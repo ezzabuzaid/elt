@@ -1,7 +1,10 @@
+import { inspect } from 'node:util';
+
 import type { Connection } from '../core/connection.ts';
 import { type Copy, type CopyOutcome, describeFailures } from '../core/copy.ts';
 import type { ExtractionCoverage, FailureType } from '../core/source.ts';
 import type { Target as DestinationTarget } from '../core/target.ts';
+import type { LoadFailure } from '../core/writer.ts';
 
 export type SyncStatus = 'succeeded' | 'partial' | 'failed' | 'cancelled';
 
@@ -61,6 +64,23 @@ export abstract class SyncHistory<Target extends DestinationTarget> {
     streams: readonly string[],
     at: Date,
   ): Promise<void>;
+}
+
+// A failure as a history records it in a copy's failures. stacktrace is the
+// error as Node renders it, with its stack and every cause it chains, such as
+// the code of a refused connection behind "fetch failed", as Airbyte keeps a
+// FailureReason's stacktrace beside its message.
+export function recordedFailure({
+  partition,
+  error,
+  failureType,
+}: LoadFailure) {
+  return {
+    partition,
+    error: error instanceof Error ? error.message : String(error),
+    failure_type: failureType,
+    stacktrace: inspect(error),
+  };
 }
 
 export function copyStatus({

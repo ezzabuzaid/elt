@@ -58,7 +58,7 @@ export const syncHistoryRelations = {
       deleted_count:
         'Accepted deletion operations committed by this copy during this pass, including already-absent keys. Not a count of rows actually removed. NULL means no counts were reported.',
       failures:
-        'Array of {partition, error, failure_type} from pass outcomes. A null partition denotes a whole-stream or non-partition-specific failure; failure_type is config or system, as in sync_attempts. Empty array means none recorded; check status before assuming success.',
+        'Array of {partition, error, failure_type, stacktrace} from pass outcomes. A null partition denotes a whole-stream or non-partition-specific failure; failure_type is config or system, as in sync_attempts. error is the message; stacktrace is the error with its stack and every cause it chains, such as the code of a refused connection behind "fetch failed". Empty array means none recorded; check status before assuming success.',
     },
   },
   sync_status: {

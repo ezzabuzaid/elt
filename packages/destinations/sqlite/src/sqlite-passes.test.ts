@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { HttpServer } from '@zukhruf/testing/http';
+
 import {
   Catalog,
   Connection,
@@ -261,6 +263,83 @@ test("a pass that did not load says whether its failures are the user's to fix, 
       { status: 'succeeded', failure_type: null },
     ],
   );
+});
+
+test('each recorded failure keeps the causes its error chains, such as why a connection failed', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-passes-'));
+  // A real fetch to a port nobody listens on: undici's "fetch failed",
+  // whose cause says the connection was refused.
+  await using server = await new HttpServer().start(() => {});
+  await server.cleanup();
+  const refused = await fetch(`${server.origin}/`).then(
+    () => assert.fail('a closed port answered'),
+    (error: unknown) => error,
+  );
+  class Fetching extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    readonly identity = 'fetching';
+    readonly files = stream('files');
+    protected readonly catalog = new Catalog([this.files]);
+    failing: unknown = null;
+    opening: unknown = null;
+
+    protected override async open() {
+      if (this.opening !== null) throw this.opening;
+      return new AsyncDisposableStack();
+    }
+
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+
+    protected override async *extract(configuration: CopyConfiguration) {
+      if (this.failing !== null) throw this.failing;
+      yield { stream: configuration.stream.name, data: { id: 'kept' } };
+    }
+  }
+  const source = new Fetching();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'fetching',
+        source,
+        destination,
+        steps: [new Copy(source.files, destination.table('files'))],
+      }),
+    ],
+    history,
+  });
+  const failures = async () => {
+    await pipeline.run().catch(() => {});
+    return shell(
+      destination.path,
+      "SELECT json_extract(value, '$.error') AS error, json_extract(value, '$.stacktrace') AS stacktrace FROM extraction_coverage, json_each(failures) WHERE attempt_id = (SELECT latest_attempt_id FROM sync_status)",
+    ).rows;
+  };
+
+  source.failing = refused;
+  const streamFailed = await failures();
+  source.failing = null;
+  source.opening = refused;
+  const openFailed = await failures();
+
+  for (const recorded of [streamFailed, openFailed]) {
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0].error, 'fetch failed');
+    assert.match(
+      recorded[0].stacktrace,
+      /\[cause\]: Error: connect ECONNREFUSED 127\.0\.0\.1:\d+/,
+    );
+    assert.match(recorded[0].stacktrace, /code: 'ECONNREFUSED'/);
+  }
 });
 
 function stream(name: string) {

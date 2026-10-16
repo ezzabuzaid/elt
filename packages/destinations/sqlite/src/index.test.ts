@@ -6761,7 +6761,12 @@ test('a watcher failure the sync history recorded ends the watch with a WatchErr
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stops-'));
   const { source, pipeline, read } = await checkedPipeline(scratch.path);
   const watching = pipeline.watch({ signal: new AbortController().signal });
-  const lost = new Error('Native watcher failed');
+  // What fs.watch raises when the process runs out of file handles.
+  const lost = new Error('Native watcher failed', {
+    cause: Object.assign(new Error('EMFILE: too many open files, watch'), {
+      code: 'EMFILE',
+    }),
+  });
   try {
     await watching.next();
 
@@ -6786,6 +6791,14 @@ test('a watcher failure the sync history recorded ends the watch with a WatchErr
         },
       ],
     );
+    const [failure] = read(
+      "SELECT json_extract(f.value, '$.stacktrace') AS stacktrace FROM extraction_coverage c, json_each(c.failures) f WHERE c.attempt_id = (SELECT max(attempt_id) FROM sync_attempts)",
+    );
+    assert.match(
+      String(failure?.stacktrace),
+      /\[cause\]: Error: EMFILE: too many open files, watch/,
+    );
+    assert.match(String(failure?.stacktrace), /code: 'EMFILE'/);
     assert.equal(source.checks.listenerCount('check'), 0);
   } finally {
     await watching.return(undefined);

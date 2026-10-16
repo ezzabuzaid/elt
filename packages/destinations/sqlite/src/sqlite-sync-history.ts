@@ -10,6 +10,7 @@ import {
   passError,
   passFailureType,
   passStatus,
+  recordedFailure,
 } from '@workspace/elt';
 
 import { SQLiteDestination } from './sqlite-destination.ts';
@@ -95,11 +96,7 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
             )
             .run(
               JSON.stringify([
-                {
-                  partition: null,
-                  error: message(error),
-                  failure_type: failureType,
-                },
+                recordedFailure({ partition: null, error, failureType }),
               ]),
               id,
             );
@@ -145,13 +142,7 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
           copyStatus(outcome),
           outcome.count,
           outcome.deleted,
-          JSON.stringify(
-            outcome.failures.map(({ partition, error, failureType }) => ({
-              partition,
-              error: message(error),
-              failure_type: failureType,
-            })),
-          ),
+          JSON.stringify(outcome.failures.map(recordedFailure)),
           id,
           outcome.copy.from.name,
         );

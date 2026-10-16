@@ -101,6 +101,7 @@ export {
   passFailureType,
   passStatus,
   type RecordedPass,
+  recordedFailure,
   SyncHistory,
   type SyncStatus,
 } from './state/sync-history.ts';

@@ -13,6 +13,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { Docker, TestRun } from '@zukhruf/testing/docker';
+import { HttpServer } from '@zukhruf/testing/http';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
@@ -32,6 +33,7 @@ import {
   type SourceWatchOptions,
   Stream,
   type StreamSchema,
+  WatchError,
   diffSnapshot,
 } from '@workspace/elt';
 import { ClosedWorld } from '@workspace/snapshot-differential';
@@ -3528,6 +3530,146 @@ test('year 0000, which ISO counts astronomically, loads as 1 BC, and year 0001 s
       { id: 'leap', onBC: true, atBC: true, dayBefore: false },
     ],
   );
+});
+
+test('each recorded failure keeps the causes its error chains, such as why a connection failed', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 2, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  // A real fetch to a port nobody listens on: undici's "fetch failed",
+  // whose cause says the connection was refused.
+  await using listener = await new HttpServer().start(() => {});
+  await listener.cleanup();
+  const refused = await fetch(`${listener.origin}/`).then(
+    () => assert.fail('a closed port answered'),
+    (error: unknown) =>
+      error instanceof Error ? error : assert.fail('fetch threw no Error'),
+  );
+  class Refusing extends ScriptedSource {
+    opening: Error | null = null;
+
+    protected override async open() {
+      if (this.opening !== null) throw this.opening;
+      return super.open();
+    }
+  }
+  const files = scripted('files');
+  const source = new Refusing([files], { files: [refused] });
+  const destination = new PostgresDestination({
+    url: database.connectionString,
+    schema: 'raw',
+  });
+  const history = new PostgresSyncHistory({ url: database.connectionString });
+  await history.install();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.connectionString,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(files, destination.table('files'), incremental('files')),
+        ],
+      }),
+    ],
+  });
+  const failures = async () => {
+    await pipeline.run().catch(() => {});
+    const [copy] = await sql`SELECT failures FROM marts.extraction_coverage
+      WHERE attempt_id = (SELECT latest_attempt_id FROM marts.sync_status)`;
+    return copy?.failures;
+  };
+
+  const streamFailed = await failures();
+  source.scripts = { files: [] };
+  source.opening = refused;
+  const openFailed = await failures();
+
+  for (const recorded of [streamFailed, openFailed]) {
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0].error, 'fetch failed');
+    assert.match(
+      recorded[0].stacktrace,
+      /\[cause\]: Error: connect ECONNREFUSED 127\.0\.0\.1:\d+/,
+    );
+    assert.match(recorded[0].stacktrace, /code: 'ECONNREFUSED'/);
+  }
+});
+
+test('a watch whose poll fails records the failure with the causes its error chains', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 2, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  // A real fetch to a port nobody listens on, as a source's poll fails when
+  // its upstream refuses the connection.
+  await using listener = await new HttpServer().start(() => {});
+  await listener.cleanup();
+  const refused = await fetch(`${listener.origin}/`).then(
+    () => assert.fail('a closed port answered'),
+    (error: unknown) =>
+      error instanceof Error ? error : assert.fail('fetch threw no Error'),
+  );
+  class Polling extends ScriptedSource {
+    polling: Error | null = null;
+
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+      if (this.polling !== null) throw this.polling;
+    }
+  }
+  const files = scripted('files');
+  const source = new Polling([files], { files: [checkpoint('files', {})] });
+  source.polling = refused;
+  const destination = new PostgresDestination({
+    url: database.connectionString,
+    schema: 'raw',
+  });
+  const history = new PostgresSyncHistory({ url: database.connectionString });
+  await history.install();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.connectionString,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(files, destination.table('files'), incremental('files')),
+        ],
+      }),
+    ],
+  });
+  const watching = pipeline.watch({ signal: new AbortController().signal });
+  try {
+    await watching.next();
+
+    await assert.rejects(watching.next(), WatchError);
+
+    const [copy] = await sql`SELECT failures FROM marts.extraction_coverage
+      WHERE attempt_id = (SELECT max(attempt_id) FROM marts.sync_attempts)`;
+    assert.equal(copy?.failures[0].error, 'fetch failed');
+    assert.match(
+      copy?.failures[0].stacktrace,
+      /\[cause\]: Error: connect ECONNREFUSED 127\.0\.0\.1:\d+/,
+    );
+  } finally {
+    await watching.return(undefined);
+  }
 });
 
 test('warehouse sync history distinguishes unchanged success, partial commits, failures and unfinished passes', async () => {

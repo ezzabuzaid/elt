@@ -10,6 +10,7 @@ import {
   passError,
   passFailureType,
   passStatus,
+  recordedFailure,
 } from '@workspace/elt';
 
 import { PostgresDestination } from './postgres-destination.ts';
@@ -80,7 +81,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
         this.#write(async (transaction) => {
           await transaction`
             UPDATE _warehouse.extraction_coverage SET status = 'failed',
-              failures = ${transaction.json([{ partition: null, error: message(error), failure_type: failureType }])}
+              failures = ${transaction.json([recordedFailure({ partition: null, error, failureType })])}
             WHERE attempt_id = ${id}`;
           await transaction`
             UPDATE _warehouse.sync_attempts SET status = 'failed',
@@ -122,7 +123,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
           UPDATE _warehouse.extraction_coverage SET
             status = ${copyStatus(outcome)},
             written_count = ${outcome.count}, deleted_count = ${outcome.deleted},
-            failures = ${transaction.json(outcome.failures.map(({ partition, error, failureType }) => ({ partition, error: message(error), failure_type: failureType })))}
+            failures = ${transaction.json(outcome.failures.map(recordedFailure))}
           WHERE attempt_id = ${id} AND stream = ${outcome.copy.from.name}`;
       await transaction`
         UPDATE _warehouse.sync_attempts SET completed_at = clock_timestamp(),
