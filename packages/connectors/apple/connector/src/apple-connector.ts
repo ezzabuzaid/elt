@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import {
   Connection,
@@ -21,7 +22,9 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
   type SQLiteTable,
+  type SQLiteView,
   installSQLiteCatalog,
+  publishSQLiteViews,
 } from '@workspace/elt-sqlite';
 import type { GoogleRequester } from '@workspace/google-auth';
 import {
@@ -105,6 +108,12 @@ export abstract class AppleConnector {
   // File streams that copy the app's own store rather than attachments; they
   // load metadata only.
   protected abstract readonly storeCopies: readonly string[];
+  // Views over the import's own views, such as counterparts, published after
+  // each pass: a stream's view exists only once a pass committed it. copied
+  // names the streams the import holds; a narrowed one leaves out unscoped.
+  protected views(_copied: ReadonlySet<string>): readonly SQLiteView[] {
+    return [];
+  }
 
   protected readonly host: AppleHost;
 
@@ -270,7 +279,7 @@ export abstract class AppleConnector {
       settings,
       selection,
       observer,
-      async (pipeline, text, removal) => {
+      async (pipeline, text, removal, publish) => {
         let failed: unknown = null;
         try {
           await pipeline.run({ signal: removal });
@@ -278,6 +287,7 @@ export abstract class AppleConnector {
           if (!(error instanceof PipelineError)) throw error;
           failed = error;
         }
+        publish();
         await text?.update(removal);
         if (failed !== null) throw failed;
       },
@@ -299,7 +309,7 @@ export abstract class AppleConnector {
       settings,
       selection,
       observer,
-      async (pipeline, text, removal) => {
+      async (pipeline, text, removal, publish) => {
         const stopping = new AbortController();
         const signal = AbortSignal.any([removal, stopping.signal]);
         // A read that fails stops the watch, as an error no sync history
@@ -327,8 +337,10 @@ export abstract class AppleConnector {
             });
         };
         try {
-          for await (const _pass of pipeline.watch({ signal }))
+          for await (const _pass of pipeline.watch({ signal })) {
+            publish();
             if (text !== null) read(text);
+          }
         } finally {
           stopping.abort();
           await running;
@@ -348,6 +360,7 @@ export abstract class AppleConnector {
       pipeline: Pipeline<SQLiteTable>,
       text: AttachmentText | null,
       removal: AbortSignal,
+      publish: () => void,
     ) => Promise<unknown>,
   ): Promise<ImportOutcome> {
     using removal = settings.removal(selection);
@@ -368,10 +381,20 @@ export abstract class AppleConnector {
     try {
       await history.install([destination]);
       installSQLiteCatalog(destination);
+      const copied = connection.steps.map(
+        ({ configuration }) => configuration.stream.name,
+      );
+      const views = this.views(new Set(copied));
       await load(
         new Pipeline({ connections: [connection], history, observer }),
         text,
         removal.signal,
+        () =>
+          publish(
+            destination.path,
+            copied.map((name) => this.view(name)),
+            views,
+          ),
       );
     } catch (error) {
       if (error instanceof ConnectorRemovedError) return { status: 'removed' };
@@ -461,6 +484,35 @@ export abstract class AppleConnector {
             new MacOSDocumentParser(),
           );
     return { connection, text, destination };
+  }
+}
+
+// Publishes a connector's views. While a stream the import copies has not
+// loaded yet, whose failure the sync history records, a view that reads it
+// waits and the others are published; once every stream loaded, a view that
+// cannot be published is wrong itself.
+function publish(
+  path: string,
+  readerViews: readonly string[],
+  views: readonly SQLiteView[],
+): void {
+  if (views.length === 0) return;
+  using database = new DatabaseSync(path, { timeout: 30_000 });
+  const loaded = database.prepare(
+    `SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = ?`,
+  );
+  const waiting = readerViews.some((view) => loaded.get(view) === undefined);
+  publishSQLiteViews(database, {
+    views: waiting ? views.filter((view) => readable(database, view)) : views,
+  });
+}
+
+function readable(database: DatabaseSync, view: SQLiteView): boolean {
+  try {
+    database.prepare(view.query);
+    return true;
+  } catch {
+    return false;
   }
 }
 
