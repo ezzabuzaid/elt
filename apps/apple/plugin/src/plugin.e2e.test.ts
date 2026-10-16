@@ -1185,3 +1185,138 @@ test(
     }
   },
 );
+
+test(
+  'a chat adds the monitor it wrote, and the next sync queues the monitor’s instruction into that chat through the codex the server was given',
+  { timeout: 120_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    const plugin = join(scratch.path, 'plugin');
+    cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
+    const runtime =
+      process.env.CODEX_MCP_NODE_PATH ??
+      join(
+        homedir(),
+        '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node',
+      );
+    // A real `codex queue` writes into the user's own ~/.codex, so the server
+    // gets an executable that records each call instead.
+    const calls = join(scratch.path, 'codex-calls.jsonl');
+    const codex = join(scratch.path, 'codex');
+    writeFileSync(
+      codex,
+      `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n`,
+      { mode: 0o755 },
+    );
+    await withConnectors(scratch.path);
+    const monitor = join(
+      scratch.path,
+      'Library/Application Support/Context Compiler/Monitors/new-photos',
+    );
+    mkdirSync(monitor, { recursive: true });
+    writeFileSync(
+      join(monitor, 'package.json'),
+      JSON.stringify({
+        type: 'module',
+        exports: './new-photos-monitor.ts',
+        contextCompiler: {
+          name: 'new-photos',
+          title: 'New photos',
+          description: 'A photo is added to Photos',
+          instruction: 'Describe the new photo.',
+        },
+      }),
+    );
+    writeFileSync(
+      join(monitor, 'new-photos-monitor.ts'),
+      `import type { Query } from '@workspace/sqlite-federation';
+
+export default {
+  async evaluate(sql: Query) {
+    return sql.all\`SELECT id FROM photos.photos\`.map((row) => ({ key: String(row.id), data: null }));
+  },
+};`,
+    );
+    const {
+      mcpServers: { apple },
+    } = JSON.parse(readFileSync(join(plugin, '.mcp.json'), 'utf8'));
+    const transport = new StdioClientTransport({
+      command: join(plugin, apple.command),
+      args: apple.args,
+      cwd: join(plugin, apple.cwd),
+      env: {
+        HOME: scratch.path,
+        CODEX_MCP_NODE_PATH: runtime,
+        CODEX_CLI_PATH: codex,
+        PATH: '',
+      },
+      stderr: 'pipe',
+    });
+    const client = new Client({ name: 'apple-e2e', version: '1.0.0' });
+    await client.connect(transport, { signal: t.signal, timeout: 10_000 });
+    try {
+      await client.callTool({
+        name: 'apple_configure',
+        arguments: { connectors: [{ connector: 'photos' }] },
+      });
+      await client.callTool({ name: 'apple_sync', arguments: {} });
+      // Codex names the calling chat in each tool call's _meta.
+      const unnamed = await client.callTool({
+        name: 'apple_monitor_add',
+        arguments: { name: 'new-photos' },
+      });
+      const added = await client.callTool({
+        name: 'apple_monitor_add',
+        arguments: { name: 'new-photos' },
+        _meta: { threadId: 'chat-e2e' },
+      });
+      writeFileSync(
+        join(scratch.path, 'Pictures/photos.json'),
+        JSON.stringify([
+          { id: 'p1', title: 'Beach' },
+          { id: 'p2', title: 'Snow' },
+          { id: 'p3', title: 'Dunes' },
+        ]),
+      );
+
+      await client.callTool({ name: 'apple_sync', arguments: {} });
+
+      assert.equal(unnamed.isError, true);
+      assert.notEqual(added.isError, true, JSON.stringify(added.content));
+      assert.deepEqual(
+        readFileSync(calls, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line)),
+        [
+          [
+            'queue',
+            '--thread',
+            'chat-e2e',
+            '--message',
+            'Monitor "New photos" triggered: Describe the new photo.',
+          ],
+        ],
+      );
+      const { structuredContent } = await client.callTool({
+        name: 'apple_monitors',
+        arguments: {},
+      });
+      assert.deepEqual(
+        z
+          .object({
+            monitors: z.array(
+              z.object({
+                chat: z.string().nullable(),
+                status: z.object({ state: z.string() }),
+              }),
+            ),
+          })
+          .parse(structuredContent).monitors,
+        [{ chat: 'codex://threads/chat-e2e', status: { state: 'watching' } }],
+      );
+    } finally {
+      await client.close();
+    }
+  },
+);
