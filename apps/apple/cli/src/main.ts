@@ -28,16 +28,26 @@ const { connectors, broken } = await new Connectors([
 for (const { title, error } of broken)
   process.stderr.write(`${title} could not be loaded: ${error}\n`);
 
-const imports = new Imports(connectors);
-
 const program = new Program('apple-cli')
   .description(
-    'Import Apple apps on this Mac into outputs/cli, keep them current, and query them.',
+    'Import Apple apps on this Mac, keep them current, and query them.',
+  )
+  .option(
+    '--directory <path>',
+    'directory for settings and imports',
+    'outputs/cli',
   )
   .showHelpAfterError()
   // Each command reads its own options, so sync watch --connector reaches
   // watch rather than sync.
-  .enablePositionalOptions();
+  .enablePositionalOptions()
+  .passThroughOptions();
+
+// Read the storage option before constructing the commands' shared imports.
+// Commander leaves the command and its arguments for the full parse below.
+const { operands, unknown } = program.parseOptions(process.argv.slice(2));
+const { directory } = program.opts<{ directory: string }>();
+const imports = new Imports(connectors, directory);
 
 for (const command of [
   new SetupCommand(imports),
@@ -48,4 +58,4 @@ for (const command of [
   new PeopleCommand(imports),
 ])
   command.attach(program);
-await program.parseAsync();
+await program.parseAsync([...operands, ...unknown], { from: 'user' });

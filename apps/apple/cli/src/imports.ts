@@ -84,17 +84,18 @@ export type ConnectorStatus = {
   }[];
 };
 
-// The CLI's imports under outputs/cli: the mediator every command goes
+// The CLI's imports in the chosen directory: the mediator every command goes
 // through. It knows the Apple connectors and keeps their selection in
 // settings.sqlite and each selection's import in its own folder: data.sqlite,
 // checkpoints and attachment files. Everything here can be rebuilt by syncing
 // again.
 export class Imports {
-  readonly root = resolve('outputs/cli');
+  readonly root: string;
   readonly connectors: readonly AppleConnector[];
 
-  constructor(connectors: readonly AppleConnector[]) {
+  constructor(connectors: readonly AppleConnector[], directory: string) {
     this.connectors = connectors;
+    this.root = resolve(directory);
   }
 
   get names(): string[] {

@@ -58,7 +58,13 @@ The MCP tools only set up; the settings file's `selected_connectors` view lists 
 
 ### Apple CLI
 
-[`apps/apple/cli`](apps/apple/cli/src/main.ts) reads the same Apple connectors from a terminal, into its own store under `outputs/cli`, separate from the plugin's. Run it with `npx nx run apple-cli:start -- <command>`:
+[`apps/apple/cli`](apps/apple/cli/src/main.ts) reads the same Apple connectors from a terminal. Its store defaults to `outputs/cli` relative to the working directory. Pass `--directory <path>` before the command to choose where settings, imports, checkpoints and attachment files live. For example, read the plugin's store with:
+
+```sh
+npx nx run apple-cli:start -- --directory "$HOME/Library/Application Support/Context Compiler/Apple" status
+```
+
+Commands run with `npx nx run apple-cli:start -- [--directory <path>] <command>`:
 
 - `setup` asks which connectors to import and, optionally, which accounts, collections and dates to narrow each one to; `setup --connector notes --collection <id> --since 2025-01-01 --connector mail` does the same without prompts, each narrowing flag applying to the `--connector` before it and each date a `YYYY-MM-DD` day on this Mac's clock, and `options <connector>` lists the IDs. Changing a connector's selection removes its import, so the next sync loads it again; an import another sync is loading is removed by the next `setup` or `sync`.
 - `sync` loads every selected connector once, showing each stream's progress; run it again, or use `sync watch`, to refresh. A sync that finds another sync loading a connector says so, waits for that pass and shows its outcome instead of loading it again; if that other sync is killed first, it shows the connector as interrupted and exits 1. `status` never keeps a sync from starting. Ctrl-C stops a sync at once with exit status 130; what it committed stays, and the next sync resumes it.
@@ -66,7 +72,7 @@ The MCP tools only set up; the settings file's `selected_connectors` view lists 
 - `status` reports each connector's latest pass, last success and database; with `--json`, each stream's too. A pass a killed sync left shows as running until the next sync.
 - `query <connector> --tables` lists each stream's view, its rows and its declared coverage, and `query <connector> "<sql>"` runs one read-only statement. Each connector's `catalog` view lists every view and column with its description.
 
-Each import's `outputs/cli/<connector>/<selection>/data.sqlite` holds `raw_<stream>` tables read through described views named after their streams (`inline_attachments` for `inlineAttachments`), with the sync history and `catalog` views elt-sqlite publishes. macOS grants access to the terminal app that runs the CLI, so it needs its own Full Disk Access, Contacts, Calendar and Reminders grants; a connector denied access fails alone and names the grant. Without a terminal, or with `--json`, output is JSON (one line per pass for `sync`) and nothing prompts.
+Each import's `<directory>/<connector>/<selection>/data.sqlite` holds `raw_<stream>` tables read through described views named after their streams (`inline_attachments` for `inlineAttachments`), with the sync history and `catalog` views elt-sqlite publishes. macOS grants access to the terminal app that runs the CLI, so it needs its own Full Disk Access, Contacts, Calendar and Reminders grants; a connector denied access fails alone and names the grant. Without a terminal, or with `--json`, output is JSON (one line per pass for `sync`) and nothing prompts.
 
 Calendar reads occurrences from 2000-01-01 to a year ahead unless the selection narrows the dates, and its import downloads attachments stored in Google Drive and Gmail. That needs `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` (the same Desktop client as `google:start`, with the Drive and Gmail APIs enabled); the first Calendar sync opens a browser for consent. Contacts account names (iCloud, Google) are not in its stores and do not load.
 

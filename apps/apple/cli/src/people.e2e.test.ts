@@ -25,8 +25,8 @@ async function importsAt(root: string): Promise<Map<string, string>> {
     new TerminalHost(),
   );
   assert.deepEqual(broken, []);
-  const imports = new Imports(connectors);
-  using settings = new Settings(join(root, 'outputs/cli'));
+  const imports = new Imports(connectors, join(root, 'outputs/cli'));
+  using settings = new Settings(imports.root);
   const selections = peopleConnectors.map((connector) => ({
     connector,
     scope: {},
