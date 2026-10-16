@@ -417,6 +417,7 @@ test('an answer missing a field the SDK reads fails naming the query and the fie
                 user: { pk: '44555906095', username: 'hivefitnationgym' },
                 coauthor_producers: [],
                 usertags: null,
+                location: null,
                 carousel_media: null,
               },
             },
@@ -469,6 +470,7 @@ const gridPhoto = (pk: string) => ({
   user: { pk: '44555906095', username: 'hivefitnationgym' },
   coauthor_producers: [],
   usertags: null,
+  location: null,
   carousel_media: null,
 });
 
@@ -486,7 +488,7 @@ test('a grid page whose answer carries field errors on a field the SDK does not 
               node: {
                 ...gridPhoto('3678706059602901687'),
                 location: {
-                  pk: '2192741',
+                  pk: 2192741,
                   name: 'Hive Fitness Nation',
                   lat: 31.95,
                   lng: 35.86,

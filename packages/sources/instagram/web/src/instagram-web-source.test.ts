@@ -87,6 +87,14 @@ type Post = {
   readonly owner?: string;
   // A reel's play count; null where Instagram leaves it out.
   readonly plays?: number | null;
+  // The place the post is tagged with, its id a JSON number as Instagram
+  // sends it.
+  readonly location?: {
+    readonly pk: number;
+    readonly name: string;
+    readonly lat: number;
+    readonly lng: number;
+  };
 };
 
 type Story = {
@@ -196,6 +204,10 @@ function timelineNode(post: Post, profile: Profile) {
     user: { pk: profile.pk, username: profile.username },
     coauthor_producers: [],
     usertags: null,
+    location:
+      post.location === undefined
+        ? null
+        : { ...post.location, profile_pic_url: null },
     carousel_media: slidesOf(post),
   };
 }
@@ -1109,6 +1121,59 @@ async function storedFiles(directory: string, sql: string) {
     ),
   );
 }
+
+test('a post tagged with a place loads the place’s id, name and coordinates, and a post without one loads none', async () => {
+  await using _mac = await signedInMac();
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'instagram-load-'));
+  using _wire = instagram({
+    profiles: [
+      hive([
+        {
+          pk: '71',
+          takenAt: day,
+          location: {
+            pk: 2192741,
+            name: 'Hive Fitness Nation',
+            lat: 31.9539,
+            lng: 35.9106,
+          },
+        },
+        { pk: '72', takenAt: day - 86_400 },
+      ]),
+    ],
+    following: [],
+  });
+
+  await (
+    await pipeline(
+      await InstagramWebSource.connect({ profileIds: ['44555906095'] }),
+      dir.path,
+    )
+  ).run();
+
+  assert.deepEqual(
+    rows(
+      dir.path,
+      'SELECT id, "locationId", "locationName", latitude, longitude FROM posts ORDER BY id',
+    ),
+    [
+      {
+        id: '71',
+        locationId: '2192741',
+        locationName: 'Hive Fitness Nation',
+        latitude: 31.9539,
+        longitude: 35.9106,
+      },
+      {
+        id: '72',
+        locationId: null,
+        locationName: null,
+        latitude: null,
+        longitude: null,
+      },
+    ],
+  );
+});
 
 test('every slide of a carousel, of a repost and of a tagged post is a media row with its image stored, joined to its post', async () => {
   await using _mac = await signedInMac();

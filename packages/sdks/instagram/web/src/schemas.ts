@@ -42,6 +42,17 @@ const timelineMedia = timelineSlide.extend({
   user: owner,
   coauthor_producers: z.array(owner),
   usertags: z.object({ in: z.array(z.object({ user: owner })) }).nullable(),
+  // The place the post is tagged with. Its id comes as a JSON number, so one
+  // past 2^53, which JSON.parse would round, fails instead of loading wrong.
+  location: z
+    .object({
+      pk: z.int(),
+      name: z.string(),
+      lat: z.number(),
+      lng: z.number(),
+    })
+    .transform(({ pk, ...place }) => ({ ...place, pk: String(pk) }))
+    .nullable(),
   carousel_media: z.array(timelineSlide).nullable(),
 });
 

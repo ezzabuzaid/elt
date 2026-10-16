@@ -2427,7 +2427,7 @@ Instagram has no Mac app: Meta keeps its iPhone and iPad app off Apple silicon M
 | ----------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `following`       | `id`                                | An account the signed-in account follows: the profiles setup offers. Not partitioned.                                                            |
 | `profiles`        | `profileId`                         | A profile as its page shows it now, with its counts and business address.                                                                        |
-| `posts`           | `profileId`, `id`                   | A post on the grid, a reel shared to the grid among them, with its caption, date, counts, pinned flag, coauthors and tags.                       |
+| `posts`           | `profileId`, `id`                   | A post on the grid, a reel shared to the grid among them, with its caption, date, counts, pinned flag, coauthors, tags and tagged place.         |
 | `reels`           | `profileId`, `id`                   | A reel on the reels tab, with its plays. The tab names no date and no caption: join `id` to `posts`.                                             |
 | `reposts`         | `profileId`, `id`                   | Another account's post the profile reposted. No date.                                                                                            |
 | `tagged_posts`    | `profileId`, `id`                   | Another account's post that tags the profile. No date.                                                                                           |
@@ -2456,7 +2456,7 @@ Each GraphQL query is persisted: the client sends its name, a `doc_id`, and Rela
 ### Instagram limitations
 
 - Videos are not downloaded: `media` keeps the cover frame (backlog #2632).
-- The source keeps no location yet: `location` was null on the 66 posts probed first, but older posts of Hive's grid carry one (`lat`, `lng`, `name`; backlog #2654). Instagram's own image descriptions were null on all of them; `description` is kept for when Instagram writes one.
+- A post's tagged place is in `locationId`, `locationName`, `latitude` and `longitude`, NULL when it has none: 47 of Hive's 551 posts carry one, none of the first 99 of PropertyPlus. The place's picture is not kept; Instagram answered it with `field_exception` errors. Instagram's own image descriptions were null on every post probed; `description` is kept for when Instagram writes one.
 - Comments are read for grid posts only, not for reels kept off the grid, reposts or tagged posts.
 - The reposts and tagged tabs name a carousel's slides only by `<pk>_<owner id>`, and the reposts tab sends no media type for them: their `media.kind` is NULL. `reels.pinned` is NULL for a reel Instagram sends no pin list for.
 - A deletion shows only when a scan ends: within 11 runs for 3,479 posts.
@@ -2466,13 +2466,16 @@ Each GraphQL query is persisted: the client sends its name, a `doc_id`, and Rela
 
 Probed on 2026-10-14 and 2026-10-15 with Dia's session on @hivefitnationgym (552 posts, 15 highlights, 9 live stories) and @propertyplus.jo (3,479 posts): the queries, variables and answers the SDK sends and parses; a 33-post page for `first: 50`; highlights of 100, 81 and 52 stories (100 is Instagram's limit); comments 15 to a page; logged-out answers (a web page, a login redirect, `Incorrect Query`, `SecFetch Policy violation`); and the 401 throttle. The grid query also answered without a session, until this network was throttled.
 
-Three CLI syncs with Dia's session on 2026-10-15, both profiles selected:
+Five CLI syncs with Dia's session on 2026-10-15 and 2026-10-16, both profiles selected:
 
 1. Failed after 4 seconds: GraphQL answers a signed-in session as `text/javascript`.
 2. Partial: 462 posts, 2,181 media rows and 497 comments, and Hive's October timetable in `attachment_text`. A null `play_count`, captions without a date, video renditions without a size and a repeated comment each failed a stream.
 3. Partial after 204 seconds: 303 posts, 582 comments, 124 reels, 3 reposts and 7 stories more. A null pin list, carousel slides without a pk, and a 410 on 3 of Hive's 802 highlight stories each failed a stream; one download failed on the network, with no cause in the sync history (backlog #2652).
 
-Every failure of the second and third syncs is fixed and tested with the shape Instagram sent, but the lost network cause (#2652). The `field_exception` that stopped Hive's grid at page 5 in both was not Node's doing: the signed-in browser's answer to the same request carries the same field errors beside all 33 posts, and the SDK now reads it.
+4. Partial after 460 seconds: Hive's grid past page 5 for the first time (534 posts that run), and reposts, tagged posts and reels without errors. A null like-count flag on a grid post failed the grid, and one failed download lost the whole first load of Hive's highlight stories.
+5. Succeeded after 677 seconds on 2026-10-16, with no stream failing: Hive's grid complete at 551 posts, its 802 highlight stories with 799 images (the three the CDN answers 410 for load without), and its October timetable found by `LIKE '%BodyPump%'` on 8 images.
+
+Every failure of these syncs is fixed and tested with the shape Instagram sent. The `field_exception` that stopped Hive's grid at page 5 was not Node's doing: the signed-in browser's answer to the same request carries the same field errors beside all 33 posts, and the SDK now reads it.
 
 ## Google Search Console
 

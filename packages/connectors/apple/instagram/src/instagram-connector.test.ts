@@ -133,6 +133,7 @@ function instagram(slides: ReadonlyMap<string, Buffer>) {
     user: hive,
     coauthor_producers: [],
     usertags: null,
+    location: null,
     carousel_media: [...slides.keys()].map((id) => ({
       pk: id,
       media_type: 1,

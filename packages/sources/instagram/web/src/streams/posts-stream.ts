@@ -51,6 +51,24 @@ const properties = {
     ...flag,
     description: 'The profile pinned the post to the top of its grid.',
   },
+  locationId: {
+    type: ['string', 'null'],
+    minLength: 1,
+    description:
+      'Instagram’s id of the place the post is tagged with; NULL when it has none.',
+  },
+  locationName: {
+    ...nullableText,
+    description: 'The name of the place the post is tagged with.',
+  },
+  latitude: {
+    type: ['number', 'null'],
+    description: 'The place’s latitude, in degrees.',
+  },
+  longitude: {
+    type: ['number', 'null'],
+    description: 'The place’s longitude, in degrees.',
+  },
   likes: {
     ...count,
     description:
@@ -121,6 +139,10 @@ export class PostsStream extends ListStream<typeof properties, TimelineMedia> {
       kind: kindOf(item.media_type),
       productType: item.product_type,
       pinned: item.timeline_pinned_user_ids.includes(profile),
+      locationId: item.location?.pk ?? null,
+      locationName: item.location?.name ?? null,
+      latitude: item.location?.lat ?? null,
+      longitude: item.location?.lng ?? null,
       likes: item.like_count,
       comments: item.comment_count,
       slides: item.carousel_media?.length ?? 1,
