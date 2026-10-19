@@ -148,11 +148,10 @@ export class EventsStream extends CalendarStream<
 
   // The schema cannot relate one field to another, so the dates are checked
   // against each other once each record is valid.
-  override async read(
+  override async *read(
     scan: CalendarScan,
-  ): Promise<SchemaRecord<typeof properties>[]> {
-    const events = await super.read(scan);
-    for (const event of events) {
+  ): AsyncGenerator<SchemaRecord<typeof properties>> {
+    for await (const event of super.read(scan)) {
       const endsBeforeStart = event.endAt < event.startAt;
       const datesInconsistent = event.allDay
         ? event.startDate === null ||
@@ -161,8 +160,8 @@ export class EventsStream extends CalendarStream<
         : event.startDate !== null || event.endDate !== null;
       if (endsBeforeStart || datesInconsistent)
         throw new TypeError('Calendar returned inconsistent event dates');
+      yield event;
     }
-    return events;
   }
 
   protected rows(scan: CalendarScan): readonly CalendarEvent[] {

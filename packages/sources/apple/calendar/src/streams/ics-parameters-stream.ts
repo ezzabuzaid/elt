@@ -63,18 +63,14 @@ export class IcsParametersStream extends CalendarStream<
   } as const;
   override readonly requiresIcs = true;
 
-  protected rows(scan: CalendarScan): readonly Row[] {
-    return scan.ics.properties.flatMap((line) =>
-      line.property.parameters.flatMap(({ name, values }, position) =>
-        values.map((value, valuePosition) => ({
-          line,
-          position,
-          valuePosition,
-          name,
-          value,
-        })),
-      ),
-    );
+  protected *rows(scan: CalendarScan): Generator<Row> {
+    for (const line of scan.ics.properties)
+      for (const [
+        position,
+        { name, values },
+      ] of line.property.parameters.entries())
+        for (const [valuePosition, value] of values.entries())
+          yield { line, position, valuePosition, name, value };
   }
 
   protected record({

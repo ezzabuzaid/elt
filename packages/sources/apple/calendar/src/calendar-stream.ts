@@ -67,7 +67,7 @@ export type CalendarReader = {
   readonly requiresIcs: boolean;
   readonly dated: boolean;
   describe(): Stream;
-  read(scan: CalendarScan): Promise<Record<string, unknown>[]>;
+  read(scan: CalendarScan): AsyncIterable<Record<string, unknown>>;
   file(
     record: Record<string, unknown>,
     scan: CalendarScan,
@@ -76,8 +76,10 @@ export type CalendarReader = {
 };
 
 // A Calendar stream: its description, and how its records come out of a run's
-// scan. Reading is the same for every stream — pick the rows, project each,
-// validate against the schema — so streams supply only those two steps.
+// scan. Reading is the same for every stream: pick a row, project it and
+// validate it against the schema, then pick the next, so a pass holds one
+// record of a stream however many the scan has. Streams supply only the rows
+// and the projection.
 export abstract class CalendarStream<P extends Properties, Row> {
   abstract readonly name: string;
   abstract readonly jsonSchema: {
@@ -106,12 +108,9 @@ export abstract class CalendarStream<P extends Properties, Row> {
     return this.#stream;
   }
 
-  async read(scan: CalendarScan): Promise<SchemaRecord<P>[]> {
-    return validateRecords(
-      this,
-      this.rows(scan).map((row) => this.record(row, scan)),
-      'EventKit',
-    );
+  async *read(scan: CalendarScan): AsyncGenerator<SchemaRecord<P>> {
+    for (const row of this.rows(scan))
+      yield* validateRecords(this, [this.record(row, scan)], 'EventKit');
   }
 
   // The file a record carries, for streams that support file reads, staged
@@ -124,7 +123,7 @@ export abstract class CalendarStream<P extends Properties, Row> {
     return null;
   }
 
-  protected abstract rows(scan: CalendarScan): readonly Row[];
+  protected abstract rows(scan: CalendarScan): Iterable<Row>;
 
   protected abstract record(row: Row, scan: CalendarScan): RecordDraft<P>;
 }

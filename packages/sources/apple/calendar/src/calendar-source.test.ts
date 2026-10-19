@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile as execFileCallback } from 'node:child_process';
+import { execFile as execFileCallback, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
@@ -8,7 +8,7 @@ import { basename, dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import {
@@ -2032,6 +2032,101 @@ test('Calendar ICS streams keep attachments and vendor properties, which a test 
       { property: 'ATTACH', name: 'FMTTYPE', value: 'application/pdf' },
       { property: 'ATTACH', name: 'FILENAME', value: 'agenda.pdf' },
     ],
+  );
+});
+
+test('a Calendar pass over a large ICS export holds one record of a stream at a time, so it loads in a small heap', async () => {
+  await using stub = await StubEventKitHelper.create();
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'elt-ics-memory-'),
+  );
+  // 2,000 items of 20 attendees with 5 parameters each: 200,000
+  // icsParameters records.
+  const attendees = Array.from(
+    { length: 20 },
+    (_, person) =>
+      `ATTENDEE;CN=Person ${person};CUTYPE=INDIVIDUAL;PARTSTAT=ACCEPTED;ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:person-${person}@example.com`,
+  );
+  stub.answer(eventsRead(january, true), {
+    documents: Array.from({ length: 2_000 }, (_, item) =>
+      icsItem(
+        `item-${item}`,
+        [
+          'BEGIN:VCALENDAR',
+          'VERSION:2.0',
+          'BEGIN:VEVENT',
+          `UID:item-${item}@example.com`,
+          'DTSTAMP:20260924T100000Z',
+          `SUMMARY:Meeting ${item}`,
+          ...attendees,
+          'END:VEVENT',
+          'END:VCALENDAR',
+          '',
+        ].join('\r\n'),
+      ),
+    ),
+  });
+  // A full refresh, so the heap holds the read and what the stream does with
+  // it, and no snapshot: it takes about 96 MB when the stream holds one
+  // record at a time, and about 160 MB when it holds every row and record of
+  // the read at once. The process loads the built source from this package's
+  // folder, where its dependencies resolve.
+  const pass = `
+    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
+    const { SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { CalendarStore } = await import('@workspace/sdk-apple-eventkit');
+    const { AppleCalendarSource } = await import(process.env.SOURCE);
+    const source = new AppleCalendarSource({
+      store: new CalendarStore(process.env.HELPER),
+      startAt: '2025-01-01T00:00:00.000Z',
+      endAt: '2025-02-01T00:00:00.000Z',
+    });
+    const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
+    const history = new SQLiteSyncHistory();
+    await history.install([destination]);
+    await new Pipeline({
+      history,
+      connections: [new Connection({
+        name: 'calendar',
+        source,
+        destination,
+        steps: [new Copy(source.icsParameters, destination.table('raw_icsParameters'))],
+      })],
+    }).run();
+  `;
+
+  const run = spawnSync(
+    process.execPath,
+    ['--max-old-space-size=112', '--input-type=module', '-e', pass],
+    {
+      cwd: join(import.meta.dirname, '..'),
+      env: {
+        ...process.env,
+        SOURCE: pathToFileURL(
+          join(import.meta.dirname, 'apple-calendar-source.js'),
+        ).href,
+        HELPER: stub.path,
+        OUT: directory.path,
+      },
+      encoding: 'utf8',
+      timeout: 180_000,
+    },
+  );
+
+  // V8 names a heap limit it reached in the first lines it writes.
+  assert.equal(
+    run.status,
+    0,
+    `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
+  );
+  using imported = new DatabaseSync(join(directory.path, 'data.sqlite'), {
+    readOnly: true,
+  });
+  assert.deepEqual(
+    {
+      ...imported.prepare('SELECT count(*) AS n FROM raw_icsParameters').get(),
+    },
+    { n: 200_000 },
   );
 });
 
