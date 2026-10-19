@@ -7,6 +7,7 @@ import {
   FlightInterruptedError,
   SingleFlight,
 } from '@zukhruf/single-flight';
+import type { Locate } from '@zukhruf/sqlite-federation';
 
 import type {
   AppleConnector,
@@ -19,7 +20,6 @@ import {
   readSQLite,
 } from '@workspace/elt-sqlite';
 import { type Selection, Settings } from '@workspace/settings';
-import type { Locate } from '@workspace/sqlite-federation';
 
 import {
   ObservedPasses,

@@ -24,12 +24,6 @@
       "path": "./packages/eca"
     },
     {
-      "path": "./packages/sqlite-federation"
-    },
-    {
-      "path": "./packages/sqlite-drift"
-    },
-    {
       "path": "./apps/google"
     },
     {

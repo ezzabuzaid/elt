@@ -3,9 +3,9 @@ import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { Modes, Mutex, SqliteStore } from '@zukhruf/mutex';
+import { Declaration } from '@zukhruf/sqlite-drift';
 
 import { type CheckpointSession, CheckpointStore } from '@workspace/elt';
-import { Declaration } from '@workspace/sqlite-drift';
 
 const checkpoints = new Declaration([
   'CREATE TABLE checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, reloading INTEGER NOT NULL CHECK (reloading IN (0, 1)), state TEXT NOT NULL) STRICT',

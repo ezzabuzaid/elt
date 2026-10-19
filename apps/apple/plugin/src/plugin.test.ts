@@ -158,7 +158,7 @@ async function writeMonitor(root: string, name: string, entry: string) {
 
 // Each photo the Photos import holds, keyed by its id, written in the shape
 // $add-apple-monitor gives agents: a type-only import and a typed handle.
-const newPhotos = `import type { Query } from '@workspace/sqlite-federation';
+const newPhotos = `import type { Query } from '@zukhruf/sqlite-federation';
 
 export default {
   async evaluate(sql: Query) {

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 
+import { Declaration } from '@zukhruf/sqlite-drift';
+
 import type {
   CopyConfiguration,
   FieldValues,
@@ -18,7 +20,6 @@ import {
   describeTarget,
   reloadMode,
 } from '@workspace/elt';
-import { Declaration } from '@workspace/sqlite-drift';
 
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { describe } from './sqlite-descriptions.ts';

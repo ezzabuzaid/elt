@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "@workspace/elt": "0.0.1",
-    "@workspace/sqlite-drift": "0.0.1",
-    "@zukhruf/mutex": "^0.3.19"
+    "@zukhruf/mutex": "^0.3.19",
+    "@zukhruf/sqlite-drift": "0.3.30"
   },
   "devDependencies": {
     "@zukhruf/snapshot-differential": "0.3.28",

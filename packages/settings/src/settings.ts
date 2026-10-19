@@ -3,12 +3,13 @@ import { chmodSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+import { Declaration } from '@zukhruf/sqlite-drift';
+
 import type { FailureType } from '@workspace/elt';
 import {
   installSQLiteCatalog,
   publishSQLiteViews,
 } from '@workspace/elt-sqlite';
-import { Declaration } from '@workspace/sqlite-drift';
 
 import {
   type ConnectorFacts,

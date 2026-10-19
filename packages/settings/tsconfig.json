@@ -8,9 +8,6 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
-      "path": "../sqlite-drift"
-    },
-    {
       "path": "../sources/apple/macos"
     },
     {

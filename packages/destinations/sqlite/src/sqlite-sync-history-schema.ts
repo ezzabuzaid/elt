@@ -1,5 +1,6 @@
+import { Declaration } from '@zukhruf/sqlite-drift';
+
 import { syncHistoryRelations } from '@workspace/elt';
-import { Declaration } from '@workspace/sqlite-drift';
 
 import { type SQLiteView, viewDefinition } from './sqlite-views.ts';
 

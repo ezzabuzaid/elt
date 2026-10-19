@@ -9,12 +9,6 @@
   "exclude": ["src/page"],
   "references": [
     {
-      "path": "../../../packages/sqlite-federation"
-    },
-    {
-      "path": "../../../packages/sqlite-drift"
-    },
-    {
       "path": "../../../packages/sources/apple/macos"
     },
     {

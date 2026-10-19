@@ -22,7 +22,7 @@ description: Adds a monitor that watches the Apple imports and, after each sync,
 3. Write `package.json` and `<name>-monitor.ts` from this template. Keep the monitor in that one file.
 
    ```ts
-   import type { Query } from '@workspace/sqlite-federation';
+   import type { Query } from '@zukhruf/sqlite-federation';
 
    // A new Careem delivery receipt in Mail.
    export default {

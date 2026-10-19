@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 
+import { Federation } from '@zukhruf/sqlite-federation';
 import type { Command as Declaration } from 'commander';
 
 import { peopleFile } from '@workspace/apple-people/people';
-import { Federation } from '@workspace/sqlite-federation';
 
 import { table } from '../table.ts';
 import { Command, type Output } from './command.ts';

@@ -2,6 +2,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { SingleFlight } from '@zukhruf/single-flight';
+import type { Locate } from '@zukhruf/sqlite-federation';
 import { z } from 'zod';
 
 import type {
@@ -20,7 +21,6 @@ import {
   Settings,
 } from '@workspace/settings';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-import type { Locate } from '@workspace/sqlite-federation';
 
 import type { Monitors } from './monitors.ts';
 

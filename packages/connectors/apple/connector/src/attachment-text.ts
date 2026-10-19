@@ -2,9 +2,10 @@ import { lstat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+import { Declaration } from '@zukhruf/sqlite-drift';
+
 import type { DocumentParser } from '@workspace/elt';
 import { publishSQLiteViews } from '@workspace/elt-sqlite';
-import { Declaration } from '@workspace/sqlite-drift';
 
 // Vision text recognition, the slowest format, read about three times as
 // many files a second with four at once and little more with eight.

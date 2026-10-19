@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-import { Declaration } from '@workspace/sqlite-drift';
+import { Declaration } from '@zukhruf/sqlite-drift';
 
 import { identifiers } from './sqlite-identifiers.ts';
 

@@ -1257,7 +1257,7 @@ test(
     );
     writeFileSync(
       join(monitor, 'new-photos-monitor.ts'),
-      `import type { Query } from '@workspace/sqlite-federation';
+      `import type { Query } from '@zukhruf/sqlite-federation';
 
 export default {
   async evaluate(sql: Query) {

@@ -12,15 +12,15 @@ import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
-import { z } from 'zod';
-
-import { type Condition, Eca, type Rule } from '@workspace/eca';
-import { Declaration } from '@workspace/sqlite-drift';
+import { Declaration } from '@zukhruf/sqlite-drift';
 import {
   Federation,
   type Locate,
   type Query,
-} from '@workspace/sqlite-federation';
+} from '@zukhruf/sqlite-federation';
+import { z } from 'zod';
+
+import { type Condition, Eca, type Rule } from '@workspace/eca';
 
 // A monitor package's package.json: what the page shows of it, read without
 // running its code, and the entry whose default export has evaluate(sql).
