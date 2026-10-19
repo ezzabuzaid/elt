@@ -671,7 +671,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
           .prepare('SELECT state FROM checkpoints WHERE id = ?')
           .get('records')?.state,
       ),
-    ).state;
+    );
   assert.equal(loadedVersion(), 1);
   assert.deepEqual(savedVersion(), { version: 1 });
   assert.deepEqual((await watching.next()).value?.outcomes, [
@@ -1312,7 +1312,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     using database = new DatabaseSync(statePath, { readOnly: true });
     return JSON.parse(
       String(database.prepare('SELECT state FROM checkpoints').get()?.state),
-    ).state;
+    );
   };
   const names = () => table().map(({ id, name }) => `${id}:${name}`);
 
@@ -1844,7 +1844,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
     const states = database
       .prepare('SELECT id, state FROM checkpoints ORDER BY id')
       .all()
-      .map(({ state }) => JSON.parse(String(state)).state);
+      .map(({ state }) => JSON.parse(String(state)));
     return [
       Object.keys(states[0].snapshot),
       Object.values<{ snapshot: object }>(states[1].groups).flatMap(
@@ -2726,7 +2726,7 @@ test('a partitioned stream resumes each partition from its own state', async () 
   using state = new DatabaseSync(checkpoints.path, { readOnly: true });
   const saved = state.prepare('SELECT state FROM checkpoints').get();
   assert.deepEqual(
-    JSON.parse(String(saved?.state)).state.partitions.map(
+    JSON.parse(String(saved?.state)).partitions.map(
       (entry: { partition: Partition }) => entry.partition,
     ),
     [{ site: 'a' }, { site: 'c' }],
@@ -2779,7 +2779,7 @@ test('a failing partition loads nothing and keeps its checkpoint, while the othe
     using state = new DatabaseSync(checkpoints.path, { readOnly: true });
     const { partitions } = JSON.parse(
       String(state.prepare('SELECT state FROM checkpoints').get()?.state),
-    ).state;
+    );
     return new Map<string, unknown>(
       partitions.map((entry: { partition: Partition; state: unknown }) => [
         entry.partition.site,
@@ -3270,11 +3270,12 @@ test('a checkpoint store keeps each acknowledged state, durable at once, and hol
   const received: unknown[] = [];
   const run = (states: unknown[], fail = false) =>
     store.run(bindings, async (checkpoints) => {
-      const state = checkpoints.state('copy');
+      const state = await checkpoints.state('copy');
       received.push(structuredClone(state));
       if (state !== null && typeof state === 'object')
         Reflect.set(state, 'mutated', true);
-      for (const next of states) await checkpoints.save('copy', next, false);
+      for (const next of states)
+        await checkpoints.save('copy', JSON.stringify(next), false);
       if (fail) throw new Error('source broke');
     });
   const saved = () => {
@@ -3290,12 +3291,9 @@ test('a checkpoint store keeps each acknowledged state, durable at once, and hol
   // What was acknowledged before a failure stays saved.
   await assert.rejects(run([{ page: 3 }], true), /source broke/);
   await store.run(bindings, async (checkpoints) => {
-    assert.deepEqual(checkpoints.state('copy'), { page: 3 });
-    await checkpoints.save('copy', { page: 4 }, false);
-    assert.equal(
-      saved(),
-      JSON.stringify({ state: { page: 4 }, reloading: false }),
-    );
+    assert.deepEqual(await checkpoints.state('copy'), { page: 3 });
+    await checkpoints.save('copy', JSON.stringify({ page: 4 }), false);
+    assert.equal(saved(), '{"page":4}');
     await assert.rejects(
       store.run(bindings, async () => {}),
       /Checkpoint copy is in use by another run/,
@@ -3319,7 +3317,7 @@ test('replications checkpoint in parallel, and one already running is refused', 
     runner.run(bound([[id, {}]]), async (checkpoints) => {
       if (++started === 2) release();
       await bothStarted;
-      await checkpoints.save(id, { done: true }, false);
+      await checkpoints.save(id, JSON.stringify({ done: true }), false);
     });
 
   // Both runs wait until the other has started, so both keys are held at once.
@@ -3352,7 +3350,8 @@ test('replications checkpoint in parallel, and one already running is refused', 
         ['a', {}],
         ['b', {}],
       ]),
-      async (checkpoints) => [checkpoints.state('a'), checkpoints.state('b')],
+      async (checkpoints) =>
+        Promise.all([checkpoints.state('a'), checkpoints.state('b')]),
     ),
     [{ done: true }, { done: true }],
   );
@@ -3369,13 +3368,12 @@ test('one checkpoint run holds every copy of a run, each with its own state', as
   ]);
 
   await store.run(bindings, async (checkpoints) => {
-    await checkpoints.save('left', { page: 1 }, false);
-    await checkpoints.save('right', { page: 7 }, false);
+    await checkpoints.save('left', JSON.stringify({ page: 1 }), false);
+    await checkpoints.save('right', JSON.stringify({ page: 7 }), false);
   });
-  const states = await store.run(bindings, async (checkpoints) => [
-    checkpoints.state('left'),
-    checkpoints.state('right'),
-  ]);
+  const states = await store.run(bindings, async (checkpoints) =>
+    Promise.all([checkpoints.state('left'), checkpoints.state('right')]),
+  );
   const unknown = store.run(bindings, async (checkpoints) =>
     checkpoints.state('other'),
   );
@@ -3392,7 +3390,11 @@ test('a changed binding is refused for its copy until the checkpoint is reset', 
   const save = (bindings: ReturnType<typeof bound>) =>
     store.run(bindings, async (checkpoints) => {
       for (const id of bindings.keys())
-        await checkpoints.save(id, { from: checkpoints.state(id) }, false);
+        await checkpoints.save(
+          id,
+          JSON.stringify({ from: await checkpoints.state(id) }),
+          false,
+        );
     });
 
   await save(
@@ -3407,7 +3409,7 @@ test('a changed binding is refused for its copy until the checkpoint is reset', 
       ['other', { target: 'x' }],
     ]),
     async (checkpoints) => {
-      assert.deepEqual(checkpoints.state('other'), { from: null });
+      assert.deepEqual(await checkpoints.state('other'), { from: null });
       return checkpoints.state('copy');
     },
   );
@@ -3418,7 +3420,7 @@ test('a changed binding is refused for its copy until the checkpoint is reset', 
   );
   await store.reset('copy');
   await store.run(bound([['copy', { target: 'b' }]]), async (checkpoints) =>
-    assert.equal(checkpoints.state('copy'), null),
+    assert.equal(await checkpoints.state('copy'), null),
   );
 });
 
@@ -3844,7 +3846,7 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
     rejectCleanup = false;
     await pipeline.run();
     assert.equal(loaded('docs'), original);
-    assert.equal(saved(), '{"state":{"at":1},"reloading":false}');
+    assert.equal(saved(), '{"at":1}');
 
     rejectSave = true;
     source.scripts = {
@@ -3855,7 +3857,7 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
     };
     await assert.rejects(pipeline.run(), PipelineError);
     assert.equal(loaded('docs'), original);
-    assert.equal(saved(), '{"state":{"at":1},"reloading":false}');
+    assert.equal(saved(), '{"at":1}');
     assert.deepEqual(await readFile(original), content);
     rejectSave = false;
 
@@ -3983,7 +3985,7 @@ test('a stream that fails publishes none of its staged rows while its sibling co
   assert.deepEqual(rows('broken'), []);
   assert.deepEqual(rows('good'), ['g1:1']);
   assert.deepEqual(rows('snapshot'), ['old:1']);
-  assert.deepEqual(saved(), ['good={"state":{"page":1},"reloading":false}']);
+  assert.deepEqual(saved(), ['good={"page":1}']);
 });
 
 test('a staged unit merges like its operations applied one at a time, under replace and cursor_newer', async () => {
@@ -5726,7 +5728,7 @@ async function shapeChanges(
       .get();
     return {
       binding: String(row?.binding),
-      state: JSON.parse(String(row?.state)).state,
+      state: JSON.parse(String(row?.state)),
     };
   };
   return {
@@ -6454,7 +6456,7 @@ test('a copy that declares its columns from the stream and stores its files keep
       readOnly: true,
     });
     const row = database.prepare('SELECT state FROM checkpoints').get();
-    return JSON.parse(String(row?.state)).state;
+    return JSON.parse(String(row?.state));
   };
   const scopes = () => readdir(join(scratch.path, 'files', '.elt-files'));
   await run({ id: shape.id, title: shape.title }, [{ id: 'a', title: 'A' }]);

@@ -196,12 +196,15 @@ export abstract class Source<
   // Must be lazy: the destination prepares its targets before pulling records.
   // Each checkpoint is a commit point. A full refresh carries none, so it
   // loads all or nothing; an incremental read that fails keeps what earlier
-  // checkpoints committed. states holds each incremental stream's saved state.
-  // signal is the run's: each extract receives it, so one waiting on its
-  // upstream can stop once the run is cancelled.
+  // checkpoints committed. states holds each incremental stream's saved state,
+  // or a promise of it, by stream name; a read asks for a stream's state when
+  // it starts that stream, so a state that grows with its upstream, such as a
+  // snapshot, is held only while its own stream reads. signal is the run's:
+  // each extract receives it, so one waiting on its upstream can stop once
+  // the run is cancelled.
   async *read(
     catalog: readonly CopyConfiguration[],
-    states: ReadonlyMap<string, unknown>,
+    states: { get(stream: string): unknown },
     signal?: AbortSignal,
   ): AsyncGenerator<ReadMessage> {
     for (const configuration of catalog) this.validate(configuration);
@@ -214,12 +217,7 @@ export abstract class Source<
       throw new TypeError('Source concurrency must be a positive integer');
     yield* interleave(
       catalog.map((configuration) =>
-        this.#stream(
-          configuration,
-          states.get(configuration.stream.name) ?? null,
-          context,
-          signal,
-        ),
+        this.#stream(configuration, states, context, signal),
       ),
       this.concurrency,
     );
@@ -227,12 +225,13 @@ export abstract class Source<
 
   async *#stream(
     configuration: CopyConfiguration,
-    state: unknown,
+    states: { get(stream: string): unknown },
     context: Context,
     signal: AbortSignal | undefined,
   ): AsyncGenerator<ReadMessage> {
     const { name } = configuration.stream;
     yield new StreamStatus(name, 'STARTED');
+    const state = (await states.get(name)) ?? null;
     if (configuration.stream.partitionKey !== undefined)
       yield* this.partitioned(configuration, state, context, signal);
     else {

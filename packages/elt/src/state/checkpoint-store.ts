@@ -5,17 +5,28 @@ import {
   changedDeclarations,
 } from '../core/stream-change.ts';
 
-// A replication's saved binding and state, as the JSON text a store keeps.
+// A replication's saved binding, as the JSON text a store keeps, and whether
+// its state was saved inside a reload the destination has not swapped in.
 export type StoredCheckpoint = {
   readonly binding: string;
-  readonly state: string;
+  readonly reloading: boolean;
 };
 
+// A store reads a checkpoint's state apart from the rest of it: a snapshot's
+// state grows with its upstream, so it is read only when its stream starts.
 export type CheckpointSession = {
   read(id: string): Promise<StoredCheckpoint | undefined>;
+  // The saved state's JSON text, as save stored it.
+  state(id: string): Promise<string | undefined>;
   // Durable when it resolves. Stores the binding with the state, since a
   // replication whose stream changed shape saves the shape it loads.
-  save(id: string, checkpoint: StoredCheckpoint): Promise<void>;
+  save(
+    id: string,
+    checkpoint: StoredCheckpoint & { readonly state: string },
+  ): Promise<void>;
+  // Durable when it resolves: the reload the checkpoint was saved in
+  // completed, so it keeps its state and is no longer reloading.
+  reloaded(id: string): Promise<void>;
   remove(id: string): Promise<void>;
 };
 
@@ -31,19 +42,19 @@ export type CheckpointBinding = {
   readonly shape: object;
 };
 
-// The checkpoints of one run's replications.
+// The checkpoints of one run's replications. Each throws when the
+// replication's copy, or a declaration of its stream, changed since.
 export type CheckpointRun = {
-  // The saved state, or null for a replication never saved. Throws when the
-  // replication's copy, or a declaration of its stream, changed since.
-  state(id: string): unknown;
+  // The saved state, parsed for this call alone, so the caller owns it and
+  // may change it; null for a replication never saved.
+  state(id: string): Promise<unknown>;
   // Whether the checkpoint was saved inside a reload that has not completed.
   reloading(id: string): boolean;
-  save(id: string, state: unknown, reloading: boolean): Promise<void>;
+  // state is the JSON text of the state.
+  save(id: string, state: string, reloading: boolean): Promise<void>;
+  // The reload the checkpoint was saved in completed.
+  reloaded(id: string): Promise<void>;
 };
-
-// What a store keeps as a checkpoint's state: the source's own state, and
-// whether it was saved inside a reload the destination has not swapped in.
-type SavedState = { readonly state: unknown; readonly reloading: boolean };
 
 // Checkpoints belong to a replication ID, not to a shared Stream or warehouse
 // table. As Airbyte's platform keeps state apart from any destination, the
@@ -59,11 +70,7 @@ export abstract class CheckpointStore {
     return this.session(ids, async (session) => {
       const checkpoints = new Map<
         string,
-        {
-          binding: string;
-          saved: SavedState;
-          refused: Error | undefined;
-        }
+        { binding: string; reloading: boolean; refused: Error | undefined }
       >();
       for (const [id, { copy, shape }] of bindings) {
         const binding = JSON.stringify([copy, shape]);
@@ -83,10 +90,7 @@ export abstract class CheckpointStore {
         }
         checkpoints.set(id, {
           binding,
-          saved:
-            saved === undefined || refused !== undefined
-              ? { state: null, reloading: false }
-              : JSON.parse(saved.state),
+          reloading: saved?.reloading ?? false,
           refused,
         });
       }
@@ -97,21 +101,32 @@ export abstract class CheckpointStore {
         if (found.refused !== undefined) throw found.refused;
         return found;
       };
+      const durably = async (id: string, save: () => Promise<void>) => {
+        try {
+          await save();
+        } catch (cause) {
+          throw new Error(
+            `Checkpoint ${id} was not saved after the destination committed; the next run replays from the last saved checkpoint`,
+            { cause },
+          );
+        }
+      };
       return work({
-        // A source may mutate its input state, but only an acknowledged message may advance it.
-        state: (id) => structuredClone(checkpoint(id).saved.state),
-        reloading: (id) => checkpoint(id).saved.reloading,
-        save: async (id, state, reloading) => {
+        state: async (id) => {
+          checkpoint(id);
+          const state = await session.state(id);
+          return state === undefined ? null : JSON.parse(state);
+        },
+        reloading: (id) => checkpoint(id).reloading,
+        save: (id, state, reloading) => {
           const { binding } = checkpoint(id);
-          const saved: SavedState = { state, reloading };
-          try {
-            await session.save(id, { binding, state: JSON.stringify(saved) });
-          } catch (cause) {
-            throw new Error(
-              `Checkpoint ${id} was not saved after the destination committed; the next run replays from the last saved checkpoint`,
-              { cause },
-            );
-          }
+          return durably(id, () =>
+            session.save(id, { binding, reloading, state }),
+          );
+        },
+        reloaded: (id) => {
+          checkpoint(id);
+          return durably(id, () => session.reloaded(id));
         },
       });
     });

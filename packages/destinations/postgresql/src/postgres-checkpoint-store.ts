@@ -57,17 +57,33 @@ export class PostgresCheckpointStore extends CheckpointStore {
       return await work({
         read: async (id) => {
           const [saved] = await sql.unsafe(
-            `SELECT "binding"::text AS "binding", "state"::text AS "state" FROM ${this.#table} WHERE "id" = $1`,
+            `SELECT "binding"::text AS "binding", "reloading" FROM ${this.#table} WHERE "id" = $1`,
             [id],
           );
           return saved === undefined
             ? undefined
-            : { binding: String(saved.binding), state: String(saved.state) };
+            : {
+                binding: String(saved.binding),
+                reloading: saved.reloading === true,
+              };
         },
-        save: async (id, { binding, state }) => {
+        state: async (id) => {
+          const [saved] = await sql.unsafe(
+            `SELECT "state"::text AS "state" FROM ${this.#table} WHERE "id" = $1`,
+            [id],
+          );
+          return saved === undefined ? undefined : String(saved.state);
+        },
+        save: async (id, { binding, reloading, state }) => {
           await sql.unsafe(
-            `INSERT INTO ${this.#table} ("id", "binding", "state") VALUES ($1, $2::text::json, $3::text::json) ON CONFLICT ("id") DO UPDATE SET "binding" = excluded."binding", "state" = excluded."state"`,
-            [id, binding, state],
+            `INSERT INTO ${this.#table} ("id", "binding", "reloading", "state") VALUES ($1, $2::text::json, $3, $4::text::json) ON CONFLICT ("id") DO UPDATE SET "binding" = excluded."binding", "reloading" = excluded."reloading", "state" = excluded."state"`,
+            [id, binding, reloading, state],
+          );
+        },
+        reloaded: async (id) => {
+          await sql.unsafe(
+            `UPDATE ${this.#table} SET "reloading" = false WHERE "id" = $1`,
+            [id],
           );
         },
         remove: async (id) => {
@@ -103,7 +119,7 @@ export class PostgresCheckpointStore extends CheckpointStore {
       // JSON keeps the exact text: JSONB refuses \u0000 and lone surrogates,
       // which checkpoint state may carry.
       await transaction.unsafe(
-        `CREATE TABLE IF NOT EXISTS ${this.#table} ("id" TEXT PRIMARY KEY, "binding" JSON NOT NULL, "state" JSON NOT NULL)`,
+        `CREATE TABLE IF NOT EXISTS ${this.#table} ("id" TEXT PRIMARY KEY, "binding" JSON NOT NULL, "reloading" BOOLEAN NOT NULL, "state" JSON NOT NULL)`,
       );
     });
   }

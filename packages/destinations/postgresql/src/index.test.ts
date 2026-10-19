@@ -1951,11 +1951,12 @@ test('a Postgres checkpoint store resumes from the last acknowledged state in th
   const received: unknown[] = [];
   const run = (states: unknown[], fail = false) =>
     store.run(bindings, async (checkpoints) => {
-      const state = checkpoints.state('copy');
+      const state = await checkpoints.state('copy');
       received.push(structuredClone(state));
       if (state !== null && typeof state === 'object')
         Reflect.set(state, 'mutated', true);
-      for (const next of states) await checkpoints.save('copy', next, false);
+      for (const next of states)
+        await checkpoints.save('copy', JSON.stringify(next), false);
       if (fail) throw new Error('source broke');
     });
 
@@ -1970,7 +1971,7 @@ test('a Postgres checkpoint store resumes from the last acknowledged state in th
     [...(await sql`SELECT id, state::text FROM raw._elt_checkpoints`)].map(
       (row) => ({ ...row }),
     ),
-    [{ id: 'copy', state: '{"state":{"page":3},"reloading":false}' }],
+    [{ id: 'copy', state: '{"page":3}' }],
   );
 });
 
@@ -1982,7 +1983,11 @@ test('a changed binding is refused until the Postgres checkpoint is reset', asyn
   });
   const save = (target: string) =>
     store.run(only('copy', { target }), async (checkpoints) =>
-      checkpoints.save('copy', { from: checkpoints.state('copy') }, false),
+      checkpoints.save(
+        'copy',
+        JSON.stringify({ from: await checkpoints.state('copy') }),
+        false,
+      ),
     );
 
   await save('a');
@@ -2142,7 +2147,7 @@ test('a copy commits at each checkpoint, its rows share one loaded_at, and no ch
 
   assert.deepEqual(midway, {
     rows: ['1'],
-    state: ['{"state":{"page":1},"reloading":false}'],
+    state: ['{"page":1}'],
     checkpoints: ['idle'],
   });
   assert.deepEqual(
@@ -2166,7 +2171,7 @@ test('replications checkpoint in parallel, and one already running is refused', 
     store.run(only(id), async (checkpoints) => {
       if (++started === 2) release();
       await bothStarted;
-      await checkpoints.save(id, { done: true }, false);
+      await checkpoints.save(id, JSON.stringify({ done: true }), false);
     });
 
   // Both runs wait until the other has started, so both locks are held at once.
@@ -2201,7 +2206,7 @@ test('checkpoint state keeps text JSONB would refuse, and the store holds no cre
   const state = { nul: 'a\u0000b', lone: '\ud800' };
 
   await store.run(only('copy'), (checkpoints) =>
-    checkpoints.save('copy', state, false),
+    checkpoints.save('copy', JSON.stringify(state), false),
   );
   const resumed = await store.run(only('copy'), async (checkpoints) =>
     checkpoints.state('copy'),
@@ -2487,9 +2492,7 @@ test('a stream that fails publishes none of its staged rows while its sibling co
   assert.deepEqual(await loaded(sql, 'broken'), []);
   assert.deepEqual(await loaded(sql, 'good'), ['g1:1']);
   assert.deepEqual(await loaded(sql, 'snapshot'), ['old:1']);
-  assert.deepEqual(await savedStates(sql), [
-    'good={"state":{"page":1},"reloading":false}',
-  ]);
+  assert.deepEqual(await savedStates(sql), ['good={"page":1}']);
 });
 
 test("a failing partition's flushed rows are discarded while the next partition commits", async () => {
@@ -2590,7 +2593,7 @@ test("a failing partition's flushed rows are discarded while the next partition 
     ['b/1'],
   );
   assert.deepEqual(await savedStates(sql), [
-    'pages={"state":{"partitions":[{"partition":{"site":"b"},"state":{"page":1}}]},"reloading":false}',
+    'pages={"partitions":[{"partition":{"site":"b"},"state":{"page":1}}]}',
   ]);
 });
 
@@ -3446,8 +3449,8 @@ test("a statement that fails in one stream's merge does not erase a sibling's st
   assert.equal((await loaded(sql, 'staged')).length, 1500);
   assert.deepEqual([...(await sql`SELECT id FROM raw.dated`)], [{ id: 'a' }]);
   assert.deepEqual(await savedStates(sql), [
-    'dated={"state":{"page":0},"reloading":false}',
-    'staged={"state":{"page":1},"reloading":false}',
+    'dated={"page":0}',
+    'staged={"page":1}',
   ]);
   assert.match(
     String(error.results[1]?.failures[0]?.error),

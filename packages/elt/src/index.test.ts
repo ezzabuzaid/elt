@@ -648,7 +648,10 @@ test('a failed copy does not stop later copies, and the run reports it at the en
 });
 
 class MemoryCheckpoints extends CheckpointStore {
-  readonly saved = new Map<string, StoredCheckpoint>();
+  readonly saved = new Map<
+    string,
+    StoredCheckpoint & { readonly state: string }
+  >();
   // Ids whose save throws the mapped error.
   readonly refusing = new Map<string, Error>();
   readonly log: string[];
@@ -664,11 +667,17 @@ class MemoryCheckpoints extends CheckpointStore {
   ): Promise<T> {
     return work({
       read: async (id) => this.saved.get(id),
+      state: async (id) => this.saved.get(id)?.state,
       save: async (id, checkpoint) => {
         const refusal = this.refusing.get(id);
         if (refusal !== undefined) throw refusal;
         this.log.push(`save ${checkpoint.state}`);
         this.saved.set(id, checkpoint);
+      },
+      reloaded: async (id) => {
+        const saved = this.saved.get(id);
+        if (saved !== undefined)
+          this.saved.set(id, { ...saved, reloading: false });
       },
       remove: async (id) => {
         this.saved.delete(id);
@@ -769,12 +778,12 @@ test('each checkpoint commits its partition, and a failing partition keeps its l
     'open',
     'apply {"site":"a","run":1}',
     'commit',
-    `save ${JSON.stringify({ state: { partitions: [a] }, reloading: false })}`,
+    `save ${JSON.stringify({ partitions: [a] })}`,
     'apply {"site":"b","run":1}',
     'discard',
     'apply {"site":"c","run":1}',
     'commit',
-    `save ${JSON.stringify({ state: { partitions: [a, c] }, reloading: false })}`,
+    `save ${JSON.stringify({ partitions: [a, c] })}`,
     'close',
   ]);
 
@@ -789,13 +798,10 @@ test('each checkpoint commits its partition, and a failing partition keeps its l
     ['c', { run: 1 }],
   ]);
   assert.deepEqual(JSON.parse(checkpoints.saved.get('pages')?.state ?? ''), {
-    state: {
-      partitions: ['a', 'b', 'c'].map((site) => ({
-        partition: { site },
-        state: { run: 2 },
-      })),
-    },
-    reloading: false,
+    partitions: ['a', 'b', 'c'].map((site) => ({
+      partition: { site },
+      state: { run: 2 },
+    })),
   });
 });
 
@@ -1020,7 +1026,7 @@ test('a stage that fails to commit fails only its stream: its later messages are
     'close',
     'apply {"id":"right-1"}',
     'commit',
-    'save {"state":{"at":1},"reloading":false}',
+    'save {"at":1}',
     'close',
   ]);
   assert.deepEqual([...checkpoints.saved.keys()], ['right']);
@@ -1064,7 +1070,7 @@ test('a checkpoint that fails to save fails only its stream, which keeps what it
     'close',
     'apply {"id":"right-1"}',
     'commit',
-    'save {"state":{"at":1},"reloading":false}',
+    'save {"at":1}',
     'close',
   ]);
   assert.deepEqual([...checkpoints.saved.keys()], ['right']);
@@ -1108,10 +1114,75 @@ test('a checkpoint whose state has a lone surrogate fails its stream before anyt
   assert.deepEqual(
     [...checkpoints.saved].map(([id, { state }]) => [id, state]),
     [
-      ['left', '{"state":{"at":1},"reloading":false}'],
-      ['right', '{"state":{"at":1},"reloading":false}'],
+      ['left', '{"at":1}'],
+      ['right', '{"at":1}'],
     ],
   );
+});
+
+test('a checkpoint whose state JSON would not carry exactly fails its stream before anything since the last one commits', async () => {
+  const symbol = Symbol('cursor');
+  // Each loses or changes something on its way through JSON.
+  const states: Record<string, unknown> = {
+    'an undefined field': { cursor: undefined },
+    'a NaN': { cursor: Number.NaN },
+    'a negative zero': { cursor: -0 },
+    'a Date': { cursor: new Date(0) },
+    'a Map': { cursor: new Map([['page', 1]]) },
+    // Index 1 of two is never set.
+    'a hole in an array': { pages: Object.assign(new Array(2), [1]) },
+    'a named field on an array': { pages: Object.assign([1], { last: 1 }) },
+    'an object with no prototype': Object.assign(Object.create(null), {
+      cursor: 1,
+    }),
+    'a symbol key': { cursor: 1, [symbol]: 1 },
+  };
+
+  for (const [kind, state] of Object.entries(states)) {
+    const source = new ContextSource({
+      left: [
+        record('left', 'left-1'),
+        checkpoint('left', 1),
+        record('left', 'left-2'),
+        { type: 'STATE', stream: 'left', state },
+      ],
+      right: [record('right', 'right-1'), checkpoint('right', 1)],
+    });
+    const destination = new DrainingDestination();
+    const checkpoints = new MemoryCheckpoints(destination.log);
+    const pipeline = incrementalPipeline(source, destination, checkpoints);
+
+    const error = await pipeline.run().then(
+      () => assert.fail(`run should refuse a state with ${kind}`),
+      (error: unknown) => error,
+    );
+
+    assert.ok(error instanceof PipelineError, String(error));
+    assert.deepEqual(
+      error.results.map(({ copy, count, failures }) => [
+        copy.from.name,
+        count,
+        failures.map(({ error }) => String(error)),
+      ]),
+      [
+        [
+          'left',
+          1,
+          ['TypeError: Checkpoint state must be losslessly JSON serializable'],
+        ],
+        ['right', 1, []],
+      ],
+      kind,
+    );
+    assert.deepEqual(
+      [...checkpoints.saved].map(([id, { state }]) => [id, state]),
+      [
+        ['left', '{"at":1}'],
+        ['right', '{"at":1}'],
+      ],
+      kind,
+    );
+  }
 });
 
 test("an extract that emits another stream's message fails only its own stream, and the sibling's target never sees it", async () => {
@@ -1423,7 +1494,7 @@ test('a run its signal stops keeps each commit and checkpoint, drops what was st
     'open',
     'apply {"id":"committed"}',
     'commit',
-    `save ${JSON.stringify({ state: { at: 1 }, reloading: false })}`,
+    'save {"at":1}',
     'apply {"id":"staged"}',
     'close',
   ]);

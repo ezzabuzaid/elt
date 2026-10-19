@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from 'node:util';
-
 import type {
   CheckpointBinding,
   CheckpointRun,
@@ -42,8 +40,9 @@ class Replicated<Target extends DestinationTarget> {
   reloading = false;
   // The run's signal stopped the copy before it ended.
   cancelled = false;
-  // The state last saved, which completing a reload saves again.
-  saved: unknown = null;
+  // Whether the saved checkpoint describes the copy's stage: not once the
+  // stage is a target this load creates or reloads, until the copy saves.
+  resumes = true;
   settled = false;
 
   readonly copy: Copy<Target>;
@@ -174,7 +173,20 @@ async function transfer<Target extends DestinationTarget>(
       );
     return { run, id: replication.copy.id };
   };
-  const states = new Map<string, unknown>();
+  // The source asks for a stream's state when it starts reading that stream.
+  const states = {
+    get: async (name: string) => {
+      const replication = byStream.get(name);
+      if (
+        replication === undefined ||
+        !incremental(replication) ||
+        !replication.resumes
+      )
+        return null;
+      const { run, id } = checkpoint(replication);
+      return run.state(id);
+    },
+  };
   const reading: Replicated<Target>[] = [];
   for (const replication of replications) {
     if (!incremental(replication)) {
@@ -183,8 +195,6 @@ async function transfer<Target extends DestinationTarget>(
     }
     try {
       const { run, id } = checkpoint(replication);
-      states.set(replication.stream.name, run.state(id));
-      replication.saved = run.state(id);
       replication.reloading = run.reloading(id);
       reading.push(replication);
     } catch (error) {
@@ -208,10 +218,7 @@ async function transfer<Target extends DestinationTarget>(
         },
       );
       // A target this load creates or reloads holds nothing to resume from.
-      if (replication.stage.fresh) {
-        states.set(replication.stream.name, null);
-        replication.saved = null;
-      }
+      if (replication.stage.fresh) replication.resumes = false;
       await replication.files.reconcile(replication.stage.values);
       prepared.push(replication);
     } catch (error) {
@@ -265,7 +272,8 @@ async function transfer<Target extends DestinationTarget>(
               await stage.complete();
               if (incremental(replication)) {
                 const { run, id } = checkpoint(replication);
-                await run.save(id, replication.saved, false);
+                if (replication.resumes) await run.reloaded(id);
+                else await run.save(id, 'null', false);
               }
             }
             replication.stage = undefined;
@@ -284,7 +292,7 @@ async function transfer<Target extends DestinationTarget>(
           await commit(replication);
           const { run, id } = checkpoint(replication);
           await run.save(id, operation.state, started(replication).reloading);
-          replication.saved = operation.state;
+          replication.resumes = true;
         } else {
           await started(replication).apply(
             operation.type === 'RECORD'
@@ -439,23 +447,23 @@ function validStream(message: ReadMessage): string {
   return message.stream;
 }
 
+// A STATE's state is checked and kept as the JSON text it is saved as.
 function validOperation(
   stream: Stream,
   message: ReadMessage,
-): WriteOperation | { readonly type: 'STATE'; readonly state: unknown } {
+): WriteOperation | { readonly type: 'STATE'; readonly state: string } {
   if (
     'type' in message &&
     message.type === 'STATE' &&
     Object.hasOwn(message, 'state') &&
     !Object.hasOwn(message, 'data')
   ) {
-    const state: unknown = JSON.parse(JSON.stringify(message.state));
-    if (!isDeepStrictEqual(state, message.state))
+    if (!lossless(message.state))
       throw new TypeError(
         'Checkpoint state must be losslessly JSON serializable',
       );
-    wellFormed(state, 'Checkpoint state');
-    return { type: 'STATE', state };
+    wellFormed(message.state, 'Checkpoint state');
+    return { type: 'STATE', state: JSON.stringify(message.state) };
   }
   if (
     'type' in message &&
@@ -493,6 +501,48 @@ function validOperation(
   throw new TypeError(
     'Source must emit records with stream and data, DELETE, RESET or STATE messages',
   );
+}
+
+// Whether JSON carries value exactly, as JSON.parse(JSON.stringify(value))
+// strictly deep-equals it: null, a boolean, a string, a finite number other
+// than -0, an array with every index and no other field, or an object of
+// Object.prototype, none with an enumerable symbol key. A walk, not a round
+// trip, so checking a state as large as a snapshot copies none of it.
+function lossless(value: unknown): boolean {
+  switch (typeof value) {
+    case 'boolean':
+    case 'string':
+      return true;
+    case 'number':
+      return Number.isFinite(value) && !Object.is(value, -0);
+    case 'object': {
+      if (value === null) return true;
+      if (
+        Object.getOwnPropertySymbols(value).some((key) =>
+          Object.prototype.propertyIsEnumerable.call(value, key),
+        )
+      )
+        return false;
+      const fields = Object.keys(value);
+      if (Array.isArray(value)) {
+        if (
+          Object.getPrototypeOf(value) !== Array.prototype ||
+          fields.length !== value.length
+        )
+          return false;
+        for (let index = 0; index < value.length; index++)
+          if (!Object.hasOwn(value, index) || !lossless(value[index]))
+            return false;
+        return true;
+      }
+      return (
+        Object.getPrototypeOf(value) === Object.prototype &&
+        fields.every((field) => lossless(Reflect.get(value, field)))
+      );
+    }
+    default:
+      return false;
+  }
 }
 
 // Every store keeps text as Unicode: a lone surrogate would load as U+FFFD

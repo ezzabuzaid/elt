@@ -8,7 +8,7 @@ import { type CheckpointSession, CheckpointStore } from '@workspace/elt';
 import { Declaration } from '@workspace/sqlite-drift';
 
 const checkpoints = new Declaration([
-  'CREATE TABLE checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, state TEXT NOT NULL) STRICT',
+  'CREATE TABLE checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, reloading INTEGER NOT NULL CHECK (reloading IN (0, 1)), state TEXT NOT NULL) STRICT',
 ]);
 
 export class SQLiteCheckpointStore extends CheckpointStore {
@@ -55,18 +55,32 @@ export class SQLiteCheckpointStore extends CheckpointStore {
     return await work({
       read: async (id) => {
         const saved = database
-          .prepare('SELECT binding, state FROM checkpoints WHERE id = ?')
+          .prepare('SELECT binding, reloading FROM checkpoints WHERE id = ?')
           .get(id);
         return saved === undefined
           ? undefined
-          : { binding: String(saved.binding), state: String(saved.state) };
+          : {
+              binding: String(saved.binding),
+              reloading: saved.reloading === 1,
+            };
       },
-      save: async (id, { binding, state }) => {
+      state: async (id) => {
+        const saved = database
+          .prepare('SELECT state FROM checkpoints WHERE id = ?')
+          .get(id);
+        return saved === undefined ? undefined : String(saved.state);
+      },
+      save: async (id, { binding, reloading, state }) => {
         database
           .prepare(
-            'INSERT INTO checkpoints (id, binding, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET binding = excluded.binding, state = excluded.state',
+            'INSERT INTO checkpoints (id, binding, reloading, state) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET binding = excluded.binding, reloading = excluded.reloading, state = excluded.state',
           )
-          .run(id, binding, state);
+          .run(id, binding, reloading ? 1 : 0, state);
+      },
+      reloaded: async (id) => {
+        database
+          .prepare('UPDATE checkpoints SET reloading = 0 WHERE id = ?')
+          .run(id);
       },
       remove: async (id) => {
         database.prepare('DELETE FROM checkpoints WHERE id = ?').run(id);
