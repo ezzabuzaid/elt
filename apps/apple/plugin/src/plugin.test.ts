@@ -21,6 +21,7 @@ import { z } from 'zod';
 import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-connectors';
 import { Connectors } from '@workspace/connector-apple-manifest/connectors';
 import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
+import { StubEventKitHelper } from '@workspace/sdk-apple-eventkit/test';
 import { type Selection, importDirectory } from '@workspace/settings';
 
 import { ApplePlugin } from './apple-plugin.ts';
@@ -59,16 +60,59 @@ const noMonitors = (directory: string) =>
   });
 
 // The plugin as its server creates it, over the built-in connectors.
-async function applePlugin(install: string, directory: string) {
+async function applePlugin(
+  install: string,
+  directory: string,
+  pluginHost = host,
+) {
   const plugin = new ApplePlugin(
     new Connectors([builtInConnectors]),
-    host,
+    pluginHost,
     install,
     directory,
     noMonitors(directory),
   );
   await plugin.refresh();
   return plugin;
+}
+
+// The EventKit helper with this Mac's calendars: one account holding one
+// calendar. Listing calendars needs full Calendar access, which a CI runner
+// has no grant for, so a stub stands in for the compiled helper.
+async function oneCalendar() {
+  const stub = await StubEventKitHelper.create();
+  stub.answer(
+    { entity: 'events', collectionsOnly: true },
+    {
+      documents: [
+        {
+          type: 'account',
+          id: 'account-1',
+          name: 'Default',
+          sourceType: 0,
+          isDelegate: false,
+        },
+        {
+          type: 'calendar',
+          id: 'calendar-1',
+          accountId: 'account-1',
+          name: 'Synthetic calendar',
+          calendarType: 0,
+          writable: true,
+          subscribed: false,
+          immutable: false,
+          color: [
+            0.7960784435272217, 0.1882352977991104, 0.8784313797950745, 1,
+          ],
+          supportedAvailabilities: 0,
+          allowedEntityTypes: 1,
+          notes: 'Synthetic calendar for recorded EventKit test data',
+          selected: true,
+        },
+      ],
+    },
+  );
+  return stub;
 }
 
 // The plugin over the built-in connectors and the fixture Photos connector,
@@ -399,7 +443,11 @@ test('Calendar options give an agent no dates to copy, and name the default wind
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = await applePlugin(install, scratch.path);
+  await using calendars = await oneCalendar();
+  const plugin = await applePlugin(install, scratch.path, {
+    ...host,
+    eventKitHelper: calendars.path,
+  });
 
   const { choices: _choices, ...options } = await plugin.options('calendar');
 
@@ -412,7 +460,11 @@ test('connecting Calendar on the page saves a scope without dates, so saving it 
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = await applePlugin(install, scratch.path);
+  await using calendars = await oneCalendar();
+  const plugin = await applePlugin(install, scratch.path, {
+    ...host,
+    eventKitHelper: calendars.path,
+  });
   const choices = await connectorChoices(plugin, 'calendar');
 
   const connected = await updateConnector(
