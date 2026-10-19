@@ -1,4 +1,3 @@
-import type { KeyValue } from '@workspace/elt';
 import type { UrlInspection } from '@workspace/sdk-google-search-console';
 
 import {
@@ -143,13 +142,5 @@ export class UrlInspectionStream extends InspectionStream {
         errorMessage: error?.message ?? null,
       },
     ];
-  }
-
-  // A URL's one row is keyed by the URL alone.
-  protected override key(
-    siteUrl: string,
-    inspectionUrl: string,
-  ): Readonly<Record<string, KeyValue>> {
-    return { siteUrl, inspectionUrl };
   }
 }

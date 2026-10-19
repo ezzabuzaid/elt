@@ -1,10 +1,12 @@
+import { Coverage } from '@zukhruf/snapshot-differential';
+
 import {
   type CopyConfiguration,
-  type DeleteMessage,
-  type KeyValue,
   type Partition,
   type SourceMessage,
+  diffSnapshot,
   isTimestamp,
+  validateRecords,
 } from '@workspace/elt';
 import {
   type UrlInspection,
@@ -12,11 +14,7 @@ import {
   nextPacificMidnight,
 } from '@workspace/sdk-google-search-console';
 
-import {
-  type Discovery,
-  type Inspected,
-  planInspections,
-} from './rolling-inspection.ts';
+import { type Discovery, planInspections } from './rolling-inspection.ts';
 import type { SearchConsoleScan } from './search-console-scan.ts';
 import {
   SearchConsoleStream,
@@ -39,12 +37,14 @@ export type InspectionOptions = {
   readonly due: (stream: string, siteUrl: string, at: number) => void;
 };
 
-// The checkpoint an inspection stream writes for a property: per URL, and
-// when Google takes the property's inspections again after refusing one for
-// the daily quota, a time that has passed before any refusal.
+// The checkpoint an inspection stream writes for a property: when each URL
+// was last inspected; when Google takes the property's inspections again
+// after refusing one for the daily quota, a time that has passed before any
+// refusal; and the snapshot of the rows loaded so far.
 type Saved = {
-  readonly inspected: Map<string, Inspected>;
+  readonly inspected: Map<string, string>;
   readonly quotaResetAt: number;
+  readonly diff: unknown;
 };
 
 /**
@@ -53,7 +53,8 @@ type Saved = {
  * and inspect never-inspected then stalest URLs until none is due or the
  * daily quota runs out. Progress is kept per URL in the stream's state, with
  * when the quota resets, so a run waits for it. Each run refreshes only the
- * URLs that fell due, so the stream is incremental only.
+ * URLs that fell due, so the stream is incremental only, and its snapshot
+ * diff judges only the rows of the URLs the run inspected or found gone.
  */
 export abstract class InspectionStream extends SearchConsoleStream {
   readonly #refreshMs: number;
@@ -128,45 +129,47 @@ export abstract class InspectionStream extends SearchConsoleStream {
     );
 
     const next = new Map(saved.inspected);
-    for (const [url, { rows }] of gone) {
-      yield* this.#deletions(siteUrl, url, 0, rows);
-      next.delete(url);
-    }
+    for (const url of gone) next.delete(url);
     inspections.sort((left, right) =>
       left.inspectionUrl < right.inspectionUrl ? -1 : 1,
     );
+    const rows: Record<string, unknown>[] = [];
     for (const inspection of inspections) {
       const discovery = universe.urls.get(inspection.inspectionUrl);
       if (discovery === undefined)
         throw new TypeError(
           `Search Console inspected ${inspection.inspectionUrl}, which ${siteUrl} did not list`,
         );
-      const rows = this.rows(siteUrl, inspection, discovery);
-      yield* this.records(rows);
-      yield* this.#deletions(
-        siteUrl,
-        inspection.inspectionUrl,
-        rows.length,
-        saved.inspected.get(inspection.inspectionUrl)?.rows ?? 0,
-      );
-      next.set(inspection.inspectionUrl, {
-        at: inspection.inspectedAt,
-        rows: rows.length,
-      });
+      rows.push(...this.rows(siteUrl, inspection, discovery));
+      next.set(inspection.inspectionUrl, inspection.inspectedAt);
     }
-    yield {
-      type: 'STATE',
-      stream: this.stream.name,
-      state: {
-        inspected: Object.fromEntries(
-          [...next].sort(([left], [right]) => (left < right ? -1 : 1)),
-        ),
-        quotaResetAt:
-          quotaResetAt > Date.now()
-            ? new Date(quotaResetAt).toISOString()
-            : null,
-      },
-    };
+    // A URL this run inspected lists all its rows, and a gone URL lists none;
+    // every other URL keeps the rows its last inspection loaded.
+    const judged: ReadonlySet<unknown> = new Set([
+      ...gone,
+      ...inspections.map(({ inspectionUrl }) => inspectionUrl),
+    ]);
+    for await (const message of diffSnapshot(
+      this.stream,
+      validateRecords(this.stream, rows, 'Search Console'),
+      saved.diff,
+      { policy: new Coverage(({ key }) => judged.has(key.inspectionUrl)) },
+    ))
+      if ('type' in message && message.type === 'STATE')
+        yield {
+          ...message,
+          state: {
+            inspected: Object.fromEntries(
+              [...next].sort(([left], [right]) => (left < right ? -1 : 1)),
+            ),
+            quotaResetAt:
+              quotaResetAt > Date.now()
+                ? new Date(quotaResetAt).toISOString()
+                : null,
+            diff: message.state,
+          },
+        };
+      else yield message;
   }
 
   // The rows one inspection produces in this stream, numbered from 0.
@@ -176,16 +179,6 @@ export abstract class InspectionStream extends SearchConsoleStream {
     discovery: Discovery,
   ): Record<string, unknown>[];
 
-  // The primary key of the row a URL holds at a position: a URL's rows are
-  // the entries of a list Google returns, keyed by their position in it.
-  protected key(
-    siteUrl: string,
-    inspectionUrl: string,
-    position: number,
-  ): Readonly<Record<string, KeyValue>> {
-    return { siteUrl, inspectionUrl, position };
-  }
-
   // The checkpoint this stream wrote for a property, or nothing inspected and
   // no refusal before its first.
   #saved(state: unknown): Saved {
@@ -193,6 +186,7 @@ export abstract class InspectionStream extends SearchConsoleStream {
       return {
         inspected: new Map(),
         quotaResetAt: Number.NEGATIVE_INFINITY,
+        diff: null,
       };
     const invalid = () =>
       new TypeError(
@@ -202,6 +196,7 @@ export abstract class InspectionStream extends SearchConsoleStream {
       typeof state !== 'object' ||
       !('inspected' in state) ||
       !('quotaResetAt' in state) ||
+      !('diff' in state) ||
       typeof state.inspected !== 'object' ||
       state.inspected === null ||
       Array.isArray(state.inspected) ||
@@ -211,19 +206,9 @@ export abstract class InspectionStream extends SearchConsoleStream {
     return {
       inspected: new Map(
         Object.entries(state.inspected).map(
-          ([url, entry]: [string, unknown]): [string, Inspected] => {
-            if (
-              typeof entry !== 'object' ||
-              entry === null ||
-              !('at' in entry) ||
-              !('rows' in entry) ||
-              !isTimestamp(entry.at) ||
-              typeof entry.rows !== 'number' ||
-              !Number.isSafeInteger(entry.rows) ||
-              entry.rows < 0
-            )
-              throw invalid();
-            return [url, { at: entry.at, rows: entry.rows }];
+          ([url, at]: [string, unknown]): [string, string] => {
+            if (!isTimestamp(at)) throw invalid();
+            return [url, at];
           },
         ),
       ),
@@ -231,23 +216,7 @@ export abstract class InspectionStream extends SearchConsoleStream {
         state.quotaResetAt === null
           ? Number.NEGATIVE_INFINITY
           : Date.parse(state.quotaResetAt),
+      diff: state.diff,
     };
-  }
-
-  // Deletions for the rows a URL held from `from` up to `to`: those its
-  // inspection no longer produces, so shrunk lists and vanished URLs are
-  // deleted without reading the destination.
-  *#deletions(
-    siteUrl: string,
-    inspectionUrl: string,
-    from: number,
-    to: number,
-  ): Generator<DeleteMessage> {
-    for (let position = from; position < to; position += 1)
-      yield {
-        type: 'DELETE',
-        stream: this.stream.name,
-        key: this.key(siteUrl, inspectionUrl, position),
-      };
   }
 }

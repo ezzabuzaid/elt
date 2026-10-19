@@ -11,12 +11,6 @@ export type Universe = {
   readonly complete: boolean;
 };
 
-// Per URL: when the stream last loaded its inspection and how many rows that
-// inspection produced (one for urlInspection, the array length for the
-// sitemap and referrer streams), so shrunk arrays and vanished URLs can be
-// deleted without reading the destination.
-export type Inspected = { readonly at: string; readonly rows: number };
-
 /**
  * What one run of one inspection stream does for a property: reuse an
  * inspection another stream already made this read, call the API only for
@@ -30,7 +24,8 @@ export function planInspections({
   now,
   refreshMs,
 }: {
-  saved: ReadonlyMap<string, Inspected>;
+  // Per URL: when the stream last loaded its inspection.
+  saved: ReadonlyMap<string, string>;
   universe: Universe;
   cached: ReadonlyMap<string, UrlInspection>;
   now: number;
@@ -38,14 +33,14 @@ export function planInspections({
 }): {
   reuse: UrlInspection[];
   due: string[];
-  gone: [string, Inspected][];
+  gone: string[];
   nextDue: number;
 } {
   const reuse: UrlInspection[] = [];
   const due: { url: string; at: number }[] = [];
   let nextDue = Number.POSITIVE_INFINITY;
   for (const url of universe.urls.keys()) {
-    const seen = saved.get(url)?.at;
+    const seen = saved.get(url);
     const inspection = cached.get(url);
     if (
       inspection !== undefined &&
@@ -75,9 +70,7 @@ export function planInspections({
     reuse,
     due: due.map(({ url }) => url),
     gone: universe.complete
-      ? [...saved]
-          .filter(([url]) => !universe.urls.has(url))
-          .sort(([left], [right]) => (left < right ? -1 : 1))
+      ? [...saved.keys()].filter((url) => !universe.urls.has(url))
       : [],
     nextDue,
   };
