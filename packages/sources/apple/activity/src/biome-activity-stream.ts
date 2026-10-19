@@ -1,3 +1,5 @@
+import { Retention } from '@zukhruf/snapshot-differential';
+
 import {
   type CopyConfiguration,
   type Properties,
@@ -10,7 +12,6 @@ import {
   validateRecords,
 } from '@workspace/elt';
 import type { BiomeSegment, BiomeStream } from '@workspace/sdk-apple-biome';
-import { Retention } from '@workspace/snapshot-differential';
 
 import type { ActivityScan } from './activity-scan.ts';
 import { retainedSince } from './activity-values.ts';

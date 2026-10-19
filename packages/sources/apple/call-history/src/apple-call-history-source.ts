@@ -1,5 +1,7 @@
 import { setInterval } from 'node:timers/promises';
 
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import type {
   CopyConfiguration,
   ExtractionCoverage,
@@ -14,7 +16,6 @@ import {
   CallHistoryUnavailableError,
   callHistoryStorePath,
 } from '@workspace/sdk-apple-call-history';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 

@@ -1,5 +1,11 @@
 import { setInterval } from 'node:timers/promises';
 
+import {
+  ClosedWorld,
+  type DeletionPolicy,
+  Retention,
+} from '@zukhruf/snapshot-differential';
+
 import type {
   CopyConfiguration,
   ExtractionCoverage,
@@ -18,11 +24,6 @@ import {
   safariContainer,
   safariDirectory,
 } from '@workspace/sdk-apple-safari';
-import {
-  ClosedWorld,
-  type DeletionPolicy,
-  Retention,
-} from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 

@@ -1,5 +1,7 @@
 import { setInterval } from 'node:timers/promises';
 
+import { Coverage } from '@zukhruf/snapshot-differential';
+
 import {
   Catalog,
   type CopyConfiguration,
@@ -16,7 +18,6 @@ import {
   TeamsUnavailableError,
   teamsDirectory,
 } from '@workspace/sdk-microsoft-teams';
-import { Coverage } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { AccountsStream } from './streams/accounts-stream.ts';

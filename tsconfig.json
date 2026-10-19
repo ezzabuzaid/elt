@@ -237,9 +237,6 @@
       "path": "./packages/connectors/apple/whatsapp"
     },
     {
-      "path": "./packages/snapshot-differential"
-    },
-    {
       "path": "./packages/sdks/chromium/cookies"
     },
     {

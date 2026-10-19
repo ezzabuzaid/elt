@@ -218,10 +218,10 @@ State belongs to the orchestration, not the destination, as in Airbyte, so any s
 
 ### Snapshot streams
 
-A source without a change feed can still load incrementally with `diffSnapshot(stream, records, state, { policy })`, a [snapshot differential](../packages/snapshot-differential/README.md) (Labio and Garcia-Molina, VLDB 1996). The stream declares `sourceDefinedCursor`, and `emitsDeletes` when its upstream deletes records ([forgetting upstreams](#forgetting-upstreams) leave it out). The source passes one complete scan, the previous state, and a deletion policy:
+A source without a change feed can still load incrementally with `diffSnapshot(stream, records, state, { policy })`, a [snapshot differential](https://github.com/JanuaryLabs/zukhruf/tree/main/packages/snapshot-differential#readme) (Labio and Garcia-Molina, VLDB 1996). The stream declares `sourceDefinedCursor`, and `emitsDeletes` when its upstream deletes records ([forgetting upstreams](#forgetting-upstreams) leave it out). The source passes one complete scan, the previous state, and a deletion policy:
 
 ```ts
-import { ClosedWorld } from '@workspace/snapshot-differential';
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 protected override async *extract(configuration, state) {
   // The scan lists every record, so a key it does not list was deleted.
@@ -263,7 +263,7 @@ Some upstreams keep records only for a while and then drop them without any dele
 Some upstreams hold only part of their records and say which part, as the Slack app caches the stretches of each conversation it loaded and records their ranges. A message that vanished inside a range the cache still holds was deleted; one outside every range was only dropped from the cache. The source gives the diff a `Coverage` with the vanished records that the read vouches for:
 
 ```ts
-import { Coverage } from '@workspace/snapshot-differential';
+import { Coverage } from '@zukhruf/snapshot-differential';
 
 protected override async *extract(configuration, state, partition, scan) {
   // A vanished message is deleted only where the app still holds the history.
@@ -315,7 +315,7 @@ for await (const page of profile.pages(after)) {
 - **What a reader sees:** a new or changed record loads with the part that lists it. A record no part of the scan listed is deleted when the part that ends the scan commits. Until then, every row stays.
 - **State:** while a scan is open, the snapshot also keeps the keys its parts listed (`listed`). A part is a commit: a run that fails keeps the parts before it, and the next run goes on after them.
 - **Lag:** a record deleted after a part listed it is deleted when the next scan ends. Two parts may list one key; one part may not list it twice.
-- **Precedent:** Airbyte's resumable full refresh keeps its page token only between the attempts of one job, and its truncate refresh keeps every row hidden until the sync ends; neither lets one scan go on through syncs that succeed. See [ADR 0002](../packages/snapshot-differential/docs/adr/0002-a-scan-can-be-listed-in-parts.md).
+- **Precedent:** Airbyte's resumable full refresh keeps its page token only between the attempts of one job, and its truncate refresh keeps every row hidden until the sync ends; neither lets one scan go on through syncs that succeed. See [ADR 0002](https://github.com/JanuaryLabs/zukhruf/blob/main/packages/snapshot-differential/docs/adr/0002-a-scan-can-be-listed-in-parts.md).
 
 #### Forgetting upstreams
 

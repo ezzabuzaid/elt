@@ -1,13 +1,14 @@
 import {
+  ClosedWorld,
+  type DeletionPolicy,
+} from '@zukhruf/snapshot-differential';
+
+import {
   type Properties,
   type RecordDraft,
   type SourceMessage,
   diffSnapshot,
 } from '@workspace/elt';
-import {
-  ClosedWorld,
-  type DeletionPolicy,
-} from '@workspace/snapshot-differential';
 
 import { InstagramStream, type ReadContext } from './instagram-stream.ts';
 

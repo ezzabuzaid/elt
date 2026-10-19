@@ -12,8 +12,8 @@
   "dependencies": {
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-apple-notes": "0.0.1",
-    "@workspace/snapshot-differential": "0.0.1",
-    "@workspace/source-apple-macos": "0.0.1"
+    "@workspace/source-apple-macos": "0.0.1",
+    "@zukhruf/snapshot-differential": "0.3.25"
   },
   "devDependencies": {
     "@workspace/elt-sqlite": "0.0.1"

@@ -1,3 +1,5 @@
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import {
   type RecordDraft,
   type SourceMessage,
@@ -10,7 +12,6 @@ import type {
   ReelMedia,
   TimelineMedia,
 } from '@workspace/sdk-instagram-web';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 
 import { fields, instant, kindOf, largest } from '../fields.ts';
 import type { LaneReader } from '../instagram-run.ts';

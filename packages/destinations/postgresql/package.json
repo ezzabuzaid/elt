@@ -14,7 +14,7 @@
     "postgres": "^3.4.9"
   },
   "devDependencies": {
-    "@workspace/snapshot-differential": "0.0.1",
+    "@zukhruf/snapshot-differential": "0.3.25",
     "@zukhruf/testing": "0.3.21"
   }
 }

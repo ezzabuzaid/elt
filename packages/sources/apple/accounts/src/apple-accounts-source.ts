@@ -1,5 +1,7 @@
 import { setInterval } from 'node:timers/promises';
 
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import type {
   CopyConfiguration,
   ExtractionCoverage,
@@ -14,7 +16,6 @@ import {
   AccountsUnavailableError,
   accountsStorePath,
 } from '@workspace/sdk-apple-accounts';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import { AccountsScan } from './accounts-scan.ts';

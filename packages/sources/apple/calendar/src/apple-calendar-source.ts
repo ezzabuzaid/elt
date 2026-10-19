@@ -2,6 +2,8 @@ import { mkdtempDisposable, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import type {
   CopyConfiguration,
   ExtractionCoverage,
@@ -16,7 +18,6 @@ import {
   CalendarUnavailableError,
   IcsExportUnavailableError,
 } from '@workspace/sdk-apple-eventkit';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { CalendarScan } from './calendar-scan.ts';

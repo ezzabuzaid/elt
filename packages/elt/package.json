@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@workspace/snapshot-differential": "0.0.1"
+    "@zukhruf/snapshot-differential": "0.3.25"
   },
   "exports": {
     ".": {

@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import { Docker, TestRun } from '@zukhruf/testing/docker';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Postgres } from '@zukhruf/testing/postgres';
@@ -36,7 +37,6 @@ import {
   WatchError,
   diffSnapshot,
 } from '@workspace/elt';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 
 import {
   PostgresCheckpointStore,

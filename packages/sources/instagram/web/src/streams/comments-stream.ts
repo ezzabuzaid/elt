@@ -1,3 +1,5 @@
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import { type SourceMessage, diffGroupedSnapshot } from '@workspace/elt';
 import type {
   Comment,
@@ -5,7 +7,6 @@ import type {
   TimelineMedia,
   TopComment,
 } from '@workspace/sdk-instagram-web';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 
 import { fields, instant } from '../fields.ts';
 import {

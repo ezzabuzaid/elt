@@ -1,7 +1,4 @@
-import {
-  type DeletionPolicy,
-  Retention,
-} from '@workspace/snapshot-differential';
+import { type DeletionPolicy, Retention } from '@zukhruf/snapshot-differential';
 
 import { fields, instant, kindOf, largest } from '../fields.ts';
 import { type ReadContext, within } from '../instagram-stream.ts';

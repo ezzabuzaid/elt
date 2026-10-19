@@ -1,3 +1,5 @@
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import {
   type CopyConfiguration,
   type RecordDraft,
@@ -9,7 +11,6 @@ import {
   validateRecords,
 } from '@workspace/elt';
 import type { BiomeDevice } from '@workspace/sdk-apple-biome';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 
 import type { ActivityScan } from '../activity-scan.ts';
 import { activityFields, isoTime } from '../activity-values.ts';

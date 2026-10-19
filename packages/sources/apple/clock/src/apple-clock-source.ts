@@ -1,5 +1,7 @@
 import { setInterval } from 'node:timers/promises';
 
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import {
   Catalog,
   type CopyConfiguration,
@@ -19,7 +21,6 @@ import {
   type ClockVersion,
   clockLocation,
 } from '@workspace/sdk-apple-clock/clock-store';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import { AlarmsStream } from './streams/alarms-stream.ts';

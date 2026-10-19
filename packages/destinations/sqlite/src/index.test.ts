@@ -18,6 +18,12 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
+  ClosedWorld,
+  Coverage,
+  Retention,
+} from '@zukhruf/snapshot-differential';
+
+import {
   Catalog,
   Connection,
   Copy,
@@ -44,11 +50,6 @@ import {
   diffGroupedSnapshot,
   diffSnapshot,
 } from '@workspace/elt';
-import {
-  ClosedWorld,
-  Coverage,
-  Retention,
-} from '@workspace/snapshot-differential';
 
 import {
   SQLiteCheckpointStore,

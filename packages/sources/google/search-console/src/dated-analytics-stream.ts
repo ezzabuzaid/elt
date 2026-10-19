@@ -1,3 +1,5 @@
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import {
   type CopyConfiguration,
   type Partition,
@@ -10,7 +12,6 @@ import {
   readSearchAnalytics,
   today,
 } from '@workspace/sdk-google-search-console';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 
 import { addDays, earlier, subMonths } from './calendar-dates.ts';
 import { RETENTION_MONTHS, analyticsRecords } from './search-analytics.ts';

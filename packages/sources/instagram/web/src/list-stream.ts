@@ -1,10 +1,11 @@
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import {
   type Properties,
   type RecordDraft,
   type SourceMessage,
   diffSnapshot,
 } from '@workspace/elt';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 
 import type { InstagramRun, LaneReader } from './instagram-run.ts';
 import {

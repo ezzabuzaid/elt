@@ -1,3 +1,5 @@
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import {
   type CopyConfiguration,
   type Partition,
@@ -5,7 +7,6 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 
 import type { SearchConsoleScan } from './search-console-scan.ts';
 import {

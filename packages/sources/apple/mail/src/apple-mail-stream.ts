@@ -1,3 +1,5 @@
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import {
   type CopyConfiguration,
   type FieldSchema,
@@ -7,7 +9,6 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 
 import type { MailScan } from './mail-scan.ts';
 import type { MailSelection } from './mail-selection.ts';

@@ -4,7 +4,7 @@ import {
   SnapshotDifferential,
   type SnapshotGroup,
   type Verdict,
-} from '@workspace/snapshot-differential';
+} from '@zukhruf/snapshot-differential';
 
 import { Deduplication } from './deduplication.ts';
 import type { DeleteMessage, StateMessage } from './source.ts';

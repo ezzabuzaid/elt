@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
 
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import type {
   CopyConfiguration,
   ExtractionCoverage,
@@ -21,7 +23,6 @@ import {
   booksContainer,
   booksGroupContainer,
 } from '@workspace/sdk-apple-books';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import { BooksScan } from './books-scan.ts';

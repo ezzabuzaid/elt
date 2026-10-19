@@ -1,3 +1,5 @@
+import { Retention } from '@zukhruf/snapshot-differential';
+
 import {
   type CopyConfiguration,
   type Properties,
@@ -13,7 +15,6 @@ import type {
   KnowledgeEvent,
   KnowledgeStream,
 } from '@workspace/sdk-apple-knowledge';
-import { Retention } from '@workspace/snapshot-differential';
 
 import type { ActivityScan } from './activity-scan.ts';
 import { activityFields, isoTime, retainedSince } from './activity-values.ts';

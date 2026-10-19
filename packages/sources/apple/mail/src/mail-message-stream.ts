@@ -1,3 +1,8 @@
+import {
+  ClosedWorld,
+  type SnapshotGroup,
+} from '@zukhruf/snapshot-differential';
+
 import type { RecordDraft, SourceMessage, Stream } from '@workspace/elt';
 import { diffGroupedSnapshot } from '@workspace/elt';
 import type {
@@ -5,10 +10,6 @@ import type {
   MailFile,
   MimePart,
 } from '@workspace/sdk-apple-mail';
-import {
-  ClosedWorld,
-  type SnapshotGroup,
-} from '@workspace/snapshot-differential';
 
 import {
   AppleMailStream,

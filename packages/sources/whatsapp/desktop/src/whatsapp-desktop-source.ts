@@ -1,6 +1,12 @@
 import { setInterval } from 'node:timers/promises';
 
 import {
+  ClosedWorld,
+  type DeletionPolicy,
+  Retention,
+} from '@zukhruf/snapshot-differential';
+
+import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
@@ -18,11 +24,6 @@ import {
   type WhatsAppVersion,
   whatsappContainer,
 } from '@workspace/sdk-whatsapp-desktop';
-import {
-  ClosedWorld,
-  type DeletionPolicy,
-  Retention,
-} from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { BlockedContactsStream } from './streams/blocked-contacts-stream.ts';

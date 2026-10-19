@@ -1,5 +1,7 @@
 import { setInterval } from 'node:timers/promises';
 
+import { ClosedWorld } from '@zukhruf/snapshot-differential';
+
 import {
   Catalog,
   type CopyConfiguration,
@@ -16,7 +18,6 @@ import {
   WalletUnavailableError,
   walletStorePath,
 } from '@workspace/sdk-apple-wallet';
-import { ClosedWorld } from '@workspace/snapshot-differential';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import type { WalletReader } from './apple-wallet-stream.ts';

@@ -14,7 +14,7 @@
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-apple-biome": "0.0.1",
     "@workspace/sdk-apple-knowledge": "0.0.1",
-    "@workspace/snapshot-differential": "0.0.1"
+    "@zukhruf/snapshot-differential": "0.3.25"
   },
   "devDependencies": {
     "@workspace/elt-sqlite": "0.0.1"

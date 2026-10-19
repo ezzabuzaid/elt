@@ -1,6 +1,8 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import type { SnapshotGroup } from '@zukhruf/snapshot-differential';
+
 import { type RecordDraft, fileExtension } from '@workspace/elt';
 import {
   type IndexedAttachment,
@@ -8,7 +10,6 @@ import {
   type MimePart,
   readMailMime,
 } from '@workspace/sdk-apple-mail';
-import type { SnapshotGroup } from '@workspace/snapshot-differential';
 
 import { type MailEntry, mailSchema } from '../apple-mail-stream.ts';
 import {
