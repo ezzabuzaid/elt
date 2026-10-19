@@ -103,8 +103,11 @@ is installed.
 
 Run `npx nx run proactive:typecheck` and `npx nx run proactive:test`. Tests require
 Docker and use `@zukhruf/testing` to acquire an isolated PostgreSQL database
-per test. The Nx target runs through `zukhruf-docker-tests`; each test closes
-its clients and drops its database when done. The generator and
+per test. The Nx target starts Node's test runner with the Docker global setup
+from `@zukhruf/testing`. `src/docker-global-setup.ts` exports that setup, and
+the target gives the file to `--test-global-setup`. The setup starts one test
+run and cleans up a killed run. Each test closes its clients and drops its
+database when done. The generator and
 agent tests use a local executable in place of the authenticated Codex
 service, and the automations test one in place of `osascript`; they make no AI
 request and show no notification.

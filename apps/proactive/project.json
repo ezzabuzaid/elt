@@ -6,7 +6,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "zukhruf-docker-tests {args} apps/proactive/dist/*.test.js"
+      "command": "node --test --test-global-setup=apps/proactive/dist/docker-global-setup.js {args} apps/proactive/dist/*.test.js"
     },
     "start": {
       "dependsOn": ["build"],
