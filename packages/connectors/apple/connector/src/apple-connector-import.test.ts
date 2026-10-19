@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdir, mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import {
   Catalog,
@@ -204,6 +207,128 @@ test(
         .all()
         .map(({ id }) => id),
       ['n1', 'n2'],
+    );
+  },
+);
+
+test(
+  'a pass whose process was killed is recorded failed once the next import begins, and that import resumes from its last checkpoint',
+  { timeout: 30_000 },
+  async () => {
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'import-'));
+    using settings = new Settings(join(scratch.path, 'Apple'));
+    const reads: unknown[] = [];
+    const connector = new OneSourceConnector(
+      new TwoNotesSource(reads, async () => {}),
+    );
+    const selection = {
+      connector: connector.name,
+      scope: {},
+      includeAttachments: false,
+    };
+    settings.select([selection], {
+      facts: () => connector,
+      permissions: () => connector.guidance(),
+    });
+    // The same import in a process of its own, whose source commits the
+    // first note and then waits until the process is killed, as a process
+    // that runs out of memory or is quit mid-pass leaves its pass.
+    const pass = `
+      const { Catalog, Source, Stream } = await import('@workspace/elt');
+      const { Settings } = await import('@workspace/settings');
+      const { AppleConnector } = await import(process.env.CONNECTOR);
+      class TwoNotesSource extends Source {
+        identity = 'two-notes';
+        catalog = new Catalog([new Stream({
+          name: 'notes',
+          jsonSchema: {
+            type: 'object',
+            description: 'One note.',
+            properties: { id: { type: 'string', description: 'The note.' } },
+            required: ['id'],
+          },
+          primaryKey: ['id'],
+          supportedSyncModes: ['incremental'],
+          sourceDefinedCursor: true,
+        })]);
+        coverage() { return { description: 'Every note.', selection: {} }; }
+        async open() { return new AsyncDisposableStack(); }
+        async *observe({ streams }) { yield streams; }
+        async *extract() {
+          yield { stream: 'notes', data: { id: 'n1' } };
+          yield { type: 'STATE', stream: 'notes', state: { after: 1 } };
+          process.stdout.write('paused\\n');
+          await new Promise(() => setInterval(() => {}, 1 << 30));
+        }
+      }
+      class OneSourceConnector extends AppleConnector {
+        datedBy = null;
+        fullDiskAccess = false;
+        choices = [];
+        unscoped = [];
+        storeCopies = [];
+        constructor() {
+          super({ grantee: 'Codex', eventKitHelper: '' }, { name: 'one-source', title: 'One Source', folder: '/nonexistent' });
+        }
+        access() { return 'Nothing to grant.'; }
+        source() { return new TwoNotesSource(); }
+      }
+      await new OneSourceConnector().import(new Settings(process.env.APPLE), JSON.parse(process.env.SELECTION));
+    `;
+    const killed = spawn(
+      process.execPath,
+      ['--input-type=module', '-e', pass],
+      {
+        cwd: join(import.meta.dirname, '..'),
+        env: {
+          ...process.env,
+          CONNECTOR: pathToFileURL(
+            join(import.meta.dirname, 'apple-connector.js'),
+          ).href,
+          APPLE: join(scratch.path, 'Apple'),
+          SELECTION: JSON.stringify(selection),
+        },
+        stdio: ['ignore', 'pipe', 'inherit'],
+      },
+    );
+    await once(killed.stdout, 'data');
+    killed.kill('SIGKILL');
+    await once(killed, 'exit');
+
+    const next = await connector.import(settings, selection);
+
+    assert.deepEqual(next, { status: 'imported' });
+    assert.deepEqual(reads, [{ after: 1 }]);
+    using database = new DatabaseSync(settings.database(selection), {
+      readOnly: true,
+    });
+    assert.deepEqual(
+      database
+        .prepare(
+          'SELECT status, error, failure_type FROM sync_attempts ORDER BY attempt_id',
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        {
+          status: 'failed',
+          error: 'The process running this pass ended before the pass did',
+          failure_type: 'system',
+        },
+        { status: 'succeeded', error: null, failure_type: null },
+      ],
+    );
+    assert.deepEqual(
+      database
+        .prepare(
+          'SELECT attempt_id, stream, status FROM extraction_coverage ORDER BY attempt_id',
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        { attempt_id: 1, stream: 'notes', status: 'failed' },
+        { attempt_id: 2, stream: 'notes', status: 'succeeded' },
+      ],
     );
   },
 );

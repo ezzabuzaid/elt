@@ -4,6 +4,7 @@ import {
   type Connection,
   type CopyOutcome,
   type DeclaredCopy,
+  type FailureType,
   type RecordedPass,
   SyncHistory,
   copyStatus,
@@ -89,24 +90,29 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
     return {
       finish: async (outcomes) => this.#finish(path, id, outcomes),
       fail: async (error, failureType) =>
-        write(path, (database) => {
-          database
-            .prepare(
-              `UPDATE ${coverage} SET "status" = 'failed', "failures" = ? WHERE "attempt_id" = ?`,
-            )
-            .run(
-              JSON.stringify([
-                recordedFailure({ partition: null, error, failureType }),
-              ]),
-              id,
-            );
-          database
-            .prepare(
-              `UPDATE ${attempts} SET "status" = 'failed', "completed_at" = ${now}, "error" = ?, "failure_type" = ? WHERE "id" = ?`,
-            )
-            .run(message(error), failureType, id);
-        }),
+        write(path, (database) => fail(database, id, error, failureType)),
     };
+  }
+
+  // Records every pass of connection that began and never ended as failed:
+  // the process running it ended first, so no outcome will come. As Airbyte
+  // fails a connection's unfinished jobs before it starts the next, only a
+  // caller that knows no other process runs a pass of connection calls it,
+  // such as the leader of the connection's flight; a pass still running
+  // would read failed until it records how it ended.
+  async failUnfinished(connection: Connection<SQLiteTable>): Promise<void> {
+    const error = new Error(
+      'The process running this pass ended before the pass did',
+    );
+    write(this.#path(connection), (database) => {
+      const unfinished = database
+        .prepare(
+          `SELECT "id" FROM ${attempts} WHERE "connector" = ? AND "status" = 'running'`,
+        )
+        .all(connection.name);
+      for (const { id } of unfinished)
+        fail(database, Number(id), error, 'system');
+    });
   }
 
   // Brings the history's tables to their declaration and publishes its views
@@ -158,6 +164,30 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
         );
     });
   }
+}
+
+// A pass that produced no outcomes, so what it committed is unknown.
+function fail(
+  database: DatabaseSync,
+  id: number,
+  error: unknown,
+  failureType: FailureType,
+): void {
+  database
+    .prepare(
+      `UPDATE ${coverage} SET "status" = 'failed', "failures" = ? WHERE "attempt_id" = ?`,
+    )
+    .run(
+      JSON.stringify([
+        recordedFailure({ partition: null, error, failureType }),
+      ]),
+      id,
+    );
+  database
+    .prepare(
+      `UPDATE ${attempts} SET "status" = 'failed', "completed_at" = ${now}, "error" = ?, "failure_type" = ? WHERE "id" = ?`,
+    )
+    .run(message(error), failureType, id);
 }
 
 function persistent({ path }: SQLiteDestination): string {

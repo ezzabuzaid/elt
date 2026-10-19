@@ -1647,11 +1647,11 @@ test(
     const synced = await replaced;
 
     assert.equal(photosRow(synced)?.state, 'succeeded', JSON.stringify(synced));
-    // The setup's pass, the killed server's, which never ended, and the
-    // replacement's own.
+    // The setup's pass, the killed server's, which never ended and the
+    // replacement recorded failed when its own began, and the replacement's.
     assert.deepEqual(passes(scratch.path, 'photos'), [
       'succeeded',
-      'running',
+      'failed',
       'succeeded',
     ]);
     const database = importOf(scratch.path, 'photos');

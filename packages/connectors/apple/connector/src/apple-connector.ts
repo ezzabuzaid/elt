@@ -426,6 +426,10 @@ export abstract class AppleConnector {
     const history = new SQLiteSyncHistory();
     try {
       await history.install([destination]);
+      // Every host loads an import only while no other process can: the
+      // plugin as the leader of the import's flight, the CLI as its owner.
+      // So a pass of it still recorded running is one whose process ended.
+      await history.failUnfinished(connection);
       installSQLiteCatalog(destination);
       const copied = connection.steps.map(
         ({ configuration }) => configuration.stream.name,
