@@ -15,6 +15,6 @@
   },
   "devDependencies": {
     "@zukhruf/snapshot-differential": "0.3.28",
-    "@zukhruf/testing": "0.3.21"
+    "@zukhruf/testing": "0.3.24"
   }
 }
