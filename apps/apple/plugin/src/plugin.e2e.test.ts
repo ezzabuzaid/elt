@@ -1014,8 +1014,22 @@ test(
       assert.equal(kept.connectors[0]?.includeAttachments, false);
 
       const cancelled = await setUp({ action: 'cancel' });
+      // The selection only: the narrowed Notes import runs in the background
+      // and may finish between the two reads, which changes its sync status.
+      const selected = ({
+        connector,
+        scope,
+        includeAttachments,
+      }: {
+        connector: string;
+        scope: unknown;
+        includeAttachments: boolean;
+      }) => ({ connector, scope, includeAttachments });
       assert.equal(cancelled.changed, false);
-      assert.deepEqual(cancelled.connectors, kept.connectors);
+      assert.deepEqual(
+        cancelled.connectors.map(selected),
+        kept.connectors.map(selected),
+      );
     } finally {
       await client.close();
       await transport.close();
