@@ -3,7 +3,11 @@ import {
   type SnapshotGroup,
 } from '@zukhruf/snapshot-differential';
 
-import type { RecordDraft, SourceMessage, Stream } from '@workspace/elt';
+import type {
+  CopyConfiguration,
+  RecordDraft,
+  SourceMessage,
+} from '@workspace/elt';
 import { diffGroupedSnapshot } from '@workspace/elt';
 import type {
   IndexedAttachment,
@@ -47,14 +51,17 @@ export abstract class MailMessageStream extends AppleMailStream {
   }
 
   protected override snapshot(
-    stream: Stream,
+    configuration: CopyConfiguration,
     scan: MailScan,
     records: MailRecords,
     state: unknown,
   ): AsyncIterable<SourceMessage> {
-    return diffGroupedSnapshot(stream, this.#accepted(scan, records), state, {
-      policy: new ClosedWorld(),
-    });
+    return diffGroupedSnapshot(
+      configuration,
+      this.#accepted(scan, records),
+      state,
+      { policy: new ClosedWorld() },
+    );
   }
 
   protected async *entries(

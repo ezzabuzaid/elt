@@ -83,28 +83,22 @@ export abstract class AppleMailStream {
         yield* validateRecords(stream, [entry.data], 'Mail');
       }
     };
-    const entries = () => this.entries(scan);
-    const messages =
-      configuration.syncMode !== 'incremental'
-        ? (async function* () {
-            for await (const data of records(entries()))
-              yield { stream: stream.name, data };
-          })()
-        : this.snapshot(stream, scan, records, state);
+    const messages = this.snapshot(configuration, scan, records, state);
     for await (const message of messages)
       yield 'type' in message || configuration.fileReads.length === 0
         ? message
         : { ...message, file };
   }
 
-  // An incremental read: the scan compared with the saved snapshot.
+  // The scan as the copy reads it: in an incremental copy, compared with the
+  // saved snapshot.
   protected snapshot(
-    stream: Stream,
+    configuration: CopyConfiguration,
     scan: MailScan,
     records: MailRecords,
     state: unknown,
   ): AsyncIterable<SourceMessage> {
-    return diffSnapshot(stream, records(this.entries(scan)), state, {
+    return diffSnapshot(configuration, records(this.entries(scan)), state, {
       policy: new ClosedWorld(),
     });
   }

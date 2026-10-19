@@ -107,12 +107,6 @@ export abstract class BiomeActivityStream<P extends Properties, E> {
     scan: ActivityScan,
   ): AsyncGenerator<SourceMessage> {
     const found = await scan.biome.segments(this.biome);
-    if (configuration.syncMode === 'full_refresh') {
-      for (const segment of found)
-        for await (const data of this.#read(segment))
-          yield { stream: this.name, data };
-      return;
-    }
     const groups = await Promise.all(
       found.map(async (segment) => ({
         key: `${segment.origin}/${segment.name}`,
@@ -120,7 +114,7 @@ export abstract class BiomeActivityStream<P extends Properties, E> {
         records: () => this.#read(segment),
       })),
     );
-    yield* diffGroupedSnapshot(configuration.stream, groups, state, {
+    yield* diffGroupedSnapshot(configuration, groups, state, {
       policy: new Retention(retainedSince(scan.startedAt, this.retentionDays)),
     });
   }

@@ -27,7 +27,7 @@ import {
   Catalog,
   Connection,
   Copy,
-  type CopyConfiguration,
+  CopyConfiguration,
   type Destination,
   type FailureType,
   type FileContent,
@@ -1272,7 +1272,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
       configuration: CopyConfiguration,
       state: unknown,
     ) {
-      yield* diffSnapshot(configuration.stream, rows, state, {
+      yield* diffSnapshot(configuration, rows, state, {
         policy: new ClosedWorld(),
       });
     }
@@ -1373,7 +1373,16 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     emitsDeletes: undefined,
   });
   await assert.rejects(
-    Array.fromAsync(diffSnapshot(plain, [], null)),
+    Array.fromAsync(
+      diffSnapshot(
+        new CopyConfiguration(plain, {
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+        }),
+        [],
+        null,
+      ),
+    ),
     /must declare sourceDefinedCursor to diff snapshots/,
   );
 });
@@ -1408,7 +1417,7 @@ test('a snapshot stream that emits no deletions keeps the rows of keys its upstr
       configuration: CopyConfiguration,
       state: unknown,
     ) {
-      yield* diffSnapshot(configuration.stream, rows, state);
+      yield* diffSnapshot(configuration, rows, state);
     }
   }
 
@@ -1501,7 +1510,7 @@ test('a grouped snapshot stream that emits no deletions keeps the rows of a grou
       state: unknown,
     ) {
       yield* diffGroupedSnapshot(
-        configuration.stream,
+        configuration,
         groups.map(({ key, rows }) => ({
           key,
           fingerprint: null,
@@ -1598,7 +1607,7 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
       state: unknown,
     ) {
       yield* diffGroupedSnapshot(
-        configuration.stream,
+        configuration,
         groups.map(({ key, fingerprint, rows }) => ({
           key,
           fingerprint,
@@ -1788,14 +1797,14 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
     ) {
       if (configuration.stream === events)
         yield* diffSnapshot(
-          events,
+          configuration,
           scan.groups.flatMap(({ rows }) => rows),
           state,
           { policy: new Retention(scan.horizon) },
         );
       else
         yield* diffGroupedSnapshot(
-          grouped,
+          configuration,
           scan.groups.map(({ key, fingerprint, rows }) => ({
             key,
             fingerprint,
@@ -1897,16 +1906,25 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
 
   // A diff of an expiring stream needs a policy, and timestamps to expire
   // by; the horizon a retention keeps records from is a timestamp.
+  const incrementalEvents = new CopyConfiguration(events, {
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+  });
   const failing: [() => AsyncIterable<unknown>, RegExp][] = [
     [
-      () => diffSnapshot(events, [], null),
+      () => diffSnapshot(incrementalEvents, [], null),
       /expires by seenAt, so its snapshot diff needs a policy/,
     ],
     [
       () =>
-        diffSnapshot(events, [{ id: 'x', seenAt: 'yesterday' }], null, {
-          policy: new Retention(scan.horizon),
-        }),
+        diffSnapshot(
+          incrementalEvents,
+          [{ id: 'x', seenAt: 'yesterday' }],
+          null,
+          {
+            policy: new Retention(scan.horizon),
+          },
+        ),
       /must carry seenAt as a timestamp to expire/,
     ],
   ];
@@ -1984,10 +2002,12 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
       state: unknown,
     ) {
       if (configuration.stream === messages)
-        yield* diffSnapshot(messages, scan.rows, state, { policy: coverage });
+        yield* diffSnapshot(configuration, scan.rows, state, {
+          policy: coverage,
+        });
       else
         yield* diffGroupedSnapshot(
-          grouped,
+          configuration,
           [...new Set(scan.rows.map(({ channel }) => channel))].map(
             (channel) => ({
               key: channel,
@@ -2088,7 +2108,13 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
   await assert.rejects(
     Array.fromAsync(
       diffSnapshot(
-        new Stream({ ...messages, emitsDeletes: undefined }),
+        new CopyConfiguration(
+          new Stream({ ...messages, emitsDeletes: undefined }),
+          {
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          },
+        ),
         [],
         null,
         { policy: coverage },
@@ -2128,11 +2154,11 @@ test('a diff whose next read repeats only a lookback window deletes none of the 
       yield streams;
     }
     protected override async *extract(
-      _configuration: CopyConfiguration,
+      configuration: CopyConfiguration,
       state: unknown,
     ) {
       const { next } = read;
-      yield* diffSnapshot(days, read.rows, state, {
+      yield* diffSnapshot(configuration, read.rows, state, {
         policy: new ClosedWorld(),
         rereads: ({ day }) => day >= next,
       });
@@ -2655,7 +2681,7 @@ class Sites extends Source {
     this.received.push([site, state]);
     const pages = this.pagesOf[site];
     if (pages === undefined) throw new Error(`site ${site} is down`);
-    yield* diffSnapshot(configuration.stream, pages, state, {
+    yield* diffSnapshot(configuration, pages, state, {
       policy: new ClosedWorld(),
     });
   }
@@ -3059,12 +3085,11 @@ class FileSource extends Source {
       id,
       version,
     }));
-    const messages =
-      this.snapshot && configuration.syncMode === 'incremental'
-        ? diffSnapshot(configuration.stream, scan, state, {
-            policy: new ClosedWorld(),
-          })
-        : scan.map((data) => ({ stream: 'files', data }));
+    const messages = this.snapshot
+      ? diffSnapshot(configuration, scan, state, {
+          policy: new ClosedWorld(),
+        })
+      : scan.map((data) => ({ stream: 'files', data }));
     for await (const message of messages) {
       if ('type' in message || !this.withFiles) {
         yield message;
@@ -5656,7 +5681,7 @@ async function shapeChanges(
       ) {
         received.push(state);
         yield* diffSnapshot(
-          configuration.stream,
+          configuration,
           rows,
           state,
           horizon !== undefined
@@ -6400,12 +6425,9 @@ test('a copy that declares its columns from the stream and stores its files keep
         state: unknown,
       ) {
         received.push(state);
-        for await (const message of diffSnapshot(
-          configuration.stream,
-          rows,
-          state,
-          { policy: new ClosedWorld() },
-        )) {
+        for await (const message of diffSnapshot(configuration, rows, state, {
+          policy: new ClosedWorld(),
+        })) {
           if ('type' in message) {
             yield message;
             continue;

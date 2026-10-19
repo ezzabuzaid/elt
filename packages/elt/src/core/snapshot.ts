@@ -6,6 +6,7 @@ import {
   type Verdict,
 } from '@zukhruf/snapshot-differential';
 
+import type { CopyConfiguration } from './copy-configuration.ts';
 import { Deduplication } from './deduplication.ts';
 import type { DeleteMessage, StateMessage } from './source.ts';
 import type { Stream } from './stream.ts';
@@ -27,13 +28,15 @@ type SnapshotMessage<Data> =
   | DeleteMessage
   | StateMessage;
 
-// Incremental reads for a source without a change feed: compare one complete
-// scan with the previous snapshot, emit new or changed records, a DELETE for
-// every vanished key the policy judges deleted, then the new snapshot as the
-// only STATE. rereads names the lookback window of a scan the next one
-// repeats only in part; continues makes the call one part of a scan.
+// Reads for a source without a change feed. An incremental copy compares one
+// complete scan with the previous snapshot, emits new or changed records, a
+// DELETE for every vanished key the policy judges deleted, then the new
+// snapshot as the only STATE. A full refresh replaces its target, so it emits
+// every record of the scan, one at a time as the scan yields it, and saves
+// nothing. rereads names the lookback window of a scan the next one repeats
+// only in part; continues makes the call one part of a scan.
 export async function* diffSnapshot<Data extends Record<string, unknown>>(
-  stream: Stream,
+  { stream, syncMode }: CopyConfiguration,
   records: AsyncIterable<Data> | Iterable<Data>,
   state: unknown,
   options: SnapshotDiffOptions & {
@@ -41,22 +44,32 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
   } = {},
 ): AsyncGenerator<SnapshotMessage<Data>> {
   const differential = differentialOf<Data>(stream, options);
+  if (syncMode !== 'incremental') {
+    for await (const data of records) yield { stream: stream.name, data };
+    return;
+  }
   for await (const change of differential.diff(records, state, options))
     yield messageOf(stream, change);
 }
 
 // diffSnapshot for a scan whose records come from inputs the source can
-// fingerprint cheaply: a group whose fingerprint matches the last committed
-// scan keeps its records without reading them.
+// fingerprint cheaply: in an incremental copy, a group whose fingerprint
+// matches the last committed scan keeps its records without reading them.
 export async function* diffGroupedSnapshot<
   Data extends Record<string, unknown>,
 >(
-  stream: Stream,
+  { stream, syncMode }: CopyConfiguration,
   groups: AsyncIterable<SnapshotGroup<Data>> | Iterable<SnapshotGroup<Data>>,
   state: unknown,
   options: SnapshotDiffOptions = {},
 ): AsyncGenerator<SnapshotMessage<Data>> {
   const differential = differentialOf<Data>(stream, options);
+  if (syncMode !== 'incremental') {
+    for await (const group of groups)
+      for await (const data of group.records())
+        yield { stream: stream.name, data };
+    return;
+  }
   for await (const change of differential.diffGroups(groups, state, options))
     yield messageOf(stream, change);
 }

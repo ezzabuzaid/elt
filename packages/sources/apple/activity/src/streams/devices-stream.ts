@@ -81,12 +81,9 @@ export class DevicesStream {
     scan: ActivityScan,
   ): AsyncGenerator<SourceMessage> {
     const records = this.#read(scan);
-    if (configuration.syncMode === 'full_refresh')
-      yield* records.map((data) => ({ stream: this.name, data }));
-    else
-      yield* diffSnapshot(configuration.stream, records, state, {
-        policy: new ClosedWorld(),
-      });
+    yield* diffSnapshot(configuration, records, state, {
+      policy: new ClosedWorld(),
+    });
   }
 
   #read(scan: ActivityScan): SchemaRecord<typeof properties>[] {

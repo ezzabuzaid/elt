@@ -134,13 +134,9 @@ export class AppleMessagesSource extends Source<MessagesScan> {
     if (reader === undefined)
       throw new TypeError(`Messages has no stream ${stream.name}`);
     const records = reader.read(scan);
-    const messages =
-      configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
-        : (async function* () {
-            for await (const data of records)
-              yield { stream: stream.name, data };
-          })();
+    const messages = diffSnapshot(configuration, records, state, {
+      policy: new ClosedWorld(),
+    });
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)
         yield message;

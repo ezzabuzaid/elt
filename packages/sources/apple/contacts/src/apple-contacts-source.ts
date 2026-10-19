@@ -183,10 +183,9 @@ export class AppleContactsSource extends Source<ContactsScan> {
     if (reader === undefined)
       throw new TypeError(`Contacts has no stream ${stream.name}`);
     const records = await reader.read(scan);
-    const messages =
-      configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
-        : records.map((data) => ({ stream: stream.name, data }));
+    const messages = diffSnapshot(configuration, records, state, {
+      policy: new ClosedWorld(),
+    });
     if (configuration.fileReads.length === 0 || reader !== readers.images) {
       yield* messages;
       return;

@@ -171,17 +171,14 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
     if (reader === undefined)
       throw new Error(`Slack has no stream ${stream.name}`);
     const records = reader.read(scan);
-    const messages =
-      configuration.syncMode === 'full_refresh'
-        ? records.map((data) => ({ stream: stream.name, data }))
-        : diffSnapshot(
-            stream,
-            records,
-            state,
-            stream.emitsDeletes
-              ? { policy: new Coverage(({ key }) => reader.covers(scan, key)) }
-              : {},
-          );
+    const messages = diffSnapshot(
+      configuration,
+      records,
+      state,
+      stream.emitsDeletes
+        ? { policy: new Coverage(({ key }) => reader.covers(scan, key)) }
+        : {},
+    );
     for await (const message of messages)
       if ('type' in message || configuration.fileReads.length === 0)
         yield message;

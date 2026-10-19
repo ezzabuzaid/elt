@@ -34,11 +34,10 @@ export abstract class SnapshotStream<
     const { records, images = new Map<string, string>() } =
       await this.scan(context);
     const valid = this.validated(records);
-    const stream = this.describe();
     yield* this.withImages(
-      context.incremental
-        ? diffSnapshot(stream, valid, context.state, { policy: this.policy() })
-        : valid.map((data) => ({ stream: stream.name, data })),
+      diffSnapshot(context.configuration, valid, context.state, {
+        policy: this.policy(),
+      }),
       images,
       context,
     );

@@ -3126,7 +3126,7 @@ test('a checkpoint lost between commit and save replays to the same rows', async
       configuration: CopyConfiguration,
       state: unknown,
     ) {
-      yield* diffSnapshot(configuration.stream, this.rows, state, {
+      yield* diffSnapshot(configuration, this.rows, state, {
         policy: new ClosedWorld(),
       });
     }
@@ -3220,7 +3220,7 @@ test('array fields load as native arrays of their item type, in order, and an un
       configuration: CopyConfiguration,
       state: unknown,
     ) {
-      yield* diffSnapshot(configuration.stream, this.rows, state, {
+      yield* diffSnapshot(configuration, this.rows, state, {
         policy: new ClosedWorld(),
       });
     }

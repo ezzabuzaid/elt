@@ -29,14 +29,12 @@ export abstract class ListingStream extends SearchConsoleStream {
     signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const rows = await this.list(partition, scan, signal);
-    if (configuration.syncMode === 'incremental')
-      yield* diffSnapshot(
-        this.stream,
-        validateRecords(this.stream, rows, 'Search Console'),
-        state,
-        { policy: new ClosedWorld() },
-      );
-    else yield* this.records(rows);
+    yield* diffSnapshot(
+      configuration,
+      validateRecords(this.stream, rows, 'Search Console'),
+      state,
+      { policy: new ClosedWorld() },
+    );
   }
 
   protected abstract list(

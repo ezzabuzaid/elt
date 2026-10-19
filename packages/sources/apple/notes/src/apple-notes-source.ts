@@ -129,10 +129,9 @@ export class AppleNotesSource extends Source<NotesScan> {
     if (reader === undefined)
       throw new Error(`Apple Notes has no stream ${stream.name}`);
     const records = await reader.read(scan);
-    const messages =
-      configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
-        : records.map((data) => ({ stream: stream.name, data }));
+    const messages = diffSnapshot(configuration, records, state, {
+      policy: new ClosedWorld(),
+    });
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)
         yield message;

@@ -103,11 +103,9 @@ export class AppleClockSource extends Source<ClockSnapshot> {
     const records: Record<string, unknown>[] = readerOf(
       configuration.stream,
     ).read(snapshot);
-    yield* configuration.syncMode === 'incremental'
-      ? diffSnapshot(configuration.stream, records, state, {
-          policy: new ClosedWorld(),
-        })
-      : records.map((data) => ({ stream: configuration.stream.name, data }));
+    yield* diffSnapshot(configuration, records, state, {
+      policy: new ClosedWorld(),
+    });
   }
   protected override async *observe({
     streams,

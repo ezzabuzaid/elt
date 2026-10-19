@@ -208,13 +208,9 @@ export class AppleCalendarSource extends Source<CalendarScan> {
     const { stream } = configuration;
     const reader = readerOf(stream);
     const records = reader.read(scan);
-    const messages =
-      configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
-        : (async function* () {
-            for await (const data of records)
-              yield { stream: stream.name, data };
-          })();
+    const messages = diffSnapshot(configuration, records, state, {
+      policy: new ClosedWorld(),
+    });
     if (configuration.fileReads.length === 0) {
       yield* messages;
       return;

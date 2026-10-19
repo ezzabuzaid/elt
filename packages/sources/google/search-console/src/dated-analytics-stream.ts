@@ -83,15 +83,11 @@ export abstract class DatedAnalyticsStream extends SearchConsoleStream {
       if (firstIncompleteDate !== undefined)
         settled = earlier(settled, addDays(firstIncompleteDate, -1));
     }
-    if (configuration.syncMode !== 'incremental') {
-      yield* this.records(rows);
-      return;
-    }
     // Google may still restate every day from the next read's first, so the
     // snapshot keeps those days: a row a re-read no longer returns is deleted,
     // and the days before stay as loaded.
     for await (const message of diffSnapshot(
-      this.stream,
+      configuration,
       validateRecords(this.stream, rows, 'Search Console'),
       saved === null ? null : saved.diff,
       {

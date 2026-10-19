@@ -1,6 +1,7 @@
 import { rm } from 'node:fs/promises';
 
 import {
+  type CopyConfiguration,
   type Properties,
   type RecordDraft,
   type SchemaRecord,
@@ -37,7 +38,8 @@ export type ReadContext = {
   // The profile a partitioned stream reads; null for the account's own.
   readonly profileId: string | null;
   readonly range: DateRange;
-  readonly incremental: boolean;
+  // The copy the read is for.
+  readonly configuration: CopyConfiguration;
   // The copy reads each record's file.
   readonly files: boolean;
   readonly signal: AbortSignal | undefined;

@@ -118,8 +118,8 @@ export class AppleAccountsSource extends Source<AccountsScan> {
     if (reader === undefined)
       throw new Error(`Apple Accounts has no stream ${stream.name}`);
     const records = reader.read(scan);
-    yield* configuration.syncMode === 'incremental'
-      ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
-      : records.map((data) => ({ stream: stream.name, data }));
+    yield* diffSnapshot(configuration, records, state, {
+      policy: new ClosedWorld(),
+    });
   }
 }

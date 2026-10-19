@@ -205,12 +205,9 @@ export class AppleSafariSource extends Source<SafariScan> {
     const { stream } = configuration;
     const reader = readerOf(stream);
     const records = await reader.read(scan);
-    const messages =
-      configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state, {
-            policy: policyFor(reader.horizon(scan)),
-          })
-        : records.map((data) => ({ stream: stream.name, data }));
+    const messages = diffSnapshot(configuration, records, state, {
+      policy: policyFor(reader.horizon(scan)),
+    });
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)
         yield message;

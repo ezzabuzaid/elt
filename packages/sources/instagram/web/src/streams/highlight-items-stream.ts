@@ -66,7 +66,7 @@ export class HighlightItemsStream extends InstagramStream<typeof properties> {
           : await run.web.highlightItems(ids, after, signal);
       const { records, images } = this.#part(owner, page.items, range);
       for await (const message of this.withImages(
-        diffSnapshot(this.describe(), this.validated(records), state, {
+        diffSnapshot(context.configuration, this.validated(records), state, {
           policy: new ClosedWorld(),
           continues: page.next !== null,
         }),

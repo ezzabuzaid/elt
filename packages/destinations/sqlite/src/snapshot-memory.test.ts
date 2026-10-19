@@ -7,15 +7,19 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-// Two incremental passes of STREAMS snapshot streams of KEYS records each,
-// shaped like Calendar's icsParameters, into OUT, in a process whose heap the
-// test caps. The second pass changes one record of each stream, so it diffs
-// every scan against the snapshot the first saved.
+// Two passes of STREAMS snapshot streams of KEYS records each, shaped like
+// Calendar's icsParameters, into OUT, in a process whose heap the test caps.
+// SYNC_MODE selects the copies' sync mode, and GROUPED reads each scan
+// through diffGroupedSnapshot in groups of 20 keys. The second pass changes
+// one record of each stream, so an incremental pass diffs every scan against
+// the snapshot the first saved.
 const passes = `
-  const { Catalog, Connection, Copy, Pipeline, Source, Stream, diffSnapshot } = await import('@workspace/elt');
+  const { Catalog, Connection, Copy, Pipeline, Source, Stream, diffGroupedSnapshot, diffSnapshot } = await import('@workspace/elt');
   const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import(process.env.DESTINATION);
   const { ClosedWorld } = await import('@zukhruf/snapshot-differential');
   const keys = Number(process.env.KEYS);
+  const fullRefresh = process.env.SYNC_MODE === 'full_refresh';
+  const grouped = process.env.GROUPED === '1';
   const item = (key) => (Math.floor(key / 20) * 2654435761 >>> 0).toString(16).padStart(8, '0') + '-1111-4222-8333-' + String(key).padStart(12, '0');
   class Parameters extends Source {
     identity = 'parameters';
@@ -34,14 +38,24 @@ const passes = `
     async *observe({ streams }) { yield streams; }
     async *extract(configuration, state) {
       const pass = this.pass;
-      function* records() {
-        for (let key = 0; key < keys; key++)
+      function* records(from, to) {
+        for (let key = from; key < to; key++)
           yield {
             id: JSON.stringify(['E6A1F0C2-7B3D-4C1E-9A55-0F7E2D9B8C11', item(key) + '@google.com', 'VCALENDAR/VEVENT', key % 20, key % 3, 0]),
             value: key === 0 ? 'pass ' + pass : 'Person ' + (key % 997),
           };
       }
-      yield* diffSnapshot(configuration.stream, records(), state, { policy: new ClosedWorld() });
+      function* groups() {
+        for (let group = 0; group * 20 < keys; group++)
+          yield {
+            key: String(group),
+            fingerprint: group === 0 ? 'pass ' + pass : 'unchanged',
+            records: () => records(group * 20, Math.min(keys, group * 20 + 20)),
+          };
+      }
+      if (grouped)
+        yield* diffGroupedSnapshot(configuration, groups(), state, { policy: new ClosedWorld() });
+      else yield* diffSnapshot(configuration, records(0, keys), state, { policy: new ClosedWorld() });
     }
   }
   const source = new Parameters();
@@ -55,11 +69,9 @@ const passes = `
       source,
       destination,
       checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
-      steps: source.streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
-        id: stream.name,
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-      })),
+      steps: source.streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), fullRefresh
+        ? { id: stream.name, syncMode: 'full_refresh', destinationSyncMode: 'overwrite' }
+        : { id: stream.name, syncMode: 'incremental', destinationSyncMode: 'append_dedup' })),
     })],
   });
   await pipeline.run();
@@ -69,7 +81,19 @@ const passes = `
 
 function runPasses(
   out: string,
-  { streams, keys, heapMb }: { streams: number; keys: number; heapMb: number },
+  {
+    streams,
+    keys,
+    heapMb,
+    syncMode = 'incremental',
+    grouped = false,
+  }: {
+    streams: number;
+    keys: number;
+    heapMb: number;
+    syncMode?: 'incremental' | 'full_refresh';
+    grouped?: boolean;
+  },
 ) {
   const run = spawnSync(
     process.execPath,
@@ -83,6 +107,8 @@ function runPasses(
         OUT: out,
         STREAMS: String(streams),
         KEYS: String(keys),
+        SYNC_MODE: syncMode,
+        GROUPED: grouped ? '1' : '0',
       },
       encoding: 'utf8',
       timeout: 180_000,
@@ -144,4 +170,42 @@ test('a pass holds only the saved state of the stream it reads, so many large sn
       written_count: 1,
     })),
   );
+});
+
+test('a full refresh holds no snapshot, so it loads a scan in a heap far smaller than a diff of it needs', async () => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'elt-snapshot-memory-'),
+  );
+
+  // A full refresh yields each record as the scan does: 400,000 of them load
+  // in about 8 MB. Holding the scan takes over 64 MB, and diffing it with
+  // the empty snapshot of a full refresh over 96 MB.
+  const loaded = runPasses(directory.path, {
+    streams: 1,
+    keys: 400_000,
+    heapMb: 24,
+    syncMode: 'full_refresh',
+  });
+
+  assert.deepEqual(loaded, [
+    { stream: 'parameters0', status: 'succeeded', written_count: 400_000 },
+  ]);
+});
+
+test('a grouped full refresh reads its groups one record at a time, in the same small heap', async () => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'elt-snapshot-memory-'),
+  );
+
+  const loaded = runPasses(directory.path, {
+    streams: 1,
+    keys: 400_000,
+    heapMb: 24,
+    syncMode: 'full_refresh',
+    grouped: true,
+  });
+
+  assert.deepEqual(loaded, [
+    { stream: 'parameters0', status: 'succeeded', written_count: 400_000 },
+  ]);
 });

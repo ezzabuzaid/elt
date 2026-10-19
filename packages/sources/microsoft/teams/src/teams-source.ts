@@ -167,12 +167,8 @@ export class TeamsSource extends Source<TeamsScan> {
     if (reader === undefined)
       throw new Error(`Microsoft Teams has no stream ${stream.name}`);
     const records = reader.read(scan);
-    if (configuration.syncMode === 'full_refresh') {
-      for (const data of records) yield { stream: stream.name, data };
-      return;
-    }
     yield* diffSnapshot(
-      stream,
+      configuration,
       records,
       state,
       stream.emitsDeletes

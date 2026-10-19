@@ -70,6 +70,7 @@ export class CommentsStream extends InstagramStream<typeof properties> {
   async *read({
     run,
     state,
+    configuration,
     profileId: owner,
     range,
     signal,
@@ -82,7 +83,6 @@ export class CommentsStream extends InstagramStream<typeof properties> {
     if (typeof scanned !== 'number') throw foreign(this.name);
     let scan = scanned;
     let diff = saved.diff;
-    const stream = this.describe();
     const inRange = (item: TimelineMedia) =>
       within(range, instant(item.taken_at));
     const { startAt } = range;
@@ -104,10 +104,15 @@ export class CommentsStream extends InstagramStream<typeof properties> {
         records: () => this.#comments(run.web, owner, post, signal),
       }));
       const lane = part.ends ? { ...part.lane, ended: false } : part.lane;
-      for await (const message of diffGroupedSnapshot(stream, groups, diff, {
-        policy: new ClosedWorld(),
-        continues: !part.ends,
-      }))
+      for await (const message of diffGroupedSnapshot(
+        configuration,
+        groups,
+        diff,
+        {
+          policy: new ClosedWorld(),
+          continues: !part.ends,
+        },
+      ))
         if ('type' in message && message.type === 'STATE') {
           diff = message.state;
           if (part.ends) scan += 1;

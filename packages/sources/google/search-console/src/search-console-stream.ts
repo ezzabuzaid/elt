@@ -2,11 +2,9 @@ import {
   type CopyConfiguration,
   type Partition,
   type Properties,
-  type RecordMessage,
   type SourceMessage,
   Stream,
   type SyncMode,
-  validateRecords,
 } from '@workspace/elt';
 
 import type { SearchConsoleScan } from './search-console-scan.ts';
@@ -114,14 +112,6 @@ export abstract class SearchConsoleStream {
         `Search Console stream ${this.stream.name} is read per property`,
       );
     return siteUrl;
-  }
-
-  // A full refresh: every row, validated, as a record.
-  protected *records(
-    rows: readonly Record<string, unknown>[],
-  ): Generator<RecordMessage> {
-    for (const data of validateRecords(this.stream, rows, 'Search Console'))
-      yield { stream: this.stream.name, data };
   }
 }
 

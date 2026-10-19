@@ -90,14 +90,9 @@ export abstract class KnowledgeActivityStream<P extends Properties, E> {
     scan: ActivityScan,
   ): AsyncGenerator<SourceMessage> {
     const records = this.#read(scan);
-    if (configuration.syncMode === 'full_refresh')
-      yield* records.map((data) => ({ stream: this.name, data }));
-    else
-      yield* diffSnapshot(configuration.stream, records, state, {
-        policy: new Retention(
-          retainedSince(scan.startedAt, this.retentionDays),
-        ),
-      });
+    yield* diffSnapshot(configuration, records, state, {
+      policy: new Retention(retainedSince(scan.startedAt, this.retentionDays)),
+    });
   }
 
   #read(scan: ActivityScan): SchemaRecord<P>[] {

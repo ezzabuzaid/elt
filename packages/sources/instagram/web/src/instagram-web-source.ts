@@ -187,7 +187,7 @@ export class InstagramWebSource extends Source<InstagramRun> {
       state,
       profileId: partition === null ? null : String(partition.profileId),
       range: this.range,
-      incremental: configuration.syncMode === 'incremental',
+      configuration,
       files: configuration.fileReads.length > 0,
       signal,
     });

@@ -72,7 +72,7 @@ export abstract class InspectionStream extends SearchConsoleStream {
   }
 
   async *extract(
-    _configuration: CopyConfiguration,
+    configuration: CopyConfiguration,
     state: unknown,
     partition: Partition | null,
     scan: SearchConsoleScan,
@@ -150,7 +150,7 @@ export abstract class InspectionStream extends SearchConsoleStream {
       ...inspections.map(({ inspectionUrl }) => inspectionUrl),
     ]);
     for await (const message of diffSnapshot(
-      this.stream,
+      configuration,
       validateRecords(this.stream, rows, 'Search Console'),
       saved.diff,
       { policy: new Coverage(({ key }) => judged.has(key.inspectionUrl)) },

@@ -1,6 +1,7 @@
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import {
+  type CopyConfiguration,
   type RecordDraft,
   type SourceMessage,
   diffSnapshot,
@@ -159,7 +160,7 @@ export class MediaStream extends InstagramStream<typeof properties> {
           images.set(key, slide.image.url);
         });
       yield* this.withImages(
-        this.#part(scan, [...drafts.values()], ends),
+        this.#part(scan, context.configuration, [...drafts.values()], ends),
         images,
         context,
       );
@@ -168,11 +169,12 @@ export class MediaStream extends InstagramStream<typeof properties> {
 
   async *#part(
     scan: MediaScan,
+    configuration: CopyConfiguration,
     drafts: readonly RecordDraft<typeof properties>[],
     ends: boolean,
   ): AsyncGenerator<SourceMessage> {
     for await (const message of diffSnapshot(
-      this.describe(),
+      configuration,
       this.validated(drafts),
       scan.diff,
       { policy: new ClosedWorld(), continues: !ends },

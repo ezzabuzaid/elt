@@ -42,6 +42,7 @@ export abstract class ListStream<
   async *read({
     run,
     state,
+    configuration,
     profileId,
     range,
     signal,
@@ -51,7 +52,6 @@ export abstract class ListStream<
     const profile = await run.profile(profileId, signal);
     const reader = this.reader(run);
     const saved = readScan(this.name, state);
-    const stream = this.describe();
     let diff = saved.diff;
     for await (const part of walk(
       reader,
@@ -69,7 +69,7 @@ export abstract class ListStream<
         [...items.values()].map((item) => this.record(item, profileId)),
       );
       const lane = part.ends ? { ...part.lane, ended: false } : part.lane;
-      for await (const message of diffSnapshot(stream, records, diff, {
+      for await (const message of diffSnapshot(configuration, records, diff, {
         policy: new ClosedWorld(),
         continues: !part.ends,
       }))

@@ -113,16 +113,16 @@ export class AppleRemindersSource extends Source<RemindersScan> {
   }
 
   protected override async *extract(
-    { stream, syncMode }: CopyConfiguration,
+    configuration: CopyConfiguration,
     state: unknown,
     _partition: null,
     scan: RemindersScan,
   ): AsyncGenerator<SourceMessage> {
-    const records = readerOf(stream).read(scan);
-    if (syncMode === 'incremental')
-      yield* diffSnapshot(stream, records, state, {
-        policy: new ClosedWorld(),
-      });
-    else for (const data of records) yield { stream: stream.name, data };
+    yield* diffSnapshot(
+      configuration,
+      readerOf(configuration.stream).read(scan),
+      state,
+      { policy: new ClosedWorld() },
+    );
   }
 }
