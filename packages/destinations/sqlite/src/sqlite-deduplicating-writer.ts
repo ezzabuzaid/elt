@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 
 import type {
@@ -49,8 +50,19 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     return this.configuration.destinationSyncMode === 'overwrite_dedup';
   }
 
+  // Named after the table and its key, so a changed key builds a new index
+  // and an unchanged one is never rebuilt.
+  get #dedupIndex(): string {
+    return `_elt_dedup_${createHash('sha256')
+      .update(
+        JSON.stringify([this.table.name, this.keys.map((key) => key.name)]),
+      )
+      .digest('hex')}`;
+  }
+
   // A stored table the load merges into must hold keys and cursors of the
-  // stream's types, none null, and no key twice, which its index will forbid.
+  // stream's types, none null, and no key twice, which its index forbids once
+  // it exists.
   protected override inspect(database: DatabaseSync): void {
     const existing = database
       .prepare(`PRAGMA table_info(${this.table.quotedName})`)
@@ -81,6 +93,11 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     if (
       database
         .prepare(
+          `SELECT 1 FROM sqlite_schema WHERE "type" = 'index' AND "name" = ?`,
+        )
+        .get(this.#dedupIndex) === undefined &&
+      database
+        .prepare(
           `SELECT 1 FROM ${this.table.quotedName} GROUP BY ${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(', ')} HAVING count(*) > 1 LIMIT 1`,
         )
         .get()
@@ -96,37 +113,40 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     database: DatabaseSync,
     replacing: boolean,
   ): void {
-    if (!replacing) this.index(database);
+    if (replacing) this.dropDedupIndexes(database, this.#dedupIndex);
+    else this.#index(database);
   }
 
   protected override replace(database: DatabaseSync): void {
     super.replace(database);
-    this.index(database);
+    this.#index(database);
   }
 
-  private index(
-    database: DatabaseSync,
-    name = this.dedupIndex,
-    on = this.table.quotedName,
-  ): void {
+  // The target's key index, built only when it does not exist yet.
+  #index(database: DatabaseSync): void {
+    this.dropDedupIndexes(database, this.#dedupIndex);
+    this.#unique(database, `"${this.#dedupIndex}"`, this.table.quotedName);
+  }
+
+  #unique(database: DatabaseSync, name: string, on: string): void {
     database.exec(
-      `CREATE UNIQUE INDEX ${name} ON ${on} (${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(', ')})`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS ${name} ON ${on} (${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(', ')})`,
     );
   }
 
   // A reload's hidden target merges on its key from its first commit; SQLite
   // cannot rename an index, so the target's own is built once it is swapped in.
   get #provisionalIndex(): string {
-    return `${this.dedupIndex.slice(0, -1)}_next"`;
+    return `"${this.#dedupIndex}_next"`;
   }
 
   protected override build(database: DatabaseSync, into: string): void {
-    this.index(database, this.#provisionalIndex, into);
+    this.#unique(database, this.#provisionalIndex, into);
   }
 
   protected override adopt(database: DatabaseSync): void {
     database.exec(`DROP INDEX IF EXISTS ${this.#provisionalIndex}`);
-    this.index(database);
+    this.#index(database);
   }
 
   // The result of applying the staged operations one at a time: a staged

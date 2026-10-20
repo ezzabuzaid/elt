@@ -15,8 +15,6 @@ export class SQLiteAppendWriter extends SQLiteWriter {
     Object.freeze(this);
   }
 
-  protected override initialize(): void {}
-
   protected override merge(
     database: DatabaseSync,
     stage: string,

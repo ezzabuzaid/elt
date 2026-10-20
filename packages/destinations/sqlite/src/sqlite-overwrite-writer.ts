@@ -19,8 +19,6 @@ export class SQLiteOverwriteWriter extends SQLiteWriter {
     return true;
   }
 
-  protected override initialize(): void {}
-
   protected override merge(
     database: DatabaseSync,
     stage: string,

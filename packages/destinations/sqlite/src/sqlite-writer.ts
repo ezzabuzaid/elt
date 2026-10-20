@@ -75,11 +75,25 @@ export abstract class SQLiteWriter extends Writer {
   }
 
   // What the target needs at its first commit, before its first merge.
-  // replacing: that commit replaces the target, so its rows are moot.
-  protected abstract initialize(
+  // replacing: that commit replaces the target, so its rows are moot. A mode
+  // without a key releases the index a deduplicating mode made.
+  protected initialize(database: DatabaseSync, _replacing: boolean): void {
+    this.dropDedupIndexes(database, null);
+  }
+
+  // Drops the deduplication indexes this library made on the target, except
+  // kept.
+  protected dropDedupIndexes(
     database: DatabaseSync,
-    replacing: boolean,
-  ): void;
+    kept: string | null,
+  ): void {
+    for (const { name } of database
+      .prepare(
+        String.raw`SELECT "name" FROM sqlite_schema WHERE "type" = 'index' AND "tbl_name" = ? AND "name" LIKE '\_elt\_dedup\_%' ESCAPE '\'`,
+      )
+      .all(this.table.name))
+      if (name !== kept) database.exec(`DROP INDEX ${quote(String(name))}`);
+  }
 
   // Refuses, before anything is read, stored rows the load cannot keep.
   protected inspect(_database: DatabaseSync): void {}
@@ -124,10 +138,6 @@ export abstract class SQLiteWriter extends Writer {
 
   private get hash(): string {
     return createHash('sha256').update(this.table.location).digest('hex');
-  }
-
-  protected get dedupIndex(): string {
-    return quote(`_elt_dedup_${this.hash}`);
   }
 
   protected get fields(): string[] {
@@ -331,8 +341,6 @@ export abstract class SQLiteWriter extends Writer {
   // index its mode owns, its reader view and its descriptions.
   #create(database: DatabaseSync, writer: string, replacing: boolean): void {
     this.own(database, writer);
-    // Only this library-owned mode index is replaced; explicit SQL constraints remain authoritative.
-    database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
     database.exec(this.table.createTableSQL);
     this.initialize(database, replacing);
     if (this.table.readerView !== undefined)
@@ -409,7 +417,7 @@ export abstract class SQLiteWriter extends Writer {
   #evolve(database: DatabaseSync): void {
     if (this.table.readerView !== undefined)
       database.exec(`DROP VIEW IF EXISTS ${quote(this.table.readerView)}`);
-    database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
+    this.dropDedupIndexes(database, null);
     this.#dropRetiredChunks(database);
     try {
       this.#declaration(this.table.name).apply(database);
