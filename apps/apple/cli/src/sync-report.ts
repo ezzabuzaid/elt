@@ -6,7 +6,7 @@ import type { SQLiteTable } from '@workspace/elt-sqlite';
 
 import type { SyncObserver } from './imports.ts';
 import type { PassSummary } from './sync.ts';
-import { json } from './table.ts';
+import { counted, json } from './table.ts';
 
 const count = new Intl.NumberFormat('en');
 
@@ -60,7 +60,7 @@ export class SyncReport implements SyncObserver {
         (total, { written, deleted }) => total + written + deleted,
         0,
       );
-      const line = `${title.padEnd(10)} ${written === 0 ? 'no changes' : `${count.format(written)} rows`} · ${summary.streams.length} streams · ${summary.seconds}s`;
+      const line = `${title.padEnd(10)} ${written === 0 ? 'no changes' : counted(written, 'row')} · ${counted(summary.streams.length, 'stream')} · ${summary.seconds}s`;
       if (summary.status === 'succeeded') log.success(line);
       else log.warn(`${title.padEnd(10)} ${summary.status} · ${summary.error}`);
     });

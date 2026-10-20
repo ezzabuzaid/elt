@@ -1,4 +1,11 @@
 const bytes = (value: Uint8Array) => `<${value.byteLength} bytes>`;
+const numbers = new Intl.NumberFormat('en');
+const plurals = new Intl.PluralRules('en');
+
+// A count with its noun in the matching number: "1 row", "1,200 rows".
+export function counted(count: number, noun: string): string {
+  return `${numbers.format(count)} ${plurals.select(count) === 'one' ? noun : `${noun}s`}`;
+}
 
 // Values as one line each: bytes are summarized, text stays within 60 columns.
 function cell(value: unknown): string {

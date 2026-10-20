@@ -5,7 +5,7 @@ import { Argument, type Command as Declaration } from 'commander';
 
 import type { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
 
-import { table } from '../table.ts';
+import { counted, table } from '../table.ts';
 import { Command, type Output } from './command.ts';
 
 type ViewSummary = {
@@ -112,8 +112,7 @@ export class QueryCommand extends Command {
       data: rows.map((row) =>
         Object.fromEntries(columns.map((name, at) => [name, row[at]])),
       ),
-      text: () =>
-        `${table(columns, rows)}\n${rows.length} row${rows.length === 1 ? '' : 's'}`,
+      text: () => `${table(columns, rows)}\n${counted(rows.length, 'row')}`,
     };
   }
 }

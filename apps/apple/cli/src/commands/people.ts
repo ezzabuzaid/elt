@@ -5,7 +5,7 @@ import type { Command as Declaration } from 'commander';
 
 import { peopleFile } from '@workspace/apple-people/people';
 
-import { table } from '../table.ts';
+import { counted, table } from '../table.ts';
 import { Command, type Output } from './command.ts';
 
 // Everyone but the user, the most recent first.
@@ -46,8 +46,7 @@ export class PeopleCommand extends Command {
       data: rows.map((row) =>
         Object.fromEntries(columns.map((name, at) => [name, row[at]])),
       ),
-      text: () =>
-        `${table(columns, rows)}\n${rows.length} ${rows.length === 1 ? 'row' : 'rows'}`,
+      text: () => `${table(columns, rows)}\n${counted(rows.length, 'row')}`,
     };
   }
 }

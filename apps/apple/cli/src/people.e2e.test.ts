@@ -115,7 +115,7 @@ test('people preserves the default list, custom SQL, duplicate columns and empty
 
   for (const [sql, expected] of [
     ['SELECT name AS person FROM people WHERE 0', /person\s+0 rows/],
-    ['SELECT 1 AS same, 2 AS same', /same\s+same\s+1\s+2\s+1 row/],
+    ['SELECT 1 AS same, 2 AS same', /same\s+same\s+1\s+2\s+1 row\s*$/],
   ] as const) {
     const rendered = spawnSync(
       '/usr/bin/expect',
@@ -226,7 +226,7 @@ test('query preserves main, schema PRAGMAs, positional output and statement reje
 
   for (const [sql, expected] of [
     ['SELECT name AS person FROM counterparts WHERE 0', /person\s+0 rows/],
-    ['SELECT 1 AS same, 2 AS same', /same\s+same\s+1\s+2\s+1 row/],
+    ['SELECT 1 AS same, 2 AS same', /same\s+same\s+1\s+2\s+1 row\s*$/],
   ] as const) {
     const rendered = spawnSync(
       '/usr/bin/expect',

@@ -1237,7 +1237,7 @@ test('a second sync of an import another sync is importing says so, waits for th
         [['photos', 'succeeded']],
       );
       assert.equal(waited, 0, second.screen);
-      assert.match(second.screen, /Photos\s+1 rows · 1 streams/);
+      assert.match(second.screen, /Photos\s+1 row · 1 stream · \d+s/);
       assert.match(second.screen, /All connectors current\./);
       const attempts = cli(
         mac.path,
