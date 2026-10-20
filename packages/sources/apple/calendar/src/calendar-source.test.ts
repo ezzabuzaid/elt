@@ -323,6 +323,8 @@ const eventsRead = (
   { startAt, endAt }: { readonly startAt: string; readonly endAt: string },
   ics = false,
 ): HelperRequest => ({ entity: 'events', startAt, endAt, ics });
+// What the helper writes when the store changed while it read.
+const changed = 'EVENTKIT_CHANGED: the store changed during the read\n';
 
 const january = {
   startAt: '2025-01-01T00:00:00.000Z',
@@ -851,12 +853,14 @@ test('Calendar lists its accounts and calendars without reading events, while ev
   await using stub = await StubEventKitHelper.create();
   const events = eventsRead(january);
   stub
-    .answer(events, { documents: [account(), calendar(), occurrence()] })
+    .answer(events, {
+      documents: [account(), calendar(), occurrence()],
+      stderr: changed,
+    })
     .answer(
       { entity: 'events', collectionsOnly: true },
       { documents: [account(), calendar()] },
-    )
-    .watch({ changeDuringReadsOf: events });
+    );
   const source = new AppleCalendarSource({
     store: new CalendarStore(stub.path),
     ...january,
@@ -892,12 +896,14 @@ test('a Calendar run that reads events with its listings still needs one event r
   await using stub = await StubEventKitHelper.create();
   const events = eventsRead(january);
   stub
-    .answer(events, { documents: [account(), calendar(), occurrence()] })
+    .answer(events, {
+      documents: [account(), calendar(), occurrence()],
+      stderr: changed,
+    })
     .answer(
       { entity: 'events', collectionsOnly: true },
       { documents: [account(), calendar()] },
-    )
-    .watch({ changeDuringReadsOf: events });
+    );
   const source = new AppleCalendarSource({
     store: new CalendarStore(stub.path),
     ...january,

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { execFile as execFileCallback } from 'node:child_process';
+import { execFile as execFileCallback, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -141,6 +143,38 @@ class ScratchEventKit implements AsyncDisposable {
     }
   }
 
+  // Saves a reminder in the list under a new title every 100 ms until
+  // disposed, starting once the first save is done: a store that never holds
+  // still for a read.
+  async changing(): Promise<AsyncDisposable> {
+    const changer = spawn(
+      '/usr/bin/osascript',
+      [
+        '-l',
+        'JavaScript',
+        '-e',
+        ScratchEventKit.#script,
+        'changing',
+        JSON.stringify({ calendarId: this.id }),
+      ],
+      { stdio: ['ignore', 'ignore', 'pipe'] },
+    );
+    const exited = once(changer, 'exit');
+    const stderr: string[] = [];
+    for await (const line of createInterface({ input: changer.stderr })) {
+      if (line === 'changing')
+        return {
+          async [Symbol.asyncDispose]() {
+            changer.kill();
+            await exited;
+          },
+        };
+      stderr.push(line);
+    }
+    await exited;
+    throw new Error(`The reminder changer stopped: ${stderr.join('\n')}`);
+  }
+
   // Null when no account on this Mac accepts a new calendar or list.
   static async unless<T>(creating: Promise<T>): Promise<T | null> {
     try {
@@ -205,7 +239,17 @@ function run([mode, payload]) {
     }
     return '';
   }
-  const date = (iso) => $.NSDate.dateWithTimeIntervalSince1970(Date.parse(iso) / 1000);
+  if (mode === 'changing') {
+    const reminder = $.EKReminder.reminderWithEventStore(store);
+    reminder.calendar = store.calendarWithIdentifier(spec.calendarId);
+    for (let saves = 0; ; saves++) {
+      reminder.title = 'Changing ' + saves;
+      if (!store.saveReminderCommitError(reminder, true, null)) throw new Error('Reminder not saved');
+      if (saves === 0) console.log('changing');
+      delay(0.1);
+    }
+  }
+  const date =(iso) => $.NSDate.dateWithTimeIntervalSince1970(Date.parse(iso) / 1000);
   const calendar = store.calendarWithIdentifier(spec.calendarId);
   for (const item of spec.items) {
     if (mode === 'events') {
@@ -261,16 +305,30 @@ const list = (
 });
 
 const remindersRead: HelperRequest = { entity: 'reminders' };
+// What the helper writes when the store changed while it read.
+const changed = 'EVENTKIT_CHANGED: the store changed during the read\n';
+
+test('a read starts no watcher of its own', async () => {
+  await using stub = await StubEventKitHelper.create();
+  stub
+    .answer(remindersRead, { documents: [account('a1')] })
+    .watch({ lines: [], then: { stderr: 'a read started a watcher\n' } });
+
+  const { accounts } = await new RemindersStore(stub.path).read({});
+
+  assert.deepEqual(
+    accounts.map(({ name }) => name),
+    ['a1'],
+  );
+});
 
 test('a read repeats when the store changes while it runs', async () => {
   await using stub = await StubEventKitHelper.create();
-  stub
-    .answer(
-      remindersRead,
-      { documents: [account('before')] },
-      { documents: [account('after')] },
-    )
-    .watch({ changeDuringFirstRead: true });
+  stub.answer(
+    remindersRead,
+    { documents: [account('before')], stderr: changed },
+    { documents: [account('after')] },
+  );
 
   const { accounts } = await new RemindersStore(stub.path).read({});
 
@@ -283,9 +341,7 @@ test('a read repeats when the store changes while it runs', async () => {
 
 test('a read gives up when the store changes during every attempt', async () => {
   await using stub = await StubEventKitHelper.create();
-  stub
-    .answer(remindersRead, { documents: [account('a1')] })
-    .watch({ everyMs: 20 });
+  stub.answer(remindersRead, { documents: [account('a1')], stderr: changed });
 
   await assert.rejects(
     new RemindersStore(stub.path).read({}),
@@ -305,13 +361,11 @@ const collectionsRead: HelperRequest = {
 
 test('a read of only the accounts and lists repeats when the store changes while it runs', async () => {
   await using stub = await StubEventKitHelper.create();
-  stub
-    .answer(
-      collectionsRead,
-      { documents: [account('before')] },
-      { documents: [account('after')] },
-    )
-    .watch({ changeDuringFirstRead: true });
+  stub.answer(
+    collectionsRead,
+    { documents: [account('before')], stderr: changed },
+    { documents: [account('after')] },
+  );
 
   const { accounts } = await new RemindersStore(stub.path).collections({});
 
@@ -324,9 +378,10 @@ test('a read of only the accounts and lists repeats when the store changes while
 
 test('a read of only the accounts and lists gives up when the store changes during every attempt', async () => {
   await using stub = await StubEventKitHelper.create();
-  stub
-    .answer(collectionsRead, { documents: [account('a1')] })
-    .watch({ everyMs: 20 });
+  stub.answer(collectionsRead, {
+    documents: [account('a1')],
+    stderr: changed,
+  });
 
   await assert.rejects(
     new RemindersStore(stub.path).collections({}),
@@ -709,6 +764,24 @@ test(
         due?.day,
       ]),
       [['Store reminder', list.id, 2025, 1, 3]],
+    );
+  },
+);
+
+test(
+  'a read of a list that changes all through it gives up, through the real helper',
+  { timeout: 120_000 },
+  async (t) => {
+    if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+    await using list = await ScratchEventKit.unless(
+      ScratchEventKit.reminders([]),
+    );
+    if (list === null) return t.skip('no account accepts a new list');
+    await using _changing = await list.changing();
+
+    await assert.rejects(
+      new RemindersStore(helper).read({ calendarIds: [list.id] }),
+      EventKitChangingError,
     );
   },
 );

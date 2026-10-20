@@ -1,4 +1,4 @@
-import { setInterval, setTimeout as sleep } from 'node:timers/promises';
+import { setInterval } from 'node:timers/promises';
 
 import type {
   AccountDocument,
@@ -10,8 +10,6 @@ import type {
 import { EventKitChangingError } from './errors.ts';
 import nativeProcess from './native-process.ts';
 
-// EventKit posts EKEventStoreChangedNotification up to this long after a change.
-const settleMs = 250;
 // How often checks says the store held still. While the helper subscribes,
 // EventKit posts every change, so a second with none means nothing changed.
 const checkMs = 1000;
@@ -139,36 +137,17 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
       : error;
   }
 
-  // EventKit has no read transaction. Reads run while a watcher counts
-  // EKEventStoreChangedNotification and repeat when a change arrived during
-  // them or within settleMs after.
+  // EventKit has no read transaction. The helper fails a read with
+  // EVENTKIT_CHANGED when the store changed while it read, and the read runs
+  // again.
   async #consistent<T>(readOnce: () => Promise<T>): Promise<T> {
-    const controller = new AbortController();
-    const changes = this.watch(controller.signal)[Symbol.asyncIterator]();
-    let count = 0;
-    let failure: { error: unknown } | undefined;
-    // The watcher's first notification only confirms the subscription.
-    await changes.next();
-    const counting = (async () => {
+    for (let attempt = 1; attempt <= attempts; attempt++)
       try {
-        while (!(await changes.next()).done) count++;
+        return await readOnce();
       } catch (error) {
-        if (!controller.signal.aborted) failure = { error };
+        if (!helperStderr(error).includes('EVENTKIT_CHANGED')) throw error;
       }
-    })();
-    try {
-      for (let attempt = 1; attempt <= attempts; attempt++) {
-        const before = count;
-        const result = await readOnce();
-        await sleep(settleMs);
-        if (failure !== undefined) throw failure.error;
-        if (count === before) return result;
-      }
-      throw new EventKitChangingError(this.entity, attempts);
-    } finally {
-      controller.abort();
-      await counting;
-    }
+    throw new EventKitChangingError(this.entity, attempts);
   }
 
   async #documents(

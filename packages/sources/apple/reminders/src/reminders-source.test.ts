@@ -261,6 +261,8 @@ const reminder = (
 ): ReminderDocument => ({ ...recordedReminders.buyMilk, ...overrides });
 
 const remindersRead: HelperRequest = { entity: 'reminders' };
+// What the helper writes when the store changed while it read.
+const changed = 'EVENTKIT_CHANGED: the store changed during the read\n';
 
 // A date component set a live test writes; EventKit fills in the Gregorian
 // calendar and era.
@@ -782,12 +784,12 @@ test('Reminders lists its accounts and lists without reading reminders, while ev
         recordedReminders.list,
         recordedReminders.buyMilk,
       ],
+      stderr: changed,
     })
     .answer(
       { entity: 'reminders', collectionsOnly: true },
       { documents: [recordedReminders.account, recordedReminders.list] },
-    )
-    .watch({ changeDuringReadsOf: remindersRead });
+    );
   const source = new AppleRemindersSource({
     store: new RemindersStore(stub.path),
   });
@@ -814,12 +816,12 @@ test('a Reminders run that reads reminders with its lists still needs one remind
         recordedReminders.list,
         recordedReminders.buyMilk,
       ],
+      stderr: changed,
     })
     .answer(
       { entity: 'reminders', collectionsOnly: true },
       { documents: [recordedReminders.account, recordedReminders.list] },
-    )
-    .watch({ changeDuringReadsOf: remindersRead });
+    );
   const source = new AppleRemindersSource({
     store: new RemindersStore(stub.path),
   });

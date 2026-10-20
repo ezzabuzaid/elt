@@ -27,18 +27,10 @@ export type HelperRead = {
 
 // What `eventkit watch` writes. By default it confirms the subscription and
 // then reports no change until it is stopped.
-export type HelperWatch =
-  | {
-      readonly lines: readonly string[];
-      readonly then: 'wait' | 'exit' | { readonly stderr: string };
-    }
-  // A store change every `everyMs` milliseconds.
-  | { readonly everyMs: number }
-  // One store change while the first read runs.
-  | { readonly changeDuringFirstRead: true }
-  // A store change while each read of request runs: a store too busy to hold
-  // still for that read, whatever else it is asked.
-  | { readonly changeDuringReadsOf: HelperRequest };
+export type HelperWatch = {
+  readonly lines: readonly string[];
+  readonly then: 'wait' | 'exit' | { readonly stderr: string };
+};
 
 type Scenario = {
   readonly reads: readonly {
@@ -135,7 +127,6 @@ export class StubEventKitHelper implements AsyncDisposable {
     return `#!${process.execPath}
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 
 const here = (name) => new URL(name, import.meta.url);
@@ -154,7 +145,6 @@ const key = (request) =>
     .digest('hex');
 
 if (command === 'read') {
-  writeFileSync(here('read-started'), '');
   const request = JSON.parse(argument);
   const index = scenario.reads.findIndex((read) =>
     isDeepStrictEqual(read.request, request),
@@ -171,32 +161,9 @@ if (command === 'read') {
   }
 } else if (command === 'watch') {
   const { watch } = scenario;
-  if ('everyMs' in watch)
-    for (;;) {
-      write('changed');
-      await sleep(watch.everyMs);
-    }
-  else if ('changeDuringFirstRead' in watch) {
-    write('changed');
-    while (!existsSync(here('read-started'))) await sleep(5);
-    write('changed');
-    stay();
-  } else if ('changeDuringReadsOf' in watch) {
-    write('changed');
-    const counter = here('reads-' + key(watch.changeDuringReadsOf));
-    const reads = () => (existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0);
-    for (let seen = reads(); ; await sleep(5)) {
-      const now = reads();
-      if (now > seen) {
-        seen = now;
-        write('changed');
-      }
-    }
-  } else {
-    for (const line of watch.lines) write(line);
-    if (watch.then === 'wait') stay();
-    else if (watch.then !== 'exit') fail(watch.then.stderr);
-  }
+  for (const line of watch.lines) write(line);
+  if (watch.then === 'wait') stay();
+  else if (watch.then !== 'exit') fail(watch.then.stderr);
 } else fail('Usage: eventkit read <request> | eventkit watch events|reminders\\n');
 `;
   }

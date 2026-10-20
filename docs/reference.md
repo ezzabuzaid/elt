@@ -387,7 +387,7 @@ class ChatSource extends Source<ChatDatabase> {
 
 #### EventKit consistency
 
-EventKit has no read transaction, so Calendar and Reminders contexts read optimistically: a watcher subscribes to `EKEventStoreChangedNotification`, every selected stream is read, and the reads repeat if a change arrived during them or within 250 ms after, the notification's delivery delay. Five disturbed attempts in a row raise `EventKitChangingError`. Each attempt is one `eventkit` helper process that reads every selected stream. The snapshot holds the selected streams' records in memory for the run. Measured on 2026-09-29 (macOS 27): a full Calendar read from 2000 to 2027 (10,956 events, about 110,000 ICS parameter rows) took about 6 s, and Reminders about 0.1 s.
+EventKit has no read transaction, so Calendar and Reminders contexts read optimistically. Each attempt is one `eventkit` helper process that reads every selected stream. The process subscribes to `EKEventStoreChangedNotification` before it reads. EventKit posts the notification on the main run loop up to 250 ms after a change, and the read blocks that loop while it fetches, so the process runs the loop for 250 ms after it reads. When a change arrived, the process fails with `EVENTKIT_CHANGED`, and the store reads again. Five disturbed attempts in a row raise `EventKitChangingError`. The snapshot holds the selected streams' records in memory for the run. Measured on 2026-09-29 (macOS 27): a full Calendar read from 2000 to 2027 (10,956 events, about 110,000 ICS parameter rows) took about 6 s, and Reminders about 0.1 s.
 
 ### Apple Notes behavior
 
