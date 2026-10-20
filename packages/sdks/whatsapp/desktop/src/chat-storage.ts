@@ -1,9 +1,6 @@
 import { join } from 'node:path';
 
-import {
-  AppDatabase,
-  type AppDatabaseColumns,
-} from '@workspace/sdk-apple-app-database';
+import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
 import type {
   Chat,
@@ -166,7 +163,7 @@ const requiredColumns = {
     'ZSOUND',
     'ZRINGTONE',
   ],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 
 // Where WhatsApp keeps a message's media file, from its mediaLocalPath.
 export function messageMediaFile(
@@ -192,11 +189,11 @@ const messageKey = `chat.ZCONTACTJID AS chatJid, message.ZISFROMME AS isFromMe,
 // shows, and has no key; it is not read. Hold it only while reading: an open
 // read stops WhatsApp checkpointing its WAL.
 export class ChatStorageSnapshot implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
   readonly #container: string;
 
   constructor(path: string, container: string) {
-    this.#database = new AppDatabase(path, WhatsAppUnavailableError);
+    this.#database = new Snapshot(path, WhatsAppUnavailableError);
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
     this.#container = container;
   }

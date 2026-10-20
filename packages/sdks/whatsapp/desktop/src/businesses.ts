@@ -1,9 +1,7 @@
+import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+
 import { decodeArchive, isDictionary } from '@workspace/codec-plist';
 import { ProtobufMessage } from '@workspace/codec-protobuf';
-import {
-  AppDatabase,
-  type AppDatabaseColumns,
-} from '@workspace/sdk-apple-app-database';
 
 import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
 import {
@@ -162,7 +160,7 @@ const requiredColumns = {
     'ZCERTIFICATEDETAILS',
   ],
   ZWABIZROLEDATA: ['Z_PK', 'ZJID', 'ZACTOR', 'ZHOSTSTORAGE', 'ZLASTUPDATETIME'],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 
 // A value an NSKeyedArchiver archive holds, as the codec unarchives it.
 function archived(value: unknown): unknown {
@@ -188,10 +186,10 @@ function archivedProtobuf(value: unknown): ProtobufMessage | null {
 // chats with, which WhatsApp fetches and keeps. Left out: the server's
 // profile version tags, internal flags and the one marketing token.
 export class BusinessesSnapshot implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, WhatsAppUnavailableError);
+    this.#database = new Snapshot(path, WhatsAppUnavailableError);
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
   }
 

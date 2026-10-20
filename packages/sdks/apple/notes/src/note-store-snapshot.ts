@@ -2,7 +2,7 @@ import { access } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { SQLOutputValue } from 'node:sqlite';
 
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { NotesSchemaError, NotesUnavailableError } from './errors.ts';
 import { NoteDocument, decodeTable } from './note-document.ts';
@@ -222,11 +222,11 @@ const tableType = 'com.apple.notes.table';
 // stops Notes checkpointing its WAL.
 export class NoteStoreSnapshot implements Disposable {
   readonly #path: string;
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
     this.#path = path;
-    this.#database = new AppDatabase(path, NotesUnavailableError);
+    this.#database = new Snapshot(path, NotesUnavailableError);
     this.#database.requireColumns(requiredColumns, NotesSchemaError);
   }
 

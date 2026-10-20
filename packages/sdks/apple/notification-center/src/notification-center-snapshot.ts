@@ -1,3 +1,6 @@
+import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+
+import { referenceDateInstant } from '@workspace/codec-apple-reference-date';
 import {
   type PlistValue,
   decodeArchive,
@@ -5,11 +8,6 @@ import {
   isDictionary,
   parseBinaryPlist,
 } from '@workspace/codec-plist';
-import {
-  AppDatabase,
-  type AppDatabaseColumns,
-  referenceDateInstant,
-} from '@workspace/sdk-apple-app-database';
 
 import {
   NotificationCenterSchemaError,
@@ -27,17 +25,17 @@ const requiredColumns = {
   app: ['app_id', 'identifier', 'badge'],
   record: ['rec_id', 'app_id', 'uuid', 'data', 'delivered_date', 'style'],
   categories: ['app_id', 'categories'],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 
 // The store as of one moment: everything read through it agrees. A layout
 // missing any column this reader reads is refused when the snapshot opens.
 // Hold it only while reading: an open read stops usernoted checkpointing its
 // WAL.
 export class NotificationCenterSnapshot implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, NotificationCenterUnavailableError);
+    this.#database = new Snapshot(path, NotificationCenterUnavailableError);
     this.#database.requireColumns(
       requiredColumns,
       NotificationCenterSchemaError,

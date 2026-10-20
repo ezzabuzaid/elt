@@ -2,7 +2,7 @@ import { type Dirent, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { AppDatabaseVersion } from '@workspace/sdk-apple-app-database';
+import { DataVersion } from '@zukhruf/sqlite-data-version';
 
 import { AddressBookStore, storeFile } from './address-book-store.ts';
 import { ContactsUnavailableError } from './errors.ts';
@@ -69,7 +69,7 @@ export class AddressBook implements AsyncDisposable {
 // with each commit to it, and an added or removed account changes the store
 // set.
 export class AddressBookVersion implements Disposable {
-  readonly #stores = new Map<string, AppDatabaseVersion>();
+  readonly #stores = new Map<string, DataVersion>();
   readonly directory: string;
 
   constructor(directory: string) {
@@ -89,7 +89,7 @@ export class AddressBookVersion implements Disposable {
       paths.map((path) => {
         let version = this.#stores.get(path);
         if (version === undefined) {
-          version = new AppDatabaseVersion(path, ContactsUnavailableError);
+          version = new DataVersion(path, ContactsUnavailableError);
           this.#stores.set(path, version);
         }
         return [path, version.current];

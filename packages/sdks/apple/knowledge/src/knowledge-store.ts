@@ -1,10 +1,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import {
-  AppDatabase,
-  AppDatabaseVersion,
-} from '@workspace/sdk-apple-app-database';
+import { DataVersion } from '@zukhruf/sqlite-data-version';
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { KnowledgeSchemaError, KnowledgeUnavailableError } from './errors.ts';
 import type {
@@ -63,10 +61,10 @@ const columnsOf = (sets: readonly KnowledgeColumns[], table: KnowledgeTable) =>
 // knowledgeC read in one snapshot. Hold it only while reading: an open read
 // stops knowledgeC checkpointing its WAL.
 export class KnowledgeSnapshot implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, KnowledgeUnavailableError);
+    this.#database = new Snapshot(path, KnowledgeUnavailableError);
   }
 
   // A stream's events in the order knowledgeC stored them. Each read checks
@@ -124,7 +122,7 @@ export class KnowledgeStore {
   }
 
   // knowledgeC commits through a WAL it keeps open.
-  version(): AppDatabaseVersion {
-    return new AppDatabaseVersion(this.#path, KnowledgeUnavailableError);
+  version(): DataVersion {
+    return new DataVersion(this.#path, KnowledgeUnavailableError);
   }
 }

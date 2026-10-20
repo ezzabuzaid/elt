@@ -1,7 +1,4 @@
-import {
-  AppDatabase,
-  type AppDatabaseColumns,
-} from '@workspace/sdk-apple-app-database';
+import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
 import { ClockSchemaError, ClockUnavailableError } from './errors.ts';
 import {
@@ -82,13 +79,13 @@ const columns = {
   ],
   ZMTCDMAKEUPDAY: ['Z_PK', 'ZDATE', 'ZTYPE', 'ZCALENDARRELEASE'],
   ZMTCDREPORT: ['Z_PK', 'ZDATE', 'ZCONCERNS'],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 
 // One read-only transaction pins all related Clock entities to the same commit.
 export class ClockDatabase implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
   constructor(path: string) {
-    this.#database = new AppDatabase(path, ClockUnavailableError);
+    this.#database = new Snapshot(path, ClockUnavailableError);
     this.#database.requireColumns(columns, ClockSchemaError);
   }
 

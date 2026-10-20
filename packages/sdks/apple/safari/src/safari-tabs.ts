@@ -1,9 +1,10 @@
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
+
 import {
   type PlistValue,
   decodeArchive,
   parseBinaryPlist,
 } from '@workspace/codec-plist';
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
 
 import { SafariSchemaError, SafariUnavailableError } from './errors.ts';
 import {
@@ -69,8 +70,8 @@ const select = (table: keyof typeof tabsColumns, order: string) =>
 
 // SafariTabs.db open read-only and pinned to one moment, refused without the
 // columns this reader reads.
-export function tabsDatabase(path: string): AppDatabase {
-  const database = new AppDatabase(path, SafariUnavailableError);
+export function tabsDatabase(path: string): Snapshot {
+  const database = new Snapshot(path, SafariUnavailableError);
   database.requireColumns(tabsColumns, SafariSchemaError);
   return database;
 }
@@ -117,7 +118,7 @@ type ProfileListing = {
   readonly serverId: string | null;
 };
 
-export const profileListings = (database: AppDatabase): ProfileListing[] =>
+export const profileListings = (database: Snapshot): ProfileListing[] =>
   database
     .all(select('bookmarks', 'id'))
     .filter(isProfile)
@@ -264,7 +265,7 @@ const plist = (value: Row[string] | undefined): Dictionary =>
 // tabs. Each row's attributes decode once, when a reader first reads a value
 // from them, so a row a reader skips never fails on its attributes.
 export class SafariTabs implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
   readonly #rows: Row[];
   readonly #byId: Map<unknown, Row>;
   readonly #windows: Row[];

@@ -1,4 +1,4 @@
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { nullableFlag, number, stored } from './books-values.ts';
 import { BooksSchemaError, BooksUnavailableError } from './errors.ts';
@@ -33,10 +33,10 @@ export type Theme = {
 
 // BookTheme as Books last saved it, pinned to one moment.
 export class BooksThemes implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, BooksUnavailableError);
+    this.#database = new Snapshot(path, BooksUnavailableError);
     this.#database.requireColumns(themesColumns, BooksSchemaError);
   }
 

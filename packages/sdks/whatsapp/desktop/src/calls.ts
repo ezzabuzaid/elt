@@ -1,7 +1,4 @@
-import {
-  AppDatabase,
-  type AppDatabaseColumns,
-} from '@workspace/sdk-apple-app-database';
+import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
 import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
 import { flag, instant, number, requiredText, text } from './values.ts';
@@ -64,16 +61,16 @@ const requiredColumns = {
     'ZLINKTOKEN',
   ],
   ZWACDCALLEVENTPARTICIPANT: ['Z_PK', 'ZJIDSTRING', 'ZOUTCOME'],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 
 // CallHistory.sqlite as of one moment, so a call and its participants agree.
 export class CallsSnapshot implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
   readonly #callLog: string;
   readonly #participantLog: string;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, WhatsAppUnavailableError);
+    this.#database = new Snapshot(path, WhatsAppUnavailableError);
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
     try {
       this.#callLog = this.#relationship('ZWACDCALLEVENT', 'CALLEVENTS');

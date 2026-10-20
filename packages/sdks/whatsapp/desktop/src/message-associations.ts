@@ -1,4 +1,4 @@
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
 import { requiredText } from './values.ts';
@@ -27,10 +27,10 @@ const requiredColumns = {
 // (threads, AI threads, broadcast campaigns, key stores) are empty here or
 // hold keys and queues, and are not read.
 export class MessageAssociationsSnapshot implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, WhatsAppUnavailableError);
+    this.#database = new Snapshot(path, WhatsAppUnavailableError);
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
   }
 

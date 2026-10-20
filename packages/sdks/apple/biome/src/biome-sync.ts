@@ -1,6 +1,6 @@
 import type { SQLOutputValue } from 'node:sqlite';
 
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { BiomeSchemaError, BiomeUnavailableError } from './errors.ts';
 
@@ -37,10 +37,10 @@ const text = (value: SQLOutputValue | undefined) =>
 
 // Biome's device list (sync/sync.db), read in one snapshot.
 export class BiomeSync implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, BiomeUnavailableError);
+    this.#database = new Snapshot(path, BiomeUnavailableError);
     this.#database.requireColumns(columns, BiomeSchemaError);
   }
 

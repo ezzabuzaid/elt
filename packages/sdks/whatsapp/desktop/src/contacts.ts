@@ -1,4 +1,4 @@
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
 import { instant, number, requiredText, text } from './values.ts';
@@ -69,10 +69,10 @@ const requiredColumns = {
 
 // ContactsV2.sqlite as of one moment.
 export class ContactsSnapshot implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, WhatsAppUnavailableError);
+    this.#database = new Snapshot(path, WhatsAppUnavailableError);
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
   }
 

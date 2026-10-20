@@ -89,7 +89,7 @@ An agnostic package is designed as if it were published to npm: anyone could cop
 
 An SDK is the agnostic package that speaks one vendor store or API, such as `~/Library/Accounts/Accounts4.sqlite` or Google's OAuth, and knows nothing of `elt`. Every store a source reads gets one, even when only one source reads it.
 
-- **The SDK owns the store:** its location (`accountsStorePath`), opening it read-only, decoding it into typed objects, what its keys mean (an account's TLS setting resolved through its parent account), errors that name the grant (`AccountsUnavailableError`), and its change signal (`AccountsStore.version()`, the EventKit helper's `watch`).
+- **The SDK owns the store:** its location (`accountsStorePath`), opening it read-only (another app's SQLite file through `Snapshot` from `@zukhruf/sqlite-snapshot`), decoding it into typed objects, what its keys mean (an account's TLS setting resolved through its parent account), errors that name the grant (`AccountsUnavailableError`), and its change signal (`AccountsStore.version()`, a `DataVersion` from `@zukhruf/sqlite-data-version`, the EventKit helper's `watch`).
 - **The source owns the pipeline:** streams, field names, JSON Schema, descriptions, scope, checkpoints, and which streams `observe()` refreshes when an SDK reports a change.
 - **Enforced by the `layer:sdk` tag:** `eslint.config.mjs` stops a `layer:sdk` project from reaching `layer:elt` (`packages/elt`), directly or through a source, destination or connector. An SDK is also an island.
 - **Named** `packages/sdks/<platform>/<surface>`, `@workspace/sdk-<platform>-<name>`, so `sdk-apple-mail`, `source-apple-mail` and `connector-apple-mail` read as one stack. `packages/google-auth` keeps its name until it moves there.

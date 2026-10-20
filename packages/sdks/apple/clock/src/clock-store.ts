@@ -2,7 +2,7 @@ import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { AppDatabaseVersion } from '@workspace/sdk-apple-app-database';
+import { DataVersion } from '@zukhruf/sqlite-data-version';
 
 import { ClockDatabase } from './clock-database.ts';
 import { stopwatches, worldClocks } from './clock-preferences.ts';
@@ -103,11 +103,11 @@ export class ClockSnapshot implements AsyncDisposable {
 // probe never loads records. Missing preference files still change on return.
 export class ClockVersion implements Disposable {
   readonly #path: string;
-  readonly #database?: AppDatabaseVersion;
+  readonly #database?: DataVersion;
   constructor(path: string, store: ClockStoreKind) {
     this.#path = path;
     if (store === 'database')
-      this.#database = new AppDatabaseVersion(path, ClockUnavailableError);
+      this.#database = new DataVersion(path, ClockUnavailableError);
   }
   async current(): Promise<string> {
     if (this.#database) return String(this.#database.current);

@@ -1,4 +1,4 @@
-import type { AppDatabaseColumns } from '@workspace/sdk-apple-app-database';
+import type { SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
 const kinds = [
   'text',
@@ -263,7 +263,7 @@ const views: readonly ContactsView[] = [
 ];
 
 // Tables read only to join, or for values no view lists.
-const otherColumns: AppDatabaseColumns = {
+const otherColumns: SnapshotColumns = {
   Z_PRIMARYKEY: ['Z_ENT', 'Z_NAME'],
   Z_22PARENTGROUPS: ['Z_22CONTACTS', 'Z_19PARENTGROUPS1'],
   Z_18PARENTGROUPS: ['Z_18CHILDGROUPS', 'Z_19PARENTGROUPS'],
@@ -280,7 +280,7 @@ const otherColumns: AppDatabaseColumns = {
 };
 
 // Every column a reader of these views reads, by table.
-export const requiredColumns: AppDatabaseColumns = (() => {
+export const requiredColumns: SnapshotColumns = (() => {
   const required = new Map<string, Set<string>>();
   const add = (table: string, columns: readonly string[]) => {
     const present = required.get(table) ?? new Set<string>();

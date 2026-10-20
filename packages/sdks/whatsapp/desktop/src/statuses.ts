@@ -1,4 +1,4 @@
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { messageMediaFile } from './chat-storage.ts';
 import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
@@ -99,11 +99,11 @@ function instant(value: unknown): string | null {
 
 // statusDB/Status.sqlite as of one moment.
 export class StatusesSnapshot implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
   readonly #container: string;
 
   constructor(path: string, container: string) {
-    this.#database = new AppDatabase(path, WhatsAppUnavailableError);
+    this.#database = new Snapshot(path, WhatsAppUnavailableError);
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
     this.#container = container;
   }

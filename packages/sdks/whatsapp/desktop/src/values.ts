@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 
-import { referenceDateInstant } from '@workspace/sdk-apple-app-database';
+import { referenceDateInstant } from '@workspace/codec-apple-reference-date';
 
 export function text(value: unknown): string | null {
   return typeof value === 'string' ? value : null;

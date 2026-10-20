@@ -1,4 +1,4 @@
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { coreDataTime, integer, nullableFlag, text } from './books-values.ts';
 import { BooksSchemaError, BooksUnavailableError } from './errors.ts';
@@ -56,10 +56,10 @@ export type Purchase = {
 
 // BKJaliscoServerSource as Books last saved it, pinned to one moment.
 export class BooksPurchases implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, BooksUnavailableError);
+    this.#database = new Snapshot(path, BooksUnavailableError);
     this.#database.requireColumns(purchasesColumns, BooksSchemaError);
   }
 

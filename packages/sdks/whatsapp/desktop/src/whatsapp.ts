@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { AppDatabaseVersion } from '@workspace/sdk-apple-app-database';
+import { DataVersion } from '@zukhruf/sqlite-data-version';
 
 import { BusinessesSnapshot } from './businesses.ts';
 import { CallsSnapshot } from './calls.ts';
@@ -104,7 +104,7 @@ export class WhatsApp {
 // so its appearance is a change; reading it reports why.
 export class WhatsAppVersion implements Disposable {
   readonly #path: string;
-  #probe?: AppDatabaseVersion;
+  #probe?: DataVersion;
 
   constructor(path: string) {
     this.#path = path;
@@ -112,10 +112,7 @@ export class WhatsAppVersion implements Disposable {
 
   get current(): string {
     try {
-      this.#probe ??= new AppDatabaseVersion(
-        this.#path,
-        WhatsAppUnavailableError,
-      );
+      this.#probe ??= new DataVersion(this.#path, WhatsAppUnavailableError);
     } catch (error) {
       if (error instanceof WhatsAppUnavailableError) return 'missing';
       throw error;

@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import type { SQLOutputValue } from 'node:sqlite';
 
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import {
   type ContactEntity,
@@ -178,13 +178,13 @@ export class AddressBookStore implements Disposable {
   readonly source: string | null;
   readonly directory: string;
   readonly path: string;
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(source: string | null, directory: string) {
     this.source = source;
     this.directory = directory;
     this.path = join(directory, storeFile);
-    this.#database = new AppDatabase(this.path, ContactsUnavailableError);
+    this.#database = new Snapshot(this.path, ContactsUnavailableError);
   }
 
   // Refuses a store without a column or entity a reader needs, and closes

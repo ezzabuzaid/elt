@@ -96,9 +96,6 @@
       "path": "./packages/connectors/apple/connector"
     },
     {
-      "path": "./packages/sdks/apple/app-database"
-    },
-    {
       "path": "./packages/connectors/apple/activity"
     },
     {
@@ -157,6 +154,9 @@
     },
     {
       "path": "./packages/codecs/segb"
+    },
+    {
+      "path": "./packages/codecs/apple-reference-date"
     },
     {
       "path": "./packages/connectors/apple/notification-center"

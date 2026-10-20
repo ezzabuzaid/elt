@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@workspace/codec-protobuf": "0.0.1",
-    "@workspace/sdk-apple-app-database": "0.0.1"
+    "@zukhruf/sqlite-data-version": "0.3.31",
+    "@zukhruf/sqlite-snapshot": "0.3.31"
   }
 }

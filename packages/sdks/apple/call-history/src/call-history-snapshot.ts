@@ -1,8 +1,6 @@
-import {
-  AppDatabase,
-  type AppDatabaseColumns,
-  referenceDateInstant,
-} from '@workspace/sdk-apple-app-database';
+import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+
+import { referenceDateInstant } from '@workspace/codec-apple-reference-date';
 
 import { type Call, type Handle, callCategory, callKind } from './call.ts';
 import {
@@ -108,17 +106,17 @@ const requiredColumns = {
     'ZASSETID',
   ],
   ZSAINTDAVIDSCOUNTS: ['Z_PK', 'ZCALL', 'ZTYPE', 'ZCOUNT'],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 
 // The store as of one moment: everything read through it agrees, and each kind
 // of record is read on request. A layout missing any column this reader reads
 // is refused when the snapshot opens. Hold it only while reading: an open read
 // stops callhistoryd checkpointing its WAL.
 export class CallHistorySnapshot implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, CallHistoryUnavailableError);
+    this.#database = new Snapshot(path, CallHistoryUnavailableError);
     this.#database.requireColumns(requiredColumns, CallHistorySchemaError);
   }
 

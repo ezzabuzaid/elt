@@ -1,10 +1,8 @@
 import { join } from 'node:path';
 
+import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+
 import { decodeArchive } from '@workspace/codec-plist';
-import {
-  AppDatabase,
-  type AppDatabaseColumns,
-} from '@workspace/sdk-apple-app-database';
 
 import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
 import { bytes, number, onDisk, requiredText, text } from './values.ts';
@@ -85,7 +83,7 @@ const requiredColumns = {
     'ZRELATIVEIMAGEPATH',
   ],
   Z_PRIMARYKEY: ['Z_ENT', 'Z_NAME'],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 
 // Where WhatsApp keeps a sticker's or tray image's file, from its path.
 export function stickerFile(container: string, relativePath: string): string {
@@ -94,14 +92,14 @@ export function stickerFile(container: string, relativePath: string): string {
 
 // Sticker.sqlite as of one moment.
 export class StickersSnapshot implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
   readonly #container: string;
   readonly #tray: number;
   readonly #store: number;
 
   constructor(path: string, container: string) {
     this.#container = container;
-    this.#database = new AppDatabase(path, WhatsAppUnavailableError);
+    this.#database = new Snapshot(path, WhatsAppUnavailableError);
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
     try {
       this.#tray = this.#entity('WACDStickerPack');

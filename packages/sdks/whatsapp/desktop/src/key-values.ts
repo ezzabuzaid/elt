@@ -1,5 +1,6 @@
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
+
 import { ProtobufMessage } from '@workspace/codec-protobuf';
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
 
 import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
 import { bytes, instant, requiredText, unixSecondInstant } from './values.ts';
@@ -62,10 +63,10 @@ const requiredColumns = {
 // of keys; only those that hold the account's settings or what it knows of
 // people are read. The rest are caches, tokens, queues and telemetry.
 class KeyValueSnapshot implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, WhatsAppUnavailableError);
+    this.#database = new Snapshot(path, WhatsAppUnavailableError);
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
   }
 

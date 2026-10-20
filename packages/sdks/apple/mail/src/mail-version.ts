@@ -1,6 +1,6 @@
 import { watch } from 'node:fs';
 
-import { AppDatabaseVersion } from '@workspace/sdk-apple-app-database';
+import { DataVersion } from '@zukhruf/sqlite-data-version';
 
 import { MailUnavailableError } from './errors.ts';
 import { envelopeIndexPath } from './mail-location.ts';
@@ -11,17 +11,14 @@ import { envelopeIndexPath } from './mail-location.ts';
 // of the whole store sees. A failed watch fails the next read of current.
 export class MailVersion implements Disposable {
   readonly #resources: DisposableStack;
-  readonly #index: AppDatabaseVersion;
+  readonly #index: DataVersion;
   #events = 0;
   #failure: Error | null = null;
 
   constructor(root: string, directory: string) {
     using resources = new DisposableStack();
     this.#index = resources.use(
-      new AppDatabaseVersion(
-        envelopeIndexPath(directory),
-        MailUnavailableError,
-      ),
+      new DataVersion(envelopeIndexPath(directory), MailUnavailableError),
     );
     const watcher = watch(root, { recursive: true }, () => {
       this.#events += 1;

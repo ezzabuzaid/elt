@@ -1,12 +1,10 @@
+import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+
 import {
   type PlistValue,
   decodeArchive,
   isDictionary,
 } from '@workspace/codec-plist';
-import {
-  AppDatabase,
-  type AppDatabaseColumns,
-} from '@workspace/sdk-apple-app-database';
 
 import { Account } from './account.ts';
 import { AccountsSchemaError, AccountsUnavailableError } from './errors.ts';
@@ -83,7 +81,7 @@ const accountColumns = {
   ZACCOUNTTYPE: ['Z_PK', 'ZIDENTIFIER'],
   ZACCOUNTPROPERTY: ['ZOWNER', 'ZKEY', 'ZVALUE'],
   ZDATACLASS: ['Z_PK', 'ZNAME'],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 const accountTypeColumns = {
   ZACCOUNTTYPE: [
     'Z_PK',
@@ -98,14 +96,14 @@ const accountTypeColumns = {
     'ZVISIBILITY',
   ],
   ZDATACLASS: ['Z_PK', 'ZNAME'],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 const dataclassColumns = {
   ZDATACLASS: ['ZNAME', 'ZENUMVALUE'],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 const accessOptionKeyColumns = {
   ZACCESSOPTIONSKEY: ['Z_PK', 'ZNAME', 'ZENUMVALUE'],
   ZACCOUNTTYPE: ['Z_PK', 'ZIDENTIFIER'],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 const authorizationColumns = {
   ZAUTHORIZATION: [
     'ZACCOUNTTYPE',
@@ -114,7 +112,7 @@ const authorizationColumns = {
     'ZOPTIONS',
   ],
   ZACCOUNTTYPE: ['Z_PK', 'ZIDENTIFIER'],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 const credentialItemColumns = {
   ZCREDENTIALITEM: [
     'ZACCOUNTIDENTIFIER',
@@ -122,7 +120,7 @@ const credentialItemColumns = {
     'ZEXPIRATIONDATE',
     'ZPERSISTENT',
   ],
-} satisfies AppDatabaseColumns;
+} satisfies SnapshotColumns;
 
 // Core Data dates are seconds since 2001-01-01. SQLite converts them, so the
 // millisecond rounds as SQLite rounds it.
@@ -133,10 +131,10 @@ const instant = (column: string) =>
 // record is read on request and checks only the tables it reads. Hold it only
 // while reading: an open read stops accountsd checkpointing its WAL.
 export class AccountsSnapshot implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, AccountsUnavailableError);
+    this.#database = new Snapshot(path, AccountsUnavailableError);
   }
 
   accounts(): Account[] {
@@ -335,7 +333,7 @@ export class AccountsSnapshot implements Disposable {
 
   // Mail reads only accounts, so a table it does not read fails only the
   // reads of that table, and the snapshot stays open for the rest.
-  #require(columns: AppDatabaseColumns): void {
+  #require(columns: SnapshotColumns): void {
     const missing = this.#database.missingColumns(columns);
     if (missing.length > 0)
       throw new AccountsSchemaError(this.#database.path, missing);

@@ -1,6 +1,6 @@
 import type { SQLOutputValue } from 'node:sqlite';
 
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { MailLayoutError, MailUnavailableError } from './errors.ts';
 import {
@@ -103,10 +103,10 @@ function isRow<T extends MailTable>(
 // Mail's Envelope Index pinned to one moment by a read transaction, its
 // layout checked when it opens. Every read streams its rows.
 export class EnvelopeIndex implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, MailUnavailableError);
+    this.#database = new Snapshot(path, MailUnavailableError);
     this.#database.requireColumns(required, MailLayoutError);
   }
 

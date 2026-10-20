@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { AppDatabaseVersion } from '@workspace/sdk-apple-app-database';
+import { DataVersion } from '@zukhruf/sqlite-data-version';
 
 import { NotesUnavailableError } from './errors.ts';
 import { NoteStoreSnapshot } from './note-store-snapshot.ts';
@@ -28,7 +28,7 @@ export class NotesStore {
 
   // Notes keeps NoteStore.sqlite and its WAL open while it runs; this probe
   // changes with each commit Notes makes.
-  version(): AppDatabaseVersion {
-    return new AppDatabaseVersion(this.#path, NotesUnavailableError);
+  version(): DataVersion {
+    return new DataVersion(this.#path, NotesUnavailableError);
   }
 }

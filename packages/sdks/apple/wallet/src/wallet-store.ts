@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { AppDatabaseVersion } from '@workspace/sdk-apple-app-database';
+import { DataVersion } from '@zukhruf/sqlite-data-version';
 
 import { WalletUnavailableError } from './errors.ts';
 import { readPassBundle } from './pass-bundle.ts';
@@ -44,7 +44,7 @@ export class WalletStore {
 
   // A probe whose current value changes with each commit to the database,
   // such as passd adding, updating, archiving or removing a pass.
-  version(): AppDatabaseVersion {
-    return new AppDatabaseVersion(this.#database, WalletUnavailableError);
+  version(): DataVersion {
+    return new DataVersion(this.#database, WalletUnavailableError);
   }
 }

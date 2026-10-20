@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { AppDatabaseVersion } from '@workspace/sdk-apple-app-database';
+import { DataVersion } from '@zukhruf/sqlite-data-version';
 
 import { AccountsSnapshot } from './accounts-snapshot.ts';
 import { AccountsUnavailableError } from './errors.ts';
@@ -29,7 +29,7 @@ export class AccountsStore {
 
   // A probe whose current value changes with each commit to the store, such
   // as accountsd saving an account.
-  version(): AppDatabaseVersion {
-    return new AppDatabaseVersion(this.#path, AccountsUnavailableError);
+  version(): DataVersion {
+    return new DataVersion(this.#path, AccountsUnavailableError);
   }
 }

@@ -1,6 +1,6 @@
 import { inflateSync } from 'node:zlib';
 
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { SafariSchemaError, SafariUnavailableError } from './errors.ts';
 import { appleTime, flag, integer, stored, text } from './safari-values.ts';
@@ -82,10 +82,10 @@ export type CloudTabCloseRequest = {
 // CloudTabs.db: the tabs open on the account's other devices, as Safari last
 // fetched them from iCloud.
 export class CloudTabs implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, SafariUnavailableError);
+    this.#database = new Snapshot(path, SafariUnavailableError);
     this.#database.requireColumns(cloudTabsColumns, SafariSchemaError);
   }
 

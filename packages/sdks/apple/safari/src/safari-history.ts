@@ -1,5 +1,6 @@
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
+
 import { type PlistValue, parseBinaryPlist } from '@workspace/codec-plist';
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
 
 import { SafariSchemaError, SafariUnavailableError } from './errors.ts';
 import {
@@ -133,11 +134,11 @@ export type HistoryItemTag = {
 export class ProfileHistory implements Disposable {
   // The profile's external UUID; DefaultProfile for the default one.
   readonly profileId: string;
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string, profileId: string) {
     this.profileId = profileId;
-    this.#database = new AppDatabase(path, SafariUnavailableError);
+    this.#database = new Snapshot(path, SafariUnavailableError);
     this.#database.requireColumns(historyColumns, SafariSchemaError);
   }
 

@@ -2,10 +2,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { SQLOutputValue } from 'node:sqlite';
 
-import {
-  AppDatabase,
-  AppDatabaseVersion,
-} from '@workspace/sdk-apple-app-database';
+import { DataVersion } from '@zukhruf/sqlite-data-version';
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import {
   type ChatColumnKind,
@@ -166,10 +164,10 @@ const required = Object.fromEntries(
 // reader holds no table whole however long the history. Hold it only while
 // reading: an open read stops Messages checkpointing its WAL.
 export class ChatDatabase implements Disposable {
-  readonly #database: AppDatabase;
+  readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new AppDatabase(path, MessagesUnavailableError);
+    this.#database = new Snapshot(path, MessagesUnavailableError);
     this.#database.requireColumns(required, MessagesSchemaError);
   }
 
@@ -355,7 +353,7 @@ export class MessagesStore {
     return new ChatDatabase(this.path);
   }
 
-  version(): AppDatabaseVersion {
-    return new AppDatabaseVersion(this.path, MessagesUnavailableError);
+  version(): DataVersion {
+    return new DataVersion(this.path, MessagesUnavailableError);
   }
 }

@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 
-import { AppDatabaseVersion } from '@workspace/sdk-apple-app-database';
+import { DataVersion } from '@zukhruf/sqlite-data-version';
 
 import {
   type BooksLocation,
@@ -24,17 +24,14 @@ async function fingerprint(path: string): Promise<string> {
 // whole, so a changed stat of either marks a new one.
 export class BooksVersion implements Disposable {
   readonly #location: BooksLocation;
-  readonly #database: AppDatabaseVersion | null;
+  readonly #database: DataVersion | null;
 
   constructor(location: BooksLocation, store: BooksStore) {
     this.#location = location;
     this.#database =
       store === 'preferences'
         ? null
-        : new AppDatabaseVersion(
-            storeFiles(location)[store],
-            BooksUnavailableError,
-          );
+        : new DataVersion(storeFiles(location)[store], BooksUnavailableError);
   }
 
   async current(): Promise<string> {

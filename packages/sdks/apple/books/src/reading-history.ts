@@ -1,5 +1,6 @@
+import { Snapshot } from '@zukhruf/sqlite-snapshot';
+
 import { ProtobufMessage } from '@workspace/codec-protobuf';
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
 
 import { BooksSchemaError, BooksUnavailableError } from './errors.ts';
 
@@ -230,7 +231,7 @@ const noHistory: ReadingHistory = { months: [], days: [], streaks: [] };
 // says which of two live ones is current, so two refuse to read rather than
 // pick one; so does a document that is not bytes.
 export function readingHistory(path: string): ReadingHistory {
-  using database = new AppDatabase(path, BooksUnavailableError);
+  using database = new Snapshot(path, BooksUnavailableError);
   database.requireColumns(readingHistoryColumns, BooksSchemaError);
   const rows = database.all(
     "SELECT ZPROTODATA FROM ZCRDTMODELSYNCENTITY WHERE ZTYPE = 'ReadingHistoryModel' AND coalesce(ZDELETEDFLAG, 0) = 0",
