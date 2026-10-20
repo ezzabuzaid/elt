@@ -13,9 +13,12 @@ const concurrency = 4;
 
 // A table another version declared otherwise is replaced, and every stored
 // file is read again.
-const rawAttachmentText = new Declaration([
-  `CREATE TABLE raw_attachment_text (ref TEXT PRIMARY KEY, sha256 TEXT NOT NULL, parser TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('parsed', 'no_text', 'failed')), content TEXT, error TEXT)`,
-]);
+const rawAttachmentText = new Declaration(
+  [
+    `CREATE TABLE raw_attachment_text (ref TEXT PRIMARY KEY, sha256 TEXT NOT NULL, parser TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('parsed', 'no_text', 'failed')), content TEXT, error TEXT)`,
+  ],
+  { rows: 'replace' },
+);
 
 const columns = {
   ref: 'Absolute path of the stored copy: the attachmentRef value of every row whose file it is. Join attachmentRef to it.',

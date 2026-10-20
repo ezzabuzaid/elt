@@ -26,10 +26,13 @@ const heartbeatMs = 1_000;
 
 // Tables another version declared otherwise are replaced, and the selection
 // they held is lost: stored settings are disposable, so the user sets up again.
-const settingsTables = new Declaration([
-  'CREATE TABLE selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL)',
-  "CREATE TABLE connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failure_type TEXT NOT NULL CHECK (failure_type IN ('config', 'system')), failed_at TEXT NOT NULL)",
-]);
+const settingsTables = new Declaration(
+  [
+    'CREATE TABLE selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL)',
+    "CREATE TABLE connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failure_type TEXT NOT NULL CHECK (failure_type IN ('config', 'system')), failed_at TEXT NOT NULL)",
+  ],
+  { rows: 'replace' },
+);
 
 // Where a connector's import lives: one directory per selection, so a pass
 // still writing an earlier selection never touches the current one.

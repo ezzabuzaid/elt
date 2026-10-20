@@ -12,7 +12,7 @@
   "dependencies": {
     "@workspace/elt": "0.0.1",
     "@zukhruf/mutex": "^0.3.19",
-    "@zukhruf/sqlite-drift": "0.3.30"
+    "@zukhruf/sqlite-drift": "0.3.31"
   },
   "devDependencies": {
     "@zukhruf/snapshot-differential": "0.3.28",

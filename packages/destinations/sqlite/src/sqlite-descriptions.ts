@@ -8,9 +8,12 @@ import { identifiers } from './sqlite-identifiers.ts';
 // beside what they describe, and the catalog view shows them to readers.
 export const descriptions = '"_elt_descriptions"';
 
-const descriptionsTable = new Declaration([
-  `CREATE TABLE ${descriptions} ("relation" TEXT NOT NULL COLLATE NOCASE, "column" TEXT NOT NULL COLLATE NOCASE, "data_type" TEXT, "description" TEXT NOT NULL, PRIMARY KEY ("relation", "column")) STRICT`,
-]);
+const descriptionsTable = new Declaration(
+  [
+    `CREATE TABLE ${descriptions} ("relation" TEXT NOT NULL COLLATE NOCASE, "column" TEXT NOT NULL COLLATE NOCASE, "data_type" TEXT, "description" TEXT NOT NULL, PRIMARY KEY ("relation", "column")) STRICT`,
+  ],
+  { rows: 'replace' },
+);
 
 export type ColumnDescription = {
   readonly description: string | null;

@@ -29,9 +29,12 @@ import type { SQLiteTable } from './sqlite-table.ts';
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
-const writersTable = new Declaration([
-  'CREATE TABLE "_elt_writers" ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL) STRICT',
-]);
+const writersTable = new Declaration(
+  [
+    'CREATE TABLE "_elt_writers" ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL) STRICT',
+  ],
+  { rows: 'replace' },
+);
 
 export const seq = '"_elt_seq"';
 export const op = '"_elt_op"';
@@ -362,17 +365,24 @@ export abstract class SQLiteWriter extends Writer {
     return `_elt_next_${this.hash}`;
   }
 
-  // Whether a stored table is the one the stream needs, by the text SQLite
-  // keeps of its CREATE TABLE, which a CHECK alone can change.
+  // The table the stream needs under the name, by the text SQLite keeps of
+  // its CREATE TABLE, which a CHECK alone can change. Evolving it keeps its
+  // rows.
+  #declaration(name: string): Declaration {
+    return new Declaration(
+      [`CREATE TABLE ${this.table.definition(quote(name))}`],
+      { rows: 'keep' },
+    );
+  }
+
+  // Whether a stored table is the one the stream needs.
   #fit(database: DatabaseSync, name: string): StoredFit {
-    return new Declaration([
-      `CREATE TABLE ${this.table.definition(quote(name))}`,
-    ]).drift(database);
+    return this.#declaration(name).drift(database);
   }
 
   // Drops the chunks of every stored column that is no longer one of the
-  // target's file columns, before the table is replaced: no row of the table
-  // that takes its place refers to them.
+  // target's file columns, and the triggers that delete them, before the table
+  // is replaced: no row of the table that takes its place refers to them.
   #dropRetiredChunks(database: DatabaseSync): void {
     const files = new Set(
       this.table.columns
@@ -382,47 +392,38 @@ export abstract class SQLiteWriter extends Writer {
     for (const { name } of database
       .prepare('SELECT "name" FROM pragma_table_info(?)')
       .all(this.table.name))
-      if (!files.has(identifiers.key(String(name))))
-        database.exec(
-          `DROP TABLE IF EXISTS ${quote(SQLiteFileStore.tableName(this.table, { name: String(name) }))}`,
-        );
+      if (!files.has(identifiers.key(String(name)))) {
+        const chunks = SQLiteFileStore.tableName(this.table, {
+          name: String(name),
+        });
+        database.exec(`DROP TABLE IF EXISTS ${quote(chunks)}`);
+        for (const trigger of ['delete', 'update'])
+          database.exec(
+            `DROP TRIGGER IF EXISTS ${quote(`${chunks}_${trigger}`)}`,
+          );
+      }
   }
 
   // Brings a stored table the stream no longer fits to its shape, keeping
-  // every row: SQLite cannot change a column's type or constraints in place,
-  // so the rows move into a table of the new definition, column by name, a
-  // column the stream added reading NULL and one it dropped left behind. A
-  // value the new definition refuses fails the load, naming the column, and
-  // the transaction leaves the table as it was.
-  #evolve(database: DatabaseSync, into: string): void {
-    const stored = new Map(
-      database
-        .prepare('SELECT "name" FROM pragma_table_info(?)')
-        .all(this.table.name)
-        .map(({ name }) => [
-          identifiers.key(String(name)),
-          quote(String(name)),
-        ]),
-    );
-    const sources = [...this.table.columns.map(({ name }) => name), 'loaded_at']
-      .map((name) => stored.get(identifiers.key(name)) ?? 'NULL')
-      .join(', ');
+  // every row: drift rebuilds it from the new definition and copies the
+  // columns both have, by name, a column the stream added taking its default
+  // (NULL) and one it dropped left behind. A value the new definition refuses
+  // fails the load, naming the column, and the transaction leaves the table as
+  // it was. The reader view selects the stored columns, and the mode index
+  // can cover a dropped key, so both are made again for the new shape.
+  #evolve(database: DatabaseSync): void {
     if (this.table.readerView !== undefined)
       database.exec(`DROP VIEW IF EXISTS ${quote(this.table.readerView)}`);
-    database.exec(`CREATE TABLE ${this.table.definition(into)}`);
+    database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
+    this.#dropRetiredChunks(database);
     try {
-      database.exec(
-        `INSERT INTO ${into} (${this.fields.join(', ')}) SELECT ${sources} FROM ${this.table.quotedName}`,
-      );
+      this.#declaration(this.table.name).apply(database);
     } catch (cause) {
       throw new TypeError(
         `The rows stored in ${this.table.quotedName} do not fit the new shape of stream ${this.stream.name}: ${cause instanceof Error ? cause.message : String(cause)}. Clear the copy to load it again, or change the stream so they fit.`,
         { cause },
       );
     }
-    this.#dropRetiredChunks(database);
-    database.exec(`DROP TABLE ${this.table.quotedName}`);
-    database.exec(`ALTER TABLE ${into} RENAME TO ${this.table.quotedName}`);
     this.initialize(database, false);
     if (this.table.readerView !== undefined)
       this.installReaderView(database, this.table.readerView);
@@ -492,7 +493,7 @@ export abstract class SQLiteWriter extends Writer {
           target === 'stale',
         );
       if (mode === 'evolve') {
-        this.#evolve(database, hidden);
+        this.#evolve(database);
         mode = 'load';
       }
       if (mode === 'load' && !this.replaces) this.inspect(database);

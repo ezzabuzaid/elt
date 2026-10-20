@@ -7,9 +7,12 @@ import { Declaration } from '@zukhruf/sqlite-drift';
 
 import { type CheckpointSession, CheckpointStore } from '@workspace/elt';
 
-const checkpoints = new Declaration([
-  'CREATE TABLE checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, reloading INTEGER NOT NULL CHECK (reloading IN (0, 1)), state TEXT NOT NULL) STRICT',
-]);
+const checkpoints = new Declaration(
+  [
+    'CREATE TABLE checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, reloading INTEGER NOT NULL CHECK (reloading IN (0, 1)), state TEXT NOT NULL) STRICT',
+  ],
+  { rows: 'replace' },
+);
 
 export class SQLiteCheckpointStore extends CheckpointStore {
   readonly path: string;

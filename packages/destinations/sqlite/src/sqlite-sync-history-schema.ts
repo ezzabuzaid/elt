@@ -40,7 +40,7 @@ const tables = [
 ];
 
 // The history's tables, which install() brings to this declaration.
-export const syncHistoryTables = new Declaration(tables);
+export const syncHistoryTables = new Declaration(tables, { rows: 'replace' });
 
 // When each declared stream last matched its upstream: the start of its last
 // successful pass, or a later check that found it unchanged.
@@ -102,7 +102,7 @@ export const syncHistoryViews: readonly SQLiteView[] = Object.values(
 // The whole history as this version reads it: a file whose tables or views
 // another version installed has no history this version can read until its
 // next pass installs it again.
-export const syncHistory = new Declaration([
-  ...tables,
-  ...syncHistoryViews.map(viewDefinition),
-]);
+export const syncHistory = new Declaration(
+  [...tables, ...syncHistoryViews.map(viewDefinition)],
+  { rows: 'replace' },
+);

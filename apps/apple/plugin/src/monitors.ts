@@ -49,10 +49,13 @@ type Loaded = MonitorManifest & {
 
 // Each registered monitor: the chat its instruction goes to, and its last
 // run and failure as the page shows them.
-const monitorTables = new Declaration([
-  'CREATE TABLE monitors (name TEXT PRIMARY KEY, thread TEXT NOT NULL, added_at TEXT NOT NULL, ran_at TEXT, failure TEXT, failed_at TEXT)',
-  'CREATE TABLE monitor_keys (name TEXT NOT NULL REFERENCES monitors (name) ON DELETE CASCADE, key TEXT NOT NULL, PRIMARY KEY (name, key)) WITHOUT ROWID',
-]);
+const monitorTables = new Declaration(
+  [
+    'CREATE TABLE monitors (name TEXT PRIMARY KEY, thread TEXT NOT NULL, added_at TEXT NOT NULL, ran_at TEXT, failure TEXT, failed_at TEXT)',
+    'CREATE TABLE monitor_keys (name TEXT NOT NULL REFERENCES monitors (name) ON DELETE CASCADE, key TEXT NOT NULL, PRIMARY KEY (name, key)) WITHOUT ROWID',
+  ],
+  { rows: 'replace' },
+);
 
 const now = () => new Date().toISOString();
 const messageOf = (error: unknown) =>

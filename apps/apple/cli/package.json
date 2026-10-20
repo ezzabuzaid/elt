@@ -33,7 +33,7 @@
     "@workspace/source-apple-macos": "0.0.1",
     "@zukhruf/election": "0.3.21",
     "@zukhruf/single-flight": "0.3.21",
-    "@zukhruf/sqlite-federation": "0.3.30",
+    "@zukhruf/sqlite-federation": "0.3.31",
     "commander": "15.0.0"
   },
   "devDependencies": {
