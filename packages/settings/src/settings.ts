@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
+import { transaction } from '@zukhruf/sqlite-transaction';
 
 import type { FailureType } from '@workspace/elt';
 import {
@@ -147,29 +148,28 @@ export class Settings implements Disposable {
   ): void {
     const problems = selectionProblems(selections, facts);
     if (problems.length > 0) throw new Error(problems.join('\n'));
-    this.settings.exec('BEGIN IMMEDIATE');
-    try {
-      this.settings.exec('DELETE FROM selections');
-      const insert = this.settings.prepare(
-        'INSERT INTO selections VALUES(?,?,?,?,?,?)',
-      );
-      for (const [position, selection] of selections.entries())
-        insert.run(
-          position,
-          selection.connector,
-          JSON.stringify(selection.scope),
-          selection.includeAttachments ? 1 : 0,
-          this.directory(selection),
-          permissions(selection),
+    transaction(
+      this.settings,
+      () => {
+        this.settings.exec('DELETE FROM selections');
+        const insert = this.settings.prepare(
+          'INSERT INTO selections VALUES(?,?,?,?,?,?)',
         );
-      this.settings.exec(
-        'DELETE FROM connection_failures WHERE directory NOT IN (SELECT directory FROM selections)',
-      );
-      this.settings.exec('COMMIT');
-    } catch (error) {
-      this.settings.exec('ROLLBACK');
-      throw error;
-    }
+        for (const [position, selection] of selections.entries())
+          insert.run(
+            position,
+            selection.connector,
+            JSON.stringify(selection.scope),
+            selection.includeAttachments ? 1 : 0,
+            this.directory(selection),
+            permissions(selection),
+          );
+        this.settings.exec(
+          'DELETE FROM connection_failures WHERE directory NOT IN (SELECT directory FROM selections)',
+        );
+      },
+      { mode: 'immediate' },
+    );
     this.#publish();
   }
 

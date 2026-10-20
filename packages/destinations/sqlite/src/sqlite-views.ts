@@ -1,5 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 
+import { transaction } from '@zukhruf/sqlite-transaction';
+
 import type { ReaderRelation } from '@workspace/elt';
 
 import { describe } from './sqlite-descriptions.ts';
@@ -49,43 +51,40 @@ export function publishSQLiteViews(
   if (views.length === 0) return;
 
   // A failed definition restores every replaced view, even if the caller
-  // catches the error and continues its transaction.
-  database.exec('SAVEPOINT publish');
-  try {
-    for (const view of views.toReversed())
-      database.exec(`DROP VIEW IF EXISTS ${quote(view.name)}`);
-    for (const view of views) {
-      // A prepared statement runs one statement, so a query cannot append DDL.
-      database.prepare(viewDefinition(view)).run();
-      const columns = database
-        .prepare('SELECT "name" FROM pragma_table_info(?)')
-        .all(view.name)
-        .map(({ name }) => String(name));
-      if (
-        columns.length !== Object.keys(view.columns).length ||
-        columns.some((name) => !Object.hasOwn(view.columns, name))
-      )
-        throw new TypeError(
-          `View ${quote(view.name)} must describe exactly its output columns: ${columns.join(', ')}`,
+  // catches the error and continues its transaction. With no transaction of
+  // the caller, it begins deferred.
+  transaction(
+    database,
+    () => {
+      for (const view of views.toReversed())
+        database.exec(`DROP VIEW IF EXISTS ${quote(view.name)}`);
+      for (const view of views) {
+        // A prepared statement runs one statement, so a query cannot append DDL.
+        database.prepare(viewDefinition(view)).run();
+        const columns = database
+          .prepare('SELECT "name" FROM pragma_table_info(?)')
+          .all(view.name)
+          .map(({ name }) => String(name));
+        if (
+          columns.length !== Object.keys(view.columns).length ||
+          columns.some((name) => !Object.hasOwn(view.columns, name))
+        )
+          throw new TypeError(
+            `View ${quote(view.name)} must describe exactly its output columns: ${columns.join(', ')}`,
+          );
+        describe(
+          database,
+          view.name,
+          view.description,
+          Object.fromEntries(
+            Object.entries(view.columns).map(([column, description]) => [
+              column,
+              { description },
+            ]),
+          ),
         );
-      describe(
-        database,
-        view.name,
-        view.description,
-        Object.fromEntries(
-          Object.entries(view.columns).map(([column, description]) => [
-            column,
-            { description },
-          ]),
-        ),
-      );
-    }
-    database.exec('RELEASE publish');
-  } catch (error) {
-    if (database.isTransaction) {
-      database.exec('ROLLBACK TO publish');
-      database.exec('RELEASE publish');
-    }
-    throw error;
-  }
+      }
+    },
+    { mode: 'deferred' },
+  );
 }

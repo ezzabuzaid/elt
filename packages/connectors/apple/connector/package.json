@@ -24,6 +24,7 @@
     "@workspace/settings": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
     "@zukhruf/sqlite-drift": "0.3.31",
+    "@zukhruf/sqlite-transaction": "0.3.31",
     "p-retry": "^8.0.1"
   }
 }

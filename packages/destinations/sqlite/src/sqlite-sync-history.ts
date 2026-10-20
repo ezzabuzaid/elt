@@ -1,5 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
+import { transaction } from '@zukhruf/sqlite-transaction';
+
 import {
   type Connection,
   type CopyOutcome,
@@ -196,17 +198,12 @@ function persistent({ path }: SQLiteDestination): string {
   return path;
 }
 
-function write<T>(path: string, work: (database: DatabaseSync) => T): T {
+function write<T>(
+  path: string,
+  work: (database: DatabaseSync) => T extends PromiseLike<unknown> ? never : T,
+): T {
   using database = new DatabaseSync(path, { timeout: busyTimeout });
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    const result = work(database);
-    database.exec('COMMIT');
-    return result;
-  } catch (error) {
-    if (database.isTransaction) database.exec('ROLLBACK');
-    throw error;
-  }
+  return transaction(database, () => work(database), { mode: 'immediate' });
 }
 
 function message(error: unknown): string {

@@ -1,5 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
+import { transaction } from '@zukhruf/sqlite-transaction';
+
 import { readerCatalog } from '@workspace/elt';
 
 import { createDescriptions, descriptions } from './sqlite-descriptions.ts';
@@ -13,14 +15,15 @@ export function installSQLiteCatalog({ path }: { path: string }): void {
   if (path === ':memory:')
     throw new TypeError('A SQLite catalog requires a database file');
   using database = new DatabaseSync(path, { timeout: 30_000 });
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    createDescriptions(database);
-    publishSQLiteViews(database, {
-      views: [
-        {
-          ...readerCatalog,
-          query: `SELECT 'view' AS "kind", s."name" AS "name", NULL AS "data_type", d."description" AS "description"
+  transaction(
+    database,
+    () => {
+      createDescriptions(database);
+      publishSQLiteViews(database, {
+        views: [
+          {
+            ...readerCatalog,
+            query: `SELECT 'view' AS "kind", s."name" AS "name", NULL AS "data_type", d."description" AS "description"
             FROM sqlite_schema s JOIN ${descriptions} d ON d."relation" = s."name" AND d."column" = ''
             WHERE s."type" = 'view'
             UNION ALL
@@ -29,12 +32,10 @@ export function installSQLiteCatalog({ path }: { path: string }): void {
             JOIN ${descriptions} c ON c."relation" = s."name" AND c."column" <> ''
             WHERE s."type" = 'view'
             ORDER BY 2`,
-        },
-      ],
-    });
-    database.exec('COMMIT');
-  } catch (error) {
-    if (database.isTransaction) database.exec('ROLLBACK');
-    throw error;
-  }
+          },
+        ],
+      });
+    },
+    { mode: 'immediate' },
+  );
 }

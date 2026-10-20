@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
+import { transaction } from '@zukhruf/sqlite-transaction';
 
 import type {
   CopyConfiguration,
@@ -10,7 +11,6 @@ import type {
   Partition,
   ReloadMode,
   Stage,
-  StoredFit,
   TargetDescription,
 } from '@workspace/elt';
 import {
@@ -375,11 +375,6 @@ export abstract class SQLiteWriter extends Writer {
     );
   }
 
-  // Whether a stored table is the one the stream needs.
-  #fit(database: DatabaseSync, name: string): StoredFit {
-    return this.#declaration(name).drift(database);
-  }
-
   // Drops the chunks of every stored column that is no longer one of the
   // target's file columns, and the triggers that delete them, before the table
   // is replaced: no row of the table that takes its place refers to them.
@@ -452,11 +447,11 @@ export abstract class SQLiteWriter extends Writer {
         store: new SQLiteFileStore(database, this.table, column),
       }));
     let mode: ReloadMode;
-    const open = () => mode === 'reload' || mode === 'continue';
-    const into = () => (open() ? hidden : this.table.quotedName);
+    const open = (at: ReloadMode) => at === 'reload' || at === 'continue';
+    const into = () => (open(mode) ? hidden : this.table.quotedName);
     const tables = () =>
-      [this.table.name, ...(open() ? [this.#hiddenName] : [])].filter((table) =>
-        this.exists(database, identifiers.key(table)),
+      [this.table.name, ...(open(mode) ? [this.#hiddenName] : [])].filter(
+        (table) => this.exists(database, identifiers.key(table)),
       );
     // Every stored file a row of the tables refers to.
     const referenced = (column: SQLiteColumn) =>
@@ -474,39 +469,40 @@ export abstract class SQLiteWriter extends Writer {
             `DELETE FROM ${quote(store.name)} WHERE "file" NOT IN (${referenced(column)})`,
           );
     };
-    database.exec('BEGIN IMMEDIATE');
-    try {
-      this.#refuse(database, writer);
-      const target = this.#fit(database, this.table.name);
-      mode = reloadMode({
-        reloading,
-        destinationSyncMode: this.configuration.destinationSyncMode,
-        target,
-        hidden: this.#fit(database, this.#hiddenName),
-      });
-      // A hidden target no reload continues is a leftover readers never saw.
-      if (mode !== 'continue') database.exec(`DROP TABLE IF EXISTS ${hidden}`);
-      if (!open() && this.table.readerView !== undefined)
-        this.#refuseReaderView(
-          database,
-          this.table.readerView,
-          target === 'stale',
+    mode = transaction(
+      database,
+      () => {
+        this.#refuse(database, writer);
+        const target = this.#declaration(this.table.name).drift(database);
+        let next = reloadMode({
+          reloading,
+          destinationSyncMode: this.configuration.destinationSyncMode,
+          target,
+          hidden: this.#declaration(this.#hiddenName).drift(database),
+        });
+        // A hidden target no reload continues is a leftover readers never saw.
+        if (next !== 'continue')
+          database.exec(`DROP TABLE IF EXISTS ${hidden}`);
+        if (!open(next) && this.table.readerView !== undefined)
+          this.#refuseReaderView(
+            database,
+            this.table.readerView,
+            target === 'stale',
+          );
+        if (next === 'evolve') {
+          this.#evolve(database);
+          next = 'load';
+        }
+        if (next === 'load' && !this.replaces) this.inspect(database);
+        database.exec(`DROP TABLE IF EXISTS ${stage}`);
+        database.exec(
+          `CREATE TEMP TABLE ${name} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,
         );
-      if (mode === 'evolve') {
-        this.#evolve(database);
-        mode = 'load';
-      }
-      if (mode === 'load' && !this.replaces) this.inspect(database);
-      database.exec(`DROP TABLE IF EXISTS ${stage}`);
-      database.exec(
-        `CREATE TEMP TABLE ${name} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,
-      );
-      for (const { store } of stores) store.stage();
-      database.exec('COMMIT');
-    } catch (error) {
-      if (database.isTransaction) database.exec('ROLLBACK');
-      throw error;
-    }
+        for (const { store } of stores) store.stage();
+        return next;
+      },
+      { mode: 'immediate' },
+    );
     const fresh = mode === 'create' || mode === 'reload';
     // The hidden target of a reload exists once its first commit made it.
     let opened = mode === 'continue';
@@ -531,25 +527,11 @@ export abstract class SQLiteWriter extends Writer {
       database.exec(`DELETE FROM ${stage}`);
       resets = [];
     };
-    // Each commit is one transaction; a failed one leaves the database as the
-    // last commit left it.
-    const commit = (work: () => void) => {
-      database.exec('BEGIN IMMEDIATE');
-      try {
-        work();
-        database.exec('COMMIT');
-      } catch (error) {
-        // SQLITE_FULL/IOERR can roll back the transaction already. Keep that
-        // original error instead of masking it with a rollback error.
-        if (database.isTransaction) database.exec('ROLLBACK');
-        throw error;
-      }
-    };
     let committed = false;
     return {
       fresh,
       get reloading() {
-        return open();
+        return open(mode);
       },
       values: this.values(database, tables),
       apply: async (operation) => {
@@ -588,51 +570,61 @@ export abstract class SQLiteWriter extends Writer {
         }
         record.run(...this.encode(data));
       },
+      // Each commit is one transaction; a failed one leaves the database as
+      // the last commit left it.
       commit: async () => {
-        commit(() => {
-          if (open()) {
-            if (!opened) {
-              database.exec(`DROP TABLE IF EXISTS ${hidden}`);
-              database.exec(`CREATE TABLE ${this.table.definition(hidden)}`);
-              this.build(database, hidden);
+        transaction(
+          database,
+          () => {
+            if (open(mode)) {
+              if (!opened) {
+                database.exec(`DROP TABLE IF EXISTS ${hidden}`);
+                database.exec(`CREATE TABLE ${this.table.definition(hidden)}`);
+                this.build(database, hidden);
+              }
+              if (!committed) this.own(database, writer);
+            } else if (!committed) {
+              this.#create(database, writer, this.replaces);
+              if (this.replaces) this.replace(database);
             }
-            if (!committed) this.own(database, writer);
-          } else if (!committed) {
-            this.#create(database, writer, this.replaces);
-            if (this.replaces) this.replace(database);
-          }
-          for (const partition of resets) {
-            const [rows, values] = this.#scope(partition);
-            database.prepare(`DELETE FROM ${into()}${rows}`).run(...values);
-          }
-          for (const { store } of stores) store.publish();
-          this.merge(database, stage, loadedAt, into());
-          // Files of the rows a reset emptied, and of staged rows it dropped.
-          if (resets.length > 0) prune();
-          drop();
-        });
-        opened = open();
+            for (const partition of resets) {
+              const [rows, values] = this.#scope(partition);
+              database.prepare(`DELETE FROM ${into()}${rows}`).run(...values);
+            }
+            for (const { store } of stores) store.publish();
+            this.merge(database, stage, loadedAt, into());
+            // Files of the rows a reset emptied, and of staged rows it dropped.
+            if (resets.length > 0) prune();
+            drop();
+          },
+          { mode: 'immediate' },
+        );
+        opened = open(mode);
         committed = true;
       },
       complete: async () => {
-        if (!open()) return;
-        commit(() => {
-          if (this.table.readerView !== undefined)
+        if (!open(mode)) return;
+        transaction(
+          database,
+          () => {
+            if (this.table.readerView !== undefined)
+              database.exec(
+                `DROP VIEW IF EXISTS ${quote(this.table.readerView)}`,
+              );
+            this.#dropRetiredChunks(database);
+            database.exec(`DROP TABLE IF EXISTS ${this.table.quotedName}`);
             database.exec(
-              `DROP VIEW IF EXISTS ${quote(this.table.readerView)}`,
+              `ALTER TABLE ${hidden} RENAME TO ${this.table.quotedName}`,
             );
-          this.#dropRetiredChunks(database);
-          database.exec(`DROP TABLE IF EXISTS ${this.table.quotedName}`);
-          database.exec(
-            `ALTER TABLE ${hidden} RENAME TO ${this.table.quotedName}`,
-          );
-          this.adopt(database);
-          if (this.table.readerView !== undefined)
-            this.installReaderView(database, this.table.readerView);
-          this.describe(database);
-          mode = 'load';
-          prune();
-        });
+            this.adopt(database);
+            if (this.table.readerView !== undefined)
+              this.installReaderView(database, this.table.readerView);
+            this.describe(database);
+            mode = 'load';
+            prune();
+          },
+          { mode: 'immediate' },
+        );
         opened = false;
       },
       discard: async () => drop(),

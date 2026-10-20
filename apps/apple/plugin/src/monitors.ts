@@ -18,6 +18,7 @@ import {
   type Locate,
   type Query,
 } from '@zukhruf/sqlite-federation';
+import { transaction } from '@zukhruf/sqlite-transaction';
 import { z } from 'zod';
 
 import { type Condition, Eca, type Rule } from '@workspace/eca';
@@ -112,19 +113,18 @@ export class Monitors {
     const rule = { condition: monitor.condition };
     await eca.add(rule);
     using store = this.#open();
-    store.exec('BEGIN IMMEDIATE');
-    try {
-      store
-        .prepare(
-          'INSERT INTO monitors (name, thread, added_at) VALUES (?, ?, ?) ON CONFLICT (name) DO UPDATE SET thread = excluded.thread, added_at = excluded.added_at, ran_at = NULL, failure = NULL, failed_at = NULL',
-        )
-        .run(name, thread, now());
-      replaceKeys(store, name, eca.keys(rule));
-      store.exec('COMMIT');
-    } catch (error) {
-      if (store.isTransaction) store.exec('ROLLBACK');
-      throw error;
-    }
+    transaction(
+      store,
+      () => {
+        store
+          .prepare(
+            'INSERT INTO monitors (name, thread, added_at) VALUES (?, ?, ?) ON CONFLICT (name) DO UPDATE SET thread = excluded.thread, added_at = excluded.added_at, ran_at = NULL, failure = NULL, failed_at = NULL',
+          )
+          .run(name, thread, now());
+        replaceKeys(store, name, eca.keys(rule));
+      },
+      { mode: 'immediate' },
+    );
   }
 
   // Evaluates every registered monitor that loads, from the keys it saved.
@@ -196,22 +196,21 @@ export class Monitors {
         .run(now(), registered.name, registered.addedAt);
     }
     for (const [rule, registered] of rules) {
-      store.exec('BEGIN IMMEDIATE');
-      try {
-        if (stillAdded(store, registered)) {
-          replaceKeys(store, registered.name, eca.keys(rule));
-          if (!failed.has(registered.name))
-            store
-              .prepare(
-                'UPDATE monitors SET failure = NULL, failed_at = NULL WHERE name = ?',
-              )
-              .run(registered.name);
-        }
-        store.exec('COMMIT');
-      } catch (error) {
-        if (store.isTransaction) store.exec('ROLLBACK');
-        throw error;
-      }
+      transaction(
+        store,
+        () => {
+          if (stillAdded(store, registered)) {
+            replaceKeys(store, registered.name, eca.keys(rule));
+            if (!failed.has(registered.name))
+              store
+                .prepare(
+                  'UPDATE monitors SET failure = NULL, failed_at = NULL WHERE name = ?',
+                )
+                .run(registered.name);
+          }
+        },
+        { mode: 'immediate' },
+      );
     }
   }
 

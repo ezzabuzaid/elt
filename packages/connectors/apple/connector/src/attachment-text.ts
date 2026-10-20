@@ -3,6 +3,7 @@ import { basename, extname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
+import { transaction } from '@zukhruf/sqlite-transaction';
 
 import type { DocumentParser } from '@workspace/elt';
 import { publishSQLiteViews } from '@workspace/elt-sqlite';
@@ -74,52 +75,51 @@ export class AttachmentText {
   // Publishes the table and its view, forgets the files no row references,
   // and returns those still to read.
   #reconcile(database: DatabaseSync): string[] {
-    database.exec('BEGIN IMMEDIATE');
-    try {
-      rawAttachmentText.apply(database);
-      publishSQLiteViews(database, {
-        views: [
-          {
-            name: 'attachment_text',
-            description:
-              'One row per file this import stored, with the text its parser extracted, read after each sync. A stored file not read yet has no row, so search results are complete only once the text caught up with the sync. Primary key ref.',
-            columns,
-            query: `SELECT ${Object.keys(columns).join(', ')} FROM raw_attachment_text`,
-          },
-        ],
-      });
-      const present = new Set(
-        database
+    return transaction(
+      database,
+      () => {
+        rawAttachmentText.apply(database);
+        publishSQLiteViews(database, {
+          views: [
+            {
+              name: 'attachment_text',
+              description:
+                'One row per file this import stored, with the text its parser extracted, read after each sync. A stored file not read yet has no row, so search results are complete only once the text caught up with the sync. Primary key ref.',
+              columns,
+              query: `SELECT ${Object.keys(columns).join(', ')} FROM raw_attachment_text`,
+            },
+          ],
+        });
+        const present = new Set(
+          database
+            .prepare(
+              `SELECT name FROM sqlite_schema WHERE type = 'view' AND name IN (${this.#views.map(() => '?').join(', ')})`,
+            )
+            .all(...this.#views)
+            .map(({ name }) => String(name)),
+        );
+        const referenced =
+          this.#views
+            .filter((view) => present.has(view))
+            .map(
+              (view) =>
+                `SELECT DISTINCT attachmentRef AS ref FROM "${view}" WHERE attachmentRef IS NOT NULL`,
+            )
+            .join(' UNION ') || 'SELECT NULL AS ref WHERE 0';
+        database.exec(
+          `DELETE FROM raw_attachment_text WHERE ref NOT IN (${referenced})`,
+        );
+        const due = database
           .prepare(
-            `SELECT name FROM sqlite_schema WHERE type = 'view' AND name IN (${this.#views.map(() => '?').join(', ')})`,
-          )
-          .all(...this.#views)
-          .map(({ name }) => String(name)),
-      );
-      const referenced =
-        this.#views
-          .filter((view) => present.has(view))
-          .map(
-            (view) =>
-              `SELECT DISTINCT attachmentRef AS ref FROM "${view}" WHERE attachmentRef IS NOT NULL`,
-          )
-          .join(' UNION ') || 'SELECT NULL AS ref WHERE 0';
-      database.exec(
-        `DELETE FROM raw_attachment_text WHERE ref NOT IN (${referenced})`,
-      );
-      const due = database
-        .prepare(
-          `SELECT r.ref FROM (${referenced}) r LEFT JOIN raw_attachment_text t ON t.ref = r.ref
+            `SELECT r.ref FROM (${referenced}) r LEFT JOIN raw_attachment_text t ON t.ref = r.ref
            WHERE t.ref IS NULL OR t.parser <> ? OR t.status = 'failed' ORDER BY r.ref`,
-        )
-        .all(this.#parser.identity)
-        .map(({ ref }) => String(ref));
-      database.exec('COMMIT');
-      return due;
-    } catch (error) {
-      if (database.isTransaction) database.exec('ROLLBACK');
-      throw error;
-    }
+          )
+          .all(this.#parser.identity)
+          .map(({ ref }) => String(ref));
+        return due;
+      },
+      { mode: 'immediate' },
+    );
   }
 
   async #read(database: DatabaseSync, ref: string): Promise<void> {
