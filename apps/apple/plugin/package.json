@@ -34,7 +34,7 @@
     "@workspace/settings": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
     "@zukhruf/single-flight": "0.3.21",
-    "@zukhruf/sqlite-drift": "0.3.31",
+    "@zukhruf/sqlite-drift": "0.3.35",
     "@zukhruf/sqlite-federation": "0.3.31",
     "@zukhruf/sqlite-transaction": "0.3.31",
     "react": "19.3.0",
