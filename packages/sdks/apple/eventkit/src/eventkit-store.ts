@@ -42,9 +42,14 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
     this.#helper = helper;
   }
 
-  async read(query: Query): Promise<Contents> {
+  // signal stops the helper, and the read rejects with its reason.
+  async read(query: Query, signal: AbortSignal | undefined): Promise<Contents> {
     return this.#consistent(async () => {
-      const documents = await this.#documents(query, this.request(query));
+      const documents = await this.#documents(
+        query,
+        this.request(query),
+        signal,
+      );
       return this.contents(scoped(query, documents), documents);
     });
   }
@@ -52,9 +57,15 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
   // The accounts and calendars read(query) returns, without their items or a
   // window: a short read, which a store too busy for the whole read holds
   // still for.
-  async collections(query: EventKitQuery): Promise<Collections> {
+  async collections(
+    query: EventKitQuery,
+    signal: AbortSignal | undefined,
+  ): Promise<Collections> {
     return this.#consistent(async () =>
-      scoped(query, await this.#documents(query, { collectionsOnly: true })),
+      scoped(
+        query,
+        await this.#documents(query, { collectionsOnly: true }, signal),
+      ),
     );
   }
 
@@ -153,22 +164,30 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
   async #documents(
     query: EventKitQuery,
     request: Omit<HelperRequest, 'entity' | 'accountIds' | 'collectionIds'>,
+    signal: AbortSignal | undefined,
   ): Promise<EventKitDocument[]> {
     const documents: EventKitDocument[] = [];
     try {
-      for await (const line of nativeProcess.lines(this.#helper, [
-        'read',
-        JSON.stringify({
-          entity: this.entity,
-          ...request,
-          accountIds: query.accountIds,
-          collectionIds: query.calendarIds,
-        } satisfies HelperRequest),
-      ]))
+      for await (const line of nativeProcess.lines(
+        this.#helper,
+        [
+          'read',
+          JSON.stringify({
+            entity: this.entity,
+            ...request,
+            accountIds: query.accountIds,
+            collectionIds: query.calendarIds,
+          } satisfies HelperRequest),
+        ],
+        signal,
+      ))
         documents.push(inContentOrder(JSON.parse(line)));
     } catch (error) {
       throw this.failure(error);
     }
+    // The stopped helper ends its lines quietly; what it wrote is not a
+    // whole read.
+    signal?.throwIfAborted();
     return documents;
   }
 }

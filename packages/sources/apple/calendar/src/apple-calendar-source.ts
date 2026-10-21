@@ -170,6 +170,7 @@ export class AppleCalendarSource extends Source<CalendarScan> {
   // every event in the window is the read a busy store never holds still for.
   protected override async open(
     streams: readonly Stream[],
+    signal: AbortSignal | undefined,
   ): Promise<CalendarScan> {
     const scope = {
       accountIds: this.scope.accountIds,
@@ -178,19 +179,22 @@ export class AppleCalendarSource extends Source<CalendarScan> {
     if (!streams.some((stream) => readerOf(stream).dated))
       return new CalendarScan(
         {
-          ...(await this.#store.collections(scope)),
+          ...(await this.#store.collections(scope, signal)),
           occurrences: [],
           icsExports: [],
         },
         this.#attachments,
       );
     try {
-      const contents = await this.#store.read({
-        startAt: this.startAt,
-        endAt: this.endAt,
-        ics: streams.some((stream) => readerOf(stream).requiresIcs),
-        ...scope,
-      });
+      const contents = await this.#store.read(
+        {
+          startAt: this.startAt,
+          endAt: this.endAt,
+          ics: streams.some((stream) => readerOf(stream).requiresIcs),
+          ...scope,
+        },
+        signal,
+      );
       return new CalendarScan(contents, this.#attachments);
     } catch (error) {
       if (error instanceof IcsExportUnavailableError)

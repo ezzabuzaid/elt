@@ -99,6 +99,7 @@ export class AppleRemindersSource extends Source<RemindersScan> {
   // store never holds still for.
   protected override async open(
     streams: readonly Stream[],
+    signal: AbortSignal | undefined,
   ): Promise<RemindersScan> {
     const scope = {
       accountIds: this.scope.accountIds,
@@ -106,10 +107,10 @@ export class AppleRemindersSource extends Source<RemindersScan> {
     };
     if (!streams.some((stream) => readerOf(stream).readsReminders))
       return new RemindersScan({
-        ...(await this.#store.collections(scope)),
+        ...(await this.#store.collections(scope, signal)),
         reminders: [],
       });
-    return new RemindersScan(await this.#store.read(scope));
+    return new RemindersScan(await this.#store.read(scope, signal));
   }
 
   protected override async *extract(

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync } from 'node:fs';
+import { mkdtempDisposable, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
@@ -118,15 +119,21 @@ class ScratchEventKit implements AsyncDisposable {
     const items =
       this.#entity === 'events'
         ? (
-            await new CalendarStore(helper).read({
-              startAt: '1990-01-01T00:00:00.000Z',
-              endAt: '2040-01-01T00:00:00.000Z',
-              ics: false,
-              calendarIds: [this.id],
-            })
+            await new CalendarStore(helper).read(
+              {
+                startAt: '1990-01-01T00:00:00.000Z',
+                endAt: '2040-01-01T00:00:00.000Z',
+                ics: false,
+                calendarIds: [this.id],
+              },
+              undefined,
+            )
           ).occurrences.map((occurrence) => occurrence.calendarItemId)
         : (
-            await new RemindersStore(helper).read({ calendarIds: [this.id] })
+            await new RemindersStore(helper).read(
+              { calendarIds: [this.id] },
+              undefined,
+            )
           ).reminders.map((reminder) => reminder.id);
     if (items.length > 0)
       await ScratchEventKit.#run('empty', {
@@ -314,7 +321,7 @@ test('a read starts no watcher of its own', async () => {
     .answer(remindersRead, { documents: [account('a1')] })
     .watch({ lines: [], then: { stderr: 'a read started a watcher\n' } });
 
-  const { accounts } = await new RemindersStore(stub.path).read({});
+  const { accounts } = await new RemindersStore(stub.path).read({}, undefined);
 
   assert.deepEqual(
     accounts.map(({ name }) => name),
@@ -330,7 +337,7 @@ test('a read repeats when the store changes while it runs', async () => {
     { documents: [account('after')] },
   );
 
-  const { accounts } = await new RemindersStore(stub.path).read({});
+  const { accounts } = await new RemindersStore(stub.path).read({}, undefined);
 
   assert.deepEqual(
     accounts.map(({ name }) => name),
@@ -344,7 +351,7 @@ test('a read gives up when the store changes during every attempt', async () => 
   stub.answer(remindersRead, { documents: [account('a1')], stderr: changed });
 
   await assert.rejects(
-    new RemindersStore(stub.path).read({}),
+    new RemindersStore(stub.path).read({}, undefined),
     (error: unknown) => {
       assert.ok(error instanceof EventKitChangingError);
       assert.match(error.message, /changed during each of 5 consistent reads/);
@@ -352,6 +359,41 @@ test('a read gives up when the store changes during every attempt', async () => 
     },
   );
   assert.equal(stub.reads(remindersRead), 5);
+});
+
+// An EventKit helper that begins a read and never ends it, as a long read of
+// a large store does until the store stops it: EventKit cannot be made to
+// keep a read waiting, so this executable stands in for the compiled helper.
+// It marks that its read began.
+async function waitingHelper(directory: string) {
+  const path = join(directory, 'eventkit-helper');
+  const began = join(directory, 'began');
+  await writeFile(path, `#!/bin/sh\n: > '${began}'\nexec sleep 10\n`, {
+    mode: 0o755,
+  });
+  return { path, began: () => existsSync(began) };
+}
+
+test('a read its signal stops rejects with the reason at once and never resolves', async () => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'eventkit-waiting-'),
+  );
+  const helper = await waitingHelper(directory.path);
+  const removal = new AbortController();
+  const removed = new Error('the user removed this connector');
+
+  const reading = new RemindersStore(helper.path).read({}, removal.signal);
+  while (!helper.began()) await sleep(10);
+  removal.abort(removed);
+  const outcome = await Promise.race([
+    reading.then(
+      () => 'resolved',
+      (error: unknown) => error,
+    ),
+    sleep(5_000, 'still reading'),
+  ]);
+
+  assert.equal(outcome, removed);
 });
 
 const collectionsRead: HelperRequest = {
@@ -367,7 +409,10 @@ test('a read of only the accounts and lists repeats when the store changes while
     { documents: [account('after')] },
   );
 
-  const { accounts } = await new RemindersStore(stub.path).collections({});
+  const { accounts } = await new RemindersStore(stub.path).collections(
+    {},
+    undefined,
+  );
 
   assert.deepEqual(
     accounts.map(({ name }) => name),
@@ -384,10 +429,35 @@ test('a read of only the accounts and lists gives up when the store changes duri
   });
 
   await assert.rejects(
-    new RemindersStore(stub.path).collections({}),
+    new RemindersStore(stub.path).collections({}, undefined),
     EventKitChangingError,
   );
   assert.equal(stub.reads(collectionsRead), 5);
+});
+
+test('a read of only the accounts and lists its signal stops rejects with the reason at once and never resolves', async () => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'eventkit-waiting-'),
+  );
+  const helper = await waitingHelper(directory.path);
+  const removal = new AbortController();
+  const removed = new Error('the user removed this connector');
+
+  const reading = new RemindersStore(helper.path).collections(
+    {},
+    removal.signal,
+  );
+  while (!helper.began()) await sleep(10);
+  removal.abort(removed);
+  const outcome = await Promise.race([
+    reading.then(
+      () => 'resolved',
+      (error: unknown) => error,
+    ),
+    sleep(5_000, 'still reading'),
+  ]);
+
+  assert.equal(outcome, removed);
 });
 
 test('missing access fails reads and watches with the entity’s own error', async () => {
@@ -410,13 +480,16 @@ test('missing access fails reads and watches with the entity’s own error', asy
   const reminders = new RemindersStore(remindersStub.path);
   const signal = new AbortController().signal;
 
-  await assert.rejects(calendar.read({ ...january, ics: false }), (error) => {
-    assert.ok(error instanceof CalendarUnavailableError);
-    assert.equal(Reflect.get(Object(error.cause), 'stderr'), calendarDenied);
-    return true;
-  });
+  await assert.rejects(
+    calendar.read({ ...january, ics: false }, undefined),
+    (error) => {
+      assert.ok(error instanceof CalendarUnavailableError);
+      assert.equal(Reflect.get(Object(error.cause), 'stderr'), calendarDenied);
+      return true;
+    },
+  );
   await assert.rejects(calendar.watch(signal).next(), CalendarUnavailableError);
-  await assert.rejects(reminders.read({}), (error) => {
+  await assert.rejects(reminders.read({}, undefined), (error) => {
     assert.ok(error instanceof RemindersUnavailableError);
     assert.equal(Reflect.get(Object(error.cause), 'stderr'), remindersDenied);
     return true;
@@ -468,7 +541,7 @@ test('a Calendar read without the private ICS export fails with IcsExportUnavail
   );
 
   await assert.rejects(
-    new CalendarStore(stub.path).read({ ...january, ics: true }),
+    new CalendarStore(stub.path).read({ ...january, ics: true }, undefined),
     IcsExportUnavailableError,
   );
 });
@@ -523,10 +596,13 @@ test('a Calendar read keeps one all-day occurrence that EventKit expands twice i
     },
   );
 
-  const { occurrences } = await new CalendarStore(stub.path).read({
-    ...june,
-    ics: false,
-  });
+  const { occurrences } = await new CalendarStore(stub.path).read(
+    {
+      ...june,
+      ics: false,
+    },
+    undefined,
+  );
 
   assert.deepEqual(
     occurrences.map(({ startMs }) => startMs),
@@ -556,7 +632,7 @@ test('a scoped read keeps the calendars the helper selected and the accounts the
     );
   const store = new RemindersStore(stub.path);
   const listed = async (query: Parameters<RemindersStore['read']>[0]) => {
-    const { accounts, calendars } = await store.read(query);
+    const { accounts, calendars } = await store.read(query, undefined);
     return [accounts.map(({ id }) => id), calendars.map(({ id }) => id)];
   };
 
@@ -571,7 +647,7 @@ test('a scoped read keeps the calendars the helper selected and the accounts the
   ]);
   // A calendar scope keeps only the accounts owning a selected calendar.
   assert.deepEqual(await listed({ calendarIds: ['l1'] }), [['a1'], ['l1']]);
-  const { calendars } = await store.read({});
+  const { calendars } = await store.read({}, undefined);
   assert.ok(calendars.every((calendar) => !('selected' in calendar)));
 });
 
@@ -631,8 +707,8 @@ test('attendees come back in content order and alarms in firing order, whatever 
   );
   const store = new RemindersStore(stub.path);
 
-  const [first] = (await store.read({})).reminders;
-  const [second] = (await store.read({})).reminders;
+  const [first] = (await store.read({}, undefined)).reminders;
+  const [second] = (await store.read({}, undefined)).reminders;
 
   assert.deepEqual(first, second);
   assert.deepEqual(
@@ -675,12 +751,15 @@ test(
     );
     if (calendar === null) return t.skip('no account accepts a new calendar');
 
-    const { occurrences } = await new CalendarStore(helper).read({
-      startAt: '2025-01-01T00:00:00.000Z',
-      endAt: '2026-06-01T00:00:00.000Z',
-      ics: false,
-      calendarIds: [calendar.id],
-    });
+    const { occurrences } = await new CalendarStore(helper).read(
+      {
+        startAt: '2025-01-01T00:00:00.000Z',
+        endAt: '2026-06-01T00:00:00.000Z',
+        ics: false,
+        calendarIds: [calendar.id],
+      },
+      undefined,
+    );
 
     assert.deepEqual(
       occurrences.map(({ name }) => name),
@@ -709,7 +788,7 @@ test(
 
     const { accounts, calendars, occurrences } = await new CalendarStore(
       helper,
-    ).read({ ...january, ics: false, calendarIds: [calendar.id] });
+    ).read({ ...january, ics: false, calendarIds: [calendar.id] }, undefined);
 
     assert.deepEqual(
       calendars.map(({ id }) => id),
@@ -747,9 +826,12 @@ test(
     );
     if (list === null) return t.skip('no account accepts a new list');
 
-    const { calendars, reminders } = await new RemindersStore(helper).read({
-      calendarIds: [list.id],
-    });
+    const { calendars, reminders } = await new RemindersStore(helper).read(
+      {
+        calendarIds: [list.id],
+      },
+      undefined,
+    );
 
     assert.deepEqual(
       calendars.map(({ id }) => id),
@@ -780,7 +862,7 @@ test(
     await using _changing = await list.changing();
 
     await assert.rejects(
-      new RemindersStore(helper).read({ calendarIds: [list.id] }),
+      new RemindersStore(helper).read({ calendarIds: [list.id] }, undefined),
       EventKitChangingError,
     );
   },

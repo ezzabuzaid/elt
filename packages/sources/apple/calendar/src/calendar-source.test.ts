@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -136,7 +136,8 @@ async function appleImport(source: Source, directory: string) {
     return database.prepare(sql).all();
   };
   return {
-    load: () => new Pipeline({ history, connections: [connection] }).run(),
+    load: (options?: { readonly signal: AbortSignal }) =>
+      new Pipeline({ history, connections: [connection] }).run(options),
     read,
     // The documented views the streams publish, beside the catalog and the
     // sync history every SQLite load has.
@@ -414,12 +415,15 @@ class ScratchCalendar implements AsyncDisposable {
 
   // Deletes every event the calendar holds, as the helper reads them.
   async #empty(): Promise<void> {
-    const { occurrences } = await new CalendarStore(helper).read({
-      startAt: '1990-01-01T00:00:00.000Z',
-      endAt: '2040-01-01T00:00:00.000Z',
-      ics: false,
-      calendarIds: [this.id],
-    });
+    const { occurrences } = await new CalendarStore(helper).read(
+      {
+        startAt: '1990-01-01T00:00:00.000Z',
+        endAt: '2040-01-01T00:00:00.000Z',
+        ics: false,
+        calendarIds: [this.id],
+      },
+      undefined,
+    );
     const items = [...new Set(occurrences.map((item) => item.calendarItemId))];
     if (items.length > 0) await ScratchCalendar.#run('empty', { items });
   }
@@ -794,6 +798,50 @@ test(
     ]);
   },
 );
+
+// An EventKit helper that begins a read and never ends it, as a long read of
+// a large store does until the store stops it: EventKit cannot be made to
+// keep a read waiting, so this executable stands in for the compiled helper.
+// It marks that its read began.
+async function waitingHelper(directory: string) {
+  const path = join(directory, 'eventkit-helper');
+  const began = join(directory, 'began');
+  await writeFile(path, `#!/bin/sh\n: > '${began}'\nexec sleep 10\n`, {
+    mode: 0o755,
+  });
+  return { path, began: () => existsSync(began) };
+}
+
+test('a Calendar pass the host stops while EventKit reads ends at once and is recorded cancelled', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'calendar-stop-'),
+  );
+  const helper = await waitingHelper(scratch.path);
+  const source = new AppleCalendarSource({
+    store: new CalendarStore(helper.path),
+    ...january,
+  });
+  const events = await appleImport(source, join(scratch.path, 'import'));
+  const removal = new AbortController();
+  const removed = new Error('the user removed this connector');
+
+  const loading = events.load({ signal: removal.signal });
+  while (!helper.began()) await sleep(10);
+  removal.abort(removed);
+  const outcome = await Promise.race([
+    loading.then(
+      () => 'loaded',
+      (error: unknown) => error,
+    ),
+    sleep(5_000, 'still reading'),
+  ]);
+
+  assert.equal(outcome, removed);
+  assert.deepEqual(
+    events.read('SELECT status FROM sync_attempts').map(({ status }) => status),
+    ['cancelled'],
+  );
+});
 
 test('Calendar extracts the organizer and attendees EventKit returns, which a test cannot create', async () => {
   await using stub = await StubEventKitHelper.create();

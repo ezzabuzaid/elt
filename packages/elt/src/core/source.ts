@@ -148,8 +148,12 @@ export abstract class Source<
 
   // One consistent view of the upstream for reading these streams: a read
   // transaction, or every stream read up front. A source whose streams need
-  // not agree returns an empty AsyncDisposableStack.
-  protected abstract open(streams: readonly Stream[]): Promise<Context>;
+  // not agree returns an empty AsyncDisposableStack. signal is the run's: an
+  // open that waits on its upstream stops once the run is cancelled.
+  protected abstract open(
+    streams: readonly Stream[],
+    signal: AbortSignal | undefined,
+  ): Promise<Context>;
 
   // Source-specific selection rules, checked without I/O.
   protected validateExtraction(_configuration: CopyConfiguration): void {}
@@ -212,7 +216,10 @@ export abstract class Source<
       new Set(catalog.map(({ stream }) => stream.name)).size !== catalog.length
     )
       throw new TypeError('A read selects each stream once');
-    await using context = await this.open(catalog.map(({ stream }) => stream));
+    await using context = await this.open(
+      catalog.map(({ stream }) => stream),
+      signal,
+    );
     if (!Number.isSafeInteger(this.concurrency) || this.concurrency < 1)
       throw new TypeError('Source concurrency must be a positive integer');
     yield* interleave(
