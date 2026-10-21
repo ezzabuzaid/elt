@@ -2287,7 +2287,7 @@ await new Pipeline({
 
 The source reads what WhatsApp for Mac keeps on this Mac, from its own stores, with the `@workspace/sdk-whatsapp-desktop` SDK: no WhatsApp server, session or network. `npx nx run apple-cli:start -- sync --connector whatsapp` loads every stream into the import's `data.sqlite`, read through its `<snake_stream>` views, and `apps/proactive` loads chats, messages, reactions, users, contacts and push names into the warehouse as `marts.whatsapp_<stream>`.
 
-WhatsApp for Mac is WhatsApp's iOS app built for the Mac. It keeps its data in the group container it shares with its extensions, in SQLite stores that WhatsApp keeps open with a WAL, read as of one moment each through `AppDatabase`:
+WhatsApp for Mac is WhatsApp's iOS app built for the Mac. It keeps its data in the group container it shares with its extensions, in SQLite stores that WhatsApp keeps open with a WAL, read as of one moment each through `Snapshot` from `@zukhruf/sqlite-snapshot`:
 
 | Store                              | Holds                                                                                  | Streams                                                                                                                                                                                                              |
 | ---------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -414,10 +414,10 @@ packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
 packages/sdks/apple/      SDKs, one per Apple store (sdk-apple-<name>): accounts, biome,
                           books, call-history, clock, contacts, eventkit, knowledge, mail,
                           messages, notes, notification-center, safari,
-                          wallet; and app-database, the shared reader of
-                          another app's SQLite file
+                          wallet
 packages/codecs/          One package per format (codec-<format>): plist, protobuf, segb,
-                          leveldb, v8-serialization, chromium-indexeddb, sitemap
+                          leveldb, v8-serialization, chromium-indexeddb, sitemap,
+                          apple-reference-date
 packages/sdks/slack/desktop/    Slack desktop app SDK (sdk-slack-desktop)
 packages/sources/slack/desktop/ Slack desktop app source (source-slack-desktop)
 packages/sdks/microsoft/teams/    Microsoft Teams app SDK (sdk-microsoft-teams)
