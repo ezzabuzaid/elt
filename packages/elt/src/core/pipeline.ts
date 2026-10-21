@@ -295,8 +295,9 @@ export class Pipeline<Target extends DestinationTarget> {
         wake = Promise.withResolvers<void>();
         // Like a schedule after a failed sync, watching goes on: each pass
         // reports what did not load, and a retry or the source's next change
-        // loads it again.
-        const pass = await this.#pass(connection, steps, undefined);
+        // loads it again. A stopping watch stops the pass it is running, as
+        // run({ signal }) does.
+        const pass = await this.#pass(connection, steps, signal);
         for (const { copy, failures } of pass.outcomes) {
           const { name } = copy.from;
           loading.delete(name);

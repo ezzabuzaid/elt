@@ -1877,6 +1877,134 @@ test('a stopping watch waits for a source that heeds the abort to finish stoppin
   assert.equal(stopped, true);
 });
 
+test('a stopping watch ends the pass it is running, which the extract sees and the history records cancelled', async () => {
+  const reading = Promise.withResolvers<void>();
+  const seen: unknown[] = [];
+  class Reading extends ContextSource {
+    protected override async *observe({ streams, signal }: SourceWatchOptions) {
+      yield streams;
+      await new Promise((resolve) =>
+        signal.addEventListener('abort', resolve, { once: true }),
+      );
+    }
+
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      _state: unknown,
+      _partition: null,
+      _context: ReadContext,
+      signal?: AbortSignal,
+    ) {
+      reading.resolve();
+      // A long read, as a scan of a large store is: it ends when the run's
+      // signal stops it, or after 5 s.
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 5_000);
+        signal?.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      seen.push(signal?.reason);
+      yield record(configuration.stream.name, 'late');
+    }
+  }
+  const history = new MemoryHistory();
+  const pipeline = new Pipeline({
+    history,
+    connections: [leftOnly('reading', new Reading())],
+  });
+  const controller = new AbortController();
+  const removed = new Error('the user removed this connector');
+
+  const watching = Array.fromAsync(
+    pipeline.watch({ signal: controller.signal }),
+  );
+  await reading.promise;
+  controller.abort(removed);
+  const outcome = await Promise.race([
+    watching.then(
+      () => 'ended',
+      (error: unknown) => error,
+    ),
+    sleep(2_000, 'still in its pass'),
+  ]);
+
+  assert.equal(outcome, 'ended');
+  assert.deepEqual(seen, [removed]);
+  assert.ok(
+    history.log.includes('finish reading cancelled'),
+    history.log.join('\n'),
+  );
+});
+
+test("breaking a watch's loop ends the pass another connection is running, recorded cancelled", async () => {
+  const reading = Promise.withResolvers<void>();
+  class Quick extends ContextSource {
+    protected override async *observe({ streams, signal }: SourceWatchOptions) {
+      yield streams;
+      await new Promise((resolve) =>
+        signal.addEventListener('abort', resolve, { once: true }),
+      );
+    }
+  }
+  class Reading extends Quick {
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      _state: unknown,
+      _partition: null,
+      _context: ReadContext,
+      signal?: AbortSignal,
+    ) {
+      reading.resolve();
+      // A long read: it ends when the run's signal stops it, or after 5 s.
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 5_000);
+        signal?.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      yield record(configuration.stream.name, 'late');
+    }
+  }
+  const history = new MemoryHistory();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      leftOnly('quick', new Quick()),
+      leftOnly('reading', new Reading()),
+    ],
+  });
+
+  const consumed = (async () => {
+    for await (const _ of pipeline.watch({
+      signal: new AbortController().signal,
+    })) {
+      await reading.promise;
+      break;
+    }
+  })();
+  const outcome = await Promise.race([
+    consumed.then(() => 'ended'),
+    sleep(2_000, 'still in its pass'),
+  ]);
+
+  assert.equal(outcome, 'ended');
+  assert.ok(
+    history.log.includes('finish reading cancelled'),
+    history.log.join('\n'),
+  );
+});
+
 test('an invalid connection stops the whole pipeline before any read, and is recorded against that connection', async () => {
   const history = new MemoryHistory();
   const valid = new ContextSource();

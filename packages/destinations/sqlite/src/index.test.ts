@@ -753,16 +753,54 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   await assert.rejects(unselected.next(), /unselected stream/);
   assert.equal(changes.listenerCount('change'), 0);
 
+  // A stopping watch stops the pass it is running, as run({ signal }) does:
+  // the pass loads nothing more and is yielded cancelled, and the target
+  // keeps what the last whole pass loaded.
   version = 5;
   const stopping = new AbortController();
   const inFlight = pipeline.watch({ signal: stopping.signal });
   reads.once('read', () => stopping.abort());
-  assert.deepEqual((await inFlight.next()).value?.outcomes, [
-    { copy, count: 1, deleted: 0, failures: [], cancelled: false },
-    { copy: other, count: 1, deleted: 0, failures: [], cancelled: false },
-  ]);
-  assert.equal(loadedVersion(), 5);
-  assert.deepEqual(savedVersion(), { version: 5 });
+  const stopped = await inFlight.next();
+  if (stopped.done) assert.fail('watching ended before yielding its pass');
+  assert.deepEqual(
+    stopped.value.outcomes.map(
+      ({ copy, count, deleted, cancelled, failures }) => ({
+        copy,
+        count,
+        deleted,
+        cancelled,
+        errors: failures.map(({ error }) => error),
+      }),
+    ),
+    [
+      {
+        copy,
+        count: 0,
+        deleted: 0,
+        cancelled: true,
+        errors: [stopping.signal.reason],
+      },
+      {
+        copy: other,
+        count: 0,
+        deleted: 0,
+        cancelled: true,
+        errors: [stopping.signal.reason],
+      },
+    ],
+  );
+  assert.equal(loadedVersion(), 4);
+  assert.deepEqual(savedVersion(), { version: 4 });
+  {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    assert.deepEqual(
+      database
+        .prepare('SELECT version FROM other')
+        .all()
+        .map(({ version }) => version),
+      [4],
+    );
+  }
   assert.deepEqual(await inFlight.next(), { value: undefined, done: true });
   assert.equal(changes.listenerCount('change'), 0);
 

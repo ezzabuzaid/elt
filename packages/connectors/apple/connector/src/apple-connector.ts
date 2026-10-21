@@ -357,7 +357,8 @@ export abstract class AppleConnector {
         const stopping = new AbortController();
         const signal = AbortSignal.any([removal, stopping.signal]);
         // A read that fails stops the watch, as an error no sync history
-        // recorded does.
+        // recorded does, and becomes the abort reason, so the pass it stops
+        // records it as the cause.
         const failures: unknown[] = [];
         let running: Promise<void> | null = null;
         let again = false;
@@ -374,7 +375,7 @@ export abstract class AppleConnector {
           })()
             .catch((error: unknown) => {
               failures.push(error);
-              stopping.abort();
+              stopping.abort(error);
             })
             .finally(() => {
               running = null;
