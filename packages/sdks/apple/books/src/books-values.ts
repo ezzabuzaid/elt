@@ -1,5 +1,9 @@
 import type { SQLOutputValue } from 'node:sqlite';
 
+import {
+  isWithinDistantDates,
+  referenceDate,
+} from '@workspace/codec-apple-reference-date';
 import { type PlistValue, isDictionary } from '@workspace/codec-plist';
 
 export type Row = Record<string, SQLOutputValue>;
@@ -7,20 +11,11 @@ type Dictionary = Readonly<Record<string, PlistValue>>;
 
 type Stored = SQLOutputValue | PlistValue | undefined;
 
-const appleEpochSeconds = 978_307_200;
-
-// NSDate's distantPast (year 1) and distantFuture (year 4001), in seconds
-// since 2001-01-01; Core Data stores them to mean "none" or "unbounded".
-const distantPast = -63_114_076_800;
-const distantFuture = 63_113_904_000;
-
-// Core Data stores times as seconds since 2001-01-01.
+// Core Data stores times as seconds since 2001-01-01, and distantPast or
+// distantFuture to mean "none" or "unbounded".
 export const coreDataTime = (value: SQLOutputValue | undefined): Date | null =>
-  typeof value === 'number' &&
-  Number.isFinite(value) &&
-  value > distantPast &&
-  value < distantFuture
-    ? new Date(Math.round((value + appleEpochSeconds) * 1000))
+  typeof value === 'number' && isWithinDistantDates(value)
+    ? referenceDate(value)
     : null;
 
 // Property lists mark "never" with distantPast or distantFuture.

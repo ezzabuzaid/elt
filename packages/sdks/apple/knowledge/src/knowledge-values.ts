@@ -1,10 +1,9 @@
 import type { SQLOutputValue } from 'node:sqlite';
 
+import { referenceDate } from '@workspace/codec-apple-reference-date';
 import { type PlistValue, decodeArchive } from '@workspace/codec-plist';
 
 type Value = SQLOutputValue | undefined;
-
-const appleEpochSeconds = 978_307_200;
 
 export const text = (value: Value) =>
   typeof value === 'string' ? value : undefined;
@@ -22,7 +21,7 @@ export const flag = (value: Value) =>
 // Core Data's seconds since 2001-01-01.
 export const appleDate = (value: Value) =>
   typeof value === 'number' && Number.isFinite(value)
-    ? new Date(Math.round((value + appleEpochSeconds) * 1000))
+    ? referenceDate(value)
     : undefined;
 
 // An NSKeyedArchiver or plain property list; a root of nil decodes to null.

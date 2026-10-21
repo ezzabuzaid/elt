@@ -9,6 +9,9 @@
   "references": [
     {
       "path": "../../../codecs/protobuf"
+    },
+    {
+      "path": "../../../codecs/apple-reference-date"
     }
   ]
 }

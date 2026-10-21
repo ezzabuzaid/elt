@@ -12,6 +12,9 @@
     },
     {
       "path": "../../../codecs/plist"
+    },
+    {
+      "path": "../../../codecs/apple-reference-date"
     }
   ]
 }

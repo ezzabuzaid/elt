@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "@workspace/codec-apple-reference-date": "0.0.1",
     "@workspace/codec-plist": "0.0.1",
     "@workspace/codec-protobuf": "0.0.1",
     "@zukhruf/sqlite-data-version": "0.3.31",

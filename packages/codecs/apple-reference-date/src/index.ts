@@ -1,1 +1,5 @@
-export { referenceDateInstant } from './reference-date.ts';
+export {
+  isWithinDistantDates,
+  referenceDate,
+  referenceDateInstant,
+} from './reference-date.ts';

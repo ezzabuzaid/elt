@@ -4,6 +4,8 @@ import type { SQLOutputValue } from 'node:sqlite';
 
 import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
+import { referenceDate } from '@workspace/codec-apple-reference-date';
+
 import { NotesSchemaError, NotesUnavailableError } from './errors.ts';
 import { NoteDocument, decodeTable } from './note-document.ts';
 
@@ -115,13 +117,9 @@ const inlineSql = `SELECT i.ZIDENTIFIER, n.ZIDENTIFIER AS note, i.ZTYPEUTI1, i.Z
 
 type Row = Record<string, SQLOutputValue>;
 
-const appleEpochSeconds = 978_307_200;
-
 // Core Data stores dates as seconds since 2001-01-01.
 const time = (value: SQLOutputValue | undefined) =>
-  typeof value === 'number'
-    ? new Date(Math.round((value + appleEpochSeconds) * 1000))
-    : null;
+  typeof value === 'number' ? referenceDate(value) : null;
 
 const text = (value: SQLOutputValue | undefined) =>
   typeof value === 'string' ? value : null;

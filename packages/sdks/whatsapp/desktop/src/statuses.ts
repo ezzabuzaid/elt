@@ -1,5 +1,7 @@
 import { Snapshot } from '@zukhruf/sqlite-snapshot';
 
+import { referenceDate } from '@workspace/codec-apple-reference-date';
+
 import { messageMediaFile } from './chat-storage.ts';
 import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
 import { flag, number, onDisk, requiredText, text } from './values.ts';
@@ -92,9 +94,7 @@ const requiredColumns = {
 // Status.sqlite keeps whole seconds since 2001-01-01 UTC, so an instant to
 // the millisecond holds each exactly.
 function instant(value: unknown): string | null {
-  return value === null
-    ? null
-    : new Date((Number(value) + 978307200) * 1000).toISOString();
+  return value === null ? null : referenceDate(Number(value)).toISOString();
 }
 
 // statusDB/Status.sqlite as of one moment.
