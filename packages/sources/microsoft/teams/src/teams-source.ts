@@ -161,6 +161,7 @@ export class TeamsSource extends Source<TeamsScan> {
     state: unknown,
     _partition: null,
     scan: TeamsScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readersByName.get(stream.name);
@@ -172,8 +173,11 @@ export class TeamsSource extends Source<TeamsScan> {
       records,
       state,
       stream.emitsDeletes
-        ? { policy: new Coverage(({ key }) => reader.covers(scan, key)) }
-        : {},
+        ? {
+            policy: new Coverage(({ key }) => reader.covers(scan, key)),
+            signal,
+          }
+        : { signal },
     );
   }
 }

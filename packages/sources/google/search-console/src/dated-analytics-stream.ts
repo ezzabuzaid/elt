@@ -93,6 +93,7 @@ export abstract class DatedAnalyticsStream extends SearchConsoleStream {
       {
         policy: new ClosedWorld(),
         rereads: (record) => String(record.date) >= settled,
+        signal,
       },
     ))
       yield 'type' in message && message.type === 'STATE'

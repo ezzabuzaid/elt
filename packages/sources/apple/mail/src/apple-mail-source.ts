@@ -217,12 +217,13 @@ export class AppleMailSource extends Source<MailScan> {
     state: unknown,
     _partition: null,
     scan: MailScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { name } = configuration.stream;
     const reader = readersByName.get(name);
     if (reader === undefined)
       throw new TypeError(`Unknown Mail stream ${name}`);
-    yield* reader.extract(configuration, state, scan);
+    yield* reader.extract(configuration, state, scan, signal);
   }
 
   // Full Disk Access opens both stores Mail reads: its own and the system's

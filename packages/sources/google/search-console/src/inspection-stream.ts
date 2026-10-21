@@ -153,7 +153,10 @@ export abstract class InspectionStream extends SearchConsoleStream {
       configuration,
       validateRecords(this.stream, rows, 'Search Console'),
       saved.diff,
-      { policy: new Coverage(({ key }) => judged.has(key.inspectionUrl)) },
+      {
+        policy: new Coverage(({ key }) => judged.has(key.inspectionUrl)),
+        signal,
+      },
     ))
       if ('type' in message && message.type === 'STATE')
         yield {

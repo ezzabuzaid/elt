@@ -3128,6 +3128,7 @@ test('a checkpoint lost between commit and save replays to the same rows', async
     ) {
       yield* diffSnapshot(configuration, this.rows, state, {
         policy: new ClosedWorld(),
+        signal: undefined,
       });
     }
   }
@@ -3222,6 +3223,7 @@ test('array fields load as native arrays of their item type, in order, and an un
     ) {
       yield* diffSnapshot(configuration, this.rows, state, {
         policy: new ClosedWorld(),
+        signal: undefined,
       });
     }
   }

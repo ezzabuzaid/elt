@@ -70,6 +70,7 @@ export abstract class AppleMailStream {
     configuration: CopyConfiguration,
     state: unknown,
     scan: MailScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const { selection } = scan;
@@ -83,7 +84,7 @@ export abstract class AppleMailStream {
         yield* validateRecords(stream, [entry.data], 'Mail');
       }
     };
-    const messages = this.snapshot(configuration, scan, records, state);
+    const messages = this.snapshot(configuration, scan, records, state, signal);
     for await (const message of messages)
       yield 'type' in message || configuration.fileReads.length === 0
         ? message
@@ -97,9 +98,11 @@ export abstract class AppleMailStream {
     scan: MailScan,
     records: MailRecords,
     state: unknown,
+    signal: AbortSignal | undefined,
   ): AsyncIterable<SourceMessage> {
     return diffSnapshot(configuration, records(this.entries(scan)), state, {
       policy: new ClosedWorld(),
+      signal,
     });
   }
 

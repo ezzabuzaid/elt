@@ -99,12 +99,14 @@ export class AppleClockSource extends Source<ClockSnapshot> {
     state: unknown,
     _partition: null,
     snapshot: ClockSnapshot,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const records: Record<string, unknown>[] = readerOf(
       configuration.stream,
     ).read(snapshot);
     yield* diffSnapshot(configuration, records, state, {
       policy: new ClosedWorld(),
+      signal,
     });
   }
   protected override async *observe({

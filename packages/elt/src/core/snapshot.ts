@@ -1,3 +1,5 @@
+import { scheduler } from 'node:timers/promises';
+
 import {
   DeletionPolicy,
   type SnapshotChange,
@@ -21,6 +23,10 @@ export type SnapshotDiffOptions = {
   // deletes nothing, and the part that ends the scan deletes every key that
   // no part listed, for an upstream too large to list in one run.
   readonly continues?: boolean;
+  // The run's signal, as the extract receives it. A diff that finds nothing
+  // changed yields no message for the run to stop at, so it stops itself at
+  // the next record or group once the run is cancelled.
+  readonly signal: AbortSignal | undefined;
 };
 
 type SnapshotMessage<Data> =
@@ -41,14 +47,18 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
   state: unknown,
   options: SnapshotDiffOptions & {
     readonly rereads?: (record: Data) => boolean;
-  } = {},
+  },
 ): AsyncGenerator<SnapshotMessage<Data>> {
   const differential = differentialOf<Data>(stream, options);
   if (syncMode !== 'incremental') {
     for await (const data of records) yield { stream: stream.name, data };
     return;
   }
-  for await (const change of differential.diff(records, state, options))
+  for await (const change of differential.diff(
+    untilStopped(records, options.signal),
+    state,
+    options,
+  ))
     yield messageOf(stream, change);
 }
 
@@ -61,7 +71,7 @@ export async function* diffGroupedSnapshot<
   { stream, syncMode }: CopyConfiguration,
   groups: AsyncIterable<SnapshotGroup<Data>> | Iterable<SnapshotGroup<Data>>,
   state: unknown,
-  options: SnapshotDiffOptions = {},
+  options: SnapshotDiffOptions,
 ): AsyncGenerator<SnapshotMessage<Data>> {
   const differential = differentialOf<Data>(stream, options);
   if (syncMode !== 'incremental') {
@@ -70,9 +80,37 @@ export async function* diffGroupedSnapshot<
         yield { stream: stream.name, data };
     return;
   }
-  for await (const change of differential.diffGroups(groups, state, options))
+  for await (const change of differential.diffGroups(
+    untilStopped(groups, options.signal),
+    state,
+    options,
+  ))
     yield messageOf(stream, change);
 }
+
+// Each item of a scan until signal aborts. A scan that finds nothing changed
+// may never wait on I/O, and then no other task runs until it ends: not the
+// host's stop, its timers nor the requests it serves. So the scan gives the
+// event loop a turn every turnMs, and once the run is cancelled it ends with
+// the signal's reason, never as a complete scan the differential could
+// delete the unread keys of.
+async function* untilStopped<Item>(
+  items: AsyncIterable<Item> | Iterable<Item>,
+  signal: AbortSignal | undefined,
+): AsyncGenerator<Item> {
+  let turn = performance.now();
+  for await (const item of items) {
+    if (performance.now() - turn > turnMs) {
+      await scheduler.yield();
+      turn = performance.now();
+    }
+    signal?.throwIfAborted();
+    yield item;
+  }
+}
+
+// The longest a scan runs without letting another task run.
+const turnMs = 10;
 
 // A stream that declares no emitsDeletes has an upstream that forgets
 // records rather than deleting them: every vanished key leaves the snapshot

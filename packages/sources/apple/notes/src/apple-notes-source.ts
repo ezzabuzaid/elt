@@ -123,6 +123,7 @@ export class AppleNotesSource extends Source<NotesScan> {
     state: unknown,
     _partition: null,
     scan: NotesScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readersByName.get(stream.name);
@@ -131,6 +132,7 @@ export class AppleNotesSource extends Source<NotesScan> {
     const records = await reader.read(scan);
     const messages = diffSnapshot(configuration, records, state, {
       policy: new ClosedWorld(),
+      signal,
     });
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)

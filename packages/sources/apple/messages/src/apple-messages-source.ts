@@ -128,6 +128,7 @@ export class AppleMessagesSource extends Source<MessagesScan> {
     state: unknown,
     _partition: null,
     scan: MessagesScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readersByName.get(stream.name);
@@ -136,6 +137,7 @@ export class AppleMessagesSource extends Source<MessagesScan> {
     const records = reader.read(scan);
     const messages = diffSnapshot(configuration, records, state, {
       policy: new ClosedWorld(),
+      signal,
     });
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)

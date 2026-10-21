@@ -105,6 +105,7 @@ export abstract class BiomeActivityStream<P extends Properties, E> {
     configuration: CopyConfiguration,
     state: unknown,
     scan: ActivityScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const found = await scan.biome.segments(this.biome);
     const groups = await Promise.all(
@@ -116,6 +117,7 @@ export abstract class BiomeActivityStream<P extends Properties, E> {
     );
     yield* diffGroupedSnapshot(configuration, groups, state, {
       policy: new Retention(retainedSince(scan.startedAt, this.retentionDays)),
+      signal,
     });
   }
 

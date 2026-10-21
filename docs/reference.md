@@ -218,15 +218,16 @@ State belongs to the orchestration, not the destination, as in Airbyte, so any s
 
 ### Snapshot streams
 
-A source without a change feed can still load incrementally with `diffSnapshot(configuration, records, state, { policy })`, a [snapshot differential](https://github.com/JanuaryLabs/zukhruf/tree/main/packages/snapshot-differential#readme) (Labio and Garcia-Molina, VLDB 1996). The stream declares `sourceDefinedCursor`, and `emitsDeletes` when its upstream deletes records ([forgetting upstreams](#forgetting-upstreams) leave it out). The source passes one complete scan, the previous state, and a deletion policy:
+A source without a change feed can still load incrementally with `diffSnapshot(configuration, records, state, { policy, signal })`, a [snapshot differential](https://github.com/JanuaryLabs/zukhruf/tree/main/packages/snapshot-differential#readme) (Labio and Garcia-Molina, VLDB 1996). The stream declares `sourceDefinedCursor`, and `emitsDeletes` when its upstream deletes records ([forgetting upstreams](#forgetting-upstreams) leave it out). The source passes one complete scan, the previous state, a deletion policy, and the run's signal that its `extract` receives:
 
 ```ts
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
-protected override async *extract(configuration, state) {
+protected override async *extract(configuration, state, partition, context, signal) {
   // The scan lists every record, so a key it does not list was deleted.
   yield* diffSnapshot(configuration, this.scan(configuration.stream), state, {
     policy: new ClosedWorld(),
+    signal,
   });
 }
 ```
@@ -238,10 +239,11 @@ The policy is a `DeletionPolicy`, a Strategy that gives each vanished key a verd
 - **Replay:** if the checkpoint save fails after the data committed, the next run diffs against the older snapshot, re-applies the same upserts and deletions, and reaches the same rows.
 - **Failures:** an empty scan deletes every row. The source must throw on a failed read and never yield an empty collection instead. A key repeated within one scan is rejected, so a source that reads overlapping windows deduplicates first.
 - **Cost:** the source still reads everything each run; only destination writes shrink. The state holds one key and a 43-character fingerprint per row, so it grows with the stream.
+- **Stopping:** a scan that finds nothing changed yields no message until its state, and one that never waits on I/O would keep every other task of the process waiting until it ends, the host's stop included. So the diff gives the event loop a turn every 10 ms and checks `signal` at each record or group: a cancelled run stops within moments, never as a complete scan whose unread keys could be deleted. `signal` is required, so no source can leave it out.
 - **Reset:** resetting the checkpoint makes the next run reload everything but forgets which rows exist, so rows deleted upstream meanwhile stay behind. Reset together with clearing the target, or run a full-refresh overwrite.
 - **Full refresh:** the source calls `diffSnapshot` the same way in both sync modes. In a full refresh it checks the stream's declaration as an incremental copy does, then emits every record of the scan as the scan yields it, one at a time, and saves no state: the copy replaces its target, so nothing is compared. As in Airbyte's CDK, where `Stream.read` picks its checkpoint reader by the configured sync mode, the mode stays the framework's concern and never reaches the stream's own code.
 
-When the records come from inputs the source can fingerprint without reading them, such as files whose stat identifies their content, `diffGroupedSnapshot(configuration, groups, state)` skips the reading too. Each group is `{ key, fingerprint, records() }`: one input, a fingerprint of it, and a function that reads its records. In an incremental copy, a group whose fingerprint equals the one saved for its key keeps its saved rows and `records()` is never called; every other group, and any group whose fingerprint is `null`, is read and diffed record by record. The state is `{ groups: { <group key>: { fingerprint, snapshot } } }`, with `snapshot` as above, and `unknown`, the keys that the policy judged unknown, only when there is one.
+When the records come from inputs the source can fingerprint without reading them, such as files whose stat identifies their content, `diffGroupedSnapshot(configuration, groups, state, { signal })` skips the reading too. Each group is `{ key, fingerprint, records() }`: one input, a fingerprint of it, and a function that reads its records. In an incremental copy, a group whose fingerprint equals the one saved for its key keeps its saved rows and `records()` is never called; every other group, and any group whose fingerprint is `null`, is read and diffed record by record. The state is `{ groups: { <group key>: { fingerprint, snapshot } } }`, with `snapshot` as above, and `unknown`, the keys that the policy judged unknown, only when there is one.
 
 - **Deletions:** the policy judges each key that no group produced this run, carried or read. Under `ClosedWorld`, a vanished input deletes its rows, and a changed one deletes the rows it no longer produces. The groups must still come from a complete listing: the source enumerates every input on every run and skips only the reading.
 - **Fingerprints:** a fingerprint must change whenever the group's records could, including when the source's own parsing changes. A version constant in the fingerprint does that. A fingerprint that misses a change keeps stale rows without any error.
@@ -250,7 +252,7 @@ When the records come from inputs the source can fingerprint without reading the
 
 #### Expiring upstreams
 
-Some upstreams keep records only for a while and then drop them without any deletion, as macOS keeps activity for 28 days and Safari keeps history for its configured age. Without help, a snapshot diff would delete those rows too. A stream that declares `expiresBy`, the name of a non-null millisecond `date-time` property, keeps them: its source gives each diff a retention from the horizon that the upstream keeps records from, `diffSnapshot(configuration, records, state, { policy: new Retention(horizon) })`, and the same for `diffGroupedSnapshot`. A diff of such a stream without a policy fails.
+Some upstreams keep records only for a while and then drop them without any deletion, as macOS keeps activity for 28 days and Safari keeps history for its configured age. Without help, a snapshot diff would delete those rows too. A stream that declares `expiresBy`, the name of a non-null millisecond `date-time` property, keeps them: its source gives each diff a retention from the horizon that the upstream keeps records from, `diffSnapshot(configuration, records, state, { policy: new Retention(horizon), signal })`, and the same for `diffGroupedSnapshot`. A diff of such a stream without a policy fails.
 
 - **Expiry:** each snapshot entry also saves the record's `expiresBy` value (`[fingerprint, expiresBy]`), which the policy receives as `{ key, expiresBy }`. A key that vanished with a value before the horizon expired: it leaves the snapshot with no `DELETE`, and its row stays loaded. A key that vanished at or after the horizon is deleted as usual, so a deletion the upstream makes within its retention still reaches the destination.
 - **The horizon:** the source sets it on every read from the upstream's own retention rule, never from the oldest record it finds: a "clear all" leaves no old record, which would turn every deletion into an expiry. Erring toward an earlier horizon misses deletions of the oldest records; erring later deletes rows the upstream merely expired, so sources set it a margin inside the retention.
@@ -266,10 +268,11 @@ Some upstreams hold only part of their records and say which part, as the Slack 
 ```ts
 import { Coverage } from '@zukhruf/snapshot-differential';
 
-protected override async *extract(configuration, state, partition, scan) {
+protected override async *extract(configuration, state, partition, scan, signal) {
   // A vanished message is deleted only where the app still holds the history.
   yield* diffSnapshot(configuration, this.scan(configuration.stream), state, {
     policy: new Coverage(({ key }) => scan.holds(key.workspaceId, key.channelId, key.ts)),
+    signal,
   });
 }
 ```
@@ -291,6 +294,7 @@ yield *
   diffSnapshot(configuration, rows, state, {
     policy: new ClosedWorld(),
     rereads: (record) => String(record.date) >= nextStart,
+    signal,
   });
 ```
 
@@ -309,6 +313,7 @@ for await (const page of profile.pages(after)) {
     diffSnapshot(configuration, page.posts, state.diff, {
       policy: new ClosedWorld(),
       continues: page.hasNext, // more parts follow: delete nothing yet
+      signal,
     });
 }
 ```

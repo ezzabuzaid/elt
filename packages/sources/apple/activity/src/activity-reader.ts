@@ -15,6 +15,7 @@ type Reader = {
     configuration: CopyConfiguration,
     state: unknown,
     scan: ActivityScan,
+    signal: AbortSignal | undefined,
   ): AsyncIterable<SourceMessage>;
 };
 

@@ -202,7 +202,13 @@ export class AppleActivitySource extends Source<ActivityScan> {
     state: unknown,
     _partition: null,
     scan: ActivityScan,
+    signal: AbortSignal | undefined,
   ): AsyncIterable<SourceMessage> {
-    return readerOf(configuration.stream).messages(configuration, state, scan);
+    return readerOf(configuration.stream).messages(
+      configuration,
+      state,
+      scan,
+      signal,
+    );
   }
 }

@@ -160,7 +160,13 @@ export class MediaStream extends InstagramStream<typeof properties> {
           images.set(key, slide.image.url);
         });
       yield* this.withImages(
-        this.#part(scan, context.configuration, [...drafts.values()], ends),
+        this.#part(
+          scan,
+          context.configuration,
+          [...drafts.values()],
+          ends,
+          context.signal,
+        ),
         images,
         context,
       );
@@ -172,12 +178,13 @@ export class MediaStream extends InstagramStream<typeof properties> {
     configuration: CopyConfiguration,
     drafts: readonly RecordDraft<typeof properties>[],
     ends: boolean,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     for await (const message of diffSnapshot(
       configuration,
       this.validated(drafts),
       scan.diff,
-      { policy: new ClosedWorld(), continues: !ends },
+      { policy: new ClosedWorld(), continues: !ends, signal },
     ))
       if ('type' in message && message.type === 'STATE') {
         scan.diff = message.state;

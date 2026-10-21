@@ -37,6 +37,7 @@ export abstract class SnapshotStream<
     yield* this.withImages(
       diffSnapshot(context.configuration, valid, context.state, {
         policy: this.policy(),
+        signal: context.signal,
       }),
       images,
       context,

@@ -117,12 +117,13 @@ export class AppleRemindersSource extends Source<RemindersScan> {
     state: unknown,
     _partition: null,
     scan: RemindersScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     yield* diffSnapshot(
       configuration,
       readerOf(configuration.stream).read(scan),
       state,
-      { policy: new ClosedWorld() },
+      { policy: new ClosedWorld(), signal },
     );
   }
 }

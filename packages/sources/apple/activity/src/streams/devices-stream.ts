@@ -79,10 +79,12 @@ export class DevicesStream {
     configuration: CopyConfiguration,
     state: unknown,
     scan: ActivityScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const records = this.#read(scan);
     yield* diffSnapshot(configuration, records, state, {
       policy: new ClosedWorld(),
+      signal,
     });
   }
 

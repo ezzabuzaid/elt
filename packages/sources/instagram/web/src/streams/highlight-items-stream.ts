@@ -69,6 +69,7 @@ export class HighlightItemsStream extends InstagramStream<typeof properties> {
         diffSnapshot(context.configuration, this.validated(records), state, {
           policy: new ClosedWorld(),
           continues: page.next !== null,
+          signal,
         }),
         images,
         context,

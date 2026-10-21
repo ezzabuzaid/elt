@@ -55,12 +55,13 @@ export abstract class MailMessageStream extends AppleMailStream {
     scan: MailScan,
     records: MailRecords,
     state: unknown,
+    signal: AbortSignal | undefined,
   ): AsyncIterable<SourceMessage> {
     return diffGroupedSnapshot(
       configuration,
       this.#accepted(scan, records),
       state,
-      { policy: new ClosedWorld() },
+      { policy: new ClosedWorld(), signal },
     );
   }
 

@@ -106,6 +106,7 @@ export class AppleCallHistorySource extends Source<CallHistoryScan> {
     state: unknown,
     _partition: null,
     scan: CallHistoryScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readersByName.get(stream.name);
@@ -114,6 +115,7 @@ export class AppleCallHistorySource extends Source<CallHistoryScan> {
     const records = reader.read(scan);
     yield* diffSnapshot(configuration, records, state, {
       policy: new ClosedWorld(),
+      signal,
     });
   }
 }

@@ -112,6 +112,7 @@ export class AppleAccountsSource extends Source<AccountsScan> {
     state: unknown,
     _partition: null,
     scan: AccountsScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readersByName.get(stream.name);
@@ -120,6 +121,7 @@ export class AppleAccountsSource extends Source<AccountsScan> {
     const records = reader.read(scan);
     yield* diffSnapshot(configuration, records, state, {
       policy: new ClosedWorld(),
+      signal,
     });
   }
 }

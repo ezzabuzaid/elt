@@ -33,7 +33,7 @@ export abstract class ListingStream extends SearchConsoleStream {
       configuration,
       validateRecords(this.stream, rows, 'Search Console'),
       state,
-      { policy: new ClosedWorld() },
+      { policy: new ClosedWorld(), signal },
     );
   }
 

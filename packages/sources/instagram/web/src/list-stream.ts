@@ -72,6 +72,7 @@ export abstract class ListStream<
       for await (const message of diffSnapshot(configuration, records, diff, {
         policy: new ClosedWorld(),
         continues: !part.ends,
+        signal,
       }))
         if ('type' in message && message.type === 'STATE') {
           diff = message.state;

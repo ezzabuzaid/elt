@@ -88,10 +88,12 @@ export abstract class KnowledgeActivityStream<P extends Properties, E> {
     configuration: CopyConfiguration,
     state: unknown,
     scan: ActivityScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const records = this.#read(scan);
     yield* diffSnapshot(configuration, records, state, {
       policy: new Retention(retainedSince(scan.startedAt, this.retentionDays)),
+      signal,
     });
   }
 

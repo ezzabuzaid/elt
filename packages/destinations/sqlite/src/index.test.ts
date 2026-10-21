@@ -1274,6 +1274,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     ) {
       yield* diffSnapshot(configuration, rows, state, {
         policy: new ClosedWorld(),
+        signal: undefined,
       });
     }
   }
@@ -1381,6 +1382,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
         }),
         [],
         null,
+        { signal: undefined },
       ),
     ),
     /must declare sourceDefinedCursor to diff snapshots/,
@@ -1417,7 +1419,7 @@ test('a snapshot stream that emits no deletions keeps the rows of keys its upstr
       configuration: CopyConfiguration,
       state: unknown,
     ) {
-      yield* diffSnapshot(configuration, rows, state);
+      yield* diffSnapshot(configuration, rows, state, { signal: undefined });
     }
   }
 
@@ -1517,6 +1519,7 @@ test('a grouped snapshot stream that emits no deletions keeps the rows of a grou
           records: () => rows,
         })),
         state,
+        { signal: undefined },
       );
     }
   }
@@ -1617,7 +1620,7 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
           },
         })),
         state,
-        { policy: new ClosedWorld() },
+        { policy: new ClosedWorld(), signal: undefined },
       );
     }
   }
@@ -1759,6 +1762,218 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
   );
 });
 
+test('a snapshot pass over an unchanged scan that the host stops partway ends long before its last record, is recorded cancelled, and the next pass diffs against the snapshot the last whole pass saved', async () => {
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, name: { type: 'string' } },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  const removal = new AbortController();
+  const removed = new Error('the user removed this connector');
+  let stopAt = Number.POSITIVE_INFINITY;
+  const pulled: number[] = [];
+  class ScanningSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'scanning-test';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+      _partition: null,
+      _context: AsyncDisposable,
+      signal: AbortSignal | undefined,
+    ) {
+      // The same 20,000 records every pass, so a diff yields nothing until
+      // its state. While the scan reads record stopAt the host removes the
+      // connector, from a task of its own as a request or a timer would.
+      function* records() {
+        for (let index = 0; index < 20_000; index++) {
+          if (index === stopAt) setImmediate(() => removal.abort(removed));
+          pulled.push(index);
+          yield { id: String(index), name: 'unchanged' };
+        }
+      }
+      yield* diffSnapshot(configuration, records(), state, {
+        policy: new ClosedWorld(),
+        signal,
+      });
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stop-'));
+  const source = new ScanningSource();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const copy = new Copy(items, destination.table('items'), {
+    id: 'items',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+  });
+  const pipeline = new Pipeline({
+    history: await installedHistory(destination),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [copy],
+      }),
+    ],
+  });
+  const lastStatus = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare(
+        'SELECT status FROM sync_attempts ORDER BY attempt_id DESC LIMIT 1',
+      )
+      .get()?.status;
+  };
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 20_000, deleted: 0 }]);
+
+  stopAt = 1_000;
+  pulled.length = 0;
+  await assert.rejects(
+    pipeline.run({ signal: removal.signal }),
+    (error) => error === removed,
+  );
+
+  assert.ok(
+    pulled.length < 10_000,
+    `the stopped scan read ${pulled.length} of 20,000 records`,
+  );
+  assert.equal(lastStatus(), 'cancelled');
+  stopAt = Number.POSITIVE_INFINITY;
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
+});
+
+test('a grouped pass whose groups are all unchanged, stopped by the host partway, ends long before its last group, is recorded cancelled, and the next pass finds nothing changed', async () => {
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, name: { type: 'string' } },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  const removal = new AbortController();
+  const removed = new Error('the user removed this connector');
+  let stopAt = Number.POSITIVE_INFINITY;
+  const listed: number[] = [];
+  class FilesSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'files-test';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+      _partition: null,
+      _context: AsyncDisposable,
+      signal: AbortSignal | undefined,
+    ) {
+      // The same 20,000 files every pass, so a diff reads none of them
+      // again. While the scan lists file stopAt the host removes the
+      // connector, from a task of its own as a request or a timer would.
+      function* files() {
+        for (let file = 0; file < 20_000; file++) {
+          if (file === stopAt) setImmediate(() => removal.abort(removed));
+          listed.push(file);
+          yield {
+            key: `file-${file}`,
+            fingerprint: 'unchanged',
+            records: () => [{ id: String(file), name: 'unchanged' }],
+          };
+        }
+      }
+      yield* diffGroupedSnapshot(configuration, files(), state, {
+        policy: new ClosedWorld(),
+        signal,
+      });
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stop-'));
+  const source = new FilesSource();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const copy = new Copy(items, destination.table('items'), {
+    id: 'items',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+  });
+  const pipeline = new Pipeline({
+    history: await installedHistory(destination),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [copy],
+      }),
+    ],
+  });
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 20_000, deleted: 0 }]);
+
+  stopAt = 1_000;
+  listed.length = 0;
+  await assert.rejects(
+    pipeline.run({ signal: removal.signal }),
+    (error) => error === removed,
+  );
+
+  assert.ok(
+    listed.length < 10_000,
+    `the stopped scan listed ${listed.length} of 20,000 files`,
+  );
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  assert.equal(
+    database
+      .prepare(
+        'SELECT status FROM sync_attempts ORDER BY attempt_id DESC LIMIT 1',
+      )
+      .get()?.status,
+    'cancelled',
+  );
+  stopAt = Number.POSITIVE_INFINITY;
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
+});
+
 test('an expiring stream keeps the rows its upstream expired and deletes only what vanished after the horizon', async () => {
   type Row = { id: string; seenAt: string };
   type Group = { key: string; fingerprint: string; rows: Row[] };
@@ -1800,7 +2015,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
           configuration,
           scan.groups.flatMap(({ rows }) => rows),
           state,
-          { policy: new Retention(scan.horizon) },
+          { policy: new Retention(scan.horizon), signal: undefined },
         );
       else
         yield* diffGroupedSnapshot(
@@ -1811,7 +2026,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
             records: () => rows,
           })),
           state,
-          { policy: new Retention(scan.horizon) },
+          { policy: new Retention(scan.horizon), signal: undefined },
         );
     }
   }
@@ -1912,7 +2127,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
   });
   const failing: [() => AsyncIterable<unknown>, RegExp][] = [
     [
-      () => diffSnapshot(incrementalEvents, [], null),
+      () => diffSnapshot(incrementalEvents, [], null, { signal: undefined }),
       /expires by seenAt, so its snapshot diff needs a policy/,
     ],
     [
@@ -1923,6 +2138,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
           null,
           {
             policy: new Retention(scan.horizon),
+            signal: undefined,
           },
         ),
       /must carry seenAt as a timestamp to expire/,
@@ -2004,6 +2220,7 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
       if (configuration.stream === messages)
         yield* diffSnapshot(configuration, scan.rows, state, {
           policy: coverage,
+          signal: undefined,
         });
       else
         yield* diffGroupedSnapshot(
@@ -2016,7 +2233,7 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
             }),
           ),
           state,
-          { policy: coverage },
+          { policy: coverage, signal: undefined },
         );
     }
   }
@@ -2117,7 +2334,7 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
         ),
         [],
         null,
-        { policy: coverage },
+        { policy: coverage, signal: undefined },
       ),
     ),
     /emits no deletions, so its snapshot diff takes no policy/,
@@ -2161,6 +2378,7 @@ test('a diff whose next read repeats only a lookback window deletes none of the 
       yield* diffSnapshot(configuration, read.rows, state, {
         policy: new ClosedWorld(),
         rereads: ({ day }) => day >= next,
+        signal: undefined,
       });
     }
   }
@@ -2683,6 +2901,7 @@ class Sites extends Source {
     if (pages === undefined) throw new Error(`site ${site} is down`);
     yield* diffSnapshot(configuration, pages, state, {
       policy: new ClosedWorld(),
+      signal: undefined,
     });
   }
 }
@@ -3088,6 +3307,7 @@ class FileSource extends Source {
     const messages = this.snapshot
       ? diffSnapshot(configuration, scan, state, {
           policy: new ClosedWorld(),
+          signal: undefined,
         })
       : scan.map((data) => ({ stream: 'files', data }));
     for await (const message of messages) {
@@ -5680,16 +5900,14 @@ async function shapeChanges(
         state: unknown,
       ) {
         received.push(state);
-        yield* diffSnapshot(
-          configuration,
-          rows,
-          state,
-          horizon !== undefined
+        yield* diffSnapshot(configuration, rows, state, {
+          ...(horizon !== undefined
             ? { policy: new Retention(horizon) }
             : stream.emitsDeletes
               ? { policy: new ClosedWorld() }
-              : {},
-        );
+              : {}),
+          signal: undefined,
+        });
       }
     }
     return new Pipeline({
@@ -6427,6 +6645,7 @@ test('a copy that declares its columns from the stream and stores its files keep
         received.push(state);
         for await (const message of diffSnapshot(configuration, rows, state, {
           policy: new ClosedWorld(),
+          signal: undefined,
         })) {
           if ('type' in message) {
             yield message;

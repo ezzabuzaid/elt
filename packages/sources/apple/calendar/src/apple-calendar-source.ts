@@ -204,12 +204,14 @@ export class AppleCalendarSource extends Source<CalendarScan> {
     state: unknown,
     _partition: null,
     scan: CalendarScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readerOf(stream);
     const records = reader.read(scan);
     const messages = diffSnapshot(configuration, records, state, {
       policy: new ClosedWorld(),
+      signal,
     });
     if (configuration.fileReads.length === 0) {
       yield* messages;

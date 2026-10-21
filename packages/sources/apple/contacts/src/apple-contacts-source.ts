@@ -177,6 +177,7 @@ export class AppleContactsSource extends Source<ContactsScan> {
     state: unknown,
     _partition: null,
     scan: ContactsScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readersByName.get(stream.name);
@@ -185,6 +186,7 @@ export class AppleContactsSource extends Source<ContactsScan> {
     const records = await reader.read(scan);
     const messages = diffSnapshot(configuration, records, state, {
       policy: new ClosedWorld(),
+      signal,
     });
     if (configuration.fileReads.length === 0 || reader !== readers.images) {
       yield* messages;

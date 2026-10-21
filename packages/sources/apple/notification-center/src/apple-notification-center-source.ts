@@ -110,6 +110,7 @@ export class AppleNotificationCenterSource extends Source<NotificationCenterScan
     state: unknown,
     _partition: null,
     scan: NotificationCenterScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readersByName.get(stream.name);
@@ -120,7 +121,7 @@ export class AppleNotificationCenterSource extends Source<NotificationCenterScan
       configuration,
       records,
       state,
-      stream.emitsDeletes ? { policy: new ClosedWorld() } : {},
+      stream.emitsDeletes ? { policy: new ClosedWorld(), signal } : { signal },
     );
   }
 }

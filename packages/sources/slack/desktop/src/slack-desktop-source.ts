@@ -165,6 +165,7 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
     state: unknown,
     _partition: null,
     scan: SlackDesktopScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readersByName.get(stream.name);
@@ -176,8 +177,11 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
       records,
       state,
       stream.emitsDeletes
-        ? { policy: new Coverage(({ key }) => reader.covers(scan, key)) }
-        : {},
+        ? {
+            policy: new Coverage(({ key }) => reader.covers(scan, key)),
+            signal,
+          }
+        : { signal },
     );
     for await (const message of messages)
       if ('type' in message || configuration.fileReads.length === 0)

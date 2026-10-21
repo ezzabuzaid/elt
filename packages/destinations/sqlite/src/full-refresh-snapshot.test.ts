@@ -77,15 +77,16 @@ test('a full refresh checks a snapshot stream’s declaration as an incremental 
       state: unknown,
     ) {
       if (configuration.stream === deleting)
-        yield* diffSnapshot(configuration, rows, state);
+        yield* diffSnapshot(configuration, rows, state, { signal: undefined });
       else if (configuration.stream === forgetting)
         yield* diffGroupedSnapshot(
           configuration,
           [{ key: 'g', fingerprint: '1', records: () => rows }],
           state,
-          { policy: new ClosedWorld() },
+          { policy: new ClosedWorld(), signal: undefined },
         );
-      else yield* diffSnapshot(configuration, rows, state);
+      else
+        yield* diffSnapshot(configuration, rows, state, { signal: undefined });
     }
   }
 
@@ -184,6 +185,7 @@ test('a full refresh of a snapshot stream loads every record of each scan as sca
     ) {
       yield* diffSnapshot(configuration, rows, state, {
         policy: new ClosedWorld(),
+        signal: undefined,
       });
     }
   }
@@ -270,7 +272,7 @@ test('a full refresh of a grouped snapshot stream reads every group, also one wh
           records: () => rows,
         })),
         state,
-        { policy: new ClosedWorld() },
+        { policy: new ClosedWorld(), signal: undefined },
       );
     }
   }

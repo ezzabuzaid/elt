@@ -116,6 +116,7 @@ export class AppleWalletSource extends Source<WalletScan> {
     state: unknown,
     _partition: null,
     scan: WalletScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readersByName.get(stream.name);
@@ -124,6 +125,7 @@ export class AppleWalletSource extends Source<WalletScan> {
     const records = reader.read(scan);
     const messages = diffSnapshot(configuration, records, state, {
       policy: new ClosedWorld(),
+      signal,
     });
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)

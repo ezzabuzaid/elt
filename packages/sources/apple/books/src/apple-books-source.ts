@@ -166,12 +166,14 @@ export class AppleBooksSource extends Source<BooksScan> {
     state: unknown,
     _partition: null,
     scan: BooksScan,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readerOf(stream);
     const records = await reader.read(scan);
     const messages = diffSnapshot(configuration, records, state, {
       policy: new ClosedWorld(),
+      signal,
     });
     if (configuration.fileReads.length === 0) {
       yield* messages;

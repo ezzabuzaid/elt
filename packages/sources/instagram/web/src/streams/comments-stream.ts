@@ -111,6 +111,7 @@ export class CommentsStream extends InstagramStream<typeof properties> {
         {
           policy: new ClosedWorld(),
           continues: !part.ends,
+          signal,
         },
       ))
         if ('type' in message && message.type === 'STATE') {
