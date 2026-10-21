@@ -131,14 +131,15 @@ export class MailScan implements AsyncDisposable {
   }
 
   // Everything a message's records are read from: the .emlx and detached
-  // files by their versions, and the index's attachment rows. A file that
-  // changes while it is read fails the read, so a matching fingerprint means
-  // the saved records came from these inputs.
+  // files by their relative paths and fingerprints, and the index's attachment
+  // rows. A file that changes while it is read fails the read, so a matching
+  // fingerprint means the saved records came from these inputs, wherever the
+  // store now lives.
   fingerprint(id: string, file: MailFile | undefined): string {
     const { detached, indexed } = this.messageInputs();
     const identity = (input: MailFile) => [
       this.snapshot.files.relative(input),
-      input.version,
+      input.fingerprint,
     ];
     return createHash('sha256')
       .update(

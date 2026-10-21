@@ -26,6 +26,7 @@ import {
   PipelineError,
   type ReadMessage,
   type Source,
+  type StateMessage,
   type Stream,
   StreamStatus,
 } from '@workspace/elt';
@@ -1928,6 +1929,58 @@ test('Mail exports the native store, MIME, detached files and unavailable metada
       (result) => result.count === 0 && result.deleted === 0,
     ),
   );
+});
+
+test('a Mail store copied to another folder keeps the identity of every unchanged message, so none is read again', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-moved-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  // Whole-second times, which every copy keeps exactly.
+  execFileSync('/usr/bin/find', [
+    store.root,
+    ...['-type', 'f', '-exec', '/usr/bin/touch', '-t', '202501011200'],
+    ...['{}', '+'],
+  ]);
+  const copied = join(dir.path, 'Copied');
+  // Re-reading an unchanged message loads identical records, so only the
+  // snapshot a read saves shows whether its messages kept their identity.
+  const saved = async (source: AppleMailSource, state: unknown) => {
+    const messages = await Array.fromAsync(
+      source.read(
+        [
+          new Copy(
+            source.messageHeaders,
+            new SQLiteDestination({ path: ':memory:' }).table('headers'),
+            {
+              id: 'messageHeaders',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            },
+          ).configuration,
+        ],
+        { get: () => state },
+      ),
+    );
+    return messages.findLast(
+      (message): message is StateMessage =>
+        'type' in message && message.type === 'STATE',
+    )?.state;
+  };
+  const first = await saved(
+    new AppleMailSource({ path: store.root, accounts: store.accounts }),
+    null,
+  );
+  execFileSync('/bin/cp', ['-Rp', store.root, copied]);
+
+  const again = await saved(
+    new AppleMailSource({
+      path: copied,
+      accounts: new AccountsStore(join(copied, 'Accounts4.sqlite')),
+    }),
+    first,
+  );
+
+  assert.notEqual(first, undefined);
+  assert.deepEqual(again, first);
 });
 
 test('Mail message streams re-read only messages whose files or index attachment rows changed', async () => {

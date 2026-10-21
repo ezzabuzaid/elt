@@ -13,16 +13,25 @@ import { plistList, plistObject, requiredString } from './mail-plists.ts';
 // is its stat: device, inode, size, and mtime and ctime in nanoseconds; a
 // rewrite within one timestamp tick still changes ctime. Every read checks the
 // version before and after, so a file Mail changes while it is read fails the
-// read.
+// read. Its fingerprint is what a copy of the store on another disk or Mac
+// keeps: size and mtime, as rsync's quick check and git's
+// core.checkStat=minimal compare files.
 export class MailFile {
   readonly path: string;
   readonly size: number;
-  readonly version: string;
+  readonly fingerprint: string;
+  readonly #version: string;
 
-  private constructor(path: string, size: number, version: string) {
+  private constructor(
+    path: string,
+    size: number,
+    version: string,
+    fingerprint: string,
+  ) {
     this.path = path;
     this.size = size;
-    this.version = version;
+    this.#version = version;
+    this.fingerprint = fingerprint;
   }
 
   static async inspect(path: string): Promise<MailFile> {
@@ -33,6 +42,7 @@ export class MailFile {
       path,
       Number(info.size),
       `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`,
+      `${info.size}:${info.mtimeNs}`,
     );
   }
 
@@ -45,7 +55,7 @@ export class MailFile {
         );
       },
     );
-    if (current.version !== this.version)
+    if (current.#version !== this.#version)
       throw new MailChangingError(
         `Mail changed a file during extraction: ${this.path}`,
       );
