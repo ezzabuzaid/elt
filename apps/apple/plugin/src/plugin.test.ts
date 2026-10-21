@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { chmod, mkdir, mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -361,7 +361,10 @@ test('agents read the selected connectors, where each import lives and what macO
       connector: 'notes',
       scope: JSON.stringify(notes.scope),
       include_attachments: 0,
-      database: join(importDirectory(scratch.path, notes), 'data.sqlite'),
+      database: relative(
+        scratch.path,
+        join(importDirectory(scratch.path, notes), 'data.sqlite'),
+      ),
       connection_error: null,
       permissions: plugin.connector('notes').guidance(),
     },
@@ -369,13 +372,16 @@ test('agents read the selected connectors, where each import lives and what macO
       connector: 'mail',
       scope: '{}',
       include_attachments: 1,
-      database: join(
-        importDirectory(scratch.path, {
-          connector: 'mail',
-          scope: {},
-          includeAttachments: true,
-        }),
-        'data.sqlite',
+      database: relative(
+        scratch.path,
+        join(
+          importDirectory(scratch.path, {
+            connector: 'mail',
+            scope: {},
+            includeAttachments: true,
+          }),
+          'data.sqlite',
+        ),
       ),
       connection_error: null,
       permissions: plugin.connector('mail').guidance(),

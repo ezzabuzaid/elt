@@ -394,13 +394,17 @@ test(
       read(
         settingsFile,
         'SELECT connector, scope, include_attachments, database, connection_error FROM selected_connectors',
-      ).rows.map((row: Omit<SelectedConnector, 'sync'>) => ({
-        ...row,
-        sync: read(
-          row.database,
-          'SELECT latest_attempt_id, status, error, last_successful_sync_at FROM sync_status',
-        ).rows[0],
-      }));
+      ).rows.map((row: Omit<SelectedConnector, 'sync'>) => {
+        const database = join(dirname(settingsFile), row.database);
+        return {
+          ...row,
+          database,
+          sync: read(
+            database,
+            'SELECT latest_attempt_id, status, error, last_successful_sync_at FROM sync_status',
+          ).rows[0],
+        };
+      });
     // Waits until the selected connectors reach the state done looks for.
     const settled = async (
       what: string,
@@ -994,7 +998,10 @@ test(
         ).rows;
         loaded =
           notes !== undefined &&
-          read(notes.database, 'SELECT title FROM notes').rows.length > 0;
+          read(
+            join(dirname(settings), notes.database),
+            'SELECT title FROM notes',
+          ).rows.length > 0;
         if (!loaded) await sleep(500);
       }
       assert.ok(loaded, 'the Notes import never loaded the store’s notes');
@@ -1133,9 +1140,13 @@ test(
           settings,
           "SELECT database FROM selected_connectors WHERE connector = 'photos'",
         ).rows;
-        if (selected !== undefined && existsSync(selected.database))
+        const database =
+          selected === undefined
+            ? undefined
+            : join(dirname(settings), selected.database);
+        if (database !== undefined && existsSync(database))
           photos = read(
-            selected.database,
+            database,
             'SELECT id, title FROM photos ORDER BY id',
           ).rows;
       }
@@ -1171,7 +1182,7 @@ test(
         "SELECT database FROM selected_connectors WHERE connector = 'photos'",
       ).rows;
       const titled = read(
-        selected.database,
+        join(dirname(settings), selected.database),
         'SELECT id, title FROM titled_photos ORDER BY id',
         `.read "${preset}"`,
       );
@@ -1454,16 +1465,17 @@ async function chat(signal: AbortSignal, plugin: string, home: string) {
 
 // Where the import of a selected connector is, once it exists.
 function importOf(home: string, connector: string): string | undefined {
+  const store = join(
+    home,
+    'Library/Application Support/Context Compiler/Apple',
+  );
   const [selected] = read(
-    join(
-      home,
-      'Library/Application Support/Context Compiler/Apple/settings.sqlite',
-    ),
+    join(store, 'settings.sqlite'),
     `SELECT database FROM selected_connectors WHERE connector = '${connector}'`,
   ).rows;
-  return selected !== undefined && existsSync(selected.database)
-    ? selected.database
-    : undefined;
+  const database =
+    selected === undefined ? undefined : join(store, selected.database);
+  return database !== undefined && existsSync(database) ? database : undefined;
 }
 
 // How each pass of a connector's import ended, oldest first.

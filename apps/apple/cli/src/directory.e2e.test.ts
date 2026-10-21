@@ -43,11 +43,12 @@ for (const absolute of [false, true])
       using settings = new DatabaseSync(join(root, 'settings.sqlite'), {
         readOnly: true,
       });
-      const path = settings
+      const database = settings
         .prepare('SELECT database FROM selected_connectors WHERE connector = ?')
         .get('notes')?.database;
-      assert.ok(typeof path === 'string');
-      assert.ok(path.startsWith(`${root}/notes/`));
+      assert.ok(typeof database === 'string');
+      assert.match(database, /^notes\/[0-9a-f]{16}\/data\.sqlite$/);
+      const path = join(root, database);
       mkdirSync(dirname(path), { recursive: true });
       using imported = new DatabaseSync(path);
       imported.exec(

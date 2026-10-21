@@ -1545,7 +1545,7 @@ test('setup, sync, status and query read the Notes this Mac holds through docume
     JSON.parse(selected.stdout).map(
       ({ connector, database }: { connector: string; database: string }) => [
         connector,
-        realpathSync(database),
+        realpathSync(join(mac.path, 'outputs/cli', database)),
       ],
     ),
     [['notes', notes.database]],

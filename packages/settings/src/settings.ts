@@ -27,6 +27,8 @@ const heartbeatMs = 1_000;
 
 // Tables another version declared otherwise are replaced, and the selection
 // they held is lost: stored settings are disposable, so the user sets up again.
+// A selection and a failure name their import by its folder relative to the
+// root, so a store moved to another folder still names its imports.
 const settingsTables = new Declaration(
   [
     'CREATE TABLE selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL)',
@@ -38,11 +40,15 @@ const settingsTables = new Declaration(
 // Where a connector's import lives: one directory per selection, so a pass
 // still writing an earlier selection never touches the current one.
 export function importDirectory(root: string, selection: Selection): string {
+  return join(root, importFolder(selection));
+}
+
+function importFolder(selection: Selection): string {
   const key = createHash('sha256')
     .update(JSON.stringify([selection.scope, selection.includeAttachments]))
     .digest('hex')
     .slice(0, 16);
-  return join(root, selection.connector, key);
+  return join(selection.connector, key);
 }
 
 // Why a connector's import failed in a way its sync history in data.sqlite
@@ -76,7 +82,7 @@ const selectedConnectors = {
     include_attachments:
       '1 when attachment bytes are copied beside the records, 0 for metadata only.',
     database:
-      'Path of the SQLite file the import loads. It may not exist yet while the first import starts.',
+      'Path of the SQLite file the import loads, relative to the folder that holds this settings file. It may not exist yet while the first import starts.',
     connection_error:
       'Why the import last failed in a way sync_status cannot record, such as missing macOS access or a database it could not write; NULL when sync_status has the outcome. A connector with an error is inaccessible, not empty.',
     connection_failure_type:
@@ -161,7 +167,7 @@ export class Settings implements Disposable {
             selection.connector,
             JSON.stringify(selection.scope),
             selection.includeAttachments ? 1 : 0,
-            this.directory(selection),
+            importFolder(selection),
             permissions(selection),
           );
         this.settings.exec(
@@ -194,7 +200,7 @@ export class Settings implements Disposable {
   // import. It reads the settings again only when PRAGMA data_version says
   // another connection committed.
   removal(selection: Selection): Disposable & { readonly signal: AbortSignal } {
-    const directory = this.directory(selection);
+    const folder = importFolder(selection);
     const watcher = new DatabaseSync(this.#path, {
       readOnly: true,
       timeout: writerWaitMs,
@@ -211,7 +217,7 @@ export class Settings implements Disposable {
         const current = version.get()?.data_version;
         if (current === seen) return;
         seen = current;
-        if (selected.get(directory) === undefined)
+        if (selected.get(folder) === undefined)
           controller.abort(new ConnectorRemovedError(selection.connector));
       } catch (error) {
         controller.abort(error);
@@ -246,7 +252,7 @@ export class Settings implements Disposable {
       .prepare(
         'SELECT error, failure_type, failed_at FROM connection_failures WHERE directory=?',
       )
-      .get(this.directory(selection));
+      .get(importFolder(selection));
     return row === undefined
       ? undefined
       : {
@@ -265,13 +271,13 @@ export class Settings implements Disposable {
       .prepare(
         "INSERT INTO connection_failures (directory, error, failure_type, failed_at) VALUES(?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(directory) DO UPDATE SET error=excluded.error, failure_type=excluded.failure_type, failed_at=excluded.failed_at",
       )
-      .run(this.directory(selection), error, failureType);
+      .run(importFolder(selection), error, failureType);
   }
 
   clearConnectionFailure(selection: Selection) {
     this.settings
       .prepare('DELETE FROM connection_failures WHERE directory=?')
-      .run(this.directory(selection));
+      .run(importFolder(selection));
   }
 
   [Symbol.dispose]() {

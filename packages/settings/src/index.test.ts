@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, renameSync } from 'node:fs';
 import { mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
@@ -123,7 +123,7 @@ test('readers find each selected import, where it lives and what access it needs
       connector: 'notes',
       scope: '{"collectionIds":["folder-1"]}',
       include_attachments: 0,
-      database: store.database(notes),
+      database: relative(scratch.path, store.database(notes)),
       connection_error: 'Notes could not be opened.',
       connection_failure_type: 'config',
       permissions: 'Allow notes.',
@@ -132,11 +132,14 @@ test('readers find each selected import, where it lives and what access it needs
       connector: 'books',
       scope: '{}',
       include_attachments: 1,
-      database: store.database({
-        connector: 'books',
-        scope: {},
-        includeAttachments: true,
-      }),
+      database: relative(
+        scratch.path,
+        store.database({
+          connector: 'books',
+          scope: {},
+          includeAttachments: true,
+        }),
+      ),
       connection_error: null,
       connection_failure_type: null,
       permissions: 'Allow books.',
@@ -149,6 +152,35 @@ test('readers find each selected import, where it lives and what access it needs
     ).rows,
     [{ name: 'selected_connectors.database' }],
   );
+});
+
+test('a store moved to another folder still names its imports, their failures and their databases', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'store-'));
+  const notes = { connector: 'notes', scope: {}, includeAttachments: true };
+  const before = join(scratch.path, 'before');
+  const after = join(scratch.path, 'after');
+  {
+    using store = new Settings(before);
+    store.select([notes], options);
+    store.saveConnectionFailure(notes, 'Notes could not be opened.', 'config');
+  }
+  renameSync(before, after);
+
+  using moved = new Settings(after);
+  using removal = moved.removal(notes);
+  const { rows } = shell(
+    join(after, 'settings.sqlite'),
+    'SELECT database FROM selected_connectors',
+  );
+
+  assert.equal(removal.signal.aborted, false);
+  assert.equal(
+    moved.connectionFailure(notes)?.error,
+    'Notes could not be opened.',
+  );
+  assert.deepEqual(rows, [
+    { database: relative(after, moved.database(notes)) },
+  ]);
 });
 
 test('readers find selected_connectors empty in a new store and in one whose tables another version declared otherwise, before anything is selected', async () => {

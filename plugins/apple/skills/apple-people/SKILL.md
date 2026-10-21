@@ -13,7 +13,7 @@ A person is a Contacts card when a card holds one of their identifiers, else one
 
 ## Answer a question
 
-1. Find the imports and the model. The Apple status in this chat's context names each selected connector's `Database` under the Apple folder it names, and the path of `people.sql`. Without a status, read the selection from `"$HOME/Library/Application Support/Context Compiler/Apple/settings.sqlite"` (`SELECT connector, database FROM selected_connectors`); `people.sql` is in `server` of this plugin, two folders above this skill's folder.
+1. Find the imports and the model. The Apple status in this chat's context names each selected connector's `Database` under the Apple folder it names, and the path of `people.sql`. Without a status, read the selection from `"$HOME/Library/Application Support/Context Compiler/Apple/settings.sqlite"` (`SELECT connector, database FROM selected_connectors`); each `database` is relative to that Apple folder, so attach `"$HOME/Library/Application Support/Context Compiler/Apple/<database>"`. `people.sql` is in `server` of this plugin, two folders above this skill's folder.
 2. Check that all eight connectors are selected and each has a database. When one is not set up or has not finished its first import, say which, and answer from the `counterparts` views of the imports there are, as `$query-apple` describes.
 3. Attach each import under its connector's name, load the model, then query. Pass everything as arguments: a heredoc needs a temporary file, which the read-only sandbox refuses.
 
