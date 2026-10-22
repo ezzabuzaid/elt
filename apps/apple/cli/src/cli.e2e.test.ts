@@ -2332,13 +2332,15 @@ test('sync watch --connector watches only the connectors it names', async () => 
   }
 });
 
-test('status says a watched connector is current as of the watch’s latest check while Safari changes nothing', async () => {
+test('status says a watched connector is current as of the watch’s latest check while its store changes nothing', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
-  await withSafari(mac.path);
-  cli(mac.path, 'setup', '--connector', 'safari');
+  // passd has never fetched these passes from iCloud, so Wallet's store is
+  // current whenever it is read, and only the watch's checks move it.
+  withWallet(mac.path);
+  cli(mac.path, 'setup', '--connector', 'wallet');
   const watch = started(mac.path, 'sync', 'watch', '--json');
   try {
-    await watch.prints(({ connector }) => connector === 'safari');
+    await watch.prints(({ connector }) => connector === 'wallet');
     const status = () =>
       JSON.parse(cli(mac.path, 'status', '--json').stdout)[0];
     const passed = status();
@@ -2828,6 +2830,7 @@ function withWallet(mac: string) {
   store.exec(`
     CREATE TABLE "pass" ("pid" INTEGER, "unique_id" TEXT NOT NULL, "pass_type_pid" INTEGER NOT NULL, "serial_number" TEXT NOT NULL, "signing_date" INTEGER, "ingested_date" INTEGER, "modified_date" INTEGER, PRIMARY KEY (pid));
     CREATE TABLE pass_annotations (pass_pid INTEGER, sorting_state INTEGER, archived_timestamp INTEGER, PRIMARY KEY (pass_pid));
+    CREATE TABLE cloud_store_zone (pid INTEGER, container_database_pid INTEGER, zone_name TEXT, zone_owner TEXT, token_data BLOB, subscription_id TEXT, fetch_timestamp INTEGER, did_finish_initial_sync INTEGER, PRIMARY KEY (pid));
     INSERT INTO pass VALUES (1, 'Rj5JgNLqUsLcgX514jcGtHwF+aI=', 1, 'BP-845', 779580466, 779621300.66, 779621300.97);
     INSERT INTO pass_annotations VALUES (1, 0, NULL);
   `);
