@@ -85,8 +85,11 @@ export class AppleWalletSource extends Source<WalletScan> {
     return localAppleStoreCoverage;
   }
 
-  override async currentAsOf() {
-    return null;
+  // passd fetches the passes other devices sync through iCloud once a day,
+  // so the store is current only as of its last fetch. A Mac that does not
+  // sync Wallet holds only its own passes.
+  override async currentAsOf(): Promise<Date | null> {
+    return this.#store.lastFetch();
   }
 
   // passd commits to its database whenever a pass is added, updated,

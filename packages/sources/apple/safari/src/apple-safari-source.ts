@@ -23,6 +23,7 @@ import {
   type SafariVersion,
   safariContainer,
   safariDirectory,
+  safariRunning,
 } from '@workspace/sdk-apple-safari';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -163,8 +164,14 @@ export class AppleSafariSource extends Source<SafariScan> {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
 
-  override async currentAsOf() {
-    return null;
+  // Safari syncs history and cloud tabs from iCloud only while it runs, so
+  // while it is closed those stores stay as of its last write to them. Tab
+  // groups and bookmarks sync through helpers that run without Safari, and
+  // closed tabs and downloads hold only what happens on this Mac.
+  override async currentAsOf(stream: Stream): Promise<Date | null> {
+    const { store } = readerOf(stream);
+    if (store !== 'history' && store !== 'cloudTabs') return null;
+    return (await safariRunning()) ? null : this.#safari.lastWrite(store);
   }
 
   // Each store the streams read reports its own changes.

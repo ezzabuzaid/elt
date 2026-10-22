@@ -50,5 +50,6 @@ export {
   safariContainer,
   safariDirectory,
 } from './safari-location.ts';
+export { safariRunning } from './safari-app.ts';
 export { Safari, SafariHistory } from './safari.ts';
 export { type WindowState } from './window-state.ts';

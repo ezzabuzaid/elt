@@ -6,6 +6,7 @@ import { DataVersion } from '@zukhruf/sqlite-data-version';
 import { WalletUnavailableError } from './errors.ts';
 import { readPassBundle } from './pass-bundle.ts';
 import type { Pass } from './pass.ts';
+import { lastPassesFetch } from './passes-fetch.ts';
 import { walletRecords } from './wallet-records.ts';
 
 // Where macOS keeps this user's Wallet passes; no privacy grant guards it.
@@ -40,6 +41,14 @@ export class WalletStore {
         )),
       });
     return passes;
+  }
+
+  // When passd last fetched the passes other devices sync through iCloud, or
+  // null on a Mac that has never fetched them. passd fetches them once a day,
+  // so a pass added, changed or removed on another device reaches this Mac up
+  // to a day later.
+  lastFetch(): Date | null {
+    return lastPassesFetch(this.#database);
   }
 
   // A probe whose current value changes with each commit to the database,

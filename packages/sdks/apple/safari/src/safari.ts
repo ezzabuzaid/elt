@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import { lastWrite } from '@zukhruf/sqlite-data-version';
+
 import {
   type PlistValue,
   isBinaryPlist,
@@ -88,27 +90,43 @@ export class Safari {
 
   // Each profile's History.db, as SafariTabs.db lists the profiles.
   history(): SafariHistory {
-    const listings = (() => {
-      using database = tabsDatabase(storeFiles(this.location).tabs);
-      return profileListings(database);
-    })();
     const profiles: ProfileHistory[] = [];
     try {
-      for (const { profileId, serverId } of listings) {
-        if (serverId === null || profileId === null)
-          throw new TypeError('A Safari profile has no identifier');
-        profiles.push(
-          new ProfileHistory(
-            profileHistory(this.location, serverId),
-            profileId,
-          ),
-        );
-      }
+      for (const { path, profileId } of this.#profiles())
+        profiles.push(new ProfileHistory(path, profileId));
     } catch (error) {
       for (const profile of profiles) profile[Symbol.dispose]();
       throw error;
     }
     return new SafariHistory(profiles);
+  }
+
+  // When Safari last wrote this store. Safari syncs both from iCloud only
+  // while it runs, so while it is closed each stays as of then. A profile's
+  // History.db changes only when that profile has visits, so history takes
+  // the latest write to any of them, which marks when Safari last ran.
+  lastWrite(store: 'history' | 'cloudTabs'): Date {
+    const files =
+      store === 'history'
+        ? this.#profiles().map(({ path }) => path)
+        : [storeFiles(this.location).cloudTabs];
+    return new Date(
+      Math.max(
+        ...files.map((file) =>
+          lastWrite(file, SafariUnavailableError).getTime(),
+        ),
+      ),
+    );
+  }
+
+  // Never empty: SafariTabs.db always lists the default profile.
+  #profiles(): { path: string; profileId: string }[] {
+    using database = tabsDatabase(storeFiles(this.location).tabs);
+    return profileListings(database).map(({ profileId, serverId }) => {
+      if (serverId === null || profileId === null)
+        throw new TypeError('A Safari profile has no identifier');
+      return { path: profileHistory(this.location, serverId), profileId };
+    });
   }
 
   // How many days of history Safari keeps, from its preferences.

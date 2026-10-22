@@ -76,6 +76,7 @@ class ScratchWallet implements Disposable {
       CREATE INDEX pass_flavor_index ON pass (pass_flavor);
       CREATE INDEX pass_unique_id_index ON pass (unique_id);
       CREATE TABLE pass_annotations (pass_pid INTEGER, sorting_state INTEGER, archived_timestamp INTEGER, PRIMARY KEY (pass_pid));
+      CREATE TABLE cloud_store_zone (pid INTEGER, container_database_pid INTEGER, zone_name TEXT, zone_owner TEXT, token_data BLOB, subscription_id TEXT, fetch_timestamp INTEGER, did_finish_initial_sync INTEGER, PRIMARY KEY (pid));
     `);
   }
 
@@ -1415,7 +1416,6 @@ test('a Wallet watch loads each commit while passd keeps its store open, and sto
   );
   // passd holds its connection open the whole time.
   using passd = new ScratchWallet(dir.path, { existing: true });
-  passd.exec('CREATE TABLE cloud_store_zone (pid INTEGER, zone_name TEXT)');
   const controller = new AbortController();
   const batches: Record<string, { count: number; deleted: number }>[] = [];
   let abortedAt = Number.NaN;
@@ -1428,7 +1428,9 @@ test('a Wallet watch loads each commit while passd keeps its store open, and sto
     if (batches.length === 1) passd.add(eventTicket);
     // CloudKit bookkeeping commits without changing a pass.
     else if (batches.length === 2)
-      passd.exec("INSERT INTO cloud_store_zone VALUES (1, 'passes')");
+      passd.exec(
+        "INSERT INTO cloud_store_zone (pid, zone_name) VALUES (1, 'passes')",
+      );
     // Past the next one-second poll, so a spurious batch would show.
     else
       setTimeout(() => {
@@ -1565,6 +1567,61 @@ test('this Mac’s Wallet loads every pass passd lists, as passd records it, and
       streamNames.map((name) => [name, { count: 0, deleted: 0 }]),
     ),
   );
+});
+
+test('a Wallet import is current only as of passd’s oldest iCloud fetch of the passes, whatever it fetched for its other zones', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  walletFixture(dir.path);
+  {
+    using passd = new ScratchWallet(dir.path, { existing: true });
+    // One passes zone per CloudKit database: one fetched today, one the
+    // day before, one never.
+    passd.exec(`
+      INSERT INTO cloud_store_zone (pid, container_database_pid, zone_name, fetch_timestamp) VALUES
+        (1, 1, 'passes', ${appleTime('2026-10-22T08:00:00.000Z')}),
+        (2, 2, 'passes', ${appleTime('2026-10-22T02:12:26.173Z')}),
+        (3, 3, 'passes', NULL),
+        (4, 1, 'remoteAssets', ${appleTime('2026-10-22T01:00:00.000Z')});
+    `);
+  }
+  const run = await pipeline(
+    new AppleWalletSource({ directory: dir.path }),
+    dir.path,
+  );
+
+  await run.run();
+
+  const current = rows(
+    join(dir.path, 'out.sqlite'),
+    'SELECT current_as_of FROM stream_status',
+  ).map(({ current_as_of }) => current_as_of);
+  assert.ok(current.length > 0);
+  assert.deepEqual(new Set(current), new Set(['2026-10-22T02:12:26.173Z']));
+});
+
+test('a Wallet import on a Mac that has never fetched its passes from iCloud is current as of its pass', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  walletFixture(dir.path);
+  {
+    using passd = new ScratchWallet(dir.path, { existing: true });
+    passd.exec(
+      "INSERT INTO cloud_store_zone (pid, container_database_pid, zone_name) VALUES (1, 1, 'passes')",
+    );
+  }
+  const run = await pipeline(
+    new AppleWalletSource({ directory: dir.path }),
+    dir.path,
+  );
+
+  await run.run();
+
+  const out = join(dir.path, 'out.sqlite');
+  const [pass] = rows(out, 'SELECT started_at FROM sync_attempts');
+  const current = rows(out, 'SELECT current_as_of FROM stream_status').map(
+    ({ current_as_of }) => current_as_of,
+  );
+  assert.ok(current.length > 0);
+  assert.deepEqual(new Set(current), new Set([pass?.started_at]));
 });
 
 test('a Wallet watch keeps every stream current while passd changes nothing', async () => {

@@ -7,6 +7,7 @@ import {
   mkdtempDisposable,
   readFile,
   rm,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -1689,6 +1690,84 @@ test('Safari reads profiles, windows, tab groups, tabs with their back and forwa
   assert.equal(downloads[1]?.attachmentRef, null);
 });
 
+// The streams of the stores Safari syncs from iCloud only while it runs.
+const historyStreams = [
+  'historyItems',
+  'historyVisits',
+  'historyTags',
+  'historyItemTags',
+  'historyTombstones',
+];
+const cloudTabStreams = [
+  'cloudTabs',
+  'cloudTabPositions',
+  'cloudTabDevices',
+  'cloudTabCloseRequests',
+];
+
+// A running Safari keeps history and cloud tabs current, so their bound shows
+// only while it is closed, as on a Mac whose user browses elsewhere.
+const safariRuns = () =>
+  spawnSync('/usr/bin/pgrep', ['-x', 'Safari']).status === 0;
+
+// A Safari database as Safari leaves it when it quits: last written then, an
+// empty WAL beside it with the same time, and read later. Safari keeps that
+// WAL; without it, a reader would make one of its own, timed as its read.
+async function leftBySafari(path: string, written: string) {
+  await writeFile(`${path}-wal`, '');
+  for (const file of [path, `${path}-wal`])
+    await utimes(file, new Date('2026-10-22T09:00:00.000Z'), new Date(written));
+}
+
+test('while Safari is closed, its history and iCloud Tabs are current only as of its last write to them, and its other streams as of the pass', async (t) => {
+  if (safariRuns()) return t.skip('Safari runs');
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  const location = await safariFixture(scratch.path);
+  // Safari wrote the work profile's history last, then quit.
+  await leftBySafari(
+    join(location.directory, 'History.db'),
+    '2026-10-20T10:40:00.000Z',
+  );
+  await leftBySafari(
+    join(location.container, 'Profiles', 'SERVER-WORK', 'History.db'),
+    '2026-10-20T10:42:21.000Z',
+  );
+  await leftBySafari(
+    join(location.container, 'CloudTabs.db'),
+    '2026-10-20T10:42:22.000Z',
+  );
+  const safari = await appleImport(
+    new AppleSafariSource(location),
+    join(scratch.path, 'import'),
+  );
+
+  await safari.load();
+
+  const [pass] = safari.read('SELECT started_at FROM sync_attempts');
+  const current = Object.fromEntries(
+    safari
+      .read('SELECT stream, current_as_of FROM stream_status')
+      .map(({ stream, current_as_of }) => [String(stream), current_as_of]),
+  );
+  assert.deepEqual(
+    current,
+    Object.fromEntries(
+      Object.keys(current).map((stream) => [
+        stream,
+        historyStreams.includes(stream)
+          ? '2026-10-20T10:42:21.000Z'
+          : cloudTabStreams.includes(stream)
+            ? '2026-10-20T10:42:22.000Z'
+            : pass?.started_at,
+      ]),
+    ),
+  );
+  assert.ok(
+    Object.keys(current).length >
+      historyStreams.length + cloudTabStreams.length,
+  );
+});
+
 test('Safari follows each store on its own: a rerun writes nothing, and edits and deletions land', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
   const location = await safariFixture(scratch.path);
@@ -2734,9 +2813,18 @@ test('Safari reads this Mac’s stores into SQLite', async (t) => {
   );
 });
 
-test('a Safari watch keeps every stream current while its stores hold still', async () => {
+test('while Safari is closed, a Safari watch makes no pass while its stores hold still, and keeps history and iCloud Tabs current only as of Safari’s last write to them, every other stream as of each check', async (t) => {
+  if (safariRuns()) return t.skip('Safari runs');
   await using dir = await mkdtempDisposable(join(tmpdir(), 'safari-current-'));
   const location = await safariFixture(dir.path);
+  // Safari wrote these stores, then quit.
+  const written = '2026-10-20T10:42:21.000Z';
+  for (const path of [
+    join(location.directory, 'History.db'),
+    join(location.container, 'Profiles', 'SERVER-WORK', 'History.db'),
+    join(location.container, 'CloudTabs.db'),
+  ])
+    await leftBySafari(path, written);
   const source = new AppleSafariSource(location);
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
@@ -2762,35 +2850,38 @@ test('a Safari watch keeps every stream current while its stores hold still', as
   try {
     await watching.next();
     using out = new DatabaseSync(data, { readOnly: true });
-    const status = out.prepare(
-      'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
-    );
+    // Waits for a check the watch recorded, as its sync history keeps it.
+    for (
+      let tries = 0;
+      out.prepare('SELECT count(*) AS n FROM _elt_stream_checks').get()?.n ===
+      0;
+      tries++
+    ) {
+      if (tries > 100) assert.fail('the watch recorded no check');
+      await sleep(100);
+    }
     const [pass] = out
       .prepare('SELECT started_at, completed_at FROM sync_attempts')
       .all();
-    // Nothing changes, so only the watch's next check can move current_as_of.
-    for (
-      let tries = 0;
-      status
-        .all()
-        .some(
-          ({ current_as_of }) =>
-            String(current_as_of) <= String(pass?.started_at),
-        );
-      tries++
-    ) {
-      if (tries > 100)
-        assert.fail(`not current: ${JSON.stringify(status.all())}`);
-      await sleep(100);
-    }
 
     assert.equal(
       out.prepare('SELECT count(*) AS n FROM sync_attempts').get()?.n,
       1,
     );
-    for (const row of status.all()) {
-      assert.equal(row.status, 'succeeded', String(row.stream));
+    const status = out
+      .prepare(
+        'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
+      )
+      .all();
+    assert.ok(status.length > historyStreams.length + cloudTabStreams.length);
+    for (const row of status) {
+      const stream = String(row.stream);
+      assert.equal(row.status, 'succeeded', stream);
       assert.equal(row.last_successful_sync_at, pass?.completed_at);
+      if ([...historyStreams, ...cloudTabStreams].includes(stream))
+        assert.equal(row.current_as_of, written, stream);
+      else
+        assert.ok(String(row.current_as_of) > String(pass?.started_at), stream);
     }
   } finally {
     await watching.return(undefined);
