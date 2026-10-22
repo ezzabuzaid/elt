@@ -79,7 +79,7 @@ const pollIntervalMs = 1000;
 // Reads what the Microsoft Teams app keeps on this Mac, from its own store,
 // without Microsoft Graph, a token or the network.
 export class TeamsSource extends Source<TeamsScan> {
-  readonly identity: string;
+  readonly identity = 'microsoft-teams';
   protected readonly catalog = catalog;
   readonly accounts = readers.accounts.describe();
   readonly conversations = readers.conversations.describe();
@@ -112,7 +112,6 @@ export class TeamsSource extends Source<TeamsScan> {
     this.directory = directory;
     this.scope = scope;
     this.#store = new TeamsStore(directory);
-    this.identity = `microsoft-teams:${directory}`;
     Object.freeze(this);
   }
 

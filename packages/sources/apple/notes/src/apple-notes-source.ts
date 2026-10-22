@@ -52,7 +52,7 @@ const launchIntervalMs = 30_000;
 // export. Only Notes.app syncs iCloud notes, so a watch keeps it running,
 // hidden.
 export class AppleNotesSource extends Source<NotesScan> {
-  readonly identity: string;
+  readonly identity = 'apple-notes';
   protected readonly catalog = catalog;
   readonly accounts = readers.accounts.describe();
   readonly folders = readers.folders.describe();
@@ -75,7 +75,6 @@ export class AppleNotesSource extends Source<NotesScan> {
     this.path = path;
     this.scope = scope;
     this.#store = new NotesStore(path);
-    this.identity = `apple-notes:${path}`;
     Object.freeze(this);
   }
 

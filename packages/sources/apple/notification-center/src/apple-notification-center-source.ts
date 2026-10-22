@@ -46,7 +46,7 @@ const pollIntervalMs = 1000;
 // Reads this Mac's Notification Center, the store usernoted keeps, without
 // Notification Center or the UserNotifications framework.
 export class AppleNotificationCenterSource extends Source<NotificationCenterScan> {
-  readonly identity: string;
+  readonly identity = 'apple-notification-center';
   protected readonly catalog = catalog;
   readonly notifications = readers.notifications.describe();
   readonly apps = readers.apps.describe();
@@ -62,7 +62,6 @@ export class AppleNotificationCenterSource extends Source<NotificationCenterScan
     this.path = path;
     this.scope = scope;
     this.#store = new NotificationCenterStore(path);
-    this.identity = `apple-notification-center:${path}`;
     Object.freeze(this);
   }
 

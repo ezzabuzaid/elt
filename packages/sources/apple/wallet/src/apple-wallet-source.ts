@@ -53,7 +53,7 @@ const pollIntervalMs = 1000;
 // Reads the passes in this Mac's Wallet from the store passd keeps, without
 // Wallet or PassKit, which show an app only the passes its issuer signed.
 export class AppleWalletSource extends Source<WalletScan> {
-  readonly identity: string;
+  readonly identity = 'apple-wallet';
   protected readonly catalog = catalog;
   readonly passes = readers.passes.describe();
   readonly passFields = readers.passFields.describe();
@@ -69,7 +69,6 @@ export class AppleWalletSource extends Source<WalletScan> {
   constructor({ directory = walletStorePath }: { directory?: string } = {}) {
     super();
     this.#store = new WalletStore(directory);
-    this.identity = `apple-wallet:${directory}`;
     Object.freeze(this);
   }
 

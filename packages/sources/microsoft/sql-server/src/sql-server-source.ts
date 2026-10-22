@@ -78,7 +78,7 @@ export class SqlServerSource extends Source<SqlServerSession> {
     streams: readonly SqlServerStream[],
   ) {
     super();
-    this.identity = `sql-server:${database.location}`;
+    this.identity = `sql-server:${database.name}`;
     this.#database = database;
     this.#streams = new Map(
       streams.map((stream) => [stream.stream.name, stream]),

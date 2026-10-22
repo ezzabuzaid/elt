@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import {
   chmod,
+  cp,
   mkdir,
   mkdtempDisposable,
   open,
@@ -3182,5 +3183,80 @@ test('teams options name the account by its organization’s domain, a team with
         ['Release', 'team / reviews', 'team 19:design-general@thread.tacv2'],
       ],
     ],
+  );
+});
+
+test('a Mac copied to another home resumes its imports from their checkpoints, with no reload', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  const before = join(scratch.path, 'ada');
+  const after = join(scratch.path, 'grace');
+  await mkdir(before);
+  await withNotes(before);
+  withWallet(before);
+  const setup = cli(
+    before,
+    'setup',
+    '--connector',
+    'notes',
+    '--connector',
+    'wallet',
+    '--json',
+  );
+  assert.equal(setup.status, 0, setup.stderr);
+  const first = cli(before, 'sync', '--json');
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+
+  // Migration Assistant copies the home, the apps' stores and the imports
+  // with it, to a Mac whose user has another name; the old Mac is gone.
+  await cp(before, after, { recursive: true });
+  await rm(before, { recursive: true });
+  const synced = cli(after, 'sync', '--json');
+
+  assert.equal(synced.status, 0, synced.stdout + synced.stderr);
+  assert.deepEqual(
+    lines(synced.stdout).map(({ connector, status, streams }) => ({
+      connector,
+      status,
+      changed: streams.filter(
+        ({ written, deleted }: { written: number; deleted: number }) =>
+          written + deleted > 0,
+      ),
+    })),
+    [
+      { connector: 'notes', status: 'succeeded', changed: [] },
+      { connector: 'wallet', status: 'succeeded', changed: [] },
+    ],
+  );
+  const text = cli(
+    after,
+    'query',
+    'notes',
+    `SELECT t.content FROM attachments a
+     JOIN attachment_text t ON t.ref = a.attachmentRef`,
+    '--json',
+  );
+  assert.deepEqual(JSON.parse(text.stdout), [{ content: 'attached words' }]);
+  const notes = JSON.parse(cli(after, 'status', '--json').stdout).find(
+    ({ connector }: { connector: string }) => connector === 'notes',
+  );
+  const [attachment] = JSON.parse(
+    cli(
+      after,
+      'query',
+      'notes',
+      'SELECT attachmentRef FROM attachments WHERE attachmentRef IS NOT NULL',
+      '--json',
+    ).stdout,
+  );
+  assert.equal(
+    await readFile(
+      join(
+        dirname(String(notes?.database)),
+        'files',
+        String(attachment?.attachmentRef),
+      ),
+      'utf8',
+    ),
+    'attached words',
   );
 });

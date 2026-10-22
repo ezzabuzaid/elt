@@ -79,7 +79,7 @@ const pollIntervalMs = 1000;
 // Reads what the Slack app keeps on this Mac, from its own store, without
 // Slack's API, a token or the network.
 export class SlackDesktopSource extends Source<SlackDesktopScan> {
-  readonly identity: string;
+  readonly identity = 'slack-desktop';
   protected readonly catalog = catalog;
   readonly workspaces = readers.workspaces.describe();
   readonly channels = readers.channels.describe();
@@ -112,7 +112,6 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
     this.directory = directory;
     this.scope = scope;
     this.#store = new SlackDesktopStore(directory);
-    this.identity = `slack-desktop:${directory}`;
     Object.freeze(this);
   }
 

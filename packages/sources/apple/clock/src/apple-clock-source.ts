@@ -65,7 +65,7 @@ function readerOf(stream: Stream) {
 }
 
 export class AppleClockSource extends Source<ClockSnapshot> {
-  readonly identity: string;
+  readonly identity = 'apple-clock';
   protected readonly catalog = catalog;
   readonly #store: ClockStore;
   readonly alarms = alarmsReader.describe();
@@ -81,7 +81,6 @@ export class AppleClockSource extends Source<ClockSnapshot> {
   constructor(location: ClockLocation = clockLocation) {
     super();
     this.#store = new ClockStore(location);
-    this.identity = `apple-clock:${JSON.stringify([location.database, location.cities, location.stopwatches])}`;
   }
   protected override open(streams: readonly Stream[]): Promise<ClockSnapshot> {
     return this.#store.open(

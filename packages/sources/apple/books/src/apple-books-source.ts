@@ -78,7 +78,7 @@ const pollIntervalMs = 1000;
 // Reads Books' own stores, so Books need not run to export. What Books syncs
 // from the user's other devices is what bookdatastored last fetched.
 export class AppleBooksSource extends Source<BooksScan> {
-  readonly identity: string;
+  readonly identity = 'apple-books';
   protected readonly catalog = catalog;
   readonly libraryAssets = readers.libraryAssets.describe();
   readonly collections = readers.collections.describe();
@@ -107,7 +107,6 @@ export class AppleBooksSource extends Source<BooksScan> {
     super();
     this.location = Object.freeze({ container, groupContainer });
     this.#books = new Books(this.location);
-    this.identity = `apple-books:${container}:${groupContainer}`;
     Object.freeze(this);
   }
 

@@ -100,7 +100,7 @@ const pollIntervalMs = 1000;
 // fetches history and tabs from the user's other devices, so what they
 // contribute is what Safari last fetched while it ran.
 export class AppleSafariSource extends Source<SafariScan> {
-  readonly identity: string;
+  readonly identity = 'apple-safari';
   protected readonly catalog = catalog;
   readonly historyItems = readers.historyItems.describe();
   readonly historyVisits = readers.historyVisits.describe();
@@ -144,7 +144,6 @@ export class AppleSafariSource extends Source<SafariScan> {
     this.location = Object.freeze({ directory, container });
     this.scope = scope;
     this.#safari = new Safari(this.location);
-    this.identity = `apple-safari:${directory}:${container}`;
     Object.freeze(this);
   }
 

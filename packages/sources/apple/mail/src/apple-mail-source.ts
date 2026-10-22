@@ -138,7 +138,7 @@ export const restrictedMailStreams = [
 ] as const;
 
 export class AppleMailSource extends Source<MailScan> {
-  readonly identity: string;
+  readonly identity = 'apple-mail';
   protected readonly catalog = catalog;
   readonly accounts = readers.accounts.describe();
   readonly smtpServers = readers.smtpServers.describe();
@@ -204,7 +204,6 @@ export class AppleMailSource extends Source<MailScan> {
     this.#store = new MailStore(path);
     this.#accounts = accounts;
     this.scope = scope;
-    this.identity = `apple-mail:${path}`;
     Object.freeze(this);
   }
 

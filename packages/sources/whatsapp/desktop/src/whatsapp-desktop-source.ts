@@ -116,7 +116,7 @@ const pollIntervalMs = 1000;
 // Reads what WhatsApp for Mac keeps on this Mac, from its own stores, without
 // WhatsApp's servers, a session or the network.
 export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
-  readonly identity: string;
+  readonly identity = 'whatsapp-desktop';
   protected readonly catalog = catalog;
   readonly chats = readers.chats.describe();
   readonly messages = readers.messages.describe();
@@ -160,7 +160,6 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
     this.container = container;
     this.scope = scope;
     this.#whatsapp = new WhatsApp(container);
-    this.identity = `whatsapp-desktop:${container}`;
     Object.freeze(this);
   }
 

@@ -51,7 +51,7 @@ const pollIntervalMs = 1000;
 // Reads the system Accounts store, where macOS keeps every account its apps
 // sync through, without the Accounts framework or any app.
 export class AppleAccountsSource extends Source<AccountsScan> {
-  readonly identity: string;
+  readonly identity = 'apple-accounts';
   protected readonly catalog = catalog;
   readonly accounts = readers.accounts.describe();
   readonly accountProperties = readers.accountProperties.describe();
@@ -69,7 +69,6 @@ export class AppleAccountsSource extends Source<AccountsScan> {
     super();
     this.path = path;
     this.#store = new AccountsStore(path);
-    this.identity = `apple-accounts:${path}`;
     Object.freeze(this);
   }
 

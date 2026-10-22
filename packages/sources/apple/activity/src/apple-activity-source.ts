@@ -82,7 +82,7 @@ const readerOf = (stream: Stream): ActivityReader => {
 // lacks, and Biome's device list. macOS drops activity after each stream's
 // maximum age; rows the source loaded stay.
 export class AppleActivitySource extends Source<ActivityScan> {
-  readonly identity: string;
+  readonly identity = 'apple-activity';
   protected readonly catalog = catalog;
   readonly appFocus = readers.appFocus.describe();
   readonly screenTimeAppUsage = readers.screenTimeAppUsage.describe();
@@ -117,7 +117,6 @@ export class AppleActivitySource extends Source<ActivityScan> {
     super();
     this.location = Object.freeze({ biome, knowledge });
     this.pollIntervalMs = pollIntervalMs;
-    this.identity = `apple-activity:${biome}:${knowledge}`;
     Object.freeze(this);
   }
 

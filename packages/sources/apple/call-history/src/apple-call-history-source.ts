@@ -46,7 +46,7 @@ const pollIntervalMs = 1000;
 // Reads this Mac's call history, the store callhistoryd keeps for Phone and
 // FaceTime, without either app or the CallHistory framework.
 export class AppleCallHistorySource extends Source<CallHistoryScan> {
-  readonly identity: string;
+  readonly identity = 'apple-call-history';
   protected readonly catalog = catalog;
   readonly calls = readers.calls.describe();
   readonly callParticipants = readers.callParticipants.describe();
@@ -63,7 +63,6 @@ export class AppleCallHistorySource extends Source<CallHistoryScan> {
     this.path = path;
     this.scope = scope;
     this.#store = new CallHistoryStore(path);
-    this.identity = `apple-call-history:${path}`;
     Object.freeze(this);
   }
 

@@ -60,7 +60,7 @@ const readersByName = new Map<string, MessagesReader>(
 const pollIntervalMs = 1000;
 
 export class AppleMessagesSource extends Source<MessagesScan> {
-  readonly identity: string;
+  readonly identity = 'apple-messages';
   protected readonly catalog = catalog;
   readonly chats = readers.chats.describe();
   readonly handles = readers.handles.describe();
@@ -85,7 +85,6 @@ export class AppleMessagesSource extends Source<MessagesScan> {
     this.path = path;
     this.scope = scope;
     this.#store = new MessagesStore(path);
-    this.identity = `apple-messages:${path}`;
     Object.freeze(this);
   }
 

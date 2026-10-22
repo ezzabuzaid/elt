@@ -11,6 +11,9 @@ import { SqlServerSession } from './sql-server-session.ts';
 export class SqlServerDatabase {
   // Server and database, without credentials.
   readonly location: string;
+  // The database's own name, which stays when the server is reached another
+  // way.
+  readonly name: string;
   readonly #config: sql.config;
 
   constructor(connectionString: string) {
@@ -23,6 +26,7 @@ export class SqlServerDatabase {
       );
     const instance = config.options?.instanceName;
     this.location = `${config.server}${instance ? `\\${instance}` : ''}:${config.port ?? 1433}/${config.database}`;
+    this.name = config.database;
     // A read streams a whole table, so no time limit fits every table.
     this.#config = { ...config, requestTimeout: 0, pool: { min: 0, max: 4 } };
     Object.freeze(this);

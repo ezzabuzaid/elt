@@ -90,7 +90,7 @@ const pollIntervalMs = 1000;
 // Reads Contacts' own Core Data stores, one per account, so Contacts.app
 // need not run and no Contacts.framework entitlement is needed for notes.
 export class AppleContactsSource extends Source<ContactsScan> {
-  readonly identity: string;
+  readonly identity = 'apple-contacts';
   protected readonly catalog = catalog;
   readonly containers = readers.containers.describe();
   readonly groups = readers.groups.describe();
@@ -133,7 +133,6 @@ export class AppleContactsSource extends Source<ContactsScan> {
     this.scope = scope;
     this.#preferences = preferences;
     this.#store = new ContactsStore(directory);
-    this.identity = `apple-contacts:${directory}`;
     Object.freeze(this);
   }
 
