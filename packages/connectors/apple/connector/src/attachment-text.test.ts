@@ -37,6 +37,15 @@ import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-documen
 
 import { AttachmentText } from './attachment-text.ts';
 
+// A source whose upstream is current whenever it is read.
+abstract class LiveSource<
+  Context extends AsyncDisposable = AsyncDisposable,
+> extends Source<Context> {
+  override async currentAsOf() {
+    return null;
+  }
+}
+
 // The import whose stored files the text reads: one record per file in a
 // folder, its copy stored through LocalFiles as AppleConnector stores
 // attachments, and deleted once its file is.
@@ -57,7 +66,7 @@ const documents = new Stream({
   emitsDeletes: true,
 });
 
-class FolderSource extends Source {
+class FolderSource extends LiveSource {
   readonly identity = 'folder';
   protected readonly catalog = new Catalog([documents]);
   readonly #folder: string;

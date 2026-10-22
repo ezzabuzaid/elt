@@ -239,6 +239,12 @@ export class AppleMailSource extends Source<MailScan> {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
 
+  // Mail and its daemon write the index as mail arrives, also while
+  // Mail.app is closed, so the store is current only as of its last write.
+  override async currentAsOf(): Promise<Date> {
+    return this.#store.lastWrite();
+  }
+
   // Polls the store's version, which reports index commits and file changes,
   // and, while an account stream is selected, the Accounts store's; a change
   // there refreshes only the account streams.

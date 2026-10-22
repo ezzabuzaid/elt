@@ -102,6 +102,10 @@ export class GoogleHealthSource extends Source<GoogleHealthScan> {
     };
   }
 
+  override async currentAsOf() {
+    return null;
+  }
+
   // Only the user can fix an account without a Google Health profile, a
   // grant Google no longer refreshes, or a grant without the data's scope.
   override failureType(error: unknown): FailureType {

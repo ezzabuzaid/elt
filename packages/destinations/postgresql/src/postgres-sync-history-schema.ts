@@ -3,13 +3,14 @@ import { syncHistoryRelations } from '@workspace/elt';
 import type { PostgresView } from './postgres-views.ts';
 
 // When connector's stream last matched its upstream: the start of its last
-// successful pass, or a later check that found it unchanged. NULL if it never
-// succeeded.
+// successful pass, or a later check that found it unchanged, each no later
+// than when the source said the upstream itself was last current. NULL if it
+// never succeeded. LEAST and GREATEST skip NULLs.
 const currentAsOf = (connector: string, stream: string) => `(
-        SELECT CASE WHEN success.id IS NULL THEN NULL ELSE GREATEST(success.started_at, k.checked_at) END
+        SELECT CASE WHEN success.id IS NULL THEN NULL ELSE GREATEST(LEAST(success.started_at, success.upstream_current_as_of), k.checked_at) END
         FROM (SELECT 1) one
         LEFT JOIN LATERAL (
-          SELECT s.id, s.started_at FROM _warehouse.extraction_coverage sc
+          SELECT s.id, s.started_at, sc.upstream_current_as_of FROM _warehouse.extraction_coverage sc
           JOIN _warehouse.sync_attempts s ON s.id = sc.attempt_id
           WHERE s.connector = ${connector} AND sc.stream = ${stream} AND sc.status = 'succeeded'
           ORDER BY s.completed_at DESC, s.id DESC LIMIT 1
@@ -84,7 +85,8 @@ export const syncHistoryTables = [
     description text NOT NULL CHECK (btrim(description) <> ''), selection jsonb NOT NULL,
     status text NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'succeeded', 'partial', 'failed', 'cancelled')),
     written_count bigint CHECK (written_count >= 0), deleted_count bigint CHECK (deleted_count >= 0),
-    failures jsonb NOT NULL DEFAULT '[]', PRIMARY KEY (attempt_id, stream)
+    failures jsonb NOT NULL DEFAULT '[]', upstream_current_as_of timestamptz,
+    PRIMARY KEY (attempt_id, stream)
   )`,
   // Each stream's latest check by a watch that found it unchanged.
   `CREATE TABLE IF NOT EXISTS _warehouse.stream_checks (

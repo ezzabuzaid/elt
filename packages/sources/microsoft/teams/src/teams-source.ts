@@ -132,6 +132,12 @@ export class TeamsSource extends Source<TeamsScan> {
     };
   }
 
+  // Teams' web client writes its caches only while the app runs, so the
+  // store is current only as of its last write.
+  override async currentAsOf(): Promise<Date> {
+    return this.#store.lastWrite();
+  }
+
   // The web client writes its caches as it works, so a write wakes every
   // selected stream; the snapshot diff writes nothing for those that did not
   // change.

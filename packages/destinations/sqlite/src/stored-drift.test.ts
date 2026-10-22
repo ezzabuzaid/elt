@@ -24,9 +24,18 @@ import {
   readPassStatus,
 } from './index.ts';
 
+// A source whose upstream is current whenever it is read.
+abstract class LiveSource<
+  Context extends AsyncDisposable = AsyncDisposable,
+> extends Source<Context> {
+  override async currentAsOf() {
+    return null;
+  }
+}
+
 // Two records behind a cursor, so a run that resumes its checkpoint reads
 // none and one that starts over reads both.
-class Counting extends Source {
+class Counting extends LiveSource {
   readonly identity = 'counting';
   readonly records = new Stream({
     name: 'records',

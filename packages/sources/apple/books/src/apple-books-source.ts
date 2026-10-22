@@ -126,6 +126,10 @@ export class AppleBooksSource extends Source<BooksScan> {
     return localAppleStoreCoverage;
   }
 
+  override async currentAsOf() {
+    return null;
+  }
+
   // Each store the streams read reports its own changes. A book downloaded
   // from iCloud without a library change is picked up by the next change or
   // run.

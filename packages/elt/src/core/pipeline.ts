@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import type { SyncHistory } from '../state/sync-history.ts';
+import type { StreamCheck, SyncHistory } from '../state/sync-history.ts';
 import { Connection } from './connection.ts';
 import {
   type Copy,
@@ -11,6 +11,8 @@ import {
 import { interleave } from './interleave.ts';
 import type { PassObserver } from './pass-observer.ts';
 import { replicate } from './replication.ts';
+import type { Source } from './source.ts';
+import type { Stream } from './stream.ts';
 import type { Target as DestinationTarget } from './target.ts';
 import { TargetOwnedError } from './writer.ts';
 
@@ -35,6 +37,15 @@ const stopGraceMs = 1000;
 const retryLimit = 5;
 const retryDelayMs = (failures: number) =>
   Math.min(10_000 * 3 ** (failures - 1), 30 * 60_000);
+
+// What a source answered, before a pass, about how current a copy's upstream
+// is, or why it could not tell.
+type Asked<Target extends DestinationTarget> =
+  | { readonly copy: Copy<Target>; readonly upstream: Date | null }
+  | {
+      readonly copy: Copy<Target>;
+      readonly unknown: { readonly error: unknown };
+    };
 
 // One connection's read over the copies it selected, and what each loaded.
 export type Pass<Target extends DestinationTarget> = {
@@ -241,12 +252,15 @@ export class Pipeline<Target extends DestinationTarget> {
             );
           initial = false;
           if (pending.size > 0) wake.resolve();
-          const current = [...loaded].filter(
-            (name) => !pending.has(name) && !loading.has(name),
+          const current = [...streams.values()].filter(
+            ({ name }) =>
+              loaded.has(name) && !pending.has(name) && !loading.has(name),
           );
           if (current.length > 0)
             try {
-              await this.history.checked(connection, current, new Date());
+              await this.history.checked(connection, new Date(), (at) =>
+                checked(connection.source, current, at),
+              );
             } catch (error) {
               unrecorded = { error };
               return;
@@ -349,23 +363,65 @@ export class Pipeline<Target extends DestinationTarget> {
     steps: readonly Copy<Target>[],
     signal: AbortSignal | undefined,
   ): Promise<Pass<Target>> {
+    const { source } = connection;
+    // Asked before the read, so a store an app stopped writing is current
+    // only as of then.
+    const asked = await Promise.all(
+      steps.map(async (copy): Promise<Asked<Target>> => {
+        try {
+          return { copy, upstream: await source.currentAsOf(copy.from) };
+        } catch (error) {
+          return { copy, unknown: { error } };
+        }
+      }),
+    );
     const record = await this.history.begin(
       connection,
-      steps.map((copy) => ({
-        copy,
-        coverage: connection.source.coverage(copy.from),
-      })),
+      steps.map((copy) => ({ copy, coverage: source.coverage(copy.from) })),
     );
     const observed = advise(() => this.observer?.begin(connection));
-    const outcomes = await replicate(
-      connection.source,
+    const read = await replicate(
+      source,
       connection.destination,
       connection.checkpoints,
-      steps,
+      asked.flatMap((answer) => ('upstream' in answer ? [answer.copy] : [])),
       observed && ((progress) => advise(() => observed.progress(progress))),
       signal,
     );
-    await record.finish(outcomes);
+    // A copy whose source could not tell how current its upstream is was not
+    // read: what it would load could not be dated.
+    const outcomes: CopyOutcome<Target>[] = [
+      ...read,
+      ...asked.flatMap((answer) =>
+        'unknown' in answer
+          ? [
+              {
+                copy: answer.copy,
+                count: 0,
+                deleted: 0,
+                failures: [
+                  {
+                    partition: null,
+                    error: answer.unknown.error,
+                    failureType: source.failureType(answer.unknown.error),
+                  },
+                ],
+                cancelled: false,
+              },
+            ]
+          : [],
+      ),
+    ];
+    await record.finish(
+      outcomes,
+      new Map(
+        asked.flatMap((answer) =>
+          'upstream' in answer && answer.upstream !== null
+            ? [[answer.copy.from.name, answer.upstream]]
+            : [],
+        ),
+      ),
+    );
     advise(() => observed?.finish(outcomes));
     return Object.freeze({ connection, outcomes: Object.freeze(outcomes) });
   }
@@ -445,6 +501,30 @@ function connectionError(
 ): Error {
   return new Error(`Connection ${connection.name}: ${message(cause)}`, {
     cause,
+  });
+}
+
+// The streams a check found unchanged, each current as of the check or as of
+// earlier when its source says its upstream was current only then. A stream
+// whose source cannot tell is left out: the check does not vouch for it.
+async function checked(
+  source: Source,
+  streams: readonly Stream[],
+  at: Date,
+): Promise<StreamCheck[]> {
+  const answers = await Promise.allSettled(
+    streams.map((stream) => source.currentAsOf(stream)),
+  );
+  return streams.flatMap((stream, index) => {
+    const answer = answers[index];
+    if (answer?.status !== 'fulfilled') return [];
+    const upstream = answer.value;
+    return [
+      {
+        stream: stream.name,
+        at: upstream !== null && upstream < at ? upstream : at,
+      },
+    ];
   });
 }
 

@@ -19,6 +19,15 @@ import { Settings } from '@workspace/settings';
 
 import { AppleConnector } from './apple-connector.ts';
 
+// A source whose upstream is current whenever it is read.
+abstract class LiveSource<
+  Context extends AsyncDisposable = AsyncDisposable,
+> extends Source<Context> {
+  override async currentAsOf() {
+    return null;
+  }
+}
+
 const stream = (name: string) =>
   new Stream({
     name,
@@ -35,7 +44,7 @@ const stream = (name: string) =>
 
 // An app with two stores: people always reads, and calls fails to read while
 // the file broken exists beside it.
-class TwoStoreSource extends Source {
+class TwoStoreSource extends LiveSource {
   readonly identity = 'two-stores';
   protected readonly catalog = new Catalog([stream('people'), stream('calls')]);
   readonly #broken: string;

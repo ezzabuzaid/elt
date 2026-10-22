@@ -170,6 +170,14 @@ export abstract class Source<
   // Declares what a pass over this stream covers, from this source's configuration.
   abstract coverage(stream: Stream): ExtractionCoverage;
 
+  // When this stream's upstream was last current, if not whenever it is
+  // read: an app's store that the app writes only while it runs stays as of
+  // when the app last wrote it, as a replica stays as of its last replayed
+  // change. null means the upstream is current whenever it is read. The
+  // pipeline asks before each pass and each check it records; a stream whose
+  // source cannot tell is not read, and fails with that error.
+  abstract currentAsOf(stream: Stream): Promise<Date | null>;
+
   // What kind of failure an error from this source is. Only the source knows
   // which of its upstream's errors mean the user must act; any other error,
   // a destination's included, is system.

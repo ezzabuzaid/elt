@@ -41,6 +41,10 @@ class PhotosSource extends Source {
     return { description: 'every photo in photos.json', selection: {} };
   }
 
+  async currentAsOf() {
+    return null;
+  }
+
   protected async open() {
     return new AsyncDisposableStack();
   }

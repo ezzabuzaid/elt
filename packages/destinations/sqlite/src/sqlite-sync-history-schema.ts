@@ -30,6 +30,7 @@ const tables = [
     "written_count" INTEGER CHECK ("written_count" >= 0),
     "deleted_count" INTEGER CHECK ("deleted_count" >= 0),
     "failures" TEXT NOT NULL DEFAULT '[]' CHECK (json_valid("failures")),
+    "upstream_current_as_of" TEXT,
     PRIMARY KEY ("attempt_id", "stream")
   ) STRICT`,
   // Each stream's latest check by a watch that found it unchanged.
@@ -43,14 +44,15 @@ const tables = [
 export const syncHistoryTables = new Declaration(tables, { rows: 'replace' });
 
 // When each declared stream last matched its upstream: the start of its last
-// successful pass, or a later check that found it unchanged.
+// successful pass, or a later check that found it unchanged, each no later
+// than when the source said the upstream itself was last current.
 const currency = `"stream_success" AS (
-        SELECT a."connector", c."stream", a."started_at",
+        SELECT a."connector", c."stream", min(a."started_at", coalesce(c."upstream_current_as_of", a."started_at")) AS "current_as_of",
           row_number() OVER (PARTITION BY a."connector", c."stream" ORDER BY a."completed_at" DESC, a."id" DESC) AS "rank"
         FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id" WHERE c."status" = 'succeeded'
       ), "currency" AS (
         SELECT d."connector", d."stream",
-          CASE WHEN s."started_at" IS NULL THEN NULL ELSE max(s."started_at", coalesce(k."checked_at", s."started_at")) END AS "current_as_of"
+          CASE WHEN s."current_as_of" IS NULL THEN NULL ELSE max(s."current_as_of", coalesce(k."checked_at", s."current_as_of")) END AS "current_as_of"
         FROM (SELECT DISTINCT a."connector", c."stream" FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id") d
         LEFT JOIN "stream_success" s ON s."connector" = d."connector" AND s."stream" = d."stream" AND s."rank" = 1
         LEFT JOIN ${checks} k ON k."connector" = d."connector" AND k."stream" = d."stream"

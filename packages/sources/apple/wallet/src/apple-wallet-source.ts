@@ -85,6 +85,10 @@ export class AppleWalletSource extends Source<WalletScan> {
     return localAppleStoreCoverage;
   }
 
+  override async currentAsOf() {
+    return null;
+  }
+
   // passd commits to its database whenever a pass is added, updated,
   // archived or removed, and data_version cannot say which table a commit
   // touched, so each commit wakes every selected stream; the snapshot diff

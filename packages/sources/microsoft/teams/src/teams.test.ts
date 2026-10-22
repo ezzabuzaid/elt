@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtempDisposable, rm } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtempDisposable,
+  readdir,
+  rm,
+  utimes,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -1087,6 +1094,32 @@ function failureTypes(error: {
     ),
   ];
 }
+
+test('a Teams import is current only as of the web client’s last write, which it makes only while the app runs', async () => {
+  const { dir, app, out } = await scratch();
+  await using _ = dir;
+  await app.save(account());
+  // Teams quit after this write; a reader read its files later.
+  const written = new Date('2026-10-20T20:43:59.000Z');
+  const database = join(app.directory, leveldb);
+  for (const name of await readdir(database))
+    await utimes(
+      join(database, name),
+      new Date(+written + 100_000_000),
+      written,
+    );
+  const source = new TeamsSource(app.directory);
+
+  await (await pipeline(source, dir.path)).run();
+
+  using data = new DatabaseSync(out, { readOnly: true });
+  const current = data
+    .prepare('SELECT current_as_of FROM stream_status')
+    .all()
+    .map(({ current_as_of }) => current_as_of);
+  assert.ok(current.length > 0);
+  assert.deepEqual(new Set(current), new Set([written.toISOString()]));
+});
 
 test('a store that stops being readable fails every stream, naming Full Disk Access, and keeps what loaded', async () => {
   const { dir, app, out } = await scratch();

@@ -34,6 +34,7 @@ const passes = `
     catalog = new Catalog(this.streams);
     pass = 1;
     coverage() { return { description: 'synthetic', selection: {} }; }
+    async currentAsOf() { return null; }
     async open() { return new AsyncDisposableStack(); }
     async *observe({ streams }) { yield streams; }
     async *extract(configuration, state) {

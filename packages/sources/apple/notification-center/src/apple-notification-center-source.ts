@@ -80,6 +80,10 @@ export class AppleNotificationCenterSource extends Source<NotificationCenterScan
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
 
+  override async currentAsOf() {
+    return null;
+  }
+
   // One database whose data_version cannot say which table a commit touched,
   // so each commit wakes every selected stream; the snapshot diff writes
   // nothing for the ones that did not change.

@@ -39,6 +39,15 @@ import {
   validateRecords,
 } from './index.ts';
 
+// A source whose upstream is current whenever it is read.
+abstract class LiveSource<
+  Context extends AsyncDisposable = AsyncDisposable,
+> extends Source<Context> {
+  override async currentAsOf() {
+    return null;
+  }
+}
+
 test('file storage declarations validate identities and keep parsing separate without doing I/O', () => {
   const stream = new Stream({
     name: 'files',
@@ -365,7 +374,7 @@ const checkpoint = (stream: string, at: number): SourceMessage => ({
   state: { at },
 });
 
-class ContextSource extends Source<ReadContext> {
+class ContextSource extends LiveSource<ReadContext> {
   override coverage() {
     return { description: 'test', selection: {} };
   }
@@ -688,7 +697,7 @@ class MemoryCheckpoints extends CheckpointStore {
 
 // Reads one record per site, then a checkpoint naming the run; sites listed
 // in down fail after emitting their record.
-class Sites extends Source {
+class Sites extends LiveSource {
   override coverage() {
     return { description: 'test', selection: {} };
   }

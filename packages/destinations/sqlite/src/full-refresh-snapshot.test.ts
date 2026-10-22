@@ -23,6 +23,15 @@ import {
 
 import { SQLiteDestination, SQLiteSyncHistory } from './index.ts';
 
+// A source whose upstream is current whenever it is read.
+abstract class LiveSource<
+  Context extends AsyncDisposable = AsyncDisposable,
+> extends Source<Context> {
+  override async currentAsOf() {
+    return null;
+  }
+}
+
 // A sync history installed in each destination's file, as a host installs it
 // before the first pass.
 async function installedHistory(...destinations: SQLiteDestination[]) {
@@ -54,7 +63,7 @@ test('a full refresh checks a snapshot stream’s declaration as an incremental 
     supportedSyncModes: ['full_refresh', 'incremental'],
   });
   const rows = [{ id: 'a' }];
-  class MisdeclaredSource extends Source {
+  class MisdeclaredSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -165,7 +174,7 @@ test('a full refresh of a snapshot stream loads every record of each scan as sca
     sourceDefinedCursor: true,
     emitsDeletes: true,
   });
-  class ItemsSource extends Source {
+  class ItemsSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -246,7 +255,7 @@ test('a full refresh of a grouped snapshot stream reads every group, also one wh
     sourceDefinedCursor: true,
     emitsDeletes: true,
   });
-  class GroupedSource extends Source {
+  class GroupedSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }

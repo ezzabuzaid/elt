@@ -27,6 +27,15 @@ import {
   readSQLite,
 } from './index.ts';
 
+// A source whose upstream is current whenever it is read.
+abstract class LiveSource<
+  Context extends AsyncDisposable = AsyncDisposable,
+> extends Source<Context> {
+  override async currentAsOf() {
+    return null;
+  }
+}
+
 // The sqlite3 shell agents read with, which refuses writes.
 function shell(database: string, sql: string) {
   const { stdout, stderr } = spawnSync(
@@ -41,7 +50,7 @@ test('a pass and each of its streams read running while it runs and cancelled on
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-passes-'));
   const reading = Promise.withResolvers<void>();
   // Emits one record, then waits for its run to stop.
-  class Waiting extends Source {
+  class Waiting extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -162,7 +171,7 @@ test("a pass that did not load says whether its failures are the user's to fix, 
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-passes-'));
   // What an SDK throws when macOS denies its store.
   class StoreDeniedError extends Error {}
-  class Guarded extends Source {
+  class Guarded extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -275,7 +284,7 @@ test('each recorded failure keeps the causes its error chains, such as why a con
     () => assert.fail('a closed port answered'),
     (error: unknown) => error,
   );
-  class Fetching extends Source {
+  class Fetching extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }

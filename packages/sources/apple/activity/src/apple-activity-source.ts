@@ -146,6 +146,10 @@ export class AppleActivitySource extends Source<ActivityScan> {
     };
   }
 
+  override async currentAsOf() {
+    return null;
+  }
+
   // Biome writes into preallocated segment files in place, so neither their
   // size, their modification time nor FSEvents report a new record; each
   // segment's fingerprint does. Databases report commits through data_version.

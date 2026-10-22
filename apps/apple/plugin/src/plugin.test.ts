@@ -238,6 +238,8 @@ async function passes(plugin: ApplePlugin, item: Selection) {
             failures: [],
             cancelled: false,
           })),
+          // Every Notes stream reads a live upstream here.
+          new Map(),
         ),
       fail: pass.fail,
     };

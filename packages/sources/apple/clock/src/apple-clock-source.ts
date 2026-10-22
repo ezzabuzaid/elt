@@ -94,6 +94,11 @@ export class AppleClockSource extends Source<ClockSnapshot> {
   override coverage() {
     return localAppleStoreCoverage;
   }
+
+  override async currentAsOf() {
+    return null;
+  }
+
   protected override async *extract(
     configuration: CopyConfiguration,
     state: unknown,

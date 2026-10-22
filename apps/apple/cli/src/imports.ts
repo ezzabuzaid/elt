@@ -73,7 +73,8 @@ export type ConnectorStatus = {
   readonly state: 'never' | PassState;
   readonly completedAt: string | null;
   readonly lastSuccessAt: string | null;
-  // When what it loaded last matched the app, as a watch keeps it.
+  // When what it loaded last matched the app's store, as a watch keeps it,
+  // no later than when the app last wrote a store it writes only at times.
   readonly currentAsOf: string | null;
   readonly error: string | null;
   readonly streams: readonly {

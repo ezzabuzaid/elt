@@ -23,6 +23,7 @@ import {
   WhatsAppUnavailableError,
   type WhatsAppVersion,
   whatsappContainer,
+  whatsappRunning,
 } from '@workspace/sdk-whatsapp-desktop';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
@@ -183,6 +184,14 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
         'What WhatsApp for Mac keeps on this Mac: the chats and messages it has synced from the phone and received while running, with the files it downloaded. WhatsApp writes its chats and messages only while the app runs, and drops a contact’s status a day after it is posted. An import’s chats and dates narrow chats, messages and what hangs off them; the other streams are not narrowed.',
       selection: this.scope,
     };
+  }
+
+  // WhatsApp writes its stores only while the app runs, so while it is
+  // closed each store stays as of when the app last wrote it.
+  override async currentAsOf(stream: Stream): Promise<Date | null> {
+    return (await whatsappRunning())
+      ? null
+      : this.#whatsapp.lastWrite(readerOf(stream).store);
   }
 
   // Each store the streams read reports its own commits.

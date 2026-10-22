@@ -85,6 +85,10 @@ export class AppleRemindersSource extends Source<RemindersScan> {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
 
+  override async currentAsOf() {
+    return null;
+  }
+
   protected override async *observe({
     streams,
     signal,

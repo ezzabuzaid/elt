@@ -150,6 +150,10 @@ export class AppleContactsSource extends Source<ContactsScan> {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
 
+  override async currentAsOf() {
+    return null;
+  }
+
   protected override async *observe({
     streams,
     signal,

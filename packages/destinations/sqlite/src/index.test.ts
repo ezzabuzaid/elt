@@ -60,6 +60,15 @@ import {
   installSQLiteCatalog,
 } from './index.ts';
 
+// A source whose upstream is current whenever it is read.
+abstract class LiveSource<
+  Context extends AsyncDisposable = AsyncDisposable,
+> extends Source<Context> {
+  override async currentAsOf() {
+    return null;
+  }
+}
+
 // A sync history installed in each destination's file, as a host installs it
 // before the first pass.
 async function installedHistory(...destinations: SQLiteDestination[]) {
@@ -69,7 +78,7 @@ async function installedHistory(...destinations: SQLiteDestination[]) {
 }
 
 test('the public ELT API copies source records into SQLite', async () => {
-  class TestSource extends Source {
+  class TestSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -125,7 +134,7 @@ test('the public ELT API copies source records into SQLite', async () => {
 });
 
 test('the macOS sqlite3 shell reads the catalog of a loaded file: every described view and column', async () => {
-  class DescribedSource extends Source {
+  class DescribedSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -414,7 +423,7 @@ test('every name is sanitized as Airbyte does, around the names SQLite takes as 
 });
 
 test('array fields load as JSON arrays that SQLite checks and reads element by element', async () => {
-  class ListSource extends Source {
+  class ListSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -502,7 +511,7 @@ test('array fields load as JSON arrays that SQLite checks and reads element by e
 });
 
 test('a source accepts only the stream objects from its own catalog', async () => {
-  class OwnedSource extends Source {
+  class OwnedSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -568,7 +577,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   const reads = new EventEmitter();
   let version = 1;
   const previousStates: unknown[] = [];
-  class WatchingSource extends Source {
+  class WatchingSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -828,7 +837,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
 });
 
 test('a cursor inside the primary key is rejected unless the policy replaces', async () => {
-  class MetricsSource extends Source {
+  class MetricsSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -940,7 +949,7 @@ test('a cursor inside the primary key is rejected unless the policy replaces', a
 
 test('replace loads a restated fact that cursor_newer discards', async () => {
   let clicks = 12;
-  class RestatingSource extends Source {
+  class RestatingSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -1065,7 +1074,7 @@ test('deletions remove keyed rows from a deduplicating SQLite table', async () =
     sourceDefinedCursor: true,
     emitsDeletes: true,
   });
-  class DeletingSource extends Source {
+  class DeletingSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -1162,7 +1171,7 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
     });
   const items = selectable();
   let messages: SourceMessage[] = [];
-  class DeletingSource extends Source {
+  class DeletingSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -1292,7 +1301,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     sourceDefinedCursor: true,
     emitsDeletes: true,
   });
-  class SnapshotSource extends Source {
+  class SnapshotSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -1439,7 +1448,7 @@ test('a snapshot stream that emits no deletions keeps the rows of keys its upstr
     supportedSyncModes: ['full_refresh', 'incremental'],
     sourceDefinedCursor: true,
   });
-  class ForgetfulSource extends Source {
+  class ForgetfulSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -1531,7 +1540,7 @@ test('a grouped snapshot stream that emits no deletions keeps the rows of a grou
     supportedSyncModes: ['full_refresh', 'incremental'],
     sourceDefinedCursor: true,
   });
-  class ForgetfulGroups extends Source {
+  class ForgetfulGroups extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -1629,7 +1638,7 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
     sourceDefinedCursor: true,
     emitsDeletes: true,
   });
-  class GroupedSource extends Source {
+  class GroupedSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -1816,7 +1825,7 @@ test('a snapshot pass over an unchanged scan that the host stops partway ends lo
   const removed = new Error('the user removed this connector');
   let stopAt = Number.POSITIVE_INFINITY;
   const pulled: number[] = [];
-  class ScanningSource extends Source {
+  class ScanningSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -1920,7 +1929,7 @@ test('a grouped pass whose groups are all unchanged, stopped by the host partway
   const removed = new Error('the user removed this connector');
   let stopAt = Number.POSITIVE_INFINITY;
   const listed: number[] = [];
-  class FilesSource extends Source {
+  class FilesSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -2030,7 +2039,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
   } as const;
   const events = new Stream({ name: 'events', ...declaration });
   const grouped = new Stream({ name: 'grouped', ...declaration });
-  class ExpiringSource extends Source {
+  class ExpiringSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -2237,7 +2246,7 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
   } as const;
   const messages = new Stream({ name: 'messages', ...declaration });
   const grouped = new Stream({ name: 'grouped', ...declaration });
-  class CachedSource extends Source {
+  class CachedSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -2394,7 +2403,7 @@ test('a diff whose next read repeats only a lookback window deletes none of the 
     sourceDefinedCursor: true,
     emitsDeletes: true,
   });
-  class WindowSource extends Source {
+  class WindowSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -2473,7 +2482,7 @@ test('a diff whose next read repeats only a lookback window deletes none of the 
 });
 
 test('a target has one writer, even when another loads only its own partitions', async () => {
-  class Records extends Source {
+  class Records extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -2595,7 +2604,7 @@ test('a target has one writer, even when another loads only its own partitions',
 });
 
 test('a writer may change its own mode, and dropping a target releases it', async () => {
-  class Records extends Source {
+  class Records extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -2762,7 +2771,7 @@ test('a table refuses two columns of one field, and a reader view SQLite would t
 
 test('a pipeline refuses two writers of one target before running any', async () => {
   let extracted = 0;
-  class Records extends Source {
+  class Records extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -2883,7 +2892,7 @@ test('a pipeline refuses two writers of one target before running any', async ()
   assert.equal(extracted, 0);
 });
 
-class Sites extends Source {
+class Sites extends LiveSource {
   override coverage() {
     return { description: 'test', selection: {} };
   }
@@ -3289,7 +3298,7 @@ test('partition declarations are validated before extraction', async () => {
   );
 });
 
-class FileSource extends Source {
+class FileSource extends LiveSource {
   override coverage() {
     return { description: 'test', selection: {} };
   }
@@ -3723,7 +3732,7 @@ const scripted = (name: string, { snapshot = true } = {}) =>
   });
 
 // Reads what a test scripts for each stream; an Error entry is thrown there.
-class ScriptedSource extends Source {
+class ScriptedSource extends LiveSource {
   override coverage() {
     return { description: 'test', selection: {} };
   }
@@ -4537,7 +4546,7 @@ test('renamed file columns keep their original bytes and stored files through la
     supportsFileTransfer: true,
   });
   let messages: SourceMessage[] = [];
-  class Documents extends Source {
+  class Documents extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -4636,7 +4645,7 @@ test('a load holds no write transaction while the source reads, and a stream tha
     other.exec('COMMIT');
   };
   let wroteWhileReading = false;
-  class Interleaved extends Source {
+  class Interleaved extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -4793,7 +4802,7 @@ test('two file columns whose table and column names join alike keep their own ch
   const left = described('left');
   const right = described('right');
   let messages: Record<string, SourceMessage[]> = {};
-  class Files extends Source {
+  class Files extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -4902,7 +4911,7 @@ test('a reset of a partition named by a renamed field replaces only that partiti
     emitsDeletes: true,
   });
   let script: Record<string, SourceMessage[]> = {};
-  class Accounts extends Source {
+  class Accounts extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -5090,7 +5099,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
   const turns = order.map(() => Promise.withResolvers<void>());
   turns[0]?.resolve();
   const checkpointed = Promise.withResolvers<void>();
-  class Interleaved extends Source {
+  class Interleaved extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -5262,7 +5271,7 @@ for (const { outcome, next, expected } of leftBehind)
     // only then does docs fail: its discard never commits, as after a crash.
     // Each gate opens when the consumer asks for a stream's next message, so
     // the order holds without timers.
-    class Crossing extends Source {
+    class Crossing extends LiveSource {
       override coverage() {
         return { description: 'test', selection: {} };
       }
@@ -5561,7 +5570,7 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
     supportedSyncModes: ['incremental'],
     emitsDeletes: true,
   });
-  class LedgerSource extends Source {
+  class LedgerSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -5723,7 +5732,7 @@ test('a reset replaces only its partition at the next commit, and one a failure 
   });
   // What each partition emits on the next run.
   let script: Record<string, (SourceMessage | Error)[]> = {};
-  class Resetting extends Source {
+  class Resetting extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -5817,7 +5826,7 @@ test('a full refresh ignores resets, so an appending copy keeps its history', as
     sourceDefinedCursor: true,
     emitsDeletes: true,
   });
-  class Resetting extends Source {
+  class Resetting extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -5919,7 +5928,7 @@ async function shapeChanges(
       name: declaration.name ?? 'items',
       supportedSyncModes: declaration.supportedSyncModes ?? ['incremental'],
     });
-    class Discovered extends Source {
+    class Discovered extends LiveSource {
       override coverage() {
         return { description: 'test', selection: {} };
       }
@@ -6326,7 +6335,7 @@ test('an overwrite whose stored table no longer fits reloads it rather than evol
       jsonSchema: { type: 'object', properties },
       supportedSyncModes: ['full_refresh'],
     });
-    class Snapshot extends Source {
+    class Snapshot extends LiveSource {
       override coverage() {
         return { description: 'test', selection: {} };
       }
@@ -6395,7 +6404,7 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
   const received: unknown[] = [];
   const reached = Promise.withResolvers<void>();
   const gate = Promise.withResolvers<void>();
-  class Scripted extends Source {
+  class Scripted extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -6662,7 +6671,7 @@ test('a copy that declares its columns from the stream and stores its files keep
       emitsDeletes: true,
       supportsFileTransfer: true,
     });
-    class Attachments extends Source {
+    class Attachments extends LiveSource {
       override coverage() {
         return { description: 'test', selection: {} };
       }
@@ -6783,6 +6792,13 @@ class CheckedSource extends Source {
   readonly checks = new EventEmitter();
   readonly failing = new Set<string>();
   readonly denied = new Set<string>();
+  // When the test says a stream's upstream last matched its own upstream, as
+  // an app's store that the app writes only while it runs; none means live.
+  readonly upstreamAsOf = new Map<string, Date>();
+  // Streams whose source cannot tell how current their upstream is.
+  readonly unknowable = new Set<string>();
+  // Each stream the pipeline asked about, in order.
+  readonly asked: string[] = [];
   readonly a = new Stream({
     name: 'a',
     jsonSchema: {
@@ -6801,6 +6817,13 @@ class CheckedSource extends Source {
 
   override failureType(error: unknown): FailureType {
     return error instanceof DeniedError ? 'config' : 'system';
+  }
+
+  override async currentAsOf(stream: Stream) {
+    this.asked.push(stream.name);
+    if (this.unknowable.has(stream.name))
+      throw new DeniedError(`${stream.name}'s store is not there`);
+    return this.upstreamAsOf.get(stream.name) ?? null;
   }
 
   protected override async open() {
@@ -6931,6 +6954,151 @@ test('under a watch, a check that finds nothing changed makes each stream curren
         loaded[stream]?.last_successful_sync_at,
       );
     }
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+});
+
+test('a run makes a stream current only as of when its source says its upstream last matched, if that came first, and the connector as of its oldest stream', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  const { source, pipeline, streams, connector, startedAt } =
+    await checkedPipeline(scratch.path);
+  // As WhatsApp's store stays as of when the app quit.
+  source.upstreamAsOf.set('a', new Date('2026-10-20T20:34:45.000Z'));
+
+  await pipeline.run();
+
+  assert.equal(streams().a?.current_as_of, '2026-10-20T20:34:45.000Z');
+  assert.equal(streams().b?.current_as_of, startedAt());
+  assert.equal(connector(), '2026-10-20T20:34:45.000Z');
+});
+
+test('a source that says its upstream matched after the pass began leaves the stream current as of the pass', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  const { source, pipeline, streams, startedAt } = await checkedPipeline(
+    scratch.path,
+  );
+  source.upstreamAsOf.set('a', new Date(Date.now() + 3_600_000));
+
+  await pipeline.run();
+
+  assert.equal(streams().a?.current_as_of, startedAt());
+});
+
+test('under a watch, a check while the source says its upstream stopped keeps the stream current as of then, not as of the check', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  const { source, pipeline, streams, until } = await checkedPipeline(
+    scratch.path,
+  );
+  const controller = new AbortController();
+  const watching = pipeline.watch({ signal: controller.signal });
+  try {
+    await watching.next();
+    // The app that writes a's upstream quits after the pass.
+    const stopped = new Date();
+    source.upstreamAsOf.set('a', stopped);
+    await sleep(10);
+
+    const checked = new Date().toISOString();
+    source.checks.emit('check', []);
+    await until(() => String(streams().b?.current_as_of) >= checked);
+
+    assert.equal(streams().a?.current_as_of, stopped.toISOString());
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+});
+
+test('a stream whose source cannot tell how current its upstream is fails with that error, unread, while the other streams load', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  const { source, pipeline, read, streams } = await checkedPipeline(
+    scratch.path,
+  );
+  source.unknowable.add('a');
+
+  const failed = await pipeline.run().catch((error: unknown) => error);
+
+  assert.ok(failed instanceof PipelineError);
+  assert.match(
+    String(
+      failed.results.find(({ copy }) => copy.from.name === 'a')?.failures[0]
+        ?.error,
+    ),
+    /a's store is not there/,
+  );
+  assert.deepEqual(
+    read(
+      "SELECT stream, status, written_count, json_extract(failures, '$[0].failure_type') AS failure_type FROM extraction_coverage ORDER BY stream",
+    ),
+    [
+      {
+        stream: 'a',
+        status: 'failed',
+        written_count: 0,
+        failure_type: 'config',
+      },
+      {
+        stream: 'b',
+        status: 'succeeded',
+        written_count: 1,
+        failure_type: null,
+      },
+    ],
+  );
+  // Never read, so the destination never made its table.
+  assert.deepEqual(
+    read("SELECT name FROM sqlite_schema WHERE name IN ('a', 'b')"),
+    [{ name: 'b' }],
+  );
+  assert.equal(streams().a?.current_as_of, null);
+});
+
+test('under a watch, a check leaves out a stream whose source cannot tell how current its upstream is, and the watch goes on', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  const { source, pipeline, streams, until } = await checkedPipeline(
+    scratch.path,
+  );
+  const controller = new AbortController();
+  const watching = pipeline.watch({ signal: controller.signal });
+  try {
+    await watching.next();
+    const loaded = streams();
+    source.unknowable.add('a');
+
+    const checked = new Date().toISOString();
+    source.checks.emit('check', []);
+    await until(() => String(streams().b?.current_as_of) >= checked);
+    source.checks.emit('check', [source.b]);
+    const pass = await watching.next();
+
+    assert.equal(streams().a?.current_as_of, loaded.a?.current_as_of);
+    assert.deepEqual(outcomes(pass), [['b', null]]);
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+});
+
+test('a watch asks the source how current each stream is only for a check it records, at most once a minute', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  const { source, pipeline, streams, until } = await checkedPipeline(
+    scratch.path,
+  );
+  const controller = new AbortController();
+  const watching = pipeline.watch({ signal: controller.signal });
+  try {
+    await watching.next();
+    const beforeChecks = source.asked.length;
+
+    const checked = new Date().toISOString();
+    for (let check = 0; check < 3; check++) source.checks.emit('check', []);
+    await until(() => String(streams().b?.current_as_of) >= checked);
+    // Gives the two later checks time to reach the history.
+    await sleep(300);
+
+    assert.deepEqual(source.asked.slice(beforeChecks).sort(), ['a', 'b']);
   } finally {
     controller.abort();
     await watching.return(undefined);

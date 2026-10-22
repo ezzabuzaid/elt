@@ -23,9 +23,18 @@ import {
   SQLiteSyncHistory,
 } from './index.ts';
 
+// A source whose upstream is current whenever it is read.
+abstract class LiveSource<
+  Context extends AsyncDisposable = AsyncDisposable,
+> extends Source<Context> {
+  override async currentAsOf() {
+    return null;
+  }
+}
+
 // Two records, then a checkpoint on every pass, as a snapshot source saves its
 // snapshot even when a pass finds nothing new.
-class Checkpointing extends Source {
+class Checkpointing extends LiveSource {
   readonly identity = 'checkpointing';
   readonly records = new Stream({
     name: 'records',

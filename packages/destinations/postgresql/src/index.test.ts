@@ -47,6 +47,15 @@ import {
 } from './index.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
 
+// A source whose upstream is current whenever it is read.
+abstract class LiveSource<
+  Context extends AsyncDisposable = AsyncDisposable,
+> extends Source<Context> {
+  override async currentAsOf() {
+    return null;
+  }
+}
+
 // A sync history installed in the database at url, as a host installs it
 // before the first pass.
 async function installedHistory(url: string) {
@@ -60,7 +69,7 @@ const databases = new Postgres({
 });
 
 // Emits whatever the test sets on `messages`, then an empty checkpoint.
-class Messages extends Source {
+class Messages extends LiveSource {
   override coverage() {
     return { description: 'test', selection: {} };
   }
@@ -2343,7 +2352,7 @@ const scripted = (name: string, { snapshot = true } = {}) =>
 type Scripted = SourceMessage | Error | (() => unknown);
 
 // Reads what a test scripts for each stream, up to concurrency streams at once.
-class ScriptedSource extends Source {
+class ScriptedSource extends LiveSource {
   override coverage() {
     return { description: 'test', selection: {} };
   }
@@ -4650,7 +4659,7 @@ test('a reset of a partition named by a renamed field replaces only that partiti
     emitsDeletes: true,
   });
   let script: Record<string, SourceMessage[]> = {};
-  class Accounts extends Source {
+  class Accounts extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -4759,7 +4768,7 @@ test('a reset replaces its partition, or the whole table, at the next commit; a 
   // What each partition of items, and the table, emits on the next run.
   let script: Record<string, (SourceMessage | Error)[]> = {};
   const received: unknown[] = [];
-  class Resetting extends Source {
+  class Resetting extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -5065,7 +5074,7 @@ test('a load holds no transaction while the source reads, so a run over many tab
       }),
   );
   const held: number[] = [];
-  class Many extends Source {
+  class Many extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -5155,7 +5164,7 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
   const received: unknown[] = [];
   const reached = Promise.withResolvers<void>();
   const gate = Promise.withResolvers<void>();
-  class Scripted extends Source {
+  class Scripted extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -5278,7 +5287,7 @@ test('rows past one JSON string stage in batches by size, and a record too large
     supportedSyncModes: ['full_refresh'],
   });
   let records: Record<string, string>[] = [];
-  class Documents extends Source {
+  class Documents extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
     }
@@ -5354,6 +5363,9 @@ class CheckedSource extends Source {
   readonly identity = 'checked';
   readonly checks = new EventEmitter();
   readonly failing = new Set<string>();
+  // When the test says a stream's upstream last matched its own upstream, as
+  // an app's store that the app writes only while it runs; none means live.
+  readonly upstreamAsOf = new Map<string, Date>();
   readonly a = new Stream({
     name: 'a',
     jsonSchema: {
@@ -5368,6 +5380,10 @@ class CheckedSource extends Source {
 
   override coverage() {
     return { description: 'test', selection: {} };
+  }
+
+  override async currentAsOf(stream: Stream) {
+    return this.upstreamAsOf.get(stream.name) ?? null;
   }
 
   protected override async open() {
@@ -5515,6 +5531,76 @@ test('under a watch, a check that finds nothing changed makes each stream curren
         loaded[stream]?.last_successful_sync_at,
       );
     }
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+});
+
+test('a run makes a stream current only as of when its source says its upstream last matched, if that came first, and the connector as of its oldest stream, in Postgres', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 2, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  const { source, pipeline, streams, connector, startedAt } =
+    await checkedPipeline(database.connectionString, sql);
+  // As WhatsApp's store stays as of when the app quit.
+  const stopped = new Date('2026-10-20T20:34:45.000Z');
+  source.upstreamAsOf.set('a', stopped);
+
+  await pipeline.run();
+
+  const seen = await streams();
+  assert.deepEqual(seen.a?.current_as_of, stopped);
+  assert.deepEqual(seen.b?.current_as_of, await startedAt());
+  assert.deepEqual(await connector(), stopped);
+});
+
+test('a source that says its upstream matched after the pass began leaves the stream current as of the pass, in Postgres', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 2, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  const { source, pipeline, streams, startedAt } = await checkedPipeline(
+    database.connectionString,
+    sql,
+  );
+  source.upstreamAsOf.set('a', new Date(Date.now() + 3_600_000));
+
+  await pipeline.run();
+
+  assert.deepEqual((await streams()).a?.current_as_of, await startedAt());
+});
+
+test('under a watch, a check while the source says its upstream stopped keeps the stream current as of then, not as of the check, in Postgres', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 2, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  const { source, pipeline, streams, until } = await checkedPipeline(
+    database.connectionString,
+    sql,
+  );
+  const controller = new AbortController();
+  const watching = pipeline.watch({ signal: controller.signal });
+  try {
+    await watching.next();
+    // The app that writes a's upstream quits after the pass.
+    const stopped = new Date();
+    source.upstreamAsOf.set('a', stopped);
+    await sleep(10);
+
+    const checked = new Date();
+    source.checks.emit('check', []);
+    await until((seen) => Number(seen.b?.current_as_of) >= +checked);
+
+    assert.deepEqual((await streams()).a?.current_as_of, stopped);
   } finally {
     controller.abort();
     await watching.return(undefined);

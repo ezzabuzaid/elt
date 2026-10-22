@@ -16,6 +16,7 @@ import {
   NotesUnavailableError,
   launchNotesHidden,
   noteStorePath,
+  notesRunning,
 } from '@workspace/sdk-apple-notes';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -88,6 +89,12 @@ export class AppleNotesSource extends Source<NotesScan> {
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };
+  }
+
+  // Only Notes.app syncs iCloud notes, so while it is closed the store stays
+  // as of when Notes last wrote it.
+  override async currentAsOf(): Promise<Date | null> {
+    return (await notesRunning()) ? null : this.#store.lastWrite();
   }
 
   protected override async *observe({

@@ -85,6 +85,10 @@ export class AppleAccountsSource extends Source<AccountsScan> {
     return localAppleStoreCoverage;
   }
 
+  override async currentAsOf() {
+    return null;
+  }
+
   protected override async *observe({
     streams,
     signal,

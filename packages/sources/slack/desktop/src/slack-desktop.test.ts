@@ -5,7 +5,9 @@ import {
   mkdir,
   mkdtempDisposable,
   readFile,
+  readdir,
   rm,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -2222,64 +2224,54 @@ test('this Mac’s Slack app loads every workspace it keeps, and a second read w
   assert.deepEqual(second, unchanged);
 });
 
-test('a Slack watch keeps every stream current while the app saves nothing', async () => {
-  const { dir, store } = await scratch();
+test('a Slack watch makes no pass while the app saves nothing, and keeps every stream current only as of the app’s last save', async () => {
+  const { dir, store, out } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
+  await store.download({});
+  // Slack quit after this save; a reader read its files later.
+  const saved = new Date('2026-10-11T08:36:23.000Z');
+  const database = join(store.directory, indexedDBPath);
+  for (const path of [
+    ...(await readdir(database)).map((name) => join(database, name)),
+    join(store.directory, 'storage/root-state.json'),
+  ])
+    await utimes(path, new Date(+saved + 100_000_000), saved);
   const source = new SlackDesktopSource(store.directory);
-  const data = join(dir.path, 'out.sqlite');
-  const destination = new SQLiteDestination({ path: data });
-  const history = new SQLiteSyncHistory();
-  await history.install([destination]);
-  const { streams } = await source.discover();
-  const watching = new Pipeline({
-    history,
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        checkpoints: new SQLiteCheckpointStore({
-          path: join(dir.path, 'state.sqlite'),
-        }),
-        steps: streams.map(
-          (stream) => new Copy(stream, destination.table(stream.name)),
-        ),
-      }),
-    ],
-  }).watch({ signal: AbortSignal.timeout(30_000) });
+  const watching = (await pipeline(source, dir.path)).watch({
+    signal: AbortSignal.timeout(30_000),
+  });
   try {
     await watching.next();
-    using out = new DatabaseSync(data, { readOnly: true });
-    const status = out.prepare(
-      'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
-    );
-    const [pass] = out
-      .prepare('SELECT started_at, completed_at FROM sync_attempts')
-      .all();
-    // Nothing changes, so only the watch's next check can move current_as_of.
+    using data = new DatabaseSync(out, { readOnly: true });
+    // Waits for a check the watch recorded, as its sync history keeps it.
     for (
       let tries = 0;
-      status
-        .all()
-        .some(
-          ({ current_as_of }) =>
-            String(current_as_of) <= String(pass?.started_at),
-        );
+      data.prepare('SELECT count(*) AS n FROM _elt_stream_checks').get()?.n ===
+      0;
       tries++
     ) {
-      if (tries > 100)
-        assert.fail(`not current: ${JSON.stringify(status.all())}`);
+      if (tries > 100) assert.fail('the watch recorded no check');
       await sleep(100);
     }
 
+    const [pass] = data
+      .prepare('SELECT started_at, completed_at FROM sync_attempts')
+      .all();
     assert.equal(
-      out.prepare('SELECT count(*) AS n FROM sync_attempts').get()?.n,
+      data.prepare('SELECT count(*) AS n FROM sync_attempts').get()?.n,
       1,
     );
-    for (const row of status.all()) {
+    const status = data
+      .prepare(
+        'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
+      )
+      .all();
+    assert.ok(status.length > 0);
+    for (const row of status) {
       assert.equal(row.status, 'succeeded', String(row.stream));
       assert.equal(row.last_successful_sync_at, pass?.completed_at);
+      assert.equal(row.current_as_of, saved.toISOString(), String(row.stream));
     }
   } finally {
     await watching.return(undefined);

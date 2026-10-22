@@ -19,10 +19,19 @@ import { Settings } from '@workspace/settings';
 
 import { AppleConnector } from './apple-connector.ts';
 
+// A source whose upstream is current whenever it is read.
+abstract class LiveSource<
+  Context extends AsyncDisposable = AsyncDisposable,
+> extends Source<Context> {
+  override async currentAsOf() {
+    return null;
+  }
+}
+
 // An app whose store lists two notes. Each read records the cursor it was
 // handed; a read from the start pauses after the first note until the test
 // lets it go on.
-class TwoNotesSource extends Source {
+class TwoNotesSource extends LiveSource {
   readonly identity = 'two-notes';
   protected readonly catalog = new Catalog([
     new Stream({
@@ -80,7 +89,7 @@ class TwoNotesSource extends Source {
 }
 
 // An app with one file in its store, whose copy the import stores.
-class OneFileSource extends Source {
+class OneFileSource extends LiveSource {
   readonly identity = 'one-file';
   protected readonly catalog = new Catalog([
     new Stream({
@@ -252,6 +261,7 @@ test(
           sourceDefinedCursor: true,
         })]);
         coverage() { return { description: 'Every note.', selection: {} }; }
+        async currentAsOf() { return null; }
         async open() { return new AsyncDisposableStack(); }
         async *observe({ streams }) { yield streams; }
         async *extract() {

@@ -8,6 +8,7 @@ import {
   type DeclaredCopy,
   type FailureType,
   type RecordedPass,
+  type StreamCheck,
   SyncHistory,
   copyStatus,
   passError,
@@ -46,14 +47,13 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
 
   protected override async recordChecks(
     connection: Connection<SQLiteTable>,
-    streams: readonly string[],
-    at: Date,
+    streamChecks: readonly StreamCheck[],
   ): Promise<void> {
     write(this.#path(connection), (database) => {
       const check = database.prepare(
         `INSERT INTO ${checks} ("connector", "stream", "checked_at") VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET "checked_at" = excluded."checked_at"`,
       );
-      for (const stream of streams)
+      for (const { stream, at } of streamChecks)
         check.run(connection.name, stream, at.toISOString());
     });
   }
@@ -90,7 +90,8 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
       return id;
     });
     return {
-      finish: async (outcomes) => this.#finish(path, id, outcomes),
+      finish: async (outcomes, upstream) =>
+        this.#finish(path, id, outcomes, upstream),
       fail: async (error, failureType) =>
         write(path, (database) => fail(database, id, error, failureType)),
     };
@@ -140,6 +141,7 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
     path: string,
     id: number,
     outcomes: readonly CopyOutcome<SQLiteTable>[],
+    upstream: ReadonlyMap<string, Date>,
   ): void {
     write(path, (database) => {
       const record = database.prepare(
@@ -154,6 +156,11 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
           id,
           outcome.copy.from.name,
         );
+      const bound = database.prepare(
+        `UPDATE ${coverage} SET "upstream_current_as_of" = ? WHERE "attempt_id" = ? AND "stream" = ?`,
+      );
+      for (const [stream, at] of upstream)
+        bound.run(at.toISOString(), id, stream);
       database
         .prepare(
           `UPDATE ${attempts} SET "completed_at" = ${now}, "status" = ?, "error" = ?, "failure_type" = ? WHERE "id" = ?`,

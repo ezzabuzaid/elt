@@ -264,6 +264,10 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
     };
   }
 
+  override async currentAsOf() {
+    return null;
+  }
+
   // Google refused the grant, will no longer refresh it, or the grant cannot
   // read the property, so only the user can fix it. A rate limit Google sends
   // as a 403 never gets here: the API turns it into a SearchConsoleQuotaError

@@ -51,7 +51,7 @@ The Apple plugin imports each selected connector's data into its own SQLite file
 
    To combine subscription evidence in one statement, open Mail as the main database and attach Messages and Notes as `sms` and `note_store`. Load Mail's two presets, then read Messages' and Notes' preset SQL and replace their explicit `main.` qualifiers with `sms.` and `note_store.` before loading those SQL statements on the same connection. This avoids confusing different connectors' identically named `messages` and `attachments` views. Query `mail_subscription_evidence UNION ALL message_subscription_evidence UNION ALL note_subscription_evidence` with a `SELECT * FROM` before each view; all three have the same documented columns. Include only selected, readable connectors, and report coverage gaps.
 
-5. Answer plainly with the app, the record's title, name or date, and useful source links when present. When freshness matters, give the time in `current_as_of`: the data matched the app at that time. `stream_status` has it per stream.
+5. Answer plainly with the app, the record's title, name or date, and useful source links when present. When freshness matters, give the time in `current_as_of`: the data was current as of that time. For WhatsApp and Notes while closed, and for Slack, Teams and Mail, that is when the app last wrote its store on this Mac, so anything newer is not here yet. `stream_status` has it per stream.
 
 ## Gotchas
 

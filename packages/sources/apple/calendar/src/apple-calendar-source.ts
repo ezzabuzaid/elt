@@ -155,6 +155,10 @@ export class AppleCalendarSource extends Source<CalendarScan> {
     };
   }
 
+  override async currentAsOf() {
+    return null;
+  }
+
   protected override async *observe({
     streams,
     signal,

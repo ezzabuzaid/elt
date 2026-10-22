@@ -13,9 +13,18 @@ export type DeclaredCopy<Target extends DestinationTarget> = {
   readonly coverage: ExtractionCoverage;
 };
 
+// A stream a check found unchanged: current as of the check, or as of
+// earlier when its source says its upstream was current only then.
+export type StreamCheck = { readonly stream: string; readonly at: Date };
+
 // One pass as recorded: declared before its read, closed with what it loaded.
+// upstream holds, by stream, when its source said its upstream was last
+// current; a stream it does not hold was read from a live upstream.
 export type RecordedPass<Target extends DestinationTarget> = {
-  finish(outcomes: readonly CopyOutcome<Target>[]): Promise<void>;
+  finish(
+    outcomes: readonly CopyOutcome<Target>[],
+    upstream: ReadonlyMap<string, Date>,
+  ): Promise<void>;
   // The pass produced no outcomes, so what it committed is unknown.
   fail(error: unknown, failureType: FailureType): Promise<void>;
 };
@@ -42,27 +51,27 @@ export abstract class SyncHistory<Target extends DestinationTarget> {
     copies: readonly DeclaredCopy<Target>[],
   ): Promise<RecordedPass<Target>>;
 
-  // At that moment a watch's source checked these streams and found them
+  // At that moment a watch's source checked its streams and found them
   // unchanged since their last copy loaded, so readers see them current as of
   // then though no pass read them, as a Debezium heartbeat moves a connector's
   // position with no change to carry. A connection's first check is recorded
-  // at once, and the next at most once a minute.
+  // at once, and the next at most once a minute; current gives the streams
+  // to record only then, since asking a source can cost a process call.
   async checked(
     connection: Connection<Target>,
-    streams: readonly string[],
     at: Date,
+    current: (at: Date) => Promise<readonly StreamCheck[]>,
   ): Promise<void> {
     const last = this.#checkedAt.get(connection.name);
     if (last !== undefined && at.getTime() - last < checkRecordMs) return;
     this.#checkedAt.set(connection.name, at.getTime());
-    await this.recordChecks(connection, streams, at);
+    await this.recordChecks(connection, await current(at));
   }
 
   // Durable when it resolves.
   protected abstract recordChecks(
     connection: Connection<Target>,
-    streams: readonly string[],
-    at: Date,
+    checks: readonly StreamCheck[],
   ): Promise<void>;
 }
 

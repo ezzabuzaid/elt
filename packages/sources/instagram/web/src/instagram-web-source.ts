@@ -158,6 +158,10 @@ export class InstagramWebSource extends Source<InstagramRun> {
     };
   }
 
+  override async currentAsOf() {
+    return null;
+  }
+
   protected override async *observe({
     streams,
     signal,

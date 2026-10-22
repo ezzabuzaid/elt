@@ -5,6 +5,7 @@ import {
   type CopyOutcome,
   type DeclaredCopy,
   type RecordedPass,
+  type StreamCheck,
   SyncHistory,
   copyStatus,
   passError,
@@ -39,11 +40,10 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
 
   protected override async recordChecks(
     connection: Connection<PostgresTable>,
-    streams: readonly string[],
-    at: Date,
+    streamChecks: readonly StreamCheck[],
   ): Promise<void> {
     await this.#write(async (transaction) => {
-      for (const stream of streams)
+      for (const { stream, at } of streamChecks)
         await transaction`
           INSERT INTO _warehouse.stream_checks (connector, stream, checked_at)
           VALUES (${connection.name}, ${stream}, ${at})
@@ -76,7 +76,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
       return attempt.id;
     });
     return {
-      finish: (outcomes) => this.#finish(id, outcomes),
+      finish: (outcomes, upstream) => this.#finish(id, outcomes, upstream),
       fail: (error, failureType) =>
         this.#write(async (transaction) => {
           await transaction`
@@ -116,6 +116,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
   #finish(
     id: string,
     outcomes: readonly CopyOutcome<PostgresTable>[],
+    upstream: ReadonlyMap<string, Date>,
   ): Promise<void> {
     return this.#write(async (transaction) => {
       for (const outcome of outcomes)
@@ -125,6 +126,10 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
             written_count = ${outcome.count}, deleted_count = ${outcome.deleted},
             failures = ${transaction.json(outcome.failures.map(recordedFailure))}
           WHERE attempt_id = ${id} AND stream = ${outcome.copy.from.name}`;
+      for (const [stream, at] of upstream)
+        await transaction`
+          UPDATE _warehouse.extraction_coverage SET upstream_current_as_of = ${at}
+          WHERE attempt_id = ${id} AND stream = ${stream}`;
       await transaction`
         UPDATE _warehouse.sync_attempts SET completed_at = clock_timestamp(),
           status = ${passStatus(outcomes)}, error = ${passError(outcomes)},

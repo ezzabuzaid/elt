@@ -136,6 +136,12 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
     };
   }
 
+  // Slack saves its state every few minutes while it runs and when it
+  // quits, so the store is current only as of its last save.
+  override async currentAsOf(): Promise<Date> {
+    return this.#store.lastWrite();
+  }
+
   // The app saves one record for all of a workspace, so a save wakes every
   // selected stream; the snapshot diff writes nothing for those that did not
   // change.

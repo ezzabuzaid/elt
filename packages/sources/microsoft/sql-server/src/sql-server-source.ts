@@ -107,6 +107,10 @@ export class SqlServerSource extends Source<SqlServerSession> {
     return this.#reader(stream).coverage();
   }
 
+  async currentAsOf() {
+    return null;
+  }
+
   // Polls the database's change counters: a moved Change Tracking version
   // wakes the streams read through it, a moved rowversion the streams read
   // by theirs; streams with neither refresh on an interval.

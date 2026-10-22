@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import {
   chmod,
   mkdir,
@@ -9,6 +9,7 @@ import {
   readFile,
   rename,
   rm,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -2804,7 +2805,7 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
     ]);
 });
 
-test('a Mail watch keeps every stream current while Mail and the Accounts store hold still', async () => {
+test('a Mail watch makes no pass while Mail and the Accounts store hold still, and keeps every stream current only as of the last write of the index', async () => {
   await using dir = await mkdtempDisposable(
     join(tmpdir(), 'elt-mail-current-'),
   );
@@ -2814,6 +2815,11 @@ test('a Mail watch keeps every stream current while Mail and the Accounts store 
   // counts as a change.
   using mail = new DatabaseSync(store.index);
   mail.prepare('SELECT count(*) FROM messages').get();
+  // Mail last wrote its index then; a reader read it later.
+  const written = new Date('2026-10-21T01:16:44.000Z');
+  for (const path of [store.index, `${store.index}-wal`])
+    if (existsSync(path))
+      await utimes(path, new Date(+written + 100_000_000), written);
   // FSEvents reports those writes a few milliseconds late, none after 200 ms
   // (probed for #2235); a watch started sooner would see them.
   await sleep(500);
@@ -2845,35 +2851,38 @@ test('a Mail watch keeps every stream current while Mail and the Accounts store 
   try {
     await watching.next();
     using out = new DatabaseSync(data, { readOnly: true });
-    const status = out.prepare(
-      'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
-    );
-    const [pass] = out
-      .prepare('SELECT started_at, completed_at FROM sync_attempts')
-      .all();
-    // Nothing changes, so only the watch's next check can move current_as_of.
+    // Waits for a check the watch recorded, as its sync history keeps it.
     for (
       let tries = 0;
-      status
-        .all()
-        .some(
-          ({ current_as_of }) =>
-            String(current_as_of) <= String(pass?.started_at),
-        );
+      out.prepare('SELECT count(*) AS n FROM _elt_stream_checks').get()?.n ===
+      0;
       tries++
     ) {
-      if (tries > 100)
-        assert.fail(`not current: ${JSON.stringify(status.all())}`);
+      if (tries > 100) assert.fail('the watch recorded no check');
       await sleep(100);
     }
 
+    const [pass] = out
+      .prepare('SELECT started_at, completed_at FROM sync_attempts')
+      .all();
     assert.equal(
       out.prepare('SELECT count(*) AS n FROM sync_attempts').get()?.n,
       1,
     );
-    for (const row of status.all()) {
+    const status = out
+      .prepare(
+        'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
+      )
+      .all();
+    assert.ok(status.length > 0);
+    for (const row of status) {
       assert.equal(row.status, 'succeeded', String(row.stream));
       assert.equal(row.last_successful_sync_at, pass?.completed_at);
+      assert.equal(
+        row.current_as_of,
+        written.toISOString(),
+        String(row.stream),
+      );
     }
   } finally {
     await watching.return(undefined);

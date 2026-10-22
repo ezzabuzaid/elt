@@ -163,6 +163,10 @@ export class AppleSafariSource extends Source<SafariScan> {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
 
+  override async currentAsOf() {
+    return null;
+  }
+
   // Each store the streams read reports its own changes.
   protected override async *observe({
     streams,
