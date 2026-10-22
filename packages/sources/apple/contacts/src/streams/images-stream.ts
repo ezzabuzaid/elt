@@ -87,12 +87,15 @@ export class ImagesStream extends AppleContactsStream<ContactImagesRow> {
     return selection.contact(row.contactId);
   }
 
-  // The stored data stays in the scan, for the files the read hands over.
+  // The row's stored data stays in the scan, for the files the read hands
+  // over. The diff hands on each record before the next row is read, so the
+  // previous row's data is no longer needed.
   protected async records(
     row: ContactImagesRow,
     _store: AddressBookStore,
     scan: ContactsScan,
   ): Promise<Record<string, unknown>[]> {
+    scan.images.clear();
     const records: Record<string, unknown>[] = [];
     for (const kind of ['image', 'thumbnail'] as const) {
       const data = row[kind]();

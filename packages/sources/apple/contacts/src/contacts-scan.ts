@@ -64,8 +64,8 @@ export const imageKey = (contactId: unknown, kind: unknown) =>
   JSON.stringify([contactId, kind]);
 
 // One run's read of every account store: streams read through it, each
-// store's selection is worked out once, and the images stream leaves its
-// stored data here for the files the read hands over.
+// store's selection is worked out once, and the images stream leaves the
+// stored data of the row it reads here for the files the read hands over.
 export class ContactsScan implements AsyncDisposable {
   readonly images = new Map<string, StoredData>();
   // The Mac's region, which a number without a country code is read in.

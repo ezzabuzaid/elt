@@ -827,9 +827,20 @@ test('Contacts exports every stream of every account store by identifier', async
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'elt-contacts-'),
   );
-  const source = new AppleContactsSource(
-    addressBookFixture(join(scratch.path, 'AddressBook')),
-  );
+  const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
+  // Grace keeps a photo beside her thumbnail: one row with two images.
+  const photo = Buffer.from('a larger photo');
+  {
+    using store = new DatabaseSync(
+      join(directory, 'Sources/ACCOUNT-A/AddressBook-v22.abcddb'),
+    );
+    store
+      .prepare(
+        "UPDATE ZABCDRECORD SET ZIMAGEDATA = ? WHERE ZUNIQUEID = 'GRACE:ABPerson'",
+      )
+      .run(inline(photo));
+  }
+  const source = new AppleContactsSource(directory);
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -875,7 +886,7 @@ test('Contacts exports every stream of every account store by identifier', async
       ['remoteLocations', 1],
       ['unknownProperties', 2],
       ['distributionListConfigs', 1],
-      ['images', 3],
+      ['images', 4],
     ],
   );
   const out = destination.path;
@@ -1151,7 +1162,7 @@ test('Contacts exports every stream of every account store by identifier', async
   );
   const images = rows(
     out,
-    'SELECT contactId, kind, storage, externalId, byteLength, sha256, bytes FROM images ORDER BY contactId',
+    'SELECT contactId, kind, storage, externalId, byteLength, sha256, bytes FROM images ORDER BY contactId, kind',
   );
   const jpeg = Buffer.from('not really a jpeg');
   assert.deepEqual(
@@ -1168,6 +1179,15 @@ test('Contacts exports every stream of every account store by identifier', async
         byteLength: jpeg.length,
         sha256: sha256(jpeg),
         bytes: jpeg,
+      },
+      {
+        contactId: 'GRACE:ABPerson',
+        kind: 'image',
+        storage: 'inline',
+        externalId: null,
+        byteLength: photo.length,
+        sha256: sha256(photo),
+        bytes: photo,
       },
       {
         contactId: 'GRACE:ABPerson',
@@ -1745,6 +1765,8 @@ test('a Contacts pass over a large store holds one contact at a time, so it load
       INSERT INTO ZABCDEMAILADDRESS (Z_PK, ZOWNER, ZUNIQUEID, ZLABEL, ZADDRESS)
         SELECT Z_PK, Z_PK, 'EMAIL-' || Z_PK, '_$!<Home>!$_', 'person' || Z_PK || '@example.com'
         FROM ZABCDRECORD WHERE Z_ENT = ${contact};
+      UPDATE ZABCDRECORD SET ZTHUMBNAILIMAGEDATA = unhex('01' || hex(randomblob(16384)))
+        WHERE Z_ENT = ${contact} AND Z_PK <= 4001;
     `);
   }
   const preferences = join(scratch.path, 'GlobalPreferences.plist');
@@ -1755,8 +1777,12 @@ test('a Contacts pass over a large store holds one contact at a time, so it load
   // The import as a host runs it, in a process whose heap is far smaller
   // than the store: a pass that holds every contact, or every record it
   // keeps, at once runs out of it (it needs about 250 MB; one that reads a
-  // contact at a time fits in 32). The process loads the built source from
-  // this package's folder, where its dependencies resolve.
+  // contact at a time fits in 32). Image bytes live outside the heap, so the
+  // process reports its peak array-buffer memory: about 17-19 MB when it
+  // keeps one contact's images at a time, about 66 MB when it keeps the
+  // 4,000 thumbnails until the pass ends; the 40 MB bound sits clear of
+  // both. The process loads the built source from this package's folder,
+  // where its dependencies resolve.
   const pass = `
     const { Connection, Copy, Pipeline } = await import('@workspace/elt');
     const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
@@ -1766,6 +1792,10 @@ test('a Contacts pass over a large store holds one contact at a time, so it load
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
     await history.install([destination]);
+    let arrayBuffers = 0;
+    const sample = setInterval(() => {
+      arrayBuffers = Math.max(arrayBuffers, process.memoryUsage().arrayBuffers);
+    }, 5);
     await new Pipeline({
       history,
       connections: [
@@ -1782,6 +1812,8 @@ test('a Contacts pass over a large store holds one contact at a time, so it load
         }),
       ],
     }).run();
+    clearInterval(sample);
+    process.stdout.write(String(arrayBuffers));
   `;
 
   const run = spawnSync(
@@ -1815,8 +1847,21 @@ test('a Contacts pass over a large store holds one contact at a time, so it load
       join(scratch.path, 'data.sqlite'),
       `SELECT (SELECT count(*) FROM raw_contacts) AS contacts,
               (SELECT count(*) FROM raw_phoneNumbers) AS phoneNumbers,
-              (SELECT count(*) FROM raw_emailAddresses) AS emailAddresses`,
+              (SELECT count(*) FROM raw_emailAddresses) AS emailAddresses,
+              (SELECT count(*) FROM raw_images) AS images`,
     ),
-    [{ contacts: 60_000, phoneNumbers: 60_000, emailAddresses: 60_000 }],
+    [
+      {
+        contacts: 60_000,
+        phoneNumbers: 60_000,
+        emailAddresses: 60_000,
+        images: 4_000,
+      },
+    ],
+  );
+  const arrayBuffers = Number(run.stdout);
+  assert.ok(
+    arrayBuffers < 40_000_000,
+    `array buffers peaked at ${arrayBuffers} bytes`,
   );
 });
