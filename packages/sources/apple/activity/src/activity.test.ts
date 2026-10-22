@@ -30,6 +30,11 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
+import {
+  AppInFocus,
+  BiomeStore,
+  biomeDirectory,
+} from '@workspace/sdk-apple-biome';
 
 import { AppleActivitySource } from './apple-activity-source.ts';
 
@@ -1410,6 +1415,7 @@ test('Activity reads this Mac’s activity into SQLite', async (t) => {
   const source = new AppleActivitySource();
   const activity = await appleImport(source, scratch.path);
 
+  const startedAt = Date.now();
   const outcome = await activity.load().then(
     (loaded) => loaded,
     (error: unknown) => error,
@@ -1423,17 +1429,53 @@ test('Activity reads this Mac’s activity into SQLite', async (t) => {
     return t.skip('no Full Disk Access to Biome and knowledgeC');
   assert.ok(!(outcome instanceof Error), String(outcome));
 
-  // Every Mac has a device list naming itself, and records app focus.
+  // Every Mac has a device list naming itself.
   assert.deepEqual(
     activity.read('SELECT count(*) AS n FROM devices WHERE "thisMac" = 1'),
     [{ n: 1 }],
   );
-  const focus = activity.read(
-    'SELECT count(*) AS n, min("recordedAt") AS oldest FROM app_focus WHERE origin = \'local\'',
-  )[0];
-  assert.ok(Number(focus?.n) > 0);
-  // macOS keeps app focus for 28 days.
-  assert.ok(String(focus?.oldest) > daysAgo(29).toISOString());
+  // Biome blanks each app focus record once it passes 28 days, on its own
+  // schedule, so how far back it keeps varies. The import loads every record
+  // Biome kept when the load began, at the time Biome wrote it. A segment is
+  // named for when it started, in microseconds since 2001-01-01, and holds
+  // the records written until the next one started, so the names bound each
+  // record's time apart from how its bytes decode.
+  const loaded = new Map(
+    activity
+      .read(
+        `SELECT segment, slot, "recordedAt" FROM app_focus WHERE origin = 'local'`,
+      )
+      .map(({ segment, slot, recordedAt }) => [
+        `${String(segment)}/${String(slot)}`,
+        recordedAt,
+      ]),
+  );
+  const streams = await new BiomeStore(biomeDirectory).streams();
+  const segments = (await streams.segments(new AppInFocus()))
+    .filter(({ origin }) => origin === 'local')
+    .sort((a, b) => Number(a.name) - Number(b.name));
+  const started = (name: string) => Date.UTC(2001, 0, 1) + Number(name) / 1000;
+  const wrong: string[] = [];
+  let kept = 0;
+  for (const [index, segment] of segments.entries()) {
+    const next = segments[index + 1];
+    const end = next === undefined ? Date.now() : started(next.name);
+    for (const { slot, writtenAt } of await segment.records()) {
+      const address = `${segment.name}/${slot}`;
+      const at = writtenAt.getTime();
+      if (at < Math.floor(started(segment.name)) || at > Math.ceil(end))
+        wrong.push(`${address} written outside its segment`);
+      if (at >= startedAt) continue;
+      kept += 1;
+      if (loaded.get(address) !== writtenAt.toISOString())
+        wrong.push(`${address} loaded as ${String(loaded.get(address))}`);
+    }
+  }
+  assert.ok(kept > 0);
+  assert.deepEqual(
+    { wrong: wrong.length, first: wrong.slice(0, 5) },
+    { wrong: 0, first: [] },
+  );
 });
 
 test('an Activity watch keeps every stream current while its stores hold still', async () => {
