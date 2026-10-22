@@ -422,7 +422,8 @@ function unloaded(name: string): string {
 // Who owns an import: the process holding its claim, a sync for one pass or a
 // sync watch until it stops. The claim sits at the store's root, beside the
 // settings, so the removal of an import's folder never deletes a claim a
-// waiting watch holds open.
+// waiting watch holds open. The Apple plugin has a copy in
+// apps/apple/plugin/src/apple-plugin.ts: change both.
 function owners(settings: Settings, directory: string): SqliteElection {
   const name = relative(settings.root, directory).replaceAll(sep, '.');
   return new SqliteElection({

@@ -116,7 +116,7 @@ const mcpServer = new McpServer(
     ],
   },
   {
-    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(plugin.connectors.map(({ title }) => title))} content the user chose into private SQLite files on this Mac when the user connects a connector or changes what it imports, and again when the user presses Sync on the Apple page; nothing refreshes an import on its own. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
+    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(plugin.connectors.map(({ title }) => title))} content the user chose into private SQLite files on this Mac when the user connects a connector or changes what it imports, and again when the user presses Sync on the Apple page. A connector the user keeps current on its page also loads each change while ChatGPT is open. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
   },
 );
 // McpServer turns a thrown error into an isError result the model can act on.
@@ -405,11 +405,33 @@ mcpServer.registerTool(
   },
 );
 mcpServer.registerTool(
+  'apple_connector_watch',
+  {
+    title: 'Keep one Apple connector current',
+    description:
+      'Switch one connected connector, from its page, to load each change while ChatGPT is open, or back to loading only at Sync.',
+    inputSchema: { connector: connectorSchema, watched: z.boolean() },
+    outputSchema: connectorsResult,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    _meta: appOnly,
+  },
+  async ({ connector, watched }) => {
+    await refresh();
+    plugin.setWatched(connector, watched);
+    return structured({ connectors: connectorRows(plugin) });
+  },
+);
+mcpServer.registerTool(
   'apple_sync',
   {
     title: 'Sync Apple connectors',
     description:
-      'Import every connected connector again from the Apple page, or only the one named, so each brings in what changed since its last sync, and return once every pass has ended. A connector another chat is importing finishes that pass instead.',
+      'Import every connected connector again from the Apple page, or only the one named, so each brings in what changed since its last sync, and return once every pass has ended. A connector another chat is importing finishes that pass instead, and one kept current loads each change already.',
     inputSchema: { connector: connectorSchema.optional() },
     outputSchema: connectorsResult,
     annotations: {
@@ -471,11 +493,22 @@ mcpServer.registerTool(
   },
 );
 
+// Every server stands by for the imports the user keeps current, so one of
+// them is watched while any chat or the Apple page is open.
+const watching = new AbortController();
+void plugin.watch(watching.signal);
 mcpServer.server.onclose = () => {
+  watching.abort();
   void transcription[Symbol.asyncDispose]();
 };
 for (const signal of ['SIGINT', 'SIGTERM'] as const)
   process.once(signal, () => {
     void mcpServer.close();
   });
+// Codex closes a chat's server by ending its stdin, which the SDK's stdio
+// transport does not listen for (1.32.1); the server closes then, so its
+// watches stop and the process ends.
+process.stdin.once('end', () => {
+  void mcpServer.close();
+});
 await mcpServer.connect(new StdioServerTransport());

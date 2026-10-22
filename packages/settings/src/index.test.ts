@@ -250,6 +250,42 @@ test('a changed selection leaves its previous import stale, and a selection with
   );
 });
 
+test('a connector the user keeps current stays so when narrowed, until it is switched off or disconnected', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'store-'));
+  const notes = { connector: 'notes', scope: {}, includeAttachments: true };
+  const books = { connector: 'books', scope: {}, includeAttachments: true };
+  {
+    using store = new Settings(scratch.path);
+    store.select([notes, books], options);
+    store.watch('notes');
+    store.watch('books');
+  }
+
+  using store = new Settings(scratch.path);
+  const reopened = store.watched();
+  store.select([{ ...notes, scope: { accountIds: ['a'] } }, books], options);
+  const narrowed = store.watched();
+  store.unwatch('books');
+  const switchedOff = store.watched();
+  store.watch('books');
+  store.select([books], options);
+  store.watch('contacts');
+  store.select(
+    [
+      notes,
+      books,
+      { connector: 'contacts', scope: {}, includeAttachments: true },
+    ],
+    options,
+  );
+  const reconnected = store.watched();
+
+  assert.deepEqual(reopened, ['notes', 'books']);
+  assert.deepEqual(narrowed, ['notes', 'books']);
+  assert.deepEqual(switchedOff, ['notes']);
+  assert.deepEqual(reconnected, ['books']);
+});
+
 test('removing a connector stops its running import', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'store-'));
   const notes = { connector: 'notes', scope: {}, includeAttachments: true };

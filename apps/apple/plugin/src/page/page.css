@@ -238,6 +238,15 @@ button.item:hover,
   white-space: nowrap;
 }
 
+/* A connector kept current says so after its title, as Space's rows end in
+   a muted count. */
+.item-note {
+  flex: none;
+  margin-left: auto;
+  color: var(--color-text-secondary, var(--muted-foreground));
+  font-size: var(--font-text-sm-size, 13px);
+}
+
 /* A section with no rows says how to add one, aligned with a row's title. */
 .section li.empty {
   padding: 5px 8px;
@@ -472,7 +481,7 @@ button.item:hover,
 .transcription-link {
   flex: none;
 }
-.transcription-toggle {
+.toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;

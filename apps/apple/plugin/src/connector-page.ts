@@ -120,6 +120,7 @@ export function connectorRows(plugin: ApplePlugin): ConnectorRow[] {
       title: connector.title,
       loaded: true,
       selection,
+      watched: item?.watched ?? false,
       status: loadedStatus(connector, item, now),
       narrowsBy: {
         accountIds: connector.narrowsBy('accountIds'),
@@ -141,6 +142,7 @@ export function connectorRows(plugin: ApplePlugin): ConnectorRow[] {
         scope: item.scope,
         includeAttachments: item.includeAttachments,
       },
+      watched: item.watched,
       status: {
         state: item.sync === null ? 'waiting' : item.sync.state,
         text: item.permissions,

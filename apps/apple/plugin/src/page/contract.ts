@@ -21,6 +21,8 @@ const row = z.strictObject({
   title: z.string(),
   loaded: z.boolean(),
   selection: selection.nullable(),
+  // The user keeps it current: it loads each change while ChatGPT is open.
+  watched: z.boolean(),
   status: z.strictObject({
     state: z.enum([
       'off',

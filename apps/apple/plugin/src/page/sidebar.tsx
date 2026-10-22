@@ -98,6 +98,7 @@ function ConnectorLink({ row }: { row: ConnectorRow }) {
     <>
       <StatusGlyph row={row} />
       <span className="item-title">{row.title}</span>
+      {row.watched && <span className="item-note">Watching</span>}
     </>
   );
   return (

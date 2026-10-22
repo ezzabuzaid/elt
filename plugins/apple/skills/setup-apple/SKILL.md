@@ -71,7 +71,7 @@ Read each connector's state as `$query-apple` describes. Then reply in this shap
 
 Use these facts only when the user asks:
 
-- The plugin imports a connector when the user switches it on or changes what it imports. Sync on the Apple page imports every connected connector again, and Sync in a connector's right-click menu imports that connector alone; either also finishes an interrupted, failed or partial import. Nothing imports on its own, and nothing runs after Codex closes.
+- The plugin imports a connector when the user switches it on or changes what it imports. Sync on the Apple page imports every connected connector again, and Sync in a connector's right-click menu imports that connector alone; either also finishes an interrupted, failed or partial import. A connector whose page has Keep current on also loads each change while ChatGPT is open. Nothing else imports on its own, and nothing runs after ChatGPT closes.
 - The Apple page switches each connector on or off and shows its import status. Open it from Explore in the ChatGPT sidebar and pin it, or find it in Settings search. Give the user its link: [Apple page](codex://plugins/apple/app/apple_page). The link to one connector's page ends in `?path=%2Fconnectors%2F<connector>`, such as `codex://plugins/apple/app/apple_page?path=%2Fconnectors%2Fcalendar`. A connector that is switched on imports everything. Its detail page narrows it to accounts, folders, dates or attachments.
 - The hooks give each new chat the Apple status.
 - `extraction_coverage` gives what each pass loaded per stream.

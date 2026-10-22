@@ -10,6 +10,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -455,6 +456,7 @@ test(
         'apple_configure',
         'apple_connector_choices',
         'apple_connector_update',
+        'apple_connector_watch',
         'apple_connectors',
         'apple_context',
         'apple_monitor_add',
@@ -477,6 +479,7 @@ test(
         'apple_connectors',
         'apple_connector_choices',
         'apple_connector_update',
+        'apple_connector_watch',
         'apple_sync',
         'apple_transcription',
         'apple_transcription_update',
@@ -531,6 +534,7 @@ test(
         'apple_connectors',
         'apple_connector_choices',
         'apple_connector_update',
+        'apple_connector_watch',
         'apple_sync',
         'apple_transcription',
         'apple_transcription_update',
@@ -1385,7 +1389,13 @@ async function readerOf(pipe: string) {
 // A chat's Apple server on the installed plugin, started as Codex starts it.
 // closed settles once its process ended; send signals it only until then,
 // so no other process that takes its ID gets the signal.
-async function chat(signal: AbortSignal, plugin: string, home: string) {
+async function chat(
+  signal: AbortSignal,
+  plugin: string,
+  home: string,
+  // The codex a monitor's match is queued through, when the test checks one.
+  codex?: string,
+) {
   const {
     mcpServers: { apple },
   } = JSON.parse(readFileSync(join(plugin, '.mcp.json'), 'utf8'));
@@ -1401,6 +1411,7 @@ async function chat(signal: AbortSignal, plugin: string, home: string) {
           homedir(),
           '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node',
         ),
+      ...(codex === undefined ? {} : { CODEX_CLI_PATH: codex }),
       PATH: '',
     },
     stderr: 'pipe',
@@ -1448,6 +1459,45 @@ async function chat(signal: AbortSignal, plugin: string, home: string) {
         undefined,
         { signal },
       ),
+    // The Keep current switch on a connector's page.
+    watch: (connector: string, watched: boolean) =>
+      client.callTool(
+        { name: 'apple_connector_watch', arguments: { connector, watched } },
+        undefined,
+        { signal },
+      ),
+    connectors: () =>
+      client.callTool({ name: 'apple_connectors', arguments: {} }, undefined, {
+        signal,
+      }),
+    // A monitor the chat wrote, added for the chat Codex names in _meta.
+    addMonitor: (name: string, thread: string) =>
+      client.callTool(
+        {
+          name: 'apple_monitor_add',
+          arguments: { name },
+          _meta: { threadId: thread },
+        },
+        undefined,
+        { signal },
+      ),
+    disconnect: (connector: string) =>
+      client.callTool(
+        {
+          name: 'apple_connector_update',
+          arguments: { connector, selection: null },
+        },
+        undefined,
+        { signal },
+      ),
+    // Closes the chat as Codex does, by ending the server's stdin, and says
+    // how long the server took to exit. The SDK sends SIGTERM after 2 s, so
+    // a server that ignores the end of its stdin takes longer.
+    async hangUp() {
+      const started = performance.now();
+      await client.close();
+      return performance.now() - started;
+    },
     async [Symbol.asyncDispose]() {
       send('SIGKILL');
       await client.close();
@@ -1496,6 +1546,80 @@ const photosRow = (result: unknown) =>
     })
     .parse(result)
     .structuredContent.connectors.find(({ name }) => name === 'photos')?.status;
+
+// Photos as a connector whose source keeps watching its library, as a real
+// app's store is watched: it reports a change whenever photos.json is
+// replaced. It stats the library, so a pipe in its place does not block it.
+async function withWatchedPhotos(home: string) {
+  await withConnectors(home);
+  const connector = join(
+    home,
+    'Library/Application Support/Context Compiler/Connectors/photos/photos-connector.ts',
+  );
+  const imports = "import { readFile } from 'node:fs/promises';";
+  const watcher =
+    '  protected async *observe({ streams }: SourceWatchOptions) {\n    yield streams;\n  }';
+  const source = readFileSync(connector, 'utf8');
+  assert.ok(
+    source.includes(imports) && source.includes(watcher),
+    'the Photos fixture watches another way',
+  );
+  writeFileSync(
+    connector,
+    source
+      .replace(imports, "import { readFile, stat } from 'node:fs/promises';")
+      .replace(
+        watcher,
+        `  protected async *observe({ streams, signal }: SourceWatchOptions) {
+    yield streams;
+    const library = join(homedir(), 'Pictures/photos.json');
+    let seen = (await stat(library)).mtimeMs;
+    while (!signal.aborted) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const { mtimeMs } = await stat(library);
+      if (mtimeMs !== seen) {
+        seen = mtimeMs;
+        yield streams;
+      }
+    }
+  }`,
+      ),
+  );
+}
+
+// Replaces the Photos library in one step, as an app saves its store, so no
+// pass reads it half written.
+function photograph(
+  home: string,
+  photos: readonly { id: string; title: string }[],
+) {
+  const library = join(home, 'Pictures/photos.json');
+  writeFileSync(`${library}.new`, JSON.stringify(photos));
+  renameSync(`${library}.new`, library);
+}
+
+// The photos the Photos import holds.
+function photoIds(home: string): string[] {
+  const database = importOf(home, 'photos');
+  return database === undefined
+    ? []
+    : read(database, 'SELECT id FROM photos ORDER BY id').rows.map(
+        ({ id }: { id: string }) => id,
+      );
+}
+
+// Waits until what a test expects holds, or fails with what the servers
+// wrote to stderr.
+async function eventually(
+  holds: () => boolean,
+  failure: string,
+  said: () => string,
+) {
+  for (let tries = 0; !holds(); tries++) {
+    if (tries > 120) assert.fail(`${failure} within 60 s:\n${said()}`);
+    await sleep(500);
+  }
+}
 
 // Three chats' servers on one Apple store, as when a customer's import
 // failed with "Checkpoint … is in use by another run". The first server
@@ -1679,5 +1803,555 @@ test(
       { id: 'p2' },
       { id: 'p3' },
     ]);
+  },
+);
+
+const beach = { id: 'p1', title: 'Beach' };
+const snow = { id: 'p2', title: 'Snow' };
+const dunes = { id: 'p3', title: 'Dunes' };
+
+// Photos kept current by the first chat's server, while a second chat's
+// server, open before the switch, stands by for it. The second is stopped
+// while the user switches Photos on, so the first takes the watch; the
+// second hears of the switch only through the settings.
+async function ownedWatch(signal: AbortSignal, home: string) {
+  const owned = new AsyncDisposableStack();
+  try {
+    const plugin = join(home, 'plugin');
+    cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
+    await withWatchedPhotos(home);
+    const owner = owned.use(await chat(signal, plugin, home));
+    const other = owned.use(await chat(signal, plugin, home));
+    const said = () => `${owner.diagnostics}\n${other.diagnostics}`;
+    await owner.configure(['photos']);
+    await eventually(
+      () => passes(home, 'photos').join() === 'succeeded',
+      'the first import did not load',
+      said,
+    );
+    other.send('SIGSTOP');
+    try {
+      await owner.watch('photos', true);
+      await eventually(
+        () => passes(home, 'photos').length === 2,
+        'the watch ran no pass',
+        said,
+      );
+    } finally {
+      other.send('SIGCONT');
+    }
+    return {
+      owner,
+      other,
+      said,
+      [Symbol.asyncDispose]: () => owned.disposeAsync(),
+    };
+  } catch (error) {
+    await owned.disposeAsync();
+    throw error;
+  }
+}
+
+test(
+  'a chat that closes while its server keeps Photos current exits at once, and another chat’s server, open before Photos was switched on, takes the watch and loads the next change with no Sync',
+  { ...onUnix, timeout: 180_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    await using scene = await ownedWatch(t.signal, scratch.path);
+
+    const exitedIn = await scene.owner.hangUp();
+    photograph(scratch.path, [beach, snow, dunes]);
+    await eventually(
+      () => photoIds(scratch.path).includes('p3'),
+      'the other chat’s server did not load the change',
+      scene.said,
+    );
+
+    assert.ok(
+      exitedIn < 2_000,
+      `the closed chat’s server exited only after ${Math.round(exitedIn)} ms, once the client sent SIGTERM`,
+    );
+    assert.deepEqual(photoIds(scratch.path), ['p1', 'p2', 'p3']);
+    assert.ok(
+      passes(scratch.path, 'photos').every((status) => status === 'succeeded'),
+      JSON.stringify(passes(scratch.path, 'photos')),
+    );
+  },
+);
+
+test(
+  'a server Codex stops with SIGTERM while it keeps Photos current exits, and another chat’s server takes the watch',
+  { ...onUnix, timeout: 180_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    await using scene = await ownedWatch(t.signal, scratch.path);
+
+    scene.owner.send('SIGTERM');
+    const exited = await Promise.race([
+      scene.owner.closed.then(() => true),
+      sleep(5_000).then(() => false),
+    ]);
+    photograph(scratch.path, [beach, snow, dunes]);
+    await eventually(
+      () => photoIds(scratch.path).includes('p3'),
+      'the other chat’s server did not load the change',
+      scene.said,
+    );
+
+    assert.ok(exited, 'the server kept running 5 s after SIGTERM');
+    assert.deepEqual(photoIds(scratch.path), ['p1', 'p2', 'p3']);
+  },
+);
+
+test(
+  'switching Keep current off in a chat whose server does not own the watch stops it, and a change then waits for Sync',
+  { ...onUnix, timeout: 180_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    await using scene = await ownedWatch(t.signal, scratch.path);
+
+    const switched = await scene.other.watch('photos', false);
+    // The owner hears of the switch within a second.
+    await sleep(2_000);
+    photograph(scratch.path, [beach, snow, dunes]);
+    await sleep(3_000);
+    const unwatched = photoIds(scratch.path);
+    const synced = await scene.other.sync('photos');
+
+    assert.notEqual(switched.isError, true, JSON.stringify(switched.content));
+    assert.deepEqual(unwatched, ['p1', 'p2']);
+    assert.equal(photosRow(synced)?.state, 'succeeded', JSON.stringify(synced));
+    assert.deepEqual(photoIds(scratch.path), ['p1', 'p2', 'p3']);
+    assert.deepEqual(passes(scratch.path, 'photos'), [
+      'succeeded',
+      'succeeded',
+      'succeeded',
+    ]);
+  },
+);
+
+test(
+  'a Sync of Photos from another chat while a watch keeps it current runs no pass of its own',
+  { ...onUnix, timeout: 180_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    await using scene = await ownedWatch(t.signal, scratch.path);
+
+    const synced = await scene.other.sync('photos');
+
+    assert.equal(photosRow(synced)?.state, 'succeeded', JSON.stringify(synced));
+    assert.deepEqual(passes(scratch.path, 'photos'), [
+      'succeeded',
+      'succeeded',
+    ]);
+  },
+);
+
+test(
+  'with two chats open, each change to Photos is loaded by one pass, not one per server',
+  { timeout: 180_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    const plugin = join(scratch.path, 'plugin');
+    cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
+    await withWatchedPhotos(scratch.path);
+    await using first = await chat(t.signal, plugin, scratch.path);
+    await using second = await chat(t.signal, plugin, scratch.path);
+    const said = () => `${first.diagnostics}\n${second.diagnostics}`;
+    await first.configure(['photos']);
+    await eventually(
+      () => passes(scratch.path, 'photos').join() === 'succeeded',
+      'the first import did not load',
+      said,
+    );
+
+    await first.watch('photos', true);
+    await eventually(
+      () => passes(scratch.path, 'photos').length === 2,
+      'the watch ran no pass',
+      said,
+    );
+    // Both servers have heard of the switch by now.
+    await sleep(2_000);
+    photograph(scratch.path, [beach, snow, dunes]);
+    await eventually(
+      () => photoIds(scratch.path).includes('p3'),
+      'no server loaded the change',
+      said,
+    );
+    await sleep(3_000);
+
+    assert.deepEqual(passes(scratch.path, 'photos'), [
+      'succeeded',
+      'succeeded',
+      'succeeded',
+    ]);
+  },
+);
+
+test(
+  'only the connectors switched on are kept current: Photos loads a change with no Sync, while Albums, connected but never switched on, waits for Sync',
+  { timeout: 180_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    const plugin = join(scratch.path, 'plugin');
+    cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
+    await withWatchedPhotos(scratch.path);
+    // Albums, another connector that watches its own library, albums.json.
+    const connectors = join(
+      scratch.path,
+      'Library/Application Support/Context Compiler/Connectors',
+    );
+    mkdirSync(join(connectors, 'albums'));
+    writeFileSync(
+      join(connectors, 'albums/package.json'),
+      JSON.stringify({
+        type: 'module',
+        exports: './albums-connector.ts',
+        contextCompiler: { name: 'albums', title: 'Albums' },
+      }),
+    );
+    writeFileSync(
+      join(connectors, 'albums/albums-connector.ts'),
+      readFileSync(
+        join(connectors, 'photos/photos-connector.ts'),
+        'utf8',
+      ).replaceAll("'Pictures/photos.json'", "'Pictures/albums.json'"),
+    );
+    const albums = join(scratch.path, 'Pictures/albums.json');
+    writeFileSync(albums, JSON.stringify([{ id: 'a1', title: 'Summer' }]));
+    await using user = await chat(t.signal, plugin, scratch.path);
+    await user.configure(['photos', 'albums']);
+    await eventually(
+      () =>
+        passes(scratch.path, 'photos').join() === 'succeeded' &&
+        passes(scratch.path, 'albums').join() === 'succeeded',
+      'the first imports did not load',
+      () => user.diagnostics,
+    );
+
+    const switched = await user.watch('photos', true);
+    photograph(scratch.path, [beach, snow, dunes]);
+    writeFileSync(
+      `${albums}.new`,
+      JSON.stringify([
+        { id: 'a1', title: 'Summer' },
+        { id: 'a2', title: 'Winter' },
+      ]),
+    );
+    renameSync(`${albums}.new`, albums);
+    await eventually(
+      () => photoIds(scratch.path).includes('p3'),
+      'Photos did not load the change',
+      () => user.diagnostics,
+    );
+    await sleep(3_000);
+    const database = importOf(scratch.path, 'albums');
+    assert.ok(database !== undefined);
+    const albumIds = read(database, 'SELECT id FROM photos ORDER BY id').rows;
+    // The rows the switch returned, which the page shows, and the rows the
+    // page reads again later.
+    const watchedOf = (result: unknown) =>
+      z
+        .object({
+          structuredContent: z.object({
+            connectors: z.array(
+              z.object({ name: z.string(), watched: z.boolean() }),
+            ),
+          }),
+        })
+        .parse(result)
+        .structuredContent.connectors.filter(({ name }) =>
+          ['albums', 'photos'].includes(name),
+        );
+    const listed = watchedOf(await user.connectors());
+
+    assert.deepEqual(albumIds, [{ id: 'a1' }]);
+    assert.deepEqual(passes(scratch.path, 'albums'), ['succeeded']);
+    for (const rows of [watchedOf(switched), listed])
+      assert.deepEqual(rows, [
+        { name: 'albums', watched: false },
+        { name: 'photos', watched: true },
+      ]);
+  },
+);
+
+test(
+  'a server whose plugin was updated gives up the watch while its chat stays open, and a chat on the new version takes it and loads the next change',
+  { timeout: 180_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    const old = join(scratch.path, 'plugin-old');
+    const current = join(scratch.path, 'plugin-new');
+    cpSync(join(root, 'plugins/apple'), old, { recursive: true });
+    cpSync(old, current, { recursive: true });
+    await withWatchedPhotos(scratch.path);
+    await using stale = await chat(t.signal, old, scratch.path);
+    await stale.configure(['photos']);
+    await eventually(
+      () => passes(scratch.path, 'photos').join() === 'succeeded',
+      'the first import did not load',
+      () => stale.diagnostics,
+    );
+    await stale.watch('photos', true);
+    await eventually(
+      () => passes(scratch.path, 'photos').length === 2,
+      'the watch ran no pass',
+      () => stale.diagnostics,
+    );
+
+    // Installing another version deletes this version's folder.
+    rmSync(old, { recursive: true, force: true });
+    await sleep(2_000);
+    photograph(scratch.path, [beach, snow, dunes]);
+    await sleep(3_000);
+    const beforeNewChat = photoIds(scratch.path);
+    const passesBeforeNewChat = passes(scratch.path, 'photos');
+    await using fresh = await chat(t.signal, current, scratch.path);
+    await eventually(
+      () => photoIds(scratch.path).includes('p3'),
+      'the new version’s server did not load the change',
+      () => `${stale.diagnostics}\n${fresh.diagnostics}`,
+    );
+    const staleOpen = await Promise.race([
+      stale.closed.then(() => false),
+      sleep(0).then(() => true),
+    ]);
+
+    assert.deepEqual(beforeNewChat, ['p1', 'p2']);
+    assert.deepEqual(passesBeforeNewChat, ['succeeded', 'succeeded']);
+    assert.ok(staleOpen, 'the old version’s server ended');
+    assert.deepEqual(photoIds(scratch.path), ['p1', 'p2', 'p3']);
+  },
+);
+
+test(
+  'disconnecting Photos while its watched pass reads keeps the import until the pass ends, then the watch stops and removes it for good',
+  { ...onUnix, timeout: 180_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    const plugin = join(scratch.path, 'plugin');
+    cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
+    await withWatchedPhotos(scratch.path);
+    await using user = await chat(t.signal, plugin, scratch.path);
+    await user.configure(['photos']);
+    await eventually(
+      () => passes(scratch.path, 'photos').join() === 'succeeded',
+      'the first import did not load',
+      () => user.diagnostics,
+    );
+    await user.watch('photos', true);
+    await eventually(
+      () => passes(scratch.path, 'photos').length === 2,
+      'the watch ran no pass',
+      () => user.diagnostics,
+    );
+    const database = importOf(scratch.path, 'photos');
+    assert.ok(database !== undefined);
+    const directory = dirname(database);
+    // A pipe in place of the library: the watch sees a change, and its pass
+    // reads until the test writes the pipe.
+    const library = join(scratch.path, 'Pictures/photos.json');
+    rmSync(library);
+    spawnSync('/usr/bin/mkfifo', [library]);
+    const reading = await readerOf(library);
+
+    let disconnected;
+    let keptWhileReading;
+    try {
+      disconnected = await user.disconnect('photos');
+      // The watch hears of the removal within a second, and its pass reads on.
+      await sleep(2_000);
+      keptWhileReading = existsSync(directory);
+      await reading.writeFile(JSON.stringify([beach, snow, dunes]));
+    } finally {
+      await reading.close();
+    }
+    await eventually(
+      () => !existsSync(directory),
+      'the import was not removed',
+      () => user.diagnostics,
+    );
+    await sleep(3_000);
+
+    assert.notEqual(
+      disconnected.isError,
+      true,
+      JSON.stringify(disconnected.content),
+    );
+    assert.ok(keptWhileReading, 'the import was removed while its pass read');
+    assert.equal(existsSync(directory), false);
+  },
+);
+
+test(
+  'a monitor’s match that a watched pass loaded is queued into its chat with no Sync',
+  { timeout: 180_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    const plugin = join(scratch.path, 'plugin');
+    cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
+    // A real `codex queue` writes into the user's own ~/.codex, so the server
+    // gets an executable that records each call instead.
+    const calls = join(scratch.path, 'codex-calls.jsonl');
+    const codex = join(scratch.path, 'codex');
+    writeFileSync(
+      codex,
+      `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n`,
+      { mode: 0o755 },
+    );
+    await withWatchedPhotos(scratch.path);
+    const monitor = join(
+      scratch.path,
+      'Library/Application Support/Context Compiler/Monitors/new-photos',
+    );
+    mkdirSync(monitor, { recursive: true });
+    writeFileSync(
+      join(monitor, 'package.json'),
+      JSON.stringify({
+        type: 'module',
+        exports: './new-photos-monitor.ts',
+        contextCompiler: {
+          name: 'new-photos',
+          title: 'New photos',
+          description: 'A photo is added to Photos',
+          instruction: 'Describe the new photo.',
+        },
+      }),
+    );
+    writeFileSync(
+      join(monitor, 'new-photos-monitor.ts'),
+      `import type { Query } from '@zukhruf/sqlite-federation';
+
+export default {
+  async evaluate(sql: Query) {
+    return sql.all\`SELECT id FROM photos.photos\`.map((row) => ({ key: String(row.id), data: null }));
+  },
+};`,
+    );
+    await using user = await chat(t.signal, plugin, scratch.path, codex);
+    await user.configure(['photos']);
+    await eventually(
+      () => passes(scratch.path, 'photos').join() === 'succeeded',
+      'the first import did not load',
+      () => user.diagnostics,
+    );
+    const added = await user.addMonitor('new-photos', 'chat-e2e');
+    await user.watch('photos', true);
+    await eventually(
+      () => passes(scratch.path, 'photos').length === 2,
+      'the watch ran no pass',
+      () => user.diagnostics,
+    );
+
+    photograph(scratch.path, [beach, snow, dunes]);
+    await eventually(
+      () => existsSync(calls),
+      'no match was queued',
+      () => user.diagnostics,
+    );
+
+    assert.notEqual(added.isError, true, JSON.stringify(added.content));
+    assert.deepEqual(
+      readFileSync(calls, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line)),
+      [
+        [
+          'queue',
+          '--thread',
+          'chat-e2e',
+          '--message',
+          'Monitor "New photos" triggered: Describe the new photo.',
+        ],
+      ],
+    );
+  },
+);
+
+test(
+  'a watched connector whose source fails is shown failed and stops alone, while another watched connector keeps loading each change',
+  { timeout: 180_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    const plugin = join(scratch.path, 'plugin');
+    cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
+    await withWatchedPhotos(scratch.path);
+    // Albums, another connector that watches its own library, albums.json;
+    // its watch fails once that library is gone.
+    const connectors = join(
+      scratch.path,
+      'Library/Application Support/Context Compiler/Connectors',
+    );
+    mkdirSync(join(connectors, 'albums'));
+    writeFileSync(
+      join(connectors, 'albums/package.json'),
+      JSON.stringify({
+        type: 'module',
+        exports: './albums-connector.ts',
+        contextCompiler: { name: 'albums', title: 'Albums' },
+      }),
+    );
+    writeFileSync(
+      join(connectors, 'albums/albums-connector.ts'),
+      readFileSync(
+        join(connectors, 'photos/photos-connector.ts'),
+        'utf8',
+      ).replaceAll("'Pictures/photos.json'", "'Pictures/albums.json'"),
+    );
+    const albums = join(scratch.path, 'Pictures/albums.json');
+    writeFileSync(albums, JSON.stringify([{ id: 'a1', title: 'Summer' }]));
+    await using user = await chat(t.signal, plugin, scratch.path);
+    await user.configure(['photos', 'albums']);
+    await eventually(
+      () =>
+        passes(scratch.path, 'photos').join() === 'succeeded' &&
+        passes(scratch.path, 'albums').join() === 'succeeded',
+      'the first imports did not load',
+      () => user.diagnostics,
+    );
+    await user.watch('photos', true);
+    await user.watch('albums', true);
+    await eventually(
+      () =>
+        passes(scratch.path, 'photos').length === 2 &&
+        passes(scratch.path, 'albums').length === 2,
+      'the watches ran no pass',
+      () => user.diagnostics,
+    );
+
+    rmSync(albums);
+    await eventually(
+      () => passes(scratch.path, 'albums').at(-1) === 'failed',
+      'the Albums watch did not fail',
+      () => user.diagnostics,
+    );
+    photograph(scratch.path, [beach, snow, dunes]);
+    await eventually(
+      () => photoIds(scratch.path).includes('p3'),
+      'Photos did not load the change',
+      () => user.diagnostics,
+    );
+    const status = (name: string, result: unknown) =>
+      z
+        .object({
+          structuredContent: z.object({
+            connectors: z.array(
+              z.object({
+                name: z.string(),
+                status: z.object({ state: z.string(), text: z.string() }),
+              }),
+            ),
+          }),
+        })
+        .parse(result)
+        .structuredContent.connectors.find((row) => row.name === name)?.status;
+    const rows = await user.connectors();
+
+    assert.equal(status('albums', rows)?.state, 'failed');
+    assert.match(status('albums', rows)?.text ?? '', /ENOENT|no such file/);
+    assert.equal(status('photos', rows)?.state, 'succeeded');
+    assert.deepEqual(photoIds(scratch.path), ['p1', 'p2', 'p3']);
   },
 );

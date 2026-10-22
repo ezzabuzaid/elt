@@ -343,21 +343,27 @@ export abstract class AppleConnector {
   // change its source reports, each recorded in the import's sync history.
   // The attachment text is read after each pass, coalesced: while it reads,
   // passes only ask for one more read, so the import never waits on it.
-  // Ends once the user removes the connector, or once the source stops
-  // reporting changes; otherwise it lasts as long as the process.
+  // Ends once the user removes the connector, once the source stops
+  // reporting changes, or quietly once signal aborts; otherwise it lasts as
+  // long as the process.
   async watch(
     settings: Settings,
     selection: Selection,
     observer?: PassObserver<SQLiteTable>,
+    signal?: AbortSignal,
   ): Promise<ImportOutcome> {
     return this.#load(
       settings,
       selection,
       observer,
-      undefined,
+      signal,
       async (pipeline, text, removal, publish) => {
         const stopping = new AbortController();
-        const signal = AbortSignal.any([removal, stopping.signal]);
+        const stopped = AbortSignal.any(
+          signal === undefined
+            ? [removal, stopping.signal]
+            : [removal, stopping.signal, signal],
+        );
         // A read that fails stops the watch, as an error no sync history
         // recorded does, and becomes the abort reason, so the pass it stops
         // records it as the cause.
@@ -372,8 +378,8 @@ export abstract class AppleConnector {
           running = (async () => {
             do {
               again = false;
-              await attachments.update(signal);
-            } while (again && !signal.aborted);
+              await attachments.update(stopped);
+            } while (again && !stopped.aborted);
           })()
             .catch((error: unknown) => {
               failures.push(error);
@@ -384,7 +390,7 @@ export abstract class AppleConnector {
             });
         };
         try {
-          for await (const _pass of pipeline.watch({ signal })) {
+          for await (const _pass of pipeline.watch({ signal: stopped })) {
             publish();
             if (text !== null) read(text);
           }
@@ -429,9 +435,9 @@ export abstract class AppleConnector {
     const history = new SQLiteSyncHistory();
     try {
       await history.install([destination]);
-      // Every host loads an import only while no other process can: the
-      // plugin as the leader of the import's flight, the CLI as its owner.
-      // So a pass of it still recorded running is one whose process ended.
+      // Every host loads an import only while it owns it, so no other
+      // process can: a pass of it still recorded running is one whose
+      // process ended.
       await history.failUnfinished(connection);
       installSQLiteCatalog(destination);
       const copied = connection.steps.map(

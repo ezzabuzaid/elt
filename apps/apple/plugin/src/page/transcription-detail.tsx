@@ -83,7 +83,7 @@ function TranscriptionForm({ choices }: { choices: TranscriptionChoices }) {
         void save();
       }}
     >
-      <label className="transcription-toggle">
+      <label className="toggle">
         <span>Transcribe audio</span>
         <input
           className="switch"

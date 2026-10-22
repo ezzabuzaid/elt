@@ -1,6 +1,8 @@
 import { existsSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 
+import { SqliteElection } from '@zukhruf/election';
 import { SingleFlight } from '@zukhruf/single-flight';
 import type { Locate } from '@zukhruf/sqlite-federation';
 import { z } from 'zod';
@@ -25,6 +27,10 @@ import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import type { Monitors } from './monitors.ts';
 
 const ids = z.array(z.string().min(1).max(1024)).max(1000);
+
+// How soon a server hears that the user switched a connector to keep current
+// or back, and how soon one whose plugin was updated stops its watches.
+const followMs = 1_000;
 
 // A connector by its name. Connectors are rediscovered on use, so the name
 // is checked when a tool runs, not by an enum fixed when the chat began.
@@ -155,11 +161,15 @@ export class ApplePlugin {
     );
   }
 
-  // The store, refused once another plugin version replaced this one, which
-  // deletes this version's folder.
+  // Whether another plugin version replaced this one, which deletes this
+  // version's folder.
+  get #replaced(): boolean {
+    return !existsSync(join(this.install, '.codex-plugin/plugin.json'));
+  }
+
+  // The store, refused once another plugin version replaced this one.
   #open(): Settings {
-    if (!existsSync(join(this.install, '.codex-plugin/plugin.json')))
-      throw new PluginUpdatedError();
+    if (this.#replaced) throw new PluginUpdatedError();
     return new Settings(this.directory);
   }
 
@@ -175,6 +185,7 @@ export class ApplePlugin {
 
   status() {
     using settings = this.#open();
+    const watched = settings.watched();
     return {
       connectors: settings.selections().map((item) => {
         const database = settings.database(item);
@@ -195,6 +206,7 @@ export class ApplePlugin {
         return {
           ...item,
           title: this.#loaded(item.connector)?.title ?? item.connector,
+          watched: watched.includes(item.connector),
           database: existsSync(database) ? database : null,
           sync,
           content: existsSync(database)
@@ -216,9 +228,11 @@ export class ApplePlugin {
   }
 
   // Removes each import the selection no longer names, unless a server runs
-  // its pass now: joining that pass's flight gives up the wait at once, and
-  // that pass removes its import when it ends. While a removal runs, a pass
-  // of the import waits. The CLI's Imports removes stale imports the same way.
+  // its pass now or keeps it current: joining that pass's flight gives up the
+  // wait at once, and that pass removes its import when it ends, as a watch
+  // does once it hears of the removal within a second. While a removal runs,
+  // a pass of the import waits. The CLI's Imports removes stale imports the
+  // same way.
   async #removeStale(
     settings: Settings,
     flights: SingleFlight<void>,
@@ -229,7 +243,9 @@ export class ApplePlugin {
         .run(
           directory,
           async () => {
-            rmSync(directory, { recursive: true, force: true });
+            await using owner = await owners(settings, directory).campaign();
+            if (owner !== undefined)
+              rmSync(directory, { recursive: true, force: true });
           },
           { onJoin: () => joined.abort(), signal: joined.signal },
         )
@@ -265,12 +281,13 @@ export class ApplePlugin {
 
   // Runs one pass of each selection's import at once, each in the import's
   // flight, so a server that finds another loading an import waits for that
-  // pass instead of loading it again. A pass whose selection the user removed
-  // meanwhile removes its import when it ends, since the removal could not
-  // while the pass ran. A pass whose flight lost its lease stops, since its
-  // outcome reaches no other server; its checkpoints resume the next pass.
-  // Settles whatever the passes do: each pass records how it ended in its
-  // import's sync history.
+  // pass instead of loading it again. An import a watch keeps current runs no
+  // pass, since the watch loads each change already. A pass whose selection
+  // the user removed meanwhile removes its import when it ends, since the
+  // removal could not while the pass ran. A pass whose flight lost its lease
+  // stops, since its outcome reaches no other server; its checkpoints resume
+  // the next pass. Settles whatever the passes do: each pass records how it
+  // ended in its import's sync history.
   async import(
     selections: readonly Selection[],
     options?: { afterCurrent: boolean },
@@ -285,6 +302,8 @@ export class ApplePlugin {
           flights.run(
             directory,
             async ({ signal }) => {
+              await using owner = await owners(settings, directory).campaign();
+              if (owner === undefined) return;
               try {
                 await this.connector(selection.connector).import(
                   settings,
@@ -325,6 +344,90 @@ export class ApplePlugin {
     );
   }
 
+  // Switches a connector to be kept current, or back to Sync only; every
+  // server hears of it within a second.
+  setWatched(connector: string, watched: boolean): void {
+    using settings = this.#open();
+    if (watched) settings.watch(connector);
+    else settings.unwatch(connector);
+  }
+
+  // Keeps each import the user chose to keep current until signal aborts.
+  // Every server stands by for each, and the one that owns an import watches
+  // it, so it stays current while any chat's server or the Apple page's
+  // runs. Each second it follows the settings: a connector switched off,
+  // narrowed or disconnected stops its watch, and one switched on or
+  // narrowed starts one. A server whose plugin was updated stops its
+  // watches, so a server of the new version owns them. Settles whatever the
+  // watches do: each pass records how it ended in its import's sync history.
+  async watch(signal: AbortSignal): Promise<void> {
+    const watches = new Map<string, AbortController>();
+    const running = new Set<Promise<void>>();
+    try {
+      using settings = this.#open();
+      while (!this.#replaced) {
+        const kept = keptCurrent(settings);
+        for (const [directory, watch] of watches)
+          if (!kept.has(directory)) {
+            watch.abort();
+            watches.delete(directory);
+          }
+        for (const [directory, selection] of kept)
+          if (!watches.has(directory)) {
+            const watch = new AbortController();
+            watches.set(directory, watch);
+            const ended = this.#keepCurrent(
+              selection,
+              AbortSignal.any([signal, watch.signal]),
+            ).catch(() => undefined);
+            running.add(ended);
+            void ended.then(() => running.delete(ended));
+          }
+        await sleep(followMs, undefined, { signal });
+      }
+    } catch {
+      // Stopped, or the settings could not be read: a server that starts
+      // next follows them again.
+    } finally {
+      for (const watch of watches.values()) watch.abort();
+      await Promise.all(running);
+    }
+  }
+
+  // Owns the import once no other server does, then watches it until signal
+  // aborts or the watch ends on its own, checking the monitors after each
+  // pass. The import is won back from an owner that may have stopped because
+  // the user switched it off within the last second, which this server has
+  // not followed yet, so it reads the settings again first. A watch the
+  // user's removal ended removes its import.
+  async #keepCurrent(selection: Selection, signal: AbortSignal): Promise<void> {
+    const connector = this.connector(selection.connector);
+    using settings = this.#open();
+    const directory = settings.directory(selection);
+    await using _owner = await owners(settings, directory).campaign({
+      timeout: Number.POSITIVE_INFINITY,
+      signal,
+    });
+    if (!keptCurrent(settings).has(directory)) return;
+    try {
+      await connector.watch(
+        settings,
+        selection,
+        {
+          begin: () => ({
+            progress() {},
+            finish: () => void this.#check().catch(() => undefined),
+            fail() {},
+          }),
+        },
+        signal,
+      );
+    } finally {
+      if (settings.staleImports().includes(directory))
+        rmSync(directory, { recursive: true, force: true });
+    }
+  }
+
   // Registers a monitor for the chat that asked; see Monitors.add.
   async addMonitor(name: string, thread: string): Promise<void> {
     await this.monitors.add(name, thread, this.#locate());
@@ -360,6 +463,31 @@ export class ApplePlugin {
       note: connector.note,
     };
   }
+}
+
+// Each import the user keeps current, by its folder.
+function keptCurrent(settings: Settings): Map<string, Selection> {
+  const watched = settings.watched();
+  return new Map(
+    settings
+      .selections()
+      .filter(({ connector }) => watched.includes(connector))
+      .map((selection) => [settings.directory(selection), selection]),
+  );
+}
+
+// Who owns an import: the server holding its claim, for one pass of a sync
+// or for as long as it keeps the import current. The claim sits at the
+// store's root, beside the settings, so the removal of an import's folder
+// never deletes a claim a waiting server holds open. A copy of the CLI's
+// owners() in apps/apple/cli/src/imports.ts: change both.
+function owners(settings: Settings, directory: string): SqliteElection {
+  const name = relative(settings.root, directory).replaceAll(sep, '.');
+  return new SqliteElection({
+    directory: settings.root,
+    claimFile: `${name}.owner.lock`,
+    epochFile: `${name}.owner.epoch`,
+  });
 }
 
 // What an unloaded connector's selection can be narrowed by: exactly what it

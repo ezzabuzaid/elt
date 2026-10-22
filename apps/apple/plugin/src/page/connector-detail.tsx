@@ -9,6 +9,7 @@ import {
   type ConnectorSelection,
   choicesResult,
 } from './contract.ts';
+import { KeepCurrent } from './keep-current.tsx';
 import { usePage } from './page-context.tsx';
 
 // One connector: its status and what it imports; its switch is on its
@@ -66,6 +67,7 @@ export function ConnectorDetail({ row }: { row: ConnectorRow }) {
     <main className="page">
       <h2>{row.title}</h2>
       <ConnectorStatus row={row} />
+      {row.selection !== null && <KeepCurrent row={row} />}
       <section className="card">
         <h3>What to import</h3>
         {whatToImport}

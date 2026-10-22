@@ -33,6 +33,7 @@ const settingsTables = new Declaration(
   [
     'CREATE TABLE selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL)',
     "CREATE TABLE connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failure_type TEXT NOT NULL CHECK (failure_type IN ('config', 'system')), failed_at TEXT NOT NULL)",
+    'CREATE TABLE watched (connector TEXT PRIMARY KEY)',
     'CREATE TABLE transcription (id INTEGER PRIMARY KEY CHECK (id = 1), model TEXT NOT NULL)',
   ],
   { rows: 'replace' },
@@ -162,6 +163,32 @@ export class Settings implements Disposable {
         .run(model);
   }
 
+  // The selected connectors the user keeps current, in the order chosen. A
+  // narrowed connector stays kept current; a disconnected one is forgotten.
+  watched(): string[] {
+    return this.settings
+      .prepare(
+        'SELECT connector FROM watched JOIN selections USING (connector) ORDER BY position',
+      )
+      .all()
+      .map(({ connector }) => String(connector));
+  }
+
+  // Keeps a selected connector current; one not selected stays as it is.
+  watch(connector: string): void {
+    this.settings
+      .prepare(
+        'INSERT OR IGNORE INTO watched SELECT connector FROM selections WHERE connector = ?',
+      )
+      .run(connector);
+  }
+
+  unwatch(connector: string): void {
+    this.settings
+      .prepare('DELETE FROM watched WHERE connector = ?')
+      .run(connector);
+  }
+
   // Saves a selection that has no problems, with what macOS needs granted for
   // each connector, forgets the failures of every other import and publishes
   // what readers see. The imports it no longer names are left stale.
@@ -195,6 +222,9 @@ export class Settings implements Disposable {
           );
         this.settings.exec(
           'DELETE FROM connection_failures WHERE directory NOT IN (SELECT directory FROM selections)',
+        );
+        this.settings.exec(
+          'DELETE FROM watched WHERE connector NOT IN (SELECT connector FROM selections)',
         );
       },
       { mode: 'immediate' },

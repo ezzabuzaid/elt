@@ -63,4 +63,4 @@ description: Adds a monitor that watches the Apple imports and, after each sync,
 
 - `apple_monitor_add` succeeded from the chat that should receive the instruction.
 - The Apple page lists the monitor as `Watching`, with no `Could not be loaded` or `Last check failed` line.
-- You told the user what it watches, what it will do, and that it checks after each sync.
+- You told the user what it watches, what it will do, and that it checks after each sync, which for a connector kept current is each change it loads.

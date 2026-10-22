@@ -33,6 +33,8 @@ type Page = {
     connector: string,
     selection: Partial<ConnectorSelection> | null,
   ) => Promise<void>;
+  // Keeps a connected connector current while ChatGPT is open, or not.
+  readonly watch: (connector: string, watched: boolean) => Promise<void>;
   // Imports every connected connector again, or only the one named, and
   // settles once its passes have ended; a failure becomes the page's failure.
   readonly sync: (connector?: string) => Promise<void>;
@@ -154,6 +156,21 @@ export function PageProvider({
     [app],
   );
 
+  const watch = useCallback(
+    async (connector: string, watched: boolean) => {
+      if (app === null) return;
+      const { connectors } = await callTool(
+        app,
+        'apple_connector_watch',
+        { connector, watched },
+        connectorsResult,
+      );
+      setRows(connectors);
+      setFailure(null);
+    },
+    [app],
+  );
+
   const sync = useCallback(
     async (connector?: string) => {
       if (app === null) return;
@@ -230,6 +247,7 @@ export function PageProvider({
         removeMonitor,
         failure,
         update,
+        watch,
         sync,
         syncing,
         syncingConnectors,
