@@ -10,15 +10,15 @@ description: Adds a monitor that watches the Apple imports and, after each sync,
 - A monitor is a folder in `~/Library/Application Support/Context Compiler/Monitors/<name>/` holding two files: a `package.json` and the entry point it names.
 - `package.json` is `{ "type": "module", "exports": "./<name>-monitor.ts", "contextCompiler": { "name": "<name>", "title": "<Title>", "description": "<what it watches, in the user's words>", "instruction": "<what to do when it matches>" } }`. `name` is lowercase letters, digits and dashes. The Apple page shows the title, the description and the instruction.
 - The entry is TypeScript that Node runs as written. Its default export is an object with `async evaluate(sql)`. `sql` is a read-only handle with `all` and `get` tagged templates over every Apple import: name an import as a schema, by its connector name, as in `` sql.all`SELECT … FROM mail.messages` ``. A statement may name at most 10 imports.
-- `evaluate` returns the matches that are true now: `[{ key, data }]`. The key names one thing across checks, such as a message id or an order id. Each key is sent once while it keeps matching.
-- After each sync, the plugin evaluates every added monitor. For each new key, it queues `Monitor "<title>" triggered: <instruction>` into the chat that added the monitor, and that chat runs it as a user turn. The message carries no data: the turn reads the imports itself, as `$query-apple` describes.
+- `evaluate` returns the matches that are true now: `[{ key, data }]`. The key names one thing across checks, such as a message id or an order id, and the turn uses it to find that thing. Each key is sent once while it keeps matching.
+- After each sync, the plugin evaluates every added monitor. When a monitor has new keys, the plugin queues one message into the chat that added the monitor: the line `Monitor "<title>" triggered: <instruction>`, then `New matches:` and one `- <key>` line for each new key. That chat runs the message as a user turn. The message carries no other data: the turn finds the row of each key in the imports itself, as `$query-apple` describes.
 - When you add a monitor, what it matches now is its baseline and is not sent. Only what starts to match later is sent.
 - A monitor runs inside the plugin, with every macOS permission ChatGPT has.
 
 ## Writing the monitor
 
 1. Ask the user for "when X, then Y" in their words, and confirm it with one example.
-2. Find X in the imports as `$query-apple` describes. Read real rows, and pick a key that names one occurrence, such as the message id of one receipt.
+2. Find X in the imports as `$query-apple` describes. Read real rows, and pick a key that names one occurrence and finds its row, such as the message id of one receipt.
 3. Write `package.json` and `<name>-monitor.ts` from this template. Keep the monitor in that one file.
 
    ```ts
@@ -42,7 +42,7 @@ description: Adds a monitor that watches the Apple imports and, after each sync,
    };
    ```
 
-   The instruction says what to do, not how: "Log my calorie intake from the food I ordered." The turn that runs it finds the new receipt itself.
+   The instruction says what to do, not how: "Log my calorie intake from the food I ordered." The turn that runs it reads the receipts that the message names.
 
 ## Setting it up
 

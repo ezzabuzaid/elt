@@ -198,12 +198,12 @@ async function stubCodex(directory: string) {
   };
 }
 
-const queued = (thread: string) => [
+const queued = (thread: string, ...keys: string[]) => [
   'queue',
   '--thread',
   thread,
   '--message',
-  'Monitor "New photos" triggered: Describe the new photo.',
+  `Monitor "New photos" triggered: Describe the new photo.\nNew matches:\n${keys.map((key) => `- ${key}`).join('\n')}`,
 ];
 
 // Stands in for a server's import of one connector selection.
@@ -706,7 +706,7 @@ test('the next import replaces a pass a killed process left, so syncing a connec
   }
 });
 
-test('a monitor added from a chat stays quiet about what already matched, and once a sync brings a new match, queues its instruction into that chat once', async () => {
+test('a monitor added from a chat stays quiet about what already matched, and once a sync brings new matches, queues one message into that chat that names each of them', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
   const home = join(scratch.path, 'home');
   const photosJson = join(home, 'Pictures/photos.json');
@@ -738,13 +738,22 @@ test('a monitor added from a chat stays quiet about what already matched, and on
       JSON.stringify([
         { id: 'p1', title: 'Beach' },
         { id: 'p2', title: 'Snow' },
+        { id: 'p3', title: 'Dunes' },
       ]),
     );
 
     await plugin.import(imports);
 
     assert.deepEqual(quiet, []);
-    assert.deepEqual(codex.calls(), [queued('chat-1')]);
+    assert.deepEqual(codex.calls(), [
+      [
+        'queue',
+        '--thread',
+        'chat-1',
+        '--message',
+        'Monitor "New photos" triggered: Describe the new photo.\nNew matches:\n- p2\n- p3',
+      ],
+    ]);
   } finally {
     if (previous === undefined) delete process.env.HOME;
     else process.env.HOME = previous;
@@ -800,14 +809,17 @@ test('a monitor keeps what it sent across a restart: a match that arrived while 
 
     await after.import(imports);
 
-    assert.deepEqual(codex.calls(), [queued('chat-1'), queued('chat-1')]);
+    assert.deepEqual(codex.calls(), [
+      queued('chat-1', 'p2'),
+      queued('chat-1', 'p3'),
+    ]);
   } finally {
     if (previous === undefined) delete process.env.HOME;
     else process.env.HOME = previous;
   }
 });
 
-test('a match whose instruction could not be sent is sent again at the next sync, and until then the monitor says why', async () => {
+test('matches whose message could not be sent are all sent again at the next sync, and until then the monitor says why', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
   const home = join(scratch.path, 'home');
   const photosJson = join(home, 'Pictures/photos.json');
@@ -837,6 +849,7 @@ test('a match whose instruction could not be sent is sent again at the next sync
       JSON.stringify([
         { id: 'p1', title: 'Beach' },
         { id: 'p2', title: 'Snow' },
+        { id: 'p3', title: 'Dunes' },
       ]),
     );
     await writeFile(codex.failing, '');
@@ -857,10 +870,46 @@ test('a match whose instruction could not be sent is sent again at the next sync
       failedRow?.status.text,
       failed?.state === 'watching' ? failed.failure : undefined,
     );
-    assert.deepEqual(codex.calls(), [queued('chat-1'), queued('chat-1')]);
+    assert.deepEqual(codex.calls(), [
+      queued('chat-1', 'p2', 'p3'),
+      queued('chat-1', 'p2', 'p3'),
+    ]);
     const [sent] = await plugin.monitors.status();
     assert.equal(sent?.state === 'watching' && sent.failure, null);
     assert.equal((await monitorRows(plugin))[0]?.status.state, 'watching');
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('a monitor whose message a failed send kept from going sends its matches at the next sync', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const { home, codex, root, plugin, imports, photos } = await monitoredPhotos(
+    scratch.path,
+  );
+  // Sorted first, so its failed send stops the check before the second
+  // monitor's message.
+  await writeMonitor(root, 'a-photos', newPhotos);
+  await writeMonitor(root, 'b-photos', newPhotos);
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    await plugin.addMonitor('a-photos', 'chat-1');
+    await plugin.addMonitor('b-photos', 'chat-2');
+    await photos('p1', 'p2');
+    await writeFile(codex.failing, '');
+    await plugin.import(imports);
+    rmSync(codex.failing);
+
+    await plugin.import(imports);
+
+    assert.deepEqual(codex.calls(), [
+      queued('chat-1', 'p2'),
+      queued('chat-1', 'p2'),
+      queued('chat-2', 'p2'),
+    ]);
   } finally {
     if (previous === undefined) delete process.env.HOME;
     else process.env.HOME = previous;
@@ -925,7 +974,7 @@ export default {
       state: 'failed',
       text: 'Last check failed: no such column: albums',
     });
-    assert.deepEqual(codex.calls(), [queued('chat-2')]);
+    assert.deepEqual(codex.calls(), [queued('chat-2', 'p2')]);
   } finally {
     if (previous === undefined) delete process.env.HOME;
     else process.env.HOME = previous;
@@ -1041,7 +1090,7 @@ test('two servers that import at once send a new match once', async () => {
 
     await Promise.all([first.import(imports), second.import(imports)]);
 
-    assert.deepEqual(codex.calls(), [queued('chat-1')]);
+    assert.deepEqual(codex.calls(), [queued('chat-1', 'p2')]);
   } finally {
     if (previous === undefined) delete process.env.HOME;
     else process.env.HOME = previous;
@@ -1152,7 +1201,7 @@ test('adding a monitor again from another chat moves where it sends', async () =
     await photos('p1', 'p2');
     await plugin.import(imports);
 
-    assert.deepEqual(codex.calls(), [queued('chat-2')]);
+    assert.deepEqual(codex.calls(), [queued('chat-2', 'p2')]);
   } finally {
     if (previous === undefined) delete process.env.HOME;
     else process.env.HOME = previous;
@@ -1183,7 +1232,7 @@ test('a monitor whose entry is edited checks with the new code at the next sync,
     await plugin.import(imports);
 
     assert.equal(edited?.status.text, 'Last check failed: edited');
-    assert.deepEqual(codex.calls(), [queued('chat-1')]);
+    assert.deepEqual(codex.calls(), [queued('chat-1', 'p2')]);
     assert.equal((await monitorRows(plugin))[0]?.status.state, 'watching');
   } finally {
     if (previous === undefined) delete process.env.HOME;
@@ -1285,7 +1334,7 @@ export default {
     await importing;
     await plugin.import(imports);
 
-    assert.deepEqual(codex.calls(), [queued('chat-2')]);
+    assert.deepEqual(codex.calls(), [queued('chat-2', 'p2')]);
   } finally {
     if (previous === undefined) delete process.env.HOME;
     else process.env.HOME = previous;

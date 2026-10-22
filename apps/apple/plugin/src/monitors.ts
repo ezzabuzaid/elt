@@ -81,8 +81,9 @@ export type MonitorStatus = {
 
 // The monitors in the folder the plugin reads, what each registered one
 // last did, and the check that runs after each import: every registered
-// monitor's condition over the imports, each new match sent to its chat as
-// the monitor's instruction through `codex queue`.
+// monitor's condition over the imports, and its new matches sent to its chat
+// through `codex queue` as one message: the monitor's instruction and their
+// keys.
 export class Monitors {
   readonly #root: string;
   readonly #store: string;
@@ -128,11 +129,12 @@ export class Monitors {
   }
 
   // Evaluates every registered monitor that loads, from the keys it saved.
-  // Each new match is sent before its keys are saved, so a stop in between
-  // sends it again and never loses it; a send that fails stops the check, and
-  // that match comes again at the next one. What it writes afterwards goes to
-  // the registration it read, so a monitor removed or added again meanwhile
-  // keeps what that change wrote.
+  // Each monitor's new matches go to its chat as one message that names their
+  // keys, sent before the keys are saved, so a stop in between sends them
+  // again and never loses them; a send that fails stops the check, and the
+  // matches of every monitor it did not send come again at the next one. What
+  // it writes afterwards goes to the registration it read, so a monitor
+  // removed or added again meanwhile keeps what that change wrote.
   async check(locate: () => Locate): Promise<void> {
     const { loaded } = await this.#load();
     using store = this.#open();
@@ -161,6 +163,10 @@ export class Monitors {
     for (const [rule, { name }] of rules)
       await eca.add(rule, { keys: savedKeys(store, name) });
     const failed = new Set<string>();
+    // Each monitor's new keys until its message is sent. eca moves past them
+    // as the watch goes on, so a key still here when the keys are saved is
+    // left out of them and comes again at the next check.
+    const unsent = new Map<Rule<Query, unknown>, string[]>();
     // The warehouse commits once, so the watch ends after that evaluation.
     for await (const found of eca.watch({
       signal: new AbortController().signal,
@@ -172,13 +178,22 @@ export class Monitors {
         fail(store, registered, `Last check failed: ${messageOf(found.error)}`);
         continue;
       }
+      unsent.set(found.rule, [...(unsent.get(found.rule) ?? []), found.key]);
+    }
+    for (const [rule, registered] of rules) {
+      const keys = unsent.get(rule);
+      if (keys === undefined) continue;
       try {
         await promisify(execFile)(this.#codex, [
           'queue',
           '--thread',
           registered.thread,
           '--message',
-          `Monitor "${registered.monitor.title}" triggered: ${registered.monitor.instruction}`,
+          [
+            `Monitor "${registered.monitor.title}" triggered: ${registered.monitor.instruction}`,
+            'New matches:',
+            ...keys.map((key) => `- ${key}`),
+          ].join('\n'),
         ]);
       } catch (error) {
         failed.add(registered.name);
@@ -189,6 +204,7 @@ export class Monitors {
         );
         break;
       }
+      unsent.delete(rule);
       store
         .prepare(
           'UPDATE monitors SET ran_at = ? WHERE name = ? AND added_at = ?',
@@ -200,7 +216,11 @@ export class Monitors {
         store,
         () => {
           if (stillAdded(store, registered)) {
-            replaceKeys(store, registered.name, eca.keys(rule));
+            replaceKeys(
+              store,
+              registered.name,
+              eca.keys(rule).difference(new Set(unsent.get(rule))),
+            );
             if (!failed.has(registered.name))
               store
                 .prepare(

@@ -1338,7 +1338,7 @@ export default {
             '--thread',
             'chat-e2e',
             '--message',
-            'Monitor "New photos" triggered: Describe the new photo.',
+            'Monitor "New photos" triggered: Describe the new photo.\nNew matches:\n- p3',
           ],
         ],
       );
@@ -2272,7 +2272,7 @@ export default {
           '--thread',
           'chat-e2e',
           '--message',
-          'Monitor "New photos" triggered: Describe the new photo.',
+          'Monitor "New photos" triggered: Describe the new photo.\nNew matches:\n- p3',
         ],
       ],
     );
