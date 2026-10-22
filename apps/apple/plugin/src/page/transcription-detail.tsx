@@ -41,11 +41,7 @@ export function TranscriptionDetail() {
 function TranscriptionForm({ choices }: { choices: TranscriptionChoices }) {
   const { app } = usePage();
   const [saved, setSaved] = useState(choices.selected);
-  const selected = choices.models.find(
-    ({ configuration }) =>
-      configuration.engine === saved?.engine &&
-      configuration.directory === saved.directory,
-  );
+  const selected = choices.models.find(({ id }) => id === saved);
   const [enabled, setEnabled] = useState(choices.selected !== null);
   const [model, setModel] = useState(
     selected?.id ?? choices.models[0]?.id ?? '',

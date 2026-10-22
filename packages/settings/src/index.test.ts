@@ -299,17 +299,11 @@ test('the transcription choice persists independently of connector selections an
       [{ connector: 'notes', scope: {}, includeAttachments: true }],
       options,
     );
-    settings.setTranscription({
-      engine: 'cohere',
-      directory: '/models/cohere-int8',
-    });
+    settings.setTranscription('cohere-int8');
   }
   {
     using settings = new Settings(directory.path);
-    assert.deepEqual(settings.transcription(), {
-      engine: 'cohere',
-      directory: '/models/cohere-int8',
-    });
+    assert.equal(settings.transcription(), 'cohere-int8');
     assert.equal(settings.selections()[0]?.connector, 'notes');
     settings.setTranscription(null);
   }

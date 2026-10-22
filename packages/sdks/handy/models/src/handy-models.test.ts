@@ -26,6 +26,7 @@ test('discovery lists complete supported downloads and excludes partial or absen
   assert.equal(model?.id, 'cohere-int8');
   assert.deepEqual(model?.configuration, {
     engine: 'cohere',
+    name: 'cohere-int8',
     directory: cohere,
   });
 });

@@ -15,7 +15,11 @@ export abstract class HandyModel {
   }
 
   get configuration(): LocalTranscriptionConfiguration {
-    return { engine: this.engine, directory: join(this.#root, this.id) };
+    return {
+      engine: this.engine,
+      name: this.id,
+      directory: join(this.#root, this.id),
+    };
   }
 
   async available(): Promise<boolean> {

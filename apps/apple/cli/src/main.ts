@@ -5,6 +5,7 @@ import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-
 import { Connectors } from '@workspace/connector-apple-manifest/connectors';
 import { provideHostModules } from '@workspace/connector-apple-manifest/host-modules';
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
+import { HandyModels } from '@workspace/sdk-handy-models';
 
 import { OptionsCommand } from './commands/options.ts';
 import { QueryCommand } from './commands/query.ts';
@@ -46,16 +47,17 @@ const { directory, transcriptionModel } = program.opts<{
   directory: string;
   transcriptionModel?: string;
 }>();
-await using transcription = new AppleTranscription(directory);
-if (transcriptionModel !== undefined) {
-  const { models } = await transcription.choices();
-  const chosen = models.find(({ id }) => id === transcriptionModel);
-  if (transcriptionModel !== 'off' && chosen === undefined)
-    program.error(
-      `No installed model named ${transcriptionModel}. Available: ${[...models.map(({ id }) => id), 'off'].join(', ')}.`,
+await using transcription = new AppleTranscription(
+  directory,
+  new HandyModels(),
+);
+if (transcriptionModel === undefined) await transcription.refresh();
+else
+  await transcription
+    .configure(transcriptionModel === 'off' ? null : transcriptionModel)
+    .catch((error: unknown) =>
+      program.error(error instanceof Error ? error.message : String(error)),
     );
-  await transcription.configure(chosen?.configuration ?? null);
-} else await transcription.refresh();
 
 const { connectors, broken } = await new Connectors([
   builtInConnectors,

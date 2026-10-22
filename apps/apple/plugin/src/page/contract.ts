@@ -100,19 +100,10 @@ export type ConnectorRow = z.infer<typeof row>;
 export type MonitorRow = z.infer<typeof monitorRow>;
 export type ConnectorChoices = z.infer<z.ZodObject<typeof choicesResult>>;
 
-const transcriptionModel = z.strictObject({
-  engine: z.enum(['cohere', 'canary']),
-  directory: z.string(),
-});
+// Models by the id Handy installs them under.
 export const transcriptionResult = {
-  selected: transcriptionModel.nullable(),
-  models: z.array(
-    z.strictObject({
-      id: z.string(),
-      title: z.string(),
-      configuration: transcriptionModel,
-    }),
-  ),
+  selected: z.string().nullable(),
+  models: z.array(z.strictObject({ id: z.string(), title: z.string() })),
 };
 export type TranscriptionChoices = z.infer<
   z.ZodObject<typeof transcriptionResult>

@@ -11,10 +11,6 @@ import {
   installSQLiteCatalog,
   publishSQLiteViews,
 } from '@workspace/elt-sqlite';
-import {
-  type LocalTranscriptionConfiguration,
-  LocalTranscriptionModel,
-} from '@workspace/transcription-local';
 
 import {
   type ConnectorFacts,
@@ -144,24 +140,26 @@ export class Settings implements Disposable {
       }));
   }
 
-  transcription(): LocalTranscriptionConfiguration | null {
+  // The transcription model the user chose, by the id Handy installs it under:
+  // the hosts find its files on whichever Mac reads the store.
+  transcription(): string | null {
     const row = this.settings
       .prepare('SELECT model FROM transcription WHERE id = 1')
       .get();
     if (row === undefined) return null;
     if (typeof row.model !== 'string')
       throw new TypeError('Invalid stored transcription model');
-    return LocalTranscriptionModel.parse(JSON.parse(row.model));
+    return row.model;
   }
 
-  setTranscription(model: LocalTranscriptionConfiguration | null): void {
+  setTranscription(model: string | null): void {
     if (model === null) this.settings.exec('DELETE FROM transcription');
     else
       this.settings
         .prepare(
           'INSERT INTO transcription VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET model = excluded.model',
         )
-        .run(JSON.stringify(LocalTranscriptionModel.parse(model)));
+        .run(model);
   }
 
   // Saves a selection that has no problems, with what macOS needs granted for

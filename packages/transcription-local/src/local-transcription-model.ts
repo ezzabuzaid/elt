@@ -16,8 +16,11 @@ import { z } from 'zod';
 import { TranscriptionWorker } from './transcription-worker.ts';
 
 const execute = promisify(execFile);
+// A model is its engine and name; the directory only says where its files are
+// on this Mac, so a store moved to another Mac keeps the transcripts it made.
 const configuration = z.strictObject({
   engine: z.enum(['cohere', 'canary']),
+  name: z.string().min(1),
   directory: z.string().min(1),
 });
 export type LocalTranscriptionConfiguration = z.infer<typeof configuration>;
@@ -46,7 +49,10 @@ export class LocalTranscriptionModel
       directory: resolve(options.directory),
     };
     this.#helper = helper;
-    this.modelId = JSON.stringify(this.#configuration);
+    this.modelId = JSON.stringify({
+      engine: this.#configuration.engine,
+      name: this.#configuration.name,
+    });
   }
 
   static parse(value: unknown): LocalTranscriptionConfiguration {

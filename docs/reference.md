@@ -605,6 +605,7 @@ import { LocalTranscriptionModel } from '@workspace/transcription-local';
 
 await using model = new LocalTranscriptionModel({
   engine: 'cohere',
+  name: 'cohere-int8',
   directory: '/path/to/Handy/models/cohere-int8',
 });
 const parser = new MacOSDocumentParser([new AudioFormat(model)]);

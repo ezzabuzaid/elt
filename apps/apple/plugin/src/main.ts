@@ -11,6 +11,7 @@ import { AppleTranscription } from '@workspace/connector-apple-connector/apple-t
 import { Connectors } from '@workspace/connector-apple-manifest/connectors';
 import { provideHostModules } from '@workspace/connector-apple-manifest/host-modules';
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
+import { HandyModels } from '@workspace/sdk-handy-models';
 
 import {
   ApplePlugin,
@@ -57,6 +58,7 @@ const store = join(
 );
 const transcription = new AppleTranscription(
   store,
+  new HandyModels(),
   fileURLToPath(new URL('transcribe-local', import.meta.url)),
 );
 const plugin = new ApplePlugin(
@@ -310,13 +312,7 @@ mcpServer.registerTool(
     _meta: appOnly,
   },
   async ({ model }) => {
-    const { models } = await transcription.choices();
-    const chosen = models.find(({ id }) => id === model);
-    if (model !== null && chosen === undefined)
-      throw new Error(
-        `The model ${model} is no longer installed in Handy. Refresh this page and choose an installed model.`,
-      );
-    await transcription.configure(chosen?.configuration ?? null);
+    await transcription.configure(model);
     await refresh();
     if (model !== null)
       void plugin.import(

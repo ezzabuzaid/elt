@@ -18,14 +18,20 @@ export class HandyModels {
     this.#directory = directory;
   }
 
+  get #models(): HandyModel[] {
+    return [new CohereModel(this.#directory), new CanaryModel(this.#directory)];
+  }
+
   async list(): Promise<HandyModel[]> {
-    const models = [
-      new CohereModel(this.#directory),
-      new CanaryModel(this.#directory),
-    ];
+    const models = this.#models;
     const available = await Promise.all(
       models.map((model) => model.available()),
     );
     return models.filter((_, index) => available[index]);
+  }
+
+  // The model Handy keeps under this id, whether or not its files are there.
+  find(id: string): HandyModel | undefined {
+    return this.#models.find((model) => model.id === id);
   }
 }

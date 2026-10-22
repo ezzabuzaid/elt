@@ -46,12 +46,9 @@ test('the CLI saves an installed model in its chosen directory, rejects unknown 
   const enabled = run('cohere-int8');
   assert.equal(enabled.status, 0, enabled.stderr);
   using settings = new Settings(directory);
-  assert.deepEqual(settings.transcription(), {
-    engine: 'cohere',
-    directory: model,
-  });
+  assert.equal(settings.transcription(), 'cohere-int8');
   assert.equal(run('missing').status, 1);
-  assert.equal(settings.transcription()?.engine, 'cohere');
+  assert.equal(settings.transcription(), 'cohere-int8');
   const disabled = run('off');
   assert.equal(disabled.status, 0, disabled.stderr);
   assert.equal(settings.transcription(), null);

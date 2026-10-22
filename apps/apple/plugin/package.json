@@ -31,6 +31,7 @@
     "@workspace/eca": "0.0.1",
     "@workspace/elt": "0.0.1",
     "@workspace/elt-sqlite": "0.0.1",
+    "@workspace/sdk-handy-models": "0.0.1",
     "@workspace/settings": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
     "@zukhruf/single-flight": "0.3.21",

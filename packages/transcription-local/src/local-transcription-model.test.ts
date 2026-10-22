@@ -27,6 +27,7 @@ test('real decoding and native model failures reject, and disposal rejects furth
   ]);
   await using model = new LocalTranscriptionModel({
     engine: 'cohere',
+    name: 'cohere-int8',
     directory: directory.path,
   });
   const audio = await readFile(path);
@@ -58,6 +59,7 @@ test('real decoding and native model failures reject, and disposal rejects furth
 test('a cancelled queued call never loads a model and invalid configuration is refused', async () => {
   await using model = new LocalTranscriptionModel({
     engine: 'canary',
+    name: 'canary-180m-flash',
     directory: '/nonexistent',
   });
   await assert.rejects(
@@ -69,9 +71,31 @@ test('a cancelled queued call never loads a model and invalid configuration is r
     { name: 'AbortError' },
   );
   assert.throws(() =>
-    LocalTranscriptionModel.parse({ engine: 'whisper', directory: '/models' }),
+    LocalTranscriptionModel.parse({
+      engine: 'whisper',
+      name: 'whisper',
+      directory: '/models',
+    }),
   );
   assert.throws(() =>
-    LocalTranscriptionModel.parse({ engine: 'cohere', directory: '' }),
+    LocalTranscriptionModel.parse({
+      engine: 'cohere',
+      name: 'cohere-int8',
+      directory: '',
+    }),
   );
+});
+
+test('a model is named by its engine and name, not by where its files are, so a store moved to another Mac keeps its transcripts', async () => {
+  const at = (directory: string, name = 'cohere-int8') =>
+    new LocalTranscriptionModel({ engine: 'cohere', name, directory });
+  await using here = at('/Users/ada/Library/Handy/models/cohere-int8');
+  await using moved = at('/Users/grace/Library/Handy/models/cohere-int8');
+  await using other = at(
+    '/Users/ada/Library/Handy/models/cohere-int8',
+    'other',
+  );
+
+  assert.equal(moved.modelId, here.modelId);
+  assert.notEqual(other.modelId, here.modelId);
 });

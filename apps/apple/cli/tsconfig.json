@@ -11,6 +11,9 @@
       "path": "../../../packages/sources/apple/macos"
     },
     {
+      "path": "../../../packages/sdks/handy/models"
+    },
+    {
       "path": "../../../packages/settings"
     },
     {
