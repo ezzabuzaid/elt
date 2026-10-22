@@ -1710,13 +1710,10 @@ const cloudTabStreams = [
 const safariRuns = () =>
   spawnSync('/usr/bin/pgrep', ['-x', 'Safari']).status === 0;
 
-// A Safari database as Safari leaves it when it quits: last written then, an
-// empty WAL beside it with the same time, and read later. Safari keeps that
-// WAL; without it, a reader would make one of its own, timed as its read.
+// A Safari database as Safari leaves it when it quits: last written then,
+// and read later.
 async function leftBySafari(path: string, written: string) {
-  await writeFile(`${path}-wal`, '');
-  for (const file of [path, `${path}-wal`])
-    await utimes(file, new Date('2026-10-22T09:00:00.000Z'), new Date(written));
+  await utimes(path, new Date('2026-10-22T09:00:00.000Z'), new Date(written));
 }
 
 test('while Safari is closed, its history and iCloud Tabs are current only as of its last write to them, and its other streams as of the pass', async (t) => {
