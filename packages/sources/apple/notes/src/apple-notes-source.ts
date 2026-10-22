@@ -136,7 +136,7 @@ export class AppleNotesSource extends Source<NotesScan> {
     const reader = readersByName.get(stream.name);
     if (reader === undefined)
       throw new Error(`Apple Notes has no stream ${stream.name}`);
-    const records = await reader.read(scan);
+    const records = reader.read(scan);
     const messages = diffSnapshot(configuration, records, state, {
       policy: new ClosedWorld(),
       signal,

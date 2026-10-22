@@ -209,7 +209,7 @@ export class AppleSafariSource extends Source<SafariScan> {
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readerOf(stream);
-    const records = await reader.read(scan);
+    const records = reader.read(scan);
     const messages = diffSnapshot(configuration, records, state, {
       policy: policyFor(reader.horizon(scan)),
       signal,
