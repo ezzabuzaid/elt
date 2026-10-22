@@ -110,9 +110,9 @@ export class StickersSnapshot implements Disposable {
     }
   }
 
-  packs(): StickerPack[] {
+  packs(): IteratorObject<StickerPack, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT Z_ENT AS entity, ZSTICKERPACKID AS stickerPackId, ZNAME AS name,
                 ZPUBLISHER AS publisher, ZPACKDESCRIPTION AS description,
                 ZFILESIZE AS fileSize, ZSTICKERCOUNT AS stickerCount,
@@ -151,9 +151,9 @@ export class StickersSnapshot implements Disposable {
       });
   }
 
-  stickers(): Sticker[] {
+  stickers(): IteratorObject<Sticker, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT sticker.ZFILEHASH AS fileHash,
                 pack.ZSTICKERPACKID AS stickerPackId, sticker.ZSORT AS sort,
                 sticker.ZMIMETYPE AS mimeType, sticker.ZWIDTH AS width,

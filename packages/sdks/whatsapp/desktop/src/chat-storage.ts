@@ -198,9 +198,9 @@ export class ChatStorageSnapshot implements Disposable {
     this.#container = container;
   }
 
-  chats(): Chat[] {
+  chats(): IteratorObject<Chat, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT chat.ZCONTACTJID AS jid, chat.ZSESSIONTYPE AS sessionType,
                 chat.ZPARTNERNAME AS partnerName,
                 chat.ZCONTACTIDENTIFIER AS contactIdentifier,
@@ -262,9 +262,11 @@ export class ChatStorageSnapshot implements Disposable {
       }));
   }
 
-  messages(): Message[] {
+  // Read as the caller iterates: a store keeps tens of thousands of
+  // messages, so no read holds them all.
+  messages(): IteratorObject<Message, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT ${messageKey}, message.ZFROMJID AS fromJid,
                 message.ZTOJID AS toJid, member.ZMEMBERJID AS groupMemberJid,
                 message.ZPUSHNAME AS pushName,
@@ -338,9 +340,9 @@ export class ChatStorageSnapshot implements Disposable {
       });
   }
 
-  dataItems(): MessageDataItem[] {
+  dataItems(): IteratorObject<MessageDataItem, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT ${messageKey}, item.ZINDEX AS "index", item.ZTYPE AS type,
                 item.ZDATE AS date, item.ZCONTENT1 AS content1,
                 item.ZCONTENT2 AS content2, item.ZTITLE AS title,
@@ -370,9 +372,9 @@ export class ChatStorageSnapshot implements Disposable {
       }));
   }
 
-  groupMembers(): GroupMember[] {
+  groupMembers(): IteratorObject<GroupMember, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT chat.ZCONTACTJID AS groupJid, member.ZMEMBERJID AS memberJid,
                 member.ZCONTACTNAME AS contactName,
                 member.ZFIRSTNAME AS firstName,
@@ -398,9 +400,9 @@ export class ChatStorageSnapshot implements Disposable {
       }));
   }
 
-  groupMembersChanges(): GroupMembersChange[] {
+  groupMembersChanges(): IteratorObject<GroupMembersChange, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT ZGROUPJID AS groupJid, ZCHANGEDATE AS changeDate,
                 ZCHANGETYPE AS changeType, ZMEMBERJIDS AS memberJids
          FROM ZWAGROUPMEMBERSCHANGE ORDER BY Z_PK`,
@@ -424,9 +426,9 @@ export class ChatStorageSnapshot implements Disposable {
       });
   }
 
-  pushNames(): PushName[] {
+  pushNames(): IteratorObject<PushName, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT ZJID AS jid, ZPUSHNAME AS pushName FROM ZWAPROFILEPUSHNAME ORDER BY Z_PK',
       )
       .map((row) => ({
@@ -435,9 +437,9 @@ export class ChatStorageSnapshot implements Disposable {
       }));
   }
 
-  profilePictures(): ProfilePicture[] {
+  profilePictures(): IteratorObject<ProfilePicture, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT ZJID AS jid, ZPICTUREID AS pictureId, ZPATH AS path,
                 ZREQUESTDATE AS requestDate
          FROM ZWAPROFILEPICTUREITEM ORDER BY Z_PK`,
@@ -457,17 +459,17 @@ export class ChatStorageSnapshot implements Disposable {
       });
   }
 
-  blockedJids(): string[] {
+  blockedJids(): IteratorObject<string, undefined> {
     return this.#database
-      .all('SELECT ZJID AS jid FROM ZWABLACKLISTITEM ORDER BY Z_PK')
+      .iterate('SELECT ZJID AS jid FROM ZWABLACKLISTITEM ORDER BY Z_PK')
       .map((row) =>
         requiredText(row.jid, 'A blocked WhatsApp contact has no JID'),
       );
   }
 
-  chatPushConfigs(): ChatPushConfig[] {
+  chatPushConfigs(): IteratorObject<ChatPushConfig, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT ZJID AS jid, ZALERTS AS alerts, ZMUTEDUNTIL AS mutedUntil,
                 ZSOUND AS sound, ZRINGTONE AS ringtone
          FROM ZWACHATPUSHCONFIG ORDER BY Z_PK`,

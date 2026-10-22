@@ -26,7 +26,7 @@ export class ContactDatesStream extends LabeledValueStream {
   protected readonly view = contactDateView;
   protected override readonly naming = naming;
 
-  protected rows(store: AddressBookStore): readonly ValueRow[] {
+  protected rows(store: AddressBookStore): Iterable<ValueRow> {
     return store.contactDates();
   }
 }

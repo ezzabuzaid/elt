@@ -89,9 +89,10 @@ export class CloudTabs implements Disposable {
     this.#database.requireColumns(cloudTabsColumns, SafariSchemaError);
   }
 
-  devices(): CloudTabDevice[] {
+  // Each read yields its rows as the caller iterates them.
+  devices(): IteratorObject<CloudTabDevice, undefined> {
     return this.#database
-      .all(select('cloud_tab_devices', 'device_uuid'))
+      .iterate(select('cloud_tab_devices', 'device_uuid'))
       .map((row) => ({
         id: stored(row.device_uuid),
         name: text(row.device_name),
@@ -102,33 +103,35 @@ export class CloudTabs implements Disposable {
       }));
   }
 
-  tabs(): CloudTab[] {
-    return this.#database.all(select('cloud_tabs', 'tab_uuid')).map((row) => ({
-      id: stored(row.tab_uuid),
-      deviceId: stored(row.device_uuid),
-      title: text(row.title),
-      url: stored(row.url),
-      showingReader: flag(row.is_showing_reader),
-      pinned: flag(row.is_pinned),
-      readerScrollPageIndex: integer(row.reader_scroll_position_page_index),
-      sceneId: text(row.scene_id),
-      lastViewedAt:
-        row.last_viewed_time === 0 ? null : appleTime(row.last_viewed_time),
-      topic: text(row.topic_title),
-      positions: () => {
-        if (!(row.position instanceof Uint8Array))
-          throw new TypeError('A Safari iCloud tab has no position');
-        const { sortValues }: { sortValues: SortValue[] } = JSON.parse(
-          inflateSync(row.position).toString('utf8'),
-        );
-        return sortValues;
-      },
-    }));
+  tabs(): IteratorObject<CloudTab, undefined> {
+    return this.#database
+      .iterate(select('cloud_tabs', 'tab_uuid'))
+      .map((row) => ({
+        id: stored(row.tab_uuid),
+        deviceId: stored(row.device_uuid),
+        title: text(row.title),
+        url: stored(row.url),
+        showingReader: flag(row.is_showing_reader),
+        pinned: flag(row.is_pinned),
+        readerScrollPageIndex: integer(row.reader_scroll_position_page_index),
+        sceneId: text(row.scene_id),
+        lastViewedAt:
+          row.last_viewed_time === 0 ? null : appleTime(row.last_viewed_time),
+        topic: text(row.topic_title),
+        positions: () => {
+          if (!(row.position instanceof Uint8Array))
+            throw new TypeError('A Safari iCloud tab has no position');
+          const { sortValues }: { sortValues: SortValue[] } = JSON.parse(
+            inflateSync(row.position).toString('utf8'),
+          );
+          return sortValues;
+        },
+      }));
   }
 
-  closeRequests(): CloudTabCloseRequest[] {
+  closeRequests(): IteratorObject<CloudTabCloseRequest, undefined> {
     return this.#database
-      .all(select('cloud_tab_close_requests', 'close_request_uuid'))
+      .iterate(select('cloud_tab_close_requests', 'close_request_uuid'))
       .map((row) => ({
         id: stored(row.close_request_uuid),
         deviceId: stored(row.destination_device_uuid),

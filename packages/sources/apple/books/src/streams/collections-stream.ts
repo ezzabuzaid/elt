@@ -58,7 +58,7 @@ export class CollectionsStream extends BooksStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Collection[] {
+  protected rows(scan: BooksScan): Iterable<Collection> {
     return scan.library.collections();
   }
 

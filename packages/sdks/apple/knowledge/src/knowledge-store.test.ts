@@ -51,7 +51,7 @@ test('a layout without a column fails only the reads that need it, and the other
       /missing ZOBJECT\.ZVALUEINTEGER\)/.test(error.message),
   );
   assert.deepEqual(
-    intents.map(({ id, category, startedAt }) => ({
+    intents.toArray().map(({ id, category, startedAt }) => ({
       id,
       category,
       startedAt,

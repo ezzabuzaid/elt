@@ -100,7 +100,7 @@ export class StickersStream extends WhatsAppStream<typeof properties, Sticker> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly Sticker[] {
+  protected rows(scan: WhatsAppScan): Iterable<Sticker> {
     return scan.stickers.stickers();
   }
 

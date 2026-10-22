@@ -166,7 +166,7 @@ export class ContactsStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly AddressBookContact[] {
+  protected rows(scan: WhatsAppScan): Iterable<AddressBookContact> {
     return scan.contacts.contacts();
   }
 

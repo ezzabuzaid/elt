@@ -193,9 +193,9 @@ export class BusinessesSnapshot implements Disposable {
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
   }
 
-  profiles(): BusinessProfile[] {
+  profiles(): IteratorObject<BusinessProfile, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT profile.ZJID AS jid,
                 profile.ZBUSINESSDESCRIPTION AS description,
                 profile.ZADDRESS AS address, profile.ZLATITUDE AS latitude,
@@ -262,9 +262,9 @@ export class BusinessesSnapshot implements Disposable {
       });
   }
 
-  verifiedNames(): BusinessVerifiedName[] {
+  verifiedNames(): IteratorObject<BusinessVerifiedName, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT name.ZJID AS lid, name.ZPHONENUMBERJID AS phoneNumberJid,
                 name.ZNAME AS name,
                 name.ZVERIFICATIONLEVEL AS verificationLevel,
@@ -296,18 +296,19 @@ export class BusinessesSnapshot implements Disposable {
       });
   }
 
-  categories(): BusinessCategory[] {
+  categories(): IteratorObject<BusinessCategory, undefined> {
+    const position = positions();
     return this.#database
-      .all(
+      .iterate(
         `SELECT profile.ZJID AS jid, category.ZCATEGORYID AS categoryId,
                 category.ZNAME AS name
          FROM ZWABIZCATEGORYDATA AS category
          JOIN ZWABIZPROFILEDATA AS profile ON profile.Z_PK = category.ZPROFILE
          ORDER BY profile.Z_PK, category.Z_FOK_PROFILE, category.Z_PK`,
       )
-      .map((row, index, rows) => ({
+      .map((row) => ({
         jid: requiredText(row.jid, 'A WhatsApp business has no JID'),
-        position: position(rows, index),
+        position: position(row),
         categoryId: requiredText(
           row.categoryId,
           'A WhatsApp business category has no ID',
@@ -316,9 +317,9 @@ export class BusinessesSnapshot implements Disposable {
       }));
   }
 
-  hours(): BusinessHours[] {
+  hours(): IteratorObject<BusinessHours, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT ZJID AS jid, ZHOURSCONFIGS AS hours FROM ZWABIZPROFILEDATA
          WHERE ZHOURSCONFIGS IS NOT NULL ORDER BY Z_PK`,
       )
@@ -343,9 +344,10 @@ export class BusinessesSnapshot implements Disposable {
       });
   }
 
-  serviceAreas(): BusinessServiceArea[] {
+  serviceAreas(): IteratorObject<BusinessServiceArea, undefined> {
+    const position = positions();
     return this.#database
-      .all(
+      .iterate(
         `SELECT profile.ZJID AS jid, area.ZLATITUDE AS latitude,
                 area.ZLONGITUDE AS longitude,
                 area.ZAREARADIUSMETERS AS radiusMeters,
@@ -354,9 +356,9 @@ export class BusinessesSnapshot implements Disposable {
          JOIN ZWABIZPROFILEDATA AS profile ON profile.Z_PK = area.ZPROFILE
          ORDER BY profile.Z_PK, area.Z_PK`,
       )
-      .map((row, index, rows) => ({
+      .map((row) => ({
         jid: requiredText(row.jid, 'A WhatsApp business has no JID'),
-        position: position(rows, index),
+        position: position(row),
         latitude: number(row.latitude),
         longitude: number(row.longitude),
         radiusMeters: number(row.radiusMeters),
@@ -364,18 +366,19 @@ export class BusinessesSnapshot implements Disposable {
       }));
   }
 
-  botPrompts(): BusinessBotPrompt[] {
+  botPrompts(): IteratorObject<BusinessBotPrompt, undefined> {
+    const position = positions();
     return this.#database
-      .all(
+      .iterate(
         `SELECT profile.ZJID AS jid, prompt.ZTEXT AS text,
                 prompt.ZEMOJI AS emoji
          FROM ZWABIZBOTPROMPTDATA AS prompt
          JOIN ZWABIZPROFILEDATA AS profile ON profile.ZBOTDATA = prompt.ZBOTDATA
          ORDER BY profile.Z_PK, prompt.Z_FOK_BOTDATA, prompt.Z_PK`,
       )
-      .map((row, index, rows) => ({
+      .map((row) => ({
         jid: requiredText(row.jid, 'A WhatsApp business has no JID'),
-        position: position(rows, index),
+        position: position(row),
         text: requiredText(row.text, 'A WhatsApp business prompt has no text'),
         emoji: text(row.emoji),
       }));
@@ -397,12 +400,16 @@ function websites(value: unknown): string[] {
   return decoded;
 }
 
-// A row's place among the rows of its business, which come in order.
-function position(
-  rows: readonly Record<string, unknown>[],
-  index: number,
-): number {
-  let first = index;
-  while (first > 0 && rows[first - 1]?.jid === rows[index]?.jid) first -= 1;
-  return index - first;
+// Each row's place among the rows of its business, counted as the rows come
+// in business order, so no read needs the rows before it.
+function positions(): (row: Readonly<Record<string, unknown>>) => number {
+  let business: unknown;
+  let next = 0;
+  return (row) => {
+    if (row.jid !== business) {
+      business = row.jid;
+      next = 0;
+    }
+    return next++;
+  };
 }

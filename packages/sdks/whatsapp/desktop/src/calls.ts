@@ -84,9 +84,9 @@ export class CallsSnapshot implements Disposable {
     }
   }
 
-  calls(): Call[] {
+  calls(): IteratorObject<Call, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT call.ZCALLIDSTRING AS callId, call.ZDATE AS date,
                 call.ZDURATION AS duration, call.ZOUTCOME AS outcome,
                 call.ZBYTESSENT AS bytesSent,
@@ -127,9 +127,9 @@ export class CallsSnapshot implements Disposable {
       }));
   }
 
-  participants(): CallParticipant[] {
+  participants(): IteratorObject<CallParticipant, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT call.ZCALLIDSTRING AS callId, participant.ZJIDSTRING AS jid,
                 participant.ZOUTCOME AS outcome
          FROM ZWACDCALLEVENTPARTICIPANT AS participant

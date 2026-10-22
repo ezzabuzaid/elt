@@ -36,8 +36,8 @@ export class DataclassesStream extends AppleAccountsStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: AccountsScan): readonly Dataclass[] {
-    return scan.dataclasses;
+  protected rows(scan: AccountsScan): Iterable<Dataclass> {
+    return scan.snapshot.dataclasses();
   }
 
   protected records(dataclass: Dataclass): RecordDraft<typeof properties>[] {

@@ -37,8 +37,8 @@ export class AppsStream extends AppleNotificationCenterStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: NotificationCenterScan): readonly NotificationApp[] {
-    return scan.apps;
+  protected rows(scan: NotificationCenterScan): Iterable<NotificationApp> {
+    return scan.snapshot.apps();
   }
 
   protected records(app: NotificationApp): RecordDraft<typeof properties>[] {

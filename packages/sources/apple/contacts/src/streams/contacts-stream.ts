@@ -58,7 +58,7 @@ export class ContactsStream extends AppleContactsStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(store: AddressBookStore): readonly RecordRow<ContactEntity>[] {
+  protected rows(store: AddressBookStore): Iterable<RecordRow<ContactEntity>> {
     return store.contacts();
   }
 

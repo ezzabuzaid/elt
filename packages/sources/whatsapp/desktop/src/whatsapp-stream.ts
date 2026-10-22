@@ -38,7 +38,7 @@ export type WhatsAppReader = {
   readonly name: string;
   readonly store: WhatsAppStore;
   describe(): Stream;
-  read(scan: WhatsAppScan): Record<string, unknown>[];
+  read(scan: WhatsAppScan): Iterable<Record<string, unknown>>;
   horizon(scan: WhatsAppScan): string | undefined;
   file(record: Record<string, unknown>, scan: WhatsAppScan): string | null;
 };
@@ -71,12 +71,10 @@ export abstract class WhatsAppStream<P extends Properties, Row> {
     return this.#stream;
   }
 
-  read(scan: WhatsAppScan): SchemaRecord<P>[] {
-    return validateRecords(
-      this,
-      this.rows(scan).map((row) => this.record(row)),
-      'WhatsApp',
-    );
+  // One record at a time, so a pass never holds a whole store's rows.
+  *read(scan: WhatsAppScan): Generator<SchemaRecord<P>> {
+    for (const row of this.rows(scan))
+      yield* validateRecords(this, [this.record(row)], 'WhatsApp');
   }
 
   // The instant WhatsApp keeps the stream's records from, for streams it
@@ -90,7 +88,7 @@ export abstract class WhatsAppStream<P extends Properties, Row> {
     return null;
   }
 
-  protected abstract rows(scan: WhatsAppScan): readonly Row[];
+  protected abstract rows(scan: WhatsAppScan): Iterable<Row>;
 
   protected abstract record(row: Row): RecordDraft<P>;
 }

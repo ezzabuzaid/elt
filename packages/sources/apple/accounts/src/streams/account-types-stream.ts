@@ -76,8 +76,8 @@ export class AccountTypesStream extends AppleAccountsStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: AccountsScan): readonly AccountType[] {
-    return scan.accountTypes;
+  protected rows(scan: AccountsScan): Iterable<AccountType> {
+    return scan.snapshot.accountTypes();
   }
 
   protected records(type: AccountType): RecordDraft<typeof properties>[] {

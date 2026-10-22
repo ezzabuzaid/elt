@@ -45,8 +45,8 @@ export class CallParticipantsStream extends AppleCallHistoryStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: CallHistoryScan): readonly Participant[] {
-    return scan.participants;
+  protected rows(scan: CallHistoryScan): Iterable<Participant> {
+    return scan.participants();
   }
 
   protected records(

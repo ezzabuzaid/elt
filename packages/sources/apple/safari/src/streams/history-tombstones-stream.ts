@@ -62,10 +62,14 @@ export class HistoryTombstonesStream extends SafariStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Profiled<HistoryTombstone>[] {
-    return scan.history.profiles.flatMap(({ profileId, tombstones }) =>
-      tombstones.map((row) => ({ profileId, row })),
-    );
+  protected rows(scan: SafariScan): Iterable<Profiled<HistoryTombstone>> {
+    return scan.history.profiles
+      .values()
+      .flatMap((profile) =>
+        profile
+          .tombstones()
+          .map((row) => ({ profileId: profile.profileId, row })),
+      );
   }
 
   protected record({

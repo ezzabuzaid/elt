@@ -69,9 +69,11 @@ export class BooksAnnotations implements Disposable {
     this.#database.requireColumns(annotationsColumns, BooksSchemaError);
   }
 
-  annotations(): Annotation[] {
+  // Read as the caller iterates: a library keeps tens of thousands of
+  // annotations, so no read holds them all.
+  annotations(): IteratorObject<Annotation, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT * FROM ZAEANNOTATION WHERE ZANNOTATIONUUID IS NOT NULL ORDER BY Z_PK',
       )
       .map((row) => {

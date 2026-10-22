@@ -48,7 +48,7 @@ export class MessageAssociationsStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly MessageAssociation[] {
+  protected rows(scan: WhatsAppScan): Iterable<MessageAssociation> {
     return scan.messageAssociations();
   }
 

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { chmod, mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 
 import {
   Connection,
@@ -69,7 +70,7 @@ class ScratchNotificationCenter implements Disposable {
       .run(...Object.values(row));
   }
 
-  delete(sql: string): void {
+  exec(sql: string): void {
     this.#database.exec(sql);
   }
 
@@ -371,7 +372,7 @@ test('a notification Notification Center drops stays loaded, while the next run 
   // a newer one replaces it, and records none of these.
   {
     using usernoted = new ScratchNotificationCenter(path, { existing: true });
-    usernoted.delete('DELETE FROM record WHERE rec_id IN (1, 2)');
+    usernoted.exec('DELETE FROM record WHERE rec_id IN (1, 2)');
     deliver(usernoted, {
       ...scriptEditorDelivery,
       recId: 4,
@@ -580,7 +581,7 @@ test('an app that posts again under the same request loads the new notification 
   // usernoted deletes the replaced row, and its rec_id is free for the next.
   {
     using usernoted = new ScratchNotificationCenter(path, { existing: true });
-    usernoted.delete('DELETE FROM record WHERE rec_id = 2');
+    usernoted.exec('DELETE FROM record WHERE rec_id = 2');
     deliver(usernoted, {
       ...codexDelivery,
       uuid: '7C0DE5E1-0000-4000-8000-000000000002',
@@ -671,7 +672,7 @@ test('an app macOS forgets deletes its app and categories while its notification
   // usernoted's app_deleted trigger takes the app's records and categories.
   {
     using usernoted = new ScratchNotificationCenter(path, { existing: true });
-    usernoted.delete('DELETE FROM app WHERE app_id = 1');
+    usernoted.exec('DELETE FROM app WHERE app_id = 1');
   }
 
   const second = counts(await run.run());
@@ -953,4 +954,89 @@ test('a Notification Center watch keeps every stream current while usernoted cha
   } finally {
     await watching.return(undefined);
   }
+});
+
+test('a Notification Center pass over a large store holds one notification at a time, so it loads in a small heap', async () => {
+  await using dir = await mkdtempDisposable(
+    join(tmpdir(), 'elt-notes-center-large-'),
+  );
+  const path = join(dir.path, 'db');
+  {
+    using store = new ScratchNotificationCenter(path);
+    store.insert('app', { app_id: 1, identifier: 'com.apple.mobilesms' });
+    deliver(store, messagesDelivery);
+    // Every other notification copies the first one's request under its own
+    // UUID, so the store is large without a plist written for each.
+    store.exec(`
+      WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i + 1 FROM n WHERE i < 60000)
+      INSERT INTO record (rec_id, app_id, uuid, data, delivered_date, presented, style)
+        SELECT i, 1, randomblob(16), (SELECT data FROM record WHERE rec_id = 1),
+               ${messagesDelivery.delivered} + i, 0, 1
+        FROM n;
+    `);
+  }
+  // The import as a host runs it, in a process whose heap is far smaller
+  // than the store: a pass that holds every notification, or every record it
+  // keeps, at once runs out of it (it needs about 192 MB; one that reads a
+  // notification at a time fits in 32). The process loads the built source from
+  // this package's folder, where its dependencies resolve.
+  const pass = `
+    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { AppleNotificationCenterSource } = await import(process.env.SOURCE);
+    const source = new AppleNotificationCenterSource(process.env.STORE);
+    const destination = new SQLiteDestination({ path: process.env.OUT + '/out.sqlite' });
+    const { streams } = await source.discover();
+    const history = new SQLiteSyncHistory();
+    await history.install([destination]);
+    await new Pipeline({
+      history,
+      connections: [
+        new Connection({
+          name: 'notification-center',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/state.sqlite' }),
+          steps: streams.map((stream) => new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          })),
+        }),
+      ],
+    }).run();
+  `;
+
+  const run = spawnSync(
+    process.execPath,
+    ['--max-old-space-size=64', '--input-type=module', '-e', pass],
+    {
+      // The package's own folder, where its dependencies resolve.
+      cwd: join(import.meta.dirname, '..'),
+      env: {
+        ...process.env,
+        SOURCE: pathToFileURL(
+          join(import.meta.dirname, 'apple-notification-center-source.js'),
+        ).href,
+        STORE: path,
+        OUT: dir.path,
+      },
+      encoding: 'utf8',
+      timeout: 120_000,
+    },
+  );
+
+  // V8 names a heap limit it reached in the first lines it writes.
+  assert.equal(
+    run.status,
+    0,
+    `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
+  );
+  assert.deepEqual(
+    rows(
+      join(dir.path, 'out.sqlite'),
+      'SELECT count(*) AS n FROM notifications',
+    ),
+    [{ n: 60_000 }],
+  );
 });

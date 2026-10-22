@@ -35,7 +35,7 @@ export class MessagingAddressesStream extends LabeledValueStream<MessagingAddres
   } as const;
   protected readonly view = messagingAddressView;
 
-  protected rows(store: AddressBookStore): readonly MessagingAddressRow[] {
+  protected rows(store: AddressBookStore): Iterable<MessagingAddressRow> {
     return store.messagingAddresses();
   }
 

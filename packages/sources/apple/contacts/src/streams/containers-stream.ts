@@ -48,7 +48,7 @@ export class ContainersStream extends AppleContactsStream<
 
   protected rows(
     store: AddressBookStore,
-  ): readonly RecordRow<ContainerEntity>[] {
+  ): Iterable<RecordRow<ContainerEntity>> {
     return store.containers();
   }
 

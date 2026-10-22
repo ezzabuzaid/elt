@@ -38,7 +38,7 @@ export class AlertTonesStream extends AppleContactsStream<ValueRow> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(store: AddressBookStore): readonly ValueRow[] {
+  protected rows(store: AddressBookStore): Iterable<ValueRow> {
     return store.alertTones();
   }
 

@@ -46,8 +46,8 @@ export class SaintDavidsCountsStream extends AppleCallHistoryStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: CallHistoryScan): readonly SaintDavidsCount[] {
-    return scan.saintDavidsCounts;
+  protected rows(scan: CallHistoryScan): Iterable<SaintDavidsCount> {
+    return scan.saintDavidsCounts();
   }
 
   protected records(count: SaintDavidsCount): RecordDraft<typeof properties>[] {

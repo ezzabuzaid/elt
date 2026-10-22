@@ -44,9 +44,10 @@ export class BiomeSync implements Disposable {
     this.#database.requireColumns(columns, BiomeSchemaError);
   }
 
-  devices(): BiomeDevice[] {
+  // Read as the caller iterates, like every read that feeds a stream.
+  devices(): IteratorObject<BiomeDevice, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT device_identifier, me, name, CAST(model AS TEXT) AS model, platform, last_sync_date FROM DevicePeer ORDER BY device_identifier',
       )
       .map((row) => ({

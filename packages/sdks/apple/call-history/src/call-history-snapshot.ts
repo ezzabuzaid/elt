@@ -120,9 +120,11 @@ export class CallHistorySnapshot implements Disposable {
     this.#database.requireColumns(requiredColumns, CallHistorySchemaError);
   }
 
-  calls(): Call[] {
+  // Read as the caller iterates, as every read below: a store keeps tens of
+  // thousands of calls, so no read holds them all.
+  calls(): IteratorObject<Call, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT record.ZUNIQUE_ID AS id,
                 record.ZDATE AS startedAt,
                 record.ZDURATION AS duration,
@@ -234,10 +236,10 @@ export class CallHistorySnapshot implements Disposable {
       });
   }
 
-  participants(): Participant[] {
+  participants(): IteratorObject<Participant, undefined> {
     const { table, call, handle: other } = this.#participantLinks();
     return this.#database
-      .all(
+      .iterate(
         `SELECT record.ZUNIQUE_ID AS callId, handle.ZTYPE AS type,
                 handle.ZVALUE AS value, handle.ZNORMALIZEDVALUE AS normalizedValue
          FROM "${table}" AS link
@@ -251,9 +253,9 @@ export class CallHistorySnapshot implements Disposable {
       }));
   }
 
-  timers(): CallTimers[] {
+  timers(): IteratorObject<CallTimers, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT Z_PK AS id, ZTIMER_ALL AS "all", ZTIMER_INCOMING AS incoming,
                 ZTIMER_OUTGOING AS outgoing, ZTIMER_LAST AS last,
                 ZTIMER_LIFETIME AS lifetime
@@ -269,9 +271,9 @@ export class CallHistorySnapshot implements Disposable {
       }));
   }
 
-  emergencyMediaItems(): EmergencyMediaItem[] {
+  emergencyMediaItems(): IteratorObject<EmergencyMediaItem, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT item.Z_PK AS id, record.ZUNIQUE_ID AS callId,
                 item.ZEMERGENCYMEDIATYPE AS mediaType, item.ZASSETID AS assetId
          FROM ZEMERGENCYMEDIAITEM AS item
@@ -286,9 +288,9 @@ export class CallHistorySnapshot implements Disposable {
       }));
   }
 
-  saintDavidsCounts(): SaintDavidsCount[] {
+  saintDavidsCounts(): IteratorObject<SaintDavidsCount, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT counted.Z_PK AS id, record.ZUNIQUE_ID AS callId,
                 counted.ZTYPE AS type, counted.ZCOUNT AS count
          FROM ZSAINTDAVIDSCOUNTS AS counted

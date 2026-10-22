@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import {
   chmod,
@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import {
@@ -2524,4 +2525,94 @@ test('a Books watch keeps every stream current while its stores hold still', asy
   } finally {
     await watching.return(undefined);
   }
+});
+
+test('a Books pass over a large annotation store holds one annotation at a time, so it loads in a small heap', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-large-'));
+  const location = await booksFixture(scratch.path);
+  {
+    using store = new DatabaseSync(location.files.annotations);
+    store.exec(`
+      WITH RECURSIVE annotation(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM annotation WHERE n < 60000
+      )
+      INSERT INTO ZAEANNOTATION (Z_PK, Z_ENT, Z_OPT, ZANNOTATIONUUID, ZANNOTATIONASSETID, ZANNOTATIONTYPE, ZANNOTATIONSTYLE, ZANNOTATIONISUNDERLINE, ZANNOTATIONDELETED, ZANNOTATIONSELECTEDTEXT, ZANNOTATIONNOTE, ZANNOTATIONLOCATION, ZANNOTATIONCREATORIDENTIFIER, ZANNOTATIONCREATIONDATE, ZANNOTATIONMODIFICATIONDATE)
+        SELECT 100 + n, 1, 1, 'LARGE-' || n, 'A1', 2, 3, 0, 0, 'highlight ' || n || ' ' || hex(randomblob(500)), 'note ' || hex(randomblob(20)), 'epubcfi(/6/4!/4/2,/1:0,/1:' || n || ')', 'com~apple~iBooks', 780000000 + n, 780000000 + n
+        FROM annotation;
+    `);
+  }
+  // The import as a host runs it, in a process whose heap is far smaller
+  // than the store. Each annotation carries 1 KB of selected text, so a pass
+  // that holds every annotation, or every record it keeps, at once runs out
+  // of it: one that reads an annotation at a time but validates the whole
+  // set at once needs about 112 MB, and one that also reads every row at
+  // once needs about 192; one that reads and validates an annotation at a
+  // time fits in 28. The process loads the built source from this package's
+  // folder, where its dependencies resolve.
+  const pass = `
+    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { AppleBooksSource } = await import(process.env.SOURCE);
+    const source = new AppleBooksSource({ container: process.env.CONTAINER, groupContainer: process.env.GROUP_CONTAINER });
+    const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
+    const { streams } = await source.discover();
+    const history = new SQLiteSyncHistory();
+    await history.install([destination]);
+    await new Pipeline({
+      history,
+      connections: [
+        new Connection({
+          name: 'books',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
+          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          })),
+        }),
+      ],
+    }).run();
+  `;
+
+  const run = spawnSync(
+    process.execPath,
+    ['--max-old-space-size=64', '--input-type=module', '-e', pass],
+    {
+      // The package's own folder, where its dependencies resolve.
+      cwd: join(import.meta.dirname, '..'),
+      env: {
+        ...process.env,
+        SOURCE: pathToFileURL(
+          join(import.meta.dirname, 'apple-books-source.js'),
+        ).href,
+        CONTAINER: location.container,
+        GROUP_CONTAINER: location.groupContainer,
+        OUT: scratch.path,
+      },
+      encoding: 'utf8',
+      timeout: 120_000,
+    },
+  );
+
+  // V8 names a heap limit it reached in the first lines it writes.
+  assert.equal(
+    run.status,
+    0,
+    `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
+  );
+  using imported = new DatabaseSync(join(scratch.path, 'data.sqlite'), {
+    readOnly: true,
+  });
+  assert.deepEqual(
+    {
+      ...imported
+        .prepare(
+          "SELECT count(*) AS n FROM raw_annotations WHERE id LIKE 'LARGE-%'",
+        )
+        .get(),
+    },
+    { n: 60_000 },
+  );
 });

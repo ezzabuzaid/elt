@@ -66,10 +66,8 @@ export class CategoriesStream extends AppleNotificationCenterStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(
-    scan: NotificationCenterScan,
-  ): readonly NotificationCategory[] {
-    return scan.categories;
+  protected rows(scan: NotificationCenterScan): Iterable<NotificationCategory> {
+    return scan.snapshot.categories();
   }
 
   protected records(

@@ -205,21 +205,21 @@ export class AddressBookStore implements Disposable {
     throw new ContactsSchemaError(this.path, missing);
   }
 
-  containers(): RecordRow<ContainerEntity>[] {
+  containers(): IteratorObject<RecordRow<ContainerEntity>, undefined> {
     return this.#records('r', containerView, containerEntities);
   }
 
-  groups(): RecordRow<GroupEntity>[] {
+  groups(): IteratorObject<RecordRow<GroupEntity>, undefined> {
     return this.#records('g', groupView, groupEntities);
   }
 
-  contacts(): RecordRow<ContactEntity>[] {
+  contacts(): IteratorObject<RecordRow<ContactEntity>, undefined> {
     return this.#records('c', contactView, contactEntities);
   }
 
-  groupMembers(): GroupMemberRow[] {
+  groupMembers(): IteratorObject<GroupMemberRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT g.ZUNIQUEID AS "@groupId", c.ZUNIQUEID AS "@contactId" FROM Z_22PARENTGROUPS j JOIN ZABCDRECORD g ON g.Z_PK = j.Z_19PARENTGROUPS1 JOIN ZABCDRECORD c ON c.Z_PK = j.Z_22CONTACTS',
       )
       .map((row) => ({
@@ -228,9 +228,9 @@ export class AddressBookStore implements Disposable {
       }));
   }
 
-  groupSubgroups(): GroupSubgroupRow[] {
+  groupSubgroups(): IteratorObject<GroupSubgroupRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT p.ZUNIQUEID AS "@parentGroupId", g.ZUNIQUEID AS "@childGroupId" FROM Z_18PARENTGROUPS j JOIN ZABCDRECORD p ON p.Z_PK = j.Z_19PARENTGROUPS JOIN ZABCDRECORD g ON g.Z_PK = j.Z_18CHILDGROUPS',
       )
       .map((row) => ({
@@ -239,37 +239,37 @@ export class AddressBookStore implements Disposable {
       }));
   }
 
-  notes(): ContactPartRow[] {
+  notes(): IteratorObject<ContactPartRow, undefined> {
     return this.#contactParts('n', noteView);
   }
 
-  alternateBirthdays(): ContactPartRow[] {
+  alternateBirthdays(): IteratorObject<ContactPartRow, undefined> {
     return this.#contactParts('d', dateComponentsView);
   }
 
-  phoneNumbers(): ValueRow[] {
+  phoneNumbers(): IteratorObject<ValueRow, undefined> {
     return this.#valueRows('p', phoneNumberView);
   }
 
-  emailAddresses(): ValueRow[] {
+  emailAddresses(): IteratorObject<ValueRow, undefined> {
     return this.#valueRows('e', emailAddressView);
   }
 
-  postalAddresses(): ValueRow[] {
+  postalAddresses(): IteratorObject<ValueRow, undefined> {
     return this.#valueRows('a', postalAddressView);
   }
 
-  urlAddresses(): ValueRow[] {
+  urlAddresses(): IteratorObject<ValueRow, undefined> {
     return this.#valueRows('u', urlAddressView);
   }
 
-  socialProfiles(): ValueRow[] {
+  socialProfiles(): IteratorObject<ValueRow, undefined> {
     return this.#valueRows('s', socialProfileView);
   }
 
-  messagingAddresses(): MessagingAddressRow[] {
+  messagingAddresses(): IteratorObject<MessagingAddressRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT m.ZUNIQUEID AS "@id", ${select(messagingAddressView, 'm')}, (SELECT s.ZSERVICENAME FROM ZABCDSERVICE s WHERE s.Z_PK = m.ZSERVICE) AS "@service" FROM ZABCDMESSAGINGADDRESS m`,
       )
       .map((row) => ({
@@ -279,34 +279,34 @@ export class AddressBookStore implements Disposable {
       }));
   }
 
-  relatedNames(): ValueRow[] {
+  relatedNames(): IteratorObject<ValueRow, undefined> {
     return this.#valueRows('n', relatedNameView);
   }
 
-  contactDates(): ValueRow[] {
+  contactDates(): IteratorObject<ValueRow, undefined> {
     return this.#valueRows('d', contactDateView);
   }
 
-  calendarUris(): ValueRow[] {
+  calendarUris(): IteratorObject<ValueRow, undefined> {
     return this.#valueRows('u', calendarUriView);
   }
 
-  addressingGrammars(): ValueRow[] {
+  addressingGrammars(): IteratorObject<ValueRow, undefined> {
     return this.#valueRows('g', addressingGrammarView);
   }
 
-  likenesses(): ValueRow[] {
+  likenesses(): IteratorObject<ValueRow, undefined> {
     return this.#valueRows('l', likenessView);
   }
 
-  alertTones(): ValueRow[] {
+  alertTones(): IteratorObject<ValueRow, undefined> {
     return this.#valueRows('t', alertToneView);
   }
 
   // Each value with its property's definition, NULL when it has none.
-  customPropertyValues(): ValueRow[] {
+  customPropertyValues(): IteratorObject<ValueRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT v.ZUNIQUEID AS "@id", ${select(customPropertyView, 'p')}, ${select(customPropertyValueView, 'v')} FROM ZABCDCUSTOMPROPERTYVALUE v LEFT JOIN ZABCDCUSTOMPROPERTY p ON p.Z_PK = v.ZCUSTOMPROPERTY`,
       )
       .map((row) => ({
@@ -318,15 +318,15 @@ export class AddressBookStore implements Disposable {
       }));
   }
 
-  remoteLocations(): ValueRow[] {
+  remoteLocations(): IteratorObject<ValueRow, undefined> {
     return this.#valueRows('l', remoteLocationView);
   }
 
   // The native rows have no identifier, and the same line stored twice on
   // one record is one fact.
-  unknownProperties(): UnknownPropertyRow[] {
+  unknownProperties(): IteratorObject<UnknownPropertyRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT DISTINCT r.ZUNIQUEID AS "@recordId", u.ZPROPERTYNAME AS "@propertyName", u.ZORIGINALLINE AS "@originalLine" FROM ZABCDUNKNOWNPROPERTY u JOIN ZABCDRECORD r ON r.Z_PK = u.ZOWNER',
       )
       .map((row) => ({
@@ -336,9 +336,12 @@ export class AddressBookStore implements Disposable {
       }));
   }
 
-  distributionListConfigs(): DistributionListConfigRow[] {
+  distributionListConfigs(): IteratorObject<
+    DistributionListConfigRow,
+    undefined
+  > {
     return this.#database
-      .all(
+      .iterate(
         'SELECT g.ZUNIQUEID AS "@groupId", c.ZUNIQUEID AS "@contactId", d.ZPROPERTYNAME AS "@propertyName", (SELECT x.ZUNIQUEID FROM ZABCDEMAILADDRESS x WHERE x.Z_PK = d.ZEMAIL) AS "@emailId", (SELECT x.ZUNIQUEID FROM ZABCDPHONENUMBER x WHERE x.Z_PK = d.ZPHONE) AS "@phoneId", (SELECT x.ZUNIQUEID FROM ZABCDPOSTALADDRESS x WHERE x.Z_PK = d.ZADDRESS) AS "@addressId" FROM ZABCDDISTRIBUTIONLISTCONFIG d JOIN ZABCDRECORD g ON g.Z_PK = d.ZGROUP JOIN ZABCDRECORD c ON c.Z_PK = d.ZCONTACT',
       )
       .map((row) => ({
@@ -351,9 +354,9 @@ export class AddressBookStore implements Disposable {
       }));
   }
 
-  images(): ContactImagesRow[] {
+  images(): IteratorObject<ContactImagesRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT c.ZUNIQUEID AS "@contactId", c.ZIMAGEDATA AS "@image", c.ZTHUMBNAILIMAGEDATA AS "@thumbnail" FROM ZABCDRECORD c ${entityJoin('c', contactEntities)} WHERE c.ZIMAGEDATA IS NOT NULL OR c.ZTHUMBNAILIMAGEDATA IS NOT NULL`,
       )
       .map((row) => {
@@ -377,9 +380,9 @@ export class AddressBookStore implements Disposable {
     alias: string,
     view: ContactsView,
     entities: readonly Entity[],
-  ): RecordRow<Entity>[] {
+  ): IteratorObject<RecordRow<Entity>, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT ${alias}.ZUNIQUEID AS "@id", ${alias}_entity.Z_NAME AS "@entity", ${select(view, alias)}, ${select(recordView, alias)} FROM ZABCDRECORD ${alias} ${entityJoin(alias, entities)}`,
       )
       .map((row) => ({
@@ -389,9 +392,12 @@ export class AddressBookStore implements Disposable {
       }));
   }
 
-  #contactParts(alias: string, view: ContactsView): ContactPartRow[] {
+  #contactParts(
+    alias: string,
+    view: ContactsView,
+  ): IteratorObject<ContactPartRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT c.ZUNIQUEID AS "@contactId", ${select(view, alias)} FROM ${view.table} ${alias} JOIN ZABCDRECORD c ON c.Z_PK = ${alias}.ZCONTACT`,
       )
       .map((row) => ({
@@ -400,9 +406,12 @@ export class AddressBookStore implements Disposable {
       }));
   }
 
-  #valueRows(alias: string, view: ContactsView): ValueRow[] {
+  #valueRows(
+    alias: string,
+    view: ContactsView,
+  ): IteratorObject<ValueRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT ${alias}.ZUNIQUEID AS "@id", ${select(view, alias)} FROM ${view.table} ${alias}`,
       )
       .map((row) => ({ id: text(row['@id']), values: values(view, row) }));

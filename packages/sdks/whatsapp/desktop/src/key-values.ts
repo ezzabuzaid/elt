@@ -70,9 +70,9 @@ class KeyValueSnapshot implements Disposable {
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
   }
 
-  elements(namespace: string): Element[] {
+  elements(namespace: string): IteratorObject<Element, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT ZKEY AS key, ZVALUE AS value, ZDATE AS date
          FROM ZWAKEYVALUEELEMENT WHERE ZNAMESPACE = ? ORDER BY ZSORT, Z_PK`,
         namespace,
@@ -103,7 +103,7 @@ const utf8 = (value: Uint8Array) =>
 // LocalKeyValue.sqlite: the settings and what WhatsApp learned of people on
 // this device.
 export class LocalKeyValueSnapshot extends KeyValueSnapshot {
-  privacySettings(): PrivacySetting[] {
+  privacySettings(): IteratorObject<PrivacySetting, undefined> {
     return this.elements('privacy-settings-values').map(({ key, value }) => ({
       category: key,
       value: utf8(value),
@@ -112,7 +112,7 @@ export class LocalKeyValueSnapshot extends KeyValueSnapshot {
 
   // A protobuf of the timer in seconds (1) and when it was set in Unix
   // seconds (2), 0 when never.
-  disappearingModes(): DisappearingMode[] {
+  disappearingModes(): IteratorObject<DisappearingMode, undefined> {
     return this.elements('disappearing-mode').map(({ key, value }) => {
       const mode = new ProtobufMessage(value);
       const setAt = mode.uint(2) ?? 0;
@@ -126,7 +126,7 @@ export class LocalKeyValueSnapshot extends KeyValueSnapshot {
 
   // A JSON list of { type, username, url, vid }; vid is a token for the
   // viewer and is not read.
-  linkedProfiles(): LinkedProfile[] {
+  linkedProfiles(): IteratorObject<LinkedProfile, undefined> {
     return this.elements('linked-profiles').flatMap(({ key, value }) => {
       const profiles: unknown = JSON.parse(utf8(value));
       if (!Array.isArray(profiles))
@@ -147,7 +147,7 @@ export class LocalKeyValueSnapshot extends KeyValueSnapshot {
     });
   }
 
-  changedNumbers(): ChangedNumber[] {
+  changedNumbers(): IteratorObject<ChangedNumber, undefined> {
     return this.elements('changenumber-oldtonew').map(
       ({ key, value, date }) => ({
         oldJid: key,
@@ -161,7 +161,7 @@ export class LocalKeyValueSnapshot extends KeyValueSnapshot {
 // BackedUpKeyValue.sqlite: what WhatsApp backs up with the account.
 export class BackedUpKeyValueSnapshot extends KeyValueSnapshot {
   // Keyed by the sticker's file hash; the date is when it was favorited.
-  favoriteStickers(): FavoriteSticker[] {
+  favoriteStickers(): IteratorObject<FavoriteSticker, undefined> {
     return this.elements('fs.v2').map(({ key, date }) => ({
       fileHash: key,
       favoritedAt: date,
@@ -170,7 +170,7 @@ export class BackedUpKeyValueSnapshot extends KeyValueSnapshot {
 
   // One protobuf whose repeated field 1 lists the stickers by score, each
   // with its file hash (1), score (2) and last use (3).
-  recentStickers(): RecentSticker[] {
+  recentStickers(): IteratorObject<RecentSticker, undefined> {
     return this.elements('rs.v2').flatMap(({ value }) =>
       new ProtobufMessage(value).messages(1).map((entry, position) => ({
         fileHash: requiredText(

@@ -42,7 +42,7 @@ export class AlternateBirthdaysStream extends AppleContactsStream<ContactPartRow
     required: Object.keys(properties),
   } as const;
 
-  protected rows(store: AddressBookStore): readonly ContactPartRow[] {
+  protected rows(store: AddressBookStore): Iterable<ContactPartRow> {
     return store.alternateBirthdays();
   }
 

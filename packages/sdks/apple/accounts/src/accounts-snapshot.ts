@@ -129,7 +129,9 @@ const instant = (column: string) =>
 
 // The store as of one moment: everything read through it agrees. Each kind of
 // record is read on request and checks only the tables it reads. Hold it only
-// while reading: an open read stops accountsd checkpointing its WAL.
+// while reading: an open read stops accountsd checkpointing its WAL. Records
+// are read as the caller iterates them, so no read holds a whole table;
+// accounts are the exception, read whole because each links to its parent.
 export class AccountsSnapshot implements Disposable {
   readonly #database: Snapshot;
 
@@ -217,13 +219,13 @@ export class AccountsSnapshot implements Disposable {
     return rows.map(account);
   }
 
-  accountTypes(): AccountType[] {
+  accountTypes(): IteratorObject<AccountType, undefined> {
     this.#require(accountTypeColumns);
     const names = this.#dataclassNames();
     const supported = this.#links('SUPPORTEDDATACLASSES', 'SUPPORTEDTYPES');
     const syncable = this.#links('SYNCABLEDATACLASSES', 'SYNCABLETYPES');
     return this.#database
-      .all(
+      .iterate(
         `SELECT Z_PK AS pk, ZIDENTIFIER AS identifier,
                 ZACCOUNTTYPEDESCRIPTION AS description,
                 ZCREDENTIALTYPE AS credentialType,
@@ -252,10 +254,10 @@ export class AccountsSnapshot implements Disposable {
       }));
   }
 
-  dataclasses(): Dataclass[] {
+  dataclasses(): IteratorObject<Dataclass, undefined> {
     this.#require(dataclassColumns);
     return this.#database
-      .all(
+      .iterate(
         'SELECT ZNAME AS name, ZENUMVALUE AS enumValue FROM ZDATACLASS ORDER BY Z_PK',
       )
       .map((row) => ({
@@ -264,12 +266,12 @@ export class AccountsSnapshot implements Disposable {
       }));
   }
 
-  accessOptionKeys(): AccessOptionKey[] {
+  accessOptionKeys(): IteratorObject<AccessOptionKey, undefined> {
     this.#require(accessOptionKeyColumns);
     const types = this.#accountTypeIdentifiers();
     const owners = this.#links('OWNINGACCOUNTTYPES', 'ACCESSKEYS');
     return this.#database
-      .all(
+      .iterate(
         'SELECT Z_PK AS pk, ZNAME AS name, ZENUMVALUE AS enumValue FROM ZACCESSOPTIONSKEY ORDER BY Z_PK',
       )
       .map((row) => ({
@@ -279,10 +281,10 @@ export class AccountsSnapshot implements Disposable {
       }));
   }
 
-  authorizations(): Authorization[] {
+  authorizations(): IteratorObject<Authorization, undefined> {
     this.#require(authorizationColumns);
     return this.#database
-      .all(
+      .iterate(
         `SELECT type.ZIDENTIFIER AS accountType,
                 authorization.ZBUNDLEID AS bundleId,
                 authorization.ZGRANTEDPERMISSIONS AS grantedPermissions,
@@ -303,10 +305,10 @@ export class AccountsSnapshot implements Disposable {
       }));
   }
 
-  credentialItems(): CredentialItem[] {
+  credentialItems(): IteratorObject<CredentialItem, undefined> {
     this.#require(credentialItemColumns);
     return this.#database
-      .all(
+      .iterate(
         `SELECT ZACCOUNTIDENTIFIER AS accountIdentifier,
                 ZSERVICENAME AS serviceName,
                 ${instant('ZEXPIRATIONDATE')} AS expiresAt,

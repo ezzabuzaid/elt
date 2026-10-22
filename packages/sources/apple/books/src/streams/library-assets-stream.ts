@@ -292,7 +292,7 @@ export class LibraryAssetsStream extends BooksStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly LibraryAsset[] {
+  protected rows(scan: BooksScan): Iterable<LibraryAsset> {
     return scan.library.assets();
   }
 

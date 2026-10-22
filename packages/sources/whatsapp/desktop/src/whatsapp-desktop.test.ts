@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { chmod, mkdtempDisposable, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import {
   Connection,
@@ -2785,4 +2786,86 @@ test('a value WhatsApp always stores but left empty fails the streams read from 
     assert.deepEqual(broken.streams, failed, what);
     for (const error of broken.errors) assert.match(String(error), named, what);
   }
+});
+
+test('a WhatsApp pass over a large ChatStorage holds one message at a time, so it loads in a small heap', async () => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'elt-whatsapp-large-'),
+  );
+  const whatsapp = new ScratchWhatsApp(join(directory.path, 'container'));
+  whatsapp.exec(
+    'chatStorage',
+    `INSERT INTO ZWACHATSESSION (Z_PK, Z_ENT, ZCONTACTJID, ZSESSIONTYPE, ZPARTNERNAME)
+       VALUES (1, 4, '${alice}', 0, 'Alice');
+     WITH RECURSIVE message(n) AS (
+       SELECT 1 UNION ALL SELECT n + 1 FROM message WHERE n < 60000
+     )
+     INSERT INTO ZWAMESSAGE (Z_PK, Z_ENT, ZCHATSESSION, ZISFROMME, ZSTANZAID, ZFROMJID, ZMESSAGEDATE, ZMESSAGETYPE, ZMESSAGESTATUS, ZTEXT)
+       SELECT n, 9, 1, n % 2, 'stanza-' || n, '${alice}', 780000000 + n, 0, 6, 'message ' || n || ' ' || hex(randomblob(40))
+       FROM message;`,
+  );
+  // The import as a host runs it, in a process whose heap is far smaller
+  // than the store: a pass that holds every message, or every record it
+  // keeps, at once runs out of it (it needs about 140 MB; one that reads a
+  // message at a time fits in 40). The process loads the built source from
+  // this package's folder, where its dependencies resolve.
+  const pass = `
+    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { WhatsAppDesktopSource } = await import(process.env.SOURCE);
+    const source = new WhatsAppDesktopSource(process.env.CONTAINER);
+    const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
+    const { streams } = await source.discover();
+    const history = new SQLiteSyncHistory();
+    await history.install([destination]);
+    await new Pipeline({
+      history,
+      connections: [
+        new Connection({
+          name: 'whatsapp',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
+          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          })),
+        }),
+      ],
+    }).run();
+  `;
+
+  const run = spawnSync(
+    process.execPath,
+    ['--max-old-space-size=64', '--input-type=module', '-e', pass],
+    {
+      // The package's own folder, where its dependencies resolve.
+      cwd: join(import.meta.dirname, '..'),
+      env: {
+        ...process.env,
+        SOURCE: pathToFileURL(
+          join(import.meta.dirname, 'whatsapp-desktop-source.js'),
+        ).href,
+        CONTAINER: whatsapp.container,
+        OUT: directory.path,
+      },
+      encoding: 'utf8',
+      timeout: 120_000,
+    },
+  );
+
+  // V8 names a heap limit it reached in the first lines it writes.
+  assert.equal(
+    run.status,
+    0,
+    `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
+  );
+  using imported = new DatabaseSync(join(directory.path, 'data.sqlite'), {
+    readOnly: true,
+  });
+  assert.deepEqual(
+    { ...imported.prepare('SELECT count(*) AS n FROM raw_messages').get() },
+    { n: 60_000 },
+  );
 });

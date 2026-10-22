@@ -46,9 +46,9 @@ export class UsersSnapshot implements Disposable {
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
   }
 
-  users(): User[] {
+  users(): IteratorObject<User, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT ZIDENTIFIER AS lid, ZPHONENUMBER AS phoneNumber,
                 ZCOUNTRYCODE AS countryCode, ZDISPLAYNAME AS displayName,
                 ZUSERNAME AS username, ZUSERTYPE AS userType, ZSTATE AS state,

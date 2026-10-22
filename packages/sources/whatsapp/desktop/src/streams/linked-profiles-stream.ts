@@ -32,7 +32,7 @@ export class LinkedProfilesStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly LinkedProfile[] {
+  protected rows(scan: WhatsAppScan): Iterable<LinkedProfile> {
     return scan.localKeyValue.linkedProfiles();
   }
 

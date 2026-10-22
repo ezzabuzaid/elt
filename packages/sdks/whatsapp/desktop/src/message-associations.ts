@@ -34,9 +34,9 @@ export class MessageAssociationsSnapshot implements Disposable {
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
   }
 
-  associations(): MessageAssociation[] {
+  associations(): IteratorObject<MessageAssociation, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT chat_jid AS chatJid, stanza_id AS stanzaId, type,
                 parent_stanza_id AS parentStanzaId, sort
          FROM message_parent_association ORDER BY chat_jid, sort, stanza_id`,

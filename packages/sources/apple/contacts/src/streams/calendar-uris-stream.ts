@@ -23,7 +23,7 @@ export class CalendarUrisStream extends LabeledValueStream {
   } as const;
   protected readonly view = calendarUriView;
 
-  protected rows(store: AddressBookStore): readonly ValueRow[] {
+  protected rows(store: AddressBookStore): Iterable<ValueRow> {
     return store.calendarUris();
   }
 }

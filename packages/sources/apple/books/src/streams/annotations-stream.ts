@@ -98,7 +98,7 @@ export class AnnotationsStream extends BooksStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Annotation[] {
+  protected rows(scan: BooksScan): Iterable<Annotation> {
     return scan.annotations.annotations();
   }
 

@@ -27,7 +27,7 @@ export const notificationCenterFields = {
 export type NotificationCenterReader = {
   readonly name: string;
   describe(): Stream;
-  read(scan: NotificationCenterScan): Record<string, unknown>[];
+  read(scan: NotificationCenterScan): Iterable<Record<string, unknown>>;
 };
 
 // A Notification Center stream: its description, and how its records come
@@ -58,15 +58,13 @@ export abstract class AppleNotificationCenterStream<P extends Properties, Row> {
     return this.#stream;
   }
 
-  read(scan: NotificationCenterScan): SchemaRecord<P>[] {
-    return validateRecords(
-      this,
-      this.rows(scan).flatMap((row) => this.records(row)),
-      'Notification Center',
-    );
+  // One row at a time, so a pass never holds a whole table's records.
+  *read(scan: NotificationCenterScan): Generator<SchemaRecord<P>> {
+    for (const row of this.rows(scan))
+      yield* validateRecords(this, this.records(row), 'Notification Center');
   }
 
-  protected abstract rows(scan: NotificationCenterScan): readonly Row[];
+  protected abstract rows(scan: NotificationCenterScan): Iterable<Row>;
 
   protected abstract records(row: Row): RecordDraft<P>[];
 }

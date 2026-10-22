@@ -22,12 +22,15 @@ const noteLinkType = 'com.apple.notes.inlinetextattachment.link';
 export const string = (value: string | null) =>
   value !== null && value.trim() !== '' ? value : null;
 
-// One run's read of the store: every stream reads through it and each kind
-// of object is read once. Disposing it ends the store's read transaction.
+// One run's read of the store: every stream reads through it. Accounts,
+// folders, attachments and inline attachments are read once and kept, as
+// lookups for the notes; notes are read as each stream iterates them, never
+// held for the run: a store keeps tens of thousands. Disposing it ends the
+// store's read transaction.
 export class NotesScan implements AsyncDisposable {
   #accounts?: NoteAccount[];
   #folders?: NoteFolder[];
-  #notes?: Note[];
+  #noteIds?: ReadonlySet<string | null>;
   #attachments?: Map<string | null, NoteAttachment>;
   #inline?: Map<string | null, InlineAttachment>;
   readonly #snapshot: NoteStoreSnapshot;
@@ -66,8 +69,8 @@ export class NotesScan implements AsyncDisposable {
     return this.#folders;
   }
 
-  get notes(): Note[] {
-    this.#notes ??= this.#snapshot
+  notes(): IteratorObject<Note, undefined> {
+    return this.#snapshot
       .notes()
       .filter(
         (note) =>
@@ -75,7 +78,6 @@ export class NotesScan implements AsyncDisposable {
           selected(this.#scope.collectionIds, note.folderId) &&
           withinDates(this.#scope, note.modifiedAt?.toISOString() ?? null),
       );
-    return this.#notes;
   }
 
   // Attachments and inline attachments of the notes in scope, by identifier,
@@ -83,7 +85,7 @@ export class NotesScan implements AsyncDisposable {
   // one entry.
   get attachments(): ReadonlyMap<string | null, NoteAttachment> {
     if (this.#attachments !== undefined) return this.#attachments;
-    const notes = new Set(this.notes.map((note) => note.id));
+    const notes = this.#notesInScope();
     this.#attachments = new Map(
       this.#snapshot
         .attachments()
@@ -95,7 +97,7 @@ export class NotesScan implements AsyncDisposable {
 
   get inline(): ReadonlyMap<string | null, InlineAttachment> {
     if (this.#inline !== undefined) return this.#inline;
-    const notes = new Set(this.notes.map((note) => note.id));
+    const notes = this.#notesInScope();
     this.#inline = new Map(
       this.#snapshot
         .inlineAttachments()
@@ -135,5 +137,11 @@ export class NotesScan implements AsyncDisposable {
         ? `[${label}](attachment:${id})`
         : `[${label}](<${url}>)`;
     });
+  }
+
+  // The identifiers of the notes in scope, which keep their attachments.
+  #notesInScope(): ReadonlySet<string | null> {
+    this.#noteIds ??= new Set(this.notes().map((note) => note.id));
+    return this.#noteIds;
   }
 }

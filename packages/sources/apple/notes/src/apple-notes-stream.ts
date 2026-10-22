@@ -20,13 +20,15 @@ export const notesFields = {
 export type NotesReader = {
   readonly name: string;
   describe(): Stream;
-  read(scan: NotesScan): Promise<Record<string, unknown>[]>;
+  read(scan: NotesScan): AsyncIterable<Record<string, unknown>>;
   file(record: Record<string, unknown>, scan: NotesScan): string | null;
 };
 
 // A Notes stream: its description, and how its records come out of a run's
-// scan. Reading is the same for every stream — pick the rows, project each,
-// validate against the schema — so streams supply only those two steps.
+// scan. Reading is the same for every stream — read one row, project it,
+// validate it against the schema, then read the next, so a pass holds one
+// row however large the store — so streams supply only the rows and the
+// projection.
 // Public discovery returns only the Stream description.
 export abstract class AppleNotesStream<P extends Properties, Row> {
   abstract readonly name: string;
@@ -51,11 +53,9 @@ export abstract class AppleNotesStream<P extends Properties, Row> {
     return this.#stream;
   }
 
-  async read(scan: NotesScan): Promise<SchemaRecord<P>[]> {
-    const records = await Promise.all(
-      this.rows(scan).map((row) => this.record(row, scan)),
-    );
-    return validateRecords(this, records, 'Notes');
+  async *read(scan: NotesScan): AsyncGenerator<SchemaRecord<P>> {
+    for (const row of this.rows(scan))
+      yield* validateRecords(this, [await this.record(row, scan)], 'Notes');
   }
 
   // The file a record carries, for streams that support file reads.
@@ -63,7 +63,7 @@ export abstract class AppleNotesStream<P extends Properties, Row> {
     return null;
   }
 
-  protected abstract rows(scan: NotesScan): readonly Row[];
+  protected abstract rows(scan: NotesScan): Iterable<Row>;
 
   protected abstract record(
     row: Row,

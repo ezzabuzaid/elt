@@ -58,8 +58,8 @@ export class CloudTabsStream extends SafariStream<typeof properties, CloudTab> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly CloudTab[] {
-    return scan.cloudTabs.tabs;
+  protected rows(scan: SafariScan): Iterable<CloudTab> {
+    return scan.cloudTabs.tabs();
   }
 
   protected record(tab: CloudTab): RecordDraft<typeof properties> {

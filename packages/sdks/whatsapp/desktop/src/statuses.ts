@@ -108,9 +108,9 @@ export class StatusesSnapshot implements Disposable {
     this.#container = container;
   }
 
-  statuses(): Status[] {
+  statuses(): IteratorObject<Status, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT status.sender_user_jid AS senderJid, status.uuid,
                 status.type, status.sort_id AS sortId, status.timestamp,
                 status.server_receipt_timestamp AS serverReceiptTimestamp,

@@ -41,8 +41,8 @@ export class AccessOptionKeysStream extends AppleAccountsStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: AccountsScan): readonly AccessOptionKey[] {
-    return scan.accessOptionKeys;
+  protected rows(scan: AccountsScan): Iterable<AccessOptionKey> {
+    return scan.snapshot.accessOptionKeys();
   }
 
   protected records(key: AccessOptionKey): RecordDraft<typeof properties>[] {

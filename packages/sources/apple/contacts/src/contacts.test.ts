@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtempDisposable, readFile } from 'node:fs/promises';
@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 
 import {
   Connection,
@@ -1718,4 +1719,104 @@ test('Contacts writes each phone number in E.164, reading one without a country 
     'OWN-COUNTRY': '+12025550199',
     'SHORT-CODE': null,
   });
+});
+
+test('a Contacts pass over a large store holds one contact at a time, so it loads in a small heap', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'contacts-large-'),
+  );
+  const directory = join(scratch.path, 'AddressBook');
+  createStore(directory, {
+    ZABCDRECORD: [{ Z_PK: 1, Z_ENT: container, ZUNIQUEID: 'ROOT:ABContainer' }],
+  });
+  mkdirSync(join(directory, 'Sources'));
+  {
+    using store = new DatabaseSync(join(directory, 'AddressBook-v22.abcddb'));
+    store.exec(`
+      WITH RECURSIVE person(n) AS (
+        SELECT 2 UNION ALL SELECT n + 1 FROM person WHERE n < 60001
+      )
+      INSERT INTO ZABCDRECORD (Z_PK, Z_ENT, ZUNIQUEID, ZCONTAINER1, ZFIRSTNAME, ZLASTNAME, ZORGANIZATION, ZJOBTITLE)
+        SELECT n, ${contact}, 'PERSON-' || n || ':ABPerson', 1, 'First ' || n, 'Last ' || hex(randomblob(20)), 'Organization ' || hex(randomblob(20)), 'Job ' || hex(randomblob(10))
+        FROM person;
+      INSERT INTO ZABCDPHONENUMBER (Z_PK, ZOWNER, ZUNIQUEID, ZLABEL, ZFULLNUMBER)
+        SELECT Z_PK, Z_PK, 'PHONE-' || Z_PK, '_$!<Mobile>!$_', '+1 202 555 ' || Z_PK
+        FROM ZABCDRECORD WHERE Z_ENT = ${contact};
+      INSERT INTO ZABCDEMAILADDRESS (Z_PK, ZOWNER, ZUNIQUEID, ZLABEL, ZADDRESS)
+        SELECT Z_PK, Z_PK, 'EMAIL-' || Z_PK, '_$!<Home>!$_', 'person' || Z_PK || '@example.com'
+        FROM ZABCDRECORD WHERE Z_ENT = ${contact};
+    `);
+  }
+  const preferences = join(scratch.path, 'GlobalPreferences.plist');
+  writeFileSync(
+    preferences,
+    binaryPlist('<dict><key>AppleLocale</key><string>en_US</string></dict>'),
+  );
+  // The import as a host runs it, in a process whose heap is far smaller
+  // than the store: a pass that holds every contact, or every record it
+  // keeps, at once runs out of it (it needs about 250 MB; one that reads a
+  // contact at a time fits in 32). The process loads the built source from
+  // this package's folder, where its dependencies resolve.
+  const pass = `
+    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { AppleContactsSource } = await import(process.env.SOURCE);
+    const source = new AppleContactsSource(process.env.STORE, {}, process.env.PREFERENCES);
+    const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
+    const { streams } = await source.discover();
+    const history = new SQLiteSyncHistory();
+    await history.install([destination]);
+    await new Pipeline({
+      history,
+      connections: [
+        new Connection({
+          name: 'contacts',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
+          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          })),
+        }),
+      ],
+    }).run();
+  `;
+
+  const run = spawnSync(
+    process.execPath,
+    ['--max-old-space-size=64', '--input-type=module', '-e', pass],
+    {
+      // The package's own folder, where its dependencies resolve.
+      cwd: join(import.meta.dirname, '..'),
+      env: {
+        ...process.env,
+        SOURCE: pathToFileURL(
+          join(import.meta.dirname, 'apple-contacts-source.js'),
+        ).href,
+        STORE: directory,
+        PREFERENCES: preferences,
+        OUT: scratch.path,
+      },
+      encoding: 'utf8',
+      timeout: 120_000,
+    },
+  );
+
+  // V8 names a heap limit it reached in the first lines it writes.
+  assert.equal(
+    run.status,
+    0,
+    `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
+  );
+  assert.deepEqual(
+    rows(
+      join(scratch.path, 'data.sqlite'),
+      `SELECT (SELECT count(*) FROM raw_contacts) AS contacts,
+              (SELECT count(*) FROM raw_phoneNumbers) AS phoneNumbers,
+              (SELECT count(*) FROM raw_emailAddresses) AS emailAddresses`,
+    ),
+    [{ contacts: 60_000, phoneNumbers: 60_000, emailAddresses: 60_000 }],
+  );
 });

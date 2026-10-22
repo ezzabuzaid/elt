@@ -276,8 +276,8 @@ export class MessagesStream extends WhatsAppStream<typeof properties, Message> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly Message[] {
-    return scan.chatStorage.messages;
+  protected rows(scan: WhatsAppScan): Iterable<Message> {
+    return scan.chatStorage.messages();
   }
 
   protected record({

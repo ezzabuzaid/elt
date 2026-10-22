@@ -76,9 +76,9 @@ export class ContactsSnapshot implements Disposable {
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
   }
 
-  contacts(): AddressBookContact[] {
+  contacts(): IteratorObject<AddressBookContact, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT ZUNIQUEID AS uniqueId, ZWHATSAPPID AS whatsappId, ZLID AS lid,
                 ZINTEROPJID AS interopJid, ZIDENTIFIER AS identifier,
                 ZFULLNAME AS fullName, ZGIVENNAME AS givenName,

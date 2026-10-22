@@ -43,7 +43,7 @@ export const safariFields = {
 export type SafariReader = {
   readonly store: SafariStore;
   describe(): Stream;
-  read(scan: SafariScan): Promise<Record<string, unknown>[]>;
+  read(scan: SafariScan): Iterable<Record<string, unknown>>;
   horizon(scan: SafariScan): string | undefined;
   file(record: Record<string, unknown>, scan: SafariScan): string | null;
 };
@@ -76,12 +76,10 @@ export abstract class SafariStream<P extends Properties, Row> {
     return this.#stream;
   }
 
-  async read(scan: SafariScan): Promise<SchemaRecord<P>[]> {
-    return validateRecords(
-      this,
-      this.rows(scan).map((row) => this.record(row, scan)),
-      'Safari',
-    );
+  // One record at a time, so a pass never holds a whole store's rows.
+  *read(scan: SafariScan): Generator<SchemaRecord<P>> {
+    for (const row of this.rows(scan))
+      yield* validateRecords(this, [this.record(row, scan)], 'Safari');
   }
 
   // The instant Safari keeps the stream's records from, for streams Safari
@@ -95,7 +93,7 @@ export abstract class SafariStream<P extends Properties, Row> {
     return null;
   }
 
-  protected abstract rows(scan: SafariScan): readonly Row[];
+  protected abstract rows(scan: SafariScan): Iterable<Row>;
 
   protected abstract record(row: Row, scan: SafariScan): RecordDraft<P>;
 }

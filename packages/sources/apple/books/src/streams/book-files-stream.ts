@@ -60,7 +60,7 @@ export class BookFilesStream extends BooksStream<typeof properties, BookFile> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): Promise<readonly BookFile[]> {
+  protected rows(scan: BooksScan): AsyncIterable<BookFile> {
     return scan.library.bookFiles();
   }
 

@@ -23,7 +23,7 @@ export class AddressingGrammarsStream extends LabeledValueStream {
   } as const;
   protected readonly view = addressingGrammarView;
 
-  protected rows(store: AddressBookStore): readonly ValueRow[] {
+  protected rows(store: AddressBookStore): Iterable<ValueRow> {
     return store.addressingGrammars();
   }
 }

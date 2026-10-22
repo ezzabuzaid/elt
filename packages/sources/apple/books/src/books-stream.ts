@@ -49,7 +49,7 @@ export type BooksReader = {
   readonly name: string;
   readonly store: BooksStore;
   describe(): Stream;
-  read(scan: BooksScan): Promise<Record<string, unknown>[]>;
+  read(scan: BooksScan): AsyncIterable<Record<string, unknown>>;
   file(
     record: Record<string, unknown>,
     scan: BooksScan,
@@ -58,9 +58,10 @@ export type BooksReader = {
 };
 
 // A Books stream: its description, the store it reads, and how its records
-// come out of a run's scan. Reading is the same for every stream — pick the
-// rows, project each, validate against the schema — so streams supply only
-// those two steps.
+// come out of a run's scan. Reading is the same for every stream — read one
+// row, project it, validate it against the schema, then read the next, so a
+// pass holds one row however large the store — so streams supply only the
+// rows and the projection.
 export abstract class BooksStream<P extends Properties, Row> {
   abstract readonly name: string;
   abstract readonly store: BooksStore;
@@ -85,13 +86,9 @@ export abstract class BooksStream<P extends Properties, Row> {
     return this.#stream;
   }
 
-  async read(scan: BooksScan): Promise<SchemaRecord<P>[]> {
-    const rows = await this.rows(scan);
-    return validateRecords(
-      this,
-      rows.map((row) => this.record(row, scan)),
-      'Books',
-    );
+  async *read(scan: BooksScan): AsyncGenerator<SchemaRecord<P>> {
+    for await (const row of this.rows(scan))
+      yield* validateRecords(this, [this.record(row, scan)], 'Books');
   }
 
   // The file a record carries, for streams that support file reads, staged
@@ -104,9 +101,7 @@ export abstract class BooksStream<P extends Properties, Row> {
     return null;
   }
 
-  protected abstract rows(
-    scan: BooksScan,
-  ): readonly Row[] | Promise<readonly Row[]>;
+  protected abstract rows(scan: BooksScan): Iterable<Row> | AsyncIterable<Row>;
 
   protected abstract record(row: Row, scan: BooksScan): RecordDraft<P>;
 }

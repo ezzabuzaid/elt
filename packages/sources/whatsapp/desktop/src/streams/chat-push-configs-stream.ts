@@ -47,7 +47,7 @@ export class ChatPushConfigsStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly ChatPushConfig[] {
+  protected rows(scan: WhatsAppScan): Iterable<ChatPushConfig> {
     return scan.chatStorage.chatPushConfigs;
   }
 

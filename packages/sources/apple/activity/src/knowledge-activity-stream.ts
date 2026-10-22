@@ -97,12 +97,10 @@ export abstract class KnowledgeActivityStream<P extends Properties, E> {
     });
   }
 
-  #read(scan: ActivityScan): SchemaRecord<P>[] {
-    return validateRecords(
-      this,
-      scan.knowledge.events(this.knowledge).map((event) => this.record(event)),
-      'Activity',
-    );
+  // One record at a time, so a pass never holds a whole stream's events.
+  *#read(scan: ActivityScan): Generator<SchemaRecord<P>> {
+    for (const event of scan.knowledge.events(this.knowledge))
+      yield* validateRecords(this, [this.record(event)], 'Activity');
   }
 
   protected abstract record(event: KnowledgeEvent & E): RecordDraft<P>;

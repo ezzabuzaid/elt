@@ -47,8 +47,8 @@ export class EmergencyMediaItemsStream extends AppleCallHistoryStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: CallHistoryScan): readonly EmergencyMediaItem[] {
-    return scan.emergencyMediaItems;
+  protected rows(scan: CallHistoryScan): Iterable<EmergencyMediaItem> {
+    return scan.emergencyMediaItems();
   }
 
   protected records(

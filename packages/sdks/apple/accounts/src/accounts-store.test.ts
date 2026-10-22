@@ -469,11 +469,11 @@ test('this Mac’s Accounts store reads as one consistent snapshot: accounts, th
     using snapshot = store.open();
     read = {
       accounts: snapshot.accounts(),
-      accountTypes: snapshot.accountTypes(),
-      dataclasses: snapshot.dataclasses(),
-      accessOptionKeys: snapshot.accessOptionKeys(),
-      authorizations: snapshot.authorizations(),
-      credentialItems: snapshot.credentialItems(),
+      accountTypes: [...snapshot.accountTypes()],
+      dataclasses: [...snapshot.dataclasses()],
+      accessOptionKeys: [...snapshot.accessOptionKeys()],
+      authorizations: [...snapshot.authorizations()],
+      credentialItems: [...snapshot.credentialItems()],
     };
   } catch (error) {
     if (error instanceof AccountsUnavailableError)

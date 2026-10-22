@@ -38,7 +38,7 @@ export class CallParticipantsStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly CallParticipant[] {
+  protected rows(scan: WhatsAppScan): Iterable<CallParticipant> {
     return scan.calls.participants();
   }
 

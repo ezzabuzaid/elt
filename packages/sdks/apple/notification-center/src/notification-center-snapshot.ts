@@ -42,9 +42,11 @@ export class NotificationCenterSnapshot implements Disposable {
     );
   }
 
-  notifications(): Notification[] {
+  // Read as the caller iterates: usernoted keeps every notification it has
+  // not cleared, so no read holds them all.
+  notifications(): IteratorObject<Notification, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT uuid, data, delivered_date AS deliveredAt, style FROM record ORDER BY rec_id',
       )
       .map((row) => {
@@ -81,18 +83,18 @@ export class NotificationCenterSnapshot implements Disposable {
       });
   }
 
-  apps(): NotificationApp[] {
+  apps(): IteratorObject<NotificationApp, undefined> {
     return this.#database
-      .all('SELECT identifier, badge FROM app ORDER BY app_id')
+      .iterate('SELECT identifier, badge FROM app ORDER BY app_id')
       .map((row) => ({
         bundleId: required(row.identifier, 'An app has no identifier'),
         badge: row.badge === null ? null : Number(row.badge),
       }));
   }
 
-  categories(): NotificationCategory[] {
+  categories(): IteratorObject<NotificationCategory, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT app.identifier AS bundleId, categories.categories AS list
          FROM categories JOIN app USING (app_id)
          ORDER BY app.app_id`,

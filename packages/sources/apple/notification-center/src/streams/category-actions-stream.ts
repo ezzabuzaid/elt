@@ -70,8 +70,8 @@ export class CategoryActionsStream extends AppleNotificationCenterStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: NotificationCenterScan): readonly Action[] {
-    return scan.categories.flatMap((category) =>
+  protected rows(scan: NotificationCenterScan): Iterable<Action> {
+    return scan.snapshot.categories().flatMap((category) =>
       category.actions.map((action) => ({
         ...action,
         bundleId: category.bundleId,

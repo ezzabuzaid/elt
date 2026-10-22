@@ -37,7 +37,7 @@ export class BusinessBotPromptsStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly BusinessBotPrompt[] {
+  protected rows(scan: WhatsAppScan): Iterable<BusinessBotPrompt> {
     return scan.businesses.botPrompts();
   }
 

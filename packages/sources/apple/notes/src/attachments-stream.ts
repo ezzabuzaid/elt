@@ -141,8 +141,8 @@ export class AttachmentsStream extends AppleNotesStream<
   } as const;
   readonly supportsFileTransfer = true;
 
-  protected rows(scan: NotesScan): readonly NoteAttachment[] {
-    return [...scan.attachments.values()];
+  protected rows(scan: NotesScan): Iterable<NoteAttachment> {
+    return scan.attachments.values();
   }
 
   protected async record(

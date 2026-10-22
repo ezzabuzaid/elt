@@ -41,7 +41,7 @@ export class DisappearingModesStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly DisappearingMode[] {
+  protected rows(scan: WhatsAppScan): Iterable<DisappearingMode> {
     return scan.localKeyValue.disappearingModes();
   }
 

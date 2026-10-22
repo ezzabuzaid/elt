@@ -2,9 +2,6 @@ import type {
   Bookmarks,
   ClosedTab,
   ClosedWindow,
-  CloudTab,
-  CloudTabCloseRequest,
-  CloudTabDevice,
   CloudTabs,
   Download,
   HistoryItem,
@@ -49,14 +46,15 @@ export type Profiled<T> = { readonly profileId: string; readonly row: T };
 
 // One profile's history as an import scope keeps it: the scope's profiles and
 // dates select visits, and items, tags and tag links follow the visits kept.
+// Records are read as each stream iterates them, never held for the run: a
+// history keeps tens of thousands of visits. Only the ids a join needs are
+// kept.
 class ProfileRecords {
   readonly profileId: string;
   readonly #history: ProfileHistory;
   readonly #scope: ImportScope;
-  #visits?: HistoryVisit[];
-  #items?: HistoryItem[];
-  #itemTags?: HistoryItemTag[];
-  #tags?: HistoryTag[];
+  #itemIds?: ReadonlySet<number | null>;
+  #tagIds?: ReadonlySet<number | null>;
 
   constructor(history: ProfileHistory, scope: ImportScope) {
     this.profileId = history.profileId;
@@ -72,47 +70,44 @@ class ProfileRecords {
     return this.#scope.startAt !== undefined || this.#scope.endAt !== undefined;
   }
 
-  get visits(): HistoryVisit[] {
-    this.#visits ??= this.#included
-      ? this.#history
-          .visits()
-          .filter((visit) => withinDates(this.#scope, iso(visit.visitedAt)))
-      : [];
-    return this.#visits;
+  *visits(): Generator<HistoryVisit> {
+    if (!this.#included) return;
+    yield* this.#history
+      .visits()
+      .filter((visit) => withinDates(this.#scope, iso(visit.visitedAt)));
   }
 
-  get items(): HistoryItem[] {
-    if (this.#items !== undefined) return this.#items;
-    const visited = new Set(this.visits.map((visit) => visit.itemId));
-    this.#items = this.#included
-      ? this.#history
-          .items()
-          .filter((item) => !this.#dated || visited.has(item.id))
-      : [];
-    return this.#items;
+  *items(): Generator<HistoryItem> {
+    if (!this.#included) return;
+    const visited = this.#dated
+      ? new Set(this.visits().map((visit) => visit.itemId))
+      : undefined;
+    yield* this.#history
+      .items()
+      .filter((item) => visited === undefined || visited.has(item.id));
   }
 
-  get itemTags(): HistoryItemTag[] {
-    if (this.#itemTags !== undefined) return this.#itemTags;
-    const items = new Set(this.items.map((item) => item.id));
-    this.#itemTags = this.#included
-      ? this.#history.itemTags().filter((link) => items.has(link.itemId))
-      : [];
-    return this.#itemTags;
+  *itemTags(): Generator<HistoryItemTag> {
+    if (!this.#included) return;
+    this.#itemIds ??= new Set(this.items().map((item) => item.id));
+    const items = this.#itemIds;
+    yield* this.#history.itemTags().filter((link) => items.has(link.itemId));
   }
 
-  get tags(): HistoryTag[] {
-    if (this.#tags !== undefined) return this.#tags;
-    const linked = new Set(this.itemTags.map((link) => link.tagId));
-    this.#tags = this.#included
-      ? this.#history.tags().filter((tag) => !this.#dated || linked.has(tag.id))
-      : [];
-    return this.#tags;
+  *tags(): Generator<HistoryTag> {
+    if (!this.#included) return;
+    if (!this.#dated) {
+      yield* this.#history.tags();
+      return;
+    }
+    this.#tagIds ??= new Set(this.itemTags().map((link) => link.tagId));
+    const linked = this.#tagIds;
+    yield* this.#history.tags().filter((tag) => linked.has(tag.id));
   }
 
   // Tombstones record deletions to sync to other devices, whatever their date.
-  get tombstones(): HistoryTombstone[] {
-    return this.#included ? this.#history.tombstones() : [];
+  *tombstones(): Generator<HistoryTombstone> {
+    if (this.#included) yield* this.#history.tombstones();
   }
 }
 
@@ -186,30 +181,6 @@ class ScopedTabs {
   }
 }
 
-// CloudTabs.db as one run reads it; its tabs serve both the tabs and their
-// positions.
-class CloudTabsRecords {
-  readonly #cloudTabs: CloudTabs;
-  #tabs?: CloudTab[];
-
-  constructor(cloudTabs: CloudTabs) {
-    this.#cloudTabs = cloudTabs;
-  }
-
-  get devices(): CloudTabDevice[] {
-    return this.#cloudTabs.devices();
-  }
-
-  get tabs(): CloudTab[] {
-    this.#tabs ??= this.#cloudTabs.tabs();
-    return this.#tabs;
-  }
-
-  get closeRequests(): CloudTabCloseRequest[] {
-    return this.#cloudTabs.closeRequests();
-  }
-}
-
 type ClosedEntries = {
   readonly windows: ClosedWindow[];
   readonly tabs: ClosedTab[];
@@ -218,7 +189,7 @@ type ClosedEntries = {
 type Readers = {
   history: ScopedHistory;
   tabs: ScopedTabs;
-  cloudTabs: CloudTabsRecords;
+  cloudTabs: CloudTabs;
   bookmarks: Bookmarks;
   closedTabs: ClosedEntries;
   downloads: Download[];
@@ -274,9 +245,8 @@ export class SafariScan implements AsyncDisposable {
         'tabs',
         () => new ScopedTabs(resources.use(safari.tabs()), scope),
       ),
-      cloudTabs: await open(
-        'cloudTabs',
-        () => new CloudTabsRecords(resources.use(safari.cloudTabs())),
+      cloudTabs: await open('cloudTabs', () =>
+        resources.use(safari.cloudTabs()),
       ),
       bookmarks: await open('bookmarks', () => safari.bookmarks()),
       closedTabs: await open('closedTabs', async () =>
@@ -305,7 +275,7 @@ export class SafariScan implements AsyncDisposable {
     return this.#reader('downloads');
   }
 
-  get cloudTabs(): CloudTabsRecords {
+  get cloudTabs(): CloudTabs {
     return this.#reader('cloudTabs');
   }
 

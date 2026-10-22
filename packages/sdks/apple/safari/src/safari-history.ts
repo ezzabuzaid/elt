@@ -142,27 +142,31 @@ export class ProfileHistory implements Disposable {
     this.#database.requireColumns(historyColumns, SafariSchemaError);
   }
 
-  visits(): HistoryVisit[] {
-    return this.#database.all(select('history_visits', 'id')).map((row) => ({
-      id: storedNumber(row.id),
-      itemId: storedNumber(row.history_item),
-      visitedAt: appleTime(row.visit_time),
-      title: text(row.title),
-      loadSuccessful: flag(row.load_successful),
-      httpNonGet: flag(row.http_non_get),
-      synthesized: flag(row.synthesized),
-      redirectSourceId: integer(row.redirect_source),
-      redirectDestinationId: integer(row.redirect_destination),
-      origin: storedNumber(row.origin),
-      generation: storedNumber(row.generation),
-      attributes: storedNumber(row.attributes),
-      score: storedNumber(row.score),
-    }));
+  // Each read below yields its rows as the caller iterates them, so no read
+  // holds a whole table: a history keeps tens of thousands of visits.
+  visits(): IteratorObject<HistoryVisit, undefined> {
+    return this.#database
+      .iterate(select('history_visits', 'id'))
+      .map((row) => ({
+        id: storedNumber(row.id),
+        itemId: storedNumber(row.history_item),
+        visitedAt: appleTime(row.visit_time),
+        title: text(row.title),
+        loadSuccessful: flag(row.load_successful),
+        httpNonGet: flag(row.http_non_get),
+        synthesized: flag(row.synthesized),
+        redirectSourceId: integer(row.redirect_source),
+        redirectDestinationId: integer(row.redirect_destination),
+        origin: storedNumber(row.origin),
+        generation: storedNumber(row.generation),
+        attributes: storedNumber(row.attributes),
+        score: storedNumber(row.score),
+      }));
   }
 
-  items(): HistoryItem[] {
+  items(): IteratorObject<HistoryItem, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT ${historyColumns.history_items.join(', ')},
             (SELECT max(visit_time) FROM history_visits
               WHERE history_item = history_items.id) AS last_visit_time
@@ -186,9 +190,9 @@ export class ProfileHistory implements Disposable {
       }));
   }
 
-  itemTags(): HistoryItemTag[] {
+  itemTags(): IteratorObject<HistoryItemTag, undefined> {
     return this.#database
-      .all(select('history_items_to_tags', 'history_item, tag_id'))
+      .iterate(select('history_items_to_tags', 'history_item, tag_id'))
       .map((row) => ({
         itemId: storedNumber(row.history_item),
         tagId: storedNumber(row.tag_id),
@@ -196,8 +200,8 @@ export class ProfileHistory implements Disposable {
       }));
   }
 
-  tags(): HistoryTag[] {
-    return this.#database.all(select('history_tags', 'id')).map((row) => ({
+  tags(): IteratorObject<HistoryTag, undefined> {
+    return this.#database.iterate(select('history_tags', 'id')).map((row) => ({
       id: storedNumber(row.id),
       type: storedNumber(row.type),
       level: storedNumber(row.level),
@@ -208,9 +212,9 @@ export class ProfileHistory implements Disposable {
     }));
   }
 
-  tombstones(): HistoryTombstone[] {
+  tombstones(): IteratorObject<HistoryTombstone, undefined> {
     return this.#database
-      .all(select('history_tombstones', 'id'))
+      .iterate(select('history_tombstones', 'id'))
       .map((row) => ({
         id: storedNumber(row.id),
         startAt: appleTime(row.start_time),

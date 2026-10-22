@@ -47,7 +47,7 @@ export class BusinessServiceAreasStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly BusinessServiceArea[] {
+  protected rows(scan: WhatsAppScan): Iterable<BusinessServiceArea> {
     return scan.businesses.serviceAreas();
   }
 

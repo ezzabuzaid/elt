@@ -22,7 +22,7 @@ export const accountsFields = {
 export type AccountsReader = {
   readonly name: string;
   describe(): Stream;
-  read(scan: AccountsScan): Record<string, unknown>[];
+  read(scan: AccountsScan): Iterable<Record<string, unknown>>;
 };
 
 // An Accounts stream: its description, and how its records come out of a
@@ -51,15 +51,13 @@ export abstract class AppleAccountsStream<P extends Properties, Row> {
     return this.#stream;
   }
 
-  read(scan: AccountsScan): SchemaRecord<P>[] {
-    return validateRecords(
-      this,
-      this.rows(scan).flatMap((row) => this.records(row)),
-      'Accounts',
-    );
+  // One row at a time, so a pass never holds a whole table's records.
+  *read(scan: AccountsScan): Generator<SchemaRecord<P>> {
+    for (const row of this.rows(scan))
+      yield* validateRecords(this, this.records(row), 'Accounts');
   }
 
-  protected abstract rows(scan: AccountsScan): readonly Row[];
+  protected abstract rows(scan: AccountsScan): Iterable<Row>;
 
   protected abstract records(row: Row): RecordDraft<P>[];
 }

@@ -40,9 +40,10 @@ export class BooksThemes implements Disposable {
     this.#database.requireColumns(themesColumns, BooksSchemaError);
   }
 
-  themes(): Theme[] {
+  // Read as the caller iterates, so no read holds the whole table.
+  themes(): IteratorObject<Theme, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT * FROM ZBOOKTHEME WHERE ZIDENTIFIER IS NOT NULL ORDER BY Z_PK',
       )
       .map((row) => ({

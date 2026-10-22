@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import {
   chmod,
   mkdir,
@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { crc32 } from 'node:zlib';
 
@@ -1498,4 +1499,100 @@ test('an Activity watch keeps every stream current while its stores hold still',
   } finally {
     await watching.return(undefined);
   }
+});
+
+test('an Activity pass over a large knowledgeC holds one event at a time, so it loads in a small heap', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'activity-large-'),
+  );
+  const location = await activityFixture(scratch.path);
+  // One discoverability signal every 10 seconds back from yesterday, all
+  // within the stream's two years. Each signal carries a 1 KB value, so a
+  // pass that holds the whole stream needs far more heap than one that reads
+  // a signal at a time; the snapshot's per-key state grows with the event
+  // count, not with the value, so the payload widens the gap and rows would
+  // not.
+  const at = appleSeconds(daysAgo(1));
+  {
+    using knowledge = new DatabaseSync(location.knowledge);
+    knowledge.exec(
+      `WITH RECURSIVE event(n) AS (
+         SELECT 1 UNION ALL SELECT n + 1 FROM event WHERE n < 120000
+       )
+       INSERT INTO ZOBJECT (ZUUID, ZSTREAMNAME, ZSTARTDATE, ZENDDATE, ZCREATIONDATE, ZSECONDSFROMGMT, ZVALUESTRING)
+         SELECT hex(randomblob(16)), '/discoverability/signals', ${at} - n * 10, ${at} - n * 10 + 5, ${at} - n * 10 + 6, 10800, hex(randomblob(512))
+         FROM event;`,
+    );
+  }
+  // The import as a host runs it, in a process whose heap is far smaller
+  // than the store: a pass that holds every event, or every record it keeps,
+  // at once runs out of it. Measured old-space needs: a pass that reads an
+  // event at a time, about 64 MB (mostly the snapshot's per-key state); one
+  // that validates the whole stream's records at once, about 220 MB. The cap
+  // of 128 leaves over 60 MB on each side. The process loads the built source
+  // from this package's folder, where its dependencies resolve.
+  const pass = `
+    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { AppleActivitySource } = await import(process.env.SOURCE);
+    const source = new AppleActivitySource({ biome: process.env.BIOME, knowledge: process.env.KNOWLEDGE });
+    const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
+    const { streams } = await source.discover();
+    const history = new SQLiteSyncHistory();
+    await history.install([destination]);
+    await new Pipeline({
+      history,
+      connections: [
+        new Connection({
+          name: 'activity',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
+          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          })),
+        }),
+      ],
+    }).run();
+  `;
+
+  const run = spawnSync(
+    process.execPath,
+    ['--max-old-space-size=128', '--input-type=module', '-e', pass],
+    {
+      // The package's own folder, where its dependencies resolve.
+      cwd: join(import.meta.dirname, '..'),
+      env: {
+        ...process.env,
+        SOURCE: pathToFileURL(
+          join(import.meta.dirname, 'apple-activity-source.js'),
+        ).href,
+        BIOME: location.biome,
+        KNOWLEDGE: location.knowledge,
+        OUT: scratch.path,
+      },
+      encoding: 'utf8',
+      timeout: 120_000,
+    },
+  );
+
+  // V8 names a heap limit it reached in the first lines it writes.
+  assert.equal(
+    run.status,
+    0,
+    `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
+  );
+  using imported = new DatabaseSync(join(scratch.path, 'data.sqlite'), {
+    readOnly: true,
+  });
+  assert.deepEqual(
+    {
+      ...imported
+        .prepare('SELECT count(*) AS n FROM raw_discoverabilitySignals')
+        .get(),
+    },
+    { n: 120_000 },
+  );
 });

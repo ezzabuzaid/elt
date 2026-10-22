@@ -119,7 +119,7 @@ export class CallsStream extends WhatsAppStream<typeof properties, Call> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly Call[] {
+  protected rows(scan: WhatsAppScan): Iterable<Call> {
     return scan.calls.calls();
   }
 

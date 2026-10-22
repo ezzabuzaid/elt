@@ -31,7 +31,7 @@ export class GroupSubgroupsStream extends AppleContactsStream<GroupSubgroupRow> 
     required: Object.keys(properties),
   } as const;
 
-  protected rows(store: AddressBookStore): readonly GroupSubgroupRow[] {
+  protected rows(store: AddressBookStore): Iterable<GroupSubgroupRow> {
     return store.groupSubgroups();
   }
 

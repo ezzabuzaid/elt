@@ -100,7 +100,7 @@ export class MessageDataItemsStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly MessageDataItem[] {
+  protected rows(scan: WhatsAppScan): Iterable<MessageDataItem> {
     return scan.chatStorage.dataItems;
   }
 

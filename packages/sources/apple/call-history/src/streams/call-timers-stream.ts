@@ -59,8 +59,8 @@ export class CallTimersStream extends AppleCallHistoryStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: CallHistoryScan): readonly CallTimers[] {
-    return scan.timers;
+  protected rows(scan: CallHistoryScan): Iterable<CallTimers> {
+    return scan.timers();
   }
 
   protected records(timers: CallTimers): RecordDraft<typeof properties>[] {

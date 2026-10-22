@@ -149,7 +149,7 @@ export class WhatsAppScan implements AsyncDisposable {
     return this.#reader('backedUpKeyValue');
   }
 
-  messageAssociations(): MessageAssociation[] {
+  messageAssociations(): Iterable<MessageAssociation> {
     const associations = this.#reader('messageAssociations').associations();
     if (!this.#scoped) return associations;
     const chats = this.chatStorage;

@@ -37,8 +37,8 @@ export class CloudTabCloseRequestsStream extends SafariStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly CloudTabCloseRequest[] {
-    return scan.cloudTabs.closeRequests;
+  protected rows(scan: SafariScan): Iterable<CloudTabCloseRequest> {
+    return scan.cloudTabs.closeRequests();
   }
 
   protected record(

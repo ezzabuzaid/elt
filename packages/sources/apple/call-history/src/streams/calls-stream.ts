@@ -335,8 +335,8 @@ export class CallsStream extends AppleCallHistoryStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: CallHistoryScan): readonly Call[] {
-    return scan.calls;
+  protected rows(scan: CallHistoryScan): Iterable<Call> {
+    return scan.calls();
   }
 
   protected records(call: Call): RecordDraft<typeof properties>[] {

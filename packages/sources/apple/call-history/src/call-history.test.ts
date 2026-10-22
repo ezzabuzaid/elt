@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { chmod, mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 
 import {
   Connection,
@@ -58,6 +60,10 @@ class ScratchCallHistory implements Disposable {
         `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
       )
       .run(...Object.values(row));
+  }
+
+  exec(sql: string): void {
+    this.#database.exec(sql);
   }
 
   [Symbol.dispose](): void {
@@ -978,4 +984,96 @@ test('a Call History watch keeps every stream current while callhistoryd changes
   } finally {
     await watching.return(undefined);
   }
+});
+
+test('a Call History pass over a large store holds one call at a time, so it loads in a small heap', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-large-'));
+  const path = join(dir.path, 'CallHistory.storedata');
+  {
+    using store = new ScratchCallHistory(path);
+    store.exec(`
+      WITH RECURSIVE call(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM call WHERE n < 60000
+      )
+      INSERT INTO ZHANDLE (Z_PK, Z_ENT, ZTYPE, ZVALUE, ZNORMALIZEDVALUE)
+        SELECT n, 4, 2, '+1 555 ' || n, '+1555' || n || hex(randomblob(512)) FROM call;
+      WITH RECURSIVE call(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM call WHERE n < 60000
+      )
+      INSERT INTO ZCALLRECORD (Z_PK, Z_ENT, ZUNIQUE_ID, ZDATE, ZDURATION, ZSERVICE_PROVIDER, ZCALLTYPE, ZCALL_CATEGORY, ZORIGINATED, ZANSWERED, ZADDRESS, ZNAME, ZLOCATION, ZCONVERSATIONID)
+        SELECT n, 2, 'CALL-' || n, 780000000 + n, n % 600, 'com.apple.Telephony', 1, 1, n % 2, 1, '+1 555 ' || n, 'caller ' || n || ' ' || hex(randomblob(40)), 'location ' || hex(randomblob(20)), randomblob(16)
+        FROM call;
+      INSERT INTO Z_2REMOTEPARTICIPANTHANDLES (Z_2REMOTEPARTICIPANTCALLS, Z_4REMOTEPARTICIPANTHANDLES)
+        SELECT Z_PK, Z_PK FROM ZCALLRECORD;
+    `);
+  }
+  // The import as a host runs it, in a process whose heap is far smaller
+  // than the store: a pass that holds every call, or every record it keeps,
+  // at once runs out of it. Each handle's normalized value carries 1 KB, kept
+  // out of the primary key so the snapshot's per-key state stays small.
+  // Measured old-space needs: a pass that reads a call at a time, about
+  // 26 MB; one whose participants read loads every row at once, about 108 MB;
+  // one that loads every read at once, over 270 MB. The cap of 64 leaves over
+  // 35 MB on each side. The process loads the built source from this
+  // package's folder, where its dependencies resolve.
+  const pass = `
+    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { AppleCallHistorySource } = await import(process.env.SOURCE);
+    const source = new AppleCallHistorySource(process.env.STORE);
+    const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
+    const { streams } = await source.discover();
+    const history = new SQLiteSyncHistory();
+    await history.install([destination]);
+    await new Pipeline({
+      history,
+      connections: [
+        new Connection({
+          name: 'calls',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
+          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          })),
+        }),
+      ],
+    }).run();
+  `;
+
+  const run = spawnSync(
+    process.execPath,
+    ['--max-old-space-size=64', '--input-type=module', '-e', pass],
+    {
+      // The package's own folder, where its dependencies resolve.
+      cwd: join(import.meta.dirname, '..'),
+      env: {
+        ...process.env,
+        SOURCE: pathToFileURL(
+          join(import.meta.dirname, 'apple-call-history-source.js'),
+        ).href,
+        STORE: path,
+        OUT: dir.path,
+      },
+      encoding: 'utf8',
+      timeout: 120_000,
+    },
+  );
+
+  // V8 names a heap limit it reached in the first lines it writes.
+  assert.equal(
+    run.status,
+    0,
+    `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
+  );
+  assert.deepEqual(
+    rows(
+      join(dir.path, 'data.sqlite'),
+      `SELECT (SELECT count(*) FROM raw_calls) AS calls,
+              (SELECT count(*) FROM raw_callParticipants) AS participants`,
+    ),
+    [{ calls: 60_000, participants: 60_000 }],
+  );
 });

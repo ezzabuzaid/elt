@@ -126,7 +126,7 @@ export class AccountsStream extends AppleAccountsStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: AccountsScan): readonly Account[] {
+  protected rows(scan: AccountsScan): Iterable<Account> {
     return scan.accounts;
   }
 

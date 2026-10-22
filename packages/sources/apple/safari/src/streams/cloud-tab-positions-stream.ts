@@ -51,12 +51,14 @@ export class CloudTabPositionsStream extends SafariStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Entry[] {
-    return scan.cloudTabs.tabs.flatMap((tab) =>
-      tab
-        .positions()
-        .map((entry, position) => ({ tabId: tab.id, position, entry })),
-    );
+  protected rows(scan: SafariScan): Iterable<Entry> {
+    return scan.cloudTabs
+      .tabs()
+      .flatMap((tab) =>
+        tab
+          .positions()
+          .map((entry, position) => ({ tabId: tab.id, position, entry })),
+      );
   }
 
   protected record({

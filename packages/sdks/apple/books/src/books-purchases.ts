@@ -63,9 +63,10 @@ export class BooksPurchases implements Disposable {
     this.#database.requireColumns(purchasesColumns, BooksSchemaError);
   }
 
-  purchases(): Purchase[] {
+  // Read as the caller iterates, so no read holds the whole table.
+  purchases(): IteratorObject<Purchase, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT * FROM ZBLJALISCOSERVERITEM WHERE ZSTOREID IS NOT NULL ORDER BY Z_PK',
       )
       .map((row) => ({

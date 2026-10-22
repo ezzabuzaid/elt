@@ -49,7 +49,7 @@ export class GroupsStream extends AppleContactsStream<RecordRow<GroupEntity>> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(store: AddressBookStore): readonly RecordRow<GroupEntity>[] {
+  protected rows(store: AddressBookStore): Iterable<RecordRow<GroupEntity>> {
     return store.groups();
   }
 

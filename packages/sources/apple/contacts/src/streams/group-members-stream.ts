@@ -31,7 +31,7 @@ export class GroupMembersStream extends AppleContactsStream<GroupMemberRow> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(store: AddressBookStore): readonly GroupMemberRow[] {
+  protected rows(store: AddressBookStore): Iterable<GroupMemberRow> {
     return store.groupMembers();
   }
 

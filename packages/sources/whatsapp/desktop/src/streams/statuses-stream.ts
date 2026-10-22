@@ -217,7 +217,7 @@ export class StatusesStream extends WhatsAppStream<typeof properties, Status> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly Status[] {
+  protected rows(scan: WhatsAppScan): Iterable<Status> {
     return scan.statuses.statuses();
   }
 

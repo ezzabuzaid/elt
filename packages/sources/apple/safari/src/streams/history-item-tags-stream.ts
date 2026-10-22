@@ -35,10 +35,14 @@ export class HistoryItemTagsStream extends SafariStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Profiled<HistoryItemTag>[] {
-    return scan.history.profiles.flatMap(({ profileId, itemTags }) =>
-      itemTags.map((row) => ({ profileId, row })),
-    );
+  protected rows(scan: SafariScan): Iterable<Profiled<HistoryItemTag>> {
+    return scan.history.profiles
+      .values()
+      .flatMap((profile) =>
+        profile
+          .itemTags()
+          .map((row) => ({ profileId: profile.profileId, row })),
+      );
   }
 
   protected record({

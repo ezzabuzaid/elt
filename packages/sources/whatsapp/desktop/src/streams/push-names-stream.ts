@@ -30,7 +30,7 @@ export class PushNamesStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly PushName[] {
+  protected rows(scan: WhatsAppScan): Iterable<PushName> {
     return scan.chatStorage.pushNames;
   }
 

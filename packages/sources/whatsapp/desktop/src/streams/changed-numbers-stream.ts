@@ -33,7 +33,7 @@ export class ChangedNumbersStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly ChangedNumber[] {
+  protected rows(scan: WhatsAppScan): Iterable<ChangedNumber> {
     return scan.localKeyValue.changedNumbers();
   }
 

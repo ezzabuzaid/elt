@@ -46,8 +46,8 @@ export class AuthorizationsStream extends AppleAccountsStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: AccountsScan): readonly Authorization[] {
-    return scan.authorizations;
+  protected rows(scan: AccountsScan): Iterable<Authorization> {
+    return scan.snapshot.authorizations();
   }
 
   protected records(

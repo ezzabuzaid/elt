@@ -105,8 +105,8 @@ export class NotificationsStream extends AppleNotificationCenterStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: NotificationCenterScan): readonly Notification[] {
-    return scan.notifications;
+  protected rows(scan: NotificationCenterScan): Iterable<Notification> {
+    return scan.notifications();
   }
 
   protected records(

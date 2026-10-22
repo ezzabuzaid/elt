@@ -23,7 +23,7 @@ export class RelatedNamesStream extends LabeledValueStream {
   } as const;
   protected readonly view = relatedNameView;
 
-  protected rows(store: AddressBookStore): readonly ValueRow[] {
+  protected rows(store: AddressBookStore): Iterable<ValueRow> {
     return store.relatedNames();
   }
 }

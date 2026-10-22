@@ -23,7 +23,7 @@ export class EmailAddressesStream extends LabeledValueStream {
   } as const;
   protected readonly view = emailAddressView;
 
-  protected rows(store: AddressBookStore): readonly ValueRow[] {
+  protected rows(store: AddressBookStore): Iterable<ValueRow> {
     return store.emailAddresses();
   }
 }

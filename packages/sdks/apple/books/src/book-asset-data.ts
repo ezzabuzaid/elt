@@ -99,9 +99,10 @@ export class BookAssetData implements Disposable {
     this.#database.requireColumns(assetDataColumns, BooksSchemaError);
   }
 
-  details(): AssetDetail[] {
+  // Every read returns rows as the caller iterates, so none holds a table.
+  details(): IteratorObject<AssetDetail, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT * FROM ZBCASSETDETAIL WHERE ZASSETID IS NOT NULL ORDER BY Z_PK',
       )
       .map((row) => ({
@@ -135,9 +136,9 @@ export class BookAssetData implements Disposable {
       }));
   }
 
-  reviews(): Review[] {
+  reviews(): IteratorObject<Review, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT * FROM ZBCASSETREVIEW WHERE ZASSETREVIEWID IS NOT NULL ORDER BY Z_PK',
       )
       .map((row) => ({

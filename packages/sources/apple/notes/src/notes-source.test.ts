@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFile as execFileCallback } from 'node:child_process';
+import { execFile as execFileCallback, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,6 +8,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { gzipSync } from 'node:zlib';
 
@@ -832,7 +834,9 @@ test('Notes declares the local Apple store as the coverage of every stream', asy
     );
 });
 
-test('a Notes watch keeps every stream current while the note store holds still', async () => {
+test('a Notes watch keeps every stream current while Notes runs and the note store holds still', async () => {
+  // The watch launches Notes hidden, and a running Notes keeps its store
+  // live, so the source says nothing earlier than each check.
   await using dir = await mkdtempDisposable(
     join(tmpdir(), 'elt-notes-current-'),
   );
@@ -895,4 +899,98 @@ test('a Notes watch keeps every stream current while the note store holds still'
   } finally {
     await watching.return(undefined);
   }
+});
+
+test('a Notes pass over a large store holds one note at a time, so it loads in a small heap', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-large-'));
+  const path = await noteStoreFixture(scratch.path);
+  {
+    using database = new DatabaseSync(path);
+    const note = database.prepare(
+      'INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7, ZNOTEDATA, ZCREATIONDATE3, ZMODIFICATIONDATE1, ZISPINNED, ZISPASSWORDPROTECTED, ZHASCHECKLIST, ZHASCHECKLISTINPROGRESS) VALUES (?, 12, ?, ?, 2, 1, ?, 780000000, 780000000, 0, 0, 0, 0)',
+    );
+    const data = database.prepare(
+      'INSERT INTO ZICNOTEDATA (Z_PK, ZNOTE, ZDATA) VALUES (?, ?, ?)',
+    );
+    database.exec('BEGIN');
+    for (let n = 1; n <= 60_000; n++) {
+      note.run(100 + n, `LARGE-${n}`, `Note ${n}`, 100 + n);
+      data.run(
+        100 + n,
+        100 + n,
+        noteBody([
+          { text: `Note ${n}\n`, style: 0 },
+          { text: `${randomBytes(500).toString('hex')} ${n}\n` },
+        ]),
+      );
+    }
+    database.exec('COMMIT');
+  }
+  // The import as a host runs it, in a process whose heap is far smaller
+  // than the store. Each note body carries 1 KB of text that does not
+  // compress, so a pass that holds every note, or every record it keeps, at
+  // once runs out of it: one that reads a note at a time but validates the
+  // whole set at once needs about 176 MB, and one that also reads every row
+  // at once needs more than 112 (its need with 100-byte bodies); one that
+  // reads and validates a note at a time fits in 32. The process loads the
+  // built source from this package's folder, where its dependencies resolve.
+  const pass = `
+    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { AppleNotesSource } = await import(process.env.SOURCE);
+    const source = new AppleNotesSource({ path: process.env.STORE });
+    const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
+    const { streams } = await source.discover();
+    const history = new SQLiteSyncHistory();
+    await history.install([destination]);
+    await new Pipeline({
+      history,
+      connections: [
+        new Connection({
+          name: 'notes',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
+          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          })),
+        }),
+      ],
+    }).run();
+  `;
+
+  const run = spawnSync(
+    process.execPath,
+    ['--max-old-space-size=64', '--input-type=module', '-e', pass],
+    {
+      // The package's own folder, where its dependencies resolve.
+      cwd: join(import.meta.dirname, '..'),
+      env: {
+        ...process.env,
+        SOURCE: pathToFileURL(
+          join(import.meta.dirname, 'apple-notes-source.js'),
+        ).href,
+        STORE: path,
+        OUT: scratch.path,
+      },
+      encoding: 'utf8',
+      timeout: 120_000,
+    },
+  );
+
+  // V8 names a heap limit it reached in the first lines it writes.
+  assert.equal(
+    run.status,
+    0,
+    `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
+  );
+  assert.deepEqual(
+    noteRows(
+      join(scratch.path, 'data.sqlite'),
+      "SELECT count(*) AS n FROM raw_notes WHERE id LIKE 'LARGE-%'",
+    ),
+    [{ n: 60_000 }],
+  );
 });

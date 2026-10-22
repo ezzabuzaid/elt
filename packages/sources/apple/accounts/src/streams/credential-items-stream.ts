@@ -45,8 +45,8 @@ export class CredentialItemsStream extends AppleAccountsStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: AccountsScan): readonly CredentialItem[] {
-    return scan.credentialItems;
+  protected rows(scan: AccountsScan): Iterable<CredentialItem> {
+    return scan.snapshot.credentialItems();
   }
 
   protected records(item: CredentialItem): RecordDraft<typeof properties>[] {

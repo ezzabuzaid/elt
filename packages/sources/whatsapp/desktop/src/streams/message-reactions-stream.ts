@@ -54,8 +54,8 @@ export class MessageReactionsStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly OnMessage<Reaction>[] {
-    return scan.chatStorage.reactions;
+  protected rows(scan: WhatsAppScan): Iterable<OnMessage<Reaction>> {
+    return scan.chatStorage.reactions();
   }
 
   protected record({

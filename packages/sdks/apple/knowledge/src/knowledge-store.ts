@@ -67,10 +67,12 @@ export class KnowledgeSnapshot implements Disposable {
     this.#database = new Snapshot(path, KnowledgeUnavailableError);
   }
 
-  // A stream's events in the order knowledgeC stored them. Each read checks
-  // only the columns it reads, so a layout change fails only the streams it
-  // touches.
-  events<E>(stream: KnowledgeStream<E>): (KnowledgeEvent & E)[] {
+  // A stream's events in the order knowledgeC stored them, read as the caller
+  // iterates: a stream keeps tens of thousands. Each read checks only the
+  // columns it reads, so a layout change fails only the streams it touches.
+  events<E>(
+    stream: KnowledgeStream<E>,
+  ): IteratorObject<KnowledgeEvent & E, undefined> {
     const missing = this.#database.missingColumns(
       Object.fromEntries(
         tables.map(({ name }) => [
@@ -87,7 +89,7 @@ export class KnowledgeSnapshot implements Disposable {
       ),
     );
     return this.#database
-      .all(
+      .iterate(
         `SELECT ${selected.join(', ')}
          FROM ZOBJECT o
          LEFT JOIN ZSTRUCTUREDMETADATA m ON m.Z_PK = o.ZSTRUCTUREDMETADATA

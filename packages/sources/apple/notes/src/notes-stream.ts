@@ -82,8 +82,8 @@ export class NotesStream extends AppleNotesStream<typeof properties, Note> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: NotesScan): readonly Note[] {
-    return scan.notes;
+  protected rows(scan: NotesScan): Iterable<Note> {
+    return scan.notes();
   }
 
   // A locked note has no document: it keeps its title, dates and flags.

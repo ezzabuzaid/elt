@@ -248,8 +248,11 @@ export class NoteStoreSnapshot implements Disposable {
     }));
   }
 
-  notes(): Note[] {
-    return this.#database.all(notesSql).map((row) => {
+  // Notes, attachments and inline attachments are read as the caller
+  // iterates: a store keeps tens of thousands of notes, so no read holds
+  // them all.
+  notes(): IteratorObject<Note, undefined> {
+    return this.#database.iterate(notesSql).map((row) => {
       const locked = flag(row.ZISPASSWORDPROTECTED);
       const data = row.ZDATA;
       return {
@@ -272,8 +275,8 @@ export class NoteStoreSnapshot implements Disposable {
     });
   }
 
-  attachments(): NoteAttachment[] {
-    return this.#database.all(attachmentsSql).map((row) => {
+  attachments(): IteratorObject<NoteAttachment, undefined> {
+    return this.#database.iterate(attachmentsSql).map((row) => {
       const locked = flag(row.locked);
       const file = this.#file(row, locked);
       const data = row.ZMERGEABLEDATA1;
@@ -314,8 +317,8 @@ export class NoteStoreSnapshot implements Disposable {
     });
   }
 
-  inlineAttachments(): InlineAttachment[] {
-    return this.#database.all(inlineSql).map((row) => ({
+  inlineAttachments(): IteratorObject<InlineAttachment, undefined> {
+    return this.#database.iterate(inlineSql).map((row) => ({
       id: text(row.ZIDENTIFIER),
       noteId: text(row.note),
       type: text(row.ZTYPEUTI1),

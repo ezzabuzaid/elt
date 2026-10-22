@@ -374,13 +374,14 @@ export class BooksLibrary implements Disposable {
     this.#database.requireColumns(libraryColumns, BooksSchemaError);
   }
 
-  assets(): LibraryAsset[] {
-    return this.#database.all(assetsQuery).map(libraryAsset);
+  // Every read returns rows as the caller iterates, so none holds a table.
+  assets(): IteratorObject<LibraryAsset, undefined> {
+    return this.#database.iterate(assetsQuery).map(libraryAsset);
   }
 
-  collections(): Collection[] {
+  collections(): IteratorObject<Collection, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT * FROM ZBKCOLLECTION WHERE ZCOLLECTIONID IS NOT NULL ORDER BY Z_PK',
       )
       .map((row) => ({
@@ -398,8 +399,8 @@ export class BooksLibrary implements Disposable {
       }));
   }
 
-  collectionMembers(): CollectionMember[] {
-    return this.#database.all(collectionMembersQuery).map((row) => ({
+  collectionMembers(): IteratorObject<CollectionMember, undefined> {
+    return this.#database.iterate(collectionMembersQuery).map((row) => ({
       collectionId: stored(row.collectionId),
       assetId: stored(row.ZASSETID),
       sortKey: integer(row.ZSORTKEY),
@@ -409,14 +410,12 @@ export class BooksLibrary implements Disposable {
 
   // Each asset's file or package and what of it is on this Mac, read from
   // iCloud's file flags so no placeholder is downloaded.
-  async bookFiles(): Promise<BookFile[]> {
-    const files: BookFile[] = [];
-    for (const row of this.#database.all(
+  async *bookFiles(): AsyncGenerator<BookFile> {
+    for (const row of this.#database.iterate(
       'SELECT ZASSETID, ZPATH FROM ZBKLIBRARYASSET WHERE ZASSETID IS NOT NULL AND ZPATH IS NOT NULL ORDER BY Z_PK',
     ))
       // The query selects only rows whose ZASSETID and ZPATH are not null.
-      files.push(await bookFile(String(row.ZASSETID), String(row.ZPATH)));
-    return files;
+      yield await bookFile(String(row.ZASSETID), String(row.ZPATH));
   }
 
   [Symbol.dispose](): void {

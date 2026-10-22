@@ -76,7 +76,7 @@ export class ImagesStream extends AppleContactsStream<ContactImagesRow> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(store: AddressBookStore): readonly ContactImagesRow[] {
+  protected rows(store: AddressBookStore): Iterable<ContactImagesRow> {
     return store.images();
   }
 

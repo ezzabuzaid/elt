@@ -153,7 +153,7 @@ export class BusinessProfilesStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly BusinessProfile[] {
+  protected rows(scan: WhatsAppScan): Iterable<BusinessProfile> {
     return scan.businesses.profiles();
   }
 

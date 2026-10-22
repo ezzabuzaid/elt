@@ -12,7 +12,7 @@ import type { ContactSelection, ContactsScan } from './contacts-scan.ts';
 export type ContactsReader = {
   readonly name: string;
   describe(): Stream;
-  read(scan: ContactsScan): Promise<Record<string, unknown>[]>;
+  read(scan: ContactsScan): AsyncIterable<Record<string, unknown>>;
 };
 
 // A Contacts stream: its description, and how its records come out of every
@@ -42,26 +42,25 @@ export abstract class AppleContactsStream<Row> {
     return this.#stream;
   }
 
-  // One row at a time, so an image's bytes are hashed one file after another.
-  async read(scan: ContactsScan): Promise<Record<string, unknown>[]> {
+  // One row at a time, so a pass never holds a whole store's rows and an
+  // image's bytes are hashed one file after another.
+  async *read(scan: ContactsScan): AsyncGenerator<Record<string, unknown>> {
     const fields = Object.keys(this.jsonSchema.properties);
-    const records: Record<string, unknown>[] = [];
     for (const store of scan.stores) {
       const selection = scan.selection(store);
       for (const row of this.rows(store)) {
         if (selection !== null && !this.accepts(row, selection)) continue;
-        for (const values of await this.records(row, store, scan))
-          records.push(
-            Object.fromEntries(
-              fields.map((field) => [field, values[field] ?? null]),
-            ),
-          );
+        const records = (await this.records(row, store, scan)).map((values) =>
+          Object.fromEntries(
+            fields.map((field) => [field, values[field] ?? null]),
+          ),
+        );
+        yield* validateRecords(this, records, 'Contacts');
       }
     }
-    return validateRecords(this, records, 'Contacts');
   }
 
-  protected abstract rows(store: AddressBookStore): readonly Row[];
+  protected abstract rows(store: AddressBookStore): Iterable<Row>;
 
   // Whether a container selection keeps the row.
   protected abstract accepts(row: Row, selection: ContactSelection): boolean;

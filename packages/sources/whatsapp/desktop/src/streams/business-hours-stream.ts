@@ -47,7 +47,7 @@ export class BusinessHoursStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly BusinessHours[] {
+  protected rows(scan: WhatsAppScan): Iterable<BusinessHours> {
     // A few profiles list one day's hours twice.
     return unique(scan.businesses.hours(), ({ jid, day, openTime }) =>
       JSON.stringify([jid, day, openTime]),

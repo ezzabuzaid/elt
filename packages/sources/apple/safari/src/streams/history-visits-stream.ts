@@ -90,10 +90,12 @@ export class HistoryVisitsStream extends SafariStream<
     return scan.history.horizon;
   }
 
-  protected rows(scan: SafariScan): readonly Profiled<HistoryVisit>[] {
-    return scan.history.profiles.flatMap(({ profileId, visits }) =>
-      visits.map((row) => ({ profileId, row })),
-    );
+  protected rows(scan: SafariScan): Iterable<Profiled<HistoryVisit>> {
+    return scan.history.profiles
+      .values()
+      .flatMap((profile) =>
+        profile.visits().map((row) => ({ profileId: profile.profileId, row })),
+      );
   }
 
   protected record({

@@ -53,8 +53,8 @@ export class MessageReceiptsStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly OnMessage<Receipt>[] {
-    return scan.chatStorage.receipts;
+  protected rows(scan: WhatsAppScan): Iterable<OnMessage<Receipt>> {
+    return scan.chatStorage.receipts();
   }
 
   protected record({

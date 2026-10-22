@@ -25,7 +25,7 @@ export class BlockedContactsStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly string[] {
+  protected rows(scan: WhatsAppScan): Iterable<string> {
     return scan.chatStorage.blockedJids;
   }
 

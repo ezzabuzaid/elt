@@ -36,7 +36,7 @@ export class UnknownPropertiesStream extends AppleContactsStream<UnknownProperty
     required: Object.keys(properties),
   } as const;
 
-  protected rows(store: AddressBookStore): readonly UnknownPropertyRow[] {
+  protected rows(store: AddressBookStore): Iterable<UnknownPropertyRow> {
     return store.unknownProperties();
   }
 

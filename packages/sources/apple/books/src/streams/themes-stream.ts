@@ -39,7 +39,7 @@ export class ThemesStream extends BooksStream<typeof properties, Theme> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Theme[] {
+  protected rows(scan: BooksScan): Iterable<Theme> {
     return scan.themes.themes();
   }
 

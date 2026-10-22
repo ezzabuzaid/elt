@@ -48,8 +48,8 @@ export class InlineAttachmentsStream extends AppleNotesStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: NotesScan): readonly InlineAttachment[] {
-    return [...scan.inline.values()];
+  protected rows(scan: NotesScan): Iterable<InlineAttachment> {
+    return scan.inline.values();
   }
 
   protected record(inline: InlineAttachment): RecordDraft<typeof properties> {

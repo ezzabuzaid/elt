@@ -43,7 +43,7 @@ export class RecentStickersStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly RecentSticker[] {
+  protected rows(scan: WhatsAppScan): Iterable<RecentSticker> {
     return scan.backedUpKeyValue.recentStickers();
   }
 

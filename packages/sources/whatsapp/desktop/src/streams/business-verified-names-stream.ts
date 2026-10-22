@@ -77,7 +77,7 @@ export class BusinessVerifiedNamesStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly BusinessVerifiedName[] {
+  protected rows(scan: WhatsAppScan): Iterable<BusinessVerifiedName> {
     return scan.businesses.verifiedNames();
   }
 

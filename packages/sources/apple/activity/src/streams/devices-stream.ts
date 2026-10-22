@@ -88,12 +88,9 @@ export class DevicesStream {
     });
   }
 
-  #read(scan: ActivityScan): SchemaRecord<typeof properties>[] {
-    return validateRecords(
-      this,
-      scan.devices.devices().map((device) => this.#record(device)),
-      'Activity',
-    );
+  *#read(scan: ActivityScan): Generator<SchemaRecord<typeof properties>> {
+    for (const device of scan.devices.devices())
+      yield* validateRecords(this, [this.#record(device)], 'Activity');
   }
 
   #record(device: BiomeDevice): RecordDraft<typeof properties> {

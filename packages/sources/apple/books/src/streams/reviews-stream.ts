@@ -37,7 +37,7 @@ export class ReviewsStream extends BooksStream<typeof properties, Review> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Review[] {
+  protected rows(scan: BooksScan): Iterable<Review> {
     return scan.assetData.reviews();
   }
 

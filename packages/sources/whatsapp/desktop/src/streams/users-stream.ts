@@ -85,7 +85,7 @@ export class UsersStream extends WhatsAppStream<typeof properties, User> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly User[] {
+  protected rows(scan: WhatsAppScan): Iterable<User> {
     return scan.users.users();
   }
 

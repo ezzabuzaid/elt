@@ -70,7 +70,7 @@ export class PurchasesStream extends BooksStream<typeof properties, Purchase> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Purchase[] {
+  protected rows(scan: BooksScan): Iterable<Purchase> {
     return scan.purchases.purchases();
   }
 

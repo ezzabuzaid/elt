@@ -46,9 +46,7 @@ export class DistributionListConfigsStream extends AppleContactsStream<Distribut
     required: Object.keys(properties),
   } as const;
 
-  protected rows(
-    store: AddressBookStore,
-  ): readonly DistributionListConfigRow[] {
+  protected rows(store: AddressBookStore): Iterable<DistributionListConfigRow> {
     return store.distributionListConfigs();
   }
 

@@ -58,7 +58,7 @@ export class GroupMembersStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly GroupMember[] {
+  protected rows(scan: WhatsAppScan): Iterable<GroupMember> {
     return scan.chatStorage.groupMembers;
   }
 

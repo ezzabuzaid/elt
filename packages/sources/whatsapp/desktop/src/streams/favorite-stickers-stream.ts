@@ -33,7 +33,7 @@ export class FavoriteStickersStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly FavoriteSticker[] {
+  protected rows(scan: WhatsAppScan): Iterable<FavoriteSticker> {
     return scan.backedUpKeyValue.favoriteStickers();
   }
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import {
   mkdir,
@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { deflateSync } from 'node:zlib';
 
@@ -2794,4 +2795,96 @@ test('a Safari watch keeps every stream current while its stores hold still', as
   } finally {
     await watching.return(undefined);
   }
+});
+
+test('a Safari pass over a large History.db holds one visit at a time, so it loads in a small heap', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'safari-large-'),
+  );
+  const location = await safariFixture(scratch.path);
+  {
+    using history = new DatabaseSync(join(location.directory, 'History.db'));
+    history.exec(
+      `WITH RECURSIVE visit(n) AS (
+         SELECT 1 UNION ALL SELECT n + 1 FROM visit WHERE n < 60000
+       )
+       INSERT INTO history_visits (id, history_item, visit_time, title)
+         SELECT 1000 + n, 1 + n % 2, ${appleSeconds(new Date().toISOString())} - n,
+                'visit ' || n || ' ' || hex(randomblob(600))
+         FROM visit;`,
+    );
+  }
+  // The import as a host runs it, in a process whose heap is far smaller
+  // than the store: a pass that holds every visit, or every record it keeps,
+  // at once runs out of it. Each visit carries a 1.2 KB title so the whole
+  // set is heavy. Measured old-generation needs: one visit at a time, about
+  // 34 MB; validating the whole set at once in SafariStream.read, about
+  // 108 MB; the SDK reading every visit into memory before the pass,
+  // about 150 MB. The 70 MB cap sits well clear of both sides. The process
+  // loads the built source from this package's folder, where its
+  // dependencies resolve.
+  const pass = `
+    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { AppleSafariSource } = await import(process.env.SOURCE);
+    const source = new AppleSafariSource({ directory: process.env.DIRECTORY, container: process.env.CONTAINER });
+    const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
+    const { streams } = await source.discover();
+    const history = new SQLiteSyncHistory();
+    await history.install([destination]);
+    await new Pipeline({
+      history,
+      connections: [
+        new Connection({
+          name: 'safari',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
+          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          })),
+        }),
+      ],
+    }).run();
+  `;
+
+  const run = spawnSync(
+    process.execPath,
+    ['--max-old-space-size=70', '--input-type=module', '-e', pass],
+    {
+      // The package's own folder, where its dependencies resolve.
+      cwd: join(import.meta.dirname, '..'),
+      env: {
+        ...process.env,
+        SOURCE: pathToFileURL(
+          join(import.meta.dirname, 'apple-safari-source.js'),
+        ).href,
+        DIRECTORY: location.directory,
+        CONTAINER: location.container,
+        OUT: scratch.path,
+      },
+      encoding: 'utf8',
+      timeout: 120_000,
+    },
+  );
+
+  // V8 names a heap limit it reached in the first lines it writes.
+  assert.equal(
+    run.status,
+    0,
+    `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
+  );
+  using imported = new DatabaseSync(join(scratch.path, 'data.sqlite'), {
+    readOnly: true,
+  });
+  assert.deepEqual(
+    {
+      ...imported
+        .prepare('SELECT count(*) AS n FROM raw_historyVisits WHERE id > 1000')
+        .get(),
+    },
+    { n: 60_000 },
+  );
 });

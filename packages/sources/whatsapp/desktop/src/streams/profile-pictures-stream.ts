@@ -51,7 +51,7 @@ export class ProfilePicturesStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): readonly ProfilePicture[] {
+  protected rows(scan: WhatsAppScan): Iterable<ProfilePicture> {
     return scan.chatStorage.profilePictures;
   }
 

@@ -28,7 +28,7 @@ export const callHistoryFields = {
 export type CallHistoryReader = {
   readonly name: string;
   describe(): Stream;
-  read(scan: CallHistoryScan): Record<string, unknown>[];
+  read(scan: CallHistoryScan): Iterable<Record<string, unknown>>;
 };
 
 // A Call History stream: its description, and how its records come out of a
@@ -57,15 +57,13 @@ export abstract class AppleCallHistoryStream<P extends Properties, Row> {
     return this.#stream;
   }
 
-  read(scan: CallHistoryScan): SchemaRecord<P>[] {
-    return validateRecords(
-      this,
-      this.rows(scan).flatMap((row) => this.records(row)),
-      'Call History',
-    );
+  // One row at a time, so a pass never holds a whole store's rows.
+  *read(scan: CallHistoryScan): Generator<SchemaRecord<P>> {
+    for (const row of this.rows(scan))
+      yield* validateRecords(this, this.records(row), 'Call History');
   }
 
-  protected abstract rows(scan: CallHistoryScan): readonly Row[];
+  protected abstract rows(scan: CallHistoryScan): Iterable<Row>;
 
   protected abstract records(row: Row): RecordDraft<P>[];
 }

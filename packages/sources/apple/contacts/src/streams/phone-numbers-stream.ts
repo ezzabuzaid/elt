@@ -51,7 +51,7 @@ export class PhoneNumbersStream extends LabeledValueStream {
   } as const;
   protected readonly view = phoneNumberView;
 
-  protected rows(store: AddressBookStore): readonly ValueRow[] {
+  protected rows(store: AddressBookStore): Iterable<ValueRow> {
     return store.phoneNumbers();
   }
 
