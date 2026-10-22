@@ -22,14 +22,19 @@ test('an existing attachment reader observes a model saved or disabled by anothe
   data.exec(
     'CREATE TABLE files (attachmentRef TEXT); CREATE VIEW documents AS SELECT * FROM files',
   );
-  data.prepare('INSERT INTO files VALUES (?)').run(audio);
+  data.prepare('INSERT INTO files VALUES (?)').run('voice.opus');
   // Handy's folder holds no weights, so the decoder fails as the reader runs.
   await using host = new AppleTranscription(
     directory.path,
     new HandyModels(join(directory.path, 'handy')),
   );
   using other = new Settings(directory.path);
-  const reader = new AttachmentText(database, ['documents'], () => host.parser);
+  const reader = new AttachmentText(
+    database,
+    directory.path,
+    ['documents'],
+    () => host.parser,
+  );
   await reader.update(new AbortController().signal);
   assert.equal(
     data.prepare('SELECT status FROM attachment_text').get()?.status,

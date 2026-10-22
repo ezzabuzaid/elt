@@ -5,6 +5,7 @@ import {
   mkdtempDisposable,
   readFile,
   readdir,
+  rename,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -159,7 +160,12 @@ async function importStore(directory: string) {
     remove: (name: string) => rm(join(upstream, name)),
     importFiles: () => new Pipeline({ history, connections: [imported] }).run(),
     readText: (parser: DocumentParser, signal = new AbortController().signal) =>
-      new AttachmentText(path, ['documents'], () => parser).update(signal),
+      new AttachmentText(
+        path,
+        files.directory,
+        ['documents'],
+        () => parser,
+      ).update(signal),
     read,
     // What a reader searching attachment text sees, by document; none before
     // the text's first update creates its view.
@@ -411,8 +417,10 @@ test('a read that fails for a reason other than the file being gone fails the up
   for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])
     await store.put(`${name}.txt`, `text ${name}`);
   await store.importFiles();
-  const ref = String(
-    store.read('SELECT attachmentRef AS ref FROM documents')[0]?.ref,
+  const ref = join(
+    directory.path,
+    'files',
+    String(store.read('SELECT attachmentRef AS ref FROM documents')[0]?.ref),
   );
   // The stored copies' directory, unreadable, as permissions can leave it:
   // the parser cannot open a copy, nor the update tell whether it is gone.
@@ -599,5 +607,36 @@ test('enabling or changing an audio model processes stored audio; disabling keep
   assert.equal(
     store.texts().find(({ name }) => name === 'new.opus')?.status,
     'no_text',
+  );
+});
+
+test('a moved import reads the text of its stored files', async () => {
+  await using directory = await mkdtempDisposable(join(tmpdir(), 'att-'));
+  const before = join(directory.path, 'before');
+  const after = join(directory.path, 'after');
+  const store = await importStore(before);
+  await store.put('note.txt', 'milk and eggs');
+  await store.importFiles();
+
+  // The import's folder moves to another disk or home, files and all.
+  await rename(before, after);
+  await new AttachmentText(
+    join(after, 'data.sqlite'),
+    join(after, 'files'),
+    ['documents'],
+    () => new MacOSDocumentParser(),
+  ).update(new AbortController().signal);
+
+  using database = new DatabaseSync(join(after, 'data.sqlite'), {
+    readOnly: true,
+  });
+  assert.deepEqual(
+    database
+      .prepare(
+        'SELECT d.name, t.status, t.content FROM documents d JOIN attachment_text t ON t.ref = d.attachmentRef',
+      )
+      .all()
+      .map((row) => ({ ...row })),
+    [{ name: 'note.txt', status: 'parsed', content: 'milk and eggs' }],
   );
 });

@@ -1123,7 +1123,7 @@ async function storedFiles(directory: string, sql: string) {
       rows(directory, sql).map(async ({ key, attachmentRef }) => [
         String(key),
         typeof attachmentRef === 'string'
-          ? await readFile(attachmentRef, 'utf8')
+          ? await readFile(join(directory, 'files', attachmentRef), 'utf8')
           : null,
       ]),
     ),

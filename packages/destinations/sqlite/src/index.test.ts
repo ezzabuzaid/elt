@@ -3773,6 +3773,7 @@ test('stored file references follow committed SQLite rows, including rejected up
     await writeFile(path, 'original');
     const directory = join(scratch.path, 'files');
     const files = new LocalFiles({ directory });
+    const at = (reference: string) => join(files.directory, reference);
     const stream = new Stream({
       ...scripted('docs', { snapshot: false }),
       supportsFileTransfer: true,
@@ -3846,7 +3847,7 @@ test('stored file references follow committed SQLite rows, including rejected up
     };
     await pipeline.run();
     const original = String(loaded()[0]?.ref);
-    assert.equal(await readFile(original, 'utf8'), 'original');
+    assert.equal(await readFile(at(original), 'utf8'), 'original');
     assert.equal(loaded()[1]?.ref, null);
     assert.equal((await storedFiles()).length, 1);
 
@@ -3862,20 +3863,20 @@ test('stored file references follow committed SQLite rows, including rejected up
     source.scripts = { docs: [fileRecord(3), new Error('upstream failed')] };
     await assert.rejects(pipeline.run(), PipelineError);
     assert.equal(saved(), beforeFailure);
-    assert.equal(await readFile(original, 'utf8'), 'original');
+    assert.equal(await readFile(at(original), 'utf8'), 'original');
     assert.equal((await storedFiles()).length, 1);
 
     await writeFile(path, 'replacement');
     source.scripts = { docs: [fileRecord(3), checkpoint('docs', { at: 3 })] };
     await pipeline.run();
     const replacement = String(loaded()[0]?.ref);
-    assert.equal(await readFile(replacement, 'utf8'), 'replacement');
-    await assert.rejects(readFile(original), { code: 'ENOENT' });
+    assert.equal(await readFile(at(replacement), 'utf8'), 'replacement');
+    await assert.rejects(readFile(at(original)), { code: 'ENOENT' });
     source.scripts = {
       docs: [removal('docs', 'a'), checkpoint('docs', { at: 4 })],
     };
     await pipeline.run();
-    await assert.rejects(readFile(replacement), { code: 'ENOENT' });
+    await assert.rejects(readFile(at(replacement)), { code: 'ENOENT' });
     assert.equal((await storedFiles()).length, 0);
     source.scripts = { docs: [fileRecord(4), checkpoint('docs', { at: 5 })] };
     await pipeline.run();
@@ -3932,7 +3933,10 @@ test('a file whose own name ends in an extension too long to keep is stored unde
     basename(reference),
     createHash('sha256').update('original').digest('hex'),
   );
-  assert.equal(await readFile(reference, 'utf8'), 'original');
+  assert.equal(
+    await readFile(join(files.directory, reference), 'utf8'),
+    'original',
+  );
 });
 
 test('stored files recover cleanup failures before checkpointing and isolate copies sharing a directory', async () => {
@@ -3958,6 +3962,7 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
         await super.retain(scope, references);
       }
     })({ directory: join(scratch.path, 'files') });
+    const at = (reference: string) => join(files.directory, reference);
     const stream = new Stream({
       ...scripted('docs', { snapshot: false }),
       supportsFileTransfer: true,
@@ -4010,7 +4015,7 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
     rejectCleanup = true;
     await assert.rejects(pipeline.run(), PipelineError);
     const original = String(loaded('docs'));
-    assert.deepEqual(await readFile(original), content);
+    assert.deepEqual(await readFile(at(original)), content);
     assert.equal(saved(), undefined);
     rejectCleanup = false;
     await pipeline.run();
@@ -4027,7 +4032,7 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
     await assert.rejects(pipeline.run(), PipelineError);
     assert.equal(loaded('docs'), original);
     assert.equal(saved(), '{"at":1}');
-    assert.deepEqual(await readFile(original), content);
+    assert.deepEqual(await readFile(at(original)), content);
     rejectSave = false;
 
     const snapshot = new Pipeline({
@@ -4045,8 +4050,8 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
     source.scripts = { docs: [{ ...record('docs', 'a', 1), file: path }] };
     await snapshot.run();
     const empty = String(loaded('snapshot'));
-    assert.equal((await readFile(empty)).length, 0);
-    assert.deepEqual(await readFile(original), content);
+    assert.equal((await readFile(at(empty))).length, 0);
+    assert.deepEqual(await readFile(at(original)), content);
     source.scripts = {
       docs: [
         { ...record('docs', 'a', 2), file: path },
@@ -4055,17 +4060,17 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
     };
     await assert.rejects(snapshot.run(), PipelineError);
     assert.equal(loaded('snapshot'), empty);
-    assert.equal((await readFile(empty)).length, 0);
+    assert.equal((await readFile(at(empty))).length, 0);
     source.scripts = { docs: [] };
     await snapshot.run();
     assert.equal(loaded('snapshot'), undefined);
-    await assert.rejects(readFile(empty), { code: 'ENOENT' });
-    assert.deepEqual(await readFile(original), content);
+    await assert.rejects(readFile(at(empty)), { code: 'ENOENT' });
+    assert.deepEqual(await readFile(at(original)), content);
     await pipeline.clear();
-    await assert.rejects(readFile(original), { code: 'ENOENT' });
+    await assert.rejects(readFile(at(original)), { code: 'ENOENT' });
     source.scripts = { docs: [{ ...record('docs', 'a', 1), file: path }] };
     await snapshot.run();
-    await rm(String(loaded('snapshot')));
+    await rm(at(String(loaded('snapshot'))));
     await assert.rejects(snapshot.run(), PipelineError);
     assert.equal(loaded('snapshot'), empty);
     await snapshot.clear();
@@ -4505,7 +4510,10 @@ test('renamed file columns keep their original bytes and stored files through la
   const stored = database
     .prepare(`SELECT Stored_Ref AS ref FROM ${view} WHERE id = 'a'`)
     .get();
-  assert.equal(await readFile(String(stored?.ref), 'utf8'), 'original');
+  assert.equal(
+    await readFile(join(store.directory, String(stored?.ref)), 'utf8'),
+    'original',
+  );
 });
 
 test('a load holds no write transaction while the source reads, and a stream that fails before its first commit leaves nothing while its sibling commits', async () => {
@@ -6653,7 +6661,7 @@ test('a copy that declares its columns from the stream and stores its files keep
   assert.equal((await scopes()).length, 1);
   for (const { attachmentRef } of loaded())
     assert.match(
-      await readFile(String(attachmentRef), 'utf8'),
+      await readFile(join(files.directory, String(attachmentRef)), 'utf8'),
       /^attachment of /,
     );
 });

@@ -1373,7 +1373,7 @@ test('each image loads with its file, and an image the issuer replaces loads aga
             );
             return [
               `${String(passId)}/${String(path)}`,
-              await readFile(String(attachmentRef)),
+              await readFile(join(dir.path, 'files', String(attachmentRef))),
             ];
           },
         ),

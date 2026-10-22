@@ -15,7 +15,7 @@ export class LocalFiles extends FileStorage {
   readonly directory: string;
   readonly identity: string;
   readonly reference =
-    'Absolute path, on the machine that ran the load, of a copy of the source file bytes. Named by content hash, keeping a short source extension, and kept only while a row references it. Not the source file name, a URL or extracted text.';
+    'Path of a copy of the source file bytes, relative to the folder the load stores files in. Named by content hash, keeping a short source extension, and kept only while a row references it. Not the source file name, a URL or extracted text.';
 
   constructor({ directory }: { directory: string }) {
     super();
@@ -27,19 +27,15 @@ export class LocalFiles extends FileStorage {
     )
       throw new TypeError('LocalFiles requires a directory');
     this.directory = resolve(directory);
-    this.identity = JSON.stringify({
-      type: 'local-files',
-      directory: this.directory,
-    });
+    // References are relative to the folder, so the folder is no part of the
+    // identity: a store moved with its files keeps every reference.
+    this.identity = JSON.stringify({ type: 'local-files' });
     Object.freeze(this);
   }
 
-  private scopePath(scope: string): string {
-    return join(
-      this.directory,
-      '.elt-files',
-      createHash('sha256').update(scope).digest('hex'),
-    );
+  // The scope's folder, relative to the storage folder.
+  private scopeFolder(scope: string): string {
+    return join('.elt-files', createHash('sha256').update(scope).digest('hex'));
   }
 
   private async inspect(path: string): Promise<boolean> {
@@ -56,7 +52,8 @@ export class LocalFiles extends FileStorage {
   }
 
   override async save(scope: string, content: FileContent): Promise<string> {
-    const directory = this.scopePath(scope);
+    const folder = this.scopeFolder(scope);
+    const directory = join(this.directory, folder);
     // Sync newly created directory entries as well as the file publication.
     const created = await mkdir(directory, { recursive: true });
     for (const path of [this.directory, dirname(directory), directory])
@@ -80,10 +77,8 @@ export class LocalFiles extends FileStorage {
         }
         await file.sync();
       }
-      const path = join(
-        directory,
-        hash.digest('hex') + fileExtension(content.path),
-      );
+      const name = hash.digest('hex') + fileExtension(content.path);
+      const path = join(directory, name);
       await link(temporary, path).catch(
         async (error: NodeJS.ErrnoException) => {
           if (error.code !== 'EEXIST') throw error;
@@ -94,7 +89,7 @@ export class LocalFiles extends FileStorage {
         },
       );
       await syncDirectory(directory);
-      return path;
+      return join(folder, name);
     } finally {
       await rm(temporary, { force: true });
     }
@@ -104,7 +99,8 @@ export class LocalFiles extends FileStorage {
     scope: string,
     references: ReadonlySet<string>,
   ): Promise<void> {
-    const directory = this.scopePath(scope);
+    const folder = this.scopeFolder(scope);
+    const directory = join(this.directory, folder);
     for (const path of [this.directory, dirname(directory), directory]) {
       if (await this.inspect(path)) continue;
       if (references.size > 0)
@@ -123,7 +119,8 @@ export class LocalFiles extends FileStorage {
         throw new TypeError(
           `Managed attachment is not a regular file: ${path}`,
         );
-      if (references.has(path)) missing.delete(path);
+      const reference = join(folder, entry.name);
+      if (references.has(reference)) missing.delete(reference);
       else obsolete.push(path);
     }
     if (missing.size > 0)

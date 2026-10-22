@@ -537,6 +537,7 @@ export abstract class AppleConnector {
         ? null
         : new AttachmentText(
             destination.path,
+            files.directory,
             stored.map(({ name }) => this.view(name)),
             () => this.host.documentParser,
           );

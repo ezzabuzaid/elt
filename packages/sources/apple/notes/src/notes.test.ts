@@ -381,7 +381,10 @@ test('Notes reads as documented views that follow edits and deletions', async ()
       .map(({ id, attachmentRef }) => [id, attachmentRef]),
   );
   assert.equal(
-    await readFile(String(files['ATT-FILE']), 'utf8'),
+    await readFile(
+      join(scratch.path, 'import', 'files', String(files['ATT-FILE'])),
+      'utf8',
+    ),
     'attached words',
   );
   assert.equal(files['ATT-PHOTO'], null);

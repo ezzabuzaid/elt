@@ -1596,7 +1596,9 @@ test('Contacts reads as documented views whose joins keep one row per contact', 
     ],
   );
   assert.deepEqual(
-    await readFile(String(images[0]?.attachmentRef)),
+    await readFile(
+      join(scratch.path, 'import', 'files', String(images[0]?.attachmentRef)),
+    ),
     Buffer.from('not really a jpeg'),
   );
 });

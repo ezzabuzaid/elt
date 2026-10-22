@@ -1684,7 +1684,15 @@ test('Safari reads profiles, windows, tab groups, tabs with their back and forwa
     ],
   );
   assert.equal(
-    await readFile(String(downloads[0]?.attachmentRef), 'utf8'),
+    await readFile(
+      join(
+        scratch.path,
+        'import',
+        'files',
+        String(downloads[0]?.attachmentRef),
+      ),
+      'utf8',
+    ),
     'downloaded bytes',
   );
   assert.equal(downloads[1]?.attachmentRef, null);

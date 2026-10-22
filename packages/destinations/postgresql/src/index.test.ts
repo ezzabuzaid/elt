@@ -365,7 +365,10 @@ test('Postgres stores per-field attachment references and reconciles only the fi
     assert.equal(unavailable?.ref0, null);
     assert.equal(unavailable?.ref1, null);
     for (const i of [0, 1] as const) {
-      assert.equal(await readFile(first[`ref${i}`], 'utf8'), 'original');
+      assert.equal(
+        await readFile(join(directories[i], first[`ref${i}`]), 'utf8'),
+        'original',
+      );
       assert.equal((await storedFiles(directories[i])).length, 1);
     }
     assert.notEqual(first.ref0, first.ref1);
@@ -392,8 +395,11 @@ test('Postgres stores per-field attachment references and reconciles only the fi
     );
     source.messages = [fileRecord(3)];
     await assert.rejects(pipeline.run(), PipelineError);
-    for (const i of [0, 1])
-      assert.equal(await readFile(first[`ref${i}`], 'utf8'), 'original');
+    for (const i of [0, 1] as const)
+      assert.equal(
+        await readFile(join(directories[i], first[`ref${i}`]), 'utf8'),
+        'original',
+      );
     await sql.unsafe('ALTER TABLE raw.docs DROP CONSTRAINT reject_three');
     await writeFile(path, 'replacement');
     await pipeline.run();
@@ -401,10 +407,12 @@ test('Postgres stores per-field attachment references and reconciles only the fi
     assert.ok(replacement);
     for (const i of [0, 1] as const) {
       assert.equal(
-        await readFile(replacement[`ref${i}`], 'utf8'),
+        await readFile(join(directories[i], replacement[`ref${i}`]), 'utf8'),
         'replacement',
       );
-      await assert.rejects(readFile(first[`ref${i}`]), { code: 'ENOENT' });
+      await assert.rejects(readFile(join(directories[i], first[`ref${i}`])), {
+        code: 'ENOENT',
+      });
       assert.equal((await storedFiles(directories[i])).length, 1);
     }
     source.messages = [{ type: 'DELETE', stream: 'docs', key: { id: 'a' } }];
@@ -510,7 +518,10 @@ test('renamed file columns keep their original bytes and stored files through la
     await pipeline.run();
 
     assert.equal(await original('a'), 'original');
-    assert.equal(await readFile(String(await stored('a')), 'utf8'), 'original');
+    assert.equal(
+      await readFile(join(store.directory, String(await stored('a'))), 'utf8'),
+      'original',
+    );
   } finally {
     await scratch[Symbol.asyncDispose]();
   }
@@ -4298,7 +4309,10 @@ test('a reader view shows exactly the loaded columns and their descriptions, fol
       ...(await sql`SELECT id, title, ref, loaded_at FROM marts.notes ORDER BY id`),
     ];
     const [first, second] = await view();
-    assert.equal(await readFile(String(first?.ref), 'utf8'), 'body');
+    assert.equal(
+      await readFile(join(files.directory, String(first?.ref)), 'utf8'),
+      'body',
+    );
     assert.equal(second?.ref, null);
     const descriptions = async (relation: string) => [
       ...(await sql`SELECT a.attname AS name, col_description(a.attrelid, a.attnum) AS description

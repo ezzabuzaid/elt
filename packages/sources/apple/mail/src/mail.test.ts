@@ -2447,7 +2447,10 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
   for (const [i, row] of output.entries()) {
     assert.equal(row.content, null);
     assert.deepEqual(bytes(destination.path, 'images', row.bytes), images[i]);
-    assert.deepEqual(await readFile(String(row.attachmentRef)), images[i]);
+    assert.deepEqual(
+      await readFile(join(files.directory, String(row.attachmentRef))),
+      images[i],
+    );
   }
 });
 
@@ -2519,7 +2522,7 @@ test('A MIME attachment whose extension alone passes the 255-byte file name limi
       stored.map(async ({ filename, attachmentRef }) => ({
         filename,
         name: basename(String(attachmentRef)),
-        body: await readFile(String(attachmentRef)),
+        body: await readFile(join(files.directory, String(attachmentRef))),
       })),
     ),
     [
@@ -2587,7 +2590,7 @@ test('An attachment Mail indexed before its message arrived, kept on disk under 
       stored.map(async ({ filename, attachmentRef }) => ({
         filename,
         name: basename(String(attachmentRef)),
-        body: await readFile(String(attachmentRef)),
+        body: await readFile(join(files.directory, String(attachmentRef))),
       })),
     ),
     [
@@ -2691,7 +2694,10 @@ test('Mail reads as documented views whose MIME, rule and subject joins hold, wi
     `SELECT "availableLocally", "attachmentRef" FROM attachments ORDER BY "messageId", "partId"`,
   );
   assert.equal(
-    await readFile(String(attachments[0]?.attachmentRef), 'utf8'),
+    await readFile(
+      join(dir.path, 'import', 'files', String(attachments[0]?.attachmentRef)),
+      'utf8',
+    ),
     '%PDF-fixture',
   );
   assert.deepEqual(

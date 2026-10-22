@@ -2460,7 +2460,7 @@ test(
         stored.map(async ({ filename, attachmentRef }) => ({
           filename,
           name: basename(String(attachmentRef)),
-          body: await readFile(String(attachmentRef)),
+          body: await readFile(join(files.directory, String(attachmentRef))),
         })),
       ),
       [
@@ -2681,7 +2681,9 @@ async function googleAttachmentFiles(
     saved[String(uri)] =
       attachmentRef === null
         ? null
-        : new Uint8Array(await readFile(String(attachmentRef)));
+        : new Uint8Array(
+            await readFile(join(files.directory, String(attachmentRef))),
+          );
   return saved;
 }
 

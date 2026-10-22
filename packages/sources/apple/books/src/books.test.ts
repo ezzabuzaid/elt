@@ -1077,9 +1077,10 @@ test('Books stores each book on this Mac as one file, packing an EPUB directory 
     ],
   );
   const [epub, , pdf, zipped] = files.map(({ attachmentRef }) => attachmentRef);
+  const at = (ref: string) => join(scratch.path, 'import', 'files', ref);
   assert.ok(typeof epub === 'string');
   assert.match(epub, /\.epub$/);
-  const listing = (await run('/usr/bin/unzip', ['-Z1', epub])).stdout
+  const listing = (await run('/usr/bin/unzip', ['-Z1', at(epub)])).stdout
     .trim()
     .split('\n');
   assert.deepEqual(listing, [
@@ -1088,16 +1089,16 @@ test('Books stores each book on this Mac as one file, packing an EPUB directory 
     'OEBPS/chapter.xhtml',
     'OEBPS/content.opf',
   ]);
-  await run('/usr/bin/unzip', ['-tq', epub]);
+  await run('/usr/bin/unzip', ['-tq', at(epub)]);
   // The mimetype is the first entry's stored bytes, right after its header.
   assert.equal(
-    (await readFile(epub)).subarray(38, 58).toString(),
+    (await readFile(at(epub))).subarray(38, 58).toString(),
     'application/epub+zip',
   );
   assert.ok(typeof pdf === 'string');
-  assert.equal(await readFile(pdf, 'utf8'), '%PDF-1.7\n%fixture\n');
+  assert.equal(await readFile(at(pdf), 'utf8'), '%PDF-1.7\n%fixture\n');
   assert.ok(typeof zipped === 'string');
-  assert.equal(await readFile(zipped, 'utf8'), 'PK zipped epub fixture');
+  assert.equal(await readFile(at(zipped), 'utf8'), 'PK zipped epub fixture');
   // The same package yields the same bytes, so a rerun keeps the same copy.
   assert.deepEqual(
     again,
@@ -1201,7 +1202,7 @@ test('Books follows each store on its own: a rerun writes nothing, and edits, de
     (
       await run('/usr/bin/unzip', [
         '-p',
-        String(epubAfter),
+        join(scratch.path, 'import', 'files', String(epubAfter)),
         'OEBPS/chapter.xhtml',
       ])
     ).stdout,

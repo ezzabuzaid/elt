@@ -1180,7 +1180,13 @@ test('Messages reads as documented views joined on both handle keys and counted 
       .read(`SELECT guid, "attachmentRef" FROM attachments`)
       .map(({ guid, attachmentRef }) => [guid, attachmentRef]),
   );
-  assert.equal(await readFile(files['att-local'], 'utf8'), 'attached words');
+  assert.equal(
+    await readFile(
+      join(scratch.path, 'import', 'files', String(files['att-local'])),
+      'utf8',
+    ),
+    'attached words',
+  );
   assert.equal(files['att-offloaded'], null);
 });
 

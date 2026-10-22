@@ -1,5 +1,5 @@
 import { lstat } from 'node:fs/promises';
-import { basename, extname } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
@@ -22,7 +22,7 @@ const rawAttachmentText = new Declaration(
 );
 
 const columns = {
-  ref: 'Absolute path of the stored copy: the attachmentRef value of every row whose file it is. Join attachmentRef to it.',
+  ref: "Path of the stored copy, relative to the import's files folder: the attachmentRef value of every row whose file it is. Join attachmentRef to it.",
   sha256:
     'SHA-256 of the file bytes, which also names the stored copy. Rows of different tables that hold the same file share it.',
   parser:
@@ -41,16 +41,20 @@ const columns = {
 // and forgets the ones no row references any longer.
 export class AttachmentText {
   readonly #path: string;
+  readonly #files: string;
   readonly #views: readonly string[];
   readonly #parser: () => DocumentParser;
 
-  // views: the import's reader views whose rows carry an attachmentRef.
+  // files: the folder the import stores files in, which attachmentRef is
+  // relative to. views: the import's reader views whose rows carry one.
   constructor(
     path: string,
+    files: string,
     views: readonly string[],
     parser: () => DocumentParser,
   ) {
     this.#path = path;
+    this.#files = files;
     this.#views = views;
     this.#parser = parser;
   }
@@ -131,9 +135,10 @@ export class AttachmentText {
     let content: string | null = null;
     let error: string | null = null;
     const parser = this.#parser();
+    const file = join(this.#files, ref);
     let identity = parser.identity;
     try {
-      const format = await parser.identityFor(ref);
+      const format = await parser.identityFor(file);
       const previous = database
         .prepare('SELECT parser, status FROM raw_attachment_text WHERE ref = ?')
         .get(ref);
@@ -141,7 +146,7 @@ export class AttachmentText {
       if (format === null && previous?.status === 'parsed') return;
       identity = format ?? 'unsupported';
       if (previous?.parser === identity && previous.status !== 'failed') return;
-      if (format !== null) content = await parser.parse(ref, signal);
+      if (format !== null) content = await parser.parse(file, signal);
       status = content === null ? 'no_text' : 'parsed';
     } catch (failure) {
       if (
@@ -151,7 +156,7 @@ export class AttachmentText {
         return;
       // A commit removed the copy after the update listed it; its rows are
       // gone too, so the file is not a failure.
-      if (await removed(ref)) return;
+      if (await removed(file)) return;
       status = 'failed';
       error = failure instanceof Error ? failure.message : String(failure);
     }

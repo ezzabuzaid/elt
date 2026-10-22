@@ -521,7 +521,7 @@ await new Pipeline({
 }).run();
 ```
 
-This stores the selected source metadata, parsed `content` and an `attachmentRef` as TEXT. The original attachment ID and containing note ID remain available for joins. `LocalFiles` stores the original bytes and returns their absolute local path. SQLite and Postgres receive only that ordinary text value: they do not construct paths or write attachment files. The Apple hosts store an `attachmentRef` for every stream with files, in each import's `files` folder, and read the text of every stored copy into `attachment_text` (see [Attachment text](#attachment-text)); they parse no file text inside the import.
+This stores the selected source metadata, parsed `content` and an `attachmentRef` as TEXT. The original attachment ID and containing note ID remain available for joins. `LocalFiles` stores the original bytes and returns their path relative to its folder (`.elt-files/<scope>/<hash><ext>`), so an import moved with its files keeps every reference, and its identity names no folder. SQLite and Postgres receive only that ordinary text value: they do not construct paths or write attachment files. The Apple hosts store an `attachmentRef` for every stream with files, in each import's `files` folder, and read the text of every stored copy into `attachment_text` (see [Attachment text](#attachment-text)); they parse no file text inside the import.
 
 Storage is selected on each file reference with `.store(files)`, independently of the connection and destination. Two fields can use different stores, and copies can share one store without sharing file ownership. Constructing a store or declaring a field performs no I/O. A stored reference and parsed text must be separate fields; applying `.parse()` to a stored-file field is refused.
 
@@ -537,7 +537,7 @@ The columns declare what to extract. `Copy` collects those declarations; `Source
 
 ### Attachment text
 
-The Apple hosts load the text of every file an import stored into the import's own `data.sqlite`, so readers can search attachments with SQL. The `attachment_text` view holds one row per stored copy, keyed by `ref`, the absolute path each row's `attachmentRef` holds: `sha256` (the bytes' hash, which names the copy), `parser` (the parser's identity, `macos-document-v4`), `status` (`parsed`, `no_text` or `failed`), `content` (the text when parsed) and `error` (why the read failed). Readers join `attachmentRef` to `ref`:
+The Apple hosts load the text of every file an import stored into the import's own `data.sqlite`, so readers can search attachments with SQL. The `attachment_text` view holds one row per stored copy, keyed by `ref`, the path each row's `attachmentRef` holds, relative to the import's `files` folder: `sha256` (the bytes' hash, which names the copy), `parser` (the parser's identity, `macos-document-v4`), `status` (`parsed`, `no_text` or `failed`), `content` (the text when parsed) and `error` (why the read failed). Readers join `attachmentRef` to `ref`:
 
 ```sql
 SELECT a.id, t.content

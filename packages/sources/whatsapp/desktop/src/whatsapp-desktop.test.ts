@@ -2417,7 +2417,9 @@ test('a downloaded photo, a profile picture’s thumbnail and sticker files load
   ).run();
 
   const file = async (reference: unknown) =>
-    typeof reference === 'string' ? readFile(reference, 'utf8') : null;
+    typeof reference === 'string'
+      ? readFile(join(dir.path, 'files', reference), 'utf8')
+      : null;
   const files = async (sql: string) =>
     Promise.all(
       rows(out, sql).map(async ({ key, attachmentRef }) => [
