@@ -699,8 +699,17 @@ test(
         'SELECT attachmentRef FROM attachments WHERE id = @id',
         `.parameter set @id "'ATT-FILE'"`,
       ).rows;
+      // A reference names the copy inside the files folder beside the
+      // import's database.
       assert.equal(
-        readFileSync(String(attachment.attachmentRef), 'utf8'),
+        readFileSync(
+          join(
+            dirname(synced.database),
+            'files',
+            String(attachment.attachmentRef),
+          ),
+          'utf8',
+        ),
         'attached words',
       );
       // An imported connector stays as it is until the user syncs it: Sync on
