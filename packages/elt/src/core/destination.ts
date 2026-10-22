@@ -32,10 +32,11 @@ export type Load<Target extends DestinationTarget> = AsyncDisposable & {
 export abstract class Destination<Target extends DestinationTarget> {
   abstract readonly supportedDestinationSyncModes: readonly DestinationSyncMode[];
 
-  // The stored object a target names, unique across destinations. Targets at
-  // one location share its writer, and a copy's checkpoint and stored files
-  // belong to it rather than to the target's columns, which evolve with the
-  // stream.
+  // The stored object a target names, as an address inside its destination:
+  // no path, host or credential, so a destination moved or reached another
+  // way keeps it. Targets at one location share its writer, and a copy's
+  // checkpoint and stored files belong to it rather than to the target's
+  // columns, which evolve with the stream.
   abstract location(target: Target): string;
 
   // Validate declarations without storage I/O; destinations check their own targets.

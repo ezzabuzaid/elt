@@ -29,7 +29,7 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
   }
 
   override location(target: SQLiteTable): string {
-    return `${this.path}#${target.location}`;
+    return target.location;
   }
 
   // Each stream's commit is its own short transaction, so no transaction

@@ -22,23 +22,14 @@ export class PostgresSession implements AsyncDisposable {
   }
 }
 
-// The server a URL names, without its credentials.
-export function server(url: string): {
-  host: string;
-  port: string;
-  database: string;
-} {
+export function connectionUrl(url: string): string {
   const parsed = URL.parse(url);
   if (
     parsed === null ||
     (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:')
   )
     throw new TypeError('Postgres requires a postgres:// connection URL');
-  return {
-    host: parsed.hostname,
-    port: parsed.port,
-    database: decodeURIComponent(parsed.pathname.slice(1)),
-  };
+  return url;
 }
 
 export function schemaName(schema: string): string {

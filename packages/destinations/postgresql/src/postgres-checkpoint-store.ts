@@ -5,9 +5,9 @@ import { type CheckpointSession, CheckpointStore } from '@workspace/elt';
 import { quote } from './identifier.ts';
 import {
   PostgresSession,
+  connectionUrl,
   schemaLock,
   schemaName,
-  server,
 } from './postgres-session.ts';
 
 // Checkpoints kept beside the data they describe, in `_elt_checkpoints`
@@ -20,9 +20,8 @@ export class PostgresCheckpointStore extends CheckpointStore {
 
   constructor({ url, schema }: { url: string; schema: string }) {
     super();
-    server(url);
+    this.#url = connectionUrl(url);
     this.schema = schemaName(schema);
-    this.#url = url;
     Object.freeze(this);
   }
 

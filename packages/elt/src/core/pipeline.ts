@@ -14,7 +14,6 @@ import { replicate } from './replication.ts';
 import type { Source } from './source.ts';
 import type { Stream } from './stream.ts';
 import type { Target as DestinationTarget } from './target.ts';
-import { TargetOwnedError } from './writer.ts';
 
 // How long a stopping watch waits for a source to finish stopping, such as
 // ending a helper process, before it leaves the source behind: a source that
@@ -117,7 +116,6 @@ export class Pipeline<Target extends DestinationTarget> {
   ): Promise<void> {
     this.#assertDistinct();
     for (const connection of this.connections) connection.validate();
-    this.#assertOwners();
     for (const copy of steps) {
       const connection = this.connections.find(({ steps }) =>
         steps.includes(copy),
@@ -465,7 +463,6 @@ export class Pipeline<Target extends DestinationTarget> {
         await this.#recordFailure(connection, error);
         throw error;
       }
-    this.#assertOwners();
   }
 
   #assertDistinct(): void {
@@ -477,21 +474,6 @@ export class Pipeline<Target extends DestinationTarget> {
       .filter((id) => id !== undefined);
     if (new Set(ids).size !== ids.length)
       throw new TypeError('Pipeline copy IDs must be distinct');
-  }
-
-  // Two copies with different writers into one target fail before any copy
-  // runs rather than after the first commits.
-  #assertOwners(): void {
-    const owners = new Map<string, string>();
-    for (const connection of this.connections)
-      for (const copy of connection.steps) {
-        const location = connection.destination.location(copy.to);
-        const writer = copy.writer(connection.source);
-        const owner = owners.get(location);
-        if (owner !== undefined && owner !== writer)
-          throw new TargetOwnedError(location, owner, writer);
-        owners.set(location, writer);
-      }
   }
 }
 

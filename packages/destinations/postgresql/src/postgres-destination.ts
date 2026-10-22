@@ -7,7 +7,7 @@ import { PostgresColumns } from './postgres-columns.ts';
 import { PostgresDeduplicatingWriter } from './postgres-deduplicating-writer.ts';
 import { PostgresLoad } from './postgres-load.ts';
 import { PostgresOverwriteWriter } from './postgres-overwrite-writer.ts';
-import { schemaName, server } from './postgres-session.ts';
+import { connectionUrl, schemaName } from './postgres-session.ts';
 import { PostgresTable } from './postgres-table.ts';
 import type { PostgresWriter } from './postgres-writer.ts';
 
@@ -22,19 +22,16 @@ export class PostgresDestination extends Destination<PostgresTable> {
   ] as const);
   readonly schema: string;
   readonly #url: string;
-  readonly #server: { host: string; port: string; database: string };
 
   constructor({ url, schema }: { url: string; schema: string }) {
     super();
-    this.#server = server(url);
+    this.#url = connectionUrl(url);
     this.schema = schemaName(schema);
-    this.#url = url;
     Object.freeze(this);
   }
 
   override location(target: PostgresTable): string {
-    const { host, port, database } = this.#server;
-    return `//${host}:${port}/${database}/${quote(this.schema)}.${target.quotedName}`;
+    return `${quote(this.schema)}.${target.quotedName}`;
   }
 
   // One connection for the whole run; each commit is its own transaction.
