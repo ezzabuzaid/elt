@@ -3,8 +3,6 @@ import type { Choice } from '@workspace/connector-apple-connector/choice';
 import { AppleCallHistorySource } from '@workspace/source-apple-call-history/apple-call-history-source';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
-import { callHistoryCounterparts } from './call-history-counterparts.ts';
-
 export default class CallHistoryConnector extends AppleConnector {
   readonly datedBy = 'call date';
   readonly fullDiskAccess = true;
@@ -15,10 +13,6 @@ export default class CallHistoryConnector extends AppleConnector {
   protected override readonly probe = 'calls';
   protected readonly unscoped = [];
   protected readonly storeCopies = [];
-
-  protected override views() {
-    return [callHistoryCounterparts];
-  }
 
   protected access(): string {
     return 'No app needs to be open: macOS keeps the calls from Phone, FaceTime and your iPhone in one store.';

@@ -18,7 +18,6 @@ import {
 } from '@workspace/source-apple-mail/apple-mail-source';
 
 import { mailContentStatus } from './mail-content-status.ts';
-import { mailCounterparts } from './mail-counterparts.ts';
 
 const accountName = (row: Row) =>
   String(JSON.parse(String(row.properties)).name);
@@ -50,10 +49,8 @@ export default class MailConnector extends AppleConnector {
   // Each message's raw .emlx; messageParts already holds its decoded text.
   protected readonly storeCopies = ['messageFiles'];
 
-  // accounts, messages, addresses and recipients, which the view reads, are
-  // in every import, narrowed or not.
   protected override views() {
-    return [mailCounterparts, mailContentStatus];
+    return [mailContentStatus];
   }
 
   override contentStatus(path: string): readonly string[] {

@@ -3,8 +3,6 @@ import type { Choice } from '@workspace/connector-apple-connector/choice';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { AppleMessagesSource } from '@workspace/source-apple-messages/apple-messages-source';
 
-import { messagesCounterparts } from './messages-counterparts.ts';
-
 export default class MessagesConnector extends AppleConnector {
   readonly datedBy = 'message date';
   readonly fullDiskAccess = true;
@@ -19,10 +17,6 @@ export default class MessagesConnector extends AppleConnector {
   ];
   protected readonly unscoped = [];
   protected readonly storeCopies = [];
-
-  protected override views() {
-    return [messagesCounterparts];
-  }
 
   protected access(): string {
     return 'Only messages synced to this Mac can be imported.';

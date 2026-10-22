@@ -7,8 +7,6 @@ import {
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { SlackDesktopSource } from '@workspace/source-slack-desktop/slack-desktop-source';
 
-import { slackCounterparts } from './slack-counterparts.ts';
-
 // A conversation's workspace, then the conversation as Slack's sidebar names
 // it; a direct message is named by the other person's member ID.
 const conversation: Choice['label'] = (row, rows) => {
@@ -48,10 +46,6 @@ export default class SlackConnector extends AppleConnector {
   ];
   protected readonly unscoped = [];
   protected readonly storeCopies = [];
-
-  protected override views() {
-    return [slackCounterparts];
-  }
 
   protected access(): string {
     return 'Open Slack in each workspace to import and let it run: it saves what it has loaded every few minutes and when it quits, and only messages it has loaded on this Mac are imported.';

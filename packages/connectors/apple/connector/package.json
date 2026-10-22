@@ -11,10 +11,6 @@
     "./choice": {
       "types": "./dist/choice.d.ts",
       "default": "./dist/choice.js"
-    },
-    "./counterparts": {
-      "types": "./dist/counterparts.d.ts",
-      "default": "./dist/counterparts.js"
     }
   },
   "dependencies": {

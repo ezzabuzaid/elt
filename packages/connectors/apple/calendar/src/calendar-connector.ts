@@ -16,8 +16,6 @@ import {
 } from '@workspace/source-apple-calendar/apple-calendar-source';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
-import { calendarCounterparts } from './calendar-counterparts.ts';
-
 export default class CalendarConnector extends AppleConnector {
   readonly datedBy =
     'event dates (events that overlap the range; with none, every event from 2000 until a year after each import)';
@@ -28,10 +26,6 @@ export default class CalendarConnector extends AppleConnector {
   ];
   protected readonly unscoped = [];
   protected readonly storeCopies = [];
-
-  protected override views() {
-    return [calendarCounterparts];
-  }
 
   protected access(grantee: string): string {
     return `Allow ${grantee} full Calendar access when macOS asks, or in System Settings › Privacy & Security › Calendars.`;

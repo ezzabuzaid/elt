@@ -110,9 +110,10 @@ export abstract class AppleConnector {
   // File streams that copy the app's own store rather than attachments; they
   // load metadata only.
   protected abstract readonly storeCopies: readonly string[];
-  // Views over the import's own views, such as counterparts, published after
-  // each pass: a stream's view exists only once a pass committed it. copied
-  // names the streams the import holds; a narrowed one leaves out unscoped.
+  // Views over the import's own views, such as Mail's mail_content_status,
+  // published after each pass: a stream's view exists only once a pass
+  // committed it. copied names the streams the import holds; a narrowed one
+  // leaves out unscoped.
   protected views(_copied: ReadonlySet<string>): readonly SQLiteView[] {
     return [];
   }
