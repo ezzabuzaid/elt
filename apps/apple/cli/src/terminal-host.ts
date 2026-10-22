@@ -4,12 +4,23 @@ import { basename, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AppleHost } from '@workspace/connector-apple-connector/apple-connector';
+import type { DocumentParser } from '@workspace/elt';
 import { type GoogleRequester, googleSession } from '@workspace/google-auth';
 
 // The CLI as the host of the Apple connectors: macOS grants access to the
 // terminal that launched it, and Google content is read with the user's own
 // OAuth client.
 export class TerminalHost implements AppleHost {
+  readonly #parser: () => DocumentParser;
+
+  constructor(parser: () => DocumentParser) {
+    this.#parser = parser;
+  }
+
+  get documentParser(): DocumentParser {
+    return this.#parser();
+  }
+
   // The helper @workspace/sdk-apple-eventkit compiles into its dist.
   readonly eventKitHelper = fileURLToPath(
     new URL(

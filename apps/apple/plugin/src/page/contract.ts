@@ -99,3 +99,21 @@ export type ConnectorSelection = z.infer<typeof selection>;
 export type ConnectorRow = z.infer<typeof row>;
 export type MonitorRow = z.infer<typeof monitorRow>;
 export type ConnectorChoices = z.infer<z.ZodObject<typeof choicesResult>>;
+
+const transcriptionModel = z.strictObject({
+  engine: z.enum(['cohere', 'canary']),
+  directory: z.string(),
+});
+export const transcriptionResult = {
+  selected: transcriptionModel.nullable(),
+  models: z.array(
+    z.strictObject({
+      id: z.string(),
+      title: z.string(),
+      configuration: transcriptionModel,
+    }),
+  ),
+};
+export type TranscriptionChoices = z.infer<
+  z.ZodObject<typeof transcriptionResult>
+>;

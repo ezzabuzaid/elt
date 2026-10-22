@@ -7,6 +7,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
+import { AppleTranscription } from '@workspace/connector-apple-connector/apple-transcription';
 import { Connectors } from '@workspace/connector-apple-manifest/connectors';
 import { provideHostModules } from '@workspace/connector-apple-manifest/host-modules';
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
@@ -31,6 +32,7 @@ import {
   choicesResult,
   connectorsResult,
   monitorsResult,
+  transcriptionResult,
 } from './page/contract.ts';
 import { setUpWithForms } from './setup-forms.ts';
 
@@ -53,6 +55,10 @@ const store = join(
   homedir(),
   'Library/Application Support/Context Compiler/Apple',
 );
+const transcription = new AppleTranscription(
+  store,
+  fileURLToPath(new URL('transcribe-local', import.meta.url)),
+);
 const plugin = new ApplePlugin(
   new Connectors([
     fileURLToPath(new URL('connectors', import.meta.url)),
@@ -60,6 +66,9 @@ const plugin = new ApplePlugin(
   ]),
   {
     grantee: 'ChatGPT',
+    get documentParser() {
+      return transcription.parser;
+    },
     eventKitHelper: fileURLToPath(new URL('eventkit-helper', import.meta.url)),
   },
   install,
@@ -75,10 +84,15 @@ const plugin = new ApplePlugin(
     codex: process.env.CODEX_CLI_PATH ?? 'codex',
   }),
 );
+// Settings may have been changed by another chat or by the CLI.
+async function refresh(): Promise<void> {
+  await transcription.refresh();
+  await plugin.refresh();
+}
 // Each tool call and import pass rediscovers the connectors first, so one the
 // user adds or edits is used without restarting this server; a chat's tool
 // list stays as it began, so tools name connectors as strings, not an enum.
-await plugin.refresh();
+await refresh();
 const { version } = z
   .object({ version: z.string() })
   .parse(
@@ -124,7 +138,7 @@ mcpServer.registerTool(
     },
   },
   async () => {
-    await plugin.refresh();
+    await refresh();
     if (!mcpServer.server.getClientCapabilities()?.elicitation)
       throw new Error(
         'This host cannot show forms. Set up with apple_options, then apple_configure.',
@@ -148,7 +162,7 @@ mcpServer.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   async ({ connector }) => {
-    await plugin.refresh();
+    await refresh();
     return structured(await plugin.options(connector));
   },
 );
@@ -167,7 +181,7 @@ mcpServer.registerTool(
     },
   },
   async (input) => {
-    await plugin.refresh();
+    await refresh();
     void plugin.import(await plugin.configure(input));
     return structured(plugin.status());
   },
@@ -266,8 +280,52 @@ mcpServer.registerTool(
     _meta: appOnly,
   },
   async () => {
-    await plugin.refresh();
+    await refresh();
     return structured({ connectors: connectorRows(plugin) });
+  },
+);
+mcpServer.registerTool(
+  'apple_transcription',
+  {
+    title: 'Audio transcription settings',
+    inputSchema: {},
+    outputSchema: transcriptionResult,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: appOnly,
+  },
+  async () => structured(await transcription.choices()),
+);
+mcpServer.registerTool(
+  'apple_transcription_update',
+  {
+    title: 'Choose an audio transcription model',
+    inputSchema: { model: z.string().min(1).nullable() },
+    outputSchema: transcriptionResult,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    _meta: appOnly,
+  },
+  async ({ model }) => {
+    const { models } = await transcription.choices();
+    const chosen = models.find(({ id }) => id === model);
+    if (model !== null && chosen === undefined)
+      throw new Error(
+        `The model ${model} is no longer installed in Handy. Refresh this page and choose an installed model.`,
+      );
+    await transcription.configure(chosen?.configuration ?? null);
+    await refresh();
+    if (model !== null)
+      void plugin.import(
+        plugin
+          .status()
+          .connectors.filter(({ includeAttachments }) => includeAttachments),
+        { afterCurrent: true },
+      );
+    return structured(await transcription.choices());
   },
 );
 mcpServer.registerTool(
@@ -316,7 +374,7 @@ mcpServer.registerTool(
     _meta: appOnly,
   },
   async ({ connector }) => {
-    await plugin.refresh();
+    await refresh();
     return structured(await connectorChoices(plugin, connector));
   },
 );
@@ -340,7 +398,7 @@ mcpServer.registerTool(
     _meta: appOnly,
   },
   async ({ connector, selection }) => {
-    await plugin.refresh();
+    await refresh();
     const { connectors, newImports } = await updateConnector(
       plugin,
       connector,
@@ -367,7 +425,7 @@ mcpServer.registerTool(
     _meta: appOnly,
   },
   async ({ connector }) => {
-    await plugin.refresh();
+    await refresh();
     await plugin.import(
       plugin
         .status()
@@ -411,10 +469,17 @@ mcpServer.registerTool(
       return {
         content: [{ type: 'text', text: new PluginUpdatedError().message }],
       };
-    await plugin.refresh();
+    await refresh();
     const text = contextFor(event);
     return { content: text === null ? [] : [{ type: 'text', text }] };
   },
 );
 
+mcpServer.server.onclose = () => {
+  void transcription[Symbol.asyncDispose]();
+};
+for (const signal of ['SIGINT', 'SIGTERM'] as const)
+  process.once(signal, () => {
+    void mcpServer.close();
+  });
 await mcpServer.connect(new StdioServerTransport());

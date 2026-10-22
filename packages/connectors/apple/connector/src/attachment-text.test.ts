@@ -13,6 +13,8 @@ import { basename, dirname, extname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { MockTranscriptionModelV4 } from 'ai/test';
+
 import {
   Catalog,
   Connection,
@@ -33,6 +35,7 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
+import { AudioFormat } from '@workspace/source-apple-macos/audio-format';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 import { AttachmentText } from './attachment-text.ts';
@@ -156,7 +159,7 @@ async function importStore(directory: string) {
     remove: (name: string) => rm(join(upstream, name)),
     importFiles: () => new Pipeline({ history, connections: [imported] }).run(),
     readText: (parser: DocumentParser, signal = new AbortController().signal) =>
-      new AttachmentText(path, ['documents'], parser).update(signal),
+      new AttachmentText(path, ['documents'], () => parser).update(signal),
     read,
     // What a reader searching attachment text sees, by document; none before
     // the text's first update creates its view.
@@ -183,6 +186,12 @@ class CountingParser extends DocumentParser {
     super(identity);
   }
 
+  override identityFor(path: string) {
+    return this.identity === this.#parser.identity
+      ? this.#parser.identityFor(path)
+      : super.identityFor(path);
+  }
+
   override parse(path: string) {
     this.read.push(path);
     return this.#parser.parse(path);
@@ -199,6 +208,10 @@ class HoldingParser extends DocumentParser {
 
   constructor() {
     super(new MacOSDocumentParser().identity);
+  }
+
+  override identityFor(path: string) {
+    return this.#parser.identityFor(path);
   }
 
   release() {
@@ -370,10 +383,9 @@ test('an import loads and commits its rows while a file is still being read', as
 test('an update stopped while files are read keeps the text it read, and the next update reads the rest', async () => {
   await using directory = await mkdtempDisposable(join(tmpdir(), 'att-'));
   const store = await importStore(directory.path);
-  // Four held files take every place, so the two others wait for one.
-  for (const name of ['a', 'b', 'c', 'd'])
+  // Whichever four start first stay held, so the other two remain queued.
+  for (const name of ['a', 'b', 'c', 'd', 'e', 'f'])
     await store.put(`${name}-held.txt`, `hold ${name}`);
-  for (const name of ['e', 'f']) await store.put(`${name}.txt`, `text ${name}`);
   await store.importFiles();
   const parser = new HoldingParser();
   const stop = new AbortController();
@@ -541,5 +553,51 @@ test('one file attached in three chats is read once, and all three find its text
       `${chat}-invoice.txt`,
       'Careem invoice 4471',
     ]),
+  );
+});
+
+// AI SDK's provider stand-in lets one test change a model's answer without
+// credentials or downloading different weights. Dispatch and storage are real.
+test('enabling or changing an audio model processes stored audio; disabling keeps its transcript', async () => {
+  await using directory = await mkdtempDisposable(join(tmpdir(), 'att-audio-'));
+  const store = await importStore(directory.path);
+  await store.put('note.txt', 'Keep this document');
+  await store.put('voice.opus', '\u0000audio');
+  await store.importFiles();
+  await store.readText(new MacOSDocumentParser());
+  assert.equal(store.texts()[1]?.status, 'no_text');
+  const model = (id: string) =>
+    new MockTranscriptionModelV4({
+      modelId: id,
+      doGenerate: async () => ({
+        text: id,
+        segments: [],
+        language: undefined,
+        durationInSeconds: undefined,
+        warnings: [],
+        response: { timestamp: new Date(), modelId: id },
+      }),
+    });
+  const parser = new MacOSDocumentParser([new AudioFormat(model('first'))]);
+  await store.readText(parser);
+  assert.deepEqual(
+    store.texts().map(({ content }) => content),
+    ['Keep this document', 'first'],
+  );
+  // A native document already read keeps its existing identity and content.
+  const document = store.texts()[0];
+  await store.readText(
+    new MacOSDocumentParser([new AudioFormat(model('second'))]),
+  );
+  assert.deepEqual(store.texts()[0], document);
+  assert.equal(store.texts()[1]?.content, 'second');
+  await store.readText(new MacOSDocumentParser());
+  assert.equal(store.texts()[1]?.content, 'second');
+  await store.put('new.opus', '\u0000new audio');
+  await store.importFiles();
+  await store.readText(new MacOSDocumentParser());
+  assert.equal(
+    store.texts().find(({ name }) => name === 'new.opus')?.status,
+    'no_text',
   );
 });

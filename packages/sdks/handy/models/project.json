@@ -1,0 +1,13 @@
+{
+  "name": "sdk-handy-models",
+  "sourceRoot": "packages/sdks/handy/models/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test {args} \"packages/sdks/handy/models/dist/*.test.js\""
+    }
+  }
+}

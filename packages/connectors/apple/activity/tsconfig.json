@@ -18,6 +18,9 @@
     },
     {
       "path": "../connector"
+    },
+    {
+      "path": "../../../sources/apple/macos"
     }
   ]
 }

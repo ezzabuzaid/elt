@@ -4,6 +4,10 @@
   "projectType": "library",
   "tags": ["layer:island"],
   "targets": {
-    "format": {}
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test {args} \"packages/sources/apple/macos/dist/*.test.js\""
+    }
   }
 }

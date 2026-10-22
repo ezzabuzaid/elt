@@ -15,6 +15,7 @@ import type {
 } from '@workspace/connector-apple-connector/apple-connector';
 import { Pipeline } from '@workspace/elt';
 import { SQLiteSyncHistory, installSQLiteCatalog } from '@workspace/elt-sqlite';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 // This package's folder, which holds its manifest and presets.
 const folder = fileURLToPath(new URL('..', import.meta.url));
@@ -33,7 +34,11 @@ async function connectorUnder(home: string): Promise<AppleConnector> {
     );
     // Activity reads nothing through EventKit.
     return new ActivityConnector(
-      { grantee: 'Codex', eventKitHelper: '' },
+      {
+        grantee: 'Codex',
+        documentParser: new MacOSDocumentParser(),
+        eventKitHelper: '',
+      },
       { name: contextCompiler.name, title: contextCompiler.title, folder },
     );
   } finally {

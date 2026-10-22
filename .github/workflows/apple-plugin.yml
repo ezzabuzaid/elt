@@ -25,6 +25,9 @@ jobs:
         with:
           node-version: 26
           cache: npm
+      # Cargo builds the bundled local transcription worker; the audio tests
+      # and runtime decode imported formats through ffmpeg.
+      - run: brew install rust ffmpeg
       - run: npm ci
       # Every push, not nx affected: skills and hooks under plugins/apple
       # belong to no project, and an unchanged build publishes no commit. A

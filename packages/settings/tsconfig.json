@@ -8,6 +8,9 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
+      "path": "../transcription-local"
+    },
+    {
       "path": "../sources/apple/macos"
     },
     {

@@ -11,6 +11,7 @@ const heifBrands = ['heic', 'heix', 'hevc', 'mif1', 'msf1', 'avif'];
 const bitmapHeaderSizes = [12, 40, 52, 56, 64, 108, 124];
 
 export class ImageFormat extends DocumentFormat {
+  readonly identity = 'image-v1';
   protected override readonly extensions = [
     'jpg',
     'jpeg',

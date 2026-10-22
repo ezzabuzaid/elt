@@ -8,6 +8,7 @@ import {
   Connection,
   Copy,
   CopyConfiguration,
+  type DocumentParser,
   type FailureType,
   LocalFiles,
   type PassObserver,
@@ -35,13 +36,13 @@ import {
   type Settings,
 } from '@workspace/settings';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 import { AttachmentText } from './attachment-text.ts';
 import type { Choice, Row, Rows } from './choice.ts';
 
 // What the host running a connector offers it.
 export type AppleHost = {
+  readonly documentParser: DocumentParser;
   // The app macOS grants access to: ChatGPT for the plugin, the terminal
   // that launched the CLI.
   readonly grantee: string;
@@ -537,7 +538,7 @@ export abstract class AppleConnector {
         : new AttachmentText(
             destination.path,
             stored.map(({ name }) => this.view(name)),
-            new MacOSDocumentParser(),
+            () => this.host.documentParser,
           );
     return { connection, text, destination };
   }

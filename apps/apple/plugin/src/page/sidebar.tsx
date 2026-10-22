@@ -11,7 +11,15 @@ import { usePage } from './page-context.tsx';
 // until the last pass ends, the page's failure to read or sync, then its
 // monitors and its connectors, each a section that folds away.
 export function Sidebar() {
-  const { rows, monitors, failure, sync, syncing } = usePage();
+  const {
+    rows,
+    monitors,
+    failure,
+    sync,
+    syncing,
+    openedTranscription,
+    openTranscription,
+  } = usePage();
   const label = syncing ? 'Syncing connectors' : 'Sync connectors';
   return (
     <nav className="sidebar" aria-label="Apple">
@@ -55,6 +63,14 @@ export function Sidebar() {
           <ConnectorLink key={row.name} row={row} />
         ))}
       </Section>
+      <button
+        type="button"
+        className="item transcription-link"
+        aria-current={openedTranscription ? 'page' : undefined}
+        onClick={openTranscription}
+      >
+        Audio transcription
+      </button>
     </nav>
   );
 }

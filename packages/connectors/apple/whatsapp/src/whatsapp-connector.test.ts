@@ -11,6 +11,7 @@ import type { AppleConnector } from '@workspace/connector-apple-connector/apple-
 import { Pipeline, PipelineError } from '@workspace/elt';
 import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 // This package's folder, which holds its manifest.
 const folder = fileURLToPath(new URL('..', import.meta.url));
@@ -29,7 +30,11 @@ async function connectorUnder(home: string): Promise<AppleConnector> {
     );
     // WhatsApp reads nothing through EventKit.
     return new WhatsAppConnector(
-      { grantee: 'Codex', eventKitHelper: '' },
+      {
+        grantee: 'Codex',
+        documentParser: new MacOSDocumentParser(),
+        eventKitHelper: '',
+      },
       { name: contextCompiler.name, title: contextCompiler.title, folder },
     );
   } finally {

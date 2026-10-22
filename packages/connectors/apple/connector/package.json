@@ -11,6 +11,10 @@
     "./choice": {
       "types": "./dist/choice.d.ts",
       "default": "./dist/choice.js"
+    },
+    "./apple-transcription": {
+      "types": "./dist/apple-transcription.d.ts",
+      "default": "./dist/apple-transcription.js"
     }
   },
   "dependencies": {
@@ -21,6 +25,11 @@
     "@workspace/source-apple-macos": "0.0.1",
     "@zukhruf/sqlite-drift": "0.3.35",
     "@zukhruf/sqlite-transaction": "0.3.31",
-    "p-retry": "^8.0.1"
+    "p-retry": "^8.0.1",
+    "@workspace/transcription-local": "0.0.1",
+    "@workspace/sdk-handy-models": "0.0.1"
+  },
+  "devDependencies": {
+    "ai": "7.0.148"
   }
 }

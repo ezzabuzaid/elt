@@ -16,6 +16,7 @@ import {
   Stream,
 } from '@workspace/elt';
 import { Settings } from '@workspace/settings';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 import { AppleConnector } from './apple-connector.ts';
 
@@ -145,7 +146,11 @@ class OneSourceConnector extends AppleConnector {
 
   constructor(source: Source) {
     super(
-      { grantee: 'Codex', eventKitHelper: '' },
+      {
+        grantee: 'Codex',
+        documentParser: new MacOSDocumentParser(),
+        eventKitHelper: '',
+      },
       { name: 'one-source', title: 'One Source', folder: '/nonexistent' },
     );
     this.#source = source;
@@ -245,6 +250,7 @@ test(
     const pass = `
       const { Catalog, Source, Stream } = await import('@workspace/elt');
       const { Settings } = await import('@workspace/settings');
+      const { MacOSDocumentParser } = await import('@workspace/source-apple-macos/macos-document-parser');
       const { AppleConnector } = await import(process.env.CONNECTOR);
       class TwoNotesSource extends Source {
         identity = 'two-notes';
@@ -278,7 +284,7 @@ test(
         unscoped = [];
         storeCopies = [];
         constructor() {
-          super({ grantee: 'Codex', eventKitHelper: '' }, { name: 'one-source', title: 'One Source', folder: '/nonexistent' });
+          super({ grantee: 'Codex', documentParser: new MacOSDocumentParser(), eventKitHelper: '' }, { name: 'one-source', title: 'One Source', folder: '/nonexistent' });
         }
         access() { return 'Nothing to grant.'; }
         source() { return new TwoNotesSource(); }

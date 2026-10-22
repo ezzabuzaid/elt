@@ -271,25 +271,41 @@ export class ApplePlugin {
   // outcome reaches no other server; its checkpoints resume the next pass.
   // Settles whatever the passes do: each pass records how it ended in its
   // import's sync history.
-  async import(selections: readonly Selection[]): Promise<void> {
+  async import(
+    selections: readonly Selection[],
+    options?: { afterCurrent: boolean },
+  ): Promise<void> {
     await Promise.allSettled(
       selections.map(async (selection) => {
         using settings = this.#open();
         await using flights = this.flights();
         const directory = settings.directory(selection);
-        await flights.run(directory, async ({ signal }) => {
-          try {
-            await this.connector(selection.connector).import(
-              settings,
-              selection,
-              undefined,
-              signal,
-            );
-          } finally {
-            if (settings.staleImports().includes(directory))
-              rmSync(directory, { recursive: true, force: true });
-          }
-        });
+        let joined = false;
+        const run = () =>
+          flights.run(
+            directory,
+            async ({ signal }) => {
+              try {
+                await this.connector(selection.connector).import(
+                  settings,
+                  selection,
+                  undefined,
+                  signal,
+                );
+              } finally {
+                if (settings.staleImports().includes(directory))
+                  rmSync(directory, { recursive: true, force: true });
+              }
+            },
+            {
+              onJoin: () => {
+                joined = true;
+              },
+            },
+          );
+        await run();
+        // A changed parser must get its own pass after an older pass finishes.
+        if (options?.afterCurrent === true && joined) await run();
       }),
     );
     // Like each pass, the check settles: a monitor's failure, settings it

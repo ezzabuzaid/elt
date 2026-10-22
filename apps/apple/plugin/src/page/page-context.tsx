@@ -39,6 +39,8 @@ type Page = {
   // Whether the page syncs every connector, and which it syncs alone.
   readonly syncing: boolean;
   readonly syncingConnectors: ReadonlySet<string>;
+  readonly openedTranscription: boolean;
+  readonly openTranscription: () => void;
   readonly opened: string | null;
   readonly open: (connector: string | null) => void;
   readonly openedMonitor: string | null;
@@ -74,6 +76,7 @@ export function PageProvider({
   const [openedMonitor, setOpenedMonitor] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [reads, setReads] = useState(0);
+  const [openedTranscription, setOpenedTranscription] = useState(false);
   const [opened, setOpened] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncingConnectors, setSyncingConnectors] = useState<
@@ -126,7 +129,11 @@ export function PageProvider({
   // A link to /connectors/<name> opens that connector; any other, the list.
   const link = useDeepLink(app);
   useEffect(() => {
-    if (link !== undefined) setOpened(connectorIn(link) ?? null);
+    if (link !== undefined) {
+      setOpened(connectorIn(link) ?? null);
+      setOpenedMonitor(null);
+      setOpenedTranscription(link === '/transcription');
+    }
   }, [link]);
 
   const update = useCallback(
@@ -197,13 +204,21 @@ export function PageProvider({
   );
 
   const open = useCallback((connector: string | null) => {
+    setOpenedTranscription(false);
     setOpened(connector);
     setOpenedMonitor(null);
   }, []);
 
   const openMonitor = useCallback((name: string) => {
+    setOpenedTranscription(false);
     setOpenedMonitor(name);
     setOpened(null);
+  }, []);
+
+  const openTranscription = useCallback(() => {
+    setOpenedTranscription(true);
+    setOpened(null);
+    setOpenedMonitor(null);
   }, []);
 
   return (
@@ -218,6 +233,8 @@ export function PageProvider({
         sync,
         syncing,
         syncingConnectors,
+        openedTranscription,
+        openTranscription,
         opened,
         open,
         openedMonitor,

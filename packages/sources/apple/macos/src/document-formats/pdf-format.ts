@@ -5,6 +5,7 @@ import { DocumentFormat } from './document-format.ts';
 import type { FileHead } from './file-head.ts';
 
 export class PdfFormat extends DocumentFormat {
+  readonly identity = 'pdf-v1';
   protected override readonly extensions = ['pdf'];
 
   protected override hasSignature(head: FileHead): boolean {

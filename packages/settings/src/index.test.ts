@@ -287,3 +287,33 @@ test('a selection that keeps a connector never stops its import', async () => {
 
   assert.equal(removal.signal.aborted, false);
 });
+
+test('the transcription choice persists independently of connector selections and can be turned off', async () => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'transcription-settings-'),
+  );
+  {
+    using settings = new Settings(directory.path);
+    assert.equal(settings.transcription(), null);
+    settings.select(
+      [{ connector: 'notes', scope: {}, includeAttachments: true }],
+      options,
+    );
+    settings.setTranscription({
+      engine: 'cohere',
+      directory: '/models/cohere-int8',
+    });
+  }
+  {
+    using settings = new Settings(directory.path);
+    assert.deepEqual(settings.transcription(), {
+      engine: 'cohere',
+      directory: '/models/cohere-int8',
+    });
+    assert.equal(settings.selections()[0]?.connector, 'notes');
+    settings.setTranscription(null);
+  }
+  using settings = new Settings(directory.path);
+  assert.equal(settings.transcription(), null);
+  assert.equal(settings.selections()[0]?.connector, 'notes');
+});

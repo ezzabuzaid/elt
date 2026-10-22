@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
+
 import { builtInConnectors } from './built-in-connectors.ts';
 import { Connectors } from './connectors.ts';
 
@@ -14,6 +16,7 @@ test('every connector folder loads as its connector for the host, and one that c
     fileURLToPath(new URL('./missing/', import.meta.url)),
   ]).load({
     grantee: 'Terminal',
+    documentParser: new MacOSDocumentParser(),
     eventKitHelper: fileURLToPath(
       new URL(
         'eventkit-helper',

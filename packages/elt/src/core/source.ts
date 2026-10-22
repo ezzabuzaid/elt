@@ -255,6 +255,7 @@ export abstract class Source<
         for await (const message of this.resolved(
           configuration,
           this.extract(configuration, state, null, context, signal),
+          signal,
         ))
           if (!('type' in message) || message.type === 'DELETE') yield message;
           else if (incremental)
@@ -273,6 +274,7 @@ export abstract class Source<
   private async *resolved(
     configuration: CopyConfiguration,
     messages: AsyncIterable<SourceMessage>,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     for await (const message of messages) {
       if (message instanceof StreamStatus)
@@ -319,7 +321,7 @@ export abstract class Source<
             pending =
               read.parser === undefined
                 ? new FileContent(message.file)
-                : read.parser.parse(message.file);
+                : read.parser.parse(message.file, signal);
             values.set(read.parser, pending);
           }
           value = await pending;
@@ -368,6 +370,7 @@ export abstract class Source<
             context,
             signal,
           ),
+          signal,
         )) {
           if ('type' in message && message.type === 'STATE') {
             if (!incremental) continue;

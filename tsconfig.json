@@ -250,6 +250,12 @@
     },
     {
       "path": "./packages/sdks/apple/launch-services"
+    },
+    {
+      "path": "./packages/transcription-local"
+    },
+    {
+      "path": "./packages/sdks/handy/models"
     }
   ]
 }

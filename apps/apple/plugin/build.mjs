@@ -82,6 +82,11 @@ for (const { manifest, out } of builtIns) {
 
 // main.ts hands this path to the Calendar and Reminders connectors.
 copyFileSync(eventkitHelper, join(outdir, 'eventkit-helper'));
+// The native worker links ONNX Runtime statically; the executable is enough.
+copyFileSync(
+  'packages/transcription-local/dist/transcribe-local',
+  join(outdir, 'transcribe-local'),
+);
 
 const {
   outputFiles: [script],

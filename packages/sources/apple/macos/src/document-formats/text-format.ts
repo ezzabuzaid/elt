@@ -11,6 +11,7 @@ const execute = promisify(execFile);
 const textutilFormats = ['txt', 'rtf', 'html', 'doc', 'docx', 'odt', 'wordml'];
 
 export class TextFormat extends DocumentFormat {
+  readonly identity = 'text-v1';
   protected override readonly extensions = [...textutilFormats, 'md'];
 
   // RTF is the one text format that names itself in its leading bytes.

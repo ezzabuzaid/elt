@@ -23,6 +23,7 @@ import { Connectors } from '@workspace/connector-apple-manifest/connectors';
 import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import { StubEventKitHelper } from '@workspace/sdk-apple-eventkit/test';
 import { type Selection, importDirectory } from '@workspace/settings';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 import { ApplePlugin } from './apple-plugin.ts';
 import { chatStatus } from './chat-status.ts';
@@ -42,6 +43,7 @@ const install = resolve('plugins/apple');
 // workspace compiled instead of the bundled copy.
 const host = {
   grantee: 'ChatGPT',
+  documentParser: new MacOSDocumentParser(),
   eventKitHelper: fileURLToPath(
     new URL(
       'eventkit-helper',

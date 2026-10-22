@@ -23,9 +23,23 @@
     "./osa": {
       "types": "./dist/osa.d.ts",
       "default": "./dist/osa.js"
+    },
+    "./document-format": {
+      "types": "./dist/document-formats/document-format.d.ts",
+      "default": "./dist/document-formats/document-format.js"
+    },
+    "./file-head": {
+      "types": "./dist/document-formats/file-head.d.ts",
+      "default": "./dist/document-formats/file-head.js"
+    },
+    "./audio-format": {
+      "types": "./dist/document-formats/audio-format.d.ts",
+      "default": "./dist/document-formats/audio-format.js"
     }
   },
   "dependencies": {
-    "@workspace/elt": "0.0.1"
+    "@workspace/elt": "0.0.1",
+    "ai": "7.0.148",
+    "file-type": "22.2.0"
   }
 }

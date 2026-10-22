@@ -1,0 +1,17 @@
+{
+  "name": "@workspace/transcription-local",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/local-transcription-model.d.ts",
+      "default": "./dist/local-transcription-model.js"
+    }
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "4.0.31",
+    "p-queue": "10.0.0",
+    "zod": "^4.3.6"
+  }
+}

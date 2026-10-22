@@ -468,3 +468,39 @@ button.item:hover,
 .dialog::backdrop {
   background: rgb(0 0 0 / 35%);
 }
+
+.transcription-link {
+  flex: none;
+}
+.transcription-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.transcription-model {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.transcription-model .form-select {
+  text-align: start;
+}
+
+.transcription-menu {
+  width: var(--radix-select-trigger-width);
+  max-height: var(--radix-select-content-available-height);
+}
+
+.transcription-menu .menu-item {
+  position: relative;
+  padding-inline-start: 32px;
+}
+
+.transcription-selected {
+  position: absolute;
+  inset-inline-start: 8px;
+  display: flex;
+  align-items: center;
+}

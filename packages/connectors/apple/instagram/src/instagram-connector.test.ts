@@ -15,6 +15,7 @@ import { setupServer } from 'msw/node';
 import { Pipeline } from '@workspace/elt';
 import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import { ScratchMac } from '@workspace/sdk-chromium-cookies/test';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 import InstagramConnector from './instagram-connector.ts';
 
@@ -27,7 +28,11 @@ function connector(): InstagramConnector {
   );
   // Instagram reads nothing through EventKit.
   return new InstagramConnector(
-    { grantee: 'Codex', eventKitHelper: '' },
+    {
+      grantee: 'Codex',
+      documentParser: new MacOSDocumentParser(),
+      eventKitHelper: '',
+    },
     { name: contextCompiler.name, title: contextCompiler.title, folder },
   );
 }

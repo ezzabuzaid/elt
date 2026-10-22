@@ -1,0 +1,28 @@
+{
+  "name": "transcription-local",
+  "sourceRoot": "packages/transcription-local/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "helper": {
+      "command": "node packages/transcription-local/build.mjs",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/native/**",
+        "{projectRoot}/build.mjs",
+        {
+          "runtime": "node -p \"process.platform + process.arch\""
+        }
+      ],
+      "outputs": ["{projectRoot}/dist/transcribe-local"]
+    },
+    "build": {
+      "dependsOn": ["...", "helper"]
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test {args} \"packages/transcription-local/dist/*.test.js\""
+    }
+  }
+}

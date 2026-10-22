@@ -97,6 +97,17 @@ npx nx run apple-cli:start -- setup
 npx nx run apple-cli:start -- sync
 ```
 
+Audio transcription is off until you choose a model. On the Apple page, open **Audio transcription**, enable it, choose a supported model installed in Handy (Cohere or Canary), and save. Audio stays on this Mac; existing and new imported attachments become searchable through `attachment_text`. Turning it off keeps existing transcripts.
+
+The CLI saves the same choice in its `--directory` store:
+
+```sh
+npx nx run apple-cli:start -- --transcription-model cohere-int8 sync --connector whatsapp
+npx nx run apple-cli:start -- --transcription-model off status
+```
+
+Use `--directory "$HOME/Library/Application Support/Context Compiler/Apple"` before the command to share the Apple page's settings. Local transcription requires `ffmpeg` on PATH (`brew install ffmpeg`). Building the native worker requires Rust/Cargo; Nx builds it automatically. Handy's model downloads are reused in place and are never modified.
+
 A pipeline declares connections of copies; the smallest one copies Notes into SQLite:
 
 ```ts
@@ -343,7 +354,7 @@ await new Pipeline({
 
 Each file field chooses its own store. SQLite and Postgres receive an ordinary text reference; `LocalFiles` owns paths and file writes. Files are saved before rows commit, and obsolete files are removed after committed rows stop referencing them. Unchanged content reuses its path; clearing a copy removes its managed files. These files mirror retained rows rather than form a permanent archive.
 
-Parsing is explicit. Omitting file-derived columns loads metadata only. The macOS parser reads PDFs with a text layer, TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, WordML, vCards, and text in images through Vision. It does not transcribe audio; audio, video and unknown formats load `null`. Files it cannot read fail the copy. Attachments whose file is not on this Mac (not yet downloaded from iCloud) or that belong to a locked note keep their metadata with `null` content and reference. Tables have no file; their cells are in the note's `markdown`.
+Parsing is explicit. Omitting file-derived columns loads metadata only. The macOS parser reads PDFs with a text layer, TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, WordML, vCards, and text in images through Vision. Add `new AudioFormat(model)` to transcribe audio with a caller-provided AI SDK model; without it, audio loads `null`. Video and unknown formats load `null`. Files it cannot read fail the copy. Attachments whose file is not on this Mac (not yet downloaded from iCloud) or that belong to a locked note keep their metadata with `null` content and reference. Tables have no file; their cells are in the note's `markdown`.
 
 The Apple hosts parse nothing inside an import. After each pass commits, they read the text of every copy it stored, four at once, into `attachment_text`, which SQL searches by joining `attachmentRef` to `ref`; a file the parser cannot read loads as `failed` and is read again after the next sync instead of failing the import. See [attachment text](docs/reference.md#attachment-text).
 

@@ -4,6 +4,7 @@ import { DocumentFormat } from './document-format.ts';
 import type { FileHead } from './file-head.ts';
 
 export class VCardFormat extends DocumentFormat {
+  readonly identity = 'vcard-v1';
   protected override readonly extensions = ['vcf'];
 
   protected override hasSignature(head: FileHead): boolean {

@@ -11,6 +11,10 @@ import {
   installSQLiteCatalog,
   publishSQLiteViews,
 } from '@workspace/elt-sqlite';
+import {
+  type LocalTranscriptionConfiguration,
+  LocalTranscriptionModel,
+} from '@workspace/transcription-local';
 
 import {
   type ConnectorFacts,
@@ -33,6 +37,7 @@ const settingsTables = new Declaration(
   [
     'CREATE TABLE selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL)',
     "CREATE TABLE connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failure_type TEXT NOT NULL CHECK (failure_type IN ('config', 'system')), failed_at TEXT NOT NULL)",
+    'CREATE TABLE transcription (id INTEGER PRIMARY KEY CHECK (id = 1), model TEXT NOT NULL)',
   ],
   { rows: 'replace' },
 );
@@ -137,6 +142,26 @@ export class Settings implements Disposable {
         scope: JSON.parse(String(row.scope)),
         includeAttachments: row.include_attachments === 1,
       }));
+  }
+
+  transcription(): LocalTranscriptionConfiguration | null {
+    const row = this.settings
+      .prepare('SELECT model FROM transcription WHERE id = 1')
+      .get();
+    if (row === undefined) return null;
+    if (typeof row.model !== 'string')
+      throw new TypeError('Invalid stored transcription model');
+    return LocalTranscriptionModel.parse(JSON.parse(row.model));
+  }
+
+  setTranscription(model: LocalTranscriptionConfiguration | null): void {
+    if (model === null) this.settings.exec('DELETE FROM transcription');
+    else
+      this.settings
+        .prepare(
+          'INSERT INTO transcription VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET model = excluded.model',
+        )
+        .run(JSON.stringify(LocalTranscriptionModel.parse(model)));
   }
 
   // Saves a selection that has no problems, with what macOS needs granted for

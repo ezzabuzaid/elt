@@ -16,6 +16,7 @@ import {
 } from '@workspace/elt';
 import type { SQLiteView } from '@workspace/elt-sqlite';
 import { Settings } from '@workspace/settings';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 import { AppleConnector } from './apple-connector.ts';
 
@@ -88,7 +89,11 @@ class TwoStoreConnector extends AppleConnector {
 
   constructor(broken: string, views: readonly SQLiteView[]) {
     super(
-      { grantee: 'Codex', eventKitHelper: '' },
+      {
+        grantee: 'Codex',
+        documentParser: new MacOSDocumentParser(),
+        eventKitHelper: '',
+      },
       { name: 'two-stores', title: 'Two Stores', folder: '/nonexistent' },
     );
     this.#broken = broken;

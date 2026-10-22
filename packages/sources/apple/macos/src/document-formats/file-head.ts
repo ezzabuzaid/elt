@@ -1,15 +1,15 @@
 import { open } from 'node:fs/promises';
 
-const length = 16;
+const length = 4100;
 
 // A file's leading bytes, where most formats name themselves. A file shorter
 // than the head holds only the bytes it has.
 export class FileHead {
-  readonly #bytes: Uint8Array;
+  readonly bytes: Uint8Array;
   readonly ascii: string;
 
   private constructor(bytes: Uint8Array) {
-    this.#bytes = bytes;
+    this.bytes = bytes;
     this.ascii = new TextDecoder('latin1').decode(bytes);
   }
 
@@ -21,6 +21,6 @@ export class FileHead {
   }
 
   startsWith(...bytes: number[]): boolean {
-    return bytes.every((byte, index) => this.#bytes[index] === byte);
+    return bytes.every((byte, index) => this.bytes[index] === byte);
   }
 }

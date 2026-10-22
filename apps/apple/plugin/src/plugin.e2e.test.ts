@@ -465,6 +465,8 @@ test(
         'apple_page',
         'apple_setup',
         'apple_sync',
+        'apple_transcription',
+        'apple_transcription_update',
       ]);
       const metaOf = (name: string) =>
         tools.find((tool) => tool.name === name)?._meta;
@@ -476,6 +478,8 @@ test(
         'apple_connector_choices',
         'apple_connector_update',
         'apple_sync',
+        'apple_transcription',
+        'apple_transcription_update',
         'apple_open_full_disk_access',
         'apple_monitors',
         'apple_monitor_remove',
@@ -528,6 +532,8 @@ test(
         'apple_connector_choices',
         'apple_connector_update',
         'apple_sync',
+        'apple_transcription',
+        'apple_transcription_update',
         'apple_open_full_disk_access',
         'apple_monitors',
         'apple_monitor_remove',

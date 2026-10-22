@@ -26,9 +26,9 @@ const columns = {
   sha256:
     'SHA-256 of the file bytes, which also names the stored copy. Rows of different tables that hold the same file share it.',
   parser:
-    'Identity of the parser that read the file, such as macos-document-v4. A file read by an earlier version is read again.',
+    'Identity of the format and model that read the file. A file is read again when that identity changes.',
   status:
-    'parsed: content holds the text. no_text: the parser read the file and found no text it can represent, such as a photo without words or a voice message. failed: reading the file failed and error says why; the file is read again after the next sync.',
+    'parsed: content holds the text. no_text: the parser read the file and found no text it can represent, such as a photo without words or audio when transcription is off. failed: reading the file failed and error says why; the file is read again after the next sync.',
   content: 'The text the parser extracted. NULL unless status is parsed.',
   error: 'Why reading the file failed. NULL unless status is failed.',
 };
@@ -42,10 +42,14 @@ const columns = {
 export class AttachmentText {
   readonly #path: string;
   readonly #views: readonly string[];
-  readonly #parser: DocumentParser;
+  readonly #parser: () => DocumentParser;
 
   // views: the import's reader views whose rows carry an attachmentRef.
-  constructor(path: string, views: readonly string[], parser: DocumentParser) {
+  constructor(
+    path: string,
+    views: readonly string[],
+    parser: () => DocumentParser,
+  ) {
     this.#path = path;
     this.#views = views;
     this.#parser = parser;
@@ -63,7 +67,7 @@ export class AttachmentText {
         while (failures.length === 0 && !signal.aborted) {
           const ref = due[next++];
           if (ref === undefined) return;
-          await this.#read(database, ref).catch((error: unknown) => {
+          await this.#read(database, ref, signal).catch((error: unknown) => {
             failures.push(error);
           });
         }
@@ -73,7 +77,7 @@ export class AttachmentText {
   }
 
   // Publishes the table and its view, forgets the files no row references,
-  // and returns those still to read.
+  // and returns the ones they still reference; #read skips those already read.
   #reconcile(database: DatabaseSync): string[] {
     return transaction(
       database,
@@ -109,27 +113,42 @@ export class AttachmentText {
         database.exec(
           `DELETE FROM raw_attachment_text WHERE ref NOT IN (${referenced})`,
         );
-        const due = database
-          .prepare(
-            `SELECT r.ref FROM (${referenced}) r LEFT JOIN raw_attachment_text t ON t.ref = r.ref
-           WHERE t.ref IS NULL OR t.parser <> ? OR t.status = 'failed' ORDER BY r.ref`,
-          )
-          .all(this.#parser.identity)
+        return database
+          .prepare(`SELECT ref FROM (${referenced}) ORDER BY ref`)
+          .all()
           .map(({ ref }) => String(ref));
-        return due;
       },
       { mode: 'immediate' },
     );
   }
 
-  async #read(database: DatabaseSync, ref: string): Promise<void> {
+  async #read(
+    database: DatabaseSync,
+    ref: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     let status: 'parsed' | 'no_text' | 'failed';
     let content: string | null = null;
     let error: string | null = null;
+    const parser = this.#parser();
+    let identity = parser.identity;
     try {
-      content = await this.#parser.parse(ref);
+      const format = await parser.identityFor(ref);
+      const previous = database
+        .prepare('SELECT parser, status FROM raw_attachment_text WHERE ref = ?')
+        .get(ref);
+      // Disabling a format stops new extraction without erasing existing text.
+      if (format === null && previous?.status === 'parsed') return;
+      identity = format ?? 'unsupported';
+      if (previous?.parser === identity && previous.status !== 'failed') return;
+      if (format !== null) content = await parser.parse(ref, signal);
       status = content === null ? 'no_text' : 'parsed';
     } catch (failure) {
+      if (
+        signal.aborted ||
+        (failure instanceof Error && failure.name === 'AbortError')
+      )
+        return;
       // A commit removed the copy after the update listed it; its rows are
       // gone too, so the file is not a failure.
       if (await removed(ref)) return;
@@ -141,14 +160,7 @@ export class AttachmentText {
         `INSERT INTO raw_attachment_text (ref, sha256, parser, status, content, error) VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT (ref) DO UPDATE SET sha256 = excluded.sha256, parser = excluded.parser, status = excluded.status, content = excluded.content, error = excluded.error`,
       )
-      .run(
-        ref,
-        basename(ref, extname(ref)),
-        this.#parser.identity,
-        status,
-        content,
-        error,
-      );
+      .run(ref, basename(ref, extname(ref)), identity, status, content, error);
   }
 }
 
