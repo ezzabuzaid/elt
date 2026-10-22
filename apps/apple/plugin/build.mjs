@@ -20,7 +20,6 @@ import { fileURLToPath } from 'node:url';
 
 import { build } from 'esbuild';
 
-import { peopleFile } from '@workspace/apple-people/people';
 import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-connectors';
 import { ConnectorManifest } from '@workspace/connector-apple-manifest/connector-manifest';
 import { hostModules } from '@workspace/connector-apple-manifest/host-modules';
@@ -83,8 +82,6 @@ for (const { manifest, out } of builtIns) {
 
 // main.ts hands this path to the Calendar and Reminders connectors.
 copyFileSync(eventkitHelper, join(outdir, 'eventkit-helper'));
-// Chats read the people model from beside the server.
-copyFileSync(peopleFile, join(outdir, 'people.sql'));
 
 const {
   outputFiles: [script],

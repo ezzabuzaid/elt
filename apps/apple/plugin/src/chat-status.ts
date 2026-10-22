@@ -1,6 +1,5 @@
-import { join, relative } from 'node:path';
+import { relative } from 'node:path';
 
-import { peopleConnectors } from '@workspace/apple-people/people';
 import type { PassStatus } from '@workspace/elt-sqlite';
 
 import type { ApplePlugin } from './apple-plugin.ts';
@@ -9,8 +8,8 @@ import { passFailure } from './pass-failure.ts';
 
 // What a chat's hooks add to the model's context: each selected connector,
 // where its import lives, how its last pass went and the presets a reader can
-// load, and the people model that reads across them. A chat keeps it until it
-// changes, so times are instants, not "minutes ago".
+// load. A chat keeps it until it changes, so times are instants, not "minutes
+// ago".
 
 const progress = (sync: PassStatus | null, guidance: string): string => {
   if (sync === null) return 'waiting for its first import';
@@ -87,7 +86,6 @@ export function chatStatus(plugin: ApplePlugin): {
     ),
     text: [
       `Apple connectors the user set up, each imported into its own SQLite file under "${plugin.directory}". Read them as $query-apple describes. The user changes them on the Apple page: ${pageLink}`,
-      `People, everyone the user dealt with across these apps: attach the imports of ${peopleConnectors.join(', ')} under those names and read "${join(plugin.install, 'server/people.sql')}", as $apple-people describes.`,
       ...rows.map(
         ({
           connector,

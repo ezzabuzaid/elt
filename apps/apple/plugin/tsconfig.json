@@ -87,9 +87,6 @@
       "path": "../../../packages/connectors/apple/manifest"
     },
     {
-      "path": "../../../packages/connectors/apple/people"
-    },
-    {
       "path": "./src/page"
     }
   ]

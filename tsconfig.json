@@ -234,9 +234,6 @@
       "path": "./packages/sdks/chromium/cookies"
     },
     {
-      "path": "./packages/connectors/apple/people"
-    },
-    {
       "path": "./packages/sdks/instagram/web"
     },
     {

@@ -10,7 +10,7 @@ import { test } from 'node:test';
 const entry = join(import.meta.dirname, 'main.js');
 
 for (const absolute of [false, true])
-  test(`--directory uses an ${absolute ? 'absolute' : 'explicit relative'} store for setup, status, query and people`, async () => {
+  test(`--directory uses an ${absolute ? 'absolute' : 'explicit relative'} store for setup, status and query`, async () => {
     await using scratch = await mkdtempDisposable(
       join(tmpdir(), 'cli-directory-'),
     );
@@ -37,7 +37,7 @@ for (const absolute of [false, true])
     );
 
     const root = resolve(realpathSync(scratch.path), directory);
-    // Seed a real import to exercise both readers without needing the Mac's
+    // Seed a real import to exercise the reader without needing the Mac's
     // private Notes store; the connector's tests cover producing its records.
     {
       using settings = new DatabaseSync(join(root, 'settings.sqlite'), {
@@ -55,14 +55,9 @@ for (const absolute of [false, true])
         "CREATE TABLE notes (title TEXT); INSERT INTO notes VALUES ('Chosen store')",
       );
     }
-    for (const args of [
-      ['query', 'notes', 'SELECT title FROM notes'],
-      ['people', 'SELECT title FROM notes.notes'],
-    ]) {
-      const result = cli(...args);
-      assert.equal(result.status, 0, result.stderr);
-      assert.deepEqual(JSON.parse(result.stdout), [{ title: 'Chosen store' }]);
-    }
+    const query = cli('query', 'notes', 'SELECT title FROM notes');
+    assert.equal(query.status, 0, query.stderr);
+    assert.deepEqual(JSON.parse(query.stdout), [{ title: 'Chosen store' }]);
     const watch = cli('sync', 'watch', '--help');
     assert.equal(watch.status, 0, watch.stderr);
     assert.match(watch.stdout, /--connector/);
