@@ -4,6 +4,10 @@
   "projectType": "library",
   "tags": ["layer:island", "layer:sdk"],
   "targets": {
-    "format": {}
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test {args} \"packages/sdks/whatsapp/desktop/dist/*.test.js\""
+    }
   }
 }

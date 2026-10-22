@@ -1,0 +1,13 @@
+{
+  "name": "sdk-apple-launch-services",
+  "sourceRoot": "packages/sdks/apple/launch-services/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test {args} \"packages/sdks/apple/launch-services/dist/*.test.js\""
+    }
+  }
+}

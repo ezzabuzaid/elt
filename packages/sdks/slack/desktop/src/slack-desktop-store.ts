@@ -112,6 +112,24 @@ export class SlackDesktopStore {
   // A value that changes whenever the app saves its state, a client's or its
   // own.
   version(): string {
+    return this.#saved()
+      .map(({ path, stats }) => `${path}:${stats?.size}:${stats?.mtimeMs}`)
+      .join('\n');
+  }
+
+  // When the app last saved its state, a client's or its own. It saves every
+  // few minutes while it is open and when it quits, so a closed app's store
+  // stays as of then.
+  lastWrite(): Date {
+    return new Date(
+      Math.max(...this.#saved().flatMap(({ stats }) => stats?.mtimeMs ?? [])),
+    );
+  }
+
+  // The files the app saves its state to. A file LevelDB removed after the
+  // folder was listed, or a state the app has not saved yet, has no stats.
+  // CURRENT always has: LevelDB replaces it by a rename, never removes it.
+  #saved() {
     const directory = join(this.#directory, indexedDB);
     try {
       return [
@@ -119,12 +137,10 @@ export class SlackDesktopStore {
           .sort()
           .map((name) => join(directory, name)),
         join(this.#directory, rootState),
-      ]
-        .map((path) => {
-          const stats = statSync(path, { throwIfNoEntry: false });
-          return `${path}:${stats?.size}:${stats?.mtimeMs}`;
-        })
-        .join('\n');
+      ].map((path) => ({
+        path,
+        stats: statSync(path, { throwIfNoEntry: false }),
+      }));
     } catch (error) {
       throw new SlackDesktopUnavailableError(this.#directory, error);
     }

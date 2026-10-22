@@ -1,3 +1,5 @@
+import { lastWrite } from '@zukhruf/sqlite-data-version';
+
 import { EnvelopeIndex } from './envelope-index.ts';
 import { MailUnavailableError } from './errors.ts';
 import { MailFiles } from './mail-files.ts';
@@ -57,6 +59,13 @@ export class MailStore {
   async version(): Promise<MailVersion> {
     const directory = await mailVersionDirectory(this.root);
     return this.#atRoot(() => new MailVersion(this.root, directory));
+  }
+
+  // When Mail last wrote the index of its current version folder. Mail's
+  // daemon writes it while Mail.app is closed too.
+  async lastWrite(): Promise<Date> {
+    const directory = await mailVersionDirectory(this.root);
+    return lastWrite(envelopeIndexPath(directory), MailUnavailableError);
   }
 
   // Full Disk Access covers the whole store, so an index this process cannot

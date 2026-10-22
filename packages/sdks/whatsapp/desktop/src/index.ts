@@ -56,6 +56,7 @@ export {
 } from './stickers.ts';
 export type { User } from './users.ts';
 export { UsersSnapshot } from './users.ts';
+export { whatsappRunning } from './whatsapp-app.ts';
 export {
   WhatsApp,
   type WhatsAppStore,

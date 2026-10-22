@@ -54,17 +54,31 @@ export class TeamsStore {
 
   // A value that changes whenever the web client writes its caches.
   version(): string {
+    return this.#saved()
+      .map(({ name, stats }) => `${name}:${stats?.size}:${stats?.mtimeMs}`)
+      .join('\n');
+  }
+
+  // When the web client last wrote its caches. It writes them only while
+  // the app runs, so a closed app's store stays as of then.
+  lastWrite(): Date {
+    return new Date(
+      Math.max(...this.#saved().flatMap(({ stats }) => stats?.mtimeMs ?? [])),
+    );
+  }
+
+  // The files of the web client's database. A file LevelDB removed after the
+  // folder was listed has no stats. CURRENT always has: LevelDB replaces it
+  // by a rename, never removes it.
+  #saved() {
     const directory = join(this.#directory, indexedDB);
     try {
       return readdirSync(directory)
         .sort()
-        .map((name) => {
-          const stats = statSync(join(directory, name), {
-            throwIfNoEntry: false,
-          });
-          return `${name}:${stats?.size}:${stats?.mtimeMs}`;
-        })
-        .join('\n');
+        .map((name) => ({
+          name,
+          stats: statSync(join(directory, name), { throwIfNoEntry: false }),
+        }));
     } catch (error) {
       throw new TeamsUnavailableError(this.#directory, error);
     }

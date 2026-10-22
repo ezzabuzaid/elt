@@ -12,6 +12,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 
+import { SlackDesktopStore, SlackDesktopUnavailableError } from './index.ts';
+
 const locations = {
   direct: 'Library/Application Support/Slack',
   appStore:
@@ -127,3 +129,62 @@ for (const location of Object.values(locations)) {
     assert.ok((await read(home.path)).version.includes(directory));
   });
 }
+
+// A reader reads the files after the app saves them, so each file's access
+// time is later than the time it was saved.
+const readLater = 100_000;
+
+// Gives the store's files the times the app saved them, in seconds since the
+// epoch; the database folder's own time stays at the first save.
+async function savedAt(
+  directory: string,
+  times: { database: number; log: number; state: number },
+) {
+  const database = join(directory, indexedDB);
+  const saved = (path: string, time: number) =>
+    utimes(path, time + readLater, time);
+  for (const file of ['CURRENT', 'MANIFEST-000001'])
+    await saved(join(database, file), times.database);
+  await saved(join(database, '000003.log'), times.log);
+  await saved(database, times.database);
+  await saved(join(directory, 'storage/root-state.json'), times.state);
+}
+
+test('the store was last written when a file of its database was, though the database folder kept its time', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'slack-written-'));
+  await save(dir.path, 'F1');
+  await writeFile(join(dir.path, indexedDB, '000003.log'), 'saved');
+  await savedAt(dir.path, {
+    database: 1_800_000_000,
+    log: 1_800_000_300,
+    state: 1_800_000_000,
+  });
+
+  const written = new SlackDesktopStore(dir.path).lastWrite();
+
+  assert.equal(written.getTime(), 1_800_000_300_000);
+});
+
+test('the store was last written when the app last saved its own state, if that came later', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'slack-written-'));
+  await save(dir.path, 'F1');
+  await writeFile(join(dir.path, indexedDB, '000003.log'), 'first save');
+  await savedAt(dir.path, {
+    database: 1_800_000_000,
+    log: 1_800_000_000,
+    state: 1_800_000_600,
+  });
+
+  const written = new SlackDesktopStore(dir.path).lastWrite();
+
+  assert.equal(written.getTime(), 1_800_000_600_000);
+});
+
+test('a store that is not there is unavailable, not a time', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'slack-written-'));
+
+  assert.throws(
+    () => new SlackDesktopStore(join(dir.path, 'Slack')).lastWrite(),
+    SlackDesktopUnavailableError,
+  );
+});

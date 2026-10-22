@@ -1,6 +1,8 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { appRunning } from '@workspace/sdk-apple-launch-services';
+
 const execFile = promisify(execFileCallback);
 const bundle = 'com.apple.Notes';
 
@@ -9,16 +11,11 @@ const bundle = 'com.apple.Notes';
 // syncs without a window or taking focus. A running Notes is left as it is,
 // since `open -j` would hide a window the user has open.
 export async function launchNotesHidden(): Promise<boolean> {
-  const { stdout } = await execFile('/usr/bin/lsappinfo', [
-    'info',
-    '-only',
-    'pid',
-    '-app',
-    bundle,
-  ]);
-  // Older macOS prints `"pid"=123`; macOS 27 prints `pid = 123`. A closed app
-  // prints nothing.
-  if (/\bpid"?\s*=\s*\d+/.test(stdout)) return false;
+  if (await notesRunning()) return false;
   await execFile('/usr/bin/open', ['-g', '-j', '-b', bundle]);
   return true;
+}
+
+export function notesRunning(): Promise<boolean> {
+  return appRunning(bundle);
 }

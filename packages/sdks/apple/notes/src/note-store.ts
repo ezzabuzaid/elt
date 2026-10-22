@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { DataVersion } from '@zukhruf/sqlite-data-version';
+import { DataVersion, lastWrite } from '@zukhruf/sqlite-data-version';
 
 import { NotesUnavailableError } from './errors.ts';
 import { NoteStoreSnapshot } from './note-store-snapshot.ts';
@@ -30,5 +30,11 @@ export class NotesStore {
   // changes with each commit Notes makes.
   version(): DataVersion {
     return new DataVersion(this.#path, NotesUnavailableError);
+  }
+
+  // When Notes last wrote the store. Only Notes.app syncs iCloud notes, so
+  // while it is closed the store stays as of then.
+  lastWrite(): Date {
+    return lastWrite(this.#path, NotesUnavailableError);
   }
 }

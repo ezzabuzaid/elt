@@ -16,4 +16,4 @@ export {
   type NoteFolder,
   NoteStoreSnapshot,
 } from './note-store-snapshot.ts';
-export { launchNotesHidden } from './notes-app.ts';
+export { launchNotesHidden, notesRunning } from './notes-app.ts';

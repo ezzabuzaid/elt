@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { DataVersion } from '@zukhruf/sqlite-data-version';
+import { DataVersion, lastWrite } from '@zukhruf/sqlite-data-version';
 
 import { BusinessesSnapshot } from './businesses.ts';
 import { CallsSnapshot } from './calls.ts';
@@ -92,6 +92,13 @@ export class WhatsApp {
   // A probe whose current value changes with each commit to the store.
   version(store: WhatsAppStore): WhatsAppVersion {
     return new WhatsAppVersion(this.#file(store));
+  }
+
+  // When WhatsApp last wrote this store. While the app is closed it writes
+  // no chats or messages, and its notification extension writes only
+  // LocalKeyValue.sqlite, so each store keeps its own time.
+  lastWrite(store: WhatsAppStore): Date {
+    return lastWrite(this.#file(store), WhatsAppUnavailableError);
   }
 
   #file(store: WhatsAppStore): string {

@@ -30,6 +30,7 @@ Only these parts are copied:
 - `#read`: three attempts, a retry on `ENOENT` while the directory exists, `IndexedDBFormatError` changed to the SDK's format error, and the codes in `unreadable` changed to the SDK's access error.
 - `#exists`, the `unreadable` set and `errorCode`.
 - `version()`, without `storage/root-state.json`: Teams has no file of its own beside its IndexedDB. It keys each file by its name, where Slack's keys it by its full path.
+- `#saved()` and `lastWrite()`: the files of the database with their stats, and the latest of their modification times. Without `storage/root-state.json`, as for `version()`.
 
 The choice between two installations (`slackDesktopDirectory`) is not copied: Teams has one location.
 

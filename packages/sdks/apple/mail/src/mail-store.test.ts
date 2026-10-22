@@ -1,11 +1,46 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtempDisposable, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtempDisposable, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
-import { MailSchemaError, MailStore } from './index.ts';
+import { MailSchemaError, MailStore, MailUnavailableError } from './index.ts';
+
+test('the store was last written when the index of its current version folder was, not an older folder', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'mail-store-'));
+  await writeFile(
+    join(dir.path, 'PersistenceInfo.plist'),
+    '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>LastUsedVersionDirectoryName</key><string>V10</string></dict></plist>',
+  );
+  for (const [version, written] of [
+    ['V9', 1_800_000_900],
+    ['V10', 1_800_000_300],
+  ] as const) {
+    await mkdir(join(dir.path, version, 'MailData'), { recursive: true });
+    const index = join(dir.path, version, 'MailData/Envelope Index');
+    new DatabaseSync(index).close();
+    // Mail and its daemon write the index; a reader only reads it later.
+    await utimes(index, written + 100_000, written);
+  }
+
+  const written = await new MailStore(dir.path).lastWrite();
+
+  assert.equal(written.getTime(), 1_800_000_300_000);
+});
+
+test('a store whose index is missing is unavailable, not a time', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'mail-store-'));
+  await writeFile(
+    join(dir.path, 'PersistenceInfo.plist'),
+    '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>LastUsedVersionDirectoryName</key><string>V10</string></dict></plist>',
+  );
+
+  await assert.rejects(
+    new MailStore(dir.path).lastWrite(),
+    MailUnavailableError,
+  );
+});
 
 test('an index without a column the reader needs fails with MailSchemaError naming each missing table.column', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'mail-store-'));
