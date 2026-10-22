@@ -737,7 +737,7 @@ test(
       assert.equal(messagesRow.status.fullDiskAccess, true);
       assert.match(
         await context(client, 'UserPromptSubmit'),
-        /^- Messages: last sync failed at .*Full Disk Access.*; no data yet\. Database: messages\//m,
+        /^- Messages: last sync failed at .*Full Disk Access.*; not every stream has loaded completely yet; stream_status has each stream's current_as_of\. Database: messages\//m,
       );
       // A connector whose import failed links to its own page.
       assert.match(

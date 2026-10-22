@@ -228,19 +228,21 @@ async function passes(plugin: ApplePlugin, item: Selection) {
   }));
   return async () => {
     const pass = await history.begin(connection, copies);
+    const end = (cancelled: boolean) =>
+      pass.finish(
+        copies.map(({ copy }) => ({
+          copy,
+          count: 0,
+          deleted: 0,
+          failures: [],
+          cancelled,
+        })),
+        // Every Notes stream reads a live upstream here.
+        new Map(),
+      );
     return {
-      finish: () =>
-        pass.finish(
-          copies.map(({ copy }) => ({
-            copy,
-            count: 0,
-            deleted: 0,
-            failures: [],
-            cancelled: false,
-          })),
-          // Every Notes stream reads a live upstream here.
-          new Map(),
-        ),
+      finish: () => end(false),
+      cancel: () => end(true),
       fail: pass.fail,
     };
   };
@@ -1469,7 +1471,7 @@ test('a chat hears of a pass only when it changes what a reader can do with the 
   const importing = chatStatus(plugin);
   assert.match(
     importing.text,
-    /^- Notes: importing since .*; no data yet\. Database: notes\//m,
+    /^- Notes: importing since .*; not every stream has loaded completely yet; stream_status has each stream's current_as_of\. Database: notes\//m,
   );
   assert.notEqual(importing.state, waiting.state);
   await (await begin()).finish();
@@ -1498,6 +1500,76 @@ test('a chat hears of a pass only when it changes what a reader can do with the 
     crashed.text,
     /^- Notes: last sync failed at .*: Notes crashed\.; data as of /m,
   );
+});
+
+test('a chat never calls an import empty while it holds rows that a pass loaded before a stream failed', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const home = join(scratch.path, 'home');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  // The second entry fails the stream after the first photo committed.
+  await writeFile(
+    join(home, 'Pictures/photos.json'),
+    JSON.stringify([{ id: 'p1', title: 'Beach' }, 'not a photo']),
+  );
+  const plugin = await photosPlugin(join(scratch.path, 'store'));
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await plugin.configure({ connectors: [photos] });
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    const partial = chatStatus(plugin).text;
+    const begin = await passes(plugin, photos);
+    await begin();
+    const running = chatStatus(plugin).text;
+    await (await begin()).fail(new Error('Photos crashed.'), 'system');
+    const failed = chatStatus(plugin).text;
+    await (await begin()).cancel();
+    const cancelled = chatStatus(plugin).text;
+
+    using data = new DatabaseSync(
+      join(importDirectory(plugin.directory, photos), 'data.sqlite'),
+      { readOnly: true },
+    );
+    assert.deepEqual(
+      data
+        .prepare('SELECT id FROM photos')
+        .all()
+        .map(({ id }) => id),
+      ['p1'],
+    );
+    // Where the chat sends the reader: the stream is listed, not current.
+    assert.deepEqual(
+      data
+        .prepare('SELECT stream, current_as_of FROM stream_status')
+        .all()
+        .map((row) => ({ ...row })),
+      [{ stream: 'photos', current_as_of: null }],
+    );
+    assert.match(
+      partial,
+      /^- Photos: partly synced at .*; not every stream has loaded completely yet; stream_status has each stream's current_as_of\. Database: photos\//m,
+    );
+    assert.match(
+      running,
+      /^- Photos: importing since .*; not every stream has loaded completely yet; stream_status has each stream's current_as_of\. Database: photos\//m,
+    );
+    assert.match(
+      failed,
+      /^- Photos: last sync failed at .*: Photos crashed\.; not every stream has loaded completely yet; stream_status has each stream's current_as_of\. Database: photos\//m,
+    );
+    assert.match(
+      cancelled,
+      /^- Photos: its last pass was stopped before it finished; not every stream has loaded completely yet; stream_status has each stream's current_as_of\. Database: photos\//m,
+    );
+    for (const text of [partial, running, failed, cancelled])
+      assert.doesNotMatch(text, /no data yet/);
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
 });
 
 test('the Apple page and chat report Mail local freshness and content gaps, including a newly downloaded body', async () => {

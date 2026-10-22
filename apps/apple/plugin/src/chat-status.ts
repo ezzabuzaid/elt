@@ -14,9 +14,11 @@ import { passFailure } from './pass-failure.ts';
 
 const progress = (sync: PassStatus | null, guidance: string): string => {
   if (sync === null) return 'waiting for its first import';
+  // currentAsOf is the oldest stream's current_as_of, so it is null while any
+  // stream has not loaded completely, even when others already hold rows.
   const since =
     sync.currentAsOf === null
-      ? 'no data yet'
+      ? "not every stream has loaded completely yet; stream_status has each stream's current_as_of"
       : `data as of ${sync.currentAsOf}`;
   switch (sync.state) {
     case 'succeeded':
