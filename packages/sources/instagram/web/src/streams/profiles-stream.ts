@@ -38,8 +38,10 @@ const properties = {
     description: 'How many posts Instagram counts on the profile, when read.',
   },
   reels: {
-    ...count,
-    description: 'How many reels Instagram counts on the profile, when read.',
+    type: ['integer', 'null'],
+    minimum: 0,
+    description:
+      'How many reels Instagram counts on the profile, when read; NULL when Instagram leaves the count out.',
   },
   city: {
     ...nullableText,

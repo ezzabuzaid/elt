@@ -48,8 +48,9 @@ const timelineMedia = timelineSlide.extend({
     .object({
       pk: z.int(),
       name: z.string(),
-      lat: z.number(),
-      lng: z.number(),
+      // null for a place Instagram knows no coordinates of.
+      lat: z.number().nullable(),
+      lng: z.number().nullable(),
     })
     .transform(({ pk, ...place }) => ({ ...place, pk: String(pk) }))
     .nullable(),
@@ -155,7 +156,8 @@ export const profileResponse = z.object({
       follower_count: z.number(),
       following_count: z.number(),
       media_count: z.number(),
-      total_clips_count: z.number(),
+      // null for some profiles, as for five followed ones on 2026-10-17.
+      total_clips_count: z.number().nullable(),
       city_name: z.string().nullable(),
       address_street: z.string().nullable(),
       hd_profile_pic_url_info: z.object({ url: z.string() }),

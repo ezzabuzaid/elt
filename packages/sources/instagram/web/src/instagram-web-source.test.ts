@@ -92,8 +92,9 @@ type Post = {
   readonly location?: {
     readonly pk: number;
     readonly name: string;
-    readonly lat: number;
-    readonly lng: number;
+    // null where Instagram knows no coordinates for the place.
+    readonly lat: number | null;
+    readonly lng: number | null;
   };
 };
 
@@ -106,6 +107,9 @@ type Story = {
 type Profile = {
   readonly pk: string;
   readonly username: string;
+  // null where Instagram leaves the reel count out, as it did for five
+  // followed profiles on 2026-10-17.
+  readonly reelCount?: null;
   posts: Post[];
   reels?: Post[];
   reposts?: Post[];
@@ -352,7 +356,8 @@ function instagram(world: World) {
             follower_count: 5820,
             following_count: 12,
             media_count: profile.posts.length,
-            total_clips_count: profile.reels?.length ?? 0,
+            total_clips_count:
+              profile.reelCount === null ? null : (profile.reels?.length ?? 0),
             city_name: 'Amman',
             address_street: null,
             hd_profile_pic_url_info: { url: imageOf(`${profile.pk}-avatar`) },
@@ -1130,7 +1135,7 @@ async function storedFiles(directory: string, sql: string) {
   );
 }
 
-test('a post tagged with a place loads the place’s id, name and coordinates, and a post without one loads none', async () => {
+test('a post tagged with a place loads the place’s id, name and coordinates, a place without coordinates loads them as NULL, and a post without a place loads none', async () => {
   await using _mac = await signedInMac();
   await using dir = await mkdtempDisposable(join(tmpdir(), 'instagram-load-'));
   using _wire = instagram({
@@ -1147,6 +1152,11 @@ test('a post tagged with a place loads the place’s id, name and coordinates, a
           },
         },
         { pk: '72', takenAt: day - 86_400 },
+        {
+          pk: '73',
+          takenAt: day - 2 * 86_400,
+          location: { pk: 213_144_181, name: 'Amman', lat: null, lng: null },
+        },
       ]),
     ],
     following: [],
@@ -1179,7 +1189,35 @@ test('a post tagged with a place loads the place’s id, name and coordinates, a
         latitude: null,
         longitude: null,
       },
+      {
+        id: '73',
+        locationId: '213144181',
+        locationName: 'Amman',
+        latitude: null,
+        longitude: null,
+      },
     ],
+  );
+});
+
+test('a profile whose reel count Instagram leaves out loads its reels as NULL', async () => {
+  await using _mac = await signedInMac();
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'instagram-load-'));
+  using _wire = instagram({
+    profiles: [{ ...hive([]), reelCount: null }],
+    following: [],
+  });
+
+  await (
+    await pipeline(
+      await InstagramWebSource.connect({ profileIds: ['44555906095'] }),
+      dir.path,
+    )
+  ).run();
+
+  assert.deepEqual(
+    rows(dir.path, 'SELECT "profileId", posts, reels FROM profiles'),
+    [{ profileId: '44555906095', posts: 0, reels: null }],
   );
 });
 
