@@ -42,8 +42,18 @@ async function readOnlyLogin(
     .batch(
       `CREATE LOGIN [${user}] WITH PASSWORD = '${password}', CHECK_POLICY = OFF`,
     );
+  // SQL Server refuses to drop a login that is logged in, and a connection
+  // closed while it streamed stays logged in for a moment after the client
+  // lets go, so the drop waits up to five seconds for its sessions to end.
   resources.defer(async () => {
-    await admin.request().batch(`DROP LOGIN [${user}]`);
+    await admin.request().batch(`
+      DECLARE @waited int = 0;
+      WHILE EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE login_name = N'${user}') AND @waited < 100
+      BEGIN
+        WAITFOR DELAY '00:00:00.050';
+        SET @waited += 1;
+      END;
+      DROP LOGIN [${user}];`);
   });
   await admin
     .request()
