@@ -15,9 +15,6 @@
       "path": "./packages/google-auth"
     },
     {
-      "path": "./packages/settings"
-    },
-    {
       "path": "./packages/elt"
     },
     {
@@ -25,12 +22,6 @@
     },
     {
       "path": "./apps/google"
-    },
-    {
-      "path": "./apps/apple/plugin"
-    },
-    {
-      "path": "./apps/apple/cli"
     },
     {
       "path": "./packages/sources/apple/macos"
@@ -66,43 +57,7 @@
       "path": "./packages/sdks/apple/eventkit"
     },
     {
-      "path": "./packages/connectors/apple/manifest"
-    },
-    {
-      "path": "./packages/connectors/apple/reminders"
-    },
-    {
-      "path": "./packages/connectors/apple/calendar"
-    },
-    {
-      "path": "./packages/connectors/apple/contacts"
-    },
-    {
-      "path": "./packages/connectors/apple/messages"
-    },
-    {
-      "path": "./packages/connectors/apple/safari"
-    },
-    {
-      "path": "./packages/connectors/apple/books"
-    },
-    {
-      "path": "./packages/connectors/apple/notes"
-    },
-    {
-      "path": "./packages/connectors/apple/mail"
-    },
-    {
-      "path": "./packages/connectors/apple/connector"
-    },
-    {
-      "path": "./packages/connectors/apple/activity"
-    },
-    {
       "path": "./packages/sources/apple/activity"
-    },
-    {
-      "path": "./packages/connectors/apple/accounts"
     },
     {
       "path": "./packages/sources/apple/accounts"
@@ -127,9 +82,6 @@
     },
     {
       "path": "./packages/sources/apple/call-history"
-    },
-    {
-      "path": "./packages/connectors/apple/call-history"
     },
     {
       "path": "./packages/sdks/apple/books"
@@ -159,9 +111,6 @@
       "path": "./packages/codecs/apple-reference-date"
     },
     {
-      "path": "./packages/connectors/apple/notification-center"
-    },
-    {
       "path": "./packages/sources/apple/notification-center"
     },
     {
@@ -183,19 +132,10 @@
       "path": "./packages/sdks/slack/desktop"
     },
     {
-      "path": "./packages/connectors/apple/slack"
-    },
-    {
       "path": "./packages/sdks/apple/wallet"
     },
     {
       "path": "./packages/sources/apple/wallet"
-    },
-    {
-      "path": "./packages/connectors/apple/wallet"
-    },
-    {
-      "path": "./packages/connectors/apple/clock"
     },
     {
       "path": "./packages/sources/apple/clock"
@@ -213,9 +153,6 @@
       "path": "./packages/sources/microsoft/teams"
     },
     {
-      "path": "./packages/connectors/apple/teams"
-    },
-    {
       "path": "./packages/sdks/whatsapp/desktop"
     },
     {
@@ -228,9 +165,6 @@
       "path": "./packages/codecs/sitemap"
     },
     {
-      "path": "./packages/connectors/apple/whatsapp"
-    },
-    {
       "path": "./packages/sdks/chromium/cookies"
     },
     {
@@ -238,9 +172,6 @@
     },
     {
       "path": "./packages/sources/instagram/web"
-    },
-    {
-      "path": "./packages/connectors/apple/instagram"
     },
     {
       "path": "./packages/sources/google/health"

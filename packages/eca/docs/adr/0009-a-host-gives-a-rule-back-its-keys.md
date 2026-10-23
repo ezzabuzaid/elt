@@ -1,6 +1,6 @@
 # A host gives a rule back its keys
 
-The Apple plugin is a host whose server stops when a chat closes or ChatGPT restarts. Its rule "when a new Careem receipt arrives, log the calories" must not miss a receipt. The server stops at 10:00. A receipt arrives at 11:00. The user syncs at 12:00, and a new server adds the rule again. With a new baseline, the 11:00 receipt is in the baseline, and the rule never yields it. The meal is not logged.
+The Context Compiler plugin is a host whose server stops when a chat closes or ChatGPT restarts. Its rule "when a new Careem receipt arrives, log the calories" must not miss a receipt. The server stops at 10:00. A receipt arrives at 11:00. The user syncs at 12:00, and a new server adds the rule again. With a new baseline, the 11:00 receipt is in the baseline, and the rule never yields it. The meal is not logged.
 
 [ADR 0006](./0006-eca-keeps-no-state-across-restarts.md) kept eca without a store and said that eca gets a way to accept the keys when the first such host needs it. The plugin is that host.
 

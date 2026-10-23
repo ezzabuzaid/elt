@@ -1,8 +1,0 @@
-{
-  "name": "connector-apple-wallet",
-  "sourceRoot": "packages/connectors/apple/wallet/src",
-  "projectType": "library",
-  "targets": {
-    "format": {}
-  }
-}

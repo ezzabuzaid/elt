@@ -4,7 +4,7 @@
 
 `elt` is a TypeScript library for declaring and running ELT pipelines. Connect a source stream to a destination with `Copy`, group one source's copies into one destination as a `Connection`, then execute the connections with `Pipeline`. It supports full refresh, incremental loading with persistent checkpoints, native change watching, and attachment extraction.
 
-The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and has no runtime dependencies. Each destination is its own package, together with its checkpoint store: `elt-sqlite` and `elt-postgresql`, which adds the `postgres` driver. The included Apple connectors use macOS scripting and EventKit; the Google connectors call REST APIs through `google-auth`. Transformations, queries, and search indexes belong in the application consuming the exported data.
+The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and has no runtime dependencies. Each destination is its own package, together with its checkpoint store: `elt-sqlite` and `elt-postgresql`, which adds the `postgres` driver. The included Apple sources use macOS scripting and EventKit; the Google sources call REST APIs through `google-auth`. Transformations, queries, and search indexes belong in the application consuming the exported data.
 
 [Quick start](#quick-start) · [Incremental sync](#incremental-sync) · [Watch for changes](#watch-for-changes) · [Reference](docs/reference.md)
 
@@ -42,43 +42,11 @@ See the reference for [Mail streams](docs/reference.md#apple-mail), [Contacts st
 
 ## Quick start
 
-### Apple plugin for Codex
-
-The [Apple plugin](plugins/apple/.codex-plugin/plugin.json) is a Codex plugin with setup and query skills and a local MCP server. To install it in Codex in the ChatGPT desktop app on a Mac:
-
-1. Choose the **Plugins** icon in the sidebar, then **Add**, **Add a marketplace**.
-2. Enter `ezzabuzaid/elt` as the source and `release` as the Git ref, then choose **Add marketplace**. Sparse paths can stay empty.
-3. Search for **Apple**, open it and choose **Install plugin**, then **Set up Apple**.
-
-Setup asks in one form which connectors to import, each in full; a connector narrowed earlier in chat keeps that selection. Mail, Notes, Messages, Safari, Books, Activity, Accounts, Call History, Notification Center, Slack, Microsoft Teams and WhatsApp need Full Disk Access for ChatGPT, which macOS does not prompt for; when it is missing, setup reports those connectors as unavailable and a second form offers to open the Full Disk Access list in System Settings. Users do not install Node, Docker or a repository: the launcher runs the server on the Node runtime bundled with the desktop app. The terminal equivalent of steps 1–2 is `codex plugin marketplace add ezzabuzaid/elt --ref release`. The post-install setup prompt requires Codex 0.156 or later.
-
-`plugins/apple` is the installable package; [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json) lists it. Codex copies the folder from a git ref and runs it as is, without installing or building anything, so its server is bundled into `plugins/apple/server` from `apps/apple/plugin` by `npx nx run apple-plugin:bundle` (`apps/apple/plugin/build.mjs`): `main.mjs`, one folder per built-in connector, the chunks they share, and the EventKit helper. That folder is build output, ignored on main. `npx nx run apple-plugin:marketplace` assembles the installable marketplace, `marketplace.json` and the built `plugins/apple`, in `dist/apple-plugin-marketplace`, which `codex plugin marketplace add` accepts as a local path. After each push to main, the [Apple plugin release workflow](.github/workflows/apple-plugin.yml) runs that target and publishes the result to the `release` branch, committing only when it changed.
-
-The MCP tools only set up; the settings file's `selected_connectors` view lists each selected connector and where its import lives, relative to that folder. Each selection imports into `~/Library/Application Support/Context Compiler/Apple/<connector>/<selection>`: `data.sqlite`, where each stream loads into a `raw_<stream>` table read through a described view, beside the `catalog`, `sync_status`, `stream_status` and `extraction_coverage` views elt-sqlite publishes, plus checkpoints and managed attachment copies. The query skill reads each `data.sqlite` directly with `sqlite3 -readonly`; the Codex sandbox also denies writes there. A plugin server imports a connector when the user connects it or changes what it imports, every connected connector again when the user presses Sync on the Apple page, and one connector when the user picks Sync in its row's right-click menu. A connector the user keeps current, with the Keep current switch on its detail page (`apple_connector_watch`), also loads each change while a chat or the Apple page is open: every server stands by for its import, and the one that owns it watches it, so Sync of it runs no pass of its own. Nothing else refreshes or retries an import on its own, so an import no pass loaded completely, such as one Codex closed during or one a full disk cut short, waits for Sync. Setup returns once the answers are saved; a connector that has not finished its first import is reported as importing. Every pass is recorded in the connector's own file, so a reader judges freshness from the file it queries. A changed scope is a new import; the previous copy is removed. After install, ChatGPT lists the Apple page, an MCP App the server serves as `ui://apple/page.html`, under the sidebar's Explore menu, where the user pins it. Its sidebar, drawn like ChatGPT's Space with the page's own title row (`header: { enabled: false }` on the entrypoint), holds Sync and lists Monitors and each connector with its status as a dot (the status line on hover), a right-click menu whose Sync imports that connector alone, and its switch, which asks before it deletes an import. The page reads them again while a sync or an import runs, and shows the connector the user opens; with none open, the main area is empty. A connector's detail page narrows it to accounts, collections, dates and attachments. ChatGPT's Settings search also finds the page by its connectors' names, through the page's `settings` entrypoint; the plugin has no native `openai/settings` section, since ChatGPT ignores a page's search terms while one exists. Chats link to the page as `codex://plugins/apple/app/apple_page`, and to one connector's page with `?path=%2Fconnectors%2F<connector>`; the hooks' status gives the agent both. The setup skill can be run again to change or disconnect connectors. It accesses content already available on the Mac; Calendar keeps remote attachment links without requiring Google sign-in. Scoped Mail omits global settings and native metadata streams whose ownership cannot be established.
-
-### Apple CLI
-
-[`apps/apple/cli`](apps/apple/cli/src/main.ts) reads the same Apple connectors from a terminal. Its store defaults to `outputs/cli` relative to the working directory. Pass `--directory <path>` before the command to choose where settings, imports, checkpoints and attachment files live. For example, read the plugin's store with:
-
-```sh
-npx nx run apple-cli:start -- --directory "$HOME/Library/Application Support/Context Compiler/Apple" status
-```
-
-Commands run with `npx nx run apple-cli:start -- [--directory <path>] <command>`:
-
-- `setup` asks which connectors to import and, optionally, which accounts, collections and dates to narrow each one to; `setup --connector notes --collection <id> --since 2025-01-01 --connector mail` does the same without prompts, each narrowing flag applying to the `--connector` before it and each date a `YYYY-MM-DD` day on this Mac's clock, and `options <connector>` lists the IDs. Changing a connector's selection removes its import, so the next sync loads it again; an import another sync is loading is removed by the next `setup` or `sync`.
-- `sync` loads every selected connector once, showing each stream's progress; run it again, or use `sync watch`, to refresh. A sync that finds another sync loading a connector says so, waits for that pass and shows its outcome instead of loading it again; if that other sync is killed first, it shows the connector as interrupted and exits 1. `status` never keeps a sync from starting. Ctrl-C stops a sync at once with exit status 130; what it committed stays, and the next sync resumes it.
-- `sync watch` keeps every selected connector current, or only those `--connector` names. It loads each one at once, then again each time its app's store changes, until Ctrl-C or SIGTERM stops it. A connector is current only as far as its app's store on this Mac: WhatsApp and Notes stop writing theirs while closed, Safari stops syncing history and iCloud Tabs while closed, Slack, Teams and Mail save theirs only now and then, and Wallet fetches passes from iCloud once a day, so their data is as of that last write or fetch. One process owns an import at a time: a second `sync watch` of it waits and takes over when the first stops, and a `sync` of it says the watch keeps it current and loads nothing. A `setup` that removes a watched connector stops its watch within a second or two, and the next `setup` or `sync` removes its import. A connector whose source stops reporting changes stops alone and says so. Watching Notes opens Notes hidden, because only Notes syncs iCloud notes.
-- `status` lists every connector with separate Configuration (enabled or disabled) and Sync columns. Enabled connectors come first and show their latest pass, last success and database; disabled connectors have no sync state. With `--json`, `enabled` is a boolean and `state` is the sync state (`null` when disabled, `never` when enabled but not synced), with each stream's status too. A pass a killed sync left shows as running until the next sync.
-- `query <connector> --tables` lists each stream's view, its rows and its declared coverage, and `query <connector> "<sql>"` runs one read-only statement. Each connector's `catalog` view lists every view and column with its description.
-
-Each import's `<directory>/<connector>/<selection>/data.sqlite` holds `raw_<stream>` tables read through described views named after their streams (`inline_attachments` for `inlineAttachments`), with the sync history and `catalog` views elt-sqlite publishes. macOS grants access to the terminal app that runs the CLI, so it needs its own Full Disk Access, Contacts, Calendar and Reminders grants; a connector denied access fails alone and names the grant. Without a terminal, or with `--json`, output is JSON (one line per pass for `sync`) and nothing prompts.
-
-Calendar reads occurrences from 2000-01-01 to a year ahead unless the selection narrows the dates, and its import downloads attachments stored in Google Drive and Gmail. That needs `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` (the same Desktop client as `google:start`, with the Drive and Gmail APIs enabled); the first Calendar sync opens a browser for consent. Contacts account names (iCloud, Google) are not in its stores and do not load.
-
 ### Library
 
-Use **Node.js 26** and npm. The Apple connectors require macOS; Calendar and Reminders require **macOS 27**, the release the EventKit helper is built for.
+[Context Compiler](https://github.com/ezzabuzaid/context-compiler) is the app built on elt: a Codex plugin and a CLI that set up, sync and query these sources on a Mac. This section uses the library directly.
+
+Use **Node.js 26** and npm. The Apple sources require macOS; Calendar and Reminders require **macOS 27**, the release the EventKit helper is built for.
 
 The packages are currently private npm workspaces. Use this checkout; the examples import its local `elt` package.
 
@@ -88,25 +56,9 @@ cd elt
 npm ci
 ```
 
-The Notes connector reads Notes' own store, `NoteStore.sqlite`, so Notes does not need to be open. macOS protects that store: allow the terminal app you run Nx from **Full Disk Access** in **System Settings → Privacy & Security → Full Disk Access**.
+The Notes source reads Notes' own store, `NoteStore.sqlite`, so Notes does not need to be open. macOS protects that store: allow the terminal app you run Nx from **Full Disk Access** in **System Settings → Privacy & Security → Full Disk Access**.
 
-Every command runs through Nx. Its targets build their dependencies first and load the workspace `.env`. Choose the Apple connectors to import, then load them:
-
-```sh
-npx nx run apple-cli:start -- setup
-npx nx run apple-cli:start -- sync
-```
-
-Audio transcription is off until you choose a model. On the Apple page, open **Audio transcription**, enable it, choose a supported model installed in Handy (Cohere or Canary), and save. Audio stays on this Mac; existing and new imported attachments become searchable through `attachment_text`. Turning it off keeps existing transcripts.
-
-The CLI saves the same choice in its `--directory` store:
-
-```sh
-npx nx run apple-cli:start -- --transcription-model cohere-int8 sync --connector whatsapp
-npx nx run apple-cli:start -- --transcription-model off status
-```
-
-Use `--directory "$HOME/Library/Application Support/Context Compiler/Apple"` before the command to share the Apple page's settings. Local transcription requires `ffmpeg` on PATH (`brew install ffmpeg`). Building the native worker requires Rust/Cargo; Nx builds it automatically. Handy's model downloads are reused in place and are never modified.
+Every command runs through Nx. Its targets build their dependencies first and load the workspace `.env`.
 
 A pipeline declares connections of copies; the smallest one copies Notes into SQLite:
 
@@ -147,18 +99,13 @@ A copy like this replaces the `notes` table's contents with the current snapshot
 
 ### Connector registration
 
-Each Apple source is its own package under [`packages/sources/apple`](packages/sources/apple) (`@workspace/source-apple-<name>`), written as if published to npm. The Apple connectors live in [`packages/connectors/apple`](packages/connectors/apple), one package each (`@workspace/connector-apple-<name>`) whose `package.json` is its manifest: a `contextCompiler` field with the connector's name and title, and `exports` naming its `AppleConnector` class, which imports its source package. The [CLI](apps/apple/cli/src/main.ts) and the [plugin](apps/apple/plugin/src/main.ts) discover them through [`connector-apple-manifest`](packages/connectors/apple/manifest/src/connectors.ts), and then the user's own connectors in `~/Library/Application Support/Context Compiler/Connectors`, which run on the host's `elt` and `AppleConnector`. Both load each selected connector into its own SQLite import.
+Each Apple source is its own package under [`packages/sources/apple`](packages/sources/apple) (`@workspace/source-apple-<name>`), written as if published to npm. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) registers a connector for each source and loads it into its own SQLite import.
 
 The [Google app](apps/google/src/main.ts) is one inline entry, like `apps/proactive`. It reads `sc-domain:ezz.sh` through one `SearchConsoleSource` and builds one `google-search-console` connection with a copy of every stream the source discovers. Each stream loads into `google_search_console.raw_<stream>`, and readers see it as the view `marts.search_console_<snake_stream>`. Each copy has the id `search-console:<stream>`. The app runs one pass and then stops. An error stops the app: Node prints the error and exits with status 1.
 
 ### Clock
 
-```sh
-npx nx run apple-cli:start -- setup --connector clock --sync
-npx nx run apple-cli:start -- sync --connector clock
-```
-
-Clock reads saved alarms, timers and recent durations, world clocks, the current stopwatch and its laps, sounds and regional calendar records. Open Clock once to create its stores; it need not stay open. Unchanged records are skipped and removed objects disappear from the import. Resetting the stopwatch removes its laps; there is no recovered session history. Removing a recent timer can leave its stored duration marked invalid. See [Clock's ten streams, access requirements and live checks](docs/reference.md#apple-clock).
+`AppleClockSource` (`@workspace/source-apple-clock/apple-clock-source`) reads saved alarms, timers and recent durations, world clocks, the current stopwatch and its laps, sounds and regional calendar records. Open Clock once to create its stores; it need not stay open. Unchanged records are skipped and removed objects disappear from the destination. Resetting the stopwatch removes its laps; there is no recovered session history. Removing a recent timer can leave its stored duration marked invalid. See [Clock's ten streams, access requirements and live checks](docs/reference.md#apple-clock).
 
 ### Reminders
 
@@ -289,7 +236,7 @@ new Copy(calendar.events, destination.table('events'), {
 });
 ```
 
-Each run writes only new and changed rows and deletes rows that disappeared, including occurrences that moved out of the window and removed attendees or alarms. The window can move between runs without resetting the checkpoint. Calendar still reads the whole window every run. See [snapshot streams](docs/reference.md#snapshot-streams).
+Each run writes only new and changed rows and deletes rows that disappeared, including occurrences that moved out of the window and removed attendees or alarms. A copy that reads attachment files needs `attachments`; `googleCalendarAttachments(requester)` from `@workspace/source-apple-calendar/google-calendar-attachments` downloads those stored in Google Drive and Gmail through a `google-auth` requester. The window can move between runs without resetting the checkpoint. Calendar still reads the whole window every run. See [snapshot streams](docs/reference.md#snapshot-streams).
 
 See [checkpoint and replay semantics](docs/reference.md#incremental-extraction-and-checkpoints).
 
@@ -354,9 +301,9 @@ await new Pipeline({
 
 Each file field chooses its own store. SQLite and Postgres receive an ordinary text reference; `LocalFiles` owns paths and file writes. Files are saved before rows commit, and obsolete files are removed after committed rows stop referencing them. Unchanged content reuses its path; clearing a copy removes its managed files. These files mirror retained rows rather than form a permanent archive.
 
-Parsing is explicit. Omitting file-derived columns loads metadata only. The macOS parser reads PDFs with a text layer, TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, WordML, vCards, and text in images through Vision. Add `new AudioFormat(model)` to transcribe audio with a caller-provided AI SDK model; without it, audio loads `null`. Video and unknown formats load `null`. Files it cannot read fail the copy. Attachments whose file is not on this Mac (not yet downloaded from iCloud) or that belong to a locked note keep their metadata with `null` content and reference. Tables have no file; their cells are in the note's `markdown`.
+Parsing is explicit. Omitting file-derived columns loads metadata only. The macOS parser reads PDFs with a text layer, TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, WordML, vCards, and text in images through Vision. Add `new AudioFormat(model)` to transcribe audio with a caller-provided AI SDK model; without it, audio loads `null`. `LocalTranscriptionModel` from `transcription-local` is such a model that runs on this Mac over a Cohere or Canary model installed in Handy; it needs `ffmpeg` on PATH (`brew install ffmpeg`), Nx builds its native worker with Rust/Cargo, and Handy's model downloads are reused in place and never modified. Video and unknown formats load `null`. Files it cannot read fail the copy. Attachments whose file is not on this Mac (not yet downloaded from iCloud) or that belong to a locked note keep their metadata with `null` content and reference. Tables have no file; their cells are in the note's `markdown`.
 
-The Apple hosts parse nothing inside an import. After each pass commits, they read the text of every copy it stored, four at once, into `attachment_text`, which SQL searches by joining `attachmentRef` to `ref`; a file the parser cannot read loads as `failed` and is read again after the next sync instead of failing the import. See [attachment text](docs/reference.md#attachment-text).
+Context Compiler's hosts parse no file inside an import; they read the stored copies into an `attachment_text` table after each pass. See [attachment text](docs/reference.md#attachment-text).
 
 See [file declarations, parsing, and attachment limitations](docs/reference.md#attachment-files-and-document-parsing).
 
@@ -413,7 +360,7 @@ Permissions apply to the process running the export, and a sandbox can still res
 | Read or watch Reminders      | Full Reminders access through EventKit                                                                                                                 |
 | Read or watch Calendar       | Full Calendar access through EventKit                                                                                                                  |
 
-Manage permissions in **System Settings → Privacy & Security**. Calendar and Reminders request access on the first native operation if it is undecided. Packaged hosts must provide the relevant usage descriptions and sandbox entitlements; see the [connector reference](docs/reference.md#apple-reminders).
+Manage permissions in **System Settings → Privacy & Security**. Calendar and Reminders request access on the first native operation if it is undecided. A packaged process must provide the relevant usage descriptions and sandbox entitlements; see the [Reminders reference](docs/reference.md#apple-reminders).
 
 ## Development
 
@@ -444,11 +391,8 @@ packages/sdks/google/search-console/ Search Console API SDK (sdk-google-search-c
 packages/sources/google/  The Search Console source (source-google-search-console)
 packages/sdks/microsoft/sql-server/    SQL Server SDK (sdk-microsoft-sql-server)
 packages/sources/microsoft/sql-server/ SQL Server source (source-microsoft-sql-server)
-packages/connectors/apple/ One package per Apple connector (connector-apple-<name>), with
-                           AppleConnector (connector-apple-connector) and discovery
-                           (connector-apple-manifest)
-apps/apple/plugin/     Codex plugin server, bundled into plugins/apple/server (apple-plugin)
-apps/apple/cli/        Terminal CLI: setup, sync, status, query (apple-cli)
+packages/eca/              Event-condition-action rules over loaded data
+packages/transcription-local/ Local audio transcription over Handy's models
 apps/google/           Google example app over the Search Console source
 apps/proactive/        Proactive rules over Calendar, Mail, Messages, Slack and WhatsApp
 docs/                  Detailed behavior and native API research
@@ -464,18 +408,16 @@ npx nx run-many -t test
 
 `build` and `typecheck` are inferred by the `@nx/js/typescript` plugin from each project's `tsconfig.json`, which extends `tsconfig.base.json` and references the workspace packages it imports; Nx keeps those references current before it runs either target. Typecheck first runs the project's `lint` target (ESLint, inferred by `@nx/eslint/plugin` from the root `eslint.config.mjs`), which runs its `format` target (Prettier, which rewrites files and sorts imports) first; each project opts in with `"format": {}` in its `project.json`. A pre-commit hook checks that the staged files are formatted, reading them as staged, and changes nothing, so a concurrent edit to the same checkout never reaches the commit; run `nx sync` yourself when a project's workspace dependencies change, since Nx refuses every task while the workspace is out of sync. Test targets build first and use Node's test runner. The EventKit package compiles the Swift `eventkit` helper (`sdk-apple-eventkit:helper`), which needs the Xcode Command Line Tools. Database integration tests require Docker. Their Nx targets run Node's test runner through `zukhruf-docker-tests`, and `@zukhruf/testing` creates or reuses PostgreSQL 18 and full SQL Server 2022 test servers on available ports. Each test acquires an isolated database directly and disposes its clients before the database; SQL Server permission tests also create and dispose their read-only logins. Full SQL Server runs emulated on Apple silicon so the tests cover Change Tracking, hierarchyid and spatial types. The supervisor cleans up run-owned containers, volumes, port forwards and temporary directories when a test process is killed. Databases inside shared servers are dropped by normal test disposal; after a forced kill, they remain until the shared server is stopped. Shared test servers remain available for later runs; list them with `docker ps --filter label=dev.zukhruf.testing.shared=1` and stop the chosen container with `docker stop <container-id>` when finished. Apple tests require macOS and an environment that permits native filesystem notifications. Calendar and Reminders tests share one "context-compiler tests" calendar and one reminders list, in the first EventKit account that accepts one, made on first use and never deleted, because iCloud brings a deleted calendar back, empty, hours later. A test holds them alone, across processes, through an exclusive SQLite transaction on `~/Library/Caches/context-compiler/eventkit-tests.sqlite`, empties the one it uses, reads its own events through the real helper, and empties it again. Where EventKit cannot produce a case (attendees, malformed documents, denied access, a missing ICS export), `StubEventKitHelper` (`@workspace/sdk-apple-eventkit/test`), a real executable, runs in place of the helper. One live test per store also reads this Mac's Calendar or Reminders read-only into a temporary SQLite database, skipped without access.
 
-The Apple plugin's end-to-end tests (`apps/apple/plugin/src/plugin.e2e.test.ts`) start the plugin server on the Node runtime that the ChatGPT desktop app keeps in `~/.cache/codex-runtimes`. When `CODEX_MCP_NODE_PATH` is set, they use that Node instead. The [Apple plugin release workflow](.github/workflows/apple-plugin.yml) sets it to the job's Node 26, because its runner has no ChatGPT app. Thus CI does not run the plugin on the Node that users have. A push to main releases the plugin. Before you push a change to a package that the plugin bundles, such as a new `@zukhruf/sqlite-federation`, run `npx nx run apple-plugin:test` on a Mac that has the ChatGPT app, with `CODEX_MCP_NODE_PATH` not set.
-
 Put `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` in the workspace `.env` (gitignored), then run the Search Console example with `npx nx run google:start`. It loads `sc-domain:ezz.sh` into the warehouse (`npx nx run infra:up`) in one pass, checkpoints included, and writes no local files. Readers see each stream as a [reader view](docs/reference.md#warehouse-marts) `marts.search_console_<snake_stream>`; an explicitly invoked consumer reads them directly through PostgreSQL as `agent_reader` (MCP is optional). Sync status and declared coverage are discoverable through `marts.catalog`; reading never starts a refresh. The first run opens a browser for Google consent; see [Search Console authorization](docs/reference.md#authorization) for the one-time OAuth client setup. `npx nx run google:test` runs the built app twice: once without the OAuth client, and once against the real API and the local warehouse. The second run needs the grant that an earlier `google:start` stored. It is a local test; CI does not run it.
 
 SQL Server is available as an SDK and source package for library use; see [SQL Server](docs/reference.md#sql-server). A read-only login needs `db_datareader`, plus `VIEW CHANGE TRACKING` on tables whose changes it should read.
 
 Run apps only through their Nx targets: `start` builds the app and its packages first and loads `.env`. Node's default TypeScript stripping does not support the parameter properties used here, so the targets run the built JavaScript.
 
-To add a connector, follow the [source-authoring guide](.agents/skills/add-elt-source/SKILL.md). Implement discovery, validation, extraction, coverage, and change watching on `Source`; keep `Stream` as immutable metadata and reuse the pipeline's loading and checkpoint handling.
+To add a source, follow the [source-authoring guide](.agents/skills/add-elt-source/SKILL.md); its connector is then registered in [Context Compiler](https://github.com/ezzabuzaid/context-compiler). Implement discovery, validation, extraction, coverage, and change watching on `Source`; keep `Stream` as immutable metadata and reuse the pipeline's loading and checkpoint handling.
 
 ## Documentation
 
-- [API and behavior reference](docs/reference.md): schemas, keys, cursors, checkpoints, attachments, storage guarantees, and complete connector details.
+- [API and behavior reference](docs/reference.md): schemas, keys, cursors, checkpoints, attachments, storage guarantees, and complete source details.
 - [EventKit Reminders notes](docs/eventkit-reminders.md): native API findings and implementation decisions.
-- [Source-authoring guide](.agents/skills/add-elt-source/SKILL.md): repository conventions for implementing connectors.
+- [Source-authoring guide](.agents/skills/add-elt-source/SKILL.md): repository conventions for implementing sources.

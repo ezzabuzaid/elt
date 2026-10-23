@@ -1,8 +1,0 @@
-{
-  "type": "module",
-  "exports": "./photos-connector.js",
-  "contextCompiler": {
-    "name": "photos",
-    "title": "Photos"
-  }
-}

@@ -1,8 +1,0 @@
-{
-  "type": "module",
-  "exports": "./broken-connector.js",
-  "contextCompiler": {
-    "name": "broken",
-    "title": "Broken"
-  }
-}

@@ -18,8 +18,7 @@
       "plugin": "@nx/eslint/plugin",
       "options": {
         "targetName": "lint"
-      },
-      "exclude": ["packages/connectors/apple/manifest/src/fixtures/**"]
+      }
     }
   ],
   "targetDefaults": {

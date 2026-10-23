@@ -10,7 +10,7 @@ Every destination table and checkpoint can be rebuilt by rerunning the pipeline 
 
 - Never design around data that is already stored: no backward-compatible schemas, no keeping checkpoint bindings stable, no migration paths, no compatibility shims or defaults left `undefined` for old state.
 - Change schemas, identities, bindings, and defaults whenever the design improves; the fix for old output is a fresh run.
-- A value that code derives and stores, such as an import folder path in `settings.sqlite`, is old output too when the derivation changes. Do not rewrite stored values into the new form, not even as a consistency check that runs on every open: that is a migration. `Settings.#follow` went this way.
+- A value that code derives and stores is old output too when the derivation changes. Do not rewrite stored values into the new form, not even as a consistency check that runs on every open: that is a migration.
 - Do not document migrations between connector versions. Document the current behavior only.
 
 ## Separate the concept from the mechanism
@@ -20,6 +20,10 @@ When asked why a notion exists, name the requirement it serves, not the code tha
 Before defending a package mechanism, list each consumer with its file and line and say whether it decides something or only displays it. Display text in a host does not justify a lock or a liveness check in a package; a consumer that decides does, until a probe shows another owner can decide it. `SQLitePasses` went this way: its pass lock fed three status strings and one folder guard, and only the guard, moved onto the import's flight, was a requirement.
 
 Before you move, extract or wrap a guard such as a lock, name the failure it prevents as a concrete case with the hosts' real configuration, and say who else prevents it. If no host can cause the case, delete the guard; do not find it a new home. The SQLite writer lock and the Markdown target lock went this way: the checkpoint store already kept two runs of one copy apart, and the only case left, two copies configured to write one table, is a misconfiguration that no host makes.
+
+## The app lives in context-compiler
+
+The Context Compiler plugin, its CLI and its connectors are in [ezzabuzaid/context-compiler](https://github.com/ezzabuzaid/context-compiler), which links this checkout as `../elt`. Connectors exist to find elt gaps: fix a gap here, not in the connector. A change that spans both repositories is two commits, elt first.
 
 ## Exhaust live verification before calling something unverified
 
@@ -31,7 +35,7 @@ While the user is at the machine, act without taking it over. Accessibility acti
 
 ## Remove before you add
 
-When the user says a mechanism should not exist, remove it before you build any feature that touches it. Do not extend it to carry the new feature, not even by one parameter. Before you add anything, ask whether it should exist at all: name the requirement it serves and who already serves it. The Apple page's Sync button went this way: it was first built as a second caller of `importPending`, after the user had said that function should not exist.
+When the user says a mechanism should not exist, remove it before you build any feature that touches it. Do not extend it to carry the new feature, not even by one parameter. Before you add anything, ask whether it should exist at all: name the requirement it serves and who already serves it.
 
 ## Remove a mechanism through its problem class
 
@@ -43,7 +47,7 @@ When the user names a capability, take its simplest literal reading and restate 
 
 ## Build the API shape the plan names
 
-Build the command, tool or API the approved plan names, in that shape. Avoiding a copy is no reason to change it: the Rule of Three accepts a second copy, recorded in a ledger. When a different shape seems better, ask before building it. People went this way: the plan named a standalone `people` command, it was first folded into `query people` to avoid copying `query`'s 25-line statement runner, and the user moved it back beside `query`.
+Build the command, tool or API the approved plan names, in that shape. Avoiding a copy is no reason to change it: the Rule of Three accepts a second copy, recorded in a ledger. When a different shape seems better, ask before building it.
 
 ## Name the standard term
 
@@ -59,23 +63,23 @@ When a first-match lookup gives the right answer in only one order, two of its m
 
 ## Place each job with whoever can know it
 
-Before proposing where a fix lives, split the requirement into its jobs and name, for each, who can actually know it: the source, the elt engine, the destination, the plugin server, or the agent. A job belongs to that owner. A slow Mail answer, for example, split into three jobs: whether a message changed (only the Mail source knows), turning changes into upserts and deletions (a shared elt helper the source calls), and when to refresh (the source's `observe()`, run by the plugin server, not a skill telling the agent to sync).
+Before proposing where a fix lives, split the requirement into its jobs and name, for each, who can actually know it: the source, the elt engine, the destination, or the agent. A job belongs to that owner. A slow Mail answer, for example, split into three jobs: whether a message changed (only the Mail source knows), turning changes into upserts and deletions (a shared elt helper the source calls), and when to refresh (the source's `observe()`, run by the host's `Pipeline.watch()`, not a skill telling the agent to sync).
 
 ## Follow the vendor's own current source, not only its docs
 
-When asked for a platform's latest format or practice, read what the vendor's newest code actually ships (for Codex plugins, `openai/plugins` at `main` and the plugins cached under `~/.codex/plugins/cache`) before recommending anything. When the docs and the source disagree, show both, cite commits, and follow the source.
+When asked for a platform's latest format or practice, read what the vendor's newest code actually ships before recommending anything. When the docs and the source disagree, show both, cite commits, and follow the source.
 
 ## Let packages own plumbing; let classes own behavior
 
-Before writing argv routing, help text, usage errors, prompts or terminal rendering, search the installed package and its authors' siblings for it. In `apps/apple/cli`, commander routes and validates, and clack prompts and renders. When a package takes over a job, such as clack exiting on Ctrl-C while its spinner runs, adapt to how it behaves rather than working around it.
+Before writing argv routing, help text, usage errors, prompts or terminal rendering, search the installed package and its authors' siblings for it. When a package takes over a job, adapt to how it behaves rather than working around it.
 
-Model a set of things that share an algorithm as a template class: an abstract base owns the fixed steps, and each variant is its own small class in its own file (`apps/apple/cli/src/commands/`, the connectors in `packages/connectors/apple/` over `AppleConnector`, Notes' streams). Do not use a definitions table imported everywhere and indexed by name. Callers ask an object; they do not reach into a registry.
+Model a set of things that share an algorithm as a template class: an abstract base owns the fixed steps, and each variant is its own small class in its own file (Notes' streams over `AppleNotesStream`, one file each). Do not use a definitions table imported everywhere and indexed by name. Callers ask an object; they do not reach into a registry.
 
 ## Agnostic packages
 
 An agnostic package is designed as if it were published to npm: anyone could copy its `src` into another project and use it. Lint owns the boundary; this section holds only what the AST cannot see.
 
-- **Enforced by the `layer:island` tag** through `island.eslint.config.mjs`, a portable file that finds islands by tag in Nx's project graph: an island may depend only on other islands and may not import a host's runtime (the list `eslint.config.mjs` passes to `islandConstraint`), declares no `any` and no generic port signature, declares in its own `package.json` every package its shipped code imports, and, like all of `packages/**`, reads no `process.env` and writes no `console`. Carried by `packages/elt`, `packages/destinations/*`, `packages/google-auth`, `packages/sdks/*/*`, `packages/codecs/*` and every source package in `packages/sources/<platform>/<name>`. A new agnostic package needs only the tag in its `project.json`. `packages/settings` and the Apple connector packages in `packages/connectors/apple/*` are not islands: they describe and import the user's Apple apps. A connector is what the Apple hosts set up, select and import through, so `AppleConnector`, selections, tool arguments, CLI flags and stored names all say connector; in the Apple hosts, "app" means only the real macOS application.
+- **Enforced by the `layer:island` tag** through `island.eslint.config.mjs`, a portable file that finds islands by tag in Nx's project graph: an island may depend only on other islands and may not import a host's runtime (hosts' runtimes are banned through `islandConstraint`), declares no `any` and no generic port signature, declares in its own `package.json` every package its shipped code imports, and, like all of `packages/**`, reads no `process.env` and writes no `console`. Carried by `packages/elt`, `packages/destinations/*`, `packages/google-auth`, `packages/sdks/*/*`, `packages/codecs/*` and every source package in `packages/sources/<platform>/<name>`. A new agnostic package needs only the tag in its `project.json`.
 - **Also enforced:** no type assertions; no test lifecycle hooks; in every test, msw's `listen()` passes `onUnhandledRequest: 'error'`.
 - **Ports are typed by the package.** A capability or decision the host owns enters as a parameter whose type the package exports, and the consumer conforms: `GoogleRequester` (`packages/google-auth/src/requester.ts`), `onRefreshed` on `GoogleOAuthApp.client`, and `directory` on `googleSession`, where each host decides where its grants live.
 - **Stored shapes carry their own guards.** Anything the host persists and reads back is parsed by a static the package exports (`GoogleGrant.parse`).
@@ -87,8 +91,8 @@ An SDK is the agnostic package that speaks one vendor store or API, such as `~/L
 
 - **The SDK owns the store:** its location (`accountsStorePath`), opening it read-only (another app's SQLite file through `Snapshot` from `@zukhruf/sqlite-snapshot`), decoding it into typed objects, what its keys mean (an account's TLS setting resolved through its parent account), errors that name the grant (`AccountsUnavailableError`), and its change signal (`AccountsStore.version()`, a `DataVersion` from `@zukhruf/sqlite-data-version`, the EventKit helper's `watch`).
 - **The source owns the pipeline:** streams, field names, JSON Schema, descriptions, scope, checkpoints, and which streams `observe()` refreshes when an SDK reports a change.
-- **Enforced by the `layer:sdk` tag:** `eslint.config.mjs` stops a `layer:sdk` project from reaching `layer:elt` (`packages/elt`), directly or through a source, destination or connector. An SDK is also an island.
-- **Named** `packages/sdks/<platform>/<surface>`, `@workspace/sdk-<platform>-<name>`, so `sdk-apple-mail`, `source-apple-mail` and `connector-apple-mail` read as one stack. `packages/google-auth` keeps its name until it moves there.
+- **Enforced by the `layer:sdk` tag:** `eslint.config.mjs` stops a `layer:sdk` project from reaching `layer:elt` (`packages/elt`), directly or through a source or destination. An SDK is also an island.
+- **Named** `packages/sdks/<platform>/<surface>`, `@workspace/sdk-<platform>-<name>`, so `sdk-apple-mail` and `source-apple-mail` read as one stack; context-compiler's `connector-apple-mail` pairs with them. `packages/google-auth` keeps its name until it moves there.
 - **A format is a codec, not an SDK.** Ask whether the package knows where the data lives or what it means. If it does, it is an SDK. If it knows only how the bytes are laid out, it is a codec: it takes bytes or a path the caller gives and returns the format's own shapes, such as protobuf fields, plist values or SEGB slots. A codec lives in `packages/codecs/<format>`, `@workspace/codec-<format>`, whether one package decodes it or many. `sdk-apple-biome` reads Biome's segment files through `codec-segb` and says what each record's fields mean. The `layer:codec` tag lets a codec depend only on other codecs.
 
 ## Fake only what cannot run for real

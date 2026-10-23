@@ -58,4 +58,4 @@ _Avoid_: Acknowledge, ack, commit (a commit is new data in the warehouse)
 
 **Host**:
 The app that gives eca the warehouse, adds the rules, watches the new matches, and acts on them.
-_Avoid_: Runner, server, app (in the Apple hosts, app means the macOS application)
+_Avoid_: Runner, server, app (in Context Compiler's hosts, app means the macOS application)

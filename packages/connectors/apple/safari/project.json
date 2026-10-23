@@ -1,8 +1,0 @@
-{
-  "name": "connector-apple-safari",
-  "sourceRoot": "packages/connectors/apple/safari/src",
-  "projectType": "library",
-  "targets": {
-    "format": {}
-  }
-}
