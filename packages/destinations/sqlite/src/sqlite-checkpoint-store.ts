@@ -2,7 +2,8 @@ import { chmodSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-import { Modes, Mutex, SqliteStore } from '@zukhruf/mutex';
+import { Modes, Mutex } from '@zukhruf/mutex';
+import { SqliteStore } from '@zukhruf/mutex/sqlite';
 import { Declaration } from '@zukhruf/sqlite-drift';
 
 import { type CheckpointSession, CheckpointStore } from '@workspace/elt';

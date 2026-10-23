@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@workspace/elt": "0.0.1",
-    "@zukhruf/mutex": "^0.3.19",
+    "@zukhruf/mutex": "^0.3.40",
     "@zukhruf/sqlite-drift": "0.3.35",
     "@zukhruf/sqlite-transaction": "0.3.31"
   },

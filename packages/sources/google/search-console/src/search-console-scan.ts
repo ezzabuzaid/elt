@@ -1,4 +1,5 @@
-import { MemoryStore, Mutex } from '@zukhruf/mutex';
+import { Mutex } from '@zukhruf/mutex';
+import { MemoryStore } from '@zukhruf/mutex/memory';
 
 import {
   type SearchConsoleApi,
