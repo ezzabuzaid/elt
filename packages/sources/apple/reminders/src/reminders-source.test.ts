@@ -347,10 +347,7 @@ class ScratchList implements AsyncDisposable {
   // test holds this exclusive transaction until it is done, and a process
   // that dies releases it.
   static #hold(): DatabaseSync {
-    const path = join(
-      homedir(),
-      'Library/Caches/context-compiler/eventkit-tests.sqlite',
-    );
+    const path = join(homedir(), 'Library/Caches/elt/eventkit-tests.sqlite');
     mkdirSync(dirname(path), { recursive: true });
     const lock = new DatabaseSync(path, { timeout: 600_000 });
     lock.exec('BEGIN EXCLUSIVE');

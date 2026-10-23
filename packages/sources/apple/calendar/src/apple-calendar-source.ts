@@ -227,7 +227,7 @@ export class AppleCalendarSource extends Source<CalendarScan> {
     }
     // Only records the diff emits are staged, one at a time.
     await using staging = await mkdtempDisposable(
-      join(tmpdir(), 'context-compiler-calendar-attachment-'),
+      join(tmpdir(), 'elt-calendar-attachment-'),
     );
     for await (const message of messages) {
       if ('type' in message) {

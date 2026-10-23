@@ -28,7 +28,7 @@ const schema = 'google_search_console';
 const healthSchema = 'google_health';
 const directory = join(
   process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'),
-  'context-compiler',
+  'elt',
 );
 
 // Search Console, every stream, loaded into its raw schema; readers see each

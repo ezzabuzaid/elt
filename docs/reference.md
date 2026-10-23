@@ -1101,13 +1101,20 @@ See the [EventKit research and implementation notes](eventkit-reminders.md) for 
 
 ```ts
 import { mkdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import { SQLiteDestination } from '@workspace/elt-sqlite';
+import { CalendarStore } from '@workspace/sdk-apple-eventkit';
 import { AppleCalendarSource } from '@workspace/source-apple-calendar/apple-calendar-source';
 
 await mkdir('./outputs', { recursive: true });
 const calendar = new AppleCalendarSource({
+  store: new CalendarStore(
+    fileURLToPath(
+      import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+    ),
+  ),
   startAt: '2026-09-01T00:00:00.000Z',
   endAt: '2026-10-01T00:00:00.000Z',
 });
@@ -1204,10 +1211,15 @@ const requester = await googleSession({
   scopes: [GOOGLE_DRIVE_READONLY_SCOPE, GMAIL_READONLY_SCOPE],
   directory: join(
     process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'),
-    'context-compiler',
+    'elt',
   ),
 });
 const calendar = new AppleCalendarSource({
+  store: new CalendarStore(
+    fileURLToPath(
+      import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+    ),
+  ),
   startAt,
   endAt,
   attachments: googleCalendarAttachments(requester),
@@ -2504,7 +2516,7 @@ const requester = await googleSession({
   scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
   directory: join(
     process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'),
-    'context-compiler',
+    'elt',
   ),
 });
 const source = new SearchConsoleSource({
@@ -2532,7 +2544,7 @@ One-time setup in the Cloud Console (Google has no API for creating Desktop OAut
 - **New scopes.** When a later caller needs a scope the grant lacks, consent runs again for the union of old and new scopes, so no earlier permission is dropped.
 - **Revoked or expired grants.** When Google refuses the stored refresh token (revoked consent, an expired Testing-mode token, or a Workspace re-authentication demand), consent runs again.
 
-The host decides where grants live: `googleSession` keeps them under `<directory>/google/`, and the Google app passes `${XDG_CONFIG_HOME:-~/.config}/context-compiler`. Grants are stored as owner-only (`0600`) JSON files, written through a temporary file and a rename, so a crash leaves the previous grant intact. This is the same protection gcloud gives its own refresh token; the file is not encrypted. File and directory names are SHA-256 hashes, not account ids. To switch Google accounts, delete that directory; the next run asks for consent.
+The host decides where grants live: `googleSession` keeps them under `<directory>/google/`, and the Google app passes `${XDG_CONFIG_HOME:-~/.config}/elt`. Grants are stored as owner-only (`0600`) JSON files, written through a temporary file and a rename, so a crash leaves the previous grant intact. This is the same protection gcloud gives its own refresh token; the file is not encrypted. File and directory names are SHA-256 hashes, not account ids. To switch Google accounts, delete that directory; the next run asks for consent.
 
 Because a user credential is billed to the project that issued its OAuth client, no quota-project header is needed. The previous gcloud-import path failed with `SERVICE_DISABLED` / `accessNotConfigured` naming `projects/764086051850`, gcloud's own client project, until a quota project was named.
 

@@ -26,7 +26,7 @@ test('without an OAuth client the app names the variables to set and exits 1', (
 });
 
 // Local only: the run reads the real Search Console and Google Health with
-// the grant stored in ~/.config/context-compiler and the OAuth client in the
+// the grant stored in ~/.config/elt and the OAuth client in the
 // root .env, which Nx loads, and loads the local warehouse (npx nx run
 // infra:up). A whole Google Health history takes minutes. spawnSync's timeout
 // ends a run that hangs; node:test's own timeout cannot fire while spawnSync

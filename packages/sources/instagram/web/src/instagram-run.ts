@@ -85,9 +85,7 @@ export class InstagramRun implements AsyncDisposable {
       'sessionid',
     );
     const web = await InstagramWeb.open(session, signal);
-    const staging = await mkdtemp(
-      join(tmpdir(), 'context-compiler-instagram-'),
-    );
+    const staging = await mkdtemp(join(tmpdir(), 'elt-instagram-'));
     return new InstagramRun(web, staging);
   }
 
