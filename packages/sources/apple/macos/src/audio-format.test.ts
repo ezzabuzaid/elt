@@ -86,7 +86,7 @@ test('empty transcripts become null and provider failures propagate without auto
   assert.equal(calls, 1);
 });
 
-test('audio macOS cannot decode or that holds no speech never reaches the model, and a Core Audio file without an extension does', async () => {
+test('audio macOS cannot decode or that holds no speech never reaches the model, and Core Audio and AMR files without an extension do', async () => {
   await using directory = await mkdtempDisposable(
     join(tmpdir(), 'audio-format-'),
   );
@@ -94,6 +94,9 @@ test('audio macOS cannot decode or that holds no speech never reaches the model,
   const midi = join(directory.path, 'tune');
   const spoken = join(directory.path, 'spoken.aiff');
   const caf = join(directory.path, 'Audio Message');
+  // An AMR voice memo, as old phones and MMS send them, starts with "#!AMR".
+  const amr = join(directory.path, 'Voice Memo');
+  await writeFile(amr, Buffer.from('#!AMR\n<\u0000'));
   await writeFile(webm, Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0]));
   await writeFile(
     midi,
@@ -133,5 +136,6 @@ test('audio macOS cannot decode or that holds no speech never reaches the model,
   assert.equal(await parser.parse(midi), null);
   assert.equal(calls, 0);
   assert.equal(await parser.parse(caf), 'hello');
-  assert.equal(calls, 1);
+  assert.equal(await parser.parse(amr), 'hello');
+  assert.equal(calls, 2);
 });

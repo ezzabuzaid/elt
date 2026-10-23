@@ -24,6 +24,7 @@ export class AudioFormat extends DocumentFormat {
     'aiff',
     'aif',
     'caf',
+    'amr',
   ];
 
   constructor(model: Exclude<TranscriptionModel, string>) {
