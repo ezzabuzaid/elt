@@ -47,15 +47,16 @@ export class FollowingStream extends SnapshotStream<typeof properties> {
     run,
     signal,
   }: ReadContext): Promise<Snapshot<typeof properties>> {
-    const accounts: FollowedAccount[] = [];
+    const accounts = new Map<string, FollowedAccount>();
     let next: string | null = null;
     do {
       const page = await run.web.following(next, signal);
-      accounts.push(...page.items);
+      // Adjacent pages can repeat an account; keep its latest description.
+      for (const account of page.items) accounts.set(account.pk, account);
       next = page.next;
     } while (next !== null);
     return {
-      records: accounts.map((account) => ({
+      records: [...accounts.values()].map((account) => ({
         id: account.pk,
         username: account.username,
         fullName: account.full_name,

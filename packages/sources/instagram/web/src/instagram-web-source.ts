@@ -101,7 +101,8 @@ export class InstagramWebSource extends Source<InstagramRun> {
         throw new TypeError(
           `Instagram date range ${instant} is not a timestamp`,
         );
-    this.profileIds = Object.freeze([...profileIds]);
+    // Instagram's following pages can overlap; each profile is one partition.
+    this.profileIds = Object.freeze([...new Set(profileIds)]);
     this.range = Object.freeze({
       ...(startAt === undefined ? {} : { startAt }),
       ...(endAt === undefined ? {} : { endAt }),

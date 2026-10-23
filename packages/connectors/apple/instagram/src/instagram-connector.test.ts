@@ -279,6 +279,82 @@ test('setup offers the accounts the browser’s Instagram account follows, by us
   ]);
 });
 
+test('an everything import keeps each followed profile once across overlapping pages', async () => {
+  await using _mac = await signedInMac();
+  await using imports = await mkdtempDisposable(
+    join(tmpdir(), 'instagram-partitions-'),
+  );
+  const repeated = {
+    pk: '6720734023',
+    username: 'repeated',
+    full_name: 'Before rename',
+    is_private: false,
+    is_verified: false,
+    profile_pic_url: imageOf('repeated'),
+  };
+  // Instagram controls which accounts repeat in its live following pages.
+  // Replay that overlap over HTTP, including a repeat within one page;
+  // the browser session, connector and validation are real.
+  // A page containing only repeats must not hide the final page's account.
+  const pages = new Map([
+    [null, { users: [repeated, repeated], has_more: true, next_max_id: '50' }],
+    [
+      '50',
+      {
+        users: [{ ...repeated, full_name: 'After rename' }],
+        has_more: true,
+        next_max_id: '100',
+      },
+    ],
+    [
+      '100',
+      {
+        users: [{ ...repeated, ...hive, full_name: 'Hive Fit Nation' }],
+        has_more: false,
+      },
+    ],
+  ]);
+  const server = setupServer(
+    http.get(
+      'https://www.instagram.com/',
+      () =>
+        new HttpResponse(tokens, { headers: { 'content-type': 'text/html' } }),
+    ),
+    http.get(
+      `https://www.instagram.com/api/v1/friendships/${session.ds_user_id}/following/`,
+      ({ request }) => {
+        const page = pages.get(new URL(request.url).searchParams.get('max_id'));
+        assert.ok(page, 'the connector must follow the returned cursor');
+        return HttpResponse.json({ ...page, status: 'ok' });
+      },
+    ),
+  );
+  server.listen({ onUnhandledRequest: 'error' });
+  try {
+    const instagramConnector = connector();
+
+    const { connection } = await instagramConnector.connection(imports.path, {
+      connector: instagramConnector.name,
+      scope: {},
+      includeAttachments: false,
+    });
+    connection.validate();
+    const catalog = await connection.source.discover();
+    const [profiles] = await instagramConnector.listChoices();
+
+    assert.deepEqual(
+      connection.source.coverage(catalog.get('profiles')).selection,
+      { profileIds: ['6720734023', '44555906095'] },
+    );
+    assert.deepEqual(profiles?.options, [
+      { id: '6720734023', label: 'repeated (After rename)' },
+      { id: '44555906095', label: 'hivefitnationgym (Hive Fit Nation)' },
+    ]);
+  } finally {
+    server.close();
+  }
+});
+
 test('an import that keeps attachments, as setup does by default, makes the text on a timetable slide searchable', async () => {
   await using mac = await signedInMac();
   const slides = new Map<string, Buffer>();

@@ -1699,6 +1699,50 @@ test('the reels tab, reposts and tagged posts load for the profile, page after p
   );
 });
 
+test('overlapping following pages import each profile once and keep every distinct account', async () => {
+  await using _mac = await signedInMac();
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'instagram-load-'));
+  const profiles: Profile[] = Array.from({ length: 51 }, (_, index) => ({
+    pk: String(10_000 + index),
+    username: `account${index}`,
+    posts: [],
+  }));
+  // The live following API returned 104 entries for 100 distinct accounts
+  // on 2026-10-16. Repeat an account within a page and across the 50-row
+  // page boundary; the last page must still contribute its new accounts.
+  const repeated = { pk: '10000', username: 'account0' };
+  using wire = instagram({
+    profiles,
+    following: [
+      repeated,
+      ...profiles.slice(0, 49),
+      repeated,
+      ...profiles.slice(49),
+    ],
+  });
+  const run = await pipeline(await InstagramWebSource.connect(), dir.path);
+
+  await run.run();
+
+  const expected = profiles.map(({ pk }) => pk);
+  assert.deepEqual(
+    ids(
+      dir.path,
+      'SELECT "profileId" AS id FROM profiles ORDER BY "profileId"',
+    ),
+    expected,
+  );
+  assert.deepEqual(
+    ids(dir.path, 'SELECT id FROM following ORDER BY id'),
+    expected,
+  );
+  assert.equal(
+    wire.calls.filter(({ name }) => name === 'PolarisProfilePageContentQuery')
+      .length,
+    profiles.length,
+  );
+});
+
 test('the accounts the browser’s account follows load across pages, and one it unfollows is deleted', async () => {
   await using _mac = await signedInMac();
   await using dir = await mkdtempDisposable(join(tmpdir(), 'instagram-load-'));
