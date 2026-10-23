@@ -16,12 +16,13 @@ import { z } from 'zod';
 import { TranscriptionWorker } from './transcription-worker.ts';
 
 const execute = promisify(execFile);
-// A model is its engine and name; the directory only says where its files are
-// on this Mac, so a store moved to another Mac keeps the transcripts it made.
+// A model is its name and the language it is told the speech is in; the path
+// only says where its file is on this Mac, so a store moved to another Mac
+// keeps the transcripts it made.
 const configuration = z.strictObject({
-  engine: z.enum(['cohere', 'canary']),
   name: z.string().min(1),
-  directory: z.string().min(1),
+  path: z.string().min(1),
+  language: z.string().min(1),
 });
 export type LocalTranscriptionConfiguration = z.infer<typeof configuration>;
 
@@ -32,7 +33,7 @@ export class LocalTranscriptionModel
   implements TranscriptionModelV4, AsyncDisposable
 {
   readonly specificationVersion = 'v4';
-  readonly provider = 'transcribe-rs';
+  readonly provider = 'transcribe-cpp';
   readonly modelId: string;
   readonly #configuration: LocalTranscriptionConfiguration;
   readonly #helper: string;
@@ -46,12 +47,12 @@ export class LocalTranscriptionModel
   ) {
     this.#configuration = {
       ...LocalTranscriptionModel.parse(options),
-      directory: resolve(options.directory),
+      path: resolve(options.path),
     };
     this.#helper = helper;
     this.modelId = JSON.stringify({
-      engine: this.#configuration.engine,
       name: this.#configuration.name,
+      language: this.#configuration.language,
     });
   }
 
@@ -81,14 +82,11 @@ export class LocalTranscriptionModel
     return this.#queue.add(async () => {
       signal.throwIfAborted();
       const timestamp = new Date();
-      const language = z
-        .object({ language: z.string().optional() })
-        .parse(options.providerOptions?.['transcribe-rs'] ?? {}).language;
       await using temporary = await mkdtempDisposable(
         join(tmpdir(), 'transcribe-local-'),
       );
       const audio = join(temporary.path, 'input');
-      const wav = join(temporary.path, 'audio.wav');
+      const pcm = join(temporary.path, 'audio.pcm');
       await writeFile(
         audio,
         typeof options.audio === 'string'
@@ -97,7 +95,7 @@ export class LocalTranscriptionModel
         { signal },
       );
       // Decode WhatsApp's Opus and other supported inputs to the engine's
-      // required 16 kHz, mono, signed 16-bit WAV using ffmpeg's codecs.
+      // required 16 kHz, mono, 32-bit float samples using ffmpeg's codecs.
       await execute(
         'ffmpeg',
         [
@@ -111,9 +109,9 @@ export class LocalTranscriptionModel
           '16000',
           '-ac',
           '1',
-          '-c:a',
-          'pcm_s16le',
-          wav,
+          '-f',
+          'f32le',
+          pcm,
         ],
         { signal },
       );
@@ -131,10 +129,12 @@ export class LocalTranscriptionModel
       signal.addEventListener('abort', abort, { once: true });
       try {
         signal.throwIfAborted();
-        const result = await worker.read(wav, language);
+        const { text } = await worker.read(pcm);
         signal.throwIfAborted();
+        // Cohere marks no timings, so the transcript has no segments.
         return {
-          ...result,
+          text,
+          segments: [],
           language: undefined,
           durationInSeconds: undefined,
           warnings: [],

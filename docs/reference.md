@@ -594,7 +594,7 @@ This follows Airbyte's source-side parser and staged-file concepts: its [file pa
 
 `MacOSDocumentParser` uses native PDFKit for PDFs with a text layer and native `textutil` for TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, and WordML. It selects the format from the filename extension, preserves text/Markdown content, and strips rich formatting when converting other formats to plain text. HTML conversion does not load external resources. Images (JPEG, PNG, GIF, HEIC/HEIF, TIFF, BMP, ICO, WebP) go through Vision's accurate text recognition, one line per observation. ImageIO checks native dimensions first; images narrower or shorter than three pixels return null because Vision crashes or rejects these inputs. Audio transcription is opt-in: pass `new AudioFormat(model)` to the parser, where `model` is a caller-owned AI SDK transcription model. Without it, audio returns null. vCards, including Messages' `.loc.vcf` locations, load as their text. A format claims a file by its extension or by its magic number, the leading bytes that name the format, so a file without a usable extension, such as Messages' `GroupPhotoImage`, is still read; text that merely begins like a magic number, such as `BMW` or `%PDF notes`, is not taken for an image or a PDF. Files that match no format, locked PDFs, PDFs without a text layer and images without recognizable text parse to `null`, so the field loads as null and the copy continues. A file that cannot be read (a PDF that cannot be opened, an image Vision cannot decode, a `textutil` error) fails the copy. The parser identity includes its formats and their configuration; `identityFor(path)` identifies the specific format and model for attachment caching. PDF parsing uses the existing OSA command's 64 MiB output buffer and 120-second timeout. Text conversion uses Node's native `execFile` defaults (1 MiB output limit and no timeout).
 
-`MacOSDocumentParser` accepts additional `DocumentFormat` instances while retaining its built-in document formats. `AudioFormat` calls Vercel AI SDK's `transcribe()` with the supplied model; it owns no credentials or model lifetime. For local inference, `@workspace/transcription-local` implements AI SDK's `TranscriptionModelV4` over a native `transcribe-rs` worker:
+`MacOSDocumentParser` accepts additional `DocumentFormat` instances while retaining its built-in document formats. `AudioFormat` calls Vercel AI SDK's `transcribe()` with the supplied model; it owns no credentials or model lifetime. For local inference, `@workspace/transcription-local` implements AI SDK's `TranscriptionModelV4` over a native worker on [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp), which loads a GGUF model and runs it on Metal:
 
 ```ts
 import { AudioFormat } from '@workspace/source-apple-macos/audio-format';
@@ -602,15 +602,15 @@ import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-documen
 import { LocalTranscriptionModel } from '@workspace/transcription-local';
 
 await using model = new LocalTranscriptionModel({
-  engine: 'cohere',
-  name: 'cohere-int8',
-  directory: '/path/to/Handy/models/cohere-int8',
+  name: 'cohere-transcribe-arabic-07-2026',
+  path: '/path/to/cohere-transcribe-arabic-07-2026-Q8_0.gguf',
+  language: 'ar',
 });
 const parser = new MacOSDocumentParser([new AudioFormat(model)]);
 const text = await parser.parse('/path/to/voice-message.opus');
 ```
 
-The local provider also works directly with `transcribe({ model, audio })`. It converts input with `ffmpeg` to 16 kHz mono WAV, serializes inference through one resident worker, and closes that worker when disposed. Cancellation stops decoding or inference. The optional provider option `providerOptions: { 'transcribe-rs': { language: 'en' } }` sets a language hint. Supported engines are Cohere INT8 and Canary 180M Flash INT8. `@workspace/sdk-handy-models` discovers complete downloads in Handy's local model directory; it never downloads or modifies a model.
+The local provider also works directly with `transcribe({ model, audio })`. It converts input with `ffmpeg` to 16 kHz mono 32-bit float samples, serializes inference through one resident worker, and closes that worker when disposed. Cohere decodes at most 512 tokens in one run, so audio longer than 40 s is cut at pauses found by Silero VAD, which ships inside the worker, into pieces of about 30 s, and each piece is decoded on its own. The transcript has no segments, because Cohere marks no timings. Cancellation stops decoding or inference. `language` tells the model which language the speech is in; the model id includes it, so a new language reads audio again. `@workspace/sdk-handy-models` finds Handy's download of Cohere Transcribe Arabic 07-2026 from Handy's catalog (`@handy-computer/models`): in Hugging Face's cache (`~/.cache/huggingface/hub`), the pinned revision first, or in Handy's models folder. Its configuration always says Arabic: told Arabic, the model still writes English as spoken, so it covers Arabic and English speech, and only these. The SDK never downloads or modifies a model.
 
 The caller composes the document parser, with or without an `AudioFormat`. Each format has its own identity, so changing the audio model does not invalidate PDF, image or text extraction. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) composes it from its saved transcription choice.
 

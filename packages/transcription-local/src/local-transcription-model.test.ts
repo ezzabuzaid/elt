@@ -26,9 +26,9 @@ test('real decoding and native model failures reject, and disposal rejects furth
     path,
   ]);
   await using model = new LocalTranscriptionModel({
-    engine: 'cohere',
-    name: 'cohere-int8',
-    directory: directory.path,
+    name: 'cohere-transcribe-arabic-07-2026',
+    path: join(directory.path, 'missing.gguf'),
+    language: 'ar',
   });
   const audio = await readFile(path);
   await assert.rejects(
@@ -58,9 +58,9 @@ test('real decoding and native model failures reject, and disposal rejects furth
 
 test('a cancelled queued call never loads a model and invalid configuration is refused', async () => {
   await using model = new LocalTranscriptionModel({
-    engine: 'canary',
-    name: 'canary-180m-flash',
-    directory: '/nonexistent',
+    name: 'cohere-transcribe-arabic-07-2026',
+    path: '/nonexistent.gguf',
+    language: 'ar',
   });
   await assert.rejects(
     model.doGenerate({
@@ -72,30 +72,38 @@ test('a cancelled queued call never loads a model and invalid configuration is r
   );
   assert.throws(() =>
     LocalTranscriptionModel.parse({
-      engine: 'whisper',
-      name: 'whisper',
-      directory: '/models',
+      name: 'cohere-transcribe-arabic-07-2026',
+      path: '/models/cohere.gguf',
     }),
   );
   assert.throws(() =>
     LocalTranscriptionModel.parse({
-      engine: 'cohere',
-      name: 'cohere-int8',
-      directory: '',
+      name: 'cohere-transcribe-arabic-07-2026',
+      path: '',
+      language: 'ar',
     }),
   );
 });
 
-test('a model is named by its engine and name, not by where its files are, so a store moved to another Mac keeps its transcripts', async () => {
-  const at = (directory: string, name = 'cohere-int8') =>
-    new LocalTranscriptionModel({ engine: 'cohere', name, directory });
-  await using here = at('/Users/ada/Library/Handy/models/cohere-int8');
-  await using moved = at('/Users/grace/Library/Handy/models/cohere-int8');
+test('a model is named by its name and language, not by where its file is, so a store moved to another Mac keeps its transcripts', async () => {
+  const at = (
+    path: string,
+    name = 'cohere-transcribe-arabic-07-2026',
+    language = 'ar',
+  ) => new LocalTranscriptionModel({ name, path, language });
+  await using here = at('/Users/ada/.cache/huggingface/hub/cohere.gguf');
+  await using moved = at('/Users/grace/.cache/huggingface/hub/cohere.gguf');
   await using other = at(
-    '/Users/ada/Library/Handy/models/cohere-int8',
+    '/Users/ada/.cache/huggingface/hub/cohere.gguf',
     'other',
+  );
+  await using english = at(
+    '/Users/ada/.cache/huggingface/hub/cohere.gguf',
+    'cohere-transcribe-arabic-07-2026',
+    'en',
   );
 
   assert.equal(moved.modelId, here.modelId);
   assert.notEqual(other.modelId, here.modelId);
+  assert.notEqual(english.modelId, here.modelId);
 });

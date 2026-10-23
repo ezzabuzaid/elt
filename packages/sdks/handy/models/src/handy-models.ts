@@ -1,36 +1,36 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { CanaryModel } from './canary-model.ts';
-import { CohereModel } from './cohere-model.ts';
-import type { HandyModel } from './handy-model.ts';
+import { CohereArabicModel } from './cohere-arabic-model.ts';
+import type { HandyFolders, HandyModel } from './handy-model.ts';
 
-// Handy owns these downloads; readers reuse them in place and never modify them.
+// Handy owns these downloads; readers reuse them in place and never modify
+// them. Handy opened from the Dock has no HF_HOME, so Hugging Face's cache is
+// in its default place.
 export class HandyModels {
-  readonly #directory: string;
+  readonly #folders: HandyFolders;
 
   constructor(
-    directory = join(
-      homedir(),
-      'Library/Application Support/com.pais.handy/models',
-    ),
+    folders: HandyFolders = {
+      hub: join(homedir(), '.cache/huggingface/hub'),
+      models: join(
+        homedir(),
+        'Library/Application Support/com.pais.handy/models',
+      ),
+    },
   ) {
-    this.#directory = directory;
+    this.#folders = folders;
   }
 
   get #models(): HandyModel[] {
-    return [new CohereModel(this.#directory), new CanaryModel(this.#directory)];
+    return [new CohereArabicModel(this.#folders)];
   }
 
-  async list(): Promise<HandyModel[]> {
-    const models = this.#models;
-    const available = await Promise.all(
-      models.map((model) => model.available()),
-    );
-    return models.filter((_, index) => available[index]);
+  list(): HandyModel[] {
+    return this.#models.filter((model) => model.installed);
   }
 
-  // The model Handy keeps under this id, whether or not its files are there.
+  // The model Handy keeps under this id, whether or not its file is there.
   find(id: string): HandyModel | undefined {
     return this.#models.find((model) => model.id === id);
   }

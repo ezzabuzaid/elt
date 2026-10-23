@@ -6,16 +6,7 @@ import { z } from 'zod';
 import type { LocalTranscriptionConfiguration } from './local-transcription-model.ts';
 
 const transcript = z.union([
-  z.object({
-    text: z.string(),
-    segments: z.array(
-      z.object({
-        text: z.string(),
-        startSecond: z.number(),
-        endSecond: z.number(),
-      }),
-    ),
-  }),
+  z.object({ text: z.string() }),
   z.object({ error: z.string() }),
 ]);
 
@@ -30,13 +21,9 @@ export class TranscriptionWorker {
 
   constructor(
     helper: string,
-    { engine, directory }: LocalTranscriptionConfiguration,
+    { path, language }: LocalTranscriptionConfiguration,
   ) {
-    this.#child = spawn(
-      helper,
-      ['--engine', engine, '--directory', directory],
-      { stdio: ['pipe', 'pipe', 'pipe'] },
-    );
+    this.#child = spawn(helper, ['--model', path, '--language', language]);
     this.#lines = createInterface({ input: this.#child.stdout })[
       Symbol.asyncIterator
     ]();
@@ -66,8 +53,8 @@ export class TranscriptionWorker {
     return this.#dead;
   }
 
-  async read(path: string, language: string | undefined) {
-    this.#child.stdin.write(JSON.stringify({ path, language }) + '\n');
+  async read(path: string) {
+    this.#child.stdin.write(JSON.stringify({ path }) + '\n');
     const next = await Promise.race([
       this.#lines.next(),
       this.#closed.then((error) => {

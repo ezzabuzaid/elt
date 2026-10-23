@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "@handy-computer/models": "0.2.2",
     "@workspace/transcription-local": "0.0.1"
   }
 }
