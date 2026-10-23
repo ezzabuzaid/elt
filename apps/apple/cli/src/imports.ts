@@ -67,10 +67,11 @@ export type { Selection };
 export type ConnectorStatus = {
   readonly connector: string;
   readonly title: string;
-  readonly selection: string;
+  readonly enabled: boolean;
+  readonly selection: string | null;
   readonly database: string | null;
-  // never: not synced yet.
-  readonly state: 'never' | PassState;
+  // null: disabled. never: enabled, not synced yet.
+  readonly state: 'never' | PassState | null;
   readonly completedAt: string | null;
   readonly lastSuccessAt: string | null;
   // When what it loaded last matched the app's store, as a watch keeps it,
@@ -347,17 +348,18 @@ export class Imports {
         : 1;
   }
 
-  // Each selected connector as its own data.sqlite records it: the latest
-  // pass, the last successful one, and every stream's own latest outcome; or
-  // why its connection could not be built, which no pass recorded.
+  // Every connector, enabled ones first: disabled connectors have no sync
+  // state; enabled ones show their import's latest pass or connection failure.
   status(): ConnectorStatus[] {
     using settings = new Settings(this.root);
-    return settings.selections().map((selection) => {
+    const selections = settings.selections();
+    const statuses: ConnectorStatus[] = selections.map((selection) => {
       const connector = this.#loaded(selection.connector);
       const path = settings.database(selection);
       const base = {
         connector: selection.connector,
         title: connector?.title ?? selection.connector,
+        enabled: true,
         selection:
           connector?.describe(selection.scope) ?? 'its saved selection',
         database: existsSync(path) ? path : null,
@@ -411,6 +413,25 @@ export class Imports {
         ),
       };
     });
+    const enabled = new Set(selections.map(({ connector }) => connector));
+    return [
+      ...statuses,
+      ...this.connectors
+        .filter(({ name }) => !enabled.has(name))
+        .map(({ name, title }) => ({
+          connector: name,
+          title,
+          enabled: false,
+          selection: null,
+          database: null,
+          state: null,
+          completedAt: null,
+          lastSuccessAt: null,
+          currentAsOf: null,
+          error: null,
+          streams: [],
+        })),
+    ];
   }
 }
 

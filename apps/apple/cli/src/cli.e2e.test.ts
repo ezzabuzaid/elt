@@ -1196,10 +1196,12 @@ test('a connector whose app macOS will not open fails alone, named with the acce
   assert.match(passes.messages.error, /Full Disk Access/);
   const status = JSON.parse(cli(mac.path, 'status', '--json').stdout);
   assert.deepEqual(
-    status.map(({ connector, state }: { connector: string; state: string }) => [
-      connector,
-      state,
-    ]),
+    status
+      .filter(({ enabled }: { enabled: boolean }) => enabled)
+      .map(({ connector, state }: { connector: string; state: string }) => [
+        connector,
+        state,
+      ]),
     [
       ['notes', 'succeeded'],
       ['messages', 'failed'],
@@ -1490,12 +1492,12 @@ test("status waits out a write to the store's settings instead of printing nothi
 
   assert.equal(reported.status, 0, reported.stderr);
   assert.deepEqual(
-    JSON.parse(reported.stdout).map(
-      ({ connector, state }: { connector: string; state: string }) => [
+    JSON.parse(reported.stdout)
+      .filter(({ enabled }: { enabled: boolean }) => enabled)
+      .map(({ connector, state }: { connector: string; state: string }) => [
         connector,
         state,
-      ],
-    ),
+      ]),
     [['notes', 'never']],
   );
 });
@@ -1705,7 +1707,9 @@ test('a command a script cannot run fails and says why, changing nothing', async
   assert.match(twoStatements.stderr, /one SQL statement/);
   const status = JSON.parse(cli(mac.path, 'status', '--json').stdout);
   assert.deepEqual(
-    status.map(({ connector }: { connector: string }) => connector),
+    status
+      .filter(({ enabled }: { enabled: boolean }) => enabled)
+      .map(({ connector }: { connector: string }) => connector),
     ['notes'],
   );
 });
@@ -1889,7 +1893,9 @@ test('a selected connector that was removed is reported by status, and sync stil
   assert.equal(sync.status, 1, sync.stderr);
   assert.equal(status.status, 0, status.stderr);
   const [notes, photos] = JSON.parse(status.stdout);
+  assert.equal(notes.enabled, true);
   assert.equal(notes.state, 'succeeded');
+  assert.equal(photos.enabled, true);
   assert.equal(photos.state, 'failed');
   assert.match(photos.error, /^No connector named photos is loaded/);
 });

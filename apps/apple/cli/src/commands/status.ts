@@ -21,7 +21,7 @@ function ago(instant: string | null): string {
 export class StatusCommand extends Command {
   readonly name = 'status';
   readonly summary =
-    "Show each selected connector's latest pass, last success, how current it is and database";
+    'List all connectors, whether they are enabled, and their sync status';
 
   protected configure(): void {}
 
@@ -30,8 +30,7 @@ export class StatusCommand extends Command {
     return {
       data: statuses,
       text: () => {
-        if (statuses.length === 0)
-          return 'No connectors are set up. Run: setup';
+        if (statuses.length === 0) return 'No connectors are available.';
         const failures = statuses
           .filter(({ error }) => error !== null)
           .map(({ title, error }) => `\n${title}: ${error}`);
@@ -39,7 +38,8 @@ export class StatusCommand extends Command {
           table(
             [
               'Connector',
-              'State',
+              'Configuration',
+              'Sync',
               'Last success',
               'Current as of',
               'Scope',
@@ -47,9 +47,10 @@ export class StatusCommand extends Command {
             ],
             statuses.map((status) => [
               status.title,
-              status.state,
-              ago(status.lastSuccessAt),
-              ago(status.currentAsOf),
+              status.enabled ? 'enabled' : 'disabled',
+              status.state ?? '—',
+              status.enabled ? ago(status.lastSuccessAt) : '—',
+              status.enabled ? ago(status.currentAsOf) : '—',
               status.selection,
               status.database === null
                 ? ''

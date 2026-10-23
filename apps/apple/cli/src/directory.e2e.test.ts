@@ -30,9 +30,9 @@ for (const absolute of [false, true])
     const status = cli('status');
     assert.equal(status.status, 0, status.stderr);
     assert.deepEqual(
-      JSON.parse(status.stdout).map(
-        ({ connector }: { connector: string }) => connector,
-      ),
+      JSON.parse(status.stdout)
+        .filter(({ enabled }: { enabled: boolean }) => enabled)
+        .map(({ connector }: { connector: string }) => connector),
       ['notes'],
     );
 
