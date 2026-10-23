@@ -24,7 +24,6 @@ import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-
 import { ConnectorManifest } from '@workspace/connector-apple-manifest/connector-manifest';
 import { hostModules } from '@workspace/connector-apple-manifest/host-modules';
 
-const eventkitHelper = 'packages/sdks/apple/eventkit/dist/eventkit-helper';
 const outdir = 'plugins/apple/server';
 
 const builtIns = readdirSync(builtInConnectors)
@@ -81,10 +80,17 @@ for (const { manifest, out } of builtIns) {
 }
 
 // main.ts hands this path to the Calendar and Reminders connectors.
-copyFileSync(eventkitHelper, join(outdir, 'eventkit-helper'));
+copyFileSync(
+  fileURLToPath(
+    import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+  ),
+  join(outdir, 'eventkit-helper'),
+);
 // The native worker links ONNX Runtime statically; the executable is enough.
 copyFileSync(
-  'packages/transcription-local/dist/transcribe-local',
+  fileURLToPath(
+    import.meta.resolve('@workspace/transcription-local/transcribe-local'),
+  ),
   join(outdir, 'transcribe-local'),
 );
 

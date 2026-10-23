@@ -21,12 +21,8 @@ export class TerminalHost implements AppleHost {
     return this.#parser();
   }
 
-  // The helper @workspace/sdk-apple-eventkit compiles into its dist.
   readonly eventKitHelper = fileURLToPath(
-    new URL(
-      'eventkit-helper',
-      import.meta.resolve('@workspace/sdk-apple-eventkit'),
-    ),
+    import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
   );
 
   // The app macOS asks for access on behalf of: the one that launched this

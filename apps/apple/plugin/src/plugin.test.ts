@@ -45,10 +45,7 @@ const host = {
   grantee: 'ChatGPT',
   documentParser: new MacOSDocumentParser(),
   eventKitHelper: fileURLToPath(
-    new URL(
-      'eventkit-helper',
-      import.meta.resolve('@workspace/sdk-apple-eventkit'),
-    ),
+    import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
   ),
 };
 

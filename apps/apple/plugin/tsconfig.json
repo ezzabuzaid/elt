@@ -12,10 +12,10 @@
       "path": "../../../packages/sources/apple/macos"
     },
     {
-      "path": "../../../packages/sdks/handy/models"
+      "path": "../../../packages/settings"
     },
     {
-      "path": "../../../packages/settings"
+      "path": "../../../packages/sdks/handy/models"
     },
     {
       "path": "../../../packages/destinations/sqlite"
@@ -82,6 +82,9 @@
     },
     {
       "path": "../../../packages/connectors/apple/accounts"
+    },
+    {
+      "path": "../../../packages/transcription-local"
     },
     {
       "path": "../../../packages/sdks/apple/eventkit"

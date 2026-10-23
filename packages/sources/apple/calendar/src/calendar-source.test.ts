@@ -78,10 +78,7 @@ const execFile = promisify(execFileCallback);
 // The helper @workspace/sdk-apple-eventkit compiles, which the live tests read
 // this Mac's calendars through.
 const helper = fileURLToPath(
-  new URL(
-    'eventkit-helper',
-    import.meta.resolve('@workspace/sdk-apple-eventkit'),
-  ),
+  import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
 );
 
 const snake = (name: string) =>

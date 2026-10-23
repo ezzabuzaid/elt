@@ -53,10 +53,7 @@ calendarEnd.setUTCFullYear(calendarEnd.getUTCFullYear() + 1);
 const calendar = new AppleCalendarSource({
   store: new CalendarStore(
     fileURLToPath(
-      new URL(
-        'eventkit-helper',
-        import.meta.resolve('@workspace/sdk-apple-eventkit'),
-      ),
+      import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
     ),
   ),
   startAt: new Date().toISOString(),

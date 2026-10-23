@@ -7,7 +7,8 @@
     ".": {
       "types": "./dist/local-transcription-model.d.ts",
       "default": "./dist/local-transcription-model.js"
-    }
+    },
+    "./transcribe-local": "./dist/transcribe-local"
   },
   "dependencies": {
     "@ai-sdk/provider": "4.0.31",
