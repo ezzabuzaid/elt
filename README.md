@@ -301,7 +301,7 @@ await new Pipeline({
 
 Each file field chooses its own store. SQLite and Postgres receive an ordinary text reference; `LocalFiles` owns paths and file writes. Files are saved before rows commit, and obsolete files are removed after committed rows stop referencing them. Unchanged content reuses its path; clearing a copy removes its managed files. These files mirror retained rows rather than form a permanent archive.
 
-Parsing is explicit. Omitting file-derived columns loads metadata only. The macOS parser reads PDFs with a text layer, TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, WordML, vCards, and text in images through Vision. Add `new AudioFormat(model)` to transcribe audio with a caller-provided AI SDK model; without it, audio loads `null`. `LocalTranscriptionModel` from `transcription-local` is such a model that runs on this Mac over Cohere Transcribe Arabic, which covers Arabic and English, installed by Handy; it needs `ffmpeg` on PATH (`brew install ffmpeg`), Nx builds its native worker with Rust/Cargo and CMake, and Handy's model downloads are reused in place and never modified. Video and unknown formats load `null`. Files it cannot read fail the copy. Attachments whose file is not on this Mac (not yet downloaded from iCloud) or that belong to a locked note keep their metadata with `null` content and reference. Tables have no file; their cells are in the note's `markdown`.
+Parsing is explicit. Omitting file-derived columns loads metadata only. The macOS parser reads PDFs with a text layer, TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, WordML, vCards, and text in images through Vision. Add `new AudioFormat(model)` to transcribe audio with a caller-provided AI SDK model; without it, audio loads `null`. `LocalTranscriptionModel` from `transcription-local` is such a model that runs on this Mac over a speech model already installed on it, which `sdk-macos-speech-models` finds; it decodes audio with macOS's `afconvert`, Nx builds its native worker with Rust/Cargo and CMake, and installed models are reused in place and never modified. Video and unknown formats load `null`. Files it cannot read fail the copy. Attachments whose file is not on this Mac (not yet downloaded from iCloud) or that belong to a locked note keep their metadata with `null` content and reference. Tables have no file; their cells are in the note's `markdown`.
 
 Context Compiler's hosts parse no file inside an import; they read the stored copies into an `attachment_text` table after each pass. See [attachment text](docs/reference.md#attachment-text).
 
@@ -392,7 +392,8 @@ packages/sources/google/  The Search Console source (source-google-search-consol
 packages/sdks/microsoft/sql-server/    SQL Server SDK (sdk-microsoft-sql-server)
 packages/sources/microsoft/sql-server/ SQL Server source (source-microsoft-sql-server)
 packages/eca/              Event-condition-action rules over loaded data
-packages/transcription-local/ Local audio transcription over Handy's models
+packages/transcription-local/ Local audio transcription over installed speech models
+packages/sdks/macos/speech-models/ Speech models installed on this Mac (sdk-macos-speech-models)
 apps/google/           Google example app over the Search Console source
 apps/proactive/        Proactive rules over Calendar, Mail, Messages, Slack and WhatsApp
 docs/                  Detailed behavior and native API research

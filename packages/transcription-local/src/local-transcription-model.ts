@@ -16,13 +16,13 @@ import { z } from 'zod';
 import { TranscriptionWorker } from './transcription-worker.ts';
 
 const execute = promisify(execFile);
-// A model is its name and the language it is told the speech is in; the path
-// only says where its file is on this Mac, so a store moved to another Mac
-// keeps the transcripts it made.
+// A model is its name and the language it is told the speech is in, if any;
+// the path only says where its file is on this Mac, so a store moved to
+// another Mac keeps the transcripts it made.
 const configuration = z.strictObject({
   name: z.string().min(1),
   path: z.string().min(1),
-  language: z.string().min(1),
+  language: z.string().min(1).optional(),
 });
 export type LocalTranscriptionConfiguration = z.infer<typeof configuration>;
 
@@ -64,12 +64,6 @@ export class LocalTranscriptionModel
   // its weights just to open settings.
   async check(): Promise<void> {
     await execute(this.#helper, ['--help']);
-    await execute('ffmpeg', ['-version']).catch((cause: unknown) => {
-      throw new Error(
-        'Local audio transcription requires ffmpeg on PATH. Install it with brew install ffmpeg.',
-        { cause },
-      );
-    });
   }
 
   doGenerate(
@@ -86,7 +80,7 @@ export class LocalTranscriptionModel
         join(tmpdir(), 'transcribe-local-'),
       );
       const audio = join(temporary.path, 'input');
-      const pcm = join(temporary.path, 'audio.pcm');
+      const wav = join(temporary.path, 'audio.wav');
       await writeFile(
         audio,
         typeof options.audio === 'string'
@@ -94,24 +88,15 @@ export class LocalTranscriptionModel
           : options.audio,
         { signal },
       );
-      // Decode WhatsApp's Opus and other supported inputs to the engine's
-      // required 16 kHz, mono, 32-bit float samples using ffmpeg's codecs.
+      // macOS's own decoder reads WhatsApp's Opus and the other formats
+      // AudioFormat accepts, so a Mac needs nothing installed. It writes the
+      // engine's required 16 kHz, mono, 32-bit float samples through its best
+      // sample rate converter; the default one cost recognized words.
       await execute(
-        'ffmpeg',
+        '/usr/bin/afconvert',
         [
-          '-nostdin',
-          '-v',
-          'error',
-          '-i',
-          audio,
-          '-vn',
-          '-ar',
-          '16000',
-          '-ac',
-          '1',
-          '-f',
-          'f32le',
-          pcm,
+          ...['-f', 'WAVE', '-d', 'LEF32@16000', '-c', '1'],
+          ...['--src-complexity', 'bats', audio, wav],
         ],
         { signal },
       );
@@ -129,7 +114,7 @@ export class LocalTranscriptionModel
       signal.addEventListener('abort', abort, { once: true });
       try {
         signal.throwIfAborted();
-        const { text } = await worker.read(pcm);
+        const { text } = await worker.read(wav);
         signal.throwIfAborted();
         // Cohere marks no timings, so the transcript has no segments.
         return {

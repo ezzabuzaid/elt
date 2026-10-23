@@ -23,7 +23,11 @@ export class TranscriptionWorker {
     helper: string,
     { path, language }: LocalTranscriptionConfiguration,
   ) {
-    this.#child = spawn(helper, ['--model', path, '--language', language]);
+    this.#child = spawn(helper, [
+      '--model',
+      path,
+      ...(language === undefined ? [] : ['--language', language]),
+    ]);
     this.#lines = createInterface({ input: this.#child.stdout })[
       Symbol.asyncIterator
     ]();

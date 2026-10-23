@@ -11,6 +11,8 @@ import type { FileHead } from './file-head.ts';
 export class AudioFormat extends DocumentFormat {
   readonly identity: string;
   readonly #model: Exclude<TranscriptionModel, string>;
+  // What macOS's own decoder reads, which LocalTranscriptionModel uses. It
+  // cannot open WebM, and other audio, such as MIDI, holds no speech.
   protected override readonly extensions = [
     'wav',
     'mp3',
@@ -21,7 +23,7 @@ export class AudioFormat extends DocumentFormat {
     'flac',
     'aiff',
     'aif',
-    'webm',
+    'caf',
   ];
 
   constructor(model: Exclude<TranscriptionModel, string>) {
@@ -31,9 +33,8 @@ export class AudioFormat extends DocumentFormat {
   }
 
   protected override async hasSignature(head: FileHead): Promise<boolean> {
-    return (
-      (await fileTypeFromBuffer(head.bytes))?.mime.startsWith('audio/') ?? false
-    );
+    const type = await fileTypeFromBuffer(head.bytes);
+    return type !== undefined && this.extensions.includes(type.ext);
   }
 
   override async text(

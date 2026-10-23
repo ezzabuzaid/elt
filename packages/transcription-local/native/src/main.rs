@@ -16,7 +16,7 @@ struct Args {
     #[arg(long)]
     model: PathBuf,
     #[arg(long)]
-    language: String,
+    language: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut session = Model::load(&args.model)?.session()?;
     let mut vad = load_vad()?;
     let options = RunOptions {
-        language: Some(args.language),
+        language: args.language,
         ..Default::default()
     };
     let mut stdout = io::stdout().lock();
@@ -68,18 +68,17 @@ fn load_vad() -> Result<VadSession, Box<dyn Error>> {
     Ok(model?.vad_session()?)
 }
 
-// The parent decodes audio to transcribe.cpp's input: 16 kHz mono 32-bit
-// float samples, little-endian, with no header.
+// The parent decodes audio to transcribe.cpp's input, 16 kHz mono 32-bit
+// float samples, in a WAV file.
 fn transcribe(
     session: &mut Session,
     vad: &mut VadSession,
     path: &Path,
     options: &RunOptions,
 ) -> Result<Response, Box<dyn Error>> {
-    let pcm: Vec<f32> = fs::read(path)?
-        .chunks_exact(4)
-        .map(|sample| f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]))
-        .collect();
+    let pcm = hound::WavReader::open(path)?
+        .into_samples::<f32>()
+        .collect::<Result<Vec<_>, _>>()?;
     let mut texts = Vec::new();
     for chunk in chunks::chunks(vad, &pcm)? {
         // Cohere can skip words spoken in the first moment of its input, as

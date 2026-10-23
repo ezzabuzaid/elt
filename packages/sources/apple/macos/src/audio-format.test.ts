@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { promisify } from 'node:util';
 
 import { MockTranscriptionModelV4 } from 'ai/test';
 
@@ -81,5 +83,55 @@ test('empty transcripts become null and provider failures propagate without auto
     throw new Error('Model unavailable');
   };
   await assert.rejects(parser.parse(audio), /Model unavailable/);
+  assert.equal(calls, 1);
+});
+
+test('audio macOS cannot decode or that holds no speech never reaches the model, and a Core Audio file without an extension does', async () => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'audio-format-'),
+  );
+  const webm = join(directory.path, 'clip.webm');
+  const midi = join(directory.path, 'tune');
+  const spoken = join(directory.path, 'spoken.aiff');
+  const caf = join(directory.path, 'Audio Message');
+  await writeFile(webm, Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0]));
+  await writeFile(
+    midi,
+    Buffer.from([
+      ...Buffer.from('MThd'),
+      ...[0, 0, 0, 6, 0, 0, 0, 1, 0, 96],
+      ...Buffer.from('MTrk'),
+      ...[0, 0, 0, 4, 0, 0xff, 0x2f, 0],
+    ]),
+  );
+  await promisify(execFile)('say', ['-o', spoken, 'hello']);
+  await promisify(execFile)('afconvert', [
+    '-f',
+    'caff',
+    '-d',
+    'LEI16',
+    spoken,
+    caf,
+  ]);
+  let calls = 0;
+  const model = new MockTranscriptionModelV4({
+    doGenerate: async () => {
+      calls++;
+      return {
+        text: 'hello',
+        segments: [],
+        language: undefined,
+        durationInSeconds: undefined,
+        warnings: [],
+        response: { timestamp: new Date(), modelId: 'test' },
+      };
+    },
+  });
+  const parser = new MacOSDocumentParser([new AudioFormat(model)]);
+
+  assert.equal(await parser.parse(webm), null);
+  assert.equal(await parser.parse(midi), null);
+  assert.equal(calls, 0);
+  assert.equal(await parser.parse(caf), 'hello');
   assert.equal(calls, 1);
 });

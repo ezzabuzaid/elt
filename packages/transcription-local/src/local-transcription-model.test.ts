@@ -12,19 +12,8 @@ test('real decoding and native model failures reject, and disposal rejects furth
   await using directory = await mkdtempDisposable(
     join(tmpdir(), 'local-model-'),
   );
-  const path = join(directory.path, 'silence.wav');
-  await promisify(execFile)('ffmpeg', [
-    '-nostdin',
-    '-v',
-    'error',
-    '-f',
-    'lavfi',
-    '-i',
-    'anullsrc=r=16000:cl=mono',
-    '-t',
-    '0.1',
-    path,
-  ]);
+  const path = join(directory.path, 'silence.aiff');
+  await promisify(execFile)('say', ['-o', path, '[[slnc 100]]']);
   await using model = new LocalTranscriptionModel({
     name: 'cohere-transcribe-arabic-07-2026',
     path: join(directory.path, 'missing.gguf'),
@@ -32,14 +21,14 @@ test('real decoding and native model failures reject, and disposal rejects furth
   });
   const audio = await readFile(path);
   await assert.rejects(
-    model.doGenerate({ audio, mediaType: 'audio/wav' }),
+    model.doGenerate({ audio, mediaType: 'audio/aiff' }),
     /Local transcription exited/,
   );
   // A failed worker can be recreated for the next request.
   await assert.rejects(
     model.doGenerate({
       audio: audio.toString('base64'),
-      mediaType: 'audio/wav',
+      mediaType: 'audio/aiff',
     }),
     /Local transcription exited/,
   );
@@ -48,10 +37,10 @@ test('real decoding and native model failures reject, and disposal rejects furth
       audio: Buffer.from('bad audio'),
       mediaType: 'audio/ogg',
     }),
-    /ffmpeg/,
+    /afconvert/,
   );
   await model[Symbol.asyncDispose]();
-  await assert.rejects(model.doGenerate({ audio, mediaType: 'audio/wav' }), {
+  await assert.rejects(model.doGenerate({ audio, mediaType: 'audio/aiff' }), {
     name: 'AbortError',
   });
 });
@@ -74,6 +63,7 @@ test('a cancelled queued call never loads a model and invalid configuration is r
     LocalTranscriptionModel.parse({
       name: 'cohere-transcribe-arabic-07-2026',
       path: '/models/cohere.gguf',
+      language: '',
     }),
   );
   assert.throws(() =>
@@ -103,7 +93,14 @@ test('a model is named by its name and language, not by where its file is, so a 
     'en',
   );
 
+  // A model that detects the language itself is told none.
+  await using unspecified = new LocalTranscriptionModel({
+    name: 'cohere-transcribe-arabic-07-2026',
+    path: '/Users/ada/.cache/huggingface/hub/cohere.gguf',
+  });
+
   assert.equal(moved.modelId, here.modelId);
   assert.notEqual(other.modelId, here.modelId);
   assert.notEqual(english.modelId, here.modelId);
+  assert.notEqual(unspecified.modelId, here.modelId);
 });

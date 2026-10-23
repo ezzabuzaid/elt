@@ -186,7 +186,7 @@
       "path": "./packages/transcription-local"
     },
     {
-      "path": "./packages/sdks/handy/models"
+      "path": "./packages/sdks/macos/speech-models"
     }
   ]
 }

@@ -1,0 +1,13 @@
+{
+  "name": "sdk-macos-speech-models",
+  "sourceRoot": "packages/sdks/macos/speech-models/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test {args} \"packages/sdks/macos/speech-models/dist/*.test.js\""
+    }
+  }
+}
