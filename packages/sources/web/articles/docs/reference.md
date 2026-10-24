@@ -142,3 +142,35 @@ Final checks: 14 web-source, 36 ELT engine and 109 SQLite tests pass (159 total)
 The final live run loaded all 26 selected articles across the same nine inputs in the earlier table. Eight inputs emitted and wrote zero records on rerun. Daring Fireball wrote one changed record: four subsequent public `WebArticle.fetch` captures showed alternating `sunnny-01.png` / `sunnny-02.png` sidebar advertising included in article HTML/text. This is extraction pollution related to 2926, not an article retry or checkpoint failure. The result is recorded as a failed unchanged-rerun assertion, not hidden as a successful stability check.
 
 A separate controlled feed contained one HTTP 404 and three real Anthropic article URLs. All three live articles committed, with the failed URL reported. A fresh pipeline then recovered the retained URL after the feed rolled to empty; that recovery served a newly downloaded Anthropic page. The failure and recovery endpoint was controlled, not an induced failure on the publisher. [Live results, article hashes and the Daring difference](2925-live.json) retain the evidence; raw captures and databases are under `/tmp/elt-2925/`. All probe processes and HTTP fixtures exited. Complete-crawl throughput and publisher-side failure injection were not tested.
+
+## Combined acceptance checks — 2026-10-24
+
+The committed 2925 source and the separate, uncommitted extraction fixes for 2924, 2926 and 2927 were verified together in this checkout. [Combined evidence](2026-10-24-combined-checks.json) records the source/build hashes, input URLs, observed counts and scope. Source and extractor hashes remained unchanged during the live run. This section supersedes the earlier Daring Fireball unchanged-rerun failure for this tested combination; the historical failure evidence above is retained.
+
+Each live input ran through `WebSource` → `Pipeline` → SQLite three times, with a new source/pipeline instance and the same destination/checkpoint files for each pass. The first pass stored 26 articles. Both subsequent passes emitted and wrote zero records, and every stored field remained identical.
+
+| Live input      | Articles | Writes across three passes | Source emissions across three passes |
+| --------------- | -------: | -------------------------- | ------------------------------------ |
+| Anthropic       |        3 | 3, 0, 0                    | 3, 0, 0                              |
+| Simon Willison  |        3 | 3, 0, 0                    | 3, 0, 0                              |
+| Julia Evans     |        3 | 3, 0, 0                    | 3, 0, 0                              |
+| Cloudflare      |        3 | 3, 0, 0                    | 3, 0, 0                              |
+| Python Insider  |        3 | 3, 0, 0                    | 3, 0, 0                              |
+| Martin Fowler   |        3 | 3, 0, 0                    | 3, 0, 0                              |
+| GitHub Blog     |        3 | 3, 0, 0                    | 3, 0, 0                              |
+| JSON Feed       |        2 | 2, 0, 0                    | 2, 0, 0                              |
+| Daring Fireball |        3 | 3, 0, 0                    | 3, 0, 0                              |
+
+The existing extraction benchmark independently fetched all 26 pages three times: 78 successful requests, stable HTML on every page, all 1,005 reference prose blocks, 39 table rows and 111 table cells retained, and zero matches for the known boilerplate checks. The primary painter tool link remains in HTML and text. Every public extractor field from these fresh captures exactly matched its persisted pipeline record. This re-verifies editorial asides (2924), sponsor/related-post exclusion including Daring ads (2926), and the primary outbound link (2927).
+
+Updates and failures cannot be induced safely on publishers. Fresh original HTML from one page per site was therefore replayed through the installed `HttpServer`, the public source/pipeline APIs and persistent SQLite, with controlled changes only at that HTTP boundary:
+
+- **Updates:** nine articles loaded; an unchanged pass emitted/wrote zero. Adding one verification paragraph to each captured article emitted/wrote nine updates, preserved nine rows, and stored every paragraph. The next unchanged pass emitted/wrote zero.
+- **Interruption/resume:** cancellation after three committed articles propagated the exact reason. A fresh pipeline wrote the six remaining articles and made no requests for the three checkpointed pages. The next pass emitted/wrote zero.
+- **Failure recovery:** a controlled 404 on the Anthropic capture reported the failed URL while the other eight articles committed. After the feed became empty, a fresh pipeline requested only the retained failed URL and stored its recovered article. The following pass emitted/wrote zero.
+
+The existing Nx suites passed with 14 source and 37 article tests, zero failures and zero TODOs. They additionally cover cancellation during retries, extraction errors, repeated interruptions, independent inputs, rate limiting and full-refresh rollback. `nx run source-web-articles:typecheck` and its 23 dependent tasks passed, including formatting and lint.
+
+The first source-test launch could not access the default fixture registry in the sandbox. The permitted launch then found an old Docker cleanup record while Docker was stopped. The package's documented `XDG_STATE_HOME` option isolated the HTTP/SQLite tests under `/tmp/elt-combined-e2e-GUb709/fixture-state`; existing recovery records were preserved, and the task registry was empty after teardown. No test setup or production code was changed.
+
+Retained evidence is under `/tmp/elt-combined-e2e-GUb709/`: logs, databases, per-pass stored rows, fresh compressed publisher captures, scorer results and manifests. All runners and the replay server exited; temporary probe scripts were removed after verification. No source, SDK, engine, dependency or checkpoint mechanism changed in this verification task. Backlog 2918 (representations/Markdown) and 2920 (checkpoint write amplification) remain deferred and untouched. Full-crawl throughput, arbitrary-site extraction and publisher-side failure injection remain outside these sampled checks.

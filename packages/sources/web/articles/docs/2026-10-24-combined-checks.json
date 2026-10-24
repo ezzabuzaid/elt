@@ -1,0 +1,210 @@
+{
+  "verifiedAt": "2026-10-24T10:43:48.172Z",
+  "gitHead": "19fa6934203e4b752669e5bddfe875fb50642d32",
+  "workingTreeNote": "The source retry fix is committed. The separately owned extraction fixes are present and uncommitted; hashes identify the tested source and builds.",
+  "sourceAndBuildSha256": {
+    "packages/sources/web/articles/src/web-source.ts": "d4f8c37e5e887a23815f74382e9e610f40b27fb0e123176100586522725348cf",
+    "packages/sources/web/articles/dist/web-source.js": "9bd4d61134994a33b6a83f70f07f66b3700d7a27639d64c7bb07d93d5ffdd7a2",
+    "packages/sdks/web/article/src/web-article.ts": "dbcff5fb9bb72b4baded21afd25c8d0be92ce66145177586aee1bcb59afc6e3b",
+    "packages/sdks/web/article/dist/web-article.js": "6e54cb25b7ccd09a6c1ae74bd426ee9dc79816ef9288c315f561aadb94bab03e"
+  },
+  "sourceAndExtractorUnchangedDuringLiveRun": true,
+  "liveBoundary": "Real websites and feeds -> WebSource -> Pipeline -> SQLite, with a fresh source and pipeline each pass.",
+  "liveSites": [
+    {
+      "site": "Anthropic",
+      "input": "https://www.anthropic.com/",
+      "articles": 3,
+      "writes": [3, 0, 0],
+      "emitted": [3, 0, 0],
+      "status": "pass"
+    },
+    {
+      "site": "Simon Willison",
+      "input": "https://simonwillison.net/",
+      "articles": 3,
+      "writes": [3, 0, 0],
+      "emitted": [3, 0, 0],
+      "status": "pass"
+    },
+    {
+      "site": "Julia Evans",
+      "input": "https://jvns.ca/",
+      "articles": 3,
+      "writes": [3, 0, 0],
+      "emitted": [3, 0, 0],
+      "status": "pass"
+    },
+    {
+      "site": "Cloudflare",
+      "input": "https://blog.cloudflare.com/",
+      "articles": 3,
+      "writes": [3, 0, 0],
+      "emitted": [3, 0, 0],
+      "status": "pass"
+    },
+    {
+      "site": "Python",
+      "input": "https://blog.python.org/",
+      "articles": 3,
+      "writes": [3, 0, 0],
+      "emitted": [3, 0, 0],
+      "status": "pass"
+    },
+    {
+      "site": "Martin Fowler",
+      "input": "https://martinfowler.com/",
+      "articles": 3,
+      "writes": [3, 0, 0],
+      "emitted": [3, 0, 0],
+      "status": "pass"
+    },
+    {
+      "site": "GitHub",
+      "input": "https://github.blog/",
+      "articles": 3,
+      "writes": [3, 0, 0],
+      "emitted": [3, 0, 0],
+      "status": "pass"
+    },
+    {
+      "site": "JSON Feed",
+      "input": "https://www.jsonfeed.org/feed.json",
+      "articles": 2,
+      "writes": [2, 0, 0],
+      "emitted": [2, 0, 0],
+      "status": "pass"
+    },
+    {
+      "site": "Daring Fireball",
+      "input": "https://daringfireball.net/feeds/main",
+      "articles": 3,
+      "writes": [3, 0, 0],
+      "emitted": [3, 0, 0],
+      "status": "pass"
+    }
+  ],
+  "storedContent": {
+    "matchedArticles": 26,
+    "fields": "Every field returned by public WebArticle.fetch exactly matches the persisted pipeline record",
+    "articles": [
+      "anthropic-skills",
+      "anthropic-safeguards",
+      "anthropic-science",
+      "simon-music",
+      "simon-kimi",
+      "simon-painter",
+      "julia-sqlite",
+      "julia-django",
+      "julia-battery",
+      "cloudflare-kisms",
+      "cloudflare-range",
+      "cloudflare-quantum",
+      "python-final",
+      "python-maintenance",
+      "python-alpha",
+      "fowler-slides",
+      "fowler-voice",
+      "fowler-hardware",
+      "github-java",
+      "github-git",
+      "github-bounty",
+      "jsonfeed-launch",
+      "jsonfeed-11",
+      "daring-arrival",
+      "daring-duo",
+      "daring-ceos"
+    ]
+  },
+  "controlledReplay": {
+    "boundary": "Fresh original publisher HTML replayed through a real loopback HTTP server, public WebSource/Pipeline, and persistent SQLite; only fixture pages are edited or failed.",
+    "sites": [
+      "Anthropic",
+      "Simon Willison",
+      "Julia Evans",
+      "Cloudflare",
+      "Python",
+      "Martin Fowler",
+      "GitHub",
+      "JSON Feed",
+      "Daring Fireball"
+    ],
+    "scenarios": [
+      {
+        "name": "unchanged-and-updates",
+        "status": "pass",
+        "firstWrites": 9,
+        "unchangedWrites": 0,
+        "changedWrites": 9,
+        "afterUpdateWrites": 0,
+        "stored": 9
+      },
+      {
+        "name": "interruption-resume",
+        "status": "pass",
+        "committedBeforeStop": 3,
+        "resumeWrites": 6,
+        "resumedRequests": [
+          "/feed.json",
+          "/03-cloudflare-kisms",
+          "/04-python-final",
+          "/05-fowler-voice",
+          "/06-github-java",
+          "/07-jsonfeed-launch",
+          "/08-daring-arrival"
+        ],
+        "committedPagesRefetched": false,
+        "stored": 9
+      },
+      {
+        "name": "failure-recovery-after-feed-rollover",
+        "status": "pass",
+        "committedDespiteFailure": 8,
+        "retryWrites": 1,
+        "retryRequests": ["/feed.json", "/00-anthropic-safeguards"],
+        "stored": 9
+      }
+    ]
+  },
+  "extraction": {
+    "requests": 78,
+    "successful": 78,
+    "differentOutputPages": 0,
+    "blocks": 1005,
+    "blocksRetained": 1005,
+    "tableRows": 39,
+    "tableRowsRetained": 39,
+    "tableCells": 111,
+    "tableCellsRetained": 111,
+    "pagesWithAllBlocks": 26,
+    "pagesWithDetectedBoilerplate": 0
+  },
+  "primaryToolLinkPreservedInHtmlAndText": "https://tools.simonwillison.net/quick-study-painter",
+  "tests": {
+    "source-web-articles": {
+      "tests": 14,
+      "pass": 14,
+      "fail": 0,
+      "todo": 0
+    },
+    "sdk-web-article": {
+      "tests": 37,
+      "pass": 37,
+      "fail": 0,
+      "todo": 0
+    }
+  },
+  "typecheck": "source-web-articles and its 23 dependent tasks passed, including formatting and lint",
+  "backlog": {
+    "verifiedDone": [2924, 2925, 2926, 2927],
+    "stillDeferred": [2918, 2920]
+  },
+  "fixtureEnvironment": "The default fixture registry attempted old Docker-run recovery while Docker was stopped. The documented XDG_STATE_HOME option isolated this HTTP/SQLite run; old ownership records were preserved. The task registry is empty after teardown.",
+  "evidenceDirectory": "/tmp/elt-combined-e2e-GUb709",
+  "limitations": [
+    "26 fixed pages across nine inputs; no complete crawl or large-listing throughput check.",
+    "Edits, interruption and failures were controlled at a loopback HTTP origin serving fresh publisher captures; publishers were not modified.",
+    "Boilerplate checks detect known surrounding content and do not prove perfect extraction on arbitrary pages.",
+    "No Markdown negotiation, checkpoint optimization, browser rendering, authentication or host connector changes."
+  ]
+}
