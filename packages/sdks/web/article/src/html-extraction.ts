@@ -106,6 +106,16 @@ export class HTMLExtraction extends Extraction {
         useAsync: false,
       },
     );
+    // Readability accepts dateline substrings as bylines; remove that hint after content selection.
+    for (const attribute of ['class', 'id']) {
+      for (const element of dom.window.document.querySelectorAll(
+        `[${attribute}*="dateline" i]`,
+      )) {
+        const value = element.getAttribute(attribute);
+        if (value)
+          element.setAttribute(attribute, value.replace(/dateline/gi, ' '));
+      }
+    }
     const article = new Readability(dom.window.document, {
       charThreshold: 1,
     }).parse();
