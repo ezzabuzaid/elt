@@ -71,7 +71,7 @@ async function readSitemapUrls(
     if (visited.has(next.url)) continue;
     visited.add(next.url);
     const listing = parse(next.url, await download(next.url, signal));
-    for (const url of listing.pages) urls.add(url);
+    for (const { url } of listing.pages) urls.add(url);
     for (const child of listing.sitemaps) {
       if (next.depth >= MAX_DEPTH)
         throw new SitemapError(

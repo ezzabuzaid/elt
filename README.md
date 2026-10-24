@@ -372,6 +372,26 @@ Manage permissions in **System Settings → Privacy & Security**. Calendar and R
 
 ## Development
 
+### Website and feed discovery
+
+`@workspace/sdk-web-discovery` accepts a website, sitemap or feed URL:
+
+```ts
+import { WebDiscovery } from '@workspace/sdk-web-discovery';
+
+const pages = await new WebDiscovery().discover(
+  'https://www.anthropic.com/',
+  AbortSignal.timeout(60_000),
+);
+// [{ url, lastModified, listingUrl }]
+```
+
+Discovery returns candidate pages without publisher-specific filters. It follows advertised sitemaps and feeds; article classification, content fetching and destination loading are separate steps. See the [API, supported formats and live verification](packages/sdks/web/discovery/README.md).
+
+Pass a discovered page URL to `new WebArticle().fetch(page.url, signal)` from `@workspace/sdk-web-article` to fetch its content and extract sanitized HTML, readable text, metadata and its declared canonical URL. This composes Mozilla Readability, jsdom, DOMPurify and html-to-text. See the [article API, public tests and live quality findings](packages/sdks/web/article/README.md).
+
+### Workspace
+
 ```text
 packages/elt/                     Core contracts, pipelines, and the checkpoint protocol
 packages/destinations/sqlite/     SQLite destination and checkpoint store (elt-sqlite)
@@ -392,6 +412,8 @@ packages/sdks/whatsapp/desktop/    WhatsApp for Mac SDK (sdk-whatsapp-desktop)
 packages/sources/whatsapp/desktop/ WhatsApp for Mac source (source-whatsapp-desktop)
 packages/sdks/chromium/cookies/   Chromium browser cookie store SDK (sdk-chromium-cookies)
 packages/sdks/instagram/web/      instagram.com web API SDK (sdk-instagram-web)
+packages/sdks/web/discovery/      Website, sitemap and feed discovery (sdk-web-discovery)
+packages/sdks/web/article/        Page fetching and article extraction (sdk-web-article)
 packages/sources/instagram/web/   Instagram source (source-instagram-web)
 packages/sources/apple/   One package per Apple source (source-apple-<name>), and the shared
                           source-apple-macos (readers, document parser)

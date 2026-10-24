@@ -8,7 +8,11 @@ export class SitemapFormatError extends Error {
 }
 
 export type SitemapListing = {
-  readonly pages: readonly string[];
+  readonly pages: readonly {
+    readonly url: string;
+    /** The sitemap's lastmod text, not a publication time. Feeds and text lists have none. */
+    readonly lastModified: string | null;
+  }[];
   readonly sitemaps: readonly string[];
 };
 
@@ -46,7 +50,7 @@ export function decodeSitemap(bytes: Uint8Array): string {
 // arrays, a repeated element it does not name an array, and an element with
 // neither children nor attributes ''.
 const empty = z.literal('');
-const entry = z.object({ loc: z.string() });
+const entry = z.object({ loc: z.string(), lastmod: z.string().optional() });
 const urlset = z.object({ url: z.array(entry).optional() });
 const sitemapindex = z.object({ sitemap: z.array(entry).optional() });
 // RSS 2.0 makes every element of an item optional, so an item may name no page.
@@ -117,7 +121,10 @@ export function parseSitemap(text: string): SitemapListing {
         throw new SitemapFormatError(
           `line ${JSON.stringify(line)} is not a URL`,
         );
-    return { pages: lines, sitemaps: [] };
+    return {
+      pages: lines.map((url) => ({ url, lastModified: null })),
+      sitemaps: [],
+    };
   }
   let document: unknown;
   try {
@@ -131,7 +138,13 @@ export function parseSitemap(text: string): SitemapListing {
   if (typeof document === 'object' && document !== null) {
     if ('urlset' in document) {
       const set = parseRoot('urlset', urlset, document.urlset);
-      return { pages: (set?.url ?? []).map(loc), sitemaps: [] };
+      return {
+        pages: (set?.url ?? []).map((page) => ({
+          url: loc(page),
+          lastModified: page.lastmod?.trim() || null,
+        })),
+        sitemaps: [],
+      };
     }
     if ('sitemapindex' in document) {
       const index = parseRoot(
@@ -147,25 +160,29 @@ export function parseSitemap(text: string): SitemapListing {
     if ('rss' in document) {
       const channel = parseRoot('rss', rss, document.rss)?.channel;
       return {
-        pages:
-          channel === undefined || channel === ''
-            ? []
-            : (channel.item ?? []).flatMap((item) =>
-                item === '' ? [] : (item.link ?? []),
-              ),
+        pages: (channel === undefined || channel === ''
+          ? []
+          : (channel.item ?? []).flatMap((item) =>
+              item === '' ? [] : (item.link ?? []),
+            )
+        ).map((url) => ({ url, lastModified: null })),
         sitemaps: [],
       };
     }
     if ('feed' in document) {
       const atom = parseRoot('feed', feed, document.feed);
       return {
-        pages: (atom?.entry ?? []).flatMap((item) =>
-          item === ''
-            ? []
-            : (item.link ?? [])
-                .filter((link) => (link['@rel'] ?? 'alternate') === 'alternate')
-                .flatMap((link) => link['@href'] ?? []),
-        ),
+        pages: (atom?.entry ?? [])
+          .flatMap((item) =>
+            item === ''
+              ? []
+              : (item.link ?? [])
+                  .filter(
+                    (link) => (link['@rel'] ?? 'alternate') === 'alternate',
+                  )
+                  .flatMap((link) => link['@href'] ?? []),
+          )
+          .map((url) => ({ url, lastModified: null })),
         sitemaps: [],
       };
     }

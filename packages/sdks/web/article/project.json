@@ -1,0 +1,13 @@
+{
+  "name": "sdk-web-article",
+  "sourceRoot": "packages/sdks/web/article/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test {args} \"packages/sdks/web/article/dist/*.test.js\""
+    }
+  }
+}
