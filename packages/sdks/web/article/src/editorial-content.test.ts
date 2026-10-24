@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
-import { WebArticle } from './index.ts';
+import { HTMLExtraction, WebArticle } from './index.ts';
 
 test('editorial asides retain explanations and contributor lists inside an article', async () => {
   // Local markup reproduces the captured editorial sidebars without relying on a publisher.
@@ -30,7 +30,7 @@ test('editorial asides retain explanations and contributor lists inside an artic
   });
 
   try {
-    const article = await new WebArticle(got).fetch(
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );
@@ -69,7 +69,7 @@ test('unmarked pages still exclude class-based navigation and advertising', asyn
     </div></body></html>`);
   });
   try {
-    const article = await new WebArticle(got).fetch(
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );
@@ -95,7 +95,7 @@ test('footer cleanup preserves author metadata without emitting promotional foot
     </article></body></html>`);
   });
   try {
-    const article = await new WebArticle(got).fetch(
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );
@@ -127,7 +127,7 @@ test('an incidental entry widget does not replace semantic article content', asy
       </body></html>`);
     });
     try {
-      const article = await new WebArticle(got).fetch(
+      const article = await new WebArticle([new HTMLExtraction()], got).fetch(
         upstream.origin,
         AbortSignal.timeout(5000),
       );
@@ -159,7 +159,7 @@ test('a short linked post retains the outbound resource in its title row', async
     </body></html>`);
   });
   try {
-    const article = await new WebArticle(got).fetch(
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );
@@ -195,7 +195,7 @@ test('a short post excludes surrounding sponsorship, recommendations and site fo
       </body></html>`);
     });
     try {
-      const article = await new WebArticle(got).fetch(
+      const article = await new WebArticle([new HTMLExtraction()], got).fetch(
         upstream.origin,
         AbortSignal.timeout(5000),
       );

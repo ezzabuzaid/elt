@@ -16,7 +16,11 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
-import { ArticleError, WebArticle } from '@workspace/sdk-web-article';
+import {
+  ArticleError,
+  HTMLExtraction,
+  WebArticle,
+} from '@workspace/sdk-web-article';
 import { WebDiscovery } from '@workspace/sdk-web-discovery';
 
 const text = { type: 'string' } as const;
@@ -197,7 +201,7 @@ export class WebSource extends Source {
         inputUrl,
         requestSignal,
       );
-      const reader = new WebArticle(http);
+      const reader = new WebArticle([new HTMLExtraction()], http);
       const pendingPages = [
         ...new Map(
           [...previous.failed, ...pages].map((page) => [page.url, page]),

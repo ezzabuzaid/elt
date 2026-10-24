@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
-import { WebArticle } from './index.ts';
+import { HTMLExtraction, WebArticle } from './index.ts';
 
 test('unmarked link-only navigation returns no article', async () => {
   // A local page reproduces the reported markup without publisher changes.
@@ -19,7 +19,7 @@ test('unmarked link-only navigation returns no article', async () => {
     });
 
     try {
-      const article = await new WebArticle(got).fetch(
+      const article = await new WebArticle([new HTMLExtraction()], got).fetch(
         upstream.origin,
         AbortSignal.timeout(5000),
       );
@@ -40,7 +40,7 @@ test('a short linked post needs no article markup or minimum prose length', asyn
   });
 
   try {
-    const article = await new WebArticle(got).fetch(
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );
@@ -67,7 +67,7 @@ test('declared articles retain posts consisting entirely of links', async () => 
     });
 
     try {
-      const article = await new WebArticle(got).fetch(
+      const article = await new WebArticle([new HTMLExtraction()], got).fetch(
         upstream.origin,
         AbortSignal.timeout(5000),
       );
@@ -96,7 +96,7 @@ test('a standalone table retains cells whose entire contents are links', async (
   });
 
   try {
-    const article = await new WebArticle(got).fetch(
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );

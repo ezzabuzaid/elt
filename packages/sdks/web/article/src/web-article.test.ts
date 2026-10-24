@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { HttpServer } from '@zukhruf/testing/http';
 import got, { HTTPError, TimeoutError } from 'got';
 
-import { ArticleError, WebArticle } from './index.ts';
+import { ArticleError, HTMLExtraction, WebArticle } from './index.ts';
 
 // These pages are served locally because live publishers cannot provide stable
 // content, controlled failure responses, or a deterministic cancellation point.
@@ -27,7 +27,7 @@ test('fetches an article with metadata and excludes surrounding navigation', asy
       ${body}<footer>Privacy policy</footer></body></html>`);
   });
 
-  const article = await new WebArticle(got).fetch(
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     `${upstream.origin}/story`,
     AbortSignal.timeout(5000),
   );
@@ -60,7 +60,7 @@ test('redirects retain the fetched URL and resolve canonical and content links a
       </head><body>${body.replace('</p>', ' Read the <a href="measurements">original measurements</a>.</p>')}</body></html>`);
   });
 
-  const article = await new WebArticle(got).fetch(
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     `${upstream.origin}/old`,
     AbortSignal.timeout(5000),
   );
@@ -83,7 +83,7 @@ test('plain text retains the article heading and paragraph boundaries in minifie
       `<html><head><title>Field observations</title></head><body>${body}</body></html>`,
     );
   });
-  const article = await new WebArticle(got).fetch(
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
     AbortSignal.timeout(5000),
   );
@@ -102,7 +102,7 @@ test('extracted HTML removes executable markup without dropping article prose', 
       `<html><head><title>Field observations</title></head><body>${body.replace('<p>', '<p onclick="alert(1)">').replace('</p>', '<img src="/chart.png" onerror="alert(2)"><script>document.body.textContent = "Replaced by script"</script></p>')}</body></html>`,
     );
   });
-  const article = await new WebArticle(got).fetch(
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
     AbortSignal.timeout(5000),
   );
@@ -125,6 +125,7 @@ test('injected request deadlines close an unfinished response and preserve the t
     response.write('<article><p>An unfinished response');
   });
   const reader = new WebArticle(
+    [new HTMLExtraction()],
     got.extend({ timeout: { request: 250 }, retry: { limit: 0 } }),
   );
   await assert.rejects(
@@ -146,7 +147,7 @@ test('permanent HTTP and extraction failures do not repeat their downloads', asy
   });
   for (const path of ['/missing', '/not-modified', '/json']) {
     await assert.rejects(
-      new WebArticle(got).fetch(
+      new WebArticle([new HTMLExtraction()], got).fetch(
         `${upstream.origin}${path}`,
         AbortSignal.timeout(5000),
       ),
@@ -176,7 +177,7 @@ test('HTTP, transport and unsupported content failures identify the failed URL',
   });
   for (const path of ['/redirect', '/json', '/disconnect']) {
     await assert.rejects(
-      new WebArticle(got).fetch(
+      new WebArticle([new HTMLExtraction()], got).fetch(
         `${upstream.origin}${path}`,
         AbortSignal.timeout(5000),
       ),
@@ -208,7 +209,7 @@ test('cancellation before and during a download preserves the caller reason', as
     );
     if (phase === 'before') controller.abort(reason);
     await assert.rejects(
-      new WebArticle(got).fetch(
+      new WebArticle([new HTMLExtraction()], got).fetch(
         upstream.origin,
         AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
       ),
@@ -231,7 +232,7 @@ test('empty and navigation-only pages return no article', async () => {
       },
     );
     assert.equal(
-      await new WebArticle(got).fetch(
+      await new WebArticle([new HTMLExtraction()], got).fetch(
         upstream.origin,
         AbortSignal.timeout(5000),
       ),
@@ -262,7 +263,7 @@ test('standard structured metadata takes precedence and absent publication dates
         </head><body>${body.replace('began in spring', 'began on 1998-04-12')}</body></html>`);
       },
     );
-    const article = await new WebArticle(got).fetch(
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );
@@ -299,7 +300,7 @@ test('decodes HTTP and HTML charset declarations and preserves Unicode', async (
         );
       },
     );
-    const article = await new WebArticle(got).fetch(
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );
@@ -328,7 +329,7 @@ test('invalid and non-web canonical declarations cannot become article identitie
         );
       },
     );
-    const article = await new WebArticle(got).fetch(
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );
@@ -344,7 +345,7 @@ test('short posts retain their prose instead of being rejected by a length thres
       '<html><head><title>A brief field note</title></head><body><nav><a href="/">Home</a></nav><article><p>The first seeds emerged today.</p><p>We will measure their growth tomorrow.</p></article></body></html>',
     );
   });
-  const article = await new WebArticle(got).fetch(
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
     AbortSignal.timeout(5000),
   );
@@ -362,7 +363,7 @@ test('prose in plain div elements remains readable without an article or paragra
       `<html><head><title>Field observations</title></head><body><main><div>${paragraphs[0]}</div><div>${paragraphs[1]}</div></main></body></html>`,
     );
   });
-  const article = await new WebArticle(got).fetch(
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
     AbortSignal.timeout(5000),
   );
@@ -378,7 +379,7 @@ test('a standalone data table remains readable without surrounding paragraph tag
       '<html><head><title>Rainfall observations</title></head><body><main><table><tr><th>Season</th><th>Rainfall</th></tr><tr><td>Spring</td><td>37 mm</td></tr><tr><td>Autumn</td><td>52 mm</td></tr></table></main></body></html>',
     );
   });
-  const article = await new WebArticle(got).fetch(
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
     AbortSignal.timeout(5000),
   );
@@ -394,7 +395,7 @@ test('plain text keeps data-table columns distinguishable', async () => {
       `<html><head><title>Field observations</title></head><body>${body.replace('</article>', '<table><tr><th>Season</th><th>Rainfall</th></tr><tr><td>Spring</td><td>37 mm</td></tr><tr><td>Autumn</td><td>52 mm</td></tr></table></article>')}</body></html>`,
     );
   });
-  const article = await new WebArticle(got).fetch(
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
     AbortSignal.timeout(5000),
   );

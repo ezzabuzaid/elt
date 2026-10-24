@@ -6,7 +6,7 @@ import got from 'got';
 
 import { WebDiscovery } from '@workspace/sdk-web-discovery';
 
-import { WebArticle } from './index.ts';
+import { HTMLExtraction, WebArticle } from './index.ts';
 
 test('a discovered article retains its introductory summary before the main body', async () => {
   // Mirrors the separate front matter and body in the captured Fowler articles.
@@ -58,7 +58,10 @@ test('a discovered article retains its introductory summary before the main body
     assert.equal(pages.length, 1);
     const page = pages[0];
     assert.ok(page);
-    const article = await new WebArticle(got).fetch(page.url, signal);
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+      page.url,
+      signal,
+    );
 
     assert.ok(article);
     assert.match(article.textContent, /We placed sensors in three garden beds/);
@@ -115,7 +118,10 @@ test('a feed article retains a figure caption containing a descriptive link', as
     assert.equal(pages.length, 1);
     const page = pages[0];
     assert.ok(page);
-    const article = await new WebArticle(got).fetch(page.url, signal);
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+      page.url,
+      signal,
+    );
 
     assert.ok(article);
     assert.match(article.textContent, /We placed sensors in three garden beds/);
@@ -185,7 +191,10 @@ test('a feed article retains acknowledgments and an authorship disclosure after 
     assert.equal(pages.length, 1);
     const page = pages[0];
     assert.ok(page);
-    const article = await new WebArticle(got).fetch(page.url, signal);
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+      page.url,
+      signal,
+    );
 
     assert.ok(article);
     assert.match(article.textContent, /Before publication, a second team/);

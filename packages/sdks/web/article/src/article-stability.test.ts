@@ -5,7 +5,7 @@ import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 import { JSDOM } from 'jsdom';
 
-import { WebArticle } from './index.ts';
+import { HTMLExtraction, WebArticle } from './index.ts';
 
 test('article extraction preserves inline punctuation and preformatted spacing', async () => {
   await using upstream = await new HttpServer().start((_request, response) => {
@@ -16,7 +16,7 @@ test('article extraction preserves inline punctuation and preformatted spacing',
       <pre><code>if (ready) {\n    record("a  b");\n}</code></pre>
     </article></body></html>`);
   });
-  const article = await new WebArticle(got).fetch(
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
     AbortSignal.timeout(5000),
   );
@@ -40,7 +40,7 @@ test('ignored comments and insignificant whitespace do not change extracted HTML
       ${' <!-- removed tracking marker --> '.repeat(spaces)}<p>The independent review found that the observations remained useful through cold weather and interrupted network access. The team published the procedure so others could repeat the trial.</p>
     </article></body></html>`);
   });
-  const reader = new WebArticle(got);
+  const reader = new WebArticle([new HTMLExtraction()], got);
   const first = await reader.fetch(upstream.origin, AbortSignal.timeout(5000));
   spaces = 17;
   const second = await reader.fetch(upstream.origin, AbortSignal.timeout(5000));

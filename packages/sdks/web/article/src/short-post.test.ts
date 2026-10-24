@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
-import { WebArticle } from './index.ts';
+import { HTMLExtraction, WebArticle } from './index.ts';
 
 test('short linked prose survives beside a longer subscription section', async () => {
   // Reproduces the nested prose, link density and competing sidebar observed
@@ -38,7 +38,7 @@ test('short linked prose survives beside a longer subscription section', async (
   });
 
   try {
-    const article = await new WebArticle(got).fetch(
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );

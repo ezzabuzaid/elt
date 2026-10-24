@@ -5,7 +5,7 @@
 ```ts
 import got from 'got';
 
-import { WebArticle } from '@workspace/sdk-web-article';
+import { HTMLExtraction, WebArticle } from '@workspace/sdk-web-article';
 import { WebDiscovery } from '@workspace/sdk-web-discovery';
 
 const signal = AbortSignal.timeout(30_000);
@@ -13,7 +13,7 @@ const pages = await new WebDiscovery(got).discover(
   'https://www.anthropic.com/',
   signal,
 );
-const reader = new WebArticle(got);
+const reader = new WebArticle([new HTMLExtraction()], got);
 const page = pages.find((page) => page.url.includes('/news/'));
 if (page) {
   const article = await reader.fetch(page.url, signal);
@@ -21,7 +21,15 @@ if (page) {
 }
 ```
 
-The example's publisher and URL selection belong to the caller. The constructor takes a Got client; use `got.extend(...)` for timeouts, retries or request hooks. HTTP retries finish before extraction, so parsing failures do not repeat downloads. A 304 fails because the SDK has no cached representation. The SDK does not render JavaScript, retrieve authenticated content, schedule crawls or store checkpoints.
+The example's publisher and URL selection belong to the caller. The constructor takes an ordered array of extraction instances and a Got client; use `got.extend(...)` for timeouts, retries or request hooks. HTTP retries finish before extraction, so parsing failures do not repeat downloads. A 304 fails because the SDK has no cached representation. The SDK does not render JavaScript, retrieve authenticated content, schedule crawls or store checkpoints.
+
+## Extraction chain
+
+`WebArticle` downloads the page once and tries each `Extraction` in array order. The first non-null article ends the chain. If every extraction returns null, the reader returns null. An exception stops the chain and becomes an `ArticleError`; cancellation preserves the supplied reason. An empty chain is invalid.
+
+`HTMLExtraction` selects content with Defuddle and metadata with Readability. The abstract `Extraction` base owns charset decoding, a fresh DOM per attempt, sanitization, the prose acceptance check, text conversion and DOM cleanup. Subclasses implement its protected `select(dom, signal)` method and return an `ArticleSelection` or null. Original response bytes are retained so every attempt sees the same charset and unmodified HTML. State stays within each call, so one reader can fetch concurrent pages.
+
+Only HTML extraction is supplied. There is no browser or model fallback, and no separate classification of a non-article page versus unresolved extraction.
 
 ## Result
 
@@ -77,7 +85,7 @@ REJECTED: `@extractus/article-extractor` 9.0.1. Its shipped implementation wraps
 
 REJECTED: Crawlee for content selection. Its crawler requires an extraction handler, and its HTML-to-text helper is not an article selector. The web source already uses Got, p-map, p-queue and the ELT engine for downloading, scheduling and persistence.
 
-RETAINED: jsdom decoding and base URLs, Readability metadata, native sanitization, text/table conversion, attributed errors, cancellation, navigation exclusion and the link-only acceptance check. Removed Readability content selection and its link-density tuning. Added package-owned content selection and whitespace normalization; no custom parser, content-recovery loop or fallback was introduced.
+RETAINED: jsdom decoding and base URLs, Readability metadata, native sanitization, text/table conversion, attributed errors, cancellation, navigation exclusion and the link-only acceptance check. Removed Readability content selection and its link-density tuning. Content selection and whitespace normalization remain package-owned. The ordered extraction chain supplies HTML extraction only.
 
 Five public regressions first failed and then passed: introductory summary retention; descriptive caption text and link retention; acknowledgments/authorship disclosure retention; unchanged inline punctuation and preformatted spacing; identical HTML when ignored comments and surrounding whitespace change. Tests exercise `WebArticle.fetch`, and the content regressions also exercise discovery, through real HTTP. The full article suite includes short posts, link-only pages, tables, metadata, charset, cancellation and sanitization.
 
