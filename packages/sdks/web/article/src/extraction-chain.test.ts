@@ -63,6 +63,10 @@ test('extractions run in order on fresh DOMs, download once and stop at the firs
   );
   assert.ok(article);
   assert.equal(article.title, 'Field report');
+  assert.equal(
+    article.markdown,
+    'The independent study confirms the observations.',
+  );
   assert.deepEqual(attempts, ['decline', 'html']);
   assert.equal(requests, 1);
 });

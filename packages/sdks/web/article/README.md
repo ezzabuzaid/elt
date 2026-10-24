@@ -17,7 +17,8 @@ const reader = new WebArticle([new HTMLExtraction()], got);
 const page = pages.find((page) => page.url.includes('/news/'));
 if (page) {
   const article = await reader.fetch(page.url, signal);
-  // article.content: sanitized HTML; article.textContent: readable plain text
+  // article.content: sanitized HTML; article.markdown: Markdown
+  // article.textContent: readable plain text
 }
 ```
 
@@ -27,7 +28,7 @@ The example's publisher and URL selection belong to the caller. The constructor 
 
 `WebArticle` downloads the page once and tries each `Extraction` in array order. The first non-null article ends the chain. If every extraction returns null, the reader returns null. An exception stops the chain and becomes an `ArticleError`; cancellation preserves the supplied reason. An empty chain is invalid.
 
-`HTMLExtraction` selects content with Defuddle and metadata with Readability. The abstract `Extraction` base owns charset decoding, a fresh DOM per attempt, sanitization, the prose acceptance check, text conversion and DOM cleanup. Subclasses implement its protected `select(dom, signal)` method and return an `ArticleSelection` or null. Original response bytes are retained so every attempt sees the same charset and unmodified HTML. State stays within each call, so one reader can fetch concurrent pages.
+`HTMLExtraction` selects content with Defuddle and metadata with Readability. The abstract `Extraction` base owns charset decoding, a fresh DOM per attempt, sanitization, the prose acceptance check, Markdown/text conversion and DOM cleanup. Subclasses implement its protected `select(dom, signal)` method and return an `ArticleSelection` or null. Original response bytes are retained so every attempt sees the same charset and unmodified HTML. State stays within each call, so one reader can fetch concurrent pages.
 
 Only HTML extraction is supplied. There is no browser or model fallback, and no separate classification of a non-article page versus unresolved extraction.
 
@@ -40,6 +41,7 @@ The exported `Article` type follows the method's return type. Metadata retains M
 | `url`                                | Final HTTP response URL, including its query                                                 |
 | `canonicalUrl`                       | Resolved HTTP(S) HTML canonical declaration, without a fragment; null when absent or invalid |
 | `content`                            | Extracted HTML with insignificant whitespace normalized, then sanitized                      |
+| `markdown`                           | Markdown converted from that same sanitized HTML, including links and pipe tables            |
 | `textContent`, `length`              | Text with paragraph breaks and formatted data tables; its JavaScript string length           |
 | `title`, `byline`, `publishedTime`   | Readability's title, author text and raw publication metadata                                |
 | `excerpt`, `siteName`, `lang`, `dir` | Readability's description, publisher, language and text direction                            |
@@ -59,6 +61,7 @@ The packages' export maps, options, types and shipped implementations were inspe
 | html-minifier-next 9.0.1         | Stable whitespace/comment normalization while preserving preformatted content      |
 | DOMPurify 3.4.17                 | Final HTML sanitization using its native policy                                    |
 | html-to-text 10.0.1              | Paragraph boundaries, text conversion and data-table formatting                    |
+| node-html-markdown 2.0.0         | Markdown conversion through its public `NodeHtmlMarkdown.translate` API            |
 | `@zukhruf/testing/http`          | Disposable real HTTP fixtures for public black-box tests                           |
 
 Defuddle's `contentSelector` recognizes microformat post containers (`.h-entry`, `.hentry`) and the common `.entry` convention when semantic article/main markup is absent. If none matches, Defuddle detects the main content normally. An incidental entry widget therefore cannot override an HTML/ARIA article or main landmark.
@@ -70,6 +73,10 @@ Exact-selector removal is disabled within declared article/main or post boundari
 Defuddle's public Node string entry owns its LinkeDOM parsing. Passing the existing JSDOM document was probed first: Defuddle's selector exceeds jsdom's hardcoded 2048-character selector limit, causing an internal fallback and losing the intended cleanup. The package-owned string path is retained instead of a local DOM adapter or disabling the selector guard. Defuddle marks that input form deprecated for its next major version; this package pins 0.19.5.
 
 The minifier enables only `collapseWhitespace`, `conservativeCollapse` and `removeComments`. It preserves spaces separating inline words and the exact contents of `pre`; its installed implementation was checked and public tests cover punctuation and code indentation. DOMPurify runs after these transformations. Its `FORBID_TAGS` and `ADD_FORBID_CONTENTS` options exclude footer markup and prose after Readability has extracted metadata, preserving authors credited in a footer. The additive option retains the sanitizer's existing forbidden-content policy. Text conversion disables wrapping and enables `dataTable` formatting.
+
+Markdown conversion runs after sanitization, so HTML, Markdown and text share the same article selection. The converter owns headings, emphasis, lists, block quotes, links, images and tables. Its `codeBlockStyle: 'indented'` preserves code containing literal backtick fences; language annotations are not retained. Its `textReplace` option escapes ampersands and less-than signs in prose so literal HTML examples remain text when rendered. Code spans and blocks bypass that replacement. No custom translator or Markdown parser is shipped.
+
+Defuddle's integrated Markdown was rejected because it runs before our final sanitization; its standalone browser export also required a browser `document` in a Node probe. Installed Turndown lacks tables, and the standard GFM plugin does not escape literal pipes in cells. The typed `node-html-markdown` API handles these cases without local rendering rules. Marked is a test-only dependency: public black-box tests render the returned Markdown independently and verify table cells, links, literal HTML and exact code text.
 
 ## Retained acceptance behavior
 
@@ -90,3 +97,5 @@ RETAINED: jsdom decoding and base URLs, Readability metadata, native sanitizatio
 Five public regressions first failed and then passed: introductory summary retention; descriptive caption text and link retention; acknowledgments/authorship disclosure retention; unchanged inline punctuation and preformatted spacing; identical HTML when ignored comments and surrounding whitespace change. Tests exercise `WebArticle.fetch`, and the content regressions also exercise discovery, through real HTTP. The full article suite includes short posts, link-only pages, tables, metadata, charset, cancellation and sanitization.
 
 Live verification evidence is recorded in the [web source reference](../../../sources/web/articles/docs/reference.md). Those checks use the actual source, ELT engine and SQLite destination. Downloads remain buffered and CPU parsing remains synchronous; cancellation does not interrupt a synchronous parse. No complete-crawl quality guarantee is implied by the sampled sites.
+
+Public regressions cover editorial asides (2924), surrounding sponsorship/recommendations (2926), and linked titles (2927), plus controls for semantic landmarks, unmarked-page clutter and footer bylines. A blanket filter disable was rejected after manual inspection exposed Daring Fireball ads; the final configuration scopes those options to declared content boundaries. The web source reference records the live verification summary; benchmark scripts and captures are temporary scratch files.

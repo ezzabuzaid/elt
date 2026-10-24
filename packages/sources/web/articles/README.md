@@ -50,7 +50,9 @@ await pipeline.run({ signal: AbortSignal.timeout(120_000) });
 
 The example's publisher and path are caller configuration. The source contains no publisher rules. Omit `include` to fetch every discovered candidate, or supply absolute [URLPattern](https://nodejs.org/api/url.html#class-urlpattern) strings. An empty `include` selects no pages. This filters article requests, not the listings discovery must read.
 
-The `articles` stream stores sanitized HTML, readable text, extraction metadata, the discovered and final response URLs, the declared canonical URL, and listing provenance. Its key is `(inputUrl, pageUrl)`; canonical declarations do not merge records. The same page selected through two inputs has one row per input.
+The `articles` stream stores sanitized HTML (`content`), Markdown (`markdown`), readable text (`textContent`), extraction metadata, the discovered and final response URLs, the declared canonical URL, and listing provenance. All three content representations come from the same extracted article. Its key is `(inputUrl, pageUrl)`; canonical declarations do not merge records. The same page selected through two inputs has one row per input.
+
+Discovery follows advertised HTML archives, calendar indexes and pagination as well as sitemaps and feeds. It collects candidate links without downloading their article bodies. HTML archive links stay within each resolved listing's origin; the source's `include` patterns decide which candidates to fetch. Hidden or unadvertised archives are not guaranteed to be found. See the [discovery rules](../../../sdks/web/discovery/README.md).
 
 Incremental reruns refetch the selected pages and emit only new or changed records. A failed article does not stop other articles: successful pages are committed, and `Pipeline.run()` reports the failures together through `PipelineError` after the scan. Failed URLs and their listing metadata remain in the checkpoint for the next run, even if they disappear from the feed. Got's normal HTTP retries happen within a run; a URL that still fails is attempted again on a later run.
 

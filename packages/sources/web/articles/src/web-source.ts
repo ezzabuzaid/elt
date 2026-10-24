@@ -60,6 +60,10 @@ const properties = {
       'Publication metadata as supplied, without date inference or conversion.',
   },
   content: { ...text, description: 'Sanitized article HTML.' },
+  markdown: {
+    ...text,
+    description: 'Markdown converted from the sanitized article HTML.',
+  },
   textContent: {
     ...text,
     description: 'Readable article text, with paragraph and table structure.',

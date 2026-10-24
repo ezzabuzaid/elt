@@ -15,6 +15,34 @@ import { ArticleError } from '@workspace/sdk-web-article';
 
 import { WebSource } from './web-source.ts';
 
+test('archive articles persist Markdown and an unchanged rerun writes no records', async () => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/') response.end('<a href="/archive/">Archive</a>');
+    else if (request.url === '/archive/')
+      response.end('<main><a href="/older">Older field report</a></main>');
+    else if (request.url === '/older')
+      response.end(
+        '<article><p>These observations confirm the <a href="/results">published results</a>.</p></article>',
+      );
+    else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const source = new WebSource({
+    inputs: [upstream.origin],
+    pollIntervalMs: 60_000,
+  });
+  const ingestion = await pipeline(source, database.path, checkpoints.path);
+  assert.equal((await ingestion.run())[0]?.count, 1);
+  assert.equal(
+    database.connection.prepare('SELECT markdown FROM articles').get()
+      ?.markdown,
+    `These observations confirm the [published results](${upstream.origin}/results).`,
+  );
+  assert.equal((await ingestion.run())[0]?.count, 0);
+});
+
 async function pipeline(source: WebSource, path: string, checkpoints: string) {
   const destination = new SQLiteDestination({ path });
   const history = new SQLiteSyncHistory();

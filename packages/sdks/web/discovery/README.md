@@ -1,6 +1,6 @@
 # Web discovery
 
-Discover candidate page URLs from a website, sitemap or feed you choose. The upstream is the public web; this package has no elt dependency or publisher rules.
+Discover candidate page URLs from a website, archive, sitemap or feed you choose. The upstream is the public web; this package has no elt dependency or publisher rules.
 
 ```ts
 import got from 'got';
@@ -8,107 +8,67 @@ import got from 'got';
 import { WebDiscovery } from '@workspace/sdk-web-discovery';
 
 const pages = await new WebDiscovery(got).discover(
-  'https://www.anthropic.com/',
+  'https://www.anthropic.com/news',
   AbortSignal.timeout(60_000),
 );
 // [{ url, lastModified, listingUrl }]
 ```
 
-The constructor takes a Got client; use `got.extend(...)` to configure timeouts, retries or request hooks. The caller supplies an absolute HTTP(S) URL and an abort signal for the whole operation. The SDK adds no separate retry policy or per-request deadline. Got retries eligible HTTP failures before the discovery rules decide whether to reject an explicit listing or ignore a missing robots file or invalid candidate.
+The constructor takes a Got client; use `got.extend(...)` for timeouts, retries and request hooks. The caller supplies an absolute HTTP(S) URL and an abort signal for the whole traversal. The SDK adds no separate retry policy, per-request deadline or hidden page limit. A large archive can take minutes; the caller chooses its time budget.
 
 ## Discovery
 
-| Input                                 | Behavior                                                                                                                                            |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Website HTML                          | Reads explicit feed and `rel="sitemap"` declarations in HTML and HTTP `Link` headers, labeled feed anchors, and the origin's `robots.txt` sitemaps. |
-| XML sitemap or index                  | Reads page locations and recursively linked maps, including gzip.                                                                                   |
-| Plain text URL list                   | Reads the listed locations.                                                                                                                         |
-| RSS 2.0, Atom, RSS 1.0/RDF, JSON Feed | Reads item/entry page links; entries without a page URL contribute no candidate.                                                                    |
+| Input                                 | Behavior                                                                                                                                                                                                    |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Website HTML                          | Reads feed and `rel="sitemap"` declarations in HTML and HTTP `Link` headers, labeled feed anchors, advertised archives and the origin's `robots.txt` sitemaps.                                              |
+| HTML archive                          | Collects same-origin candidate anchors outside navigation/footer landmarks; follows archive indexes and pagination without downloading article bodies.                                                      |
+| XML sitemap or index                  | Reads page locations and recursively linked maps, including gzip.                                                                                                                                           |
+| Plain text URL list                   | Reads the listed locations.                                                                                                                                                                                 |
+| RSS 2.0, Atom, RSS 1.0/RDF, JSON Feed | Reads item/entry page links; entries without a page URL contribute no candidate. JSON Feed `next_url`, Atom pagination links (including RSS's Atom namespace) and HTTP pagination links extend the listing. |
 
-HTML must be served as `text/html` or `application/xhtml+xml`. Other supported formats are detected from content. Relative links resolve against the final response URL; HTML links respect `<base>`. Queries and trailing slashes remain meaningful. Fragments are removed because they address a section of the same page.
+HTML must be served as `text/html` or `application/xhtml+xml`. Other supported formats are detected from content. Relative links resolve against the final response URL; HTML respects `<base>`. Queries and trailing slashes remain meaningful. Fragments are removed.
 
-Feedscout's exported feed labels and attributes identify anchor candidates, including visible text, `title` and `aria-label`. Labels match whole words, so `Feedback` is not a `feed` label. URL suffixes alone do not make an anchor a candidate. Ordinary sitemap navigation anchors are not crawled; sitemap declarations use `rel="sitemap"`.
+Feedscout's exported feed labels and attributes identify anchor candidates, including visible text, `title` and `aria-label`. Labels match whole words, so `Feedback` is not a `feed` label. An alternate with generic `application/json` and a labeled anchor are possible feeds, validated by Feedscout's public `defaultExtractFn`. A non-success status or non-feed response contributes nothing; transport and decoding errors still fail. Explicit sitemap declarations use `rel="sitemap"`.
 
-An alternate link with generic `application/json` and a labeled anchor are **candidates**, not promises of a feed. Feedscout's public `defaultExtractFn` validates their responses. A candidate returning a non-success HTTP status or non-feed content contributes nothing. Valid JSON Feed still works when advertised as `application/json`.
+Archive traversal recognizes HTML `rel="archives"`, `next` and `prev`, HTTP archive/pagination relations, archive paths, year/month indexes, and common labels such as “Archives”, “Older posts”, “All Content” and “Content Index”. Calendar months match 1–12 or English month names/abbreviations generated by the platform's date formatter; `/2008/talks/` remains a page candidate. Feed pagination also recognizes `prev-archive` and `next-archive`. All HTML archive links are restricted to the resolved listing's origin. A root containing archive links, a self-linked archive, or a directly chosen `/archive/` or `/archives/` page also supplies candidate anchors. Archive labels are generic English hints; there are no publisher hosts or selectors in production.
 
-Explicit sitemaps and feed declarations remain required: a failed or malformed listing rejects the call, even if another listing succeeded. A directly supplied non-feed JSON URL also rejects. Transport errors, decoding errors and cancellation are not swallowed for candidates. HTTP 404/410 means an optional robots file is absent. If no explicit listing is advertised and no candidate has validated into a listing, discovery tries `/sitemap.xml`. A valid empty feed counts as a listing.
+This is **link traversal**: following advertised listing links, like moving through “Older posts”. It does not recursively crawl every candidate article. Candidates can include category, resource and other non-article pages. The caller selects URLs; the article SDK decides whether a fetched page has readable content.
 
-## Results
+## Failures and results
 
-- `url`: the candidate's HTTP(S) URL. Categories, landing pages and cross-origin locations remain candidates.
-- `lastModified`: the sitemap's raw `lastmod`, or `null`. Date-only precision is retained; publication dates are never substituted. Feeds and text lists return `null`.
-- `listingUrl`: provenance, the final URL of the listing that first supplied the candidate.
+Explicit sitemap/feed failures and malformed listings reject the call even if another listing succeeded. A directly supplied invalid or missing URL also rejects. Discovered HTML archive links returning 404/410 are skipped because old indexes can contain dead links; other archive failures remain errors. An absent robots file (404/410) is optional. If no listing or archive is found or queued, discovery tries `/sitemap.xml`. A valid empty feed counts as a listing.
 
-Listings are visited once per requested URL; cycles terminate. Results are unique in discovery order, keeping the first occurrence's metadata. Each call starts fresh. Reads are sequential. Errors use `DiscoveryError` with the failing `url` and original `cause`; cancellation preserves the caller's exact reason.
+- `url`: the candidate HTTP(S) URL. Sitemaps and feeds can explicitly supply cross-origin pages.
+- `lastModified`: the sitemap's raw `lastmod`, or `null`. Publication dates are never substituted. Feed, text and HTML archive candidates return `null`.
+- `listingUrl`: provenance, the final listing URL that first supplied the candidate.
 
-Discovery does not execute JavaScript, authenticate, crawl arbitrary page links, follow feed archive pagination, classify articles, fetch article bodies or load a destination. A feed may expose only a recent window. A site with no supported listing fails explicitly.
+Requested listing URLs and known redirect targets are recorded to terminate cycles. Different redirect aliases can still cause another HTTP request to the same final URL. Results are unique in discovery order and keep the first occurrence's metadata. Each call starts fresh; listing reads are sequential. Errors use `DiscoveryError` with the failing `url` and original `cause`. Cancellation preserves the caller's exact reason.
+
+No JavaScript executes. Authentication, arbitrary page crawling, article classification and destination loading are outside this SDK. A feed without pagination exposes only its recent window; choosing its website can additionally expose archives. Hidden archives or unfamiliar markup are not guaranteed to be discovered.
 
 ## Package ownership
 
-| Public API                                                                                 | Responsibility                                                                                                                 |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| `got`: injected client                                                                     | HTTP, redirects, decompression, caller-configured retries/timeouts and cancellation.                                           |
-| `@workspace/codec-sitemap`: `decodeSitemap`, `parseSitemap`                                | Gzip, XML indexes/url sets, text, RSS and Atom; raw hints and strict validation.                                               |
-| `@crawlee/utils`: `RobotsTxtFile.from().getSitemaps({ enqueueStrategy: 'all' })`           | Robots declarations, including maps hosted elsewhere.                                                                          |
-| `feedscout/methods`: `discoverUrisFromHtml`, `discoverUrisFromHeaders`                     | HTML parsing, entities, base URLs, link selection and HTTP Link parsing.                                                       |
-| `feedscout/feeds`: `linkSelectors`, `anchorLabels`, `anchorAttributes`, `defaultExtractFn` | Published selectors/labels and validation of possible feeds. Generic JSON is configured separately from required declarations. |
-| `feedsmith`: JSON Feed and RDF detect/parse APIs                                           | Format decoding not supplied by the sitemap codec.                                                                             |
-| `fast-xml-parser`: `XMLValidator.validate`                                                 | Strict RDF validation; Feedsmith's RDF parser does not enable it.                                                              |
-| `@zukhruf/testing/http`: `HttpServer.start()`                                              | Disposable loopback HTTP fixtures for the three regression tests; `await using` closes their sockets.                          |
+| Public API                                                             | Responsibility                                                                                            |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Got                                                                    | HTTP, redirects, decompression, configured retries/timeouts and cancellation.                             |
+| `@workspace/codec-sitemap`: `decodeSitemap`, `parseSitemap`            | Gzip, XML indexes/url sets, text, RSS and Atom; raw hints and strict validation.                          |
+| `@crawlee/utils`: `RobotsTxtFile.from().getSitemaps(...)`              | Robots sitemap declarations.                                                                              |
+| `feedscout/methods`: `discoverUrisFromHtml`, `discoverUrisFromHeaders` | Feed/sitemap HTML selection and HTTP Link parsing.                                                        |
+| `feedscout/feeds`: selectors, labels, attributes, `defaultExtractFn`   | Published feed conventions and validation of possible feeds.                                              |
+| Feedsmith                                                              | JSON Feed/RDF decoding and typed feed pagination fields.                                                  |
+| `fast-xml-parser`: `XMLValidator.validate`                             | Strict RDF validation, absent from Feedsmith's RDF parser.                                                |
+| jsdom                                                                  | Archive HTML parsing, base/link resolution and DOM queries; scripts and resource loading remain disabled. |
+| `@zukhruf/testing/http`: `HttpServer.start()`                          | Disposable local HTTP fixtures for public regression tests.                                               |
 
-Got 14.6.6 is an explicit runtime dependency. The already-installed `@zukhruf/testing` 0.3.24 is an explicit development dependency. Existing MSW tests retain `onUnhandledRequest: 'error'`; tests make no external network requests.
+The existing queue, URL deduplication and injected transport own traversal. Feedscout exposes no archive crawler. Its high-level `discoverFeeds` was rejected because it catches read/extraction failures, which would erase the explicit-listing failure contract. A full crawling framework would duplicate the current transport and scheduling. Crawlee's Cheerio link helper was inspected but its installed Cheerio types failed under this package's ESM configuration; the already-installed jsdom public API needs no casts, patches or adapter. No custom HTML, XML or HTTP Link parser was added.
 
-## Verification — 2026-10-24
-
-Baseline: all six existing tests and the package typecheck passed. Each new regression failed against the preceding implementation before its fix, then passed through the public `WebDiscovery.discover` API with real local HTTP requests:
-
-| Regression                  | Red observation                                | Green observation                                                                                         |
-| --------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| HTML sitemap without robots | Older page missing                             | RSS and nested sitemap both contribute pages, with raw metadata.                                          |
-| Ordinary JSON alternate     | WordPress-shaped JSON aborts discovery         | Non-feed JSON ignored; valid generic JSON Feed retained; direct and explicit bad listings still fail.     |
-| Labeled RSS anchor          | Fallback sitemap fails instead of finding feed | Visible and attribute labels discover feeds, preserve redirect provenance and exclude non-feed responses. |
-
-Review assertions also cover HTML and HTTP declarations separately, empty candidate feeds, and sitemap fallback after invalid candidates. All nine tests pass; typecheck includes formatting and linting.
+## Verification
 
 ```sh
+nx run sdk-web-discovery:test
 nx run sdk-web-discovery:typecheck
-nx run sdk-web-discovery:test --skip-nx-cache
 ```
 
-Live checks used the built public export, with only the following URLs as input:
+The 16 public black-box tests call `WebDiscovery.discover`; no test calls a publisher. Archive regressions failed before their fixes: recent-feed-only results, missing calendar history, article paths mistaken for months, missing feed pagination, unsupported HTTP pagination/redirected indexes, an unrecognized “All Content” index, and a dead discovered archive discarding valid history. Controls retain explicit failures, cancellation, off-origin exclusion, deduplication and cycle termination. The original nine feed/sitemap regressions remain green. Typecheck includes formatting and lint.
 
-| Input                                 | Unique candidate URLs |
-| ------------------------------------- | --------------------: |
-| https://www.anthropic.com/            |                   582 |
-| https://simonwillison.net/            |                17,097 |
-| https://jvns.ca/                      |                   768 |
-| https://blog.cloudflare.com/          |                10,210 |
-| https://blog.python.org/              |                   433 |
-| https://martinfowler.com/             |                    29 |
-| https://github.blog/                  |                 9,661 |
-| https://www.jsonfeed.org/feed.json    |                     2 |
-| https://daringfireball.net/feeds/main |                    45 |
-
-Python's result includes the 383 sitemap URLs previously missed. Fowler's HTML anchors now reach its feed. GitHub's ordinary REST JSON is ignored, allowing RSS and the robots-advertised sitemap index to complete. Anthropic's current sitemap contains 582 locations; its earlier 575 count was an older live snapshot.
-
-An independent Python standard-library XML/JSON parser matched every URL, modification hint and listing URL against all fetched listings, with zero missing, extra, mismatched or duplicate records. This verifies the returned listings, not universal website completeness. These are compatibility checks, not sustained load or memory benchmarks. Captured responses and comparison results are in `/tmp/elt-discovery-after-fixes`; pre-fix evidence is in `/tmp/elt-discovery-cross-site` and `/tmp/elt-discovery-before-fixes.json`.
-
-## Fix audit
-
-**Verdict:** all three gaps are fixed with package APIs and no publisher-specific branches.
-
-**Removed:** blanket disabling of labeled-anchor discovery and the assumption that every generic JSON alternate is a required feed. Their executed observations are the anchor and JSON red/green regressions above. Stale documentation of those assumptions is removed. No production wrapper or parser was deleted; this is principally an additive behavior correction, not a claimed reduction in maintained code.
-
-**Net delta:** +358 / −85 lines against the start of this fix across five files. This is net-additive because it adds candidate validation and three public-API regression tests; no new runtime dependency or source file was added.
-
-**Retained:** public exports and return shape, the SDK file, its documentation, traversal/deduplication, raw metadata, strict explicit-listing failures and cancellation. The parsed-listing flag preserves valid empty feeds, verified through the public API. The codec's strict malformed-entry constraint is documented by commit `aa4dd782787da699d4aec2361e84c356478d625d`; no codec change was needed. The three tracked gaps are 2911–2913. Temporary probe scripts are removed after retaining their outputs.
-
-**Radius:** the changed configuration had two runtime consumers, `discoverUrisFromHtml` and `discoverUrisFromHeaders`, both in `src/web-discovery.ts`. The behavioral consumers are one test module (`src/web-discovery.test.ts`, six tests before this fix) and two documentation examples (this README and the workspace README). The public re-export in `src/index.ts`, package/project identities and root TypeScript/workspace registrations remain. No shell, CI or dynamic consumer of the removed configuration was found.
-
-**REJECTED:** full `discoverFeeds` orchestration. Its shipped `runDiscover` catches extraction/read failures and filters invalid results; adopting it would erase the explicit-listing failure contract and require another transport adapter. Its public URI and extraction functions provide the needed seams directly.
-
-**REJECTED:** restoring URL-suffix guesses or raw substring labels. They can mistake navigation such as `/rss/help` or `Feedback` for a feed. Exported labels are configured as whole-word patterns; candidate content is still validated. No custom HTML or HTTP Link parser was introduced.
-
-**Self-audit:** export maps, options, constants, runtime, underlying MIME definitions and observation hooks were inspected. No relevant environment/debug hook exists; the high-level progress hooks belong to the rejected orchestration API. No new compatibility branch, logging, environment read, type assertion or suppression was added. `LinkSelector.types` is genuinely optional in Feedscout's public types (the `rel="feed"` selector omits it); the code preserves that contract. The required empty anchor-option arrays select declarations independently of candidate heuristics. Existing parser defaults and public shapes remain unchanged.
-
-**Unproven:** sustained load behavior and complete coverage of websites with no supported listing are not claimed. **Unresolved:** none within the three requested gaps.
+The implementation consumer is `WebSource`, whose real pipeline/SQLite regression persists an article discovered through an archive and its Markdown, then writes zero records on an unchanged rerun. Archive support adds traversal policy; it does not introduce a new public configuration surface or change the result shape.

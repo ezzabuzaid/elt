@@ -57,6 +57,10 @@ test('one reader isolates redirected encoded articles, empty pages and failed pa
   assert.equal(article.lang, 'fr');
   assert.equal(article.url, `${upstream.origin}/article`);
   assert.equal(article.canonicalUrl, `${upstream.origin}/canonical`);
+  assert.equal(
+    article.markdown,
+    `Our café study confirms the [published results](${upstream.origin}/results).`,
+  );
   assert.match(
     article.textContent,
     /Our café study confirms the published results/,

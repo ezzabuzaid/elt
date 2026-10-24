@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
 
 import { HttpServer } from '@zukhruf/testing/http';
 import got, { HTTPError, TimeoutError } from 'got';
+
+import { WebDiscovery } from '@workspace/sdk-web-discovery';
 
 import { ArticleError, HTMLExtraction, WebArticle } from './index.ts';
 
@@ -13,6 +16,92 @@ const paragraphs = [
   'A second team repeated the measurements in autumn. The comparison showed a consistent effect, but the authors also described the limits of the experiment. Readers can inspect the original measurements and repeat the study in their own gardens.',
 ] as const;
 const body = `<article><h1>Field observations</h1>${paragraphs.map((text) => `<p>${text}</p>`).join('')}</article>`;
+
+test('chosen websites and feeds compose with extraction without merging URL variants or losing successful pages', async () => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    switch (request.url) {
+      case '/':
+        response.end(
+          '<link rel="alternate" type="application/rss+xml" href="/feed.xml">',
+        );
+        break;
+      case '/feed.xml':
+        response.setHeader('content-type', 'application/rss+xml');
+        response.end(`<rss><channel>
+          <item><link>/story?edition=1</link></item>
+          <item><link>/story?edition=1#again</link></item>
+          <item><link>/story?edition=2</link></item>
+          <item><link>/story</link></item>
+          <item><link>/story/</link></item>
+          <item><link>/empty</link></item>
+          <item><link>/missing</link></item>
+        </channel></rss>`);
+        break;
+      case '/story?edition=1':
+      case '/story?edition=2':
+      case '/story':
+      case '/story/':
+        response.end(
+          `<html><head><title>${request.url}</title><link rel="canonical" href="/shared-canonical"></head><body>${body}</body></html>`,
+        );
+        break;
+      case '/empty':
+        response.end(
+          '<html><body><nav><a href="/">Home</a></nav></body></html>',
+        );
+        break;
+      default:
+        response.writeHead(404).end();
+    }
+  });
+  const discovery = new WebDiscovery(got);
+  const reader = new WebArticle([new HTMLExtraction()], got);
+  for (const input of ['/', '/feed.xml']) {
+    const signal = AbortSignal.timeout(5000);
+    const pages = await discovery.discover(
+      `${upstream.origin}${input}`,
+      signal,
+    );
+    assert.deepEqual(
+      pages.map((page) => page.url),
+      [
+        `${upstream.origin}/story?edition=1`,
+        `${upstream.origin}/story?edition=2`,
+        `${upstream.origin}/story`,
+        `${upstream.origin}/story/`,
+        `${upstream.origin}/empty`,
+        `${upstream.origin}/missing`,
+      ],
+    );
+    assert.ok(
+      pages.every((page) => page.listingUrl === `${upstream.origin}/feed.xml`),
+    );
+    const results = await Promise.allSettled(
+      pages.map((page) => reader.fetch(page.url, signal)),
+    );
+    for (const [index, path] of [
+      '/story?edition=1',
+      '/story?edition=2',
+      '/story',
+      '/story/',
+    ].entries()) {
+      const result = results[index];
+      assert.ok(result?.status === 'fulfilled' && result.value);
+      assert.equal(result.value.url, `${upstream.origin}${path}`);
+      assert.equal(
+        result.value.canonicalUrl,
+        `${upstream.origin}/shared-canonical`,
+      );
+      assert.ok(result.value.textContent.includes(paragraphs[0]));
+    }
+    assert.deepEqual(results[4], { status: 'fulfilled', value: null });
+    const missing = results[5];
+    assert.ok(missing?.status === 'rejected');
+    assert.ok(missing.reason instanceof ArticleError);
+    assert.equal(missing.reason.url, `${upstream.origin}/missing`);
+  }
+});
 
 test('fetches an article with metadata and excludes surrounding navigation', async () => {
   await using upstream = await new HttpServer().start((_request, response) => {
@@ -115,6 +204,42 @@ test('extracted HTML removes executable markup without dropping article prose', 
   assert.ok(article.textContent.includes(paragraphs[0]));
 });
 
+test('reading an article never executes its scripts or fetches embedded resources', async () => {
+  const resourceRequests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (request.url !== '/story') {
+      assert.ok(request.url);
+      resourceRequests.push(request.url);
+      response.end();
+      return;
+    }
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    response.end(`<html><head><title>Field observations</title>
+      <link rel="stylesheet" href="/stylesheet.css">
+      <style>@import url('/import.css');</style>
+      <script src="/external.js"></script>
+      </head><body>${body}
+      <iframe src="/embedded"></iframe><img src="/photo.png">
+      <script>
+        document.querySelector('article').textContent = 'Script replaced the article';
+        const request = new XMLHttpRequest();
+        request.open('GET', '/beacon');
+        request.send();
+      </script></body></html>`);
+  });
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+    `${upstream.origin}/story`,
+    AbortSignal.timeout(5000),
+  );
+  assert.ok(article);
+  assert.ok(article.textContent.includes(paragraphs[0]));
+  assert.doesNotMatch(
+    article.content,
+    /<script|<iframe|Script replaced the article/,
+  );
+  assert.deepEqual(resourceRequests, []);
+});
+
 test('injected request deadlines close an unfinished response and preserve the timeout cause', async () => {
   const closed = Promise.withResolvers<void>();
   let streaming = false;
@@ -194,6 +319,34 @@ test('HTTP, transport and unsupported content failures identify the failed URL',
   }
 });
 
+test('truncated and corrupt response bodies fail instead of returning partial article text', async () => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    const html = `<html><head><title>Field observations</title></head><body>${body}</body></html>`;
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    if (request.url === '/truncated') {
+      response.setHeader('content-length', Buffer.byteLength(html) + 100);
+      response.setHeader('connection', 'close');
+    } else {
+      response.setHeader('content-encoding', 'gzip');
+    }
+    response.end(html);
+  });
+  for (const path of ['/truncated', '/corrupt-gzip']) {
+    await assert.rejects(
+      new WebArticle([new HTMLExtraction()], got).fetch(
+        `${upstream.origin}${path}`,
+        AbortSignal.timeout(5000),
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof ArticleError);
+        assert.equal(error.url, `${upstream.origin}${path}`);
+        assert.ok(Error.isError(error.cause));
+        return true;
+      },
+    );
+  }
+});
+
 test('cancellation before and during a download preserves the caller reason', async () => {
   for (const phase of ['before', 'headers', 'body']) {
     const controller = new AbortController();
@@ -216,6 +369,47 @@ test('cancellation before and during a download preserves the caller reason', as
       (error: unknown) => error === reason,
     );
   }
+});
+
+test('cancelling a streaming page leaves concurrent and later calls usable on the same reader', async () => {
+  const started = Promise.withResolvers<void>();
+  const controller = new AbortController();
+  const reason = new Error('Stop only the unfinished article');
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    if (request.url === '/streaming') {
+      response.write(`<html><body>${body}`, () => started.resolve());
+    } else {
+      response.end(
+        `<html><head><title>Field observations</title></head><body>${body}</body></html>`,
+      );
+    }
+  });
+  const reader = new WebArticle([new HTMLExtraction()], got);
+  const stopped = assert.rejects(
+    reader.fetch(
+      `${upstream.origin}/streaming`,
+      AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+    ),
+    (error: unknown) => error === reason,
+  );
+  try {
+    await Promise.race([started.promise, stopped]);
+    // A complete second request gives the first time to enter body consumption.
+    const concurrent = await reader.fetch(
+      `${upstream.origin}/complete`,
+      AbortSignal.timeout(5000),
+    );
+    assert.equal(concurrent?.title, 'Field observations');
+  } finally {
+    controller.abort(reason);
+    await stopped;
+  }
+  const subsequent = await reader.fetch(
+    `${upstream.origin}/complete`,
+    AbortSignal.timeout(5000),
+  );
+  assert.ok(subsequent?.textContent.includes(paragraphs[0]));
 });
 
 test('empty and navigation-only pages return no article', async () => {
@@ -386,6 +580,32 @@ test('a standalone data table remains readable without surrounding paragraph tag
   assert.ok(article);
   assert.match(article.textContent, /Spring\s+37 mm/);
   assert.match(article.textContent, /Autumn\s+52 mm/);
+});
+
+test('compressed pages respect the HTTP charset over conflicting HTML metadata', async () => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    const html = Buffer.from(
+      `<html><head><meta charset="utf-8"><title>Café observations</title></head><body>${body.replace('garden study', 'café study')}</body></html>`,
+      'latin1',
+    );
+    response.writeHead(200, {
+      'content-type': 'text/html; charset=iso-8859-1',
+      'content-encoding': request.url === '/gzip' ? 'gzip' : 'br',
+    });
+    response.end(
+      request.url === '/gzip' ? gzipSync(html) : brotliCompressSync(html),
+    );
+  });
+  for (const path of ['/gzip', '/brotli']) {
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+      `${upstream.origin}${path}`,
+      AbortSignal.timeout(5000),
+    );
+    assert.ok(article);
+    assert.equal(article.title, 'Café observations');
+    assert.match(article.textContent, /café study/);
+    assert.doesNotMatch(article.textContent, /�|Ã/);
+  }
 });
 
 test('plain text keeps data-table columns distinguishable', async () => {

@@ -3,6 +3,7 @@ import createDOMPurify from 'dompurify';
 import { minify } from 'html-minifier-next';
 import { convert } from 'html-to-text';
 import { type ConstructorOptions, JSDOM } from 'jsdom';
+import { NodeHtmlMarkdown } from 'node-html-markdown';
 
 export type ArticlePage = {
   readonly url: string;
@@ -56,6 +57,14 @@ export abstract class Extraction {
       return {
         ...article,
         content,
+        markdown: NodeHtmlMarkdown.translate(content, {
+          codeBlockStyle: 'indented',
+          // Escape literal HTML in prose; the converter leaves code spans/blocks alone.
+          textReplace: [
+            [/&/g, '&amp;'],
+            [/</g, '&lt;'],
+          ],
+        }),
         textContent,
         length: textContent.length,
         url: page.url,

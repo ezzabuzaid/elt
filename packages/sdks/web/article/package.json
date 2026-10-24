@@ -16,12 +16,14 @@
     "got": "14.6.6",
     "html-minifier-next": "9.0.1",
     "html-to-text": "10.0.1",
-    "jsdom": "30.1.3"
+    "jsdom": "30.1.3",
+    "node-html-markdown": "2.0.0"
   },
   "devDependencies": {
     "@types/html-to-text": "9.0.4",
     "@types/jsdom": "^28.0.3",
     "@workspace/sdk-web-discovery": "0.0.1",
-    "@zukhruf/testing": "0.3.24"
+    "@zukhruf/testing": "0.3.24",
+    "marked": "18.1.1"
   }
 }
