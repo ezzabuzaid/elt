@@ -4,7 +4,6 @@ import { DocumentParser } from '@workspace/elt';
 
 import type { DocumentFormat } from './document-formats/document-format.ts';
 import { FileHead } from './document-formats/file-head.ts';
-import { ImageFormat } from './document-formats/image-format.ts';
 import { PdfFormat } from './document-formats/pdf-format.ts';
 import { TextFormat } from './document-formats/text-format.ts';
 import { VCardFormat } from './document-formats/vcard-format.ts';
@@ -16,7 +15,6 @@ export class MacOSDocumentParser extends DocumentParser {
     const formats = [
       new PdfFormat(),
       new TextFormat(),
-      new ImageFormat(),
       new VCardFormat(),
       ...additionalFormats,
     ];
@@ -30,9 +28,9 @@ export class MacOSDocumentParser extends DocumentParser {
     Object.freeze(this);
   }
 
-  // Documents convert natively, images through Vision text recognition,
-  // contact cards as their text. Files no format recognizes, locked PDFs and
-  // files with no recognizable text load as null. Unreadable files throw.
+  // Hosts supply ImageFormat with their Vision worker and AudioFormat with
+  // their speech model. Unrecognized files, locked PDFs and files without
+  // recognizable text return null. Unreadable files throw.
   override async parse(
     path: string,
     signal?: AbortSignal,

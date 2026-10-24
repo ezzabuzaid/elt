@@ -1,5 +1,9 @@
 import type { RecordDraft } from '@workspace/elt';
-import type { ReactionCount } from '@workspace/sdk-whatsapp-desktop';
+import {
+  type Message,
+  type ReactionCount,
+  ReceiptInfo,
+} from '@workspace/sdk-whatsapp-desktop';
 
 import type { OnMessage } from '../chat-storage-records.ts';
 import {
@@ -7,8 +11,8 @@ import {
   messageKeyFields,
   messageKeyRecord,
 } from '../message-key-fields.ts';
-import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppMessageStream } from '../whatsapp-message-stream.ts';
+import { whatsappFields } from '../whatsapp-stream.ts';
 
 const { text, integer } = whatsappFields;
 
@@ -22,12 +26,11 @@ const properties = {
   },
 } as const;
 
-export class MessageReactionCountsStream extends WhatsAppStream<
+export class MessageReactionCountsStream extends WhatsAppMessageStream<
   typeof properties,
   OnMessage<ReactionCount>
 > {
   readonly name = 'messageReactionCounts';
-  readonly store = 'chatStorage';
   readonly primaryKey = [...messageKeyColumns, 'emoji'];
   readonly jsonSchema = {
     type: 'object',
@@ -37,8 +40,12 @@ export class MessageReactionCountsStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): Iterable<OnMessage<ReactionCount>> {
-    return scan.chatStorage.reactionCounts();
+  protected *messageRows(
+    message: Message,
+  ): Generator<OnMessage<ReactionCount>> {
+    if (message.receiptInfo !== null)
+      for (const item of new ReceiptInfo(message.receiptInfo).reactionCounts)
+        yield { message, item };
   }
 
   protected record({

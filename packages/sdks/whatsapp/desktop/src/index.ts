@@ -22,6 +22,7 @@ export type {
 } from './chat-records.ts';
 export {
   ChatStorageSnapshot,
+  type MessageInput,
   messageMediaFile,
   profilePictureFile,
 } from './chat-storage.ts';

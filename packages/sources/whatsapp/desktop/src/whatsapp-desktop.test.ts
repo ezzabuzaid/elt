@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { chmod, mkdtempDisposable, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -39,6 +40,7 @@ const stores = {
   chatStorage: {
     file: 'ChatStorage.sqlite',
     schema: `
+      CREATE TABLE Z_METADATA (Z_VERSION INTEGER PRIMARY KEY, Z_UUID VARCHAR(255), Z_PLIST BLOB);
       CREATE TABLE ZWABLACKLISTITEM ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZJID VARCHAR );
       CREATE TABLE ZWACHATPUSHCONFIG ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZALERTS INTEGER, ZMUTEDUNTIL TIMESTAMP, ZJID VARCHAR, ZRINGTONE VARCHAR, ZSOUND VARCHAR );
       CREATE TABLE ZWACHATSESSION ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZARCHIVED INTEGER, ZCONTACTABID INTEGER, ZFLAGS INTEGER, ZHIDDEN INTEGER, ZIDENTITYVERIFICATIONEPOCH INTEGER, ZIDENTITYVERIFICATIONSTATE INTEGER, ZMESSAGECOUNTER INTEGER, ZREMOVED INTEGER, ZSESSIONTYPE INTEGER, ZSPOTLIGHTSTATUS INTEGER, ZUNREADCOUNT INTEGER, ZGROUPINFO INTEGER, ZLASTMESSAGE INTEGER, ZPROPERTIES INTEGER, ZLASTMESSAGEDATE TIMESTAMP, ZLOCATIONSHARINGENDDATE TIMESTAMP, ZCONTACTIDENTIFIER VARCHAR, ZCONTACTJID VARCHAR, ZETAG VARCHAR, ZLASTMESSAGETEXT VARCHAR, ZPARTNERNAME VARCHAR, ZSAVEDINPUT VARCHAR );
@@ -185,6 +187,10 @@ class ScratchWhatsApp {
     mkdirSync(dirname(this.path(store)), { recursive: true });
     using database = new DatabaseSync(this.path(store));
     database.exec(`PRAGMA journal_mode = WAL; ${stores[store].schema}`);
+    if (store === 'chatStorage')
+      database
+        .prepare('INSERT INTO Z_METADATA (Z_VERSION, Z_UUID) VALUES (1, ?)')
+        .run(randomUUID());
   }
 
   insert(
@@ -999,6 +1005,14 @@ function whatsappFixture(whatsapp: ScratchWhatsApp): void {
     INSERT INTO status_media_link (status_row_id, media_content_row_id) VALUES (1, 1);
     `,
   );
+  whatsapp.exec(
+    'chatStorage',
+    `
+    UPDATE ZWAMESSAGE SET Z_OPT = 1;
+    UPDATE ZWAMEDIAITEM SET Z_OPT = 1;
+    UPDATE ZWAMESSAGEINFO SET Z_OPT = 1;
+  `,
+  );
 }
 
 // A time some hours before the tests started, whole seconds as Status.sqlite
@@ -1525,6 +1539,92 @@ test('receipts, reactions and channel reaction counts decode from each message�
       count: 1,
     },
   ]);
+});
+
+test('outgoing reactions follow this account’s add, replacement and withdrawal without duplicating other reactions', async () => {
+  const { dir, whatsapp, out } = await scratch();
+  try {
+    const run = await pipeline(
+      new WhatsAppDesktopSource(whatsapp.container),
+      dir.path,
+      ({ name }) => name === 'messageReactions',
+    );
+    // Native WhatsApp 26.40 stores this Mac's outgoing reaction in 7.2,
+    // alongside other senders in 7.1. Withdrawal omits the emoji.
+    for (const [stanzaId, emoji, time, reactedAt] of [
+      ['OUT1', '👍', 1_790_848_805_123, '2026-10-01T10:00:05.123Z'],
+      ['OUT2', '❤️', 1_790_848_806_123, '2026-10-01T10:00:06.123Z'],
+      ['OUT3', null, 1_790_848_807_123, '2026-10-01T10:00:07.123Z'],
+    ] as const) {
+      const outgoing: [number, ProtobufValue][] = [
+        [1, stanzaId],
+        [3, time],
+        [4, 1],
+        [7, 0],
+      ];
+      if (emoji !== null) outgoing.push([2, emoji]);
+      {
+        using database = new DatabaseSync(whatsapp.path('chatStorage'));
+        database
+          .prepare(
+            'UPDATE ZWAMESSAGEINFO SET ZRECEIPTINFO = ?, Z_OPT = Z_OPT + 1 WHERE Z_PK = 1',
+          )
+          .run(
+            protobuf([
+              [
+                7,
+                {
+                  message: [
+                    [
+                      1,
+                      {
+                        message: [
+                          [1, 'R2'],
+                          [2, aliceLid],
+                          [3, '😂'],
+                          [4, 1_790_848_809_000],
+                        ],
+                      },
+                    ],
+                    [2, { message: outgoing }],
+                  ],
+                },
+              ],
+            ]),
+          );
+      }
+
+      await run.run();
+
+      assert.deepEqual(table(out, 'messageReactions', 'reactionStanzaId'), [
+        {
+          chatJid: alice,
+          messageIsFromMe: 1,
+          messageStanzaId: 'B1',
+          reactionStanzaId: stanzaId,
+          senderJid: null,
+          isFromMe: 1,
+          emoji,
+          reactedAt,
+        },
+        {
+          chatJid: alice,
+          messageIsFromMe: 1,
+          messageStanzaId: 'B1',
+          reactionStanzaId: 'R2',
+          senderJid: aliceLid,
+          isFromMe: 0,
+          emoji: '😂',
+          reactedAt: '2026-10-01T10:00:09.000Z',
+        },
+      ]);
+      assert.deepEqual(counts(await run.run()), {
+        messageReactions: { count: 0, deleted: 0 },
+      });
+    }
+  } finally {
+    await dir.remove();
+  }
 });
 
 test('what ChatStorage keeps beside messages loads: links found in them, albums, group members and their changes, names, pictures, blocks and chat settings', async () => {
@@ -2169,14 +2269,14 @@ test('a blob this reader cannot decode fails the streams decoded from it and kee
     [
       'a receipt naming a recipient of an unknown kind',
       'chatStorage',
-      'UPDATE ZWAMESSAGEINFO SET ZRECEIPTINFO = ? WHERE Z_PK = 1',
+      'UPDATE ZWAMESSAGEINFO SET ZRECEIPTINFO = ?, Z_OPT = Z_OPT + 1 WHERE Z_PK = 1',
       { receipt: protobuf([[2, { message: [[1, packedJid(0x99, '1')]] }]]) },
       ['messageReactionCounts', 'messageReactions', 'messageReceipts'],
     ],
     [
       'message metadata cut short',
       'chatStorage',
-      'UPDATE ZWAMEDIAITEM SET ZMETADATA = ? WHERE Z_PK = 2',
+      'UPDATE ZWAMEDIAITEM SET ZMETADATA = ?, Z_OPT = Z_OPT + 1 WHERE Z_PK = 2',
       { metadata: Uint8Array.from([0x2a, 0x10, 0x41]) },
       [
         'messageReactionCounts',
@@ -2254,6 +2354,375 @@ test('a blob this reader cannot decode fails the streams decoded from it and kee
   }
 });
 
+test('compact message scans keep unchanged groups across reopened pipelines and reload only an edited message', async () => {
+  const { dir, whatsapp, out } = await scratch();
+  await using _ = dir;
+  const selected = new Set([
+    'messages',
+    'messageReceipts',
+    'messageReactions',
+    'messageReactionCounts',
+  ]);
+  const open = () =>
+    pipeline(
+      new WhatsAppDesktopSource(whatsapp.container),
+      dir.path,
+      ({ name }) => selected.has(name),
+    );
+  // As in Mail's integration test, saved group fingerprints expose reuse:
+  // rereading the same payload would otherwise produce identical output.
+  const groups = () =>
+    Object.fromEntries(
+      rows(
+        join(dir.path, 'state.sqlite'),
+        'SELECT id, state FROM checkpoints ORDER BY id',
+      ).map(({ id, state }) => [String(id), JSON.parse(String(state)).groups]),
+    );
+  const first = await open();
+  await first.run();
+  const saved = groups();
+  for (const name of selected)
+    assert.ok(saved[name], `${name} must save compact message groups`);
+  const original = table(out, 'messages', 'stanzaId');
+  const unchanged = Object.fromEntries(
+    [...selected].map((name) => [name, { count: 0, deleted: 0 }]),
+  );
+  assert.deepEqual(counts(await (await open()).run()), unchanged);
+  assert.deepEqual(groups(), saved);
+
+  whatsapp.exec(
+    'chatStorage',
+    "UPDATE ZWAMESSAGE SET ZTEXT = 'Edited while stopped', Z_OPT = Z_OPT + 1 WHERE Z_PK = 1",
+  );
+  assert.deepEqual(counts(await (await open()).run()), {
+    ...unchanged,
+    messages: { count: 1, deleted: 0 },
+  });
+  assert.deepEqual(
+    table(out, 'messages', 'stanzaId'),
+    original.map((row) =>
+      row.stanzaId === 'A1' ? { ...row, text: 'Edited while stopped' } : row,
+    ),
+  );
+  const edited = groups();
+  for (const name of selected) {
+    assert.deepEqual(Object.keys(edited[name]), Object.keys(saved[name]));
+    assert.equal(
+      Object.keys(saved[name]).filter(
+        (key) => edited[name][key].fingerprint !== saved[name][key].fingerprint,
+      ).length,
+      1,
+    );
+  }
+  assert.deepEqual(counts(await (await open()).run()), unchanged);
+});
+
+test('compact message scans reread a replaced Core Data store even when row IDs and versions repeat', async () => {
+  const { dir, whatsapp, out } = await scratch();
+  await using _ = dir;
+  whatsapp.exec(
+    'chatStorage',
+    `
+    UPDATE Z_METADATA SET Z_UUID = 'first-store';
+  `,
+  );
+  const open = () =>
+    pipeline(
+      new WhatsAppDesktopSource(whatsapp.container),
+      dir.path,
+      ({ name }) => name === 'messages',
+    );
+  await (await open()).run();
+  const replacement = join(dir.path, 'replacement.sqlite');
+  {
+    using database = new DatabaseSync(whatsapp.path('chatStorage'));
+    database.prepare('VACUUM INTO ?').run(replacement);
+  }
+  {
+    using database = new DatabaseSync(replacement);
+    database.exec(
+      "UPDATE ZWAMESSAGE SET ZTEXT = 'From the replacement store' WHERE Z_PK = 1",
+    );
+  }
+  renameSync(replacement, whatsapp.path('chatStorage'));
+
+  assert.deepEqual(counts(await (await open()).run()), {
+    messages: { count: 1, deleted: 0 },
+  });
+  assert.deepEqual(
+    rows(out, "SELECT text FROM messages WHERE stanzaId = 'A1'"),
+    [{ text: 'From the replacement store' }],
+  );
+});
+
+test('compact message scans catch independent receipt and channel-count changes without a message version change', async () => {
+  const { dir, whatsapp, out } = await scratch();
+  await using _ = dir;
+  const run = await pipeline(
+    new WhatsAppDesktopSource(whatsapp.container),
+    dir.path,
+    ({ name }) =>
+      [
+        'messages',
+        'messageReceipts',
+        'messageReactions',
+        'messageReactionCounts',
+      ].includes(name),
+  );
+  await run.run();
+  const recipient: [number, ProtobufValue][] = [[1, packedJid(0x8c, '9001')]];
+  for (const [field, offset, expected] of [
+    [4, 1, ['2026-10-01T10:00:01Z', null, null]],
+    [5, 2, ['2026-10-01T10:00:01Z', '2026-10-01T10:00:02Z', null]],
+    [
+      6,
+      3,
+      ['2026-10-01T10:00:01Z', '2026-10-01T10:00:02Z', '2026-10-01T10:00:03Z'],
+    ],
+  ] as const) {
+    recipient.push([field, offset]);
+    {
+      using database = new DatabaseSync(whatsapp.path('chatStorage'));
+      database
+        .prepare(
+          'UPDATE ZWAMESSAGEINFO SET Z_OPT = Z_OPT + 1, ZRECEIPTINFO = ? WHERE Z_PK = 1',
+        )
+        .run(
+          protobuf([
+            [3, 1790848800],
+            [2, { message: recipient }],
+          ]),
+        );
+    }
+    const result = counts(await run.run());
+    assert.equal(result.messages?.count, 1);
+    assert.equal(result.messageReceipts?.count, 1);
+    assert.deepEqual(
+      rows(
+        out,
+        'SELECT recipientJid, deliveredAt, readAt, playedAt FROM messageReceipts',
+      ),
+      [
+        {
+          recipientJid: aliceLid,
+          deliveredAt: expected[0],
+          readAt: expected[1],
+          playedAt: expected[2],
+        },
+      ],
+    );
+    assert.deepEqual(
+      rows(
+        whatsapp.path('chatStorage'),
+        'SELECT Z_OPT AS version FROM ZWAMESSAGE WHERE Z_PK = 2',
+      ),
+      [{ version: 1 }],
+    );
+  }
+  {
+    using database = new DatabaseSync(whatsapp.path('chatStorage'));
+    database
+      .prepare(
+        'UPDATE ZWAMESSAGEINFO SET Z_OPT = Z_OPT + 1, ZRECEIPTINFO = ? WHERE Z_PK = 2',
+      )
+      .run(
+        protobuf([
+          [
+            7,
+            {
+              message: [
+                [
+                  3,
+                  {
+                    message: [
+                      [
+                        1,
+                        {
+                          message: [
+                            [1, '❤️'],
+                            [2, 11],
+                          ],
+                        },
+                      ],
+                    ],
+                  },
+                ],
+              ],
+            },
+          ],
+        ]),
+      );
+  }
+  assert.deepEqual(counts(await run.run()).messageReactionCounts, {
+    count: 1,
+    deleted: 1,
+  });
+  assert.deepEqual(
+    rows(out, 'SELECT emoji, count FROM messageReactionCounts'),
+    [{ emoji: '❤️', count: 11 }],
+  );
+  whatsapp.exec('chatStorage', 'DELETE FROM ZWAMESSAGEINFO WHERE Z_PK = 2');
+  assert.deepEqual(counts(await run.run()).messageReactionCounts, {
+    count: 0,
+    deleted: 1,
+  });
+  assert.deepEqual(rows(out, 'SELECT emoji FROM messageReactionCounts'), []);
+});
+
+test('compact message scans follow joined rows, local files and the first duplicate, then reconcile revoked and vanished messages', async () => {
+  const { dir, whatsapp, out } = await scratch();
+  await using _ = dir;
+  const run = await pipeline(
+    new WhatsAppDesktopSource(whatsapp.container),
+    dir.path,
+    ({ name }) => name === 'messages',
+  );
+  await run.run();
+  whatsapp.exec(
+    'chatStorage',
+    "UPDATE ZWAMEDIAITEM SET ZTITLE = 'New caption', Z_OPT = Z_OPT + 1 WHERE Z_PK = 4",
+  );
+  assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 0 });
+  assert.deepEqual(
+    rows(out, "SELECT title FROM messages WHERE stanzaId = 'G1'"),
+    [{ title: 'New caption' }],
+  );
+  // The joined member changes; the message's version does not.
+  whatsapp.exec(
+    'chatStorage',
+    "UPDATE ZWAGROUPMEMBER SET ZMEMBERJID = '9009@lid' WHERE Z_PK = 1",
+  );
+  assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 0 });
+  assert.deepEqual(
+    rows(out, "SELECT senderJid FROM messages WHERE stanzaId = 'G1'"),
+    [{ senderJid: '9009@lid' }],
+  );
+  rmSync(
+    join(
+      whatsapp.container,
+      'Message/Media/120363000000000001@g.us/a/b/photo.jpg',
+    ),
+  );
+  assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 0 });
+  assert.deepEqual(
+    rows(
+      out,
+      "SELECT mediaAvailableLocally FROM messages WHERE stanzaId = 'G1'",
+    ),
+    [{ mediaAvailableLocally: 0 }],
+  );
+  whatsapp.file('Message/Media/120363000000000001@g.us/a/b/photo.jpg', 'jpeg');
+  assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 0 });
+  // Replacing a related row with one at the same version must still reload it.
+  whatsapp.exec(
+    'chatStorage',
+    `UPDATE ZWAMEDIAITEM SET Z_OPT = 2, ZTITLE = 'Replacement caption' WHERE Z_PK = 5;
+    UPDATE ZWAMESSAGE SET ZMEDIAITEM = 5, Z_OPT = Z_OPT + 1 WHERE Z_PK = 4;`,
+  );
+  assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 0 });
+  assert.deepEqual(
+    rows(out, "SELECT title FROM messages WHERE stanzaId = 'G1'"),
+    [{ title: 'Replacement caption' }],
+  );
+  // The second physical copy becomes the winner; the child loses its parent.
+  whatsapp.exec('chatStorage', 'DELETE FROM ZWAMESSAGE WHERE Z_PK = 4');
+  assert.deepEqual(counts(await run.run()).messages, { count: 2, deleted: 0 });
+  assert.deepEqual(
+    rows(out, "SELECT sort FROM messages WHERE stanzaId = 'G1'"),
+    [{ sort: 40 }],
+  );
+  assert.deepEqual(
+    rows(out, "SELECT parentStanzaId FROM messages WHERE stanzaId = 'G3'"),
+    [{ parentStanzaId: null }],
+  );
+  whatsapp.exec(
+    'chatStorage',
+    `UPDATE ZWAMESSAGE SET ZMESSAGETYPE = 14, ZTEXT = NULL, Z_OPT = Z_OPT + 1 WHERE Z_PK = 1;
+    UPDATE ZWACHATSESSION SET ZCONTACTJID = 'renamed@g.us' WHERE Z_PK = 2;`,
+  );
+  assert.deepEqual(counts(await run.run()).messages, { count: 4, deleted: 3 });
+  assert.deepEqual(
+    rows(out, "SELECT messageType, text FROM messages WHERE stanzaId = 'A1'"),
+    [{ messageType: 14, text: null }],
+  );
+  assert.deepEqual(
+    rows(out, "SELECT DISTINCT chatJid FROM messages WHERE stanzaId LIKE 'G%'"),
+    [{ chatJid: 'renamed@g.us' }],
+  );
+  whatsapp.exec('chatStorage', 'DELETE FROM ZWAMESSAGE');
+  assert.deepEqual(counts(await run.run()).messages, { count: 0, deleted: 7 });
+  assert.deepEqual(rows(out, 'SELECT stanzaId FROM messages'), []);
+});
+
+test('compact message scans reapply chat and date selection and ignore version-only changes', async () => {
+  const { dir, whatsapp, out } = await scratch();
+  await using _ = dir;
+  const run = await pipeline(
+    new WhatsAppDesktopSource(whatsapp.container, {
+      collectionIds: [alice],
+      startAt: '2026-10-01T00:00:00.000Z',
+      endAt: '2026-10-02T00:00:00.000Z',
+    }),
+    dir.path,
+    ({ name }) => name === 'messages',
+  );
+  assert.deepEqual(counts(await run.run()).messages, { count: 2, deleted: 0 });
+  whatsapp.exec('chatStorage', 'UPDATE ZWAMESSAGE SET Z_OPT = Z_OPT + 1');
+  assert.deepEqual(counts(await run.run()).messages, { count: 0, deleted: 0 });
+  whatsapp.exec(
+    'chatStorage',
+    `UPDATE ZWAMESSAGE SET ZMESSAGEDATE = ${coreData('2026-10-03T00:00:00.000Z')}, Z_OPT = Z_OPT + 1 WHERE Z_PK = 1;
+    UPDATE ZWAMESSAGE SET ZMESSAGEDATE = ${coreData('2026-10-01T12:00:00.000Z')}, Z_OPT = Z_OPT + 1 WHERE Z_PK = 3;`,
+  );
+  assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 1 });
+  assert.deepEqual(
+    rows(out, 'SELECT stanzaId FROM messages ORDER BY stanzaId'),
+    [{ stanzaId: 'A2' }, { stanzaId: 'B1' }],
+  );
+  whatsapp.exec(
+    'chatStorage',
+    "UPDATE ZWACHATSESSION SET ZCONTACTJID = 'elsewhere@s.whatsapp.net' WHERE Z_PK = 1",
+  );
+  assert.deepEqual(counts(await run.run()).messages, { count: 0, deleted: 2 });
+});
+
+test('compact message scans keep the last checkpoint after a decode failure and recover on retry', async () => {
+  const { dir, whatsapp, out } = await scratch();
+  await using _ = dir;
+  const open = () =>
+    pipeline(
+      new WhatsAppDesktopSource(whatsapp.container),
+      dir.path,
+      ({ name }) => name === 'messageReactions',
+    );
+  await (await open()).run();
+  const before = rows(
+    join(dir.path, 'state.sqlite'),
+    'SELECT state FROM checkpoints',
+  );
+  const saved = table(out, 'messageReactions', 'reactionStanzaId');
+  whatsapp.exec(
+    'chatStorage',
+    "UPDATE ZWAMESSAGEINFO SET ZRECEIPTINFO = x'0f', Z_OPT = Z_OPT + 1 WHERE Z_PK = 1",
+  );
+  await assert.rejects((await open()).run(), PipelineError);
+  assert.deepEqual(
+    rows(join(dir.path, 'state.sqlite'), 'SELECT state FROM checkpoints'),
+    before,
+  );
+  assert.deepEqual(table(out, 'messageReactions', 'reactionStanzaId'), saved);
+  // Keep the failed version: advancing a failed checkpoint would skip this repair.
+  whatsapp.exec(
+    'chatStorage',
+    "UPDATE ZWAMESSAGEINFO SET ZRECEIPTINFO = x'' WHERE Z_PK = 1",
+  );
+  assert.deepEqual(counts(await (await open()).run()).messageReactions, {
+    count: 0,
+    deleted: 2,
+  });
+  assert.deepEqual(table(out, 'messageReactions', 'reactionStanzaId'), []);
+});
+
 test('a second run with no change writes nothing; a changed record is written again, and one WhatsApp removed is deleted, with what hung off it', async () => {
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
@@ -2269,7 +2738,7 @@ test('a second run with no change writes nothing; a changed record is written ag
 
   whatsapp.exec(
     'chatStorage',
-    `UPDATE ZWAMESSAGE SET ZTEXT = 'Are you still coming?' WHERE Z_PK = 1;
+    `UPDATE ZWAMESSAGE SET ZTEXT = 'Are you still coming?', Z_OPT = Z_OPT + 1 WHERE Z_PK = 1;
      DELETE FROM ZWAMESSAGE WHERE Z_PK = 2;
      DELETE FROM ZWAMESSAGEINFO WHERE Z_PK = 1;`,
   );
@@ -2505,7 +2974,9 @@ test(
           "UPDATE ZWAADDRESSBOOKCONTACT SET ZABOUTTEXT = 'Free' WHERE Z_PK = 1",
         );
       else if (woken.length === 2)
-        chats.exec("UPDATE ZWAMESSAGE SET ZTEXT = 'Edited' WHERE Z_PK = 1");
+        chats.exec(
+          "UPDATE ZWAMESSAGE SET ZTEXT = 'Edited', Z_OPT = Z_OPT + 1 WHERE Z_PK = 1",
+        );
       else if (woken.length === 3) whatsapp.create('businesses');
       else controller.abort();
     }
@@ -2766,7 +3237,7 @@ test('a value WhatsApp always stores but left empty fails the streams read from 
     [
       'a message with no type',
       'chatStorage',
-      'UPDATE ZWAMESSAGE SET ZMESSAGETYPE = NULL WHERE Z_PK = 1',
+      'UPDATE ZWAMESSAGE SET ZMESSAGETYPE = NULL, Z_OPT = Z_OPT + 1 WHERE Z_PK = 1',
       [
         'messageReactionCounts',
         'messageReactions',
@@ -2782,6 +3253,20 @@ test('a value WhatsApp always stores but left empty fails the streams read from 
       ['privacySettings'],
       /privacy-settings-values entry has no value/,
     ],
+    ...['ZWAMESSAGE', 'ZWAMEDIAITEM', 'ZWAMESSAGEINFO'].map(
+      (table): [string, Store, string, string[], RegExp] => [
+        `${table} without its row version`,
+        'chatStorage',
+        `UPDATE ${table} SET Z_OPT = NULL WHERE Z_PK = 1`,
+        [
+          'messageReactionCounts',
+          'messageReactions',
+          'messageReceipts',
+          'messages',
+        ],
+        /message input has no row version/,
+      ],
+    ),
   ];
   for (const [what, store, sql, failed, named] of breaks) {
     const broken = await failedAfter((whatsapp) => whatsapp.exec(store, sql));
@@ -2802,8 +3287,8 @@ test('a WhatsApp pass over a large ChatStorage holds one message at a time, so i
      WITH RECURSIVE message(n) AS (
        SELECT 1 UNION ALL SELECT n + 1 FROM message WHERE n < 60000
      )
-     INSERT INTO ZWAMESSAGE (Z_PK, Z_ENT, ZCHATSESSION, ZISFROMME, ZSTANZAID, ZFROMJID, ZMESSAGEDATE, ZMESSAGETYPE, ZMESSAGESTATUS, ZTEXT)
-       SELECT n, 9, 1, n % 2, 'stanza-' || n, '${alice}', 780000000 + n, 0, 6, 'message ' || n || ' ' || hex(randomblob(40))
+     INSERT INTO ZWAMESSAGE (Z_PK, Z_ENT, Z_OPT, ZCHATSESSION, ZISFROMME, ZSTANZAID, ZFROMJID, ZMESSAGEDATE, ZMESSAGETYPE, ZMESSAGESTATUS, ZTEXT)
+       SELECT n, 9, 1, 1, n % 2, 'stanza-' || n, '${alice}', 780000000 + n, 0, 6, 'message ' || n || ' ' || hex(randomblob(40))
        FROM message;`,
   );
   // The import as a host runs it, in a process whose heap is far smaller

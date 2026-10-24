@@ -266,7 +266,7 @@ async function transfer<Target extends DestinationTarget>(
             // The first commit also makes the prepared target itself durable,
             // so an empty overwrite still clears it.
             if (!replication.failed && !replication.clean)
-              await commit(replication);
+              await commit(replication, signal);
             // A reload replaces the target only once every partition read.
             if (replication.failures.length === 0 && stage.reloading) {
               await stage.complete();
@@ -289,7 +289,7 @@ async function transfer<Target extends DestinationTarget>(
             throw new TypeError(
               `Full refresh stream ${message.stream} emitted a checkpoint`,
             );
-          await commit(replication);
+          await commit(replication, signal);
           const { run, id } = checkpoint(replication);
           await run.save(id, operation.state, started(replication).reloading);
           replication.resumes = true;
@@ -313,6 +313,7 @@ async function transfer<Target extends DestinationTarget>(
           replication.report();
         }
       } catch (error) {
+        replication.cancelled = cancelledBy(signal, error);
         await breakStage(replication, error);
       }
     }
@@ -395,7 +396,10 @@ function started<Target extends DestinationTarget>(
 
 async function commit<Target extends DestinationTarget>(
   replication: Replicated<Target>,
+  signal: AbortSignal | undefined,
 ): Promise<void> {
+  await replication.files.flush();
+  signal?.throwIfAborted();
   await started(replication).commit();
   replication.clean = true;
   replication.failed = false;

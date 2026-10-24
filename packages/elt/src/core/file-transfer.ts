@@ -47,6 +47,14 @@ export class FileTransfer {
     return data;
   }
 
+  async flush(): Promise<void> {
+    for (const read of this.reads) {
+      const storage = read.file.storage;
+      if (storage === undefined) continue;
+      await storage.flush(this.scope(read));
+    }
+  }
+
   async reconcile(values: FieldValues): Promise<void> {
     for (const read of this.reads) {
       const storage = read.file.storage;

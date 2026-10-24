@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
@@ -10,6 +12,7 @@ import type {
   MediaItem,
   Message,
   MessageDataItem,
+  MessageKey,
   ProfilePicture,
   PushName,
 } from './chat-records.ts';
@@ -31,6 +34,7 @@ import {
 // are left out: Spotlight and search indexing, encryption retries and keys,
 // participant hashes, sync tags and row references.
 const requiredColumns = {
+  Z_METADATA: ['Z_UUID'],
   ZWACHATSESSION: [
     'Z_PK',
     'ZCONTACTJID',
@@ -66,6 +70,7 @@ const requiredColumns = {
   ],
   ZWAMESSAGE: [
     'Z_PK',
+    'Z_OPT',
     'ZCHATSESSION',
     'ZISFROMME',
     'ZSTANZAID',
@@ -93,6 +98,7 @@ const requiredColumns = {
   ],
   ZWAMEDIAITEM: [
     'Z_PK',
+    'Z_OPT',
     'ZMEDIALOCALPATH',
     'ZTHUMBNAILLOCALPATH',
     'ZMEDIAURL',
@@ -112,7 +118,7 @@ const requiredColumns = {
     'ZCLOUDSTATUS',
     'ZMETADATA',
   ],
-  ZWAMESSAGEINFO: ['Z_PK', 'ZRECEIPTINFO'],
+  ZWAMESSAGEINFO: ['Z_PK', 'Z_OPT', 'ZRECEIPTINFO'],
   ZWAMESSAGEDATAITEM: [
     'ZMESSAGE',
     'ZINDEX',
@@ -184,6 +190,14 @@ export function profilePictureFile(container: string, path: string): string {
 const messageKey = `chat.ZCONTACTJID AS chatJid, message.ZISFROMME AS isFromMe,
   message.ZSTANZAID AS stanzaId`;
 
+// The small inputs of a joined message, without its text or blobs. Versions
+// belong to each row, not a store-wide cursor; related rows can change alone.
+export type MessageInput = MessageKey & {
+  readonly id: number;
+  readonly messageDate: string | null;
+  readonly fingerprint: string;
+};
+
 // ChatStorage.sqlite as of one moment, so a message, its chat and its sender
 // agree. A message whose chat WhatsApp removed belongs to no conversation it
 // shows, and has no key; it is not read. Hold it only while reading: an open
@@ -191,11 +205,19 @@ const messageKey = `chat.ZCONTACTJID AS chatJid, message.ZISFROMME AS isFromMe,
 export class ChatStorageSnapshot implements Disposable {
   readonly #database: Snapshot;
   readonly #container: string;
+  readonly #fileIdentity: string;
 
   constructor(path: string, container: string) {
     this.#database = new Snapshot(path, WhatsAppUnavailableError);
     this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
     this.#container = container;
+    try {
+      const file = statSync(path, { bigint: true });
+      this.#fileIdentity = `${file.dev}:${file.ino}:${file.birthtimeNs}`;
+    } catch (error) {
+      this.#database[Symbol.dispose]();
+      throw error;
+    }
   }
 
   chats(): IteratorObject<Chat, undefined> {
@@ -262,9 +284,59 @@ export class ChatStorageSnapshot implements Disposable {
       }));
   }
 
+  messageInputs(): IteratorObject<MessageInput, undefined> {
+    const store = requiredText(
+      this.#database.all('SELECT Z_UUID AS uuid FROM Z_METADATA')[0]?.uuid,
+      'A WhatsApp store has no UUID',
+    );
+    return this.#database
+      .iterate(
+        `
+      SELECT ${messageKey}, message.Z_PK AS id, message.Z_OPT AS version,
+             message.ZMESSAGEDATE AS messageDate,
+             media.Z_PK AS mediaId, media.Z_OPT AS mediaVersion,
+             media.ZMEDIALOCALPATH AS mediaLocalPath,
+             info.Z_PK AS infoId, info.Z_OPT AS infoVersion,
+             member.ZMEMBERJID AS memberJid, parent.ZSTANZAID AS parentStanzaId
+      FROM ZWAMESSAGE AS message
+      JOIN ZWACHATSESSION AS chat ON chat.Z_PK = message.ZCHATSESSION
+      LEFT JOIN ZWAMEDIAITEM AS media ON media.Z_PK = message.ZMEDIAITEM
+      LEFT JOIN ZWAMESSAGEINFO AS info ON info.Z_PK = message.ZMESSAGEINFO
+      LEFT JOIN ZWAGROUPMEMBER AS member ON member.Z_PK = message.ZGROUPMEMBER
+      LEFT JOIN ZWAMESSAGE AS parent ON parent.Z_PK = message.ZPARENTMESSAGE
+      ORDER BY message.Z_PK
+    `,
+      )
+      .map((row) => {
+        if (
+          row.version === null ||
+          (row.mediaId !== null && row.mediaVersion === null) ||
+          (row.infoId !== null && row.infoVersion === null)
+        )
+          throw new TypeError('A WhatsApp message input has no row version');
+        const path = text(row.mediaLocalPath);
+        return {
+          ...key(row),
+          id: requiredNumber(row.id, 'A WhatsApp message has no row ID'),
+          messageDate: instant(row.messageDate),
+          fingerprint: createHash('sha256')
+            .update(
+              JSON.stringify([
+                store,
+                this.#fileIdentity,
+                ...Object.values(row),
+                path !== null &&
+                  onDisk(messageMediaFile(this.#container, path)) !== null,
+              ]),
+            )
+            .digest('base64url'),
+        };
+      });
+  }
+
   // Read as the caller iterates: a store keeps tens of thousands of
   // messages, so no read holds them all.
-  messages(): IteratorObject<Message, undefined> {
+  messages(id?: number): IteratorObject<Message, undefined> {
     return this.#database
       .iterate(
         `SELECT ${messageKey}, message.ZFROMJID AS fromJid,
@@ -305,7 +377,9 @@ export class ChatStorageSnapshot implements Disposable {
          LEFT JOIN ZWAMESSAGE AS parent ON parent.Z_PK = message.ZPARENTMESSAGE
          LEFT JOIN ZWAMEDIAITEM AS media ON media.Z_PK = message.ZMEDIAITEM
          LEFT JOIN ZWAMESSAGEINFO AS info ON info.Z_PK = message.ZMESSAGEINFO
+         ${id === undefined ? '' : 'WHERE message.Z_PK = ?'}
          ORDER BY message.Z_PK`,
+        ...(id === undefined ? [] : [id]),
       )
       .map((row) => {
         const metadata = bytes(row.metadata);

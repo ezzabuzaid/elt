@@ -8,6 +8,15 @@
     "test": {
       "dependsOn": ["build"],
       "command": "node --test {args} \"packages/sources/apple/macos/dist/*.test.js\""
+    },
+    "helper": {
+      "command": "sh packages/sources/apple/macos/src/helper/build.sh packages/sources/apple/macos/dist/vision-worker",
+      "cache": true,
+      "inputs": ["{projectRoot}/src/helper/*"],
+      "outputs": ["{projectRoot}/dist/vision-worker"]
+    },
+    "build": {
+      "dependsOn": ["...", "helper"]
     }
   }
 }

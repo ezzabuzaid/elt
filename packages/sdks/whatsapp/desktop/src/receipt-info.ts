@@ -70,7 +70,7 @@ function offsetInstant(
 // the field numbers the store's own values bear out. Field 3 is the message's
 // time in Unix seconds; each field 2 is one recipient, whose fields 4, 5 and
 // 6 are seconds after it until delivery, reading and playing (a read message
-// has status 8, a played voice note 5); field 7 holds the reactions, each
+// has status 8, a played voice note 5); field 7.1 holds reactions, each
 // with its stanza ID (1), sender (2, absent exactly when field 6 marks the
 // account's own), emoji (3) and time in Unix milliseconds (4), and a channel
 // post's counts per emoji (field 7.3).
@@ -108,6 +108,25 @@ export class ReceiptInfo {
         reactedAt: new Date(reactedAt).toISOString(),
       };
     });
+    // Field 7.2 holds this Mac's outgoing reaction: ID (1), emoji (2),
+    // and Unix milliseconds (3). Withdrawal omits the emoji.
+    const outgoing = reactions?.message(2);
+    if (outgoing !== undefined) {
+      const stanzaId = outgoing.string(1);
+      const reactedAt = outgoing.uint(3);
+      if (stanzaId === undefined || reactedAt === undefined)
+        throw new TypeError('A WhatsApp reaction lacks its ID or time');
+      this.reactions = [
+        ...this.reactions,
+        {
+          stanzaId,
+          senderJid: null,
+          isFromMe: true,
+          emoji: outgoing.string(2) ?? null,
+          reactedAt: new Date(reactedAt).toISOString(),
+        },
+      ];
+    }
     this.reactionCounts = (reactions?.message(3)?.messages(1) ?? []).map(
       (counted) => {
         const emoji = counted.string(1);

@@ -4,8 +4,9 @@ import {
   messageMediaFile,
 } from '@workspace/sdk-whatsapp-desktop';
 
+import { WhatsAppMessageStream } from '../whatsapp-message-stream.ts';
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, base64, whatsappFields } from '../whatsapp-stream.ts';
+import { base64, whatsappFields } from '../whatsapp-stream.ts';
 
 const {
   jid,
@@ -263,9 +264,11 @@ const properties = {
 const person = (jid: string | null) =>
   jid !== null && /@(s\.whatsapp\.net|lid)$/.test(jid) ? jid : null;
 
-export class MessagesStream extends WhatsAppStream<typeof properties, Message> {
+export class MessagesStream extends WhatsAppMessageStream<
+  typeof properties,
+  Message
+> {
   readonly name = 'messages';
-  readonly store = 'chatStorage';
   readonly primaryKey = ['chatJid', 'isFromMe', 'stanzaId'];
   readonly supportsFileTransfer = true;
   readonly jsonSchema = {
@@ -276,8 +279,8 @@ export class MessagesStream extends WhatsAppStream<typeof properties, Message> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): Iterable<Message> {
-    return scan.chatStorage.messages();
+  protected *messageRows(message: Message): Generator<Message> {
+    yield message;
   }
 
   protected record({

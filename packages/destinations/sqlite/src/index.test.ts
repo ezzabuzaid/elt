@@ -3766,6 +3766,149 @@ test('a clear waits for a reader in another process instead of failing', async (
   assert.equal(after.prepare('SELECT count(*) AS n FROM docs').get()?.n, 0);
 });
 
+test('file flush failure or cancellation leaves SQLite rows and checkpoints at the last commit and can be retried', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-file-flush-'),
+  );
+  const path = join(scratch.path, 'source.txt');
+  const directory = join(scratch.path, 'nested', 'files');
+  const files = new LocalFiles({ directory });
+  const stream = new Stream({
+    ...scripted('docs', { snapshot: false }),
+    supportsFileTransfer: true,
+  });
+  const source = new ScriptedSource([stream], {});
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const history = await installedHistory(destination);
+  const pipeline = (storage: LocalFiles) =>
+    new Pipeline({
+      history,
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(
+              stream,
+              destination.table('docs', (c) => [
+                c.text('id'),
+                c.integer('version'),
+                c.text('ref').from(stream.file.store(storage)),
+              ]),
+              {
+                id: 'docs',
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+                cursorField: 'version',
+              },
+            ),
+          ],
+        }),
+      ],
+    });
+  const loaded = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT id, version, ref FROM docs ORDER BY id')
+      .all();
+  };
+  const saved = () => {
+    using database = new DatabaseSync(checkpoints.path, { readOnly: true });
+    return database
+      .prepare('SELECT state FROM checkpoints WHERE id = ?')
+      .get('docs')?.state;
+  };
+  await writeFile(path, 'original');
+  source.scripts = {
+    docs: [
+      { ...record('docs', 'a', 1), file: path },
+      checkpoint('docs', { at: 1 }),
+    ],
+  };
+  await pipeline(files).run();
+  const original = loaded();
+  assert.equal(saved(), '{"at":1}');
+
+  await writeFile(path, 'replacement');
+  source.scripts = {
+    docs: [
+      { ...record('docs', 'a', 2), file: path },
+      { ...record('docs', 'b', 2), file: path },
+      checkpoint('docs', { at: 2 }),
+    ],
+  };
+  // A disk cannot reliably fail fsync on demand; only that external failure
+  // is injected. File copying, SQLite transactions and checkpoints are real.
+  const unavailable = new (class extends LocalFiles {
+    override async flush(): Promise<void> {
+      throw new Error('file flush unavailable');
+    }
+  })({ directory });
+  await assert.rejects(pipeline(unavailable).run(), /file flush unavailable/);
+  assert.deepEqual(loaded(), original);
+  assert.equal(saved(), '{"at":1}');
+  assert.equal(
+    await readFile(join(directory, String(original[0]?.ref)), 'utf8'),
+    'original',
+  );
+
+  await pipeline(files).run();
+  const replaced = loaded();
+  assert.deepEqual(
+    replaced.map(({ id, version }) => ({ id, version })),
+    [
+      { id: 'a', version: 2 },
+      { id: 'b', version: 2 },
+    ],
+  );
+  assert.equal(replaced[0]?.ref, replaced[1]?.ref);
+  assert.equal(
+    await readFile(join(directory, String(replaced[0]?.ref)), 'utf8'),
+    'replacement',
+  );
+  assert.equal(saved(), '{"at":2}');
+  assert.equal(
+    (await readdir(directory, { recursive: true, withFileTypes: true })).filter(
+      (entry) => entry.isFile(),
+    ).length,
+    1,
+  );
+
+  const stopped = new AbortController();
+  const cancelled = new (class extends LocalFiles {
+    override async flush(scope: string) {
+      await super.flush(scope);
+      stopped.abort(new Error('stop during file flush'));
+    }
+  })({ directory });
+  await writeFile(path, 'after cancellation');
+  source.scripts = {
+    docs: [
+      { ...record('docs', 'a', 3), file: path },
+      checkpoint('docs', { at: 3 }),
+    ],
+  };
+  await assert.rejects(
+    pipeline(cancelled).run({ signal: stopped.signal }),
+    /stop during file flush/,
+  );
+  assert.deepEqual(loaded(), replaced);
+  assert.equal(saved(), '{"at":2}');
+  await pipeline(files).run();
+  assert.equal(saved(), '{"at":3}');
+  assert.equal(
+    await readFile(join(directory, String(loaded()[0]?.ref)), 'utf8'),
+    'after cancellation',
+  );
+});
+
 test('stored file references follow committed SQLite rows, including rejected updates, failures, deletions and clear', async () => {
   const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-local-sqlite-'));
   try {

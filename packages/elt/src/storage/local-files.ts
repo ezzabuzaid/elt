@@ -88,11 +88,18 @@ export class LocalFiles extends FileStorage {
             );
         },
       );
-      await syncDirectory(directory);
       return join(folder, name);
     } finally {
       await rm(temporary, { force: true });
     }
+  }
+
+  override async flush(scope: string): Promise<void> {
+    await syncDirectory(join(this.directory, this.scopeFolder(scope))).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+      },
+    );
   }
 
   override async retain(

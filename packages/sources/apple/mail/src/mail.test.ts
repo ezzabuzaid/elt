@@ -17,6 +17,7 @@ import { basename, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 
 import {
@@ -48,7 +49,9 @@ import {
   mailDirectory,
   mailVersionDirectory,
 } from '@workspace/sdk-apple-mail';
+import { ImageFormat } from '@workspace/source-apple-macos/image-format';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
+import { Vision } from '@workspace/source-apple-macos/vision';
 
 import { AppleMailSource } from './apple-mail-source.ts';
 
@@ -2350,6 +2353,11 @@ test('Mail watches index commits and file-only downloads, and cancels', async ()
 });
 
 test('Mail tracking pixels keep exact local files and database bytes with null OCR text', async () => {
+  await using vision = new Vision(
+    fileURLToPath(
+      import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
+    ),
+  );
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-pixels-'));
   const store = await fixture(join(dir.path, 'Mail'));
   const images = [];
@@ -2428,7 +2436,7 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
               columns
                 .text('content')
                 .from(source.attachments.file)
-                .parse(new MacOSDocumentParser()),
+                .parse(new MacOSDocumentParser([new ImageFormat(vision)])),
               columns.blob('bytes').from(source.attachments.file),
               columns
                 .text('attachmentRef')

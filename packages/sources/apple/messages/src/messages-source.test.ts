@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   Connection,
@@ -30,7 +30,9 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
+import { ImageFormat } from '@workspace/source-apple-macos/image-format';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
+import { Vision } from '@workspace/source-apple-macos/vision';
 
 import { AppleMessagesSource } from './apple-messages-source.ts';
 
@@ -410,6 +412,11 @@ const messagesRows = (path: string, sql: string) => {
 };
 
 test('the document parser reads every attachment kind and throws only on unreadable files', async () => {
+  await using vision = new Vision(
+    fileURLToPath(
+      import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
+    ),
+  );
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-parse-'));
   const path = await chatFixture(scratch.path);
   const files = join(scratch.path, 'Attachments');
@@ -486,7 +493,7 @@ test('the document parser reads every attachment kind and throws only on unreada
               c
                 .text('content')
                 .from(source.attachments.file)
-                .parse(new MacOSDocumentParser()),
+                .parse(new MacOSDocumentParser([new ImageFormat(vision)])),
             ]),
           ),
         ],
@@ -523,20 +530,19 @@ test('the document parser reads every attachment kind and throws only on unreada
       shortFile: null,
     },
   );
-  // The message also carries the script, so each pattern matches osascript's
-  // report of the thrown error.
+  // Both native readers report unreadable files through the pipeline.
   for (const [name, content, message] of [
     ['corrupt.pdf', 'not a pdf', /Error: Cannot read PDF/],
-    ['corrupt.heic', Uint8Array.of(0, 1, 2), /Error: Cannot read image/],
-    // A PNG cut off after its header: ImageIO reads a 64×64 image, and Vision
-    // has no pixels to decode.
+    ['corrupt.heic', Uint8Array.of(0, 1, 2), /Cannot read image/],
+    // A PNG cut off after its header: ImageIO returns empty properties,
+    // and Vision has no pixels to decode.
     [
       'truncated.png',
       Buffer.from(
         '89504e470d0a1a0a0000000d4948445200000040000000400802000000250be689',
         'hex',
       ),
-      /Error: Cannot read image: Vision failed/,
+      /Cannot read image: Vision failed/,
     ],
   ] as const) {
     attach(name, await file(name, content));
@@ -609,6 +615,11 @@ test('Messages scope filters chat and native dates before decoding attachments a
 });
 
 test('Messages exports every stream by guid, decodes archived text and streams local attachments', async () => {
+  await using vision = new Vision(
+    fileURLToPath(
+      import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
+    ),
+  );
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'elt-messages-'),
   );
@@ -626,7 +637,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
       c
         .text('content')
         .from(source.attachments.file)
-        .parse(new MacOSDocumentParser()),
+        .parse(new MacOSDocumentParser([new ImageFormat(vision)])),
       c.blob('bytes').from(source.attachments.file),
     ]),
   );

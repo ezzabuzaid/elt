@@ -61,6 +61,9 @@ test('file storage declarations validate identities and keep parsing separate wi
     override async save(): Promise<string> {
       throw new Error('unexpected save');
     }
+    override async flush(): Promise<void> {
+      throw new Error('unexpected flush');
+    }
     override async retain(): Promise<void> {
       throw new Error('unexpected cleanup');
     }

@@ -6,13 +6,10 @@ import {
   type GroupMembersChange,
   type Message,
   type MessageDataItem,
+  type MessageInput,
   type MessageKey,
   type ProfilePicture,
   type PushName,
-  type Reaction,
-  type ReactionCount,
-  type Receipt,
-  ReceiptInfo,
 } from '@workspace/sdk-whatsapp-desktop';
 import {
   type ImportScope,
@@ -74,35 +71,12 @@ export class ChatStorageRecords {
     return this.#chats;
   }
 
-  messages(): Generator<Message> {
-    return unique(
-      this.#snapshot
-        .messages()
-        .filter(
-          ({ chatJid, messageDate }) =>
-            this.#chat(chatJid) &&
-            withinDates(
-              this.#scope,
-              messageDate === null ? null : toMilliseconds(messageDate),
-            ),
-        ),
-      messageId,
-    );
+  messages(id?: number): Generator<Message> {
+    return this.#selected(this.#snapshot.messages(id));
   }
 
-  *receipts(): Generator<OnMessage<Receipt>> {
-    for (const { message, item } of this.#decoded())
-      for (const receipt of item.receipts) yield { message, item: receipt };
-  }
-
-  *reactions(): Generator<OnMessage<Reaction>> {
-    for (const { message, item } of this.#decoded())
-      for (const reaction of item.reactions) yield { message, item: reaction };
-  }
-
-  *reactionCounts(): Generator<OnMessage<ReactionCount>> {
-    for (const { message, item } of this.#decoded())
-      for (const count of item.reactionCounts) yield { message, item: count };
+  messageInputs(): Generator<MessageInput> {
+    return this.#selected(this.#snapshot.messageInputs());
   }
 
   get dataItems(): Iterable<MessageDataItem> {
@@ -145,7 +119,7 @@ export class ChatStorageRecords {
   // off, by its key.
   message(key: MessageKey): boolean {
     if (!this.#narrowed) return true;
-    this.#messageIds ??= new Set(this.messages().map(messageId));
+    this.#messageIds ??= new Set(this.messageInputs().map(messageId));
     return this.#messageIds.has(messageId(key));
   }
 
@@ -153,7 +127,7 @@ export class ChatStorageRecords {
   stanza(chatJid: string, stanzaId: string): boolean {
     if (!this.#narrowed) return true;
     this.#stanzaIds ??= new Set(
-      this.messages().map((kept) =>
+      this.messageInputs().map((kept) =>
         JSON.stringify([kept.chatJid, kept.stanzaId]),
       ),
     );
@@ -164,9 +138,19 @@ export class ChatStorageRecords {
     return selected(this.#scope.collectionIds, jid);
   }
 
-  *#decoded(): Generator<OnMessage<ReceiptInfo>> {
-    for (const message of this.messages())
-      if (message.receiptInfo !== null)
-        yield { message, item: new ReceiptInfo(message.receiptInfo) };
+  #selected<T extends MessageKey & { readonly messageDate: string | null }>(
+    rows: IteratorObject<T>,
+  ): Generator<T> {
+    return unique(
+      rows.filter(
+        ({ chatJid, messageDate }) =>
+          this.#chat(chatJid) &&
+          withinDates(
+            this.#scope,
+            messageDate === null ? null : toMilliseconds(messageDate),
+          ),
+      ),
+      messageId,
+    );
   }
 }

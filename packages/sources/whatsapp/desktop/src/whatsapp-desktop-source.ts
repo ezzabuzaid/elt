@@ -1,12 +1,6 @@
 import { setInterval } from 'node:timers/promises';
 
 import {
-  ClosedWorld,
-  type DeletionPolicy,
-  Retention,
-} from '@zukhruf/snapshot-differential';
-
-import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
@@ -15,7 +9,6 @@ import {
   type SourceMessage,
   type SourceWatchOptions,
   type Stream,
-  diffSnapshot,
 } from '@workspace/elt';
 import {
   WhatsApp,
@@ -236,21 +229,11 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readerOf(stream);
-    const records = reader.read(scan);
-    const messages = diffSnapshot(configuration, records, state, {
-      policy: policyFor(reader.horizon(scan)),
-      signal,
-    });
+    const messages = reader.changes(configuration, scan, state, signal);
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)
         yield message;
       else yield { ...message, file: reader.file(message.data, scan) };
     }
   }
-}
-
-// A stream WhatsApp expires keeps records from its horizon on; any other
-// lists every record.
-function policyFor(horizon: string | undefined): DeletionPolicy {
-  return horizon === undefined ? new ClosedWorld() : new Retention(horizon);
 }

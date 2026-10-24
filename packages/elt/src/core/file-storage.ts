@@ -10,7 +10,12 @@ export abstract class FileStorage {
 
   // Resolves only after the complete object is published. Retries must reuse
   // the reference, and new content must not overwrite a referenced object.
+  // Call flush before committing rows that reference these saves.
   abstract save(scope: string, content: FileContent): Promise<string>;
+
+  // Makes this scope's completed saves durable before their rows commit.
+  // Safe to repeat, including for a scope with no saves.
+  abstract flush(scope: string): Promise<void>;
 
   // Reconciles this scope against the destination's committed references,
   // including objects left by an interrupted save, rejected row or failed run.

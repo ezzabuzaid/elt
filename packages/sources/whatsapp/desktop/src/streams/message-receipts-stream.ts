@@ -1,5 +1,9 @@
 import type { RecordDraft } from '@workspace/elt';
-import type { Receipt } from '@workspace/sdk-whatsapp-desktop';
+import {
+  type Message,
+  type Receipt,
+  ReceiptInfo,
+} from '@workspace/sdk-whatsapp-desktop';
 
 import type { OnMessage } from '../chat-storage-records.ts';
 import {
@@ -7,8 +11,8 @@ import {
   messageKeyFields,
   messageKeyRecord,
 } from '../message-key-fields.ts';
-import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppMessageStream } from '../whatsapp-message-stream.ts';
+import { whatsappFields } from '../whatsapp-stream.ts';
 
 const { jid, text } = whatsappFields;
 const second = { ...text, format: 'date-time', precision: 0 } as const;
@@ -38,12 +42,11 @@ const properties = {
   },
 } as const;
 
-export class MessageReceiptsStream extends WhatsAppStream<
+export class MessageReceiptsStream extends WhatsAppMessageStream<
   typeof properties,
   OnMessage<Receipt>
 > {
   readonly name = 'messageReceipts';
-  readonly store = 'chatStorage';
   readonly primaryKey = [...messageKeyColumns, 'recipientJid'];
   readonly jsonSchema = {
     type: 'object',
@@ -53,8 +56,10 @@ export class MessageReceiptsStream extends WhatsAppStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: WhatsAppScan): Iterable<OnMessage<Receipt>> {
-    return scan.chatStorage.receipts();
+  protected *messageRows(message: Message): Generator<OnMessage<Receipt>> {
+    if (message.receiptInfo !== null)
+      for (const item of new ReceiptInfo(message.receiptInfo).receipts)
+        yield { message, item };
   }
 
   protected record({

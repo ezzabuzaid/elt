@@ -1,9 +1,13 @@
+import { ClosedWorld, Retention } from '@zukhruf/snapshot-differential';
+
 import {
+  type CopyConfiguration,
   type Properties,
   type RecordDraft,
   type SchemaRecord,
   Stream,
   type SyncMode,
+  diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
 import type { WhatsAppStore } from '@workspace/sdk-whatsapp-desktop';
@@ -38,8 +42,12 @@ export type WhatsAppReader = {
   readonly name: string;
   readonly store: WhatsAppStore;
   describe(): Stream;
-  read(scan: WhatsAppScan): Iterable<Record<string, unknown>>;
-  horizon(scan: WhatsAppScan): string | undefined;
+  changes(
+    configuration: CopyConfiguration,
+    scan: WhatsAppScan,
+    state: unknown,
+    signal: AbortSignal | undefined,
+  ): ReturnType<typeof diffSnapshot<Record<string, unknown>>>;
   file(record: Record<string, unknown>, scan: WhatsAppScan): string | null;
 };
 
@@ -73,7 +81,25 @@ export abstract class WhatsAppStream<P extends Properties, Row> {
 
   // One record at a time, so a pass never holds a whole store's rows.
   *read(scan: WhatsAppScan): Generator<SchemaRecord<P>> {
-    for (const row of this.rows(scan))
+    yield* this.records(this.rows(scan));
+  }
+
+  changes(
+    configuration: CopyConfiguration,
+    scan: WhatsAppScan,
+    state: unknown,
+    signal: AbortSignal | undefined,
+  ): ReturnType<typeof diffSnapshot<SchemaRecord<P>>> {
+    const horizon = this.horizon(scan);
+    return diffSnapshot(configuration, this.read(scan), state, {
+      policy:
+        horizon === undefined ? new ClosedWorld() : new Retention(horizon),
+      signal,
+    });
+  }
+
+  protected *records(rows: Iterable<Row>): Generator<SchemaRecord<P>> {
+    for (const row of rows)
       yield* validateRecords(this, [this.record(row)], 'WhatsApp');
   }
 

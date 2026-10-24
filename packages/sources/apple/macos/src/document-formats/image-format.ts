@@ -1,6 +1,4 @@
-import { resolve } from 'node:path';
-
-import osa from '../osa.ts';
+import type { Vision } from '../vision.ts';
 import { DocumentFormat } from './document-format.ts';
 import type { FileHead } from './file-head.ts';
 
@@ -45,41 +43,14 @@ export class ImageFormat extends DocumentFormat {
     );
   }
 
-  // Vision's accurate text recognition, one line per observation.
-  override async text(path: string): Promise<string | null> {
-    const content: unknown = JSON.parse(
-      await osa.execute(`
-        ObjC.import('Vision');
-        ObjC.import('ImageIO');
-        function recognize() {
-        const path = ${JSON.stringify(resolve(path))};
-        const image = $.CGImageSourceCreateWithURL($.NSURL.fileURLWithPath(path), null);
-        const properties = ObjC.castRefToObject($.CGImageSourceCopyPropertiesAtIndex(image, 0, null));
-        if (properties.isNil()) throw new Error('Cannot read image');
-        // Vision crashes on 1px and 2px images (macOS 26.6.2 and 27.0).
-        for (const key of [$.kCGImagePropertyPixelWidth, $.kCGImagePropertyPixelHeight])
-          if (Number(ObjC.unwrap(properties.objectForKey(ObjC.castRefToObject(key)))) < 3) return null;
-        const handler = $.VNImageRequestHandler.alloc.initWithURLOptions(
-          $.NSURL.fileURLWithPath(path), $()
-        );
-        const request = $.VNRecognizeTextRequest.alloc.init;
-        request.recognitionLevel = $.VNRequestTextRecognitionLevelAccurate;
-        request.automaticallyDetectsLanguage = true;
-        // Reading Vision's NSError through a JXA Ref crashes osascript (macOS
-        // 27.0), so the failure carries no reason.
-        if (!handler.performRequestsError($([request]), null))
-          throw new Error('Cannot read image: Vision failed');
-        const lines = [];
-        const results = request.results;
-        for (let index = 0; index < results.count; index++)
-          lines.push(ObjC.unwrap(results.objectAtIndex(index).topCandidates(1).objectAtIndex(0).string));
-        return lines.length > 0 ? lines.join('\\n') : null;
-        }
-        JSON.stringify(recognize());
-      `),
-    );
-    if (content !== null && typeof content !== 'string')
-      throw new TypeError('Vision returned unexpected content');
-    return content;
+  readonly #vision: Vision;
+
+  constructor(vision: Vision) {
+    super();
+    this.#vision = vision;
+  }
+
+  override text(path: string, signal?: AbortSignal): Promise<string | null> {
+    return this.#vision.read(path, signal);
   }
 }
