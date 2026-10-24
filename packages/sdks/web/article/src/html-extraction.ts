@@ -17,6 +17,8 @@ export type ArticleSelection = Omit<
 };
 
 export class HTMLExtraction extends Extraction {
+  readonly mediaTypes = ['text/html', 'application/xhtml+xml'];
+
   override async extract(
     page: ArticlePage,
     signal: AbortSignal,

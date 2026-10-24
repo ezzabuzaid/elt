@@ -390,7 +390,7 @@ const pages = await new WebDiscovery(got).discover(
 
 Discovery returns candidate pages without publisher-specific filters. It follows advertised sitemaps and feeds; article classification, content fetching and destination loading are separate steps. See the [API, supported formats and live verification](packages/sdks/web/discovery/README.md).
 
-Pass a discovered page URL to `new WebArticle(got).fetch(page.url, signal)` from `@workspace/sdk-web-article` to fetch its content and extract sanitized HTML, readable text, metadata and its declared canonical URL. This composes Mozilla Readability, jsdom, DOMPurify and html-to-text. See the [article API, public tests and live quality findings](packages/sdks/web/article/README.md).
+Pass a discovered page URL to `new WebArticle([new MarkdownExtraction(), new HTMLExtraction()], got).fetch(page.url, signal)` from `@workspace/sdk-web-article` to fetch its content and extract sanitized HTML, readable text, metadata and its declared canonical URL. It prefers native Markdown and falls back to HTML, using Marked, Defuddle, Mozilla Readability, jsdom, DOMPurify and html-to-text. See the [article API, public tests and live quality findings](packages/sdks/web/article/README.md).
 
 ### Workspace
 

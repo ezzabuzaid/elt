@@ -15,6 +15,61 @@ import { ArticleError } from '@workspace/sdk-web-article';
 
 import { WebSource } from './web-source.ts';
 
+test('native articles persist clean text and refresh independently changing HTML metadata', async () => {
+  let date = '2026-10-24';
+  const markdown =
+    '# Field report\n\nRead the [findings](/findings).\n\nSubscribe for updates.';
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (request.url === '/feed.xml') {
+      response
+        .writeHead(200, { 'content-type': 'application/rss+xml' })
+        .end('<rss><channel><item><link>/report</link></item></channel></rss>');
+    } else if (request.headers.accept?.startsWith('text/markdown')) {
+      response
+        .writeHead(200, { 'content-type': 'text/markdown' })
+        .end(markdown);
+    } else {
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          `<html><head><meta name="author" content="Lina"><meta property="article:published_time" content="${date}"></head><body><article><p>Read the <a href="/findings">findings</a>.</p></article><footer>Subscribe for updates.</footer></body></html>`,
+        );
+    }
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      inputs: [`${upstream.origin}/feed.xml`],
+      pollIntervalMs: 60_000,
+    }),
+    database.path,
+    checkpoints.path,
+  );
+  assert.equal((await ingestion.run())[0]?.count, 1);
+  const article = database.connection
+    .prepare(
+      'SELECT markdown, textContent, byline, publishedTime FROM articles',
+    )
+    .get();
+  assert.ok(article);
+  assert.equal(article.markdown, markdown);
+  assert.equal(
+    article.textContent,
+    `Read the findings [${upstream.origin}/findings].`,
+  );
+  assert.equal(article.byline, 'Lina');
+  assert.equal(article.publishedTime, '2026-10-24');
+  assert.equal((await ingestion.run())[0]?.count, 0);
+  date = '2026-10-25';
+  assert.equal((await ingestion.run())[0]?.count, 1);
+  assert.equal(
+    database.connection.prepare('SELECT publishedTime FROM articles').get()
+      ?.publishedTime,
+    '2026-10-25',
+  );
+});
+
 test('archive articles persist Markdown and an unchanged rerun writes no records', async () => {
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');
@@ -39,6 +94,60 @@ test('archive articles persist Markdown and an unchanged rerun writes no records
     database.connection.prepare('SELECT markdown FROM articles').get()
       ?.markdown,
     `These observations confirm the [published results](${upstream.origin}/results).`,
+  );
+  assert.equal((await ingestion.run())[0]?.count, 0);
+});
+
+test('the pipeline prefers native Markdown, keeps HTML fallback and writes nothing on an unchanged rerun', async () => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (request.url === '/feed.xml') {
+      assert(!request.headers.accept?.includes('text/markdown'));
+      response
+        .writeHead(200, { 'content-type': 'application/rss+xml' })
+        .end(
+          '<rss><channel><item><link>/native</link></item><item><link>/html</link></item></channel></rss>',
+        );
+    } else if (
+      request.url === '/native' &&
+      request.headers.accept?.startsWith('text/markdown')
+    ) {
+      response
+        .writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' })
+        .end('# Native report\n\n**Publisher Markdown** stays intact.');
+    } else {
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<html><head><title>HTML report</title></head><body><article><p>The HTML-only report remains available.</p></article></body></html>',
+        );
+    }
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      inputs: [`${upstream.origin}/feed.xml`],
+      pollIntervalMs: 60_000,
+    }),
+    database.path,
+    checkpoints.path,
+  );
+  assert.equal((await ingestion.run())[0]?.count, 2);
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT title, markdown FROM articles ORDER BY title')
+      .all()
+      .map(({ title, markdown }) => ({ title, markdown })),
+    [
+      {
+        title: 'HTML report',
+        markdown: 'The HTML-only report remains available.',
+      },
+      {
+        title: 'Native report',
+        markdown: '# Native report\n\n**Publisher Markdown** stays intact.',
+      },
+    ],
   );
   assert.equal((await ingestion.run())[0]?.count, 0);
 });

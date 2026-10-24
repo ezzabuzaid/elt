@@ -5,7 +5,11 @@
 ```ts
 import got from 'got';
 
-import { HTMLExtraction, WebArticle } from '@workspace/sdk-web-article';
+import {
+  HTMLExtraction,
+  MarkdownExtraction,
+  WebArticle,
+} from '@workspace/sdk-web-article';
 import { WebDiscovery } from '@workspace/sdk-web-discovery';
 
 const signal = AbortSignal.timeout(30_000);
@@ -13,7 +17,10 @@ const pages = await new WebDiscovery(got).discover(
   'https://www.anthropic.com/',
   signal,
 );
-const reader = new WebArticle([new HTMLExtraction()], got);
+const reader = new WebArticle(
+  [new MarkdownExtraction(), new HTMLExtraction()],
+  got,
+);
 const page = pages.find((page) => page.url.includes('/news/'));
 if (page) {
   const article = await reader.fetch(page.url, signal);
@@ -22,23 +29,25 @@ if (page) {
 }
 ```
 
-The example's publisher and URL selection belong to the caller. The constructor takes an ordered array of extraction instances and a Got client; use `got.extend(...)` for timeouts, retries or request hooks. HTTP retries finish before extraction, so parsing failures do not repeat downloads. A 304 fails because the SDK has no cached representation. The SDK does not render JavaScript, retrieve authenticated content, schedule crawls or store checkpoints.
+The example's publisher and URL selection belong to the caller. The constructor takes an ordered array of extraction instances and a Got client; use `got.extend(...)` for timeouts, retries or request hooks. Got owns HTTP retries. When negotiated Markdown is unusable, the reader makes one HTML-only attempt. A 304 fails because the SDK has no cached representation. The SDK does not render JavaScript, retrieve authenticated content, schedule crawls or store checkpoints.
 
 ## Extraction chain
 
-`WebArticle` downloads the page once and tries each `Extraction` in array order. The first non-null article ends the chain. If every extraction returns null, the reader returns null. An exception stops the chain and becomes an `ArticleError`; cancellation preserves the supplied reason. An empty chain is invalid.
+`WebArticle` derives its HTTP `Accept` preference from the extraction array and tries each `Extraction` in order on the downloaded response. The first non-null article ends that representation's chain. For preferred native Markdown, an available HTML counterpart supplies normalized article content and missing metadata, as described below. If every extraction returns null, the reader returns null. An exception stops that representation’s chain and becomes an `ArticleError` if no HTML fallback succeeds; cancellation preserves the supplied reason. An empty chain is invalid.
 
-`Extraction` is a format-neutral contract. Subclasses implement `extract(page, signal)` and return an `Article` or null. `ArticlePage` carries the final response `url`, the unparsed `body` (`string | Buffer`) and the `contentType` header; `WebArticle` supplies the downloaded bytes as a Buffer. The shared contract imports no HTML parser or converter.
+`Extraction` is a format-neutral contract. Subclasses declare `mediaTypes` and implement `extract(page, signal)` and return an `Article` or null. `ArticlePage` carries the final response `url`, the unparsed `body` (`string | Buffer`) and the `contentType` header; `WebArticle` supplies the downloaded bytes as a Buffer. The shared contract imports no HTML parser or converter.
 
 `HTMLExtraction` owns charset decoding, a fresh DOM per attempt, content selection with Defuddle, metadata with Readability, sanitization, the prose acceptance check, Markdown/text conversion and DOM cleanup. Its protected `select(dom, signal)` extension returns an `ArticleSelection` or null. Original response bytes are retained so every HTML attempt sees the same charset and unmodified HTML. State stays within each call, so one reader can fetch concurrent pages.
 
 Before Readability receives that DOM, `dateline` substrings are removed from class/id hints. Readability 0.6.0 otherwise accepts those hints as authors without checking their meaning. This happens after Defuddle selects content, so it changes metadata eligibility without changing the selected article. Explicit author metadata, `rel`/`itemprop` authors, author/byline classes and microformats remain available. No date strings are parsed or promoted to publication metadata.
 
-Only HTML extraction is supplied. There is no browser or model fallback, and no separate classification of a non-article page versus unresolved extraction.
+`MarkdownExtraction` accepts `text/markdown`, plus direct `.md`/`.markdown` files served as plain text or without a content type. It uses Marked for Markdown parsing, gray-matter for front matter, YAML 1.2 for metadata, DOMPurify for HTML sanitization and html-to-text for text/tables. Front-matter `title`, `author`, `date` and `description` remain strings; H1 and the first paragraph supply the title/excerpt when absent. Other metadata is null. Executable JavaScript front matter is disabled. Each call owns and closes its DOM.
+
+With Markdown first, the reader requests `text/markdown` ahead of HTML. If the server returns HTML, Feedscout follows explicit `rel="alternate"; type="text/markdown"` links in HTTP headers or HTML, including relative links and HTML base URLs. Alternatives are deduplicated and followed one hop. Their errors, empty bodies or incompatible formats preserve the original HTML response; cancellation still propagates. A 406 or unreadable negotiated Markdown triggers one request accepting HTML only. No blind extension/path guessing, browser or model fallback is used.
 
 ## Result
 
-The exported `Article` type defines the shared output contract independently of the extraction packages. `HTMLExtraction` preserves Mozilla Readability's metadata field names and missing-value semantics. The field descriptions below describe its output.
+The exported `Article` type defines the shared output contract independently of the extraction packages. `HTMLExtraction` preserves Mozilla Readability's metadata field names and missing-value semantics. The HTML-specific field descriptions below describe its output; native Markdown differences follow the table.
 
 | Field                                | Meaning                                                                                      |
 | ------------------------------------ | -------------------------------------------------------------------------------------------- |
@@ -50,7 +59,11 @@ The exported `Article` type defines the shared output contract independently of 
 | `title`, `byline`, `publishedTime`   | Readability's title, author text and raw publication metadata                                |
 | `excerpt`, `siteName`, `lang`, `dir` | Readability's description, publisher, language and text direction                            |
 
-Publication dates are not inferred from prose, URL paths, HTTP timestamps or sitemap hints. The method returns null for no readable content or for an unmarked result consisting entirely of hyperlinks. A non-null result is heuristic extraction, not proof that every part of an article was captured. Errors carry the failed URL in `ArticleError.url` and preserve their cause. Cancellation rejects with the supplied signal's original reason.
+**Native Markdown:** `markdown` preserves the publisher’s body verbatim after removing front matter. When HTML extraction is configured, `WebArticle` uses a readable HTML counterpart for `content`, `textContent` and `length`, and fills null or undefined metadata fields from it. Native metadata and the final Markdown URL retain precedence. Advertised alternatives reuse the original HTML response; negotiated Markdown makes one additional HTML-only request to the final URL. Companion failure, incompatible media types or empty extraction preserve the native article; cancellation still rejects. No recursive alternative lookup or quality-ranking heuristic is added.
+
+Without a readable HTML counterpart, `content` is sanitized HTML rendered from the native body and `textContent` derives from it. Relative URLs resolve against the representation supplying that content. Raw `markdown` remains untrusted source: it can contain navigation, footer text or raw HTML even when normalized `content` and `textContent` are clean. Consumers rendering raw Markdown must sanitize it. This distinction preserves source fidelity; it does not promise a cleaned native Markdown field. `MarkdownExtraction` itself performs no network requests or article-selection heuristics.
+
+Publication dates are not inferred from prose, URL paths, HTTP timestamps or sitemap hints. The method returns null for no readable content. HTML extraction also rejects an unmarked result consisting entirely of hyperlinks; explicit native Markdown retains short linked posts. A non-null result is heuristic extraction, not proof that every part of an article was captured. Errors carry the failed URL in `ArticleError.url` and preserve their cause. Cancellation rejects with the supplied signal's original reason.
 
 ## Package ownership
 
@@ -66,6 +79,9 @@ The packages' export maps, options, types and shipped implementations were inspe
 | DOMPurify 3.4.17                 | Final HTML sanitization using its native policy                                    |
 | html-to-text 10.0.1              | Paragraph boundaries, text conversion and data-table formatting                    |
 | node-html-markdown 2.0.0         | Markdown conversion through its public `NodeHtmlMarkdown.translate` API            |
+| Marked 18.1.1                    | Native Markdown parsing, including GFM tables and fenced code                      |
+| gray-matter 4.0.3, YAML 2.9.0    | Front-matter splitting and YAML 1.2 metadata without date coercion                 |
+| Feedscout 2.2.1                  | Advertised alternate representations in HTTP Link headers and HTML                 |
 | `@zukhruf/testing/http`          | Disposable real HTTP fixtures for public black-box tests                           |
 
 Defuddle's `contentSelector` recognizes microformat post containers (`.h-entry`, `.hentry`) and the common `.entry` convention when semantic article/main markup is absent. If none matches, Defuddle detects the main content normally. An incidental entry widget therefore cannot override an HTML/ARIA article or main landmark.
@@ -80,7 +96,7 @@ The minifier enables only `collapseWhitespace`, `conservativeCollapse` and `remo
 
 Markdown conversion runs after sanitization, so HTML, Markdown and text share the same article selection. The converter owns headings, emphasis, lists, block quotes, links, images and tables. Its `codeBlockStyle: 'indented'` preserves code containing literal backtick fences; language annotations are not retained. Its `textReplace` option escapes ampersands and less-than signs in prose so literal HTML examples remain text when rendered. Code spans and blocks bypass that replacement. No custom translator or Markdown parser is shipped.
 
-Defuddle's integrated Markdown was rejected because it runs before our final sanitization; its standalone browser export also required a browser `document` in a Node probe. Installed Turndown lacks tables, and the standard GFM plugin does not escape literal pipes in cells. The typed `node-html-markdown` API handles these cases without local rendering rules. Marked is a test-only dependency: public black-box tests render the returned Markdown independently and verify table cells, links, literal HTML and exact code text.
+Defuddle's integrated Markdown was rejected because it runs before our final sanitization; its standalone browser export also required a browser `document` in a Node probe. Installed Turndown lacks tables, and the standard GFM plugin does not escape literal pipes in cells. The typed `node-html-markdown` API handles these cases without local rendering rules. Marked now parses native Markdown in production; public black-box tests render the returned Markdown independently and verify table cells, links, literal HTML and exact code text.
 
 ## Retained acceptance behavior
 
@@ -96,12 +112,16 @@ REJECTED: `@extractus/article-extractor` 9.0.1. Its shipped implementation wraps
 
 REJECTED: Crawlee for content selection. Its crawler requires an extraction handler, and its HTML-to-text helper is not an article selector. The web source already uses Got, p-map, p-queue and the ELT engine for downloading, scheduling and persistence.
 
-RETAINED: jsdom decoding and base URLs, Readability metadata, native sanitization, text/table conversion, attributed errors, cancellation, navigation exclusion and the link-only acceptance check. Removed Readability content selection and its link-density tuning. Content selection and whitespace normalization remain package-owned. The ordered extraction chain supplies HTML extraction only.
+RETAINED: jsdom decoding and base URLs, Readability metadata, native sanitization, text/table conversion, attributed errors, cancellation, navigation exclusion and the link-only acceptance check. Removed Readability content selection and its link-density tuning. Content selection and whitespace normalization remain package-owned. The ordered extraction chain supplies Markdown and HTML extraction.
 
 Five public regressions first failed and then passed: introductory summary retention; descriptive caption text and link retention; acknowledgments/authorship disclosure retention; unchanged inline punctuation and preformatted spacing; identical HTML when ignored comments and surrounding whitespace change. Tests exercise `WebArticle.fetch`, and the content regressions also exercise discovery, through real HTTP. The full article suite includes short posts, link-only pages, tables, metadata, charset, cancellation and sanitization.
 
 Live verification evidence is recorded in the [web source reference](../../../sources/web/articles/docs/reference.md). Those checks use the actual source, ELT engine and SQLite destination. Downloads remain buffered and CPU parsing remains synchronous; cancellation does not interrupt a synchronous parse. No complete-crawl quality guarantee is implied by the sampled sites.
 
 Public regressions cover editorial asides (2924), surrounding sponsorship/recommendations (2926), and linked titles (2927), plus controls for semantic landmarks, unmarked-page clutter and footer bylines. A blanket filter disable was rejected after manual inspection exposed Daring Fireball ads; the final configuration scopes those options to declared content boundaries. The web source reference records the live verification summary; benchmark scripts and captures are temporary scratch files.
+
+Native Markdown package audit: REJECTED `front-matter` 4.0.2 because its published callable type failed under this package’s NodeNext setup; no interop shim was added. REJECTED gray-matter’s default YAML engine because it coerces publication dates to Date objects. Its official custom-engine API uses the installed YAML 1.2 parser instead. REJECTED its default JavaScript engine because front matter is untrusted data; the engine override throws. No handwritten Markdown, YAML or alternate-link parser was added.
+
+For 2941, the installed Defuddle `Defuddle()` options and Readability `parse()` were probed on both full HTML documents rendered from the live Markdown bodies. REJECTED recovering article boundaries from that flattened representation: both packages retained home navigation and serialized JSON-LD as prose, including with Defuddle's default scoring/content-pattern cleanup. Marked exposes tokens and raw source, but no article-isolation or metadata API; a custom token classifier or source-map reconstruction was not added. The existing HTML extractor already owns these boundaries and metadata, so the reader composes its result with the native source. Readability explicitly permits missing metadata (`Readability.js`'s `_getArticleMetadata` and `parse`), which is why the merge fills only null/undefined fields. No new package, parser, selector, threshold or public option is needed.
 
 For 2945, Readability's public constructor options and exports expose no byline matcher override; its shipped `REGEXPS.byline` includes `dateline`, and `_isValidByline` checks only the hint and text length. REJECTED a private-method/prototype patch. REJECTED switching author extraction wholesale to Defuddle: its public `author` result found the live sidebar author, but a probe lost the existing `<span rel="author">` footer author, and its metadata precedence/normalization differs. The small DOM normalization retains Readability's author behavior apart from the ambiguous dateline hint. Public regressions cover class/id substrings, case variants, French/Arabic dates, nested authors, structured-metadata precedence and genuine author names; dates within prose remain intact. The live verification ledger records exact before/after parity for all other fields.

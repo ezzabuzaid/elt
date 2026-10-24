@@ -43,8 +43,10 @@ test('a non-HTML extraction receives response bytes and returns its article unch
     textContent: 'Café report\n\nA short post.',
     length: 26,
   };
-  // Only HTML extraction ships; this stand-in exercises the public format extension.
+  // A test-local extraction verifies the public extension receives untouched bytes.
   class MarkdownExtraction extends Extraction {
+    readonly mediaTypes = ['text/markdown'];
+
     override async extract(page: ArticlePage, signal: AbortSignal) {
       signal.throwIfAborted();
       assert.equal(page.url, `${upstream.origin}/`);
@@ -81,6 +83,8 @@ test('extractions run in order on fresh DOMs, download once and stop at the firs
     }
   }
   class UnreachedExtraction extends Extraction {
+    readonly mediaTypes = ['text/html'];
+
     override async extract(): Promise<never> {
       throw new Error('Extraction continued after an article was found');
     }

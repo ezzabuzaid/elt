@@ -19,6 +19,7 @@ import {
 import {
   ArticleError,
   HTMLExtraction,
+  MarkdownExtraction,
   WebArticle,
 } from '@workspace/sdk-web-article';
 import { WebDiscovery } from '@workspace/sdk-web-discovery';
@@ -62,7 +63,8 @@ const properties = {
   content: { ...text, description: 'Sanitized article HTML.' },
   markdown: {
     ...text,
-    description: 'Markdown converted from the sanitized article HTML.',
+    description:
+      'Native Markdown body when available, otherwise converted from sanitized article HTML.',
   },
   textContent: {
     ...text,
@@ -205,7 +207,10 @@ export class WebSource extends Source {
         inputUrl,
         requestSignal,
       );
-      const reader = new WebArticle([new HTMLExtraction()], http);
+      const reader = new WebArticle(
+        [new MarkdownExtraction(), new HTMLExtraction()],
+        http,
+      );
       const pendingPages = [
         ...new Map(
           [...previous.failed, ...pages].map((page) => [page.url, page]),

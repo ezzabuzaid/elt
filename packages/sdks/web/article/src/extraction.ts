@@ -21,6 +21,8 @@ export type Article = {
 };
 
 export abstract class Extraction {
+  abstract readonly mediaTypes: readonly string[];
+
   abstract extract(
     page: ArticlePage,
     signal: AbortSignal,
