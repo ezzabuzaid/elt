@@ -12,11 +12,13 @@ import { pathToFileURL } from 'node:url';
 import {
   Connection,
   Copy,
+  CopyConfiguration,
   type CopyResult,
   LocalFiles,
   Pipeline,
   PipelineError,
   type Stream,
+  StreamStatus,
   type Target,
 } from '@workspace/elt';
 import {
@@ -3275,7 +3277,7 @@ test('a value WhatsApp always stores but left empty fails the streams read from 
   }
 });
 
-test('a WhatsApp pass over a large ChatStorage holds one message at a time, so it loads in a small heap', async () => {
+test('large WhatsApp passes stream payloads and reuse compact metadata within a small heap', async () => {
   await using directory = await mkdtempDisposable(
     join(tmpdir(), 'elt-whatsapp-large-'),
   );
@@ -3291,11 +3293,9 @@ test('a WhatsApp pass over a large ChatStorage holds one message at a time, so i
        SELECT n, 9, 1, 1, n % 2, 'stanza-' || n, '${alice}', 780000000 + n, 0, 6, 'message ' || n || ' ' || hex(randomblob(40))
        FROM message;`,
   );
-  // The import as a host runs it, in a process whose heap is far smaller
-  // than the store: a pass that holds every message, or every record it
-  // keeps, at once runs out of it (it needs about 140 MB; one that reads a
-  // message at a time fits in 40). The process loads the built source from
-  // this package's folder, where its dependencies resolve.
+  // Retaining full metadata objects passes the initial import but exhausts
+  // this heap on repeat; compact metadata must fit alongside checkpoints.
+  // Load the built source where its workspace dependencies resolve.
   const pass = `
     const { Connection, Copy, Pipeline } = await import('@workspace/elt');
     const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
@@ -3305,7 +3305,7 @@ test('a WhatsApp pass over a large ChatStorage holds one message at a time, so i
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
     await history.install([destination]);
-    await new Pipeline({
+    const pipeline = new Pipeline({
       history,
       connections: [
         new Connection({
@@ -3320,7 +3320,10 @@ test('a WhatsApp pass over a large ChatStorage holds one message at a time, so i
           })),
         }),
       ],
-    }).run();
+    });
+    await pipeline.run();
+    const repeated = await pipeline.run();
+    if (repeated.some(({ count, deleted }) => count !== 0 || deleted !== 0)) throw new Error('An unchanged pass wrote rows');
   `;
 
   const run = spawnSync(
@@ -3355,4 +3358,253 @@ test('a WhatsApp pass over a large ChatStorage holds one message at a time, so i
     { ...imported.prepare('SELECT count(*) AS n FROM raw_messages').get() },
     { n: 60_000 },
   );
+});
+
+test('message streams reuse one completed metadata scan and refresh file availability on the next pass', async () => {
+  const { dir, whatsapp } = await scratch();
+  await using _ = dir;
+  const source = new WhatsAppDesktopSource(whatsapp.container);
+  // Start with a derived stream: sharing must not depend on selecting messages first.
+  const selected = [
+    source.messageReactionCounts,
+    source.messages,
+    source.messageReceipts,
+    source.messageReactions,
+  ];
+  const catalog = selected.map(
+    (stream) =>
+      new CopyConfiguration(stream, {
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+      }),
+  );
+  const states = new Map<string, unknown>();
+  const fingerprints = (state: unknown) => {
+    const groups = JSON.parse(JSON.stringify(state)).groups;
+    return Object.fromEntries(
+      Object.keys(groups).map((key) => [key, groups[key].fingerprint]),
+    );
+  };
+  const first: unknown[] = [];
+  for await (const message of source.read(catalog, states)) {
+    if (message instanceof StreamStatus)
+      assert.notEqual(message.status, 'FAILED');
+    else if ('type' in message && message.type === 'STATE') {
+      first.push(fingerprints(message.state));
+      states.set(message.stream, message.state);
+      // SQLite stays pinned, but files can change between streams. Their saved
+      // fingerprints reveal a repeated native scan without mocking the SDK.
+      if (first.length === 1)
+        rmSync(
+          join(
+            whatsapp.container,
+            'Message/Media/120363000000000001@g.us/a/b/photo.jpg',
+          ),
+        );
+    }
+  }
+  assert.equal(first.length, 4);
+  for (const snapshot of first) assert.deepEqual(snapshot, first[0]);
+  const next: unknown[] = [];
+  for await (const message of source.read(catalog, states)) {
+    if (message instanceof StreamStatus)
+      assert.notEqual(message.status, 'FAILED');
+    else if ('type' in message && message.type === 'STATE')
+      next.push(fingerprints(message.state));
+  }
+  assert.equal(next.length, 4);
+  for (const snapshot of next) assert.deepEqual(snapshot, next[0]);
+  assert.notDeepEqual(next[0], first[0]);
+});
+
+test('shared metadata respects combined chat and date scopes, empty scopes and derived-only selections', async () => {
+  for (const [scope, ids, hanging] of [
+    [
+      {
+        collectionIds: [group],
+        startAt: '2026-10-04T09:00:00.000Z',
+        endAt: '2026-10-05T00:00:00.000Z',
+      },
+      ['7'],
+      1,
+    ],
+    [
+      {
+        collectionIds: [group],
+        startAt: '2026-10-03T08:00:00.000Z',
+        endAt: '2026-10-04T09:00:00.000Z',
+      },
+      ['4', '6'],
+      0,
+    ],
+    [{ collectionIds: [] }, [], 0],
+  ] satisfies [ImportScope, string[], number][]) {
+    const { dir, whatsapp, out } = await scratch();
+    await using _ = dir;
+    const selected = new Set([
+      'messageReceipts',
+      'messageReactions',
+      'messageReactionCounts',
+      'messageDataItems',
+      'messageAssociations',
+    ]);
+    const run = await pipeline(
+      new WhatsAppDesktopSource(whatsapp.container, scope),
+      dir.path,
+      ({ name }) => selected.has(name),
+    );
+    await run.run();
+    for (const { id, state } of rows(
+      join(dir.path, 'state.sqlite'),
+      'SELECT id, state FROM checkpoints',
+    )) {
+      if (
+        [
+          'messageReceipts',
+          'messageReactions',
+          'messageReactionCounts',
+        ].includes(String(id))
+      ) {
+        assert.deepEqual(Object.keys(JSON.parse(String(state)).groups), ids);
+      }
+    }
+    for (const name of ['messageDataItems', 'messageAssociations'])
+      assert.equal(
+        rows(out, 'SELECT count(*) AS n FROM "' + name + '"')[0]?.n,
+        hanging,
+      );
+    assert.deepEqual(
+      counts(await run.run()),
+      Object.fromEntries(
+        [...selected].map((name) => [name, { count: 0, deleted: 0 }]),
+      ),
+    );
+  }
+});
+
+test('cancelling a metadata build or replay publishes no partial checkpoint and a fresh read recovers', async () => {
+  for (const cancelAt of ['messages', 'messageReceipts']) {
+    const { dir, whatsapp } = await scratch();
+    await using _ = dir;
+    const source = new WhatsAppDesktopSource(whatsapp.container);
+    const catalog = [
+      source.messages,
+      source.messageReceipts,
+      source.messageReactions,
+      source.messageReactionCounts,
+    ].map(
+      (stream) =>
+        new CopyConfiguration(stream, {
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+        }),
+    );
+    const controller = new AbortController();
+    const reason = new Error('Stop the metadata pass');
+    const committed: string[] = [];
+    const failed: string[] = [];
+    for await (const message of source.read(
+      catalog,
+      new Map(),
+      controller.signal,
+    )) {
+      if (message instanceof StreamStatus) {
+        if (message.status === 'FAILED') {
+          assert.equal(message.error, reason);
+          failed.push(message.stream);
+        }
+      } else if ('type' in message) {
+        if (message.type === 'STATE') committed.push(message.stream);
+      } else if (message.stream === cancelAt) controller.abort(reason);
+    }
+    assert.equal(controller.signal.aborted, true);
+    assert.deepEqual(committed, cancelAt === 'messages' ? [] : ['messages']);
+    assert.deepEqual(
+      failed,
+      catalog.slice(committed.length).map(({ stream }) => stream.name),
+    );
+    const recovered = new Map<string, number>();
+    for await (const message of source.read(catalog, new Map())) {
+      if (message instanceof StreamStatus)
+        assert.notEqual(message.status, 'FAILED');
+      else if ('type' in message && message.type === 'STATE')
+        recovered.set(
+          message.stream,
+          Object.keys(JSON.parse(JSON.stringify(message.state)).groups).length,
+        );
+    }
+    assert.deepEqual(
+      [...recovered],
+      catalog.map(({ stream }) => [stream.name, 7]),
+    );
+    // Closing the consumer early also closes the underlying SQLite iterators.
+    for await (const message of source.read(catalog, new Map())) {
+      if (!(message instanceof StreamStatus) && !('type' in message)) break;
+    }
+    using database = new DatabaseSync(whatsapp.path('chatStorage'));
+    assert.equal(
+      database.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get()?.busy,
+      0,
+    );
+  }
+});
+
+test('a failed metadata scan or payload leaves every affected checkpoint intact and retries from the beginning', async () => {
+  for (const column of ['Z_OPT', 'ZMESSAGETYPE']) {
+    const { dir, whatsapp, out } = await scratch();
+    await using _ = dir;
+    const selected = new Set([
+      'messages',
+      'messageReceipts',
+      'messageReactions',
+      'messageReactionCounts',
+    ]);
+    const run = await pipeline(
+      new WhatsAppDesktopSource(whatsapp.container),
+      dir.path,
+      ({ name }) => selected.has(name),
+    );
+    await run.run();
+    const checkpoints = () =>
+      rows(
+        join(dir.path, 'state.sqlite'),
+        'SELECT id, state FROM checkpoints ORDER BY id',
+      );
+    const saved = checkpoints();
+    const original = table(out, 'messages', 'stanzaId');
+    // Fail after a valid prefix; accepting that prefix would delete later groups.
+    whatsapp.exec(
+      'chatStorage',
+      "UPDATE ZWAMESSAGE SET ZTEXT = 'Retry this edit', Z_OPT = Z_OPT + 1 WHERE Z_PK = 1; UPDATE ZWAMESSAGE SET Z_OPT = Z_OPT + 1 WHERE Z_PK = 6; UPDATE ZWAMESSAGE SET " +
+        column +
+        ' = NULL WHERE Z_PK = 6',
+    );
+    await assert.rejects(run.run(), (error) => {
+      assert.deepEqual(failures(error).streams, [...selected].sort());
+      return true;
+    });
+    assert.deepEqual(checkpoints(), saved);
+    assert.deepEqual(table(out, 'messages', 'stanzaId'), original);
+    whatsapp.exec(
+      'chatStorage',
+      'UPDATE ZWAMESSAGE SET ' +
+        column +
+        ' = ' +
+        (column === 'Z_OPT' ? 2 : 6) +
+        ' WHERE Z_PK = 6',
+    );
+    assert.deepEqual(
+      counts(await run.run()),
+      Object.fromEntries(
+        [...selected].map((name) => [
+          name,
+          { count: name === 'messages' ? 1 : 0, deleted: 0 },
+        ]),
+      ),
+    );
+    assert.deepEqual(
+      rows(out, "SELECT text FROM messages WHERE stanzaId = 'A1'"),
+      [{ text: 'Retry this edit' }],
+    );
+  }
 });

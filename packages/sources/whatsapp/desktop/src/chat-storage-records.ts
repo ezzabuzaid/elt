@@ -17,6 +17,10 @@ import {
   withinDates,
 } from '@workspace/source-apple-macos/import-scope';
 
+// Each cached group holds a numeric row ID and the SDK's SHA-256 digest.
+const groupBytes = 40;
+const groupsPerBlock = 4096;
+
 // A record decoded from a message's receipt info, with the message it is on.
 export type OnMessage<T> = { readonly message: MessageKey; readonly item: T };
 
@@ -44,9 +48,8 @@ const toMilliseconds = (instant: string) => `${instant.slice(0, 23)}Z`;
 
 // ChatStorage as one run reads it: the import scope's chats select chats,
 // their members and settings, and their messages, which its dates narrow
-// further; what hangs off a message follows the messages kept. Messages, and
-// what is decoded from them, are read as each stream iterates them, never
-// held for the run: a store keeps tens of thousands.
+// further; what hangs off a message follows the messages kept. Only compact
+// group metadata is held for the run; payloads are streamed.
 export class ChatStorageRecords {
   readonly #snapshot: ChatStorageSnapshot;
   readonly #scope: ImportScope;
@@ -54,6 +57,7 @@ export class ChatStorageRecords {
   #chats?: Chat[];
   #messageIds?: ReadonlySet<string>;
   #stanzaIds?: ReadonlySet<string>;
+  #messageGroups?: readonly Buffer[];
 
   constructor(snapshot: ChatStorageSnapshot, scope: ImportScope) {
     this.#snapshot = snapshot;
@@ -75,7 +79,46 @@ export class ChatStorageRecords {
     return this.#selected(this.#snapshot.messages(id));
   }
 
-  messageInputs(): Generator<MessageInput> {
+  *messageGroups(): Generator<Pick<MessageInput, 'id' | 'fingerprint'>> {
+    if (this.#messageGroups !== undefined) {
+      for (const block of this.#messageGroups)
+        for (let offset = 0; offset < block.length; offset += groupBytes)
+          yield {
+            id: block.readDoubleLE(offset),
+            fingerprint: block
+              .subarray(offset + 8, offset + groupBytes)
+              .toString('base64url'),
+          };
+      return;
+    }
+    const blocks: Buffer[] = [];
+    let block: Buffer | undefined;
+    let offset = 0;
+    for (const { id, fingerprint } of this.#messageInputs()) {
+      block ??= Buffer.allocUnsafe(groupsPerBlock * groupBytes);
+      block.writeDoubleLE(id, offset);
+      if (
+        fingerprint.length !== 43 ||
+        block.write(fingerprint, offset + 8, 32, 'base64url') !== 32
+      )
+        throw new TypeError(
+          'A WhatsApp message fingerprint must be a SHA-256 digest',
+        );
+      offset += groupBytes;
+      if (offset === block.length) {
+        blocks.push(block);
+        block = undefined;
+        offset = 0;
+      }
+      yield { id, fingerprint };
+    }
+    if (block !== undefined) blocks.push(block.subarray(0, offset));
+    // Publish only after exhaustion: a cancelled read or decode failure must
+    // not let the next stream treat a partial scan as the whole history.
+    this.#messageGroups = blocks;
+  }
+
+  #messageInputs(): Generator<MessageInput> {
     return this.#selected(this.#snapshot.messageInputs());
   }
 
@@ -119,7 +162,7 @@ export class ChatStorageRecords {
   // off, by its key.
   message(key: MessageKey): boolean {
     if (!this.#narrowed) return true;
-    this.#messageIds ??= new Set(this.messageInputs().map(messageId));
+    this.#messageIds ??= new Set(this.#messageInputs().map(messageId));
     return this.#messageIds.has(messageId(key));
   }
 
@@ -127,7 +170,7 @@ export class ChatStorageRecords {
   stanza(chatJid: string, stanzaId: string): boolean {
     if (!this.#narrowed) return true;
     this.#stanzaIds ??= new Set(
-      this.messageInputs().map((kept) =>
+      this.#messageInputs().map((kept) =>
         JSON.stringify([kept.chatJid, kept.stanzaId]),
       ),
     );

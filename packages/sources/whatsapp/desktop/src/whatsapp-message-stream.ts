@@ -57,7 +57,7 @@ export abstract class WhatsAppMessageStream<
     // issuing one point query per message; later passes fetch changed IDs.
     const messages = readAll ? scan.chatStorage.messages() : null;
     try {
-      for (const input of scan.chatStorage.messageInputs()) {
+      for (const input of scan.chatStorage.messageGroups()) {
         const message = messages?.next();
         if (message?.done)
           throw new Error('WhatsApp message inputs outlasted their snapshot');
