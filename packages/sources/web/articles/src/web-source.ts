@@ -16,7 +16,7 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
-import { WebArticle } from '@workspace/sdk-web-article';
+import { ArticleError, WebArticle } from '@workspace/sdk-web-article';
 import { WebDiscovery } from '@workspace/sdk-web-discovery';
 
 const text = { type: 'string' } as const;
@@ -91,7 +91,17 @@ const catalog = new Catalog([
   }),
 ]);
 
-const saved = z.object({ after: z.string().nullable(), diff: z.unknown() });
+const saved = z.object({
+  after: z.string().nullable(),
+  diff: z.unknown(),
+  failed: z.array(
+    z.object({
+      url: z.url({ protocol: /^https?$/ }),
+      listingUrl: z.url({ protocol: /^https?$/ }),
+      lastModified: z.string().nullable(),
+    }),
+  ),
+});
 
 export class WebSource extends Source {
   readonly identity = 'web-articles';
@@ -157,8 +167,13 @@ export class WebSource extends Source {
   ): AsyncGenerator<SourceMessage> {
     const inputUrl = z.string().parse(partition?.inputUrl);
     const previous =
-      state === null ? { after: null, diff: null } : saved.parse(state);
+      state === null
+        ? { after: null, diff: null, failed: [] }
+        : saved.parse(state);
     let diff: unknown = previous.diff;
+    let after = previous.after;
+    const failed = new Map(previous.failed.map((page) => [page.url, page]));
+    const errors: ArticleError[] = [];
     const stop = new AbortController();
     const requestSignal =
       signal === undefined
@@ -183,22 +198,50 @@ export class WebSource extends Source {
         requestSignal,
       );
       const reader = new WebArticle(http);
-      const pendingPages = pages
+      const pendingPages = [
+        ...new Map(
+          [...previous.failed, ...pages].map((page) => [page.url, page]),
+        ).values(),
+      ]
         .toSorted((a, b) => (a.url < b.url ? -1 : a.url > b.url ? 1 : 0))
         .filter(
           (page) =>
             (this.#include === undefined ||
               this.#include.some((pattern) => pattern.test(page.url))) &&
-            (previous.after === null || page.url > previous.after),
+            (previous.after === null ||
+              page.url > previous.after ||
+              failed.has(page.url)),
         );
-      for await (const { page, article } of pMapIterable(
+      for await (const result of pMapIterable(
         pendingPages,
-        async (page) => ({
-          page,
-          article: await reader.fetch(page.url, requestSignal),
-        }),
+        async (page) => {
+          try {
+            return {
+              page,
+              article: await reader.fetch(page.url, requestSignal),
+            };
+          } catch (error) {
+            requestSignal.throwIfAborted();
+            if (!(error instanceof ArticleError)) throw error;
+            return { page, error };
+          }
+        },
         { concurrency: 4 },
       )) {
+        const { page } = result;
+        if (after === null || page.url > after) after = page.url;
+        if (result.error) {
+          failed.set(page.url, page);
+          errors.push(result.error);
+          yield {
+            type: 'STATE',
+            stream: configuration.stream.name,
+            state: { after, diff, failed: [...failed.values()] },
+          };
+          continue;
+        }
+        failed.delete(page.url);
+        const { article } = result;
         for await (const message of diffSnapshot(
           configuration,
           validateRecords(
@@ -229,7 +272,10 @@ export class WebSource extends Source {
         )) {
           if ('type' in message && message.type === 'STATE') {
             diff = message.state;
-            yield { ...message, state: { after: page.url, diff } };
+            yield {
+              ...message,
+              state: { after, diff, failed: [...failed.values()] },
+            };
           } else yield message;
         }
       }
@@ -237,8 +283,20 @@ export class WebSource extends Source {
         signal,
       }))
         if ('type' in message && message.type === 'STATE')
-          yield { ...message, state: { after: null, diff: message.state } };
+          yield {
+            ...message,
+            state: {
+              after: null,
+              diff: message.state,
+              failed: [...failed.values()],
+            },
+          };
         else yield message;
+      if (errors.length > 0)
+        throw new AggregateError(
+          errors,
+          errors.map((error) => error.message).join('; '),
+        );
     } finally {
       stop.abort();
       await starts.onIdle();
