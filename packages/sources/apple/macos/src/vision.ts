@@ -11,12 +11,20 @@ const response = z.union([
   z.object({ error: z.string() }),
 ]);
 
-// Up to five processes retain Vision's loaded models. The host starts and stops
+export function visionConcurrency(cpus: number, memory: number): number {
+  // Leave headroom for imports and Vision allocations outside worker RSS.
+  return Math.max(1, Math.min(cpus, Math.floor(memory / (2 * 1024 ** 3))));
+}
+
+// Processes retain Vision's loaded models. The host starts and stops
 // them with its other resources; parsers borrow them across imports.
 export class Vision implements AsyncDisposable {
   readonly #helper: string;
   readonly #queue = new PQueue({
-    concurrency: Math.min(5, availableParallelism()),
+    concurrency: visionConcurrency(
+      availableParallelism(),
+      process.availableMemory(),
+    ),
   });
   readonly #stopped = new AbortController();
   readonly #workers: { worker: VisionWorker; busy: boolean }[];

@@ -13,7 +13,6 @@ import { MacOSDocumentParser } from './macos-document-parser.ts';
 import { Vision } from './vision.ts';
 
 const execute = promisify(execFile);
-const workers = Math.min(5, availableParallelism());
 
 async function workerPids() {
   const { stdout } = await execute('/bin/ps', ['-axo', 'pid=,ppid=,comm=']);
@@ -69,7 +68,8 @@ test('the warmed parser preserves OCR, concurrent responses and image errors, an
   );
   await vision.ready;
   const pids = await workerPids();
-  assert.equal(pids.length, workers);
+  const workers = pids.length;
+  assert.ok(workers >= 1 && workers <= availableParallelism());
   const parser = new MacOSDocumentParser([new ImageFormat(vision)]);
   assert.deepEqual(
     await Promise.all([
@@ -114,7 +114,8 @@ test('the ready parser preserves automatically detected multilingual text in all
   );
   await vision.ready;
   const pids = await workerPids();
-  assert.equal(pids.length, workers);
+  const workers = pids.length;
+  assert.ok(workers >= 1 && workers <= availableParallelism());
   const parser = new MacOSDocumentParser([new ImageFormat(vision)]);
   for (const text of [
     'Good morning',
@@ -138,59 +139,63 @@ test('the ready parser preserves automatically detected multilingual text in all
   }
 });
 
-test(
-  'the parser keeps processing queued images while four OCR workers are blocked',
-  { skip: availableParallelism() < 5 },
-  async () => {
-    await using directory = await mkdtempDisposable(
-      join(tmpdir(), 'vision-concurrent-'),
+test('the parser keeps processing queued images while its other OCR workers are blocked', async (t) => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'vision-concurrent-'),
+  );
+  const texts = [
+    'Invoice 4821 due Friday',
+    'Meet tomorrow',
+    'Good morning',
+    'See you soon',
+    'Have a nice day',
+    'Thank you',
+  ];
+  const paths = texts.map((_, index) => join(directory.path, `${index}.png`));
+  for (const [index, path] of paths.entries()) await image(path, texts[index]!);
+  await using vision = new Vision(
+    fileURLToPath(new URL('vision-worker', import.meta.url)),
+  );
+  await vision.ready;
+  const parser = new MacOSDocumentParser([new ImageFormat(vision)]);
+  const pids = await workerPids();
+  const workers = pids.length;
+  assert.ok(workers >= 1 && workers <= availableParallelism());
+  if (workers < 2) return t.skip('This device has a single OCR worker');
+  // SIGSTOP holds real native requests; the remaining worker must drain the queue.
+  const paused = pids.slice(0, -1);
+  const queued = Array.from(
+    { length: workers + 1 },
+    (_, index) => index % paths.length,
+  );
+  for (const pid of paused) process.kill(pid, 'SIGSTOP');
+  let completed = 0;
+  const results = Promise.all(
+    queued.map(async (index) => {
+      const text = await parser.parse(paths[index]!);
+      completed++;
+      return text;
+    }),
+  );
+  results.catch(() => undefined);
+  try {
+    const deadline = Date.now() + 5_000;
+    while (completed < queued.length - paused.length && Date.now() < deadline)
+      await setTimeout(10);
+    assert.equal(
+      completed,
+      queued.length - paused.length,
+      'the available worker must drain the queue while the others are paused',
     );
-    const texts = [
-      'Invoice 4821 due Friday',
-      'Meet tomorrow',
-      'Good morning',
-      'See you soon',
-      'Have a nice day',
-      'Thank you',
-    ];
-    const paths = texts.map((_, index) => join(directory.path, `${index}.png`));
-    for (const [index, path] of paths.entries())
-      await image(path, texts[index]!);
-    await using vision = new Vision(
-      fileURLToPath(new URL('vision-worker', import.meta.url)),
+  } finally {
+    for (const pid of paused) process.kill(pid, 'SIGCONT');
+    assert.deepEqual(
+      await results,
+      queued.map((index) => texts[index]),
     );
-    await vision.ready;
-    const parser = new MacOSDocumentParser([new ImageFormat(vision)]);
-    const pids = await workerPids();
-    assert.equal(pids.length, workers);
-    // SIGSTOP holds a real native request indefinitely; no OCR implementation is faked.
-    const paused = pids.slice(0, 4);
-    for (const pid of paused) process.kill(pid, 'SIGSTOP');
-    let completed = 0;
-    const results = Promise.all(
-      paths.map(async (path) => {
-        const text = await parser.parse(path);
-        completed++;
-        return text;
-      }),
-    );
-    results.catch(() => undefined);
-    try {
-      const deadline = Date.now() + 5_000;
-      while (completed < paths.length - 4 && Date.now() < deadline)
-        await setTimeout(10);
-      assert.equal(
-        completed,
-        paths.length - 4,
-        'the available worker must drain the queue while four others are paused',
-      );
-    } finally {
-      for (const pid of paused) process.kill(pid, 'SIGCONT');
-      assert.deepEqual(await results, texts);
-    }
-    assert.deepEqual(await workerPids(), pids);
-  },
-);
+  }
+  assert.deepEqual(await workerPids(), pids);
+});
 
 test('aborting an active OCR read leaves the other workers running and skips an aborted queued read', async () => {
   await using directory = await mkdtempDisposable(
@@ -203,7 +208,8 @@ test('aborting an active OCR read leaves the other workers running and skips an 
   );
   await vision.ready;
   const pids = await workerPids();
-  assert.equal(pids.length, workers);
+  const workers = pids.length;
+  assert.ok(workers >= 1 && workers <= availableParallelism());
   // ImageFormat enters the real Vision queue synchronously, so cancellation
   // exercises an active request and a queued request without racing file reads.
   const format = new ImageFormat(vision);
@@ -249,13 +255,14 @@ test('disposing OCR stops all workers and rejects queued reads without starting 
   );
   await vision.ready;
   const format = new ImageFormat(vision);
+  const requests = availableParallelism() + 1;
   const reads = Promise.allSettled(
-    Array.from({ length: workers + 1 }, () => format.text(path)),
+    Array.from({ length: requests }, () => format.text(path)),
   );
   await vision[Symbol.asyncDispose]();
   assert.deepEqual(
     (await reads).map(({ status }) => status),
-    Array.from({ length: workers + 1 }, () => 'rejected'),
+    Array.from({ length: requests }, () => 'rejected'),
   );
   await assert.rejects(format.text(path), { name: 'AbortError' });
   assert.deepEqual(await workerPids(), []);
