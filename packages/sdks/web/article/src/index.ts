@@ -1,8 +1,3 @@
-export {
-  Extraction,
-  type Article,
-  type ArticlePage,
-  type ArticleSelection,
-} from './extraction.ts';
-export { HTMLExtraction } from './html-extraction.ts';
+export { Extraction, type Article, type ArticlePage } from './extraction.ts';
+export { HTMLExtraction, type ArticleSelection } from './html-extraction.ts';
 export { ArticleError, WebArticle } from './web-article.ts';

@@ -28,13 +28,15 @@ The example's publisher and URL selection belong to the caller. The constructor 
 
 `WebArticle` downloads the page once and tries each `Extraction` in array order. The first non-null article ends the chain. If every extraction returns null, the reader returns null. An exception stops the chain and becomes an `ArticleError`; cancellation preserves the supplied reason. An empty chain is invalid.
 
-`HTMLExtraction` selects content with Defuddle and metadata with Readability. The abstract `Extraction` base owns charset decoding, a fresh DOM per attempt, sanitization, the prose acceptance check, Markdown/text conversion and DOM cleanup. Subclasses implement its protected `select(dom, signal)` method and return an `ArticleSelection` or null. Original response bytes are retained so every attempt sees the same charset and unmodified HTML. State stays within each call, so one reader can fetch concurrent pages.
+`Extraction` is a format-neutral contract. Subclasses implement `extract(page, signal)` and return an `Article` or null. `ArticlePage` carries the final response `url`, the unparsed `body` (`string | Buffer`) and the `contentType` header; `WebArticle` supplies the downloaded bytes as a Buffer. The shared contract imports no HTML parser or converter.
+
+`HTMLExtraction` owns charset decoding, a fresh DOM per attempt, content selection with Defuddle, metadata with Readability, sanitization, the prose acceptance check, Markdown/text conversion and DOM cleanup. Its protected `select(dom, signal)` extension returns an `ArticleSelection` or null. Original response bytes are retained so every HTML attempt sees the same charset and unmodified HTML. State stays within each call, so one reader can fetch concurrent pages.
 
 Only HTML extraction is supplied. There is no browser or model fallback, and no separate classification of a non-article page versus unresolved extraction.
 
 ## Result
 
-The exported `Article` type follows the method's return type. Metadata retains Mozilla Readability's field names and missing-value semantics.
+The exported `Article` type defines the shared output contract independently of the extraction packages. `HTMLExtraction` preserves Mozilla Readability's metadata field names and missing-value semantics. The field descriptions below describe its output.
 
 | Field                                | Meaning                                                                                      |
 | ------------------------------------ | -------------------------------------------------------------------------------------------- |

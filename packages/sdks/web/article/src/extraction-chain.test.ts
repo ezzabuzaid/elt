@@ -6,7 +6,9 @@ import got from 'got';
 import type { JSDOM } from 'jsdom';
 
 import {
+  type Article,
   ArticleError,
+  type ArticlePage,
   Extraction,
   HTMLExtraction,
   WebArticle,
@@ -19,12 +21,53 @@ test('an article reader requires at least one extraction', () => {
   );
 });
 
+test('a non-HTML extraction receives response bytes and returns its article unchanged', async () => {
+  let requests = 0;
+  await using upstream = await new HttpServer().start((_request, response) => {
+    requests++;
+    response.setHeader('content-type', 'text/markdown; charset=utf-8');
+    response.end('# Café report\n\nA **short** post.');
+  });
+  const article: Article = {
+    url: `${upstream.origin}/`,
+    canonicalUrl: null,
+    title: 'Café report',
+    byline: null,
+    excerpt: 'A short post.',
+    siteName: null,
+    lang: null,
+    dir: null,
+    publishedTime: null,
+    content: '<h1>Café report</h1><p>A <strong>short</strong> post.</p>',
+    markdown: '# Café report\n\nA **short** post.',
+    textContent: 'Café report\n\nA short post.',
+    length: 26,
+  };
+  // Only HTML extraction ships; this stand-in exercises the public format extension.
+  class MarkdownExtraction extends Extraction {
+    override async extract(page: ArticlePage, signal: AbortSignal) {
+      signal.throwIfAborted();
+      assert.equal(page.url, `${upstream.origin}/`);
+      assert.equal(page.contentType, 'text/markdown; charset=utf-8');
+      assert(Buffer.isBuffer(page.body));
+      assert.equal(page.body.toString(), '# Café report\n\nA **short** post.');
+      return article;
+    }
+  }
+  const result = await new WebArticle([new MarkdownExtraction()], got).fetch(
+    upstream.origin,
+    AbortSignal.timeout(5000),
+  );
+  assert.deepEqual(result, article);
+  assert.equal(requests, 1);
+});
+
 // HTMLExtraction cannot deliberately reject a valid page or fail at a chosen
 // point; test-local subclasses exercise that public extension boundary.
 test('extractions run in order on fresh DOMs, download once and stop at the first article', async () => {
   let requests = 0;
   const attempts: string[] = [];
-  class DecliningExtraction extends Extraction {
+  class DecliningExtraction extends HTMLExtraction {
     protected override async select(dom: JSDOM) {
       attempts.push('decline');
       dom.window.document.body.replaceChildren();
@@ -32,13 +75,13 @@ test('extractions run in order on fresh DOMs, download once and stop at the firs
     }
   }
   class SelectedExtraction extends HTMLExtraction {
-    protected override async select(dom: JSDOM) {
+    protected override async select(dom: JSDOM, signal: AbortSignal) {
       attempts.push('html');
-      return super.select(dom);
+      return super.select(dom, signal);
     }
   }
   class UnreachedExtraction extends Extraction {
-    protected override async select(): Promise<never> {
+    override async extract(): Promise<never> {
       throw new Error('Extraction continued after an article was found');
     }
   }
@@ -95,7 +138,7 @@ test('extraction failures and cancellation stop the chain and preserve their cau
     const reason = new Error(
       cancelled ? 'Stop this extraction' : 'Cannot select this article',
     );
-    class FailingExtraction extends Extraction {
+    class FailingExtraction extends HTMLExtraction {
       protected override async select(): Promise<null> {
         if (cancelled) {
           controller.abort(reason);

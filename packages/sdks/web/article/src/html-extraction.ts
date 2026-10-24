@@ -1,12 +1,75 @@
 import { Readability } from '@mozilla/readability';
 import { Defuddle } from 'defuddle/node';
-import type { JSDOM } from 'jsdom';
+import createDOMPurify from 'dompurify';
+import { minify } from 'html-minifier-next';
+import { convert } from 'html-to-text';
+import { type ConstructorOptions, JSDOM } from 'jsdom';
+import { NodeHtmlMarkdown } from 'node-html-markdown';
 
-import { type ArticleSelection, Extraction } from './extraction.ts';
+import { type Article, type ArticlePage, Extraction } from './extraction.ts';
+
+export type ArticleSelection = Omit<
+  NonNullable<ReturnType<Readability['parse']>>,
+  'content' | 'textContent' | 'length'
+> & {
+  readonly content: string;
+  readonly canonicalUrl: string | null;
+};
 
 export class HTMLExtraction extends Extraction {
-  protected override async select(
+  override async extract(
+    page: ArticlePage,
+    signal: AbortSignal,
+  ): Promise<Article | null> {
+    signal.throwIfAborted();
+    const options: ConstructorOptions = { url: page.url };
+    if (page.contentType) options.contentType = page.contentType;
+    const dom = new JSDOM(page.body, options);
+    try {
+      const article = await this.select(dom, signal);
+      signal.throwIfAborted();
+      if (!article) return null;
+      const content = createDOMPurify(dom.window).sanitize(
+        await minify(article.content, {
+          collapseWhitespace: true,
+          conservativeCollapse: true,
+          removeComments: true,
+        }),
+        { FORBID_TAGS: ['footer'], ADD_FORBID_CONTENTS: ['footer'] },
+      );
+      const prose = JSDOM.fragment(content);
+      for (const link of prose.querySelectorAll(
+        'a[href]:not(article a, [role="article"] a, table a)',
+      ))
+        link.remove();
+      if (!prose.textContent?.trim()) return null;
+      const textContent = convert(content, {
+        wordwrap: false,
+        selectors: [{ selector: 'table', format: 'dataTable' }],
+      });
+      return {
+        ...article,
+        content,
+        markdown: NodeHtmlMarkdown.translate(content, {
+          codeBlockStyle: 'indented',
+          // Escape literal HTML in prose; the converter leaves code spans/blocks alone.
+          textReplace: [
+            [/&/g, '&amp;'],
+            [/</g, '&lt;'],
+          ],
+        }),
+        textContent,
+        length: textContent.length,
+        url: page.url,
+      };
+    } finally {
+      dom.window.close();
+    }
+  }
+
+  protected async select(
     dom: JSDOM,
+    _signal: AbortSignal,
   ): Promise<ArticleSelection | null> {
     for (const navigation of dom.window.document.querySelectorAll(
       'nav, [role="navigation"]',

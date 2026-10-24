@@ -34,7 +34,7 @@ export class WebArticle {
       if (response.statusCode === 304) throw new HTTPError(response);
       const page: ArticlePage = {
         url,
-        html: response.body,
+        body: response.body,
         contentType: response.headers['content-type'],
       };
       for (const extraction of this.#extractions) {
