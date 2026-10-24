@@ -1,0 +1,561 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import { HttpServer } from '@zukhruf/testing/http';
+import { Sqlite } from '@zukhruf/testing/sqlite';
+
+import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+  SQLiteSyncHistory,
+} from '@workspace/elt-sqlite';
+
+import { WebSource } from './web-source.ts';
+
+async function pipeline(source: WebSource, path: string, checkpoints: string) {
+  const destination = new SQLiteDestination({ path });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  return new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'web',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({ path: checkpoints }),
+        steps: (await source.discover()).streams.map(
+          (stream) =>
+            new Copy(stream, destination.table(stream.name), {
+              id: 'web:articles',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+        ),
+      }),
+    ],
+  });
+}
+
+test('a failed page keeps committed articles and a fresh pipeline resumes without refetching them', async () => {
+  let failing = true;
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    requests.push(url.pathname);
+    if (url.pathname === '/feed.json') {
+      response.setHeader('content-type', 'application/feed+json');
+      response.end(
+        JSON.stringify({
+          version: 'https://jsonfeed.org/version/1.1',
+          title: 'Research',
+          items: [
+            { id: 'a', url: `${url.origin}/a` },
+            { id: 'b', url: `${url.origin}/b` },
+          ],
+        }),
+      );
+    } else if (url.pathname === '/b' && failing) {
+      response.writeHead(503).end('Temporarily unavailable');
+    } else if (url.pathname === '/a' || url.pathname === '/b') {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<title>Research ${url.pathname}</title><article><p>Independent research findings for ${url.pathname} remain available for readers.</p></article>`,
+      );
+    } else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const options = {
+    inputs: [`${upstream.origin}/feed.json`],
+    pollIntervalMs: 60_000,
+  };
+  const first = await pipeline(
+    new WebSource(options),
+    database.path,
+    checkpoints.path,
+  );
+
+  await assert.rejects(first.run(), PipelineError);
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT pageUrl, textContent FROM articles')
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      {
+        pageUrl: `${upstream.origin}/a`,
+        textContent:
+          'Independent research findings for /a remain available for readers.',
+      },
+    ],
+  );
+  failing = false;
+  requests.length = 0;
+  const resumed = await pipeline(
+    new WebSource(options),
+    database.path,
+    checkpoints.path,
+  );
+  assert.equal((await resumed.run())[0]?.count, 1);
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT pageUrl FROM articles ORDER BY pageUrl')
+      .all()
+      .map((row) => row.pageUrl),
+    [`${upstream.origin}/a`, `${upstream.origin}/b`],
+  );
+  assert(
+    !requests.includes('/a'),
+    'resume must not download the already committed article',
+  );
+  assert(requests.includes('/b'));
+});
+
+test(
+  'cancelling an active download preserves committed progress for a new pipeline',
+  { timeout: 10_000 },
+  async () => {
+    const downloading = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    let blocking = true;
+    const requests: string[] = [];
+    await using upstream = await new HttpServer().start((request, response) => {
+      const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+      requests.push(url.pathname);
+      if (url.pathname === '/feed.xml') {
+        response.setHeader('content-type', 'application/rss+xml');
+        response.end(
+          `<rss><channel><title>Research</title><item><link>${url.origin}/a</link></item><item><link>${url.origin}/b</link></item></channel></rss>`,
+        );
+      } else if (url.pathname === '/b' && blocking) {
+        response.writeHead(200, { 'content-type': 'text/html' });
+        response.write('<article><p>An incomplete download');
+        response.on('close', () => closed.resolve());
+        downloading.resolve();
+      } else if (url.pathname === '/a' || url.pathname === '/b') {
+        response.setHeader('content-type', 'text/html');
+        response.end(
+          `<article><p>Completed research article ${url.pathname} with its original findings.</p></article>`,
+        );
+      } else response.writeHead(404).end();
+    });
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const options = {
+      inputs: [`${upstream.origin}/feed.xml`],
+      pollIntervalMs: 60_000,
+    };
+    const first = await pipeline(
+      new WebSource(options),
+      database.path,
+      checkpoints.path,
+    );
+    const controller = new AbortController();
+    const reason = new Error('User stopped ingestion');
+    const stopped = assert.rejects(
+      first.run({ signal: controller.signal }),
+      (error) => error === reason,
+    );
+    try {
+      await downloading.promise;
+      controller.abort(reason);
+      await stopped;
+      await closed.promise;
+      assert.equal(
+        database.connection
+          .prepare('SELECT count(*) AS count FROM articles')
+          .get()?.count,
+        1,
+      );
+      blocking = false;
+      requests.length = 0;
+      const resumed = await pipeline(
+        new WebSource(options),
+        database.path,
+        checkpoints.path,
+      );
+      await resumed.run();
+      assert.equal(
+        database.connection
+          .prepare('SELECT count(*) AS count FROM articles')
+          .get()?.count,
+        2,
+      );
+      assert(!requests.includes('/a'));
+      assert(requests.includes('/b'));
+    } finally {
+      controller.abort(reason);
+      await stopped;
+    }
+  },
+);
+
+test('chosen websites and feeds persist article metadata, make unchanged reruns empty, and replace changed articles', async () => {
+  let revised = false;
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    if (url.pathname === '/') {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        '<link rel="alternate" type="application/rss+xml" href="/feed.xml">',
+      );
+    } else if (url.pathname === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel><title>Field notes</title><item><link>${url.origin}/a</link></item>${revised ? `<item><link>${url.origin}/b</link></item>` : ''}</channel></rss>`,
+      );
+    } else if (url.pathname === '/a' || url.pathname === '/b') {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<html lang="en"><head><title>Field notes ${url.pathname}</title><meta name="author" content="Research Team"><meta property="article:published_time" content="2026-10-24T09:00:00Z"><link rel="canonical" href="/shared-identity"></head><body><article><p>${revised ? 'Revised' : 'Original'} research findings from ${url.pathname} with evidence and reproducible observations.</p></article></body></html>`,
+      );
+    } else response.writeHead(404).end();
+  });
+  for (const input of ['/', '/feed.xml']) {
+    revised = false;
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const options = {
+      inputs: [`${upstream.origin}${input}`],
+      pollIntervalMs: 60_000,
+    };
+    const first = await pipeline(
+      new WebSource(options),
+      database.path,
+      checkpoints.path,
+    );
+    assert.equal((await first.run())[0]?.count, 1);
+    assert.deepEqual(
+      database.connection
+        .prepare(
+          'SELECT inputUrl, pageUrl, url, canonicalUrl, title, byline, publishedTime, lang, textContent FROM articles',
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        {
+          inputUrl: `${upstream.origin}${input}`,
+          pageUrl: `${upstream.origin}/a`,
+          url: `${upstream.origin}/a`,
+          canonicalUrl: `${upstream.origin}/shared-identity`,
+          title: 'Field notes /a',
+          byline: 'Research Team',
+          publishedTime: '2026-10-24T09:00:00Z',
+          lang: 'en',
+          textContent:
+            'Original research findings from /a with evidence and reproducible observations.',
+        },
+      ],
+    );
+    assert.match(
+      String(
+        database.connection.prepare('SELECT content FROM articles').get()
+          ?.content,
+      ),
+      /<p>Original research findings/,
+    );
+    const rerun = await pipeline(
+      new WebSource(options),
+      database.path,
+      checkpoints.path,
+    );
+    assert.equal(
+      (await rerun.run())[0]?.count,
+      0,
+      'unchanged records must not be re-emitted',
+    );
+    assert.equal(
+      database.connection
+        .prepare('SELECT count(*) AS count FROM articles')
+        .get()?.count,
+      1,
+    );
+    revised = true;
+    const changed = await pipeline(
+      new WebSource(options),
+      database.path,
+      checkpoints.path,
+    );
+    assert.equal((await changed.run())[0]?.count, 2);
+    assert.deepEqual(
+      database.connection
+        .prepare('SELECT textContent FROM articles ORDER BY pageUrl')
+        .all()
+        .map((row) => row.textContent),
+      [
+        'Revised research findings from /a with evidence and reproducible observations.',
+        'Revised research findings from /b with evidence and reproducible observations.',
+      ],
+    );
+    assert.equal((await changed.run())[0]?.count, 0);
+  }
+});
+
+test('feed rollover retains articles and independent inputs keep their own progress when one fails', async () => {
+  let failing = true;
+  let rolled = false;
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    if (url.pathname === '/two.json' && failing) response.writeHead(503).end();
+    else if (url.pathname.endsWith('.json')) {
+      response.setHeader('content-type', 'application/feed+json');
+      response.end(
+        JSON.stringify({
+          version: 'https://jsonfeed.org/version/1.1',
+          title: 'Reading',
+          items:
+            url.pathname === '/one.json' && rolled
+              ? []
+              : [
+                  { id: 'a', url: `${url.origin}/article` },
+                  { id: 'menu', url: `${url.origin}/menu` },
+                ],
+        }),
+      );
+    } else if (url.pathname === '/article') {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        '<article><p>A published observation remains available after the feed moves on.</p></article>',
+      );
+    } else if (url.pathname === '/menu') {
+      response.setHeader('content-type', 'text/html');
+      response.end('<nav><a href="/">Home</a></nav>');
+    } else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const first = await pipeline(
+    new WebSource({
+      inputs: [`${upstream.origin}/two.json`, `${upstream.origin}/one.json`],
+      pollIntervalMs: 60_000,
+    }),
+    database.path,
+    checkpoints.path,
+  );
+  await assert.rejects(first.run(), PipelineError);
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT inputUrl FROM articles')
+      .all()
+      .map((row) => row.inputUrl),
+    [`${upstream.origin}/one.json`],
+  );
+  failing = false;
+  const extended = await pipeline(
+    new WebSource({
+      inputs: [
+        `${upstream.origin}/one.json`,
+        `${upstream.origin}/two.json`,
+        `${upstream.origin}/three.json`,
+      ],
+      pollIntervalMs: 60_000,
+    }),
+    database.path,
+    checkpoints.path,
+  );
+  assert.equal((await extended.run())[0]?.count, 2);
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT inputUrl FROM articles ORDER BY inputUrl')
+      .all()
+      .map((row) => row.inputUrl),
+    [
+      `${upstream.origin}/one.json`,
+      `${upstream.origin}/three.json`,
+      `${upstream.origin}/two.json`,
+    ],
+  );
+  rolled = true;
+  assert.equal((await extended.run())[0]?.count, 0);
+  assert.equal(
+    database.connection.prepare('SELECT count(*) AS count FROM articles').get()
+      ?.count,
+    3,
+  );
+});
+
+test('a failed full refresh preserves the last complete article collection', async () => {
+  let revised = false;
+  let failing = false;
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    if (url.pathname === '/sitemap.xml') {
+      response.setHeader('content-type', 'application/xml');
+      response.end(
+        `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${url.origin}/a</loc></url>${revised ? `<url><loc>${url.origin}/b</loc></url>` : ''}</urlset>`,
+      );
+    } else if (url.pathname === '/b' && failing) response.writeHead(503).end();
+    else if (url.pathname === '/a' || url.pathname === '/b') {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<article><p>${revised ? 'Updated' : 'Original'} complete article ${url.pathname} with the published research findings.</p></article>`,
+      );
+    } else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  const source = new WebSource({
+    inputs: [`${upstream.origin}/sitemap.xml`],
+    pollIntervalMs: 60_000,
+  });
+  const destination = new SQLiteDestination({ path: database.path });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  const refresh = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'web',
+        source,
+        destination,
+        steps: (await source.discover()).streams.map(
+          (stream) => new Copy(stream, destination.table(stream.name)),
+        ),
+      }),
+    ],
+  });
+  await refresh.run();
+  const before = database.connection
+    .prepare('SELECT pageUrl, textContent FROM articles ORDER BY pageUrl')
+    .all();
+  assert.equal(before.length, 1);
+  revised = true;
+  failing = true;
+  await assert.rejects(refresh.run(), PipelineError);
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT pageUrl, textContent FROM articles ORDER BY pageUrl')
+      .all(),
+    before,
+  );
+  failing = false;
+  assert.equal((await refresh.run())[0]?.count, 2);
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT textContent FROM articles ORDER BY pageUrl')
+      .all()
+      .map((row) => row.textContent),
+    [
+      'Updated complete article /a with the published research findings.',
+      'Updated complete article /b with the published research findings.',
+    ],
+  );
+});
+
+test(
+  'pipeline watching refreshes edited articles and stops when cancelled',
+  { timeout: 10_000 },
+  async () => {
+    let body =
+      'Original observation with enough readable content to keep the article.';
+    await using upstream = await new HttpServer().start((request, response) => {
+      const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+      if (url.pathname === '/feed.xml') {
+        response.setHeader('content-type', 'application/rss+xml');
+        response.end(
+          `<rss><channel><title>Observations</title><item><link>${url.origin}/article</link></item></channel></rss>`,
+        );
+      } else if (url.pathname === '/article') {
+        response.setHeader('content-type', 'text/html');
+        response.end(`<article><p>${body}</p></article>`);
+      } else response.writeHead(404).end();
+    });
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const ingestion = await pipeline(
+      new WebSource({
+        inputs: [`${upstream.origin}/feed.xml`],
+        pollIntervalMs: 100,
+      }),
+      database.path,
+      checkpoints.path,
+    );
+    const controller = new AbortController();
+    const watch = ingestion.watch({ signal: controller.signal });
+    try {
+      assert.equal((await watch.next()).done, false);
+      assert.equal(
+        database.connection.prepare('SELECT textContent FROM articles').get()
+          ?.textContent,
+        'Original observation with enough readable content to keep the article.',
+      );
+      body =
+        'Updated observation now includes a newly verified and published finding.';
+      assert.equal((await watch.next()).done, false);
+      assert.equal(
+        database.connection.prepare('SELECT textContent FROM articles').get()
+          ?.textContent,
+        'Updated observation now includes a newly verified and published finding.',
+      );
+      controller.abort();
+      assert.equal((await watch.next()).done, true);
+    } finally {
+      controller.abort();
+      await watch.return(undefined);
+    }
+  },
+);
+
+test('explicit URL patterns restrict article downloads and preserve matching query variants', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    requests.push(url.pathname + url.search);
+    if (url.pathname === '/feed.json') {
+      response.setHeader('content-type', 'application/feed+json');
+      response.end(
+        JSON.stringify({
+          version: 'https://jsonfeed.org/version/1.1',
+          title: 'Research',
+          items: [
+            { id: 'outside', url: `${url.origin}/excluded` },
+            { id: 'one', url: `${url.origin}/articles/report?edition=one` },
+            { id: 'two', url: `${url.origin}/articles/report?edition=two` },
+          ],
+        }),
+      );
+    } else if (url.pathname === '/articles/report') {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<link rel="canonical" href="/articles/report"><article><p>Report edition ${url.searchParams.get('edition')} contains independently published observations.</p></article>`,
+      );
+    } else response.writeHead(503).end('Out of scope');
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const options = {
+    inputs: [`${upstream.origin}/feed.json`],
+    include: [`${upstream.origin}/articles/*`],
+    pollIntervalMs: 60_000,
+  };
+  const ingestion = await pipeline(
+    new WebSource(options),
+    database.path,
+    checkpoints.path,
+  );
+  assert.equal((await ingestion.run())[0]?.count, 2);
+  assert(
+    !requests.includes('/excluded'),
+    'selection must happen before HTTP fetching',
+  );
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT pageUrl, textContent FROM articles ORDER BY pageUrl')
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      {
+        pageUrl: `${upstream.origin}/articles/report?edition=one`,
+        textContent:
+          'Report edition one contains independently published observations.',
+      },
+      {
+        pageUrl: `${upstream.origin}/articles/report?edition=two`,
+        textContent:
+          'Report edition two contains independently published observations.',
+      },
+    ],
+  );
+  assert.equal((await ingestion.run())[0]?.count, 0);
+});

@@ -193,6 +193,9 @@
     },
     {
       "path": "./packages/sdks/web/article"
+    },
+    {
+      "path": "./packages/sources/web/articles"
     }
   ]
 }

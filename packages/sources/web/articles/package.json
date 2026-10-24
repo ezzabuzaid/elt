@@ -1,0 +1,22 @@
+{
+  "name": "@workspace/source-web-articles",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./web-source": {
+      "types": "./dist/web-source.d.ts",
+      "default": "./dist/web-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/sdk-web-article": "0.0.1",
+    "@workspace/sdk-web-discovery": "0.0.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1",
+    "@zukhruf/testing": "0.3.24"
+  }
+}
