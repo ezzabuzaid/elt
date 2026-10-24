@@ -4,21 +4,23 @@
 
 The upstream is the website or feed selected by the caller. The source reads it directly, not a dataset that the pipeline previously wrote. Package exports, options/types, and shipped runtime were read before implementation.
 
-| Owner                               | Public API used                                                                | Responsibility                                                                                                                   |
-| ----------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| Web discovery SDK                   | `WebDiscovery.discover`                                                        | HTML/HTTP feed discovery, robots sitemap locations, sitemap/feed decoding and candidate deduplication                            |
-| Web article SDK                     | `WebArticle.fetch`                                                             | HTTP, decoding, Readability selection, sanitization, text conversion, cancellation and attributed errors                         |
-| Got 14.6.6                          | injected client, `extend`, `beforeRequest`                                     | HTTP retries, Retry-After, redirects, response bytes, cancellation and per-attempt timeouts                                      |
-| p-map 7.1.1                         | `pMapIterable`                                                                 | Four concurrent articles, input-order results and bounded prefetching                                                            |
-| p-queue 10.0.0                      | `add`, `intervalCap`, `interval`, `strict`, `onIdle`                           | Two request starts per rolling second, including retries and redirects; abortable queued work                                    |
-| ELT engine                          | `Source`, `Stream`, `Catalog`, `validateRecords`                               | Stream contract, schema validation and independent input partitions                                                              |
-| ELT engine                          | `diffSnapshot` with `continues`                                                | New/changed record detection across partial scans; delegates fingerprinting to installed `@zukhruf/snapshot-differential` 0.3.28 |
-| ELT engine/destination              | `Pipeline`, `Copy`, `Connection`, `SQLiteDestination`, `SQLiteCheckpointStore` | Commit ordering, deduplication, failure reporting, persistence, locking and full-refresh rollback                                |
-| Installed Zod 4.6.5                 | `z.url`, `z.array`, `z.object`, `parse`                                        | HTTP input validation, polling interval validation and checkpoint-envelope parsing                                               |
-| Node                                | `URLPattern`, `timers/promises.setInterval`, `AbortSignal`                     | Caller-defined URL selection, cancellable polling and request cancellation                                                       |
-| Installed `@zukhruf/testing` 0.3.24 | `HttpServer.start`, `Sqlite.database`                                          | Real loopback HTTP and disposable SQLite fixtures                                                                                |
+| Owner                               | Public API used                                                                | Responsibility                                                                                                                      |
+| ----------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Web discovery SDK                   | `WebDiscovery.discover`                                                        | HTML/HTTP feed discovery, robots sitemap locations, sitemap/feed decoding and candidate deduplication                               |
+| Web article SDK                     | `WebArticle.fetch`                                                             | HTTP, decoding, Defuddle content selection, Readability metadata, sanitization, text conversion, cancellation and attributed errors |
+| Got 14.6.6                          | injected client, `extend`, `beforeRequest`                                     | HTTP retries, Retry-After, redirects, response bytes, cancellation and per-attempt timeouts                                         |
+| p-map 7.1.1                         | `pMapIterable`                                                                 | Four concurrent articles, input-order results and bounded prefetching                                                               |
+| p-queue 10.0.0                      | `add`, `intervalCap`, `interval`, `strict`, `onIdle`                           | Two request starts per rolling second, including retries and redirects; abortable queued work                                       |
+| ELT engine                          | `Source`, `Stream`, `Catalog`, `validateRecords`                               | Stream contract, schema validation and independent input partitions                                                                 |
+| ELT engine                          | `diffSnapshot(..., { continues: true })`                                       | New/changed record detection; delegates fingerprinting to installed `@zukhruf/snapshot-differential` 0.3.28                         |
+| ELT engine/destination              | `Pipeline`, `Copy`, `Connection`, `SQLiteDestination`, `SQLiteCheckpointStore` | Commit ordering, deduplication, failure reporting, persistence, locking and full-refresh rollback                                   |
+| Installed Zod 4.6.5                 | `z.url`, `z.array`, `z.object`, `parse`                                        | HTTP input validation, polling interval validation and checkpoint-envelope parsing                                                  |
+| Node                                | `URLPattern`, `timers/promises.setInterval`, `AbortSignal`                     | Caller-defined URL selection, cancellable polling and request cancellation                                                          |
+| Installed `@zukhruf/testing` 0.3.24 | `HttpServer.start`, `Sqlite.database`                                          | Real loopback HTTP and disposable SQLite fixtures                                                                                   |
 
-The executable package probe ran `diffSnapshot` across two continued parts and a final empty part, then changed one record. It retained earlier fingerprints and emitted the changed record. The source therefore needs only a traversal cursor around the engine's snapshot, with no custom hash, diff, queue, writer, lock or checkpoint store.
+The source uses the engine's continued-scan snapshot comparison. Each processed page emits `STATE` containing the last completed URL and the accumulated opaque comparison state. The engine commits the preceding records before saving that full state. There is no source-specific hash, diff, writer, lock or checkpoint store.
+
+Full checkpoint saves rewrite the accumulated comparison state after each page. Reducing this write amplification is deferred in backlog item 2920; it is not required for resume or change detection.
 
 REJECTED: using sitemap `lastmod` or feed publication timestamps to skip articles. They are optional hints and do not establish that an old page is unchanged. Successful reruns refetch selected pages and compare their extracted records.
 
@@ -26,17 +28,19 @@ REJECTED: `diffGroupedSnapshot` as a download-skipping shortcut. Generic website
 
 REJECTED: a new crawling framework for persistence or resume. The engine already supplies those jobs. Request scheduling and retries belong to p-map, p-queue and Got. Conditional fetching and crawl policy are not implemented.
 
-RETAINED: the SDKs’ discovery/extraction algorithms and return shapes, and the engine’s checkpoint, diff and destination behavior. Both SDK constructors require a configured Got client. The source owns the HTTP policy and passes the same client to discovery and extraction. A small native `Headers` conversion bridges Got response headers to Feedscout’s public API. Missing Readability metadata still becomes null in stream records.
+RETAINED: the SDK return shapes, discovery behavior, and the engine's commit ordering, diff, partition isolation and destination behavior. Both SDK constructors require a configured Got client. The source owns the HTTP policy and passes the same client to discovery and extraction. A small native `Headers` conversion bridges Got response headers to Feedscout’s public API. Missing Readability metadata still becomes null in stream records. Defuddle now owns content selection; see the [article SDK decisions](../../../../sdks/web/article/README.md).
 
 REJECTED: p-limit, because pMapIterable already supplies ordered concurrency and backpressure; p-retry, because Got supplies HTTP-aware retry rules, backoff and Retry-After. There is no custom worker pool, retry loop or result buffer. Node’s installed Readable.map declaration erases element/result types, so the typed iterable API fits the source without assertions or duplicate validation.
 
-Removal audit: native-fetch download code and the article SDK’s generic HTTP error construction were replaced by the injected HTTP client. This is a net-additive ingestion capability, not a reduction in feature scope. Extraction selectors, metadata rules and checkpoint contents remain unchanged. Optional engine cancellation is handled by composing the supplied signal with the scan’s own cleanup signal; no compatibility path or fallback parser is added.
+Removal audit: the article SDK delegates content selection and stable whitespace normalization to installed packages. Metadata rules, cancellation, partitioning and destination commit order remain intact. The source uses the existing full-state checkpoint protocol.
+
+The extraction fix for 2919 is retained. Checkpoint write optimization is deferred under 2920.
 
 ## State, identity and failure behavior
 
 `articles` declares `sourceDefinedCursor`, supports full refresh and incremental extraction, and uses `(inputUrl, pageUrl)` as its primary key. Each configured input is an engine-managed partition. Adding or reordering inputs preserves other inputs' progress. URLs preserve query and trailing-slash distinctions. Redirect targets and canonical declarations remain separate metadata.
 
-Discovery reads the current listings on every run. Candidates are sorted by URL. During an incomplete incremental scan, `after` identifies the last processed URL and `diff` holds the engine's opaque snapshot. Each processed page, including a null extraction, advances the cursor through a `STATE` message. The engine commits prior rows before saving that state. Finishing the scan clears `after`; the next complete pass checks all selected candidates again.
+Discovery reads the current listings on every run. Candidates are sorted by URL. During an incomplete incremental scan, `after` identifies the last processed URL and `diff` holds the engine's opaque comparison state. Each processed page, including a null extraction, emits the complete `STATE`. The engine commits prior rows before saving it. Finishing the scan clears `after`; destination rows remain untouched by listing disappearance. The next complete pass checks all selected candidates again.
 
 An HTTP failure that exhausts Got’s retry policy stops that input and reports the failed URL through the SDK error. Other configured inputs can finish. Resume rediscovers listings and continues after the saved URL; changes or newly listed URLs at or before that cursor are revisited on the next complete scan. A permanently failing page remains a reported failure until upstream recovers or the caller changes its selection. Cancellation closes active downloads, removes queued requests, retains already committed records and propagates the caller's reason. The scan also aborts its work on failure or iterator closure. Prefetched results beyond a failed URL are never checkpointed and may be fetched again on resume.
 
@@ -67,11 +71,13 @@ NX_DAEMON=false NX_ISOLATE_PLUGINS=false npx nx run source-web-articles:test
 NX_DAEMON=false NX_ISOLATE_PLUGINS=false npx nx run source-web-articles:typecheck
 ```
 
-The typecheck target includes formatting and lint. The discovery baseline passes. The pre-existing article baseline has 24 passing and three failing tests in `article-content-regressions.test.ts`: introductory summaries, linked figure captions, and acknowledgments/authorship disclosures. Those failures are tracked as **2919**, outside this source implementation. The HTTP client construction in these tests follows the current SDK API; their content assertions remain unchanged.
+The typecheck target includes formatting and lint. After removing the optimization, all 250 tests pass: 31 article, 12 web source, 36 engine, 108 SQLite and 63 PostgreSQL tests. PostgreSQL tests use real disposable databases. The unchanged-rerun regression also observes the public `PassObserver` and requires every reported `emitted.count` to remain zero before destination deduplication.
 
 ## Live verification — 2026-10-24
 
-Every row below ran the new source against the actual input through a real pipeline into SQLite, using explicit include patterns for the same previously checked articles. A fresh source/pipeline instance then reran against the same destination and checkpoint store. All 26 stored articles retained identical HTML and text to the earlier extraction baseline; second runs emitted zero records and preserved all stored rows.
+Every row below ran the new source against the actual input through a real pipeline into SQLite, using explicit include patterns for the same previously checked articles. A fresh source/pipeline instance then reran against the same destination and checkpoint store. The final 26-article comparison checks prior paragraphs of at least 50 characters against the new content rather than requiring the old extraction's omissions to remain. Second runs write zero records and preserve identical stored rows. The public regression above separately verifies zero source emissions. The new extractor retains headings, introductions, captions and appendices that the prior extractor could omit.
+
+All compared paragraphs remain except four GitHub promotional paragraphs. A separate live DOM check confirms all four belong to an `aside` outside the article; their removal is intentional. Independent checks against the live Fowler pages preserve all 3 introductory summaries, 14 captions and 54 appendix paragraphs of at least 50 characters. The captured HTML and `github-quality.json` / `fowler.json` record those comparisons beside the results.
 
 | Input                                   | Stored articles | First-run writes | Second-run writes |
 | --------------------------------------- | --------------: | ---------------: | ----------------: |
@@ -85,17 +91,17 @@ Every row below ran the new source against the actual input through a real pipel
 | `https://www.jsonfeed.org/feed.json`    |               2 |                2 |                 0 |
 | `https://daringfireball.net/feeds/main` |               3 |                3 |                 0 |
 
-Evidence: `/tmp/elt-web-source-live/results.json`, with each site's SQLite destination, checkpoint file and result JSON beside it. Earlier extraction evidence: `/tmp/elt-2917/live-after.json`. The live process exited; no server or watcher is retained. Live publisher edits and injected failures were not attempted; controlled public HTTP tests cover updates, failure and cancellation.
+Evidence: `/tmp/elt-2919-2920/live-V55r2u/results.json`, with each site's SQLite destination, checkpoint file and result JSON beside it. Earlier baseline: `/tmp/elt-web-source-live/results.json`. The live process exited; no server or watcher is retained. Live publisher edits and injected failures were not attempted; controlled public HTTP tests cover updates, failure and cancellation. These live samples were recorded before the checkpoint optimization was removed; the removal is checked through the public local regression suites.
 
-These are scoped compatibility checks, not a complete crawl or throughput benchmark. Per-article snapshots rebuild and serialize accumulated fingerprint state, producing write amplification as listings grow; **2920** tracks package/engine-level improvement and benchmarking. Discovery buffers candidate URLs; extraction buffers response bytes and a bounded number of prefetched results, and parses synchronously. Got supplies HTTP retries. HTTP caching, crawl delays, robots exclusion, authenticated pages and JavaScript rendering are not supplied by this source.
+These are scoped compatibility checks, not a complete crawl or throughput benchmark. Checkpoint work grows with the accumulated listing; large-listing write amplification is tracked in 2920. Discovery buffers candidate URLs; extraction buffers response bytes and a bounded number of prefetched results, and parses synchronously. Got supplies HTTP retries. HTTP caching, crawl delays, robots exclusion, authenticated pages and JavaScript rendering are not supplied by this source.
 
-| Review disposition                                 | Outcome                                                          |
-| -------------------------------------------------- | ---------------------------------------------------------------- |
-| Missing website/feed end-to-end claim              | Fixed in regression 3 and live pipeline checks                   |
-| Added-input continuity could pass after state loss | Fixed by preserving the existing feed during the added-input run |
-| Large-listing checkpoint amplification             | Tracked as 2920; throughput remains unproven                     |
-| Existing article-content losses                    | Tracked as 2919; source work preserves the baseline              |
-| Mutation proof                                     | Not executed under repository/skill restrictions                 |
+| Review disposition                                 | Outcome                                                                |
+| -------------------------------------------------- | ---------------------------------------------------------------------- |
+| Missing website/feed end-to-end claim              | Fixed in regression 3 and live pipeline checks                         |
+| Added-input continuity could pass after state loss | Fixed by preserving the existing feed during the added-input run       |
+| Large-listing checkpoint amplification             | Deferred in backlog item 2920; full checkpoint saves remain            |
+| Existing article-content losses                    | Fixed through Defuddle; content, short-post and table regressions pass |
+| Mutation proof                                     | Not executed under repository/skill restrictions                       |
 
 Application settings and connector registration belong to the host in `context-compiler`; this reusable web source does not require Mac app access or a native-store connector.
 
@@ -103,4 +109,14 @@ Application settings and connector registration belong to the host in `context-c
 
 The temporary-listing/article recovery, out-of-order failure/resume, and request-rate tests each failed before their corresponding integration and then passed. The real HTTP boundary verifies that retries and redirects consume the same rate budget and Retry-After delays the next attempt. Additional regressions cover failure cancelling both streaming and queued requests, and a slow first article bounding prefetch rather than downloading the whole feed. Existing source regressions still cover independent inputs, cancellation reasons, full-refresh rollback, URL selection and watching. SDK regressions cover injected download deadlines and non-retryable HTTP/extraction errors.
 
-The live observations above predate this HTTP scheduling change; they are extraction-quality evidence, not a live benchmark of the new scheduler.
+The live observations above include the HTTP scheduler and article extraction changes. They are scoped compatibility and rerun checks, not a sustained crawler throughput benchmark.
+
+## Article extraction regression evidence
+
+| Claim                                                                                                        | Observed red                                                                                    | Final result                                     |
+| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Introductory summary, descriptive caption/link, acknowledgments and authorship disclosure survive extraction | Three public discovery/extraction tests failed on the original Readability selection            | Pass                                             |
+| Inline punctuation and preformatted spacing are retained                                                     | Defuddle inserted a space in linked `HKDF-SHA-256` and removed the space before a ratio's colon | Pass with standardization disabled               |
+| Ignored comments and surrounding whitespace do not create changed HTML                                       | Same prose produced different `content` strings                                                 | Pass with package-owned whitespace normalization |
+
+Heading retention is an intentional extraction change; the paragraph-boundary regression asserts the complete exact output, including the heading. Short linked posts and tables remain covered. Mutation proof remains unexecuted under the repository/skill restrictions stated above.

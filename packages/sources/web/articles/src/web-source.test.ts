@@ -576,10 +576,29 @@ test('chosen websites and feeds persist article metadata, make unchanged reruns 
       database.path,
       checkpoints.path,
     );
+    const emitted: number[] = [];
+    const observed = new Pipeline({
+      connections: rerun.connections,
+      history: rerun.history,
+      observer: {
+        begin: () => ({
+          progress: (progress) => {
+            emitted.push(progress.emitted.count);
+          },
+          finish: () => {},
+          fail: () => {},
+        }),
+      },
+    });
     assert.equal(
-      (await rerun.run())[0]?.count,
+      (await observed.run())[0]?.count,
       0,
       'unchanged records must not be re-emitted',
+    );
+    assert(emitted.length > 0);
+    assert(
+      emitted.every((count) => count === 0),
+      'the source emits no unchanged records before destination deduplication',
     );
     assert.equal(
       database.connection

@@ -76,7 +76,7 @@ test('redirects retain the fetched URL and resolve canonical and content links a
   );
 });
 
-test('plain text preserves paragraph boundaries in minified HTML', async () => {
+test('plain text retains the article heading and paragraph boundaries in minified HTML', async () => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html');
     response.end(
@@ -88,7 +88,10 @@ test('plain text preserves paragraph boundaries in minified HTML', async () => {
     AbortSignal.timeout(5000),
   );
   assert.ok(article);
-  assert.equal(article.textContent, `${paragraphs[0]}\n\n${paragraphs[1]}`);
+  assert.equal(
+    article.textContent,
+    `FIELD OBSERVATIONS\n\n${paragraphs[0]}\n\n${paragraphs[1]}`,
+  );
   assert.equal(article.length, article.textContent.length);
 });
 
@@ -218,6 +221,8 @@ test('empty and navigation-only pages return no article', async () => {
   for (const html of [
     '',
     '<html><body><nav><a href="/">Home</a><a href="/login">Log in</a></nav></body></html>',
+    '<html><body><div role="navigation"><a href="/">Home</a><a href="/login">Log in</a></div></body></html>',
+    '<html><body><nav><p>Browse the garden journal by season.</p><a href="/spring">Spring</a><a href="/autumn">Autumn</a></nav></body></html>',
   ]) {
     await using upstream = await new HttpServer().start(
       (_request, response) => {
@@ -348,6 +353,38 @@ test('short posts retain their prose instead of being rejected by a length thres
     article.textContent,
     'The first seeds emerged today.\n\nWe will measure their growth tomorrow.',
   );
+});
+
+test('prose in plain div elements remains readable without an article or paragraph tag', async () => {
+  await using upstream = await new HttpServer().start((_request, response) => {
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    response.end(
+      `<html><head><title>Field observations</title></head><body><main><div>${paragraphs[0]}</div><div>${paragraphs[1]}</div></main></body></html>`,
+    );
+  });
+  const article = await new WebArticle(got).fetch(
+    upstream.origin,
+    AbortSignal.timeout(5000),
+  );
+  assert.ok(article);
+  assert.ok(article.textContent.includes(paragraphs[0]));
+  assert.ok(article.textContent.includes(paragraphs[1]));
+});
+
+test('a standalone data table remains readable without surrounding paragraph tags', async () => {
+  await using upstream = await new HttpServer().start((_request, response) => {
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    response.end(
+      '<html><head><title>Rainfall observations</title></head><body><main><table><tr><th>Season</th><th>Rainfall</th></tr><tr><td>Spring</td><td>37 mm</td></tr><tr><td>Autumn</td><td>52 mm</td></tr></table></main></body></html>',
+    );
+  });
+  const article = await new WebArticle(got).fetch(
+    upstream.origin,
+    AbortSignal.timeout(5000),
+  );
+  assert.ok(article);
+  assert.match(article.textContent, /Spring\s+37 mm/);
+  assert.match(article.textContent, /Autumn\s+52 mm/);
 });
 
 test('plain text keeps data-table columns distinguishable', async () => {

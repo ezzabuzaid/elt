@@ -1,6 +1,8 @@
-import { Readability, isProbablyReaderable } from '@mozilla/readability';
+import { Readability } from '@mozilla/readability';
+import { Defuddle } from 'defuddle/node';
 import createDOMPurify from 'dompurify';
 import { type Got, HTTPError, RequestError } from 'got';
+import { minify } from 'html-minifier-next';
 import { convert } from 'html-to-text';
 import { JSDOM } from 'jsdom';
 import type { ConstructorOptions } from 'jsdom';
@@ -38,13 +40,10 @@ export class WebArticle {
       if (contentType) options.contentType = contentType;
       const dom = new JSDOM(response.body, options);
       try {
-        if (
-          !isProbablyReaderable(dom.window.document, {
-            minContentLength: 0,
-            minScore: 0,
-          })
-        )
-          return null;
+        for (const navigation of dom.window.document.querySelectorAll(
+          'nav, [role="navigation"]',
+        ))
+          navigation.remove();
         const canonical = dom.window.document.querySelector<HTMLLinkElement>(
           'link[rel~="canonical"][href]',
         );
@@ -55,9 +54,34 @@ export class WebArticle {
         )
           canonicalUrl = null;
         if (canonicalUrl) canonicalUrl.hash = '';
-        const article = new Readability(dom.window.document).parse();
-        if (!article?.content) return null;
-        const content = createDOMPurify(dom.window).sanitize(article.content);
+        const extracted = await Defuddle(
+          dom.serialize(),
+          dom.window.document.baseURI,
+          {
+            // Class-name substrings such as "frontMatter" can contain article prose.
+            removePartialSelectors: false,
+            // Preserve the publisher's inline punctuation and code formatting.
+            standardize: false,
+            useAsync: false,
+          },
+        );
+        const article = new Readability(dom.window.document, {
+          charThreshold: 1,
+        }).parse();
+        if (!article || !extracted.content) return null;
+        const content = createDOMPurify(dom.window).sanitize(
+          await minify(extracted.content, {
+            collapseWhitespace: true,
+            conservativeCollapse: true,
+            removeComments: true,
+          }),
+        );
+        const prose = JSDOM.fragment(content);
+        for (const link of prose.querySelectorAll(
+          'a[href]:not(article a, [role="article"] a, table a)',
+        ))
+          link.remove();
+        if (!prose.textContent?.trim()) return null;
         const textContent = convert(content, {
           wordwrap: false,
           selectors: [{ selector: 'table', format: 'dataTable' }],

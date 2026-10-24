@@ -1,6 +1,6 @@
 # Web article fetching and extraction
 
-`WebArticle.fetch(url, signal)` downloads one page and extracts its readable content and metadata. It accepts URLs returned by `@workspace/sdk-web-discovery` and has no publisher-specific rules.
+`WebArticle.fetch(url, signal)` downloads one page and extracts readable content and metadata. It accepts URLs returned by `@workspace/sdk-web-discovery` and contains no publisher rules.
 
 ```ts
 import got from 'got';
@@ -21,73 +21,60 @@ if (page) {
 }
 ```
 
-The constructor takes a Got client. Pass `got.extend(...)` to configure request timeouts, retry policy or request hooks; the SDK adds no separate retry loop or timeout. HTTP retries finish before extraction starts, so parsing failures do not repeat downloads. A 304 response fails because this SDK has no cached representation.
-
-The selection above is an example caller choice. The SDK accepts any HTTP(S) page URL; it does not select publishers or article paths.
+The example's publisher and URL selection belong to the caller. The constructor takes a Got client; use `got.extend(...)` for timeouts, retries or request hooks. HTTP retries finish before extraction, so parsing failures do not repeat downloads. A 304 fails because the SDK has no cached representation. The SDK does not render JavaScript, retrieve authenticated content, schedule crawls or store checkpoints.
 
 ## Result
 
-The exported `Article` type follows the method's return type. Metadata retains Mozilla Readability's field names and missing-value semantics:
+The exported `Article` type follows the method's return type. Metadata retains Mozilla Readability's field names and missing-value semantics.
 
-| Field                                | Meaning                                                                                               |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `url`                                | Final HTTP response URL, including its query, after redirects                                         |
-| `canonicalUrl`                       | Resolved HTTP(S) HTML canonical declaration, with its fragment removed; `null` when absent or invalid |
-| `content`                            | Extracted HTML sanitized by DOMPurify                                                                 |
-| `textContent`, `length`              | Plain text with paragraph breaks and formatted data tables; its character count                       |
-| `title`, `byline`, `publishedTime`   | Readability's title, author text, and publication metadata                                            |
-| `excerpt`, `siteName`, `lang`, `dir` | Readability's description, publisher, language, and text direction                                    |
+| Field                                | Meaning                                                                                      |
+| ------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `url`                                | Final HTTP response URL, including its query                                                 |
+| `canonicalUrl`                       | Resolved HTTP(S) HTML canonical declaration, without a fragment; null when absent or invalid |
+| `content`                            | Extracted HTML with insignificant whitespace normalized, then sanitized                      |
+| `textContent`, `length`              | Text with paragraph breaks and formatted data tables; its JavaScript string length           |
+| `title`, `byline`, `publishedTime`   | Readability's title, author text and raw publication metadata                                |
+| `excerpt`, `siteName`, `lang`, `dir` | Readability's description, publisher, language and text direction                            |
 
-`publishedTime` preserves the supplied value. Missing metadata remains missing; publication dates are not guessed from body text, URL paths, HTTP timestamps, or discovery's sitemap hints. An extracted result does not prove that the page is an article or that every metadata field is present.
-
-The method returns `null` for a page without readable content. Fetching or parsing failures throw `ArticleError`, whose `url` identifies the failed page and whose `cause` preserves the underlying error. Aborting the supplied signal rejects with the caller's original reason.
+Publication dates are not inferred from prose, URL paths, HTTP timestamps or sitemap hints. The method returns null for no readable content or for an unmarked result consisting entirely of hyperlinks. A non-null result is heuristic extraction, not proof that every part of an article was captured. Errors carry the failed URL in `ArticleError.url` and preserve their cause. Cancellation rejects with the supplied signal's original reason.
 
 ## Package ownership
 
-The installed export maps, public options/types, and shipped runtime were inspected and probed before integration:
+The packages' export maps, options, types and shipped implementations were inspected before integration.
 
-| Package / API                                                        | Owns                                                                                                                                |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `got` and `AbortSignal`                                              | HTTP, redirects, decompression, selective retries, timeouts and cancellation                                                        |
-| `jsdom` / `JSDOM`                                                    | HTML parsing, HTTP/meta charset decoding, HTML base and link resolution; scripts and subresource loading remain disabled by default |
-| `@mozilla/readability` / `isProbablyReaderable`, `Readability.parse` | Readability detection, boilerplate removal, JSON-LD/Open Graph metadata                                                             |
-| `dompurify` / `sanitize`                                             | Sanitizing extracted HTML without a local tag/attribute allowlist                                                                   |
-| `html-to-text` / `convert`                                           | Text conversion, paragraph boundaries, `dataTable` formatting                                                                       |
-| `@zukhruf/testing/http` / `HttpServer.start`                         | Disposable real HTTP fixtures for public black-box tests                                                                            |
+| Package                          | Responsibility                                                                     |
+| -------------------------------- | ---------------------------------------------------------------------------------- |
+| Got 14.6.6                       | HTTP, redirects, decompression, selective retries, deadlines and cancellation      |
+| jsdom 30.1.3                     | Charset decoding, HTML base/link resolution, canonical declaration and DOM queries |
+| Defuddle 0.19.5, `defuddle/node` | Content selection, including introductions, linked captions and appendices         |
+| Mozilla Readability 0.6.0        | Metadata with the existing publication-date and missing-value contract             |
+| html-minifier-next 9.0.1         | Stable whitespace/comment normalization while preserving preformatted content      |
+| DOMPurify 3.4.17                 | Final HTML sanitization using its native policy                                    |
+| html-to-text 10.0.1              | Paragraph boundaries, text conversion and data-table formatting                    |
+| `@zukhruf/testing/http`          | Disposable real HTTP fixtures for public black-box tests                           |
 
-The readability pre-check uses `minContentLength: 0` and `minScore: 0` so short posts and table-heavy articles reach the full parser. The full parser retains its native scoring. Text conversion disables line wrapping and enables the package's data-table formatter. Other package defaults remain native.
+Defuddle uses `removePartialSelectors: false`: substring class matching otherwise removes prose in containers such as `frontMatter`. Its content scoring and exact-selector cleanup remain enabled. `standardize: false` preserves original inline punctuation; the default inserted a space in linked `HKDF-SHA-256`, changed `1.44 : 1`, and left variable whitespace where comments were removed. `useAsync: false` disables additional extractor requests. The SDK supplies no publisher selectors or custom scoring.
 
-REJECTED: `@extractus/article-extractor` 9.0.1 as the complete extractor. A probe with no publication metadata and a historical date in the prose returned that historical date as the publication date. Its shipped `findDate` scans body paragraphs; its public options do not disable this inference. A relative canonical declaration was also discarded in the probe.
+Defuddle's public Node string entry owns its LinkeDOM parsing. Passing the existing JSDOM document was probed first: Defuddle's selector exceeds jsdom's hardcoded 2048-character selector limit, causing an internal fallback and losing the intended cleanup. The package-owned string path is retained instead of a local DOM adapter or disabling the selector guard. Defuddle marks that input form deprecated for its next major version; this package pins 0.19.5.
 
-REJECTED: `JSDOM.fromURL` as the HTTP owner. Its public options and shipped fetch path do not expose caller cancellation. Got byte responses plus the `JSDOM` constructor preserves the response URL and byte decoding without replacing jsdom's parser.
+The minifier enables only `collapseWhitespace`, `conservativeCollapse` and `removeComments`. It preserves spaces separating inline words and the exact contents of `pre`; its installed implementation was checked and public tests cover punctuation and code indentation. DOMPurify runs after these transformations. Text conversion disables wrapping and enables `dataTable` formatting.
 
-Retained local behavior: compose those APIs, preserve HTTP provenance and cancellation, expose declared canonical identity, attribute errors to the failed URL, and close the DOM. There is no custom content scorer, metadata parser, HTML sanitizer, encoding detector, retry loop, or publisher adapter.
+## Retained acceptance behavior
 
-## Verification
+Before extraction, standard DOM operations remove explicit HTML/ARIA navigation landmarks (`nav`, `[role="navigation"]`). After sanitization, a separate `JSDOM.fragment` removes links outside `article`, `[role="article"]` and `table` solely to test whether any prose remains. The returned HTML and text retain their links. Short posts with prose, fully linked declared articles and linked tables remain eligible. No minimum prose length or publisher rule is added.
 
-```sh
-NX_DAEMON=false NX_ISOLATE_PLUGINS=false npx nx run sdk-web-article:typecheck
-NX_DAEMON=false NX_ISOLATE_PLUGINS=false npx nx run sdk-web-article:test
-```
+These rules retain the public regressions for 2914, 2915 and 2917: Simon-style short linked posts exclude subscription boilerplate; plain-div prose and standalone data tables are accepted; unmarked link-only menus are rejected. `isProbablyReaderable` remains removed because its tag-limited pre-check rejected valid content.
 
-Twelve public black-box tests use local HTTP pages and real dependencies. Ten implementation slices were observed failing before their fix; structured-metadata and charset regressions passed directly using package capabilities. Tests cover redirects/base URLs, canonical declarations, metadata, Unicode/legacy encodings, short posts, navigation-only pages, paragraph/table formatting, sanitization, HTTP/transport failures, and cancellation. No tests call live publishers or mock internal modules.
+## Decisions and verification
 
-On 2026-10-24, live discovery supplied 26 sampled page URLs across the nine previously checked inputs. Extracted bodies were compared with independently fetched source HTML; metadata and omissions were inspected. This is sampled compatibility evidence, not a crawl of every discovered URL or a sustained load test.
+REJECTED: Readability candidate-count, character-threshold and link-density tuning for 2919. Executable probes could recover the linked caption in isolation, but still lost the introduction and appendix. Readability remains the metadata owner, with `charThreshold: 1` allowing short pages.
 
-| Input                                           | Samples retaining main prose |
-| ----------------------------------------------- | ---------------------------: |
-| Anthropic                                       |                        3 / 3 |
-| Simon Willison                                  |                        2 / 3 |
-| Julia Evans                                     |                        3 / 3 |
-| Cloudflare                                      |                        3 / 3 |
-| Python Insider                                  |                        3 / 3 |
-| Martin Fowler                                   |                        3 / 3 |
-| GitHub Blog                                     |                        3 / 3 |
-| JSON Feed                                       |                        2 / 2 |
-| Daring Fireball Atom feed, its own-site entries |                        3 / 3 |
+REJECTED: `@extractus/article-extractor` 9.0.1. Its shipped implementation wraps the same Readability algorithm with fixed candidate/threshold options; it does not solve these losses. Earlier public probes also found subscription text and publication-date inference incompatible with this SDK's contract.
 
-Known quality failure: [this short Simon Willison link post](https://simonwillison.net/2026/Oct/22/de-staat-freedom/) yields the subscription/footer section instead of its main prose. The result is non-null, so callers cannot treat a non-null result as a quality guarantee. The installed parser's public `charThreshold` option was also probed and did not recover that prose. Backlog **2914** tracks a generic quality check or package alternative; no publisher workaround was added.
+REJECTED: Crawlee for content selection. Its crawler requires an extraction handler, and its HTML-to-text helper is not an article selector. The web source already uses Got, p-map, p-queue and the ELT engine for downloading, scheduling and persistence.
 
-Readability also omits some author biographies, acknowledgements, related cards, and introductory blurbs. It cannot render JavaScript-only content or retrieve authenticated content. This package does not schedule requests, enforce crawl policy, persist checkpoints, or implement conditional fetching; those remain ingestion orchestration work. Downloads are buffered, and CPU parsing is synchronous. Caller cancellation covers network work, not interruption of a running synchronous parser.
+RETAINED: jsdom decoding and base URLs, Readability metadata, native sanitization, text/table conversion, attributed errors, cancellation, navigation exclusion and the link-only acceptance check. Removed Readability content selection and its link-density tuning. Added package-owned content selection and whitespace normalization; no custom parser, content-recovery loop or fallback was introduced.
 
-Live evidence is retained at `/tmp/elt-article-live/final-results.json` with the independently fetched HTML files beside it.
+Five public regressions first failed and then passed: introductory summary retention; descriptive caption text and link retention; acknowledgments/authorship disclosure retention; unchanged inline punctuation and preformatted spacing; identical HTML when ignored comments and surrounding whitespace change. Tests exercise `WebArticle.fetch`, and the content regressions also exercise discovery, through real HTTP. The full article suite includes short posts, link-only pages, tables, metadata, charset, cancellation and sanitization.
+
+Live verification evidence is recorded in the [web source reference](../../../sources/web/articles/docs/reference.md). Those checks use the actual source, ELT engine and SQLite destination. Downloads remain buffered and CPU parsing remains synchronous; cancellation does not interrupt a synchronous parse. No complete-crawl quality guarantee is implied by the sampled sites.
