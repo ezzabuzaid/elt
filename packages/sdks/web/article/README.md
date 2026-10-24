@@ -53,11 +53,15 @@ The packages' export maps, options, types and shipped implementations were inspe
 | html-to-text 10.0.1              | Paragraph boundaries, text conversion and data-table formatting                    |
 | `@zukhruf/testing/http`          | Disposable real HTTP fixtures for public black-box tests                           |
 
-Defuddle uses `removePartialSelectors: false`: substring class matching otherwise removes prose in containers such as `frontMatter`. Its content scoring and exact-selector cleanup remain enabled. `standardize: false` preserves original inline punctuation; the default inserted a space in linked `HKDF-SHA-256`, changed `1.44 : 1`, and left variable whitespace where comments were removed. `useAsync: false` disables additional extractor requests. The SDK supplies no publisher selectors or custom scoring.
+Defuddle's `contentSelector` recognizes microformat post containers (`.h-entry`, `.hentry`) and the common `.entry` convention when semantic article/main markup is absent. If none matches, Defuddle detects the main content normally. An incidental entry widget therefore cannot override an HTML/ARIA article or main landmark.
+
+Exact-selector removal is disabled within declared article/main or post boundaries: its blanket `aside`/sidebar removal discards editorial explanations and contributor lists. Content scoring stays enabled except for the explicitly selected post containers, where link density otherwise discards a title row containing category and resource links. Unmarked pages retain both filters, including navigation and advertising cleanup. `removePartialSelectors: false` preserves prose in containers such as `frontMatter`. These are package options, not publisher selectors or a custom scoring algorithm.
+
+`standardize: false` preserves original inline punctuation; the default inserted a space in linked `HKDF-SHA-256`, changed `1.44 : 1`, and left variable whitespace where comments were removed. `useAsync: false` disables additional extractor requests.
 
 Defuddle's public Node string entry owns its LinkeDOM parsing. Passing the existing JSDOM document was probed first: Defuddle's selector exceeds jsdom's hardcoded 2048-character selector limit, causing an internal fallback and losing the intended cleanup. The package-owned string path is retained instead of a local DOM adapter or disabling the selector guard. Defuddle marks that input form deprecated for its next major version; this package pins 0.19.5.
 
-The minifier enables only `collapseWhitespace`, `conservativeCollapse` and `removeComments`. It preserves spaces separating inline words and the exact contents of `pre`; its installed implementation was checked and public tests cover punctuation and code indentation. DOMPurify runs after these transformations. Text conversion disables wrapping and enables `dataTable` formatting.
+The minifier enables only `collapseWhitespace`, `conservativeCollapse` and `removeComments`. It preserves spaces separating inline words and the exact contents of `pre`; its installed implementation was checked and public tests cover punctuation and code indentation. DOMPurify runs after these transformations. Its `FORBID_TAGS` and `ADD_FORBID_CONTENTS` options exclude footer markup and prose after Readability has extracted metadata, preserving authors credited in a footer. The additive option retains the sanitizer's existing forbidden-content policy. Text conversion disables wrapping and enables `dataTable` formatting.
 
 ## Retained acceptance behavior
 

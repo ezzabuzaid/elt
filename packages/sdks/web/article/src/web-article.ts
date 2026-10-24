@@ -54,12 +54,25 @@ export class WebArticle {
         )
           canonicalUrl = null;
         if (canonicalUrl) canonicalUrl.hash = '';
+        // Post-class hints apply only where semantic article/main markup is absent.
+        const postSelector =
+          'body:not(:has(article, main, [role="article"], [role="main"])) :is(.h-entry, .hentry, .entry)';
+        const markedPost = dom.window.document.querySelector(postSelector);
         const extracted = await Defuddle(
           dom.serialize(),
           dom.window.document.baseURI,
           {
+            contentSelector: postSelector,
+            // Declared content boundaries can contain editorial asides.
+            removeExactSelectors:
+              !markedPost &&
+              !dom.window.document.querySelector(
+                'article, main, [role="article"], [role="main"]',
+              ),
             // Class-name substrings such as "frontMatter" can contain article prose.
             removePartialSelectors: false,
+            // Keep linked title rows within a post; score clutter on unmarked pages.
+            removeLowScoring: !markedPost,
             // Preserve the publisher's inline punctuation and code formatting.
             standardize: false,
             useAsync: false,
@@ -75,6 +88,7 @@ export class WebArticle {
             conservativeCollapse: true,
             removeComments: true,
           }),
+          { FORBID_TAGS: ['footer'], ADD_FORBID_CONTENTS: ['footer'] },
         );
         const prose = JSDOM.fragment(content);
         for (const link of prose.querySelectorAll(
