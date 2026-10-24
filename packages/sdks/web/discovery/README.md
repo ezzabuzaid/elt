@@ -3,16 +3,18 @@
 Discover candidate page URLs from a website, sitemap or feed you choose. The upstream is the public web; this package has no elt dependency or publisher rules.
 
 ```ts
+import got from 'got';
+
 import { WebDiscovery } from '@workspace/sdk-web-discovery';
 
-const pages = await new WebDiscovery().discover(
+const pages = await new WebDiscovery(got).discover(
   'https://www.anthropic.com/',
   AbortSignal.timeout(60_000),
 );
 // [{ url, lastModified, listingUrl }]
 ```
 
-The caller supplies an absolute HTTP(S) URL and an abort signal, choosing the deadline for the whole operation. There is no hidden per-request timeout.
+The constructor takes a Got client; use `got.extend(...)` to configure timeouts, retries or request hooks. The caller supplies an absolute HTTP(S) URL and an abort signal for the whole operation. The SDK adds no separate retry policy or per-request deadline. Got retries eligible HTTP failures before the discovery rules decide whether to reject an explicit listing or ignore a missing robots file or invalid candidate.
 
 ## Discovery
 
@@ -45,6 +47,7 @@ Discovery does not execute JavaScript, authenticate, crawl arbitrary page links,
 
 | Public API                                                                                 | Responsibility                                                                                                                 |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `got`: injected client                                                                     | HTTP, redirects, decompression, caller-configured retries/timeouts and cancellation.                                           |
 | `@workspace/codec-sitemap`: `decodeSitemap`, `parseSitemap`                                | Gzip, XML indexes/url sets, text, RSS and Atom; raw hints and strict validation.                                               |
 | `@crawlee/utils`: `RobotsTxtFile.from().getSitemaps({ enqueueStrategy: 'all' })`           | Robots declarations, including maps hosted elsewhere.                                                                          |
 | `feedscout/methods`: `discoverUrisFromHtml`, `discoverUrisFromHeaders`                     | HTML parsing, entities, base URLs, link selection and HTTP Link parsing.                                                       |
@@ -53,7 +56,7 @@ Discovery does not execute JavaScript, authenticate, crawl arbitrary page links,
 | `fast-xml-parser`: `XMLValidator.validate`                                                 | Strict RDF validation; Feedsmith's RDF parser does not enable it.                                                              |
 | `@zukhruf/testing/http`: `HttpServer.start()`                                              | Disposable loopback HTTP fixtures for the three regression tests; `await using` closes their sockets.                          |
 
-No runtime dependency was added for the fixes. The already-installed `@zukhruf/testing` 0.3.24 is now an explicit development dependency. Existing MSW tests retain `onUnhandledRequest: 'error'`; tests make no external network requests.
+Got 14.6.6 is an explicit runtime dependency. The already-installed `@zukhruf/testing` 0.3.24 is an explicit development dependency. Existing MSW tests retain `onUnhandledRequest: 'error'`; tests make no external network requests.
 
 ## Verification — 2026-10-24
 

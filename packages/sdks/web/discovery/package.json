@@ -14,6 +14,7 @@
     "fast-xml-parser": "^5.11.1",
     "feedscout": "2.2.1",
     "feedsmith": "3.0.1",
+    "got": "14.6.6",
     "@crawlee/utils": "3.18.2"
   },
   "devDependencies": {

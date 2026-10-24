@@ -1,5 +1,8 @@
 import { setInterval } from 'node:timers/promises';
 
+import got from 'got';
+import { pMapIterable } from 'p-map';
+import PQueue from 'p-queue';
 import { z } from 'zod';
 
 import {
@@ -156,59 +159,89 @@ export class WebSource extends Source {
     const previous =
       state === null ? { after: null, diff: null } : saved.parse(state);
     let diff: unknown = previous.diff;
-    // Source.read allows runs without a signal; the SDK requires a signal.
-    const requestSignal = signal ?? new AbortController().signal;
-    const pages = await new WebDiscovery().discover(inputUrl, requestSignal);
-    const reader = new WebArticle();
-    for (const page of pages.toSorted((a, b) =>
-      a.url < b.url ? -1 : a.url > b.url ? 1 : 0,
-    )) {
-      if (
-        this.#include !== undefined &&
-        !this.#include.some((pattern) => pattern.test(page.url))
-      )
-        continue;
-      if (previous.after !== null && page.url <= previous.after) continue;
-      const article = await reader.fetch(page.url, requestSignal);
-      for await (const message of diffSnapshot(
-        configuration,
-        validateRecords(
-          configuration.stream,
-          article === null
-            ? []
-            : [
-                {
-                  ...article,
-                  inputUrl,
-                  pageUrl: page.url,
-                  listingUrl: page.listingUrl,
-                  lastModified: page.lastModified,
-                  // Readability's public result permits undefined metadata; stream cells use null.
-                  title: article.title ?? null,
-                  byline: article.byline ?? null,
-                  publishedTime: article.publishedTime ?? null,
-                  excerpt: article.excerpt ?? null,
-                  siteName: article.siteName ?? null,
-                  lang: article.lang ?? null,
-                  dir: article.dir ?? null,
-                },
-              ],
-          'Web',
-        ),
-        diff,
-        { continues: true, signal },
+    const stop = new AbortController();
+    const requestSignal =
+      signal === undefined
+        ? stop.signal
+        : AbortSignal.any([signal, stop.signal]);
+    const starts = new PQueue({
+      intervalCap: 2,
+      interval: 1_000,
+      strict: true,
+    });
+    try {
+      const http = got.extend({
+        timeout: { request: 30_000 },
+        hooks: {
+          beforeRequest: [
+            () => starts.add(() => undefined, { signal: requestSignal }),
+          ],
+        },
+      });
+      const pages = await new WebDiscovery(http).discover(
+        inputUrl,
+        requestSignal,
+      );
+      const reader = new WebArticle(http);
+      const pendingPages = pages
+        .toSorted((a, b) => (a.url < b.url ? -1 : a.url > b.url ? 1 : 0))
+        .filter(
+          (page) =>
+            (this.#include === undefined ||
+              this.#include.some((pattern) => pattern.test(page.url))) &&
+            (previous.after === null || page.url > previous.after),
+        );
+      for await (const { page, article } of pMapIterable(
+        pendingPages,
+        async (page) => ({
+          page,
+          article: await reader.fetch(page.url, requestSignal),
+        }),
+        { concurrency: 4 },
       )) {
-        if ('type' in message && message.type === 'STATE') {
-          diff = message.state;
-          yield { ...message, state: { after: page.url, diff } };
-        } else yield message;
+        for await (const message of diffSnapshot(
+          configuration,
+          validateRecords(
+            configuration.stream,
+            article === null
+              ? []
+              : [
+                  {
+                    ...article,
+                    inputUrl,
+                    pageUrl: page.url,
+                    listingUrl: page.listingUrl,
+                    lastModified: page.lastModified,
+                    // Readability's public result permits undefined metadata; stream cells use null.
+                    title: article.title ?? null,
+                    byline: article.byline ?? null,
+                    publishedTime: article.publishedTime ?? null,
+                    excerpt: article.excerpt ?? null,
+                    siteName: article.siteName ?? null,
+                    lang: article.lang ?? null,
+                    dir: article.dir ?? null,
+                  },
+                ],
+            'Web',
+          ),
+          diff,
+          { continues: true, signal },
+        )) {
+          if ('type' in message && message.type === 'STATE') {
+            diff = message.state;
+            yield { ...message, state: { after: page.url, diff } };
+          } else yield message;
+        }
       }
+      for await (const message of diffSnapshot(configuration, [], diff, {
+        signal,
+      }))
+        if ('type' in message && message.type === 'STATE')
+          yield { ...message, state: { after: null, diff: message.state } };
+        else yield message;
+    } finally {
+      stop.abort();
+      await starts.onIdle();
     }
-    for await (const message of diffSnapshot(configuration, [], diff, {
-      signal,
-    }))
-      if ('type' in message && message.type === 'STATE')
-        yield { ...message, state: { after: null, diff: message.state } };
-      else yield message;
   }
 }

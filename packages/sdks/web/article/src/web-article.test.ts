@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { HttpServer } from '@zukhruf/testing/http';
+import got, { HTTPError, TimeoutError } from 'got';
 
 import { ArticleError, WebArticle } from './index.ts';
 
@@ -26,7 +27,7 @@ test('fetches an article with metadata and excludes surrounding navigation', asy
       ${body}<footer>Privacy policy</footer></body></html>`);
   });
 
-  const article = await new WebArticle().fetch(
+  const article = await new WebArticle(got).fetch(
     `${upstream.origin}/story`,
     AbortSignal.timeout(5000),
   );
@@ -59,7 +60,7 @@ test('redirects retain the fetched URL and resolve canonical and content links a
       </head><body>${body.replace('</p>', ' Read the <a href="measurements">original measurements</a>.</p>')}</body></html>`);
   });
 
-  const article = await new WebArticle().fetch(
+  const article = await new WebArticle(got).fetch(
     `${upstream.origin}/old`,
     AbortSignal.timeout(5000),
   );
@@ -82,7 +83,7 @@ test('plain text preserves paragraph boundaries in minified HTML', async () => {
       `<html><head><title>Field observations</title></head><body>${body}</body></html>`,
     );
   });
-  const article = await new WebArticle().fetch(
+  const article = await new WebArticle(got).fetch(
     upstream.origin,
     AbortSignal.timeout(5000),
   );
@@ -98,7 +99,7 @@ test('extracted HTML removes executable markup without dropping article prose', 
       `<html><head><title>Field observations</title></head><body>${body.replace('<p>', '<p onclick="alert(1)">').replace('</p>', '<img src="/chart.png" onerror="alert(2)"><script>document.body.textContent = "Replaced by script"</script></p>')}</body></html>`,
     );
   });
-  const article = await new WebArticle().fetch(
+  const article = await new WebArticle(got).fetch(
     upstream.origin,
     AbortSignal.timeout(5000),
   );
@@ -109,6 +110,51 @@ test('extracted HTML removes executable markup without dropping article prose', 
   );
   assert.match(article.content, /chart\.png/);
   assert.ok(article.textContent.includes(paragraphs[0]));
+});
+
+test('injected request deadlines close an unfinished response and preserve the timeout cause', async () => {
+  const closed = Promise.withResolvers<void>();
+  let streaming = false;
+  await using upstream = await new HttpServer().start((_request, response) => {
+    streaming = true;
+    response.once('close', () => closed.resolve());
+    response.writeHead(200, { 'content-type': 'text/html' });
+    response.write('<article><p>An unfinished response');
+  });
+  const reader = new WebArticle(
+    got.extend({ timeout: { request: 250 }, retry: { limit: 0 } }),
+  );
+  await assert.rejects(
+    reader.fetch(upstream.origin, AbortSignal.timeout(5000)),
+    (error: unknown) =>
+      error instanceof ArticleError && error.cause instanceof TimeoutError,
+  );
+  assert(streaming, 'the deadline must interrupt body consumption');
+  await closed.promise;
+});
+
+test('permanent HTTP and extraction failures do not repeat their downloads', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    requests.push(request.url ?? '/');
+    if (request.url === '/json')
+      response.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+    else response.writeHead(request.url === '/missing' ? 404 : 304).end();
+  });
+  for (const path of ['/missing', '/not-modified', '/json']) {
+    await assert.rejects(
+      new WebArticle(got).fetch(
+        `${upstream.origin}${path}`,
+        AbortSignal.timeout(5000),
+      ),
+      (error: unknown) => {
+        assert(error instanceof ArticleError);
+        if (path !== '/json') assert(error.cause instanceof HTTPError);
+        return true;
+      },
+    );
+  }
+  assert.deepEqual(requests, ['/missing', '/not-modified', '/json']);
 });
 
 test('HTTP, transport and unsupported content failures identify the failed URL', async () => {
@@ -127,7 +173,7 @@ test('HTTP, transport and unsupported content failures identify the failed URL',
   });
   for (const path of ['/redirect', '/json', '/disconnect']) {
     await assert.rejects(
-      new WebArticle().fetch(
+      new WebArticle(got).fetch(
         `${upstream.origin}${path}`,
         AbortSignal.timeout(5000),
       ),
@@ -159,7 +205,7 @@ test('cancellation before and during a download preserves the caller reason', as
     );
     if (phase === 'before') controller.abort(reason);
     await assert.rejects(
-      new WebArticle().fetch(
+      new WebArticle(got).fetch(
         upstream.origin,
         AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
       ),
@@ -180,7 +226,10 @@ test('empty and navigation-only pages return no article', async () => {
       },
     );
     assert.equal(
-      await new WebArticle().fetch(upstream.origin, AbortSignal.timeout(5000)),
+      await new WebArticle(got).fetch(
+        upstream.origin,
+        AbortSignal.timeout(5000),
+      ),
       null,
     );
   }
@@ -208,7 +257,7 @@ test('standard structured metadata takes precedence and absent publication dates
         </head><body>${body.replace('began in spring', 'began on 1998-04-12')}</body></html>`);
       },
     );
-    const article = await new WebArticle().fetch(
+    const article = await new WebArticle(got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );
@@ -245,7 +294,7 @@ test('decodes HTTP and HTML charset declarations and preserves Unicode', async (
         );
       },
     );
-    const article = await new WebArticle().fetch(
+    const article = await new WebArticle(got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );
@@ -274,7 +323,7 @@ test('invalid and non-web canonical declarations cannot become article identitie
         );
       },
     );
-    const article = await new WebArticle().fetch(
+    const article = await new WebArticle(got).fetch(
       upstream.origin,
       AbortSignal.timeout(5000),
     );
@@ -290,7 +339,7 @@ test('short posts retain their prose instead of being rejected by a length thres
       '<html><head><title>A brief field note</title></head><body><nav><a href="/">Home</a></nav><article><p>The first seeds emerged today.</p><p>We will measure their growth tomorrow.</p></article></body></html>',
     );
   });
-  const article = await new WebArticle().fetch(
+  const article = await new WebArticle(got).fetch(
     upstream.origin,
     AbortSignal.timeout(5000),
   );
@@ -308,7 +357,7 @@ test('plain text keeps data-table columns distinguishable', async () => {
       `<html><head><title>Field observations</title></head><body>${body.replace('</article>', '<table><tr><th>Season</th><th>Rainfall</th></tr><tr><td>Spring</td><td>37 mm</td></tr><tr><td>Autumn</td><td>52 mm</td></tr></table></article>')}</body></html>`,
     );
   });
-  const article = await new WebArticle().fetch(
+  const article = await new WebArticle(got).fetch(
     upstream.origin,
     AbortSignal.timeout(5000),
   );

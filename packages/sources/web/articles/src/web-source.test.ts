@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setTimeout } from 'node:timers/promises';
 
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
@@ -37,6 +38,320 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
     ],
   });
 }
+
+test('temporary listing and article failures recover within one pipeline run', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    const retried = requests.includes(url.pathname);
+    requests.push(url.pathname);
+    if (!retried) {
+      response
+        .writeHead(url.pathname === '/feed.xml' ? 503 : 429, {
+          'retry-after': '1',
+        })
+        .end();
+    } else if (url.pathname === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel><item><link>${url.origin}/article</link></item></channel></rss>`,
+      );
+    } else {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        '<article><p>The recovered article contains the complete published observations.</p></article>',
+      );
+    }
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      inputs: [`${upstream.origin}/feed.xml`],
+      pollIntervalMs: 60_000,
+    }),
+    database.path,
+    checkpoints.path,
+  );
+
+  assert.equal((await ingestion.run())[0]?.count, 1);
+  assert.equal(
+    database.connection.prepare('SELECT textContent FROM articles').get()
+      ?.textContent,
+    'The recovered article contains the complete published observations.',
+  );
+  assert.deepEqual(requests, [
+    '/feed.xml',
+    '/feed.xml',
+    '/article',
+    '/article',
+  ]);
+});
+
+test(
+  'out-of-order downloads checkpoint only the prefix before a failed page',
+  { timeout: 10_000 },
+  async () => {
+    const laterFinished = Promise.withResolvers<void>();
+    const requests: string[] = [];
+    let failing = true;
+    await using upstream = await new HttpServer().start(
+      async (request, response) => {
+        const url = new URL(
+          request.url ?? '/',
+          `http://${request.headers.host}`,
+        );
+        requests.push(url.pathname);
+        if (url.pathname === '/feed.xml') {
+          response.setHeader('content-type', 'application/rss+xml');
+          response.end(
+            `<rss><channel>${['c', 'b', 'a'].map((name) => `<item><link>${url.origin}/${name}</link></item>`).join('')}</channel></rss>`,
+          );
+        } else if (url.pathname === '/b' && failing) {
+          response.writeHead(404).end();
+        } else {
+          if (url.pathname === '/a' && failing) await laterFinished.promise;
+          response.setHeader('content-type', 'text/html');
+          response.end(
+            `<article><p>Research article ${url.pathname} contains the complete published observations.</p></article>`,
+          );
+          if (url.pathname === '/c') laterFinished.resolve();
+        }
+      },
+    );
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const options = {
+      inputs: [`${upstream.origin}/feed.xml`],
+      pollIntervalMs: 60_000,
+    };
+    const first = await pipeline(
+      new WebSource(options),
+      database.path,
+      checkpoints.path,
+    );
+    try {
+      await assert.rejects(
+        first.run({ signal: AbortSignal.timeout(4000) }),
+        PipelineError,
+      );
+      assert.deepEqual(
+        database.connection
+          .prepare('SELECT pageUrl FROM articles')
+          .all()
+          .map((row) => row.pageUrl),
+        [`${upstream.origin}/a`],
+      );
+      assert(
+        requests.includes('/c'),
+        'a later download must finish while the first is waiting',
+      );
+      assert.equal(
+        requests.filter((path) => path === '/b').length,
+        1,
+        '404 is permanent and must not retry',
+      );
+      failing = false;
+      requests.length = 0;
+      const resumed = await pipeline(
+        new WebSource(options),
+        database.path,
+        checkpoints.path,
+      );
+      assert.equal((await resumed.run())[0]?.count, 2);
+      assert(!requests.includes('/a'), 'resume must skip the committed prefix');
+      assert.deepEqual(
+        database.connection
+          .prepare('SELECT pageUrl FROM articles ORDER BY pageUrl')
+          .all()
+          .map((row) => row.pageUrl),
+        ['a', 'b', 'c'].map((name) => `${upstream.origin}/${name}`),
+      );
+    } finally {
+      laterFinished.resolve();
+    }
+  },
+);
+
+test(
+  'listing, redirect and retry requests share the request-start rate limit',
+  { timeout: 10_000 },
+  async () => {
+    const requests: { path: string; at: number }[] = [];
+    await using upstream = await new HttpServer().start((request, response) => {
+      const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+      const retried = requests.some((item) => item.path === url.pathname);
+      requests.push({ path: url.pathname, at: performance.now() });
+      if (url.pathname === '/feed.xml') {
+        response.setHeader('content-type', 'application/rss+xml');
+        response.end(
+          `<rss><channel>${['a', 'b', 'c'].map((name) => `<item><link>${url.origin}/${name}</link></item>`).join('')}</channel></rss>`,
+        );
+      } else if (url.pathname === '/a') {
+        response.writeHead(302, { location: '/article' }).end();
+      } else if (url.pathname === '/b' && !retried) {
+        response.writeHead(429, { 'retry-after': '1' }).end();
+      } else {
+        response.setHeader('content-type', 'text/html');
+        response.end(
+          `<article><p>Published observations from ${url.pathname} remain complete after download.</p></article>`,
+        );
+      }
+    });
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const ingestion = await pipeline(
+      new WebSource({
+        inputs: [`${upstream.origin}/feed.xml`],
+        pollIntervalMs: 60_000,
+      }),
+      database.path,
+      checkpoints.path,
+    );
+    assert.equal((await ingestion.run())[0]?.count, 3);
+    assert.equal(requests.length, 6);
+    for (let index = 2; index < requests.length; index++) {
+      const first = requests[index - 2];
+      const third = requests[index];
+      assert(first && third);
+      // Measure arrivals at the HTTP boundary; allow small event-loop/transport jitter.
+      assert(
+        third.at - first.at >= 950,
+        'at most two requests may start within one second, including redirects and retries',
+      );
+    }
+    const attempts = requests.filter((item) => item.path === '/b');
+    assert.equal(attempts.length, 2);
+    assert(attempts[0] && attempts[1]);
+    assert(
+      attempts[1].at - attempts[0].at >= 950,
+      'Retry-After must delay the next attempt',
+    );
+  },
+);
+
+test(
+  'a permanent failure cancels streaming downloads and queued requests',
+  { timeout: 10_000 },
+  async () => {
+    const streaming = Promise.withResolvers<void>();
+    const closed = [
+      Promise.withResolvers<void>(),
+      Promise.withResolvers<void>(),
+    ];
+    const requests: string[] = [];
+    let active = 0;
+    await using upstream = await new HttpServer().start(
+      async (request, response) => {
+        const url = new URL(
+          request.url ?? '/',
+          `http://${request.headers.host}`,
+        );
+        requests.push(url.pathname);
+        if (url.pathname === '/feed.xml') {
+          response.setHeader('content-type', 'application/rss+xml');
+          response.end(
+            `<rss><channel>${['a', 'b', 'c', 'd', 'e'].map((name) => `<item><link>${url.origin}/${name}</link></item>`).join('')}</channel></rss>`,
+          );
+        } else if (url.pathname === '/a') {
+          await streaming.promise;
+          response.writeHead(404).end();
+        } else if (url.pathname === '/b' || url.pathname === '/c') {
+          const finished = closed[url.pathname === '/b' ? 0 : 1];
+          assert(finished);
+          response.once('close', () => finished.resolve());
+          response.writeHead(200, { 'content-type': 'text/html' });
+          response.write('<article><p>A download that has not finished');
+          active++;
+          if (active === 2) streaming.resolve();
+        } else response.writeHead(500).end('This request should never start');
+      },
+    );
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const ingestion = await pipeline(
+      new WebSource({
+        inputs: [`${upstream.origin}/feed.xml`],
+        pollIntervalMs: 60_000,
+      }),
+      database.path,
+      checkpoints.path,
+    );
+    const controller = new AbortController();
+    try {
+      await assert.rejects(
+        ingestion.run({ signal: controller.signal }),
+        PipelineError,
+      );
+      await Promise.all(closed.map((item) => item.promise));
+      assert.deepEqual(requests.toSorted(), ['/a', '/b', '/c', '/feed.xml']);
+      assert.equal(
+        controller.signal.aborted,
+        false,
+        'failure cleanup must not require caller cancellation',
+      );
+    } finally {
+      streaming.resolve();
+      controller.abort();
+    }
+  },
+);
+
+test(
+  'a slow first article bounds prefetched results instead of downloading the whole feed',
+  { timeout: 15_000 },
+  async () => {
+    const release = Promise.withResolvers<void>();
+    const prefetched = Promise.withResolvers<void>();
+    const requests: string[] = [];
+    await using upstream = await new HttpServer().start(
+      async (request, response) => {
+        const url = new URL(
+          request.url ?? '/',
+          `http://${request.headers.host}`,
+        );
+        if (url.pathname === '/feed.xml') {
+          response.setHeader('content-type', 'application/rss+xml');
+          response.end(
+            `<rss><channel>${['a', 'b', 'c', 'd', 'e', 'f'].map((name) => `<item><link>${url.origin}/${name}</link></item>`).join('')}</channel></rss>`,
+          );
+        } else {
+          requests.push(url.pathname);
+          if (url.pathname === '/a') await release.promise;
+          response.setHeader('content-type', 'text/html');
+          response.end(
+            `<article><p>Published observations from ${url.pathname} are retained in their complete form.</p></article>`,
+          );
+          if (url.pathname === '/d') prefetched.resolve();
+        }
+      },
+    );
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const ingestion = await pipeline(
+      new WebSource({
+        inputs: [`${upstream.origin}/feed.xml`],
+        pollIntervalMs: 60_000,
+      }),
+      database.path,
+      checkpoints.path,
+    );
+    const controller = new AbortController();
+    const running = ingestion.run({ signal: controller.signal });
+    try {
+      await prefetched.promise;
+      // A full rate-limit window lets an unbounded producer expose extra downloads.
+      await setTimeout(1100);
+      assert.deepEqual(requests.toSorted(), ['/a', '/b', '/c', '/d']);
+      release.resolve();
+      assert.equal((await running)[0]?.count, 6);
+    } finally {
+      release.resolve();
+      controller.abort();
+      await running.catch(() => undefined);
+    }
+  },
+);
 
 test('a failed page keeps committed articles and a fresh pipeline resumes without refetching them', async () => {
   let failing = true;

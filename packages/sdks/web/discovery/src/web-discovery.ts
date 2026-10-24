@@ -16,6 +16,7 @@ import {
   parseJsonFeed,
   parseRdfFeed,
 } from 'feedsmith';
+import { type Got, HTTPError, RequestError } from 'got';
 
 import {
   type SitemapListing,
@@ -44,6 +45,12 @@ export class DiscoveryError extends Error {
 }
 
 export class WebDiscovery {
+  readonly #http: Got;
+
+  constructor(http: Got) {
+    this.#http = http;
+  }
+
   async discover(
     input: string,
     signal: AbortSignal,
@@ -63,25 +70,33 @@ export class WebDiscovery {
         const url = webUrl(job.url, input);
         if (visited.has(url)) continue;
         visited.add(url);
-        const response = await fetch(url, { signal });
+        const response = await this.#http(url, {
+          signal,
+          responseType: 'buffer',
+          // Missing robots and invalid heuristic candidates are allowed below.
+          throwHttpErrors: false,
+        });
         upstream = response.url;
-        const bytes = new Uint8Array(await response.arrayBuffer());
+        const headers = new Headers();
+        for (const [name, value] of Object.entries(response.headers))
+          if (value !== undefined)
+            headers.set(name, Array.isArray(value) ? value.join(', ') : value);
         if (
-          !response.ok &&
+          (!response.ok || response.statusCode === 304) &&
           job.kind !== 'candidate' &&
-          !(job.kind === 'robots' && [404, 410].includes(response.status))
+          !(job.kind === 'robots' && [404, 410].includes(response.statusCode))
         ) {
-          throw new Error(`HTTP ${response.status}`);
+          throw new HTTPError(response);
         }
-        const text = decodeSitemap(bytes);
+        const text = decodeSitemap(response.body);
         if (
           job.kind === 'candidate' &&
           !(
             await defaultExtractFn({
               url: response.url,
               content: text,
-              headers: response.headers,
-              status: response.status,
+              headers,
+              status: response.statusCode,
             })
           ).isValid
         )
@@ -101,7 +116,7 @@ export class WebDiscovery {
             });
           continue;
         }
-        const contentType = response.headers
+        const contentType = headers
           .get('content-type')
           ?.split(';')[0]
           ?.trim()
@@ -152,7 +167,7 @@ export class WebDiscovery {
                     : [],
                 anchorAttributes: kind === 'candidate' ? anchorAttributes : [],
               }),
-              ...discoverUrisFromHeaders(response.headers, {
+              ...discoverUrisFromHeaders(headers, {
                 linkSelectors: selectors,
               }),
             ])
@@ -177,6 +192,8 @@ export class WebDiscovery {
       return [...pages.values()];
     } catch (cause) {
       signal.throwIfAborted();
+      if (cause instanceof RequestError && cause.response)
+        upstream = cause.response.url;
       throw new DiscoveryError(upstream, cause);
     }
   }

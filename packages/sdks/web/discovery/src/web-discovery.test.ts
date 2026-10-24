@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
 
 import { HttpServer } from '@zukhruf/testing/http';
+import got from 'got';
 import { type HttpHandler, http } from 'msw';
 import { setupServer } from 'msw/node';
 
@@ -46,7 +47,7 @@ test('HTML sitemap declarations discover older pages when robots is absent', asy
   });
   assert.deepEqual(
     (
-      await new WebDiscovery().discover(
+      await new WebDiscovery(got).discover(
         upstream.origin,
         AbortSignal.timeout(5000),
       )
@@ -113,7 +114,7 @@ test('JSON alternates are validated without hiding explicit listing errors', asy
   for (const input of ['/', '/headers'])
     assert.deepEqual(
       (
-        await new WebDiscovery().discover(
+        await new WebDiscovery(got).discover(
           `${upstream.origin}${input}`,
           AbortSignal.timeout(5000),
         )
@@ -133,7 +134,7 @@ test('JSON alternates are validated without hiding explicit listing errors', asy
     );
   for (const input of ['/api', '/explicit'])
     await assert.rejects(
-      new WebDiscovery().discover(
+      new WebDiscovery(got).discover(
         `${upstream.origin}${input}`,
         AbortSignal.timeout(5000),
       ),
@@ -194,7 +195,7 @@ test('labeled feed anchors discover pages without accepting ordinary navigation'
     }
   });
   assert.deepEqual(
-    await new WebDiscovery().discover(
+    await new WebDiscovery(got).discover(
       upstream.origin,
       AbortSignal.timeout(5000),
     ),
@@ -212,14 +213,14 @@ test('labeled feed anchors discover pages without accepting ordinary navigation'
     ],
   );
   assert.deepEqual(
-    await new WebDiscovery().discover(
+    await new WebDiscovery(got).discover(
       `${upstream.origin}/empty-only`,
       AbortSignal.timeout(5000),
     ),
     [],
   );
   assert.deepEqual(
-    await new WebDiscovery().discover(
+    await new WebDiscovery(got).discover(
       `${upstream.origin}/false-only`,
       AbortSignal.timeout(5000),
     ),
@@ -280,7 +281,7 @@ test('failures name the upstream and never return partial discovery', async () =
       ),
     );
     await assert.rejects(
-      new WebDiscovery().discover(index, AbortSignal.timeout(5000)),
+      new WebDiscovery(got).discover(index, AbortSignal.timeout(5000)),
       (error: unknown) => {
         assert.ok(error instanceof DiscoveryError);
         assert.equal(error.url, failure.url);
@@ -314,7 +315,7 @@ test('cancellation stops requests and preserves the caller reason', async () => 
     );
     if (stage === 'before') controller.abort(reason);
     await assert.rejects(
-      new WebDiscovery().discover(index, controller.signal),
+      new WebDiscovery(got).discover(index, controller.signal),
       (error: unknown) => error === reason,
     );
     assert.deepEqual(
@@ -356,7 +357,7 @@ test('arbitrary sites retain every candidate path, URL identity and raw hints', 
       ),
     );
     assert.deepEqual(
-      await new WebDiscovery().discover(
+      await new WebDiscovery(got).discover(
         `${origin}/`,
         AbortSignal.timeout(5000),
       ),
@@ -403,7 +404,7 @@ test('direct listings support sitemap, text, RSS, Atom, RDF and JSON Feed with p
       ),
     );
     assert.deepEqual(
-      await new WebDiscovery().discover(
+      await new WebDiscovery(got).discover(
         'https://feeds.example/start',
         AbortSignal.timeout(5000),
       ),
@@ -466,7 +467,7 @@ test('autodiscovery follows HTML base and HTTP feed links despite absent robots,
       ),
     );
     assert.deepEqual(
-      await new WebDiscovery().discover(
+      await new WebDiscovery(got).discover(
         'https://start.example/blog',
         AbortSignal.timeout(5000),
       ),
@@ -503,7 +504,7 @@ test('autodiscovery follows HTML base and HTTP feed links despite absent robots,
           : new Response('absent', { status: 404 }),
       ),
     );
-    const result = new WebDiscovery().discover(
+    const result = new WebDiscovery(got).discover(
       'https://bare.example/',
       AbortSignal.timeout(5000),
     );
@@ -555,7 +556,7 @@ test('traversal follows nested gzip maps, deduplicates candidates and terminates
     }),
   );
   assert.deepEqual(
-    await new WebDiscovery().discover(
+    await new WebDiscovery(got).discover(
       'https://maps.example/index.xml',
       AbortSignal.timeout(5000),
     ),

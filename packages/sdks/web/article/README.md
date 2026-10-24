@@ -3,21 +3,25 @@
 `WebArticle.fetch(url, signal)` downloads one page and extracts its readable content and metadata. It accepts URLs returned by `@workspace/sdk-web-discovery` and has no publisher-specific rules.
 
 ```ts
+import got from 'got';
+
 import { WebArticle } from '@workspace/sdk-web-article';
 import { WebDiscovery } from '@workspace/sdk-web-discovery';
 
 const signal = AbortSignal.timeout(30_000);
-const pages = await new WebDiscovery().discover(
+const pages = await new WebDiscovery(got).discover(
   'https://www.anthropic.com/',
   signal,
 );
-const reader = new WebArticle();
+const reader = new WebArticle(got);
 const page = pages.find((page) => page.url.includes('/news/'));
 if (page) {
   const article = await reader.fetch(page.url, signal);
   // article.content: sanitized HTML; article.textContent: readable plain text
 }
 ```
+
+The constructor takes a Got client. Pass `got.extend(...)` to configure request timeouts, retry policy or request hooks; the SDK adds no separate retry loop or timeout. HTTP retries finish before extraction starts, so parsing failures do not repeat downloads. A 304 response fails because this SDK has no cached representation.
 
 The selection above is an example caller choice. The SDK accepts any HTTP(S) page URL; it does not select publishers or article paths.
 
@@ -44,7 +48,7 @@ The installed export maps, public options/types, and shipped runtime were inspec
 
 | Package / API                                                        | Owns                                                                                                                                |
 | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Native `fetch` and `AbortSignal`                                     | HTTP, redirects, decompression, cancellation                                                                                        |
+| `got` and `AbortSignal`                                              | HTTP, redirects, decompression, selective retries, timeouts and cancellation                                                        |
 | `jsdom` / `JSDOM`                                                    | HTML parsing, HTTP/meta charset decoding, HTML base and link resolution; scripts and subresource loading remain disabled by default |
 | `@mozilla/readability` / `isProbablyReaderable`, `Readability.parse` | Readability detection, boilerplate removal, JSON-LD/Open Graph metadata                                                             |
 | `dompurify` / `sanitize`                                             | Sanitizing extracted HTML without a local tag/attribute allowlist                                                                   |
@@ -55,7 +59,7 @@ The readability pre-check uses `minContentLength: 0` and `minScore: 0` so short 
 
 REJECTED: `@extractus/article-extractor` 9.0.1 as the complete extractor. A probe with no publication metadata and a historical date in the prose returned that historical date as the publication date. Its shipped `findDate` scans body paragraphs; its public options do not disable this inference. A relative canonical declaration was also discarded in the probe.
 
-REJECTED: `JSDOM.fromURL` as the HTTP owner. Its public options and shipped fetch path do not expose caller cancellation. Native fetch plus the `JSDOM` constructor preserves the response URL and byte decoding without replacing jsdom's parser.
+REJECTED: `JSDOM.fromURL` as the HTTP owner. Its public options and shipped fetch path do not expose caller cancellation. Got byte responses plus the `JSDOM` constructor preserves the response URL and byte decoding without replacing jsdom's parser.
 
 Retained local behavior: compose those APIs, preserve HTTP provenance and cancellation, expose declared canonical identity, attribute errors to the failed URL, and close the DOM. There is no custom content scorer, metadata parser, HTML sanitizer, encoding detector, retry loop, or publisher adapter.
 

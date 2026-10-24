@@ -1,5 +1,6 @@
 import { Readability, isProbablyReaderable } from '@mozilla/readability';
 import createDOMPurify from 'dompurify';
+import { type Got, HTTPError, RequestError } from 'got';
 import { convert } from 'html-to-text';
 import { JSDOM } from 'jsdom';
 import type { ConstructorOptions } from 'jsdom';
@@ -17,18 +18,25 @@ export class ArticleError extends Error {
 }
 
 export class WebArticle {
+  readonly #http: Got;
+
+  constructor(http: Got) {
+    this.#http = http;
+  }
+
   async fetch(url: string, signal: AbortSignal) {
     try {
-      const response = await fetch(url, { signal });
+      const response = await this.#http(url, {
+        signal,
+        responseType: 'buffer',
+      });
       url = response.url;
-      if (!response.ok) {
-        await response.body?.cancel();
-        throw new Error(`HTTP ${response.status}`);
-      }
+      // There is no cached representation to extract after a conditional response.
+      if (response.statusCode === 304) throw new HTTPError(response);
       const options: ConstructorOptions = { url };
-      const contentType = response.headers.get('content-type');
+      const contentType = response.headers['content-type'];
       if (contentType) options.contentType = contentType;
-      const dom = new JSDOM(Buffer.from(await response.arrayBuffer()), options);
+      const dom = new JSDOM(response.body, options);
       try {
         if (
           !isProbablyReaderable(dom.window.document, {
@@ -67,6 +75,8 @@ export class WebArticle {
       }
     } catch (cause) {
       signal.throwIfAborted();
+      if (cause instanceof RequestError && cause.response)
+        url = cause.response.url;
       throw new ArticleError(url, cause);
     }
   }
