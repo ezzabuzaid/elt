@@ -195,6 +195,9 @@
       "path": "./packages/sdks/web/discovery"
     },
     {
+      "path": "./packages/sdks/web/links"
+    },
+    {
       "path": "./packages/sdks/web/article"
     },
     {
