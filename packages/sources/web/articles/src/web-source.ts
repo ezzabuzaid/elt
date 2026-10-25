@@ -1,8 +1,11 @@
 import { hash } from 'node:crypto';
+import { open } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { setInterval } from 'node:timers/promises';
 
+import KeyvSqlite from '@keyv/sqlite';
 import got from 'got';
+import { Keyv } from 'keyv';
 import { pMapIterable } from 'p-map';
 import PQueue from 'p-queue';
 import { z } from 'zod';
@@ -25,8 +28,6 @@ import {
   WebArticle,
 } from '@workspace/sdk-web-article';
 import { WebDiscovery } from '@workspace/sdk-web-discovery';
-
-import { HTTPCache } from './http-cache.ts';
 
 const text = { type: 'string' } as const;
 const nullableText = { type: ['string', 'null'] } as const;
@@ -117,7 +118,7 @@ const saved = z.object({
   ),
 });
 
-export class WebSource extends Source<HTTPCache> {
+export class WebSource extends Source {
   readonly identity = 'web-articles';
   protected readonly catalog = catalog;
   readonly #inputs: readonly string[];
@@ -169,7 +170,7 @@ export class WebSource extends Source<HTTPCache> {
     return null;
   }
   protected async open() {
-    return new HTTPCache(this.#cachePath);
+    return new AsyncDisposableStack();
   }
   protected override partitions() {
     return this.#inputs.map((inputUrl) => ({ inputUrl }));
@@ -188,7 +189,7 @@ export class WebSource extends Source<HTTPCache> {
     configuration: CopyConfiguration,
     state: unknown,
     partition: Partition | null,
-    cache: HTTPCache,
+    _context: AsyncDisposable,
     signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const inputUrl = z.string().parse(partition?.inputUrl);
@@ -199,6 +200,17 @@ export class WebSource extends Source<HTTPCache> {
     let diff: unknown = previous.diff;
     let after = previous.after;
     const failed = new Map(previous.failed.map((page) => [page.url, page]));
+    await using resources = new AsyncDisposableStack();
+    await using file = await open(this.#cachePath, 'a', 0o600);
+    await file.chmod(0o600);
+    const cache = new Keyv<unknown>({
+      store: new KeyvSqlite({
+        uri: `sqlite://${this.#cachePath}`,
+        driver: 'node:sqlite',
+        busyTimeout: 30_000,
+      }),
+    });
+    resources.defer(() => cache.disconnect());
     const errors: ArticleError[] = [];
     const stop = new AbortController();
     const onCacheError = (error: unknown) => stop.abort(error);
@@ -334,6 +346,7 @@ export class WebSource extends Source<HTTPCache> {
           };
         }
       }
+      requestSignal.throwIfAborted();
       for await (const message of diffGroupedSnapshot(configuration, [], diff, {
         signal,
       }))

@@ -38,63 +38,43 @@ The extraction fix for 2919 is retained. Checkpoint write optimization is deferr
 
 ## Persistent HTTP cache
 
-`WebSource` requires a caller-owned `cachePath` in an existing directory. Its read context owns a SQLite-backed Keyv instance, shared by discovery and article clients and closed at the end of the read. Installed Keyv 5.6.0 owns namespaces and expiry. Its supported raw-value mode passes response Buffers directly to the SQLite adapter, which stores bodies as BLOBs in a separate table from JSON metadata, with owner-only file permissions. Metadata and body changes commit in one transaction. A conditional body upsert updates only different bytes; a 304 therefore updates policy without writing the body. Expiry, deletion and clearing remove both rows through a foreign key. No new storage package or HTTP validator implementation is added. Cache storage errors cancel the scan, rather than being saved as failed article URLs.
+`WebSource` requires a caller-owned `cachePath` in an existing directory. Each input scan opens Keyv 6.1.0 with the official `@keyv/sqlite` 6.1.0 adapter and explicitly selects `driver: 'node:sqlite'`. The source creates the file with owner-only permissions and closes the cache through Keyv's public `disconnect()` when extraction ends. Cache errors cancel the scan. Got owns validators, response restoration and HTTP cache policy; Keyv and its adapter own serialization, expiry and SQLite storage.
 
-Got sends `Cache-Control: no-cache` on every request so polling checks upstream even when a response is fresh. Its cache restores the original body after 304, honors `Vary` and `no-store`, and falls back to a full download without validators. `diffGroupedSnapshot` then skips extraction for matching committed groups. A warm HTTP cache with fresh checkpoints still extracts and writes all selected articles. The cache is disposable and independent of destination and checkpoint state.
+Got 14.6.6 and cacheable-request 13.0.19 still declare Keyv 5 dependencies; even Got 16.1.0, the latest published release checked, declares Keyv 5. The root manifest therefore scopes Keyv 6.1.0 overrides to Got and cacheable-request. This keeps the HTTP cache on one Keyv implementation without runtime compatibility code or changing Got. The dependency graph is valid; Keyv 5 remains only under ESLint's cache tooling. These overrides go beyond upstream's declared version ranges and are verified against this repository's web source and SDKs, not every Got use case.
 
-Real-process regression tests verify persistence across new Node processes, ETag and Last-Modified, forced revalidation of fresh responses, missing validators, no-store, fresh checkpoints with a warm cache, full refresh, upstream edits, negotiated Markdown/HTML metadata, path validation and cache storage failures. SQLite triggers verify zero body writes on unchanged polls and body updates after upstream edits. Additional real Got/SQLite regressions cover compressed and empty 304 bodies, policy refresh, eviction, expiry, clearing and rollback when a body write fails. Existing cancellation and retry regressions run with the production cache enabled.
+The 35-line lifecycle class, its set/delete forwarding methods, write queue and two drain calls are removed. The official Node driver executes SQLite statements synchronously. The existing cold-write-error and no-store regressions pass without a drain; a new public regression also drops the cache table during 304 revalidation and requires the pipeline to fail while unchanged extraction is skipped. The source retains its error listener and final abort check. `Source.open()` returns an empty `AsyncDisposableStack`, as its contract prescribes when there is no shared upstream snapshot. The cache is transport state, so extraction owns it locally and registers `disconnect()` with a scoped `AsyncDisposableStack`. The cache is neither augmented with disposal methods nor passed through the source context. A configured Got client remains the SDK dependency. Persistence, independent input progress, cancellation and storage failures passed the existing 27-test source suite before and after this ownership change; the Nx typecheck, lint and formatting also passed.
 
-The same 26 articles across nine sites were measured before the body-write optimization on 2026-10-24 with separate cold scans and three alternating repeat rounds per mode. Medians sum each round across all nine inputs. The original HTML-only extraction and listing-only discovery are held fixed in the benchmark to isolate caching from concurrent Markdown and ordinary-link crawling changes. Production caching is used directly; only timing hooks are injected into its storage methods.
+The adapter's public `driverName` was observed as `node:sqlite`, and the runtime probe loaded no SQLite native addon. The old `sqlite3` dependency is removed. The official adapter still declares `better-sqlite3` for its other drivers, so that dependency remains installed even though this configuration does not load it. No dependency payload filtering, schema migration code, custom SQL, body comparison or new HTTP/cache package was added. The existing fingerprint/diff behavior, rate limiter, file permissions and source constructor remain intact.
 
-| Mode                         | Response body bytes | Extractions |        CPU | Wall time |
-| ---------------------------- | ------------------: | ----------: | ---------: | --------: |
-| No HTTP cache                |           1,349,211 |           4 |   940.9 ms |   13.60 s |
-| Memory HTTP cache            |             393,427 |           5 | 1,524.2 ms |   13.01 s |
-| Production SQLite HTTP cache |             393,762 |           5 | 1,384.7 ms |   13.20 s |
+The persistence and error constraints introduced in `b562c7e1` are retained. The change reaches one production cache consumer, its public pipeline tests, dependency declarations and documentation. REJECTED: keeping the lifecycle queue once the native-driver regressions pass. REJECTED: retaining the sqlite3-based adapter or introducing a type cast, runtime compatibility wrapper or Got fork to connect the versions. Self-audit found no added fallback configuration or compatibility branches. No active-scope decision is unresolved.
 
-Production caching saved 70.8% of response body bytes. Every mode still made 37 requests per repeat; caching produced 21 responses with status 304, including 14 articles. All 108 scans retained identical current article records across controls, all 81 repeat scans wrote zero records, and all 84 article 304 responses skipped extraction. Raw HTML changes on dynamic pages can require extraction without changing the saved article. This run establishes bandwidth savings, not a CPU speedup.
+The native-cache upgrade passed `nx run source-web-articles:typecheck` (including formatting and lint) and the complete source, article SDK and discovery SDK suites: 25 + 66 + 29 = 120 tests. Coverage includes persisted responses across processes, ETag and Last-Modified revalidation, compressed bodies, Markdown negotiation, no-store eviction, fresh checkpoints, full refresh and cache write failures on both cold and 304 paths. The upgrade removes 28 net production lines relative to the sqlite3 adapter with its lifecycle class; the added 304 case exercises the public pipeline rather than adapter internals. The final focused rerun verifies that both cold and 304 failures are reported through `PipelineError`; the final typecheck and a subsequent complete 27-test source rerun also passed after the concurrent discovery changes. Temporary upgrade probes, databases and logs were removed.
 
-The persistent cache rewrote 37 serialized entries per repeat: median 1,876,980 payload bytes, 61.37 ms writing and 6.79 ms reading. Those are logical bytes, not physical disk writes. Checkpoints remain 35 full saves and 42,753 JSON bytes per repeat; 2920 stays deferred. The cache closes and reopens on every benchmark scan. No full-site throughput claim is made. Raw results, hashes, assertions and the report are in `outputs/http-cache-measure/production/`; temporary databases and the benchmark process were cleaned up.
+### Earlier sqlite3 adapter comparison — 2026-10-25
 
-Final combined cache verification: all 24 source tests passed, including the four cache regressions and the concurrent ordinary-link discovery regression. The source Nx typecheck and its 23 dependent tasks passed, including lint and formatting. The ordinary-link dead-URL fix landed after measurement; that feature was disabled in the controlled benchmark.
+The following measurements compare the original custom implementation with `@keyv/sqlite` 4.0.8 using `sqlite3`. They are historical results, not performance measurements of the current Keyv 6/node:sqlite configuration.
 
-### Body-write reduction — 2949
+The comparison captured 35 responses (26 article pages plus nine listings) from nine public sites once, with no capture failures. Both adapters received the same 1,347,418 bytes of compressed or uncompressed response bodies. The storage comparison reopened the database each round, read and updated every cached policy, and alternated adapters over 16 measured rounds after two warmups. A separate SQL-trigger pass counted changed row payloads without instrumenting timed rounds.
 
-The same 26 URLs across nine sites were rerun with a cold scan, warmup and five alternating profiled repeat rounds per mode: 135 successful repeat scans. Python and JSON Feed encountered TLS connection failures; their incomplete attempts were excluded and replaced with full site reruns. Production hashes stayed unchanged during each run, and only the cache implementation differs from the last profiling implementation. HTML-only extraction and listing-only discovery remain fixed for comparison.
+| Per 35-response storage pass         |  Custom adapter | Official adapter |
+| ------------------------------------ | --------------: | ---------------: |
+| Median elapsed time                  |        10.39 ms |         13.32 ms |
+| Median process CPU                   |         9.04 ms |         12.65 ms |
+| Logical bytes written                |          15,306 |        1,812,544 |
+| Rows containing body bytes rewritten |               0 |               35 |
+| Database file size after measurement | 1,421,312 bytes |  1,851,392 bytes |
 
-All 105 persistent-cache 304 responses caused zero body writes. All 140 article 304 responses across the two cached modes skipped extraction. Every repeat downloaded the complete selection, wrote zero article records and preserved identical stored articles across modes.
+The pipeline comparison replayed the captured 26 articles through a local HTTP server and one RSS listing. It used the real Pipeline, SQLite destination and checkpoints, four concurrent downloads and the production two-request-starts-per-second limit. Each scan ran in a new Node process. HTML-only extraction was fixed for both adapters; discovery followed the fixture feed. After each adapter's cold scan, five alternating repeat scans revalidated all 27 responses.
 
-| Persistent-cache measure, mean per nine-site repeat |     Before |      After |
-| --------------------------------------------------- | ---------: | ---------: |
-| Body writes                                         |         37 |          8 |
-| Logical payload bytes written                       |  1,877,473 |    255,387 |
-| Direct cache CPU                                    |   38.75 ms |   54.10 ms |
-| Whole-process CPU                                   | 1,058.1 ms | 1,318.7 ms |
+| Per 26-article repeat poll | Custom adapter | Official adapter |
+| -------------------------- | -------------: | ---------------: |
+| Median elapsed time        |   13,043.62 ms |     13,041.04 ms |
+| Median process CPU         |      184.61 ms |        214.81 ms |
+| New article records        |              0 |                0 |
 
-Logical cache writes fell 86.4%. The remaining writes are 37 metadata updates (77,248 bytes) and eight changed bodies (178,139 bytes). Counts come from actual SQLite row changes; bytes are metadata JSON plus changed body BLOBs, not physical disk traffic. The previous values included base64-encoded bodies. Equal 200 bodies also skip body writes. Cache policy, body restoration/decompression, fingerprinting and complete checkpoint saves remain.
+A final confirmation ran the adopted implementation, including write draining, through a cold scan and five more repeat scans. Its median was 13,043.88 ms elapsed and 240.29 ms CPU, with 135/135 repeat responses returning 304 and zero new records. All stored article fields matched the original baseline after excluding load timestamps and normalizing the replay server’s ephemeral port. This confirmation was sequential after the alternating comparison, not an additional alternating sample.
 
-This reduces write amplification, not measured CPU. Direct cache reads increased from 5.10 to 13.79 ms and writes from 27.56 to 40.31 ms; separate Keyv serialization/deserialization fell from 6.10 ms to zero. The adapter now validates metadata, joins the two rows and commits their updates together. Profiles also show Zod schemas rebuilt during get/set; reusing those schemas is captured as 2951. Whole-process comparisons include live-content and GC variation: the current no-cache control averaged 1,339.5 ms, up from 1,054.8 ms in the previous profile. No isolated CPU speedup is claimed.
-
-All 26 source tests and the source Nx typecheck passed, including lint and formatting. Regression triggers reject body rewrites on 304 and verify changed bytes still update. Restart persistence, refreshed policy, compressed/empty bodies, eviction, expiry, clearing and rollback passed. Raw measurements, profiles, assertions and the report are retained under `outputs/http-cache-measure/profile-2949/`, with complete Python/JSON Feed retry results in adjacent folders. Owned test and benchmark processes exited; temporary databases were removed. No full-crawl or native-Markdown throughput measurement was made.
-
-### Validation schema reuse — 2951
-
-The stored-row and incoming-body Zod schemas now live at module scope beside the metadata schema. This is invariant hoisting: build an unchanged validator once, like compiling a regular expression outside a loop. Every read and write still parses its input with the same checks. Storage, transactions and HTTP behavior are unchanged.
-
-The same 26 URLs across nine sites completed all 135 repeat polls, with no failed sites. Only `http-cache.ts` changed from the 2949 implementation, and implementation hashes remained stable during measurement. Means sum each round across all nine sites:
-
-| Persistent-cache measure |     Before |      After |
-| ------------------------ | ---------: | ---------: |
-| Direct cache CPU         |   54.10 ms |   30.98 ms |
-| Cache read CPU           |   13.79 ms |    5.71 ms |
-| Cache write CPU          |   40.31 ms |   25.27 ms |
-| Whole-process CPU        | 1,318.7 ms | 1,067.5 ms |
-
-Direct cache CPU fell 42.7%, with the same 37 reads and 37 writes per combined repeat. Zod initialization/compilation frames under the cache adapter fell from 6.06 to 0.00 sampled milliseconds per repeat; this is sampled elapsed time, not exact CPU. Parsing remains. The no-cache control also fell from 1,339.5 to 883.4 ms, so whole-process improvement cannot be attributed entirely to schema reuse.
-
-All 103 persistent-cache 304 responses caused zero body writes, and all 137 article 304 responses skipped extraction. Every repeat wrote zero article records. Changed upstream 200 bodies increased body writes from 8.0 to 10.4 per repeat and logical cache bytes from 255,387 to 340,632: two additional GitHub bodies per repeat and two Julia Evans bodies across the five repeats. No 304 body rewrite returned.
-
-All 26 source tests and the Nx typecheck, lint and formatting passed. Results, assertions, profiles and the report are under `outputs/http-cache-measure/profile-2951/`; verification logs are under `outputs/http-cache-measure/2951-checks/`. The benchmark process exited and temporary databases were removed. HTML-only extraction and listing-only discovery remained fixed; full-crawl/native-Markdown throughput and physical disk I/O were not measured.
+All 270 repeat responses returned 304. All 26 article records matched between adapters, excluding the destination's load timestamp, and remained unchanged through every repeat. The approximately 3 ms storage-pass difference does not justify custom SQLite storage for this workload. CPU measurements varied across runs; the timing comparison does not establish a CPU speedup for either adapter. SQL payload bytes are logical writes, not physical disk traffic or SSD wear. This was controlled replay of real response bytes, not live-network timing, full-site crawling or a native-Markdown throughput benchmark. Temporary captures, benchmark scripts, databases and processes were cleaned up after verification.
 
 ## State, identity and failure behavior
 
