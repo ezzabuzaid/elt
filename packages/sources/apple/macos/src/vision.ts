@@ -31,10 +31,13 @@ export class Vision implements AsyncDisposable {
 
   constructor(helper: string) {
     this.#helper = helper;
-    this.#workers = Array.from({ length: this.#queue.concurrency }, () => ({
-      worker: new VisionWorker(helper),
-      busy: false,
-    }));
+    let previous = Promise.resolve();
+    this.#workers = Array.from({ length: this.#queue.concurrency }, () => {
+      const worker = new VisionWorker(helper, previous);
+      // Keep the chain ordered even if a waiting worker exits before its turn.
+      previous = previous.then(() => worker.ready).catch(() => undefined);
+      return { worker, busy: false };
+    });
   }
 
   get ready(): Promise<void> {
@@ -56,7 +59,10 @@ export class Vision implements AsyncDisposable {
           await slot.worker.close();
           this.#stopped.signal.throwIfAborted();
           signal?.throwIfAborted();
-          slot.worker = new VisionWorker(this.#helper);
+          slot.worker = new VisionWorker(
+            this.#helper,
+            Promise.allSettled(this.#workers.map(({ worker }) => worker.ready)),
+          );
         }
         signal?.addEventListener('abort', abort, { once: true });
         const text = await slot.worker.read(path);
@@ -90,7 +96,7 @@ class VisionWorker {
   #stderr = '';
   dead = false;
 
-  constructor(helper: string) {
+  constructor(helper: string, after: Promise<unknown>) {
     this.#child = spawn(helper);
     this.#lines = createInterface({ input: this.#child.stdout })[
       Symbol.asyncIterator
@@ -120,31 +126,35 @@ class VisionWorker {
       z.object({ ready: z.literal(true) }).parse(value);
     });
     this.ready.catch(() => undefined);
+    // Concurrent cold starts compile identical native models independently.
+    void after.then(() => {
+      if (!this.dead) this.#child.stdin.write('\n');
+    });
   }
 
   async #next(): Promise<unknown> {
-    // Preserve the previous per-image osascript deadline, including warm-up.
-    const deadline = setTimeout(() => this.kill(), 120_000);
-    try {
-      const next = await Promise.race([
-        this.#lines.next(),
-        this.#closed.then((error) => {
-          throw error;
-        }),
-      ]);
-      if (next.done) throw await this.#closed;
-      return JSON.parse(next.value);
-    } finally {
-      clearTimeout(deadline);
-    }
+    const next = await Promise.race([
+      this.#lines.next(),
+      this.#closed.then((error) => {
+        throw error;
+      }),
+    ]);
+    if (next.done) throw await this.#closed;
+    return JSON.parse(next.value);
   }
 
   async read(path: string): Promise<string | null> {
     await this.ready;
-    this.#child.stdin.write(JSON.stringify({ path: resolve(path) }) + '\n');
-    const result = response.parse(await this.#next());
-    if ('error' in result) throw new Error(result.error);
-    return result.text;
+    // Model compilation can outlast an image read; only time a ready worker.
+    const deadline = setTimeout(() => this.kill(), 120_000);
+    try {
+      this.#child.stdin.write(JSON.stringify({ path: resolve(path) }) + '\n');
+      const result = response.parse(await this.#next());
+      if ('error' in result) throw new Error(result.error);
+      return result.text;
+    } finally {
+      clearTimeout(deadline);
+    }
   }
 
   kill(): void {

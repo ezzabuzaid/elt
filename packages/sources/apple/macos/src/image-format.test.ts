@@ -105,6 +105,193 @@ test('the warmed parser preserves OCR, concurrent responses and image errors, an
   assert.ok(pids.slice(1).every((pid) => recovered.includes(pid)));
 });
 
+test('the parser waits for the first worker to warm before warming the others', async (t) => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'vision-startup-order-'),
+  );
+  const path = join(directory.path, 'note.png');
+  await image(path, 'Meet tomorrow');
+  await using vision = new Vision(
+    fileURLToPath(new URL('vision-worker', import.meta.url)),
+  );
+  const pids = await workerPids();
+  if (pids.length < 2) return t.skip('This device has a single OCR worker');
+  const first = pids[0]!;
+  process.kill(first, 'SIGSTOP');
+  const parser = new MacOSDocumentParser([new ImageFormat(vision)]);
+  let completed = 0;
+  const reads = Promise.all(
+    pids.map(async () => {
+      const text = await parser.parse(path);
+      completed++;
+      return text;
+    }),
+  );
+  reads.catch(() => undefined);
+  try {
+    // A stopped initializer models slow native compilation without clearing
+    // Apple's shared cache. No other worker should race that compilation.
+    await setTimeout(5_000);
+    assert.equal(completed, 0, 'other workers must wait for the initializer');
+  } finally {
+    process.kill(first, 'SIGCONT');
+    assert.deepEqual(
+      await reads,
+      pids.map(() => 'Meet tomorrow'),
+    );
+  }
+  await vision.ready;
+  assert.deepEqual(await workerPids(), pids);
+});
+
+test('cancelling a waiting initializer does not release later workers or its replacement early', async (t) => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'vision-startup-cancel-'),
+  );
+  const path = join(directory.path, 'note.png');
+  await image(path, 'Meet tomorrow');
+  await using vision = new Vision(
+    fileURLToPath(new URL('vision-worker', import.meta.url)),
+  );
+  const pids = await workerPids();
+  if (pids.length < 3)
+    return t.skip('This device has fewer than three OCR workers');
+  const first = pids[0]!;
+  process.kill(first, 'SIGSTOP');
+  const format = new ImageFormat(vision);
+  const stop = new AbortController();
+  let completed = 0;
+  const reads = pids.map((_, index) => {
+    const read = format.text(path, index === 1 ? stop.signal : undefined);
+    return index === 1
+      ? assert.rejects(read, { name: 'AbortError' })
+      : read.then((text) => {
+          completed++;
+          assert.equal(text, 'Meet tomorrow');
+        });
+  });
+  let results = Promise.all(reads);
+  results.catch(() => undefined);
+  try {
+    stop.abort();
+    await reads[1];
+    reads.push(
+      format.text(path).then((text) => {
+        completed++;
+        assert.equal(text, 'Meet tomorrow');
+      }),
+    );
+    results = Promise.all(reads);
+    results.catch(() => undefined);
+    await setTimeout(5_000);
+    assert.equal(
+      completed,
+      0,
+      'cancellation must not bypass the slow initializer',
+    );
+  } finally {
+    process.kill(first, 'SIGCONT');
+    await results;
+  }
+  assert.equal(completed, pids.length);
+  const recovered = await workerPids();
+  assert.equal(recovered.length, pids.length);
+  assert.ok(!recovered.includes(pids[1]!));
+  assert.ok(
+    pids
+      .filter((_, index) => index !== 1)
+      .every((pid) => recovered.includes(pid)),
+  );
+});
+
+test('the parser waits for slow OCR warm-up beyond the image deadline and reuses its workers', async (t) => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'vision-cold-start-'),
+  );
+  const path = join(directory.path, 'note.png');
+  await image(path, 'Meet tomorrow');
+  // Apple's shared compiler cache cannot be reset in a test. Hold real workers
+  // before readiness and advance only the host clock through the cold-start delay.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    await using vision = new Vision(
+      fileURLToPath(new URL('vision-worker', import.meta.url)),
+    );
+    const ready = vision.ready;
+    let warmed = false;
+    ready.then(
+      () => {
+        warmed = true;
+      },
+      () => undefined,
+    );
+    const pids = await workerPids();
+    assert.ok(pids.length > 0);
+    for (const pid of pids) process.kill(pid, 'SIGSTOP');
+    try {
+      assert.equal(warmed, false, 'workers must still be warming up');
+      t.mock.timers.tick(120_001);
+    } finally {
+      for (const pid of pids) process.kill(pid, 'SIGCONT');
+    }
+    await ready;
+    const parser = new MacOSDocumentParser([new ImageFormat(vision)]);
+    assert.equal(await parser.parse(path), 'Meet tomorrow');
+    assert.deepEqual(await workerPids(), pids);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('an image still times out after warm-up and the next read replaces its worker', async (t) => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'vision-timeout-'),
+  );
+  const path = join(directory.path, 'note.png');
+  await image(path, 'Meet tomorrow');
+  await using vision = new Vision(
+    fileURLToPath(new URL('vision-worker', import.meta.url)),
+  );
+  await vision.ready;
+  const pids = await workerPids();
+  const format = new ImageFormat(vision);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const pid of pids) process.kill(pid, 'SIGSTOP');
+  const failed = assert.rejects(
+    format.text(path),
+    /Vision worker exited \(SIGTERM\)/,
+  );
+  try {
+    // Let the ready worker start the read before advancing its deadline.
+    await Promise.resolve();
+    t.mock.timers.tick(120_001);
+  } finally {
+    for (const pid of pids) process.kill(pid, 'SIGCONT');
+    t.mock.timers.reset();
+  }
+  await failed;
+  assert.equal(await format.text(path), 'Meet tomorrow');
+  const recovered = await workerPids();
+  assert.equal(recovered.length, pids.length);
+  assert.equal(
+    recovered.filter((pid) => pids.includes(pid)).length,
+    pids.length - 1,
+  );
+});
+
+test('disposing OCR during warm-up rejects readiness and stops every worker', async () => {
+  await using vision = new Vision(
+    fileURLToPath(new URL('vision-worker', import.meta.url)),
+  );
+  const ready = assert.rejects(
+    vision.ready,
+    /Vision worker exited \(SIGTERM\)/,
+  );
+  await vision[Symbol.asyncDispose]();
+  await ready;
+  assert.deepEqual(await workerPids(), []);
+});
+
 test('the ready parser preserves automatically detected multilingual text in all reused workers', async () => {
   await using directory = await mkdtempDisposable(
     join(tmpdir(), 'vision-languages-'),
