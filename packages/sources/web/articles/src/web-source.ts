@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { setInterval } from 'node:timers/promises';
 
 import KeyvSqlite from '@keyv/sqlite';
-import got from 'got';
+import got, { HTTPError } from 'got';
 import { Keyv } from 'keyv';
 import { pMapIterable } from 'p-map';
 import PQueue from 'p-queue';
@@ -27,7 +27,11 @@ import {
   MarkdownExtraction,
   WebArticle,
 } from '@workspace/sdk-web-article';
-import { WebDiscovery } from '@workspace/sdk-web-discovery';
+import {
+  type LinkedPage,
+  WebDiscovery,
+  WebLinks,
+} from '@workspace/sdk-web-discovery';
 
 const text = { type: 'string' } as const;
 const nullableText = { type: ['string', 'null'] } as const;
@@ -109,11 +113,13 @@ const catalog = new Catalog([
 const saved = z.object({
   after: z.string().nullable(),
   diff: z.unknown(),
-  failed: z.array(
+  pending: z.array(
     z.object({
       url: z.url({ protocol: /^https?$/ }),
       listingUrl: z.url({ protocol: /^https?$/ }),
       lastModified: z.string().nullable(),
+      depth: z.number().int().nonnegative(),
+      follow: z.boolean(),
     }),
   ),
 });
@@ -195,11 +201,13 @@ export class WebSource extends Source {
     const inputUrl = z.string().parse(partition?.inputUrl);
     const previous =
       state === null
-        ? { after: null, diff: null, failed: [] }
+        ? { after: null, diff: null, pending: [] }
         : saved.parse(state);
     let diff: unknown = previous.diff;
     let after = previous.after;
-    const failed = new Map(previous.failed.map((page) => [page.url, page]));
+    const pending = new Map<string, LinkedPage>(
+      previous.pending.map((page) => [page.url, page]),
+    );
     await using resources = new AsyncDisposableStack();
     await using file = await open(this.#cachePath, 'a', 0o600);
     await file.chmod(0o600);
@@ -235,116 +243,177 @@ export class WebSource extends Source {
           ],
         },
       });
-      const pages = await new WebDiscovery(http).discover(
+      await using links = await WebLinks.open({ maxDepth: 3, maxPages: 100 });
+      const pages = await new WebDiscovery(http, links).discover(
         inputUrl,
         requestSignal,
       );
-      const reader = new WebArticle(
-        [new MarkdownExtraction(), new HTMLExtraction()],
-        http,
-      );
-      const pendingPages = [
+      const listed = new Map(pages.map((page) => [page.url, page]));
+      const includes = (url: string) =>
+        this.#include === undefined ||
+        this.#include.some((pattern) => pattern.test(url));
+      let batch: LinkedPage[] = [
         ...new Map(
-          [...previous.failed, ...pages].map((page) => [page.url, page]),
+          [
+            ...previous.pending,
+            ...pages.map((page) => ({ ...page, depth: 0, follow: true })),
+          ].map((page) => [page.url, page]),
         ).values(),
       ]
         .toSorted((a, b) => (a.url < b.url ? -1 : a.url > b.url ? 1 : 0))
         .filter(
           (page) =>
-            (this.#include === undefined ||
-              this.#include.some((pattern) => pattern.test(page.url))) &&
-            (previous.after === null ||
-              page.url > previous.after ||
-              failed.has(page.url)),
+            pending.has(page.url) ||
+            (includes(page.url) &&
+              (previous.after === null || page.url > previous.after)),
         );
-      for await (const result of pMapIterable(
-        pendingPages,
-        async (page) => {
+      const scheduled = new Set([
+        ...pages.filter((page) => includes(page.url)).map((page) => page.url),
+        ...batch.map((page) => page.url),
+      ]);
+      const attempted = new Set<string>();
+      const collect = async () => {
+        for (const page of await links.take(http, scheduled, requestSignal)) {
+          scheduled.add(page.url);
+          if (includes(page.url) || page.follow)
+            pending.set(page.url, { ...page, ...listed.get(page.url) });
+        }
+      };
+      await collect();
+      batch = [
+        ...new Map(
+          [...pending.values(), ...batch].map((page) => [page.url, page]),
+        ).values(),
+      ];
+      batch.sort((a, b) => (a.url < b.url ? -1 : a.url > b.url ? 1 : 0));
+      while (batch.length > 0) {
+        for await (const result of pMapIterable(
+          batch,
+          async (page) => {
+            try {
+              const reader = new WebArticle(
+                includes(page.url)
+                  ? [new MarkdownExtraction(), new HTMLExtraction()]
+                  : [new HTMLExtraction()],
+                http.extend({
+                  hooks: {
+                    afterResponse: [
+                      (response) =>
+                        page.follow
+                          ? links.collect(response, page.depth)
+                          : response,
+                    ],
+                  },
+                }),
+              );
+              return {
+                page,
+                download: await reader.download(page.url, requestSignal),
+              };
+            } catch (error) {
+              requestSignal.throwIfAborted();
+              if (!(error instanceof ArticleError)) throw error;
+              if (
+                page.depth > 0 &&
+                error.cause instanceof HTTPError &&
+                [404, 410].includes(error.cause.response.statusCode)
+              )
+                return { page, download: null };
+              return { page, error };
+            }
+          },
+          { concurrency: 4 },
+        )) {
+          const { page } = result;
+          attempted.add(page.url);
+          if (listed.has(page.url) && (after === null || page.url > after))
+            after = page.url;
           try {
-            return {
-              page,
-              download: await reader.download(page.url, requestSignal),
-            };
+            if (result.error) throw result.error;
+            const { download } = result;
+            if (download === null || !includes(page.url)) {
+              pending.delete(page.url);
+              await collect();
+              yield {
+                type: 'STATE',
+                stream: configuration.stream.name,
+                state: { after, diff, pending: [...pending.values()] },
+              };
+              continue;
+            }
+            for await (const message of diffGroupedSnapshot(
+              configuration,
+              [
+                {
+                  key: page.url,
+                  fingerprint:
+                    download.fingerprint === null
+                      ? null
+                      : hash(
+                          'sha256',
+                          JSON.stringify([
+                            download.fingerprint,
+                            page.listingUrl,
+                            page.lastModified,
+                          ]),
+                        ),
+                  async *records() {
+                    const article = await download.extract();
+                    yield* validateRecords(
+                      configuration.stream,
+                      article === null
+                        ? []
+                        : [
+                            {
+                              ...article,
+                              inputUrl,
+                              pageUrl: page.url,
+                              listingUrl: page.listingUrl,
+                              lastModified: page.lastModified,
+                              // Readability's public result permits undefined metadata; stream cells use null.
+                              title: article.title ?? null,
+                              byline: article.byline ?? null,
+                              publishedTime: article.publishedTime ?? null,
+                              excerpt: article.excerpt ?? null,
+                              siteName: article.siteName ?? null,
+                              lang: article.lang ?? null,
+                              dir: article.dir ?? null,
+                            },
+                          ],
+                      'Web',
+                    );
+                  },
+                },
+              ],
+              diff,
+              { continues: true, signal },
+            )) {
+              if ('type' in message && message.type === 'STATE') {
+                diff = message.state;
+                pending.delete(page.url);
+                await collect();
+                yield {
+                  ...message,
+                  state: { after, diff, pending: [...pending.values()] },
+                };
+              } else yield message;
+            }
           } catch (error) {
             requestSignal.throwIfAborted();
             if (!(error instanceof ArticleError)) throw error;
-            return { page, error };
+            pending.set(page.url, page);
+            errors.push(error);
+            await collect();
+            yield {
+              type: 'STATE',
+              stream: configuration.stream.name,
+              state: { after, diff, pending: [...pending.values()] },
+            };
           }
-        },
-        { concurrency: 4 },
-      )) {
-        const { page } = result;
-        if (after === null || page.url > after) after = page.url;
-        try {
-          if (result.error) throw result.error;
-          const { download } = result;
-          for await (const message of diffGroupedSnapshot(
-            configuration,
-            [
-              {
-                key: page.url,
-                fingerprint:
-                  download.fingerprint === null
-                    ? null
-                    : hash(
-                        'sha256',
-                        JSON.stringify([
-                          download.fingerprint,
-                          page.listingUrl,
-                          page.lastModified,
-                        ]),
-                      ),
-                async *records() {
-                  const article = await download.extract();
-                  yield* validateRecords(
-                    configuration.stream,
-                    article === null
-                      ? []
-                      : [
-                          {
-                            ...article,
-                            inputUrl,
-                            pageUrl: page.url,
-                            listingUrl: page.listingUrl,
-                            lastModified: page.lastModified,
-                            // Readability's public result permits undefined metadata; stream cells use null.
-                            title: article.title ?? null,
-                            byline: article.byline ?? null,
-                            publishedTime: article.publishedTime ?? null,
-                            excerpt: article.excerpt ?? null,
-                            siteName: article.siteName ?? null,
-                            lang: article.lang ?? null,
-                            dir: article.dir ?? null,
-                          },
-                        ],
-                    'Web',
-                  );
-                },
-              },
-            ],
-            diff,
-            { continues: true, signal },
-          )) {
-            if ('type' in message && message.type === 'STATE') {
-              diff = message.state;
-              failed.delete(page.url);
-              yield {
-                ...message,
-                state: { after, diff, failed: [...failed.values()] },
-              };
-            } else yield message;
-          }
-        } catch (error) {
-          requestSignal.throwIfAborted();
-          if (!(error instanceof ArticleError)) throw error;
-          failed.set(page.url, page);
-          errors.push(error);
-          yield {
-            type: 'STATE',
-            stream: configuration.stream.name,
-            state: { after, diff, failed: [...failed.values()] },
-          };
         }
+        batch = [...pending.values()].filter(
+          (page) => !attempted.has(page.url),
+        );
       }
       requestSignal.throwIfAborted();
       for await (const message of diffGroupedSnapshot(configuration, [], diff, {
@@ -356,7 +425,7 @@ export class WebSource extends Source {
             state: {
               after: null,
               diff: message.state,
-              failed: [...failed.values()],
+              pending: [...pending.values()],
             },
           };
         else yield message;

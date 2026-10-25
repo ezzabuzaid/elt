@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "@crawlee/core": "3.18.2",
     "@crawlee/utils": "3.18.2",
     "@workspace/codec-sitemap": "0.0.1",
     "fast-xml-parser": "^5.11.1",
