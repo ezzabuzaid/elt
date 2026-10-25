@@ -49,11 +49,9 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
         );
     }
   });
-  await using database = await new Sqlite().database();
   const source = new WebSource({
     inputs: [upstream.origin],
     pollIntervalMs: 60_000,
-    cachePath: `${database.path}.http-cache`,
   });
   const stream = (await source.discover()).get('articles');
   const incremental = new CopyConfiguration(stream, {
@@ -148,7 +146,6 @@ test('restarted source keeps unchanged rows and detects listing metadata and art
     const source = new WebSource({
       inputs: [`${upstream.origin}/sitemap.xml`],
       pollIntervalMs: 60_000,
-      cachePath: `${database.path}.http-cache`,
     });
     const destination = new SQLiteDestination({ path: database.path });
     const history = new SQLiteSyncHistory();

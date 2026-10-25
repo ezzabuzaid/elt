@@ -42,7 +42,6 @@ test('native articles persist clean text and refresh independently changing HTML
     new WebSource({
       inputs: [`${upstream.origin}/feed.xml`],
       pollIntervalMs: 60_000,
-      cachePath: `${database.path}.http-cache`,
     }),
     database.path,
     checkpoints.path,
@@ -88,7 +87,6 @@ test('archive articles persist Markdown and an unchanged rerun writes no records
   const source = new WebSource({
     inputs: [upstream.origin],
     pollIntervalMs: 60_000,
-    cachePath: `${database.path}.http-cache`,
   });
   const ingestion = await pipeline(source, database.path, checkpoints.path);
   assert.equal((await ingestion.run())[0]?.count, 1);
@@ -130,7 +128,6 @@ test('the pipeline prefers native Markdown, keeps HTML fallback and writes nothi
     new WebSource({
       inputs: [`${upstream.origin}/feed.xml`],
       pollIntervalMs: 60_000,
-      cachePath: `${database.path}.http-cache`,
     }),
     database.path,
     checkpoints.path,
@@ -210,7 +207,6 @@ test('temporary listing and article failures recover within one pipeline run', a
     new WebSource({
       inputs: [`${upstream.origin}/feed.xml`],
       pollIntervalMs: 60_000,
-      cachePath: `${database.path}.http-cache`,
     }),
     database.path,
     checkpoints.path,
@@ -267,7 +263,6 @@ test(
     const options = {
       inputs: [`${upstream.origin}/feed.xml`],
       pollIntervalMs: 60_000,
-      cachePath: `${database.path}.http-cache`,
     };
     const first = await pipeline(
       new WebSource(options),
@@ -382,7 +377,6 @@ test(
     const options = {
       inputs: [`${upstream.origin}/feed.json`],
       pollIntervalMs: 60_000,
-      cachePath: `${database.path}.http-cache`,
     };
     const first = await pipeline(
       new WebSource(options),
@@ -498,7 +492,6 @@ test(
     const options = {
       inputs: [`${upstream.origin}/feed.xml`],
       pollIntervalMs: 60_000,
-      cachePath: `${database.path}.http-cache`,
     };
     for (const count of [2, 1]) {
       const ingestion = await pipeline(
@@ -579,7 +572,6 @@ test(
       new WebSource({
         inputs: [`${upstream.origin}/feed.xml`],
         pollIntervalMs: 60_000,
-        cachePath: `${database.path}.http-cache`,
       }),
       database.path,
       checkpoints.path,
@@ -651,7 +643,6 @@ test(
       new WebSource({
         inputs: [`${upstream.origin}/feed.xml`],
         pollIntervalMs: 60_000,
-        cachePath: `${database.path}.http-cache`,
       }),
       database.path,
       checkpoints.path,
@@ -711,7 +702,6 @@ test(
       new WebSource({
         inputs: [`${upstream.origin}/feed.xml`],
         pollIntervalMs: 60_000,
-        cachePath: `${database.path}.http-cache`,
       }),
       database.path,
       checkpoints.path,
@@ -765,7 +755,6 @@ test('a completed scan retains successful articles and retries failures on the n
   const options = {
     inputs: [`${upstream.origin}/feed.json`],
     pollIntervalMs: 60_000,
-    cachePath: `${database.path}.http-cache`,
   };
   const first = await pipeline(
     new WebSource(options),
@@ -842,7 +831,6 @@ test(
     const options = {
       inputs: [`${upstream.origin}/feed.xml`],
       pollIntervalMs: 60_000,
-      cachePath: `${database.path}.http-cache`,
     };
     const first = await pipeline(
       new WebSource(options),
@@ -917,7 +905,6 @@ test('chosen websites and feeds persist article metadata, make unchanged reruns 
     const options = {
       inputs: [`${upstream.origin}${input}`],
       pollIntervalMs: 60_000,
-      cachePath: `${database.path}.http-cache`,
     };
     const first = await pipeline(
       new WebSource(options),
@@ -1047,7 +1034,6 @@ test('feed rollover retains articles and independent inputs keep their own progr
     new WebSource({
       inputs: [`${upstream.origin}/two.json`, `${upstream.origin}/one.json`],
       pollIntervalMs: 60_000,
-      cachePath: `${database.path}.http-cache`,
     }),
     database.path,
     checkpoints.path,
@@ -1069,7 +1055,6 @@ test('feed rollover retains articles and independent inputs keep their own progr
         `${upstream.origin}/three.json`,
       ],
       pollIntervalMs: 60_000,
-      cachePath: `${database.path}.http-cache`,
     }),
     database.path,
     checkpoints.path,
@@ -1119,7 +1104,6 @@ test('a failed full refresh tries later articles and preserves the last complete
   const source = new WebSource({
     inputs: [`${upstream.origin}/sitemap.xml`],
     pollIntervalMs: 60_000,
-    cachePath: `${database.path}.http-cache`,
   });
   const destination = new SQLiteDestination({ path: database.path });
   const history = new SQLiteSyncHistory();
@@ -1192,7 +1176,6 @@ test(
       new WebSource({
         inputs: [`${upstream.origin}/feed.xml`],
         pollIntervalMs: 100,
-        cachePath: `${database.path}.http-cache`,
       }),
       database.path,
       checkpoints.path,
@@ -1254,7 +1237,6 @@ test('explicit URL patterns restrict article downloads and preserve matching que
     inputs: [`${upstream.origin}/feed.json`],
     include: [`${upstream.origin}/articles/*`],
     pollIntervalMs: 60_000,
-    cachePath: `${database.path}.http-cache`,
   };
   const ingestion = await pipeline(
     new WebSource(options),

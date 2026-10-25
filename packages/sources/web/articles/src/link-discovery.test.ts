@@ -57,7 +57,6 @@ test('ordinary links reach unlisted articles while feed pages and unchanged reru
     inputs: [upstream.origin],
     include: [`${upstream.origin}/articles/*`],
     pollIntervalMs: 60_000,
-    cachePath: `${database.path}.http-cache`,
   });
   const destination = new SQLiteDestination({ path: database.path });
   const history = new SQLiteSyncHistory();
@@ -140,7 +139,6 @@ test('new URLs before the cursor survive interruption without downloading the pa
     inputs: [upstream.origin],
     include: [`${upstream.origin}/articles/*`],
     pollIntervalMs: 60000,
-    cachePath: `${database.path}.http-cache`,
   });
   const destination = new SQLiteDestination({ path: database.path }),
     history = new SQLiteSyncHistory();
@@ -241,7 +239,6 @@ test('Markdown companion responses discover articles and cap secondary feed pagi
     inputs: [upstream.origin],
     include: [`${upstream.origin}/articles/*`],
     pollIntervalMs: 60000,
-    cachePath: `${database.path}.http-cache`,
   });
   const destination = new SQLiteDestination({ path: database.path }),
     history = new SQLiteSyncHistory();

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { stat } from 'node:fs/promises';
+import { mkdtempDisposable, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { gzipSync } from 'node:zlib';
@@ -8,15 +11,13 @@ import { gzipSync } from 'node:zlib';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
-import { WebSource } from './web-source.ts';
-
 // A new Node process for each scan proves the production cache survives restart.
 const scan = `
-import { WebSource } from '@workspace/source-web-articles/web-source';
-import { Connection, Copy, Pipeline } from '@workspace/elt';
-import { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } from '@workspace/elt-sqlite';
-const [input, path, checkpoints, cachePath, id, syncMode] = process.argv.slice(1);
-const source = new WebSource({ inputs: [input], cachePath, pollIntervalMs: 60000 });
+import { WebSource } from ${JSON.stringify(import.meta.resolve('@workspace/source-web-articles/web-source'))};
+import { Connection, Copy, Pipeline } from ${JSON.stringify(import.meta.resolve('@workspace/elt'))};
+import { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } from ${JSON.stringify(import.meta.resolve('@workspace/elt-sqlite'))};
+const [input, path, checkpoints, id, syncMode] = process.argv.slice(1);
+const source = new WebSource({ inputs: [input], pollIntervalMs: 60000 });
 const destination = new SQLiteDestination({ path });
 const history = new SQLiteSyncHistory();
 await history.install([destination]);
@@ -29,6 +30,45 @@ const result = await new Pipeline({ history, connections: [new Connection({
 })] }).run();
 process.stdout.write(JSON.stringify(result.map(row => row.count)));
 `;
+
+test('HTTP resource scope exit cancels queued requests without caller cancellation', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    assert.ok(request.url);
+    requests.push(request.url);
+    response.end('ready');
+  });
+  await using directory = await mkdtempDisposable(join(tmpdir(), 'web-http-'));
+  await promisify(execFile)(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      `
+import assert from 'node:assert/strict';
+import { setImmediate } from 'node:timers/promises';
+import { webHttp } from ${JSON.stringify(new URL('./web-http.js', import.meta.url).href)};
+const [origin] = process.argv.slice(1);
+const rejected = [];
+{
+  await using client = await webHttp(undefined);
+  assert.equal(client.signal.aborted, false);
+  await client.http(origin + '/first', { signal: client.signal });
+  await client.http(origin + '/second', { signal: client.signal });
+  rejected.push(assert.rejects(
+    client.http(origin + '/queued', { signal: client.signal }),
+    { name: 'AbortError' },
+  ));
+  await setImmediate();
+}
+await Promise.all(rejected);
+`,
+      upstream.origin,
+    ],
+    { cwd: directory.path, timeout: 10_000 },
+  );
+  assert.deepEqual(requests, ['/first', '/second']);
+});
 
 test('production cache survives process restarts, revalidates fresh responses and rebuilds fresh checkpoints', async () => {
   let revision = 1;
@@ -82,8 +122,8 @@ test('production cache survives process restarts, revalidates fresh responses an
   });
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
-  await using cache = await new Sqlite().database();
-  const cachePath = cache.path;
+  await using directory = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  const cachePath = join(directory.path, '.cache/web-http.sqlite');
   async function run(
     checkpointPath = checkpoints.path,
     syncMode = 'incremental',
@@ -98,11 +138,10 @@ test('production cache survives process restarts, revalidates fresh responses an
         `${upstream.origin}/feed.xml`,
         database.path,
         checkpointPath,
-        cachePath,
         'articles',
         syncMode,
       ],
-      { timeout: 30000 },
+      { cwd: directory.path, timeout: 30000 },
     );
     assert.equal(requests.length, 6);
     return JSON.parse(result.stdout);
@@ -114,9 +153,14 @@ test('production cache survives process restarts, revalidates fresh responses an
     ),
   );
   assert.equal((await stat(cachePath)).mode & 0o777, 0o600);
+  assert.equal(
+    (await stat(join(directory.path, '.cache'))).mode & 0o777,
+    0o700,
+  );
+  using cache = new DatabaseSync(cachePath);
   freshness = 7200;
   assert.deepEqual(await run(), [0]);
-  for (const row of cache.connection.prepare('SELECT value FROM keyv').all()) {
+  for (const row of cache.prepare('SELECT value FROM keyv').all()) {
     assert(typeof row.value === 'string');
     assert.match(row.value, /public, max-age=7200/);
   }
@@ -144,7 +188,7 @@ test('production cache survives process restarts, revalidates fresh responses an
   storable = false;
   assert.deepEqual(await run(), [0]);
   assert.equal(
-    cache.connection.prepare('SELECT count(*) AS count FROM keyv').get()?.count,
+    cache.prepare('SELECT count(*) AS count FROM keyv').get()?.count,
     0,
   );
   assert.deepEqual(await run(), [0]);
@@ -186,6 +230,7 @@ test('persistent HTTP cache respects negotiated Markdown and HTML metadata', asy
   });
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
+  await using directory = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   for (const expected of [1, 0, 1]) {
     const result = await promisify(execFile)(
       process.execPath,
@@ -196,11 +241,10 @@ test('persistent HTTP cache respects negotiated Markdown and HTML metadata', asy
         `${upstream.origin}/feed.xml`,
         database.path,
         checkpoints.path,
-        `${database.path}.http-cache`,
         'articles',
         'incremental',
       ],
-      { timeout: 30000 },
+      { cwd: directory.path, timeout: 30000 },
     );
     assert.deepEqual(JSON.parse(result.stdout), [expected]);
     const article = database.connection
@@ -213,26 +257,14 @@ test('persistent HTTP cache respects negotiated Markdown and HTML metadata', asy
   }
 });
 
-test('HTTP cache requires a persistent file path', () => {
-  for (const cachePath of ['', ':memory:', 'bad\0path']) {
-    assert.throws(
-      () =>
-        new WebSource({
-          inputs: ['https://example.com/feed.xml'],
-          pollIntervalMs: 60000,
-          cachePath,
-        }),
-      /persistent file path|Too small/,
-    );
-  }
-});
-
 for (const revalidate of [false, true])
   test(`a shared cache write failure fails a ${revalidate ? '304' : 'cold'} scan`, async () => {
     let fail = !revalidate;
     await using database = await new Sqlite().database();
     await using checkpoints = await new Sqlite().database();
-    await using cache = await new Sqlite().database();
+    await using directory = await mkdtempDisposable(
+      join(tmpdir(), 'web-cache-'),
+    );
     await using upstream = await new HttpServer().start((request, response) => {
       response.setHeader('cache-control', 'public, max-age=3600');
       if (request.url === '/feed.xml') {
@@ -248,7 +280,10 @@ for (const revalidate of [false, true])
             request.headers['if-none-match'],
             revalidate ? '"article"' : undefined,
           );
-          cache.connection.exec('DROP TABLE keyv');
+          using cache = new DatabaseSync(
+            join(directory.path, '.cache/web-http.sqlite'),
+          );
+          cache.exec('DROP TABLE keyv');
         }
         response.setHeader('etag', '"article"');
         if (request.headers['if-none-match'] === '"article"') {
@@ -270,11 +305,10 @@ for (const revalidate of [false, true])
           `${upstream.origin}/feed.xml`,
           database.path,
           checkpoints.path,
-          cache.path,
           'articles',
           'incremental',
         ],
-        { timeout: 30000 },
+        { cwd: directory.path, timeout: 30000 },
       );
     if (revalidate) {
       await run();
