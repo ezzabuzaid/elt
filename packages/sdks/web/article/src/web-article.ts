@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { MIMEType } from 'node:util';
 
 import {
@@ -12,6 +13,11 @@ import {
   type ArticlePage,
   type Extraction,
 } from './extraction.ts';
+
+type ArticleDownload = {
+  readonly fingerprint: string | null;
+  extract(): Promise<Article | null>;
+};
 
 export class ArticleError extends Error {
   readonly url: string;
@@ -35,6 +41,10 @@ export class WebArticle {
   }
 
   async fetch(url: string, signal: AbortSignal) {
+    return (await this.download(url, signal)).extract();
+  }
+
+  async download(url: string, signal: AbortSignal) {
     const mediaTypes = [
       ...new Set(
         this.#extractions.flatMap((extraction) => extraction.mediaTypes),
@@ -43,7 +53,7 @@ export class WebArticle {
     const htmlTypes = mediaTypes.filter(
       (type) => type === 'text/html' || type === 'application/xhtml+xml',
     );
-    return this.#fetch(
+    return this.#download(
       url,
       signal,
       mediaTypes,
@@ -53,12 +63,12 @@ export class WebArticle {
     );
   }
 
-  async #fetch(
+  async #download(
     url: string,
     signal: AbortSignal,
     accepted: readonly string[],
     fallback?: readonly string[],
-  ): Promise<Article | null> {
+  ): Promise<ArticleDownload> {
     try {
       let response: Response<Buffer>;
       try {
@@ -78,7 +88,7 @@ export class WebArticle {
           error instanceof HTTPError &&
           error.response.statusCode === 406
         )
-          return await this.#fetch(error.response.url, signal, fallback);
+          return await this.#download(error.response.url, signal, fallback);
         throw error;
       }
       url = response.url;
@@ -91,35 +101,55 @@ export class WebArticle {
           ? []
           : accepted.slice(0, Math.max(0, accepted.indexOf(type)));
       const alternatives = this.#alternatives(response, preferred);
-      signal.throwIfAborted();
-      try {
-        const article = await this.#extractResponse(
-          response,
-          preferred,
-          alternatives,
-          signal,
-        );
-        if (article && fallback && type === 'text/markdown') {
+      return {
+        // Alternate and fallback representations can change independently of this response.
+        fingerprint:
+          alternatives.length > 0 || (fallback && type === 'text/markdown')
+            ? null
+            : createHash('sha256')
+                .update(JSON.stringify([url, contentType]))
+                .update(response.body)
+                .digest('hex'),
+        extract: async () => {
           try {
-            const companion = await this.#http(url, {
-              signal,
-              responseType: 'buffer',
-              headers: { accept: fallback.join(', ') },
-            });
-            return await this.#withHTML(article, companion, signal);
-          } catch {
-            // The companion is optional; a readable native response survives its failure.
             signal.throwIfAborted();
-            return article;
+            try {
+              const article = await this.#extractResponse(
+                response,
+                preferred,
+                alternatives,
+                signal,
+              );
+              if (article && fallback && type === 'text/markdown') {
+                try {
+                  const companion = await this.#http(url, {
+                    signal,
+                    responseType: 'buffer',
+                    headers: { accept: fallback.join(', ') },
+                  });
+                  return await this.#withHTML(article, companion, signal);
+                } catch {
+                  // The companion is optional; a readable native response survives its failure.
+                  signal.throwIfAborted();
+                  return article;
+                }
+              }
+              if (article !== null || !fallback || type !== 'text/markdown')
+                return article;
+            } catch (error) {
+              signal.throwIfAborted();
+              if (!fallback || type !== 'text/markdown') throw error;
+            }
+            return await (
+              await this.#download(url, signal, fallback)
+            ).extract();
+          } catch (cause) {
+            signal.throwIfAborted();
+            if (cause instanceof ArticleError) throw cause;
+            throw new ArticleError(url, cause);
           }
-        }
-        if (article !== null || !fallback || type !== 'text/markdown')
-          return article;
-      } catch (error) {
-        signal.throwIfAborted();
-        if (!fallback || type !== 'text/markdown') throw error;
-      }
-      return await this.#fetch(url, signal, fallback);
+        },
+      };
     } catch (cause) {
       signal.throwIfAborted();
       if (cause instanceof ArticleError) throw cause;

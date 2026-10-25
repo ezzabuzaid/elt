@@ -29,7 +29,9 @@ if (page) {
 }
 ```
 
-The example's publisher and URL selection belong to the caller. The constructor takes an ordered array of extraction instances and a Got client; use `got.extend(...)` for timeouts, retries or request hooks. Got owns HTTP retries. When negotiated Markdown is unusable, the reader makes one HTML-only attempt. A 304 fails because the SDK has no cached representation. The SDK does not render JavaScript, retrieve authenticated content, schedule crawls or store checkpoints.
+The example's publisher and URL selection belong to the caller. The constructor takes an ordered array of extraction instances and a Got client; use `got.extend(...)` for timeouts, retries or request hooks. Got owns HTTP retries. When negotiated Markdown is unusable, the reader makes one HTML-only attempt. A raw 304 without a Got-cached representation fails; with Got caching, revalidation restores the response body before it reaches the SDK. The SDK does not render JavaScript, retrieve authenticated content, schedule crawls or store checkpoints.
+
+`WebArticle.download(url, signal)` returns a lazy extraction with `fingerprint` and `extract()`. The fingerprint covers response bytes, final URL and Content-Type. A caller can compare it with committed input state before running extraction. Got can restore those same bytes after HTTP cache revalidation, so a 304 and an identical 200 have the same fingerprint. Advertised alternate representations and negotiated Markdown with HTML fallback return a null fingerprint: their additional responses can change independently and must remain eligible for extraction. Cancellation and attributed errors also apply when extraction is deferred.
 
 ## Extraction chain
 

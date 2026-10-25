@@ -1,3 +1,5 @@
+import { hash } from 'node:crypto';
+import { resolve } from 'node:path';
 import { setInterval } from 'node:timers/promises';
 
 import got from 'got';
@@ -13,7 +15,7 @@ import {
   type SourceMessage,
   type SourceWatchOptions,
   Stream,
-  diffSnapshot,
+  diffGroupedSnapshot,
   validateRecords,
 } from '@workspace/elt';
 import {
@@ -23,6 +25,8 @@ import {
   WebArticle,
 } from '@workspace/sdk-web-article';
 import { WebDiscovery } from '@workspace/sdk-web-discovery';
+
+import { HTTPCache } from './http-cache.ts';
 
 const text = { type: 'string' } as const;
 const nullableText = { type: ['string', 'null'] } as const;
@@ -113,19 +117,31 @@ const saved = z.object({
   ),
 });
 
-export class WebSource extends Source {
+export class WebSource extends Source<HTTPCache> {
   readonly identity = 'web-articles';
   protected readonly catalog = catalog;
   readonly #inputs: readonly string[];
   readonly #pollIntervalMs: number;
   readonly #include: readonly URLPattern[] | undefined;
   readonly #patterns: readonly string[] | undefined;
+  readonly #cachePath: string;
   constructor(options: {
     inputs: readonly string[];
     pollIntervalMs: number;
+    cachePath: string;
     include?: readonly string[];
   }) {
     super();
+    this.#cachePath = resolve(
+      z
+        .string()
+        .min(1)
+        .refine(
+          (path) => path !== ':memory:' && !path.includes('\0'),
+          'HTTP cache requires a persistent file path',
+        )
+        .parse(options.cachePath),
+    );
     this.#inputs = z
       .array(z.url({ protocol: /^https?$/ }))
       .min(1)
@@ -153,7 +169,7 @@ export class WebSource extends Source {
     return null;
   }
   protected async open() {
-    return new AsyncDisposableStack();
+    return new HTTPCache(this.#cachePath);
   }
   protected override partitions() {
     return this.#inputs.map((inputUrl) => ({ inputUrl }));
@@ -172,7 +188,7 @@ export class WebSource extends Source {
     configuration: CopyConfiguration,
     state: unknown,
     partition: Partition | null,
-    _context: AsyncDisposable,
+    cache: HTTPCache,
     signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const inputUrl = z.string().parse(partition?.inputUrl);
@@ -185,6 +201,8 @@ export class WebSource extends Source {
     const failed = new Map(previous.failed.map((page) => [page.url, page]));
     const errors: ArticleError[] = [];
     const stop = new AbortController();
+    const onCacheError = (error: unknown) => stop.abort(error);
+    cache.on('error', onCacheError);
     const requestSignal =
       signal === undefined
         ? stop.signal
@@ -196,6 +214,8 @@ export class WebSource extends Source {
     });
     try {
       const http = got.extend({
+        cache,
+        headers: { 'cache-control': 'no-cache' },
         timeout: { request: 30_000 },
         hooks: {
           beforeRequest: [
@@ -231,7 +251,7 @@ export class WebSource extends Source {
           try {
             return {
               page,
-              article: await reader.fetch(page.url, requestSignal),
+              download: await reader.download(page.url, requestSignal),
             };
           } catch (error) {
             requestSignal.throwIfAborted();
@@ -243,56 +263,78 @@ export class WebSource extends Source {
       )) {
         const { page } = result;
         if (after === null || page.url > after) after = page.url;
-        if (result.error) {
+        try {
+          if (result.error) throw result.error;
+          const { download } = result;
+          for await (const message of diffGroupedSnapshot(
+            configuration,
+            [
+              {
+                key: page.url,
+                fingerprint:
+                  download.fingerprint === null
+                    ? null
+                    : hash(
+                        'sha256',
+                        JSON.stringify([
+                          download.fingerprint,
+                          page.listingUrl,
+                          page.lastModified,
+                        ]),
+                      ),
+                async *records() {
+                  const article = await download.extract();
+                  yield* validateRecords(
+                    configuration.stream,
+                    article === null
+                      ? []
+                      : [
+                          {
+                            ...article,
+                            inputUrl,
+                            pageUrl: page.url,
+                            listingUrl: page.listingUrl,
+                            lastModified: page.lastModified,
+                            // Readability's public result permits undefined metadata; stream cells use null.
+                            title: article.title ?? null,
+                            byline: article.byline ?? null,
+                            publishedTime: article.publishedTime ?? null,
+                            excerpt: article.excerpt ?? null,
+                            siteName: article.siteName ?? null,
+                            lang: article.lang ?? null,
+                            dir: article.dir ?? null,
+                          },
+                        ],
+                    'Web',
+                  );
+                },
+              },
+            ],
+            diff,
+            { continues: true, signal },
+          )) {
+            if ('type' in message && message.type === 'STATE') {
+              diff = message.state;
+              failed.delete(page.url);
+              yield {
+                ...message,
+                state: { after, diff, failed: [...failed.values()] },
+              };
+            } else yield message;
+          }
+        } catch (error) {
+          requestSignal.throwIfAborted();
+          if (!(error instanceof ArticleError)) throw error;
           failed.set(page.url, page);
-          errors.push(result.error);
+          errors.push(error);
           yield {
             type: 'STATE',
             stream: configuration.stream.name,
             state: { after, diff, failed: [...failed.values()] },
           };
-          continue;
-        }
-        failed.delete(page.url);
-        const { article } = result;
-        for await (const message of diffSnapshot(
-          configuration,
-          validateRecords(
-            configuration.stream,
-            article === null
-              ? []
-              : [
-                  {
-                    ...article,
-                    inputUrl,
-                    pageUrl: page.url,
-                    listingUrl: page.listingUrl,
-                    lastModified: page.lastModified,
-                    // Readability's public result permits undefined metadata; stream cells use null.
-                    title: article.title ?? null,
-                    byline: article.byline ?? null,
-                    publishedTime: article.publishedTime ?? null,
-                    excerpt: article.excerpt ?? null,
-                    siteName: article.siteName ?? null,
-                    lang: article.lang ?? null,
-                    dir: article.dir ?? null,
-                  },
-                ],
-            'Web',
-          ),
-          diff,
-          { continues: true, signal },
-        )) {
-          if ('type' in message && message.type === 'STATE') {
-            diff = message.state;
-            yield {
-              ...message,
-              state: { after, diff, failed: [...failed.values()] },
-            };
-          } else yield message;
         }
       }
-      for await (const message of diffSnapshot(configuration, [], diff, {
+      for await (const message of diffGroupedSnapshot(configuration, [], diff, {
         signal,
       }))
         if ('type' in message && message.type === 'STATE')
@@ -313,6 +355,7 @@ export class WebSource extends Source {
     } finally {
       stop.abort();
       await starts.onIdle();
+      cache.off('error', onCacheError);
     }
   }
 }

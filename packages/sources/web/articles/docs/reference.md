@@ -7,26 +7,26 @@ The upstream is the website or feed selected by the caller. The source reads it 
 | Owner                               | Public API used                                                                | Responsibility                                                                                                                      |
 | ----------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Web discovery SDK                   | `WebDiscovery.discover`                                                        | HTML/HTTP feed discovery, robots sitemap locations, sitemap/feed decoding and candidate deduplication                               |
-| Web article SDK                     | `WebArticle.fetch`                                                             | HTTP, decoding, Defuddle content selection, Readability metadata, sanitization, text conversion, cancellation and attributed errors |
-| Got 14.6.6                          | injected client, `extend`, `beforeRequest`                                     | HTTP retries, Retry-After, redirects, response bytes, cancellation and per-attempt timeouts                                         |
-| p-map 7.1.1                         | `pMapIterable`                                                                 | Four concurrent articles, input-order results and bounded prefetching                                                               |
+| Web article SDK                     | `WebArticle.download`                                                          | HTTP, decoding, Defuddle content selection, Readability metadata, sanitization, text conversion, cancellation and attributed errors |
+| Got 14.6.6                          | injected client, `extend`, `cache`, `beforeRequest`                            | HTTP retries, Retry-After, redirects, conditional requests, cache policy, response bytes, cancellation and per-attempt timeouts     |
+| p-map 7.1.1                         | `pMapIterable`                                                                 | Four concurrent downloads, input-order results and bounded prefetching                                                              |
 | p-queue 10.0.0                      | `add`, `intervalCap`, `interval`, `strict`, `onIdle`                           | Two request starts per rolling second, including retries and redirects; abortable queued work                                       |
 | ELT engine                          | `Source`, `Stream`, `Catalog`, `validateRecords`                               | Stream contract, schema validation and independent input partitions                                                                 |
-| ELT engine                          | `diffSnapshot(..., { continues: true })`                                       | New/changed record detection; delegates fingerprinting to installed `@zukhruf/snapshot-differential` 0.3.28                         |
+| ELT engine                          | `diffGroupedSnapshot(..., { continues: true })`                                | New/changed record detection; delegates fingerprinting to installed `@zukhruf/snapshot-differential` 0.3.28                         |
 | ELT engine/destination              | `Pipeline`, `Copy`, `Connection`, `SQLiteDestination`, `SQLiteCheckpointStore` | Commit ordering, deduplication, failure reporting, persistence, locking and full-refresh rollback                                   |
 | Installed Zod 4.6.5                 | `z.url`, `z.array`, `z.object`, `parse`                                        | HTTP input validation, polling interval validation and checkpoint-envelope parsing                                                  |
 | Node                                | `URLPattern`, `timers/promises.setInterval`, `AbortSignal`                     | Caller-defined URL selection, cancellable polling and request cancellation                                                          |
 | Installed `@zukhruf/testing` 0.3.24 | `HttpServer.start`, `Sqlite.database`                                          | Real loopback HTTP and disposable SQLite fixtures                                                                                   |
 
-The source uses the engine's continued-scan snapshot comparison. Each processed page emits `STATE` containing the traversal cursor, accumulated opaque comparison state and failed page locations. The engine commits the preceding records before saving that full state. There is no source-specific hash, diff, writer, lock or checkpoint store.
+The source uses the engine's continued-scan snapshot comparison. Each processed page emits `STATE` containing the traversal cursor, accumulated opaque comparison state and failed page locations. The engine commits the preceding records before saving that full state. The source hashes the SDK input fingerprint together with listing URL and last-modified metadata; the engine owns group comparison and committed state. There is no source-specific diff, writer, lock or checkpoint store.
 
 Full checkpoint saves rewrite the accumulated comparison state after each page. Reducing this write amplification is deferred in backlog item 2920; it is not required for resume or change detection.
 
-REJECTED: using sitemap `lastmod` or feed publication timestamps to skip articles. They are optional hints and do not establish that an old page is unchanged. Successful reruns refetch selected pages and compare their extracted records.
+REJECTED: using sitemap `lastmod` or feed publication timestamps to skip articles. They are optional hints and do not establish that an old page is unchanged. Successful reruns revalidate selected pages and compare their complete input fingerprints before extraction.
 
-REJECTED: `diffGroupedSnapshot` as a download-skipping shortcut. Generic websites do not supply reliable content fingerprints before fetching. Its capability was inspected; the required upstream guarantee is absent.
+RETAINED: `diffGroupedSnapshot` for incremental computation after download. Each discovered URL is one group. Its lazy records callback extracts only when the SDK response fingerprint or listing metadata changes, or when committed state is absent. Matching groups retain their records without extraction; full refresh always extracts. Null SDK fingerprints keep alternate/fallback representations eligible because their additional responses can change independently. This skips extraction, not HTTP requests.
 
-REJECTED: a new crawling framework for persistence or resume. The engine already supplies those jobs. Request scheduling and retries belong to p-map, p-queue and Got. Conditional fetching and crawl policy are not implemented.
+REJECTED: a new crawling framework for persistence or resume. The engine already supplies those jobs. Request scheduling and retries belong to p-map, p-queue and Got. Got owns conditional fetching.
 
 RETAINED: the SDK return shapes, discovery behavior, and the engine's commit ordering, diff, partition isolation and destination behavior. Both SDK constructors require a configured Got client. The source owns the HTTP policy and passes the same client to discovery and extraction. A small native `Headers` conversion bridges Got response headers to Feedscout’s public API. Missing Readability metadata still becomes null in stream records. Defuddle now owns content selection; see the [article SDK decisions](../../../../sdks/web/article/README.md).
 
@@ -35,6 +35,66 @@ REJECTED: p-limit, because pMapIterable already supplies ordered concurrency and
 Removal audit: the article SDK delegates content selection and stable whitespace normalization to installed packages. Metadata rules, cancellation, partitioning and destination commit order remain intact. The source uses the existing full-state checkpoint protocol.
 
 The extraction fix for 2919 is retained. Checkpoint write optimization is deferred under 2920.
+
+## Persistent HTTP cache
+
+`WebSource` requires a caller-owned `cachePath` in an existing directory. Its read context owns a SQLite-backed Keyv instance, shared by discovery and article clients and closed at the end of the read. Installed Keyv 5.6.0 owns namespaces and expiry. Its supported raw-value mode passes response Buffers directly to the SQLite adapter, which stores bodies as BLOBs in a separate table from JSON metadata, with owner-only file permissions. Metadata and body changes commit in one transaction. A conditional body upsert updates only different bytes; a 304 therefore updates policy without writing the body. Expiry, deletion and clearing remove both rows through a foreign key. No new storage package or HTTP validator implementation is added. Cache storage errors cancel the scan, rather than being saved as failed article URLs.
+
+Got sends `Cache-Control: no-cache` on every request so polling checks upstream even when a response is fresh. Its cache restores the original body after 304, honors `Vary` and `no-store`, and falls back to a full download without validators. `diffGroupedSnapshot` then skips extraction for matching committed groups. A warm HTTP cache with fresh checkpoints still extracts and writes all selected articles. The cache is disposable and independent of destination and checkpoint state.
+
+Real-process regression tests verify persistence across new Node processes, ETag and Last-Modified, forced revalidation of fresh responses, missing validators, no-store, fresh checkpoints with a warm cache, full refresh, upstream edits, negotiated Markdown/HTML metadata, path validation and cache storage failures. SQLite triggers verify zero body writes on unchanged polls and body updates after upstream edits. Additional real Got/SQLite regressions cover compressed and empty 304 bodies, policy refresh, eviction, expiry, clearing and rollback when a body write fails. Existing cancellation and retry regressions run with the production cache enabled.
+
+The same 26 articles across nine sites were measured before the body-write optimization on 2026-10-24 with separate cold scans and three alternating repeat rounds per mode. Medians sum each round across all nine inputs. The original HTML-only extraction and listing-only discovery are held fixed in the benchmark to isolate caching from concurrent Markdown and ordinary-link crawling changes. Production caching is used directly; only timing hooks are injected into its storage methods.
+
+| Mode                         | Response body bytes | Extractions |        CPU | Wall time |
+| ---------------------------- | ------------------: | ----------: | ---------: | --------: |
+| No HTTP cache                |           1,349,211 |           4 |   940.9 ms |   13.60 s |
+| Memory HTTP cache            |             393,427 |           5 | 1,524.2 ms |   13.01 s |
+| Production SQLite HTTP cache |             393,762 |           5 | 1,384.7 ms |   13.20 s |
+
+Production caching saved 70.8% of response body bytes. Every mode still made 37 requests per repeat; caching produced 21 responses with status 304, including 14 articles. All 108 scans retained identical current article records across controls, all 81 repeat scans wrote zero records, and all 84 article 304 responses skipped extraction. Raw HTML changes on dynamic pages can require extraction without changing the saved article. This run establishes bandwidth savings, not a CPU speedup.
+
+The persistent cache rewrote 37 serialized entries per repeat: median 1,876,980 payload bytes, 61.37 ms writing and 6.79 ms reading. Those are logical bytes, not physical disk writes. Checkpoints remain 35 full saves and 42,753 JSON bytes per repeat; 2920 stays deferred. The cache closes and reopens on every benchmark scan. No full-site throughput claim is made. Raw results, hashes, assertions and the report are in `outputs/http-cache-measure/production/`; temporary databases and the benchmark process were cleaned up.
+
+Final combined cache verification: all 24 source tests passed, including the four cache regressions and the concurrent ordinary-link discovery regression. The source Nx typecheck and its 23 dependent tasks passed, including lint and formatting. The ordinary-link dead-URL fix landed after measurement; that feature was disabled in the controlled benchmark.
+
+### Body-write reduction — 2949
+
+The same 26 URLs across nine sites were rerun with a cold scan, warmup and five alternating profiled repeat rounds per mode: 135 successful repeat scans. Python and JSON Feed encountered TLS connection failures; their incomplete attempts were excluded and replaced with full site reruns. Production hashes stayed unchanged during each run, and only the cache implementation differs from the last profiling implementation. HTML-only extraction and listing-only discovery remain fixed for comparison.
+
+All 105 persistent-cache 304 responses caused zero body writes. All 140 article 304 responses across the two cached modes skipped extraction. Every repeat downloaded the complete selection, wrote zero article records and preserved identical stored articles across modes.
+
+| Persistent-cache measure, mean per nine-site repeat |     Before |      After |
+| --------------------------------------------------- | ---------: | ---------: |
+| Body writes                                         |         37 |          8 |
+| Logical payload bytes written                       |  1,877,473 |    255,387 |
+| Direct cache CPU                                    |   38.75 ms |   54.10 ms |
+| Whole-process CPU                                   | 1,058.1 ms | 1,318.7 ms |
+
+Logical cache writes fell 86.4%. The remaining writes are 37 metadata updates (77,248 bytes) and eight changed bodies (178,139 bytes). Counts come from actual SQLite row changes; bytes are metadata JSON plus changed body BLOBs, not physical disk traffic. The previous values included base64-encoded bodies. Equal 200 bodies also skip body writes. Cache policy, body restoration/decompression, fingerprinting and complete checkpoint saves remain.
+
+This reduces write amplification, not measured CPU. Direct cache reads increased from 5.10 to 13.79 ms and writes from 27.56 to 40.31 ms; separate Keyv serialization/deserialization fell from 6.10 ms to zero. The adapter now validates metadata, joins the two rows and commits their updates together. Profiles also show Zod schemas rebuilt during get/set; reusing those schemas is captured as 2951. Whole-process comparisons include live-content and GC variation: the current no-cache control averaged 1,339.5 ms, up from 1,054.8 ms in the previous profile. No isolated CPU speedup is claimed.
+
+All 26 source tests and the source Nx typecheck passed, including lint and formatting. Regression triggers reject body rewrites on 304 and verify changed bytes still update. Restart persistence, refreshed policy, compressed/empty bodies, eviction, expiry, clearing and rollback passed. Raw measurements, profiles, assertions and the report are retained under `outputs/http-cache-measure/profile-2949/`, with complete Python/JSON Feed retry results in adjacent folders. Owned test and benchmark processes exited; temporary databases were removed. No full-crawl or native-Markdown throughput measurement was made.
+
+### Validation schema reuse — 2951
+
+The stored-row and incoming-body Zod schemas now live at module scope beside the metadata schema. This is invariant hoisting: build an unchanged validator once, like compiling a regular expression outside a loop. Every read and write still parses its input with the same checks. Storage, transactions and HTTP behavior are unchanged.
+
+The same 26 URLs across nine sites completed all 135 repeat polls, with no failed sites. Only `http-cache.ts` changed from the 2949 implementation, and implementation hashes remained stable during measurement. Means sum each round across all nine sites:
+
+| Persistent-cache measure |     Before |      After |
+| ------------------------ | ---------: | ---------: |
+| Direct cache CPU         |   54.10 ms |   30.98 ms |
+| Cache read CPU           |   13.79 ms |    5.71 ms |
+| Cache write CPU          |   40.31 ms |   25.27 ms |
+| Whole-process CPU        | 1,318.7 ms | 1,067.5 ms |
+
+Direct cache CPU fell 42.7%, with the same 37 reads and 37 writes per combined repeat. Zod initialization/compilation frames under the cache adapter fell from 6.06 to 0.00 sampled milliseconds per repeat; this is sampled elapsed time, not exact CPU. Parsing remains. The no-cache control also fell from 1,339.5 to 883.4 ms, so whole-process improvement cannot be attributed entirely to schema reuse.
+
+All 103 persistent-cache 304 responses caused zero body writes, and all 137 article 304 responses skipped extraction. Every repeat wrote zero article records. Changed upstream 200 bodies increased body writes from 8.0 to 10.4 per repeat and logical cache bytes from 255,387 to 340,632: two additional GitHub bodies per repeat and two Julia Evans bodies across the five repeats. No 304 body rewrite returned.
+
+All 26 source tests and the Nx typecheck, lint and formatting passed. Results, assertions, profiles and the report are under `outputs/http-cache-measure/profile-2951/`; verification logs are under `outputs/http-cache-measure/2951-checks/`. The benchmark process exited and temporary databases were removed. HTML-only extraction and listing-only discovery remained fixed; full-crawl/native-Markdown throughput and physical disk I/O were not measured.
 
 ## State, identity and failure behavior
 
@@ -46,7 +106,7 @@ An HTTP failure that exhausts Got's retry policy, or an extraction failure, prod
 
 An absent listing entry is not proof of deletion: feeds routinely roll over. Incremental extraction declares no deletions and retains previously loaded rows, including when a later fetch returns no readable article. A full refresh has no incremental checkpoint and replaces the collection only on success. Removing an input or narrowing selection does not delete its already loaded rows in incremental mode; a full refresh rebuilds the chosen collection.
 
-No load timestamp enters the source record, so an unchanged page does not create a false update. `publishedTime` and sitemap `lastModified` are raw upstream text, not inferred or normalized date fields. Missing extraction metadata is null. Downloads overlap with at most four article operations per input. pMapIterable bounds outstanding results and yields them in URL order; row validation and checkpoints remain sequential. Discovery holds candidate URLs and snapshots hold fingerprints. p-queue gates every initial, redirected and retried request at two starts per rolling second. Got’s 30-second request timeout starts after that gate, applies per attempt, and does not bound retry backoff or the entire scan. The caller can bound the whole run with an abort signal. Limits are per input scan, not shared across separate pipelines.
+No load timestamp enters the source record, so an unchanged page does not create a false update. `publishedTime` and sitemap `lastModified` are raw upstream text, not inferred or normalized date fields. Missing extraction metadata is null. At most four downloads overlap per input. pMapIterable bounds outstanding results and yields them in URL order; extraction, row validation and checkpoints remain sequential. Discovery holds candidate URLs and snapshots hold fingerprints. p-queue gates every initial, redirected and retried request at two starts per rolling second. Got’s 30-second request timeout starts after that gate, applies per attempt, and does not bound retry backoff or the entire scan. The caller can bound the whole run with an abort signal. Limits are per input scan, not shared across separate pipelines.
 
 ## Public regression ledger
 
@@ -93,7 +153,7 @@ All compared paragraphs remain except four GitHub promotional paragraphs. A sepa
 
 Evidence: `/tmp/elt-2919-2920/live-V55r2u/results.json`, with each site's SQLite destination, checkpoint file and result JSON beside it. Earlier baseline: `/tmp/elt-web-source-live/results.json`. The live process exited; no server or watcher is retained. Live publisher edits and injected failures were not attempted; controlled public HTTP tests cover updates, failure and cancellation. These live samples were recorded before the checkpoint optimization was removed; the removal is checked through the public local regression suites.
 
-These are scoped compatibility checks, not a complete crawl or throughput benchmark. Checkpoint work grows with the accumulated listing; large-listing write amplification is tracked in 2920. Discovery buffers candidate URLs; extraction buffers response bytes and a bounded number of prefetched results, and parses synchronously. Got supplies HTTP retries. HTTP caching, crawl delays, robots exclusion, authenticated pages and JavaScript rendering are not supplied by this source.
+These are scoped compatibility checks, not a complete crawl or throughput benchmark. Checkpoint work grows with the accumulated listing; large-listing write amplification is tracked in 2920. Discovery buffers candidate URLs; extraction buffers response bytes and a bounded number of prefetched results, and parses synchronously. Got supplies HTTP retries. Crawl delays, robots exclusion, authenticated pages and JavaScript rendering are not supplied by this source.
 
 | Review disposition                                 | Outcome                                                                |
 | -------------------------------------------------- | ---------------------------------------------------------------------- |
@@ -257,7 +317,7 @@ The fix separates source fidelity from normalization. `markdown` still contains 
 
 Scope: replace the successful-native early returns in `WebArticle`; keep `MarkdownExtraction`, `HTMLExtraction`, their public exports and dependencies, and the source schema. The sole production caller is `WebSource`. No publisher route, custom Markdown classifier, extra public option or new dependency was introduced. Got, Defuddle, Readability and the existing converters retain their jobs. REJECTED reconstructing article boundaries from raw Markdown tokens: Marked exposes parsing/raw tokens, not article isolation, and the executable package probes failed to remove the observed clutter. REJECTED reserializing native Markdown because that would break its raw-source contract. Metadata absence is explicit in Readability's shipped `_getArticleMetadata`/`parse` implementation; the merge's nullish choices preserve native values rather than invent defaults.
 
-Public red/green tests first reproduced polluted normalized text through both negotiated and advertised Markdown. They now verify clean text, native metadata precedence, HTML metadata enrichment, original-response reuse, unchanged native source, short linked prose, table cells and code indentation. Additional controls cover unavailable/empty/wrong-type/malformed-XHTML companions and exact cancellation reasons. The real WebSource → Pipeline → SQLite test verifies clean stored text, author/date enrichment, zero writes on an unchanged rerun, and a subsequent HTML date edit being saved even though the Markdown bytes did not change.
+Public red/green tests first reproduced polluted normalized text through both negotiated and advertised Markdown. They now verify clean text, native metadata precedence, HTML metadata enrichment, original-response reuse, unchanged native source, short linked prose, table cells and code indentation. Additional controls cover unavailable/empty/wrong-type/malformed-XHTML companions and exact cancellation reasons. The real WebSource → Pipeline → SQLite test verifies clean stored text, author/date enrichment, zero writes on an unchanged rerun, and a subsequent HTML date edit being saved even though the Markdown bytes did not change. Multi-response downloads retain a null fingerprint so independent companion changes cannot be skipped.
 
 A fresh live rerun covered all 17 URLs in the table above across Anthropic, Simon Willison, Julia Evans, Python, Martin Fowler, GitHub, Cloudflare, JSON Feed and Daring Fireball. All 15 HTML-only results were deeply equal to a separate HTML-only fetch. Both native results retained exact source Markdown, while their normalized HTML/text/length equalled a separate HTML-only extraction and excluded skip/home navigation and serialized JSON-LD. The sample retained Simon's short linked post, six tables and 91 cells. Across the preferred reader's 19 requests, median fetch-plus-extraction time was 342 ms and maximum was 847 ms; these are one-pass observations, not comparative performance claims.
 
