@@ -1,7 +1,11 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { promisify } from 'node:util';
 
 import { z } from 'zod';
+
+import type { Worker } from '@workspace/pool';
 
 import type { LocalTranscriptionConfiguration } from './local-transcription-model.ts';
 
@@ -10,9 +14,12 @@ const transcript = z.union([
   z.object({ error: z.string() }),
 ]);
 
-// JSON Lines over stdio keeps the native engine independent of Node and avoids
+const execute = promisify(execFile);
+
+// One native engine process, which loads the model's weights when it starts.
+// JSON Lines over stdio keeps the engine independent of Node and avoids
 // opening a server port. Each request receives exactly one response.
-export class TranscriptionWorker {
+export class TranscriptionWorker implements Worker {
   readonly #child;
   readonly #lines;
   readonly #closed: Promise<Error>;
@@ -25,7 +32,7 @@ export class TranscriptionWorker {
   ) {
     this.#child = spawn(helper, [
       '--model',
-      path,
+      resolve(path),
       ...(language === undefined ? [] : ['--language', language]),
     ]);
     this.#lines = createInterface({ input: this.#child.stdout })[
@@ -51,6 +58,12 @@ export class TranscriptionWorker {
     // A failed model load can close stdin before a request is written. The
     // process's close event carries the actionable engine error.
     this.#child.stdin.on('error', () => undefined);
+  }
+
+  // Checks that the engine runs on this Mac before a host saves an enabled
+  // model, without loading any weights.
+  static async check(helper: string): Promise<void> {
+    await execute(helper, ['--help']);
   }
 
   get dead(): boolean {

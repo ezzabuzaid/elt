@@ -48,9 +48,9 @@
   },
   "dependencies": {
     "@workspace/elt": "0.0.1",
+    "@workspace/pool": "0.0.1",
     "ai": "7.0.148",
     "file-type": "22.2.0",
-    "p-queue": "10.0.0",
     "zod": "^4.3.6"
   }
 }

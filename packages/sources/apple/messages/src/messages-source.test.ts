@@ -30,9 +30,10 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
+import { LeaderFirst, Pool } from '@workspace/pool';
 import { ImageFormat } from '@workspace/source-apple-macos/image-format';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
-import { Vision } from '@workspace/source-apple-macos/vision';
+import { VisionWorker } from '@workspace/source-apple-macos/vision';
 
 import { AppleMessagesSource } from './apple-messages-source.ts';
 
@@ -412,11 +413,16 @@ const messagesRows = (path: string, sql: string) => {
 };
 
 test('the document parser reads every attachment kind and throws only on unreadable files', async () => {
-  await using vision = new Vision(
-    fileURLToPath(
-      import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
-    ),
-  );
+  await using ocr = new Pool({
+    size: 2,
+    startup: new LeaderFirst(),
+    create: () =>
+      new VisionWorker(
+        fileURLToPath(
+          import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
+        ),
+      ),
+  });
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-parse-'));
   const path = await chatFixture(scratch.path);
   const files = join(scratch.path, 'Attachments');
@@ -493,7 +499,7 @@ test('the document parser reads every attachment kind and throws only on unreada
               c
                 .text('content')
                 .from(source.attachments.file)
-                .parse(new MacOSDocumentParser([new ImageFormat(vision)])),
+                .parse(new MacOSDocumentParser([new ImageFormat(ocr)])),
             ]),
           ),
         ],
@@ -615,11 +621,16 @@ test('Messages scope filters chat and native dates before decoding attachments a
 });
 
 test('Messages exports every stream by guid, decodes archived text and streams local attachments', async () => {
-  await using vision = new Vision(
-    fileURLToPath(
-      import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
-    ),
-  );
+  await using ocr = new Pool({
+    size: 2,
+    startup: new LeaderFirst(),
+    create: () =>
+      new VisionWorker(
+        fileURLToPath(
+          import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
+        ),
+      ),
+  });
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'elt-messages-'),
   );
@@ -637,7 +648,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
       c
         .text('content')
         .from(source.attachments.file)
-        .parse(new MacOSDocumentParser([new ImageFormat(vision)])),
+        .parse(new MacOSDocumentParser([new ImageFormat(ocr)])),
       c.blob('bytes').from(source.attachments.file),
     ]),
   );

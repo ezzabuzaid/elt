@@ -1,0 +1,13 @@
+{
+  "name": "pool",
+  "sourceRoot": "packages/pool/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test {args} \"packages/pool/dist/*.test.js\""
+    }
+  }
+}

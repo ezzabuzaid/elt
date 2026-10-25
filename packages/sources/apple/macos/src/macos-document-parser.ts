@@ -28,8 +28,8 @@ export class MacOSDocumentParser extends DocumentParser {
     Object.freeze(this);
   }
 
-  // Hosts supply ImageFormat with their Vision worker and AudioFormat with
-  // their speech model. Unrecognized files, locked PDFs and files without
+  // Hosts supply ImageFormat with their OCR pool and AudioFormat with their
+  // speech model. Unrecognized files, locked PDFs and files without
   // recognizable text return null. Unreadable files throw.
   override async parse(
     path: string,

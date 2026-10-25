@@ -1,4 +1,6 @@
-import type { Vision } from '../vision.ts';
+import type { Pool } from '@workspace/pool';
+
+import type { VisionWorker } from '../vision.ts';
 import { DocumentFormat } from './document-format.ts';
 import type { FileHead } from './file-head.ts';
 
@@ -43,14 +45,14 @@ export class ImageFormat extends DocumentFormat {
     );
   }
 
-  readonly #vision: Vision;
+  readonly #ocr: Pool<VisionWorker>;
 
-  constructor(vision: Vision) {
+  constructor(ocr: Pool<VisionWorker>) {
     super();
-    this.#vision = vision;
+    this.#ocr = ocr;
   }
 
   override text(path: string, signal?: AbortSignal): Promise<string | null> {
-    return this.#vision.read(path, signal);
+    return this.#ocr.use((worker) => worker.read(path), signal);
   }
 }

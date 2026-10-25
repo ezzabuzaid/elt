@@ -8,11 +8,15 @@
       "types": "./dist/local-transcription-model.d.ts",
       "default": "./dist/local-transcription-model.js"
     },
+    "./transcription-worker": {
+      "types": "./dist/transcription-worker.d.ts",
+      "default": "./dist/transcription-worker.js"
+    },
     "./transcribe-local": "./dist/transcribe-local"
   },
   "dependencies": {
     "@ai-sdk/provider": "4.0.31",
-    "p-queue": "10.0.0",
+    "@workspace/pool": "0.0.1",
     "zod": "^4.3.6"
   }
 }

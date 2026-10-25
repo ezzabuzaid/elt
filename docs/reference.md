@@ -597,20 +597,45 @@ This follows Airbyte's source-side parser and staged-file concepts: its [file pa
 `MacOSDocumentParser` accepts additional `DocumentFormat` instances while retaining its built-in document formats. `AudioFormat` calls Vercel AI SDK's `transcribe()` with the supplied model; it owns no credentials or model lifetime. For local inference, `@workspace/transcription-local` implements AI SDK's `TranscriptionModelV4` over a native worker on [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp), which loads a GGUF model and runs it on Metal:
 
 ```ts
-import { AudioFormat } from '@workspace/source-apple-macos/audio-format';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
-import { LocalTranscriptionModel } from '@workspace/transcription-local';
+import { availableParallelism } from 'node:os';
 
-await using model = new LocalTranscriptionModel({
+import { LeaderFirst, Parallel, Pool } from '@workspace/pool';
+import { AudioFormat } from '@workspace/source-apple-macos/audio-format';
+import { ImageFormat } from '@workspace/source-apple-macos/image-format';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
+import {
+  VisionWorker,
+  visionConcurrency,
+} from '@workspace/source-apple-macos/vision';
+import { LocalTranscriptionModel } from '@workspace/transcription-local';
+import { TranscriptionWorker } from '@workspace/transcription-local/transcription-worker';
+
+const configuration = {
   name: 'cohere-transcribe-arabic-07-2026',
   path: '/path/to/cohere-transcribe-arabic-07-2026-Q8_0.gguf',
   language: 'ar',
+};
+await using ocr = new Pool({
+  size: visionConcurrency(availableParallelism(), process.availableMemory()),
+  startup: new LeaderFirst(),
+  create: () => new VisionWorker('/path/to/vision-worker'),
 });
-const parser = new MacOSDocumentParser([new AudioFormat(model)]);
+await using engines = new Pool({
+  size: 1,
+  startup: new Parallel(),
+  create: () =>
+    new TranscriptionWorker('/path/to/transcribe-local', configuration),
+});
+const parser = new MacOSDocumentParser([
+  new ImageFormat(ocr),
+  new AudioFormat(new LocalTranscriptionModel(configuration, engines)),
+]);
 const text = await parser.parse('/path/to/voice-message.opus');
 ```
 
-The local provider also works directly with `transcribe({ model, audio })`. It converts input with macOS's `afconvert` to 16 kHz mono 32-bit float samples, so a Mac needs nothing installed, serializes inference through one resident worker, and closes that worker when disposed. Cohere decodes at most 512 tokens in one run, so audio longer than 40 s is cut at pauses found by Silero VAD, which ships inside the worker, into pieces of about 30 s, and each piece is decoded on its own. The transcript has no segments, because Cohere marks no timings. Cancellation stops decoding or inference. `language`, when given, tells the model which language the speech is in; the model id includes it, so a new language reads audio again. `@workspace/sdk-macos-speech-models` lists the speech models installed on this Mac, whichever app or tool installed them: the Hugging Face cache (`~/.cache/huggingface/hub`), where `hf`, Handy and other tools download, and any `.gguf` or `.bin` file Spotlight finds in the home folder. A GGUF counts when its architecture is one Handy's catalog (`@handy-computer/models`) lists for transcription; a `.bin` counts when it is a whisper.cpp model. A model's id is its file name, its title is the catalog's name, the GGUF's own name or the file name, and only Cohere Transcribe Arabic is told a language: Arabic, which also keeps English as spoken. The SDK never downloads or modifies a model.
+The host owns the native workers. It builds a `Pool` (`@workspace/pool`) for each kind and disposes it, which stops every worker. A pool lends one worker to one read at a time and replaces a worker that died. Its startup decides when workers start: `LeaderFirst` starts the first Vision worker alone, because Vision compiles its models once for each helper binary and caches them, and the other workers read that cache. `Parallel`, `OrderedReady` and `OnDemand` are the other startups.
+
+The local provider also works directly with `transcribe({ model, audio })`. It converts input with macOS's `afconvert` to 16 kHz mono 32-bit float samples, so a Mac needs nothing installed, and then borrows an engine from its pool, which transcribes one file at a time. `TranscriptionWorker.check(helper)` checks that the engine runs on this Mac without loading weights. Cohere decodes at most 512 tokens in one run, so audio longer than 40 s is cut at pauses found by Silero VAD, which ships inside the worker, into pieces of about 30 s, and each piece is decoded on its own. The transcript has no segments, because Cohere marks no timings. Cancellation stops decoding or inference. `language`, when given, tells the model which language the speech is in; the model id includes it, so a new language reads audio again. `@workspace/sdk-macos-speech-models` lists the speech models installed on this Mac, whichever app or tool installed them: the Hugging Face cache (`~/.cache/huggingface/hub`), where `hf`, Handy and other tools download, and any `.gguf` or `.bin` file Spotlight finds in the home folder. A GGUF counts when its architecture is one Handy's catalog (`@handy-computer/models`) lists for transcription; a `.bin` counts when it is a whisper.cpp model. A model's id is its file name, its title is the catalog's name, the GGUF's own name or the file name, and only Cohere Transcribe Arabic is told a language: Arabic, which also keeps English as spoken. The SDK never downloads or modifies a model.
 
 The caller composes the document parser, with or without an `AudioFormat`. Each format has its own identity, so changing the audio model does not invalidate PDF, image or text extraction. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) composes it from its saved transcription choice.
 

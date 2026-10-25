@@ -13,5 +13,8 @@
     "@handy-computer/models": "0.2.2",
     "@huggingface/gguf": "0.4.6",
     "@workspace/transcription-local": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/pool": "0.0.1"
   }
 }

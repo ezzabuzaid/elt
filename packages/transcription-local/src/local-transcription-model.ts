@@ -1,8 +1,7 @@
 import { execFile } from 'node:child_process';
 import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import type {
@@ -10,10 +9,11 @@ import type {
   TranscriptionModelV4CallOptions,
   TranscriptionModelV4Result,
 } from '@ai-sdk/provider';
-import PQueue from 'p-queue';
 import { z } from 'zod';
 
-import { TranscriptionWorker } from './transcription-worker.ts';
+import type { Pool } from '@workspace/pool';
+
+import type { TranscriptionWorker } from './transcription-worker.ts';
 
 const execute = promisify(execFile);
 // A model is its name and the language it is told the speech is in, if any;
@@ -27,121 +27,70 @@ const configuration = z.strictObject({
 export type LocalTranscriptionConfiguration = z.infer<typeof configuration>;
 
 // A native model implements the same AI SDK contract as a hosted provider.
-// The owner disposes it after its imports finish; one worker reuses the weights
-// across calls, and the queue prevents concurrent inference on that worker.
-export class LocalTranscriptionModel
-  implements TranscriptionModelV4, AsyncDisposable
-{
+// It borrows engine workers from a pool its host owns and disposes; a worker
+// keeps the weights loaded across calls and transcribes one file at a time.
+export class LocalTranscriptionModel implements TranscriptionModelV4 {
   readonly specificationVersion = 'v4';
   readonly provider = 'transcribe-cpp';
   readonly modelId: string;
-  readonly #configuration: LocalTranscriptionConfiguration;
-  readonly #helper: string;
-  readonly #queue = new PQueue({ concurrency: 1 });
-  readonly #stopped = new AbortController();
-  #worker: TranscriptionWorker | undefined;
+  readonly #engines: Pool<TranscriptionWorker>;
 
   constructor(
     options: LocalTranscriptionConfiguration,
-    helper = fileURLToPath(new URL('transcribe-local', import.meta.url)),
+    engines: Pool<TranscriptionWorker>,
   ) {
-    this.#configuration = {
-      ...LocalTranscriptionModel.parse(options),
-      path: resolve(options.path),
-    };
-    this.#helper = helper;
-    this.modelId = JSON.stringify({
-      name: this.#configuration.name,
-      language: this.#configuration.language,
-    });
+    const { name, language } = LocalTranscriptionModel.parse(options);
+    this.modelId = JSON.stringify({ name, language });
+    this.#engines = engines;
   }
 
   static parse(value: unknown): LocalTranscriptionConfiguration {
     return configuration.parse(value);
   }
 
-  // Check dependencies before a host saves an enabled model, without loading
-  // its weights just to open settings.
-  async check(): Promise<void> {
-    await execute(this.#helper, ['--help']);
-  }
-
-  doGenerate(
+  async doGenerate(
     options: TranscriptionModelV4CallOptions,
   ): Promise<TranscriptionModelV4Result> {
-    const signal =
-      options.abortSignal === undefined
-        ? this.#stopped.signal
-        : AbortSignal.any([this.#stopped.signal, options.abortSignal]);
-    return this.#queue.add(async () => {
-      signal.throwIfAborted();
-      const timestamp = new Date();
-      await using temporary = await mkdtempDisposable(
-        join(tmpdir(), 'transcribe-local-'),
-      );
-      const audio = join(temporary.path, 'input');
-      const wav = join(temporary.path, 'audio.wav');
-      await writeFile(
-        audio,
-        typeof options.audio === 'string'
-          ? Buffer.from(options.audio, 'base64')
-          : options.audio,
-        { signal },
-      );
-      // macOS's own decoder reads WhatsApp's Opus and the other formats
-      // AudioFormat accepts, so a Mac needs nothing installed. It writes the
-      // engine's required 16 kHz, mono, 32-bit float samples through its best
-      // sample rate converter; the default one cost recognized words.
-      await execute(
-        '/usr/bin/afconvert',
-        [
-          ...['-f', 'WAVE', '-d', 'LEF32@16000', '-c', '1'],
-          ...['--src-complexity', 'bats', audio, wav],
-        ],
-        { signal },
-      );
-      signal.throwIfAborted();
-      if (this.#worker?.dead) {
-        await this.#worker.close();
-        this.#worker = undefined;
-      }
-      this.#worker ??= new TranscriptionWorker(
-        this.#helper,
-        this.#configuration,
-      );
-      const worker = this.#worker;
-      const abort = () => worker.kill();
-      signal.addEventListener('abort', abort, { once: true });
-      try {
-        signal.throwIfAborted();
-        const { text } = await worker.read(wav);
-        signal.throwIfAborted();
-        // Cohere marks no timings, so the transcript has no segments.
-        return {
-          text,
-          segments: [],
-          language: undefined,
-          durationInSeconds: undefined,
-          warnings: [],
-          response: { timestamp, modelId: this.modelId },
-        };
-      } catch (error) {
-        signal.throwIfAborted();
-        throw error;
-      } finally {
-        signal.removeEventListener('abort', abort);
-        if (signal.aborted) {
-          worker.kill();
-          await worker.close();
-        }
-      }
-    });
-  }
-
-  async [Symbol.asyncDispose](): Promise<void> {
-    this.#stopped.abort();
-    this.#worker?.kill();
-    await this.#worker?.close();
-    await this.#queue.onIdle();
+    const signal = options.abortSignal;
+    signal?.throwIfAborted();
+    const timestamp = new Date();
+    await using temporary = await mkdtempDisposable(
+      join(tmpdir(), 'transcribe-local-'),
+    );
+    const audio = join(temporary.path, 'input');
+    const wav = join(temporary.path, 'audio.wav');
+    await writeFile(
+      audio,
+      typeof options.audio === 'string'
+        ? Buffer.from(options.audio, 'base64')
+        : options.audio,
+      { signal },
+    );
+    // macOS's own decoder reads WhatsApp's Opus and the other formats
+    // AudioFormat accepts, so a Mac needs nothing installed. It writes the
+    // engine's required 16 kHz, mono, 32-bit float samples through its best
+    // sample rate converter; the default one cost recognized words. It runs
+    // before the call borrows an engine, which then only transcribes.
+    await execute(
+      '/usr/bin/afconvert',
+      [
+        ...['-f', 'WAVE', '-d', 'LEF32@16000', '-c', '1'],
+        ...['--src-complexity', 'bats', audio, wav],
+      ],
+      { signal },
+    );
+    const { text } = await this.#engines.use(
+      (engine) => engine.read(wav),
+      signal,
+    );
+    // Cohere marks no timings, so the transcript has no segments.
+    return {
+      text,
+      segments: [],
+      language: undefined,
+      durationInSeconds: undefined,
+      warnings: [],
+      response: { timestamp, modelId: this.modelId },
+    };
   }
 }

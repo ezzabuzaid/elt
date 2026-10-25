@@ -11,9 +11,12 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { type TestContext, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { Parallel, Pool } from '@workspace/pool';
 import { LocalTranscriptionModel } from '@workspace/transcription-local';
+import { TranscriptionWorker } from '@workspace/transcription-local/transcription-worker';
 
 import type { SpeechModel } from './speech-model.ts';
 import { SpeechModels } from './speech-models.ts';
@@ -200,7 +203,19 @@ async function transcribe(
   );
   const path = join(directory.path, 'note.aiff');
   await promisify(execFile)('say', ['-v', voice, '-o', path, text]);
-  await using local = new LocalTranscriptionModel(model.configuration);
+  await using engines = new Pool({
+    size: 1,
+    startup: new Parallel(),
+    create: () =>
+      new TranscriptionWorker(
+        fileURLToPath(
+          import.meta
+            .resolve('@workspace/transcription-local/transcribe-local'),
+        ),
+        model.configuration,
+      ),
+  });
+  const local = new LocalTranscriptionModel(model.configuration, engines);
   const result = await local.doGenerate({
     audio: await readFile(path),
     mediaType: 'audio/aiff',

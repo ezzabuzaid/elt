@@ -9,6 +9,9 @@
   "references": [
     {
       "path": "../../../transcription-local"
+    },
+    {
+      "path": "../../../pool"
     }
   ]
 }

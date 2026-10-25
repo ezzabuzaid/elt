@@ -21,9 +21,6 @@ func recognize(_ handler: VNImageRequestHandler) throws -> String? {
     return lines.isEmpty ? nil : lines.joined(separator: "\n")
 }
 
-// The pool releases one initializer at a time to avoid duplicate compilation.
-guard readLine() == "" else { exit(1) }
-
 // Exercise distinct recognition scripts before accepting files. English alone
 // leaves first-use model work for the first multilingual attachments.
 for text in ["Context Compiler", "صباح الخير", "नमस्ते दुनिया", "안녕하세요", "Доброе утро", "สวัสดีครับ", "你好世界", "こんにちは世界"] {
