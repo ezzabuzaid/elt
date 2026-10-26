@@ -16,8 +16,8 @@
   },
   "devDependencies": {
     "@workspace/elt-postgresql": "0.0.1",
-    "@zukhruf/testing": "0.3.24",
-    "msw": "^2.15.0",
+    "@zukhruf/testing": "0.3.46",
+    "msw": "^3.0.3",
     "postgres": "^3.4.9"
   }
 }

@@ -9,7 +9,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { Docker, TestRun } from '@zukhruf/testing/docker';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
@@ -18,8 +17,7 @@ import { Eca } from '@workspace/eca';
 import { MeetingBriefWriter } from './meeting-brief-writer.ts';
 import { type MeetingBrief, PlanningMeetings } from './planning-meetings.ts';
 
-const docker = new Docker({ testRun: TestRun.fromEnvironment(process.env) });
-const postgresql = new Postgres({ docker });
+const postgresql = new Postgres({ environment: process.env });
 
 test('planning briefs follow new meetings and related evidence, without retriggering on imports', async () => {
   await using database = await postgresql.database();

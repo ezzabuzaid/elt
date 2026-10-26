@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { inspect } from 'node:util';
 
-import { Docker, TestRun } from '@zukhruf/testing/docker';
 import {
   type Database,
   SQL_SERVER_FULL_IMAGE,
@@ -24,8 +23,10 @@ import {
   VariantValue,
 } from './index.ts';
 
-const docker = new Docker({ testRun: TestRun.fromEnvironment(process.env) });
-const sqlServer = new SqlServer({ docker, image: SQL_SERVER_FULL_IMAGE });
+const sqlServer = new SqlServer({
+  environment: process.env,
+  image: SQL_SERVER_FULL_IMAGE,
+});
 
 // A real db_datareader identity, with the additional grants this test needs.
 // The database belongs to Zukhruf; this scope owns only the server login.

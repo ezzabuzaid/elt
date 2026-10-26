@@ -226,7 +226,7 @@ function googleAccount() {
           ),
     ),
   );
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   return {
     google,
     // Plays the browser: Google grants exactly what the consent page asks.

@@ -46,7 +46,7 @@ function google({ reply }: { reply: () => unknown }) {
       return answer instanceof Response ? answer : Response.json(answer);
     }),
   );
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   return {
     calls,
     requester: signedIn(),

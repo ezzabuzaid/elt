@@ -17,6 +17,6 @@
   },
   "devDependencies": {
     "@workspace/elt-sqlite": "0.0.1",
-    "msw": "^2.15.0"
+    "msw": "^3.0.3"
   }
 }

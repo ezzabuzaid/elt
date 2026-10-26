@@ -53,7 +53,7 @@ function google(reply: (request: Request, url: URL) => unknown) {
       return answer instanceof Response ? answer : Response.json(answer);
     }),
   );
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   return {
     api: new GoogleHealthApi(signedIn()),
     received,
@@ -191,18 +191,19 @@ test('a 429 waits for Retry-After and then reads on', async () => {
 });
 
 test('a 429 that outlasts every retry fails as a rate limit naming the call, and a 503 that does fails as itself', async () => {
-  using limited = google(() =>
-    refusal(429, 'RESOURCE_EXHAUSTED', 'Quota exceeded or rate limited.'),
-  );
-  await assert.rejects(
-    collect(limited.api.dataPoints('steps')),
-    (error: unknown) => {
-      assert.ok(error instanceof GoogleHealthRateLimitError);
-      assert.match(error.message, /steps/);
-      return true;
-    },
-  );
-  limited[Symbol.dispose]();
+  {
+    using limited = google(() =>
+      refusal(429, 'RESOURCE_EXHAUSTED', 'Quota exceeded or rate limited.'),
+    );
+    await assert.rejects(
+      collect(limited.api.dataPoints('steps')),
+      (error: unknown) => {
+        assert.ok(error instanceof GoogleHealthRateLimitError);
+        assert.match(error.message, /steps/);
+        return true;
+      },
+    );
+  }
 
   using unavailable = google(() =>
     refusal(503, 'UNAVAILABLE', 'The service is currently unavailable.'),

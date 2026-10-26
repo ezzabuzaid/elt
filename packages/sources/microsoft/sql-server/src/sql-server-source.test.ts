@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 
-import { Docker, TestRun } from '@zukhruf/testing/docker';
 import { Postgres } from '@zukhruf/testing/postgres';
 import {
   type Database,
@@ -26,9 +25,11 @@ import {
 import { sqlServerCopies } from './sql-server-copies.ts';
 import { SqlServerSource } from './sql-server-source.ts';
 
-const docker = new Docker({ testRun: TestRun.fromEnvironment(process.env) });
-const sqlServer = new SqlServer({ docker, image: SQL_SERVER_FULL_IMAGE });
-const postgresServer = new Postgres({ docker });
+const sqlServer = new SqlServer({
+  environment: process.env,
+  image: SQL_SERVER_FULL_IMAGE,
+});
+const postgresServer = new Postgres({ environment: process.env });
 
 // A real db_datareader identity, with the additional grants this test needs.
 // The database belongs to Zukhruf; this scope owns only the server login.

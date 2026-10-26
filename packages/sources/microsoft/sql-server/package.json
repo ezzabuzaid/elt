@@ -20,7 +20,7 @@
   "devDependencies": {
     "@types/mssql": "^12.3.0",
     "@workspace/elt-postgresql": "0.0.1",
-    "@zukhruf/testing": "0.3.24",
+    "@zukhruf/testing": "0.3.46",
     "mssql": "^12.7.4",
     "postgres": "^3.4.9"
   }

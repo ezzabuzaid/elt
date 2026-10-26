@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
-import { Docker, TestRun } from '@zukhruf/testing/docker';
 import { Postgres } from '@zukhruf/testing/postgres';
 
 import {
@@ -24,7 +23,7 @@ import {
 } from './index.ts';
 
 const databases = new Postgres({
-  docker: new Docker({ testRun: TestRun.fromEnvironment(process.env) }),
+  environment: process.env,
 });
 
 // An app's store whose every scan lists all its notes, as Apple's stores do.

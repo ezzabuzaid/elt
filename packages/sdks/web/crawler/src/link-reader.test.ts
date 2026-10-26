@@ -20,7 +20,7 @@ import {
 // Synthetic upstream sites make link graphs reproducible offline.
 function mockWeb(...handlers: Parameters<typeof setupServer>) {
   const server = setupServer(...handlers);
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   return {
     [Symbol.dispose]() {
       server.close();

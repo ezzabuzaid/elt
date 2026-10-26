@@ -75,7 +75,7 @@ function instagram(api: (call: Call) => Response) {
       return api(call);
     }),
   );
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   return { calls, [Symbol.dispose]: () => server.close() };
 }
 

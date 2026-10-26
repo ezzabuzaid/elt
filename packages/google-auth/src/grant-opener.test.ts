@@ -107,7 +107,7 @@ function stored(rows: Map<string, unknown>): GoogleOAuthCredential {
 test('open reads the grant once and refreshes a token for the session scopes only', async () => {
   const tokenRequests: URLSearchParams[] = [];
   const server = googleServer(['fresh'], [], undefined, tokenRequests);
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   const { calls, store } = mapStore(STORED);
   try {
     const opener = new GoogleGrantOpener({ app: APP, store });
@@ -132,7 +132,7 @@ test('a rotated refresh token is persisted with every scope the grant holds befo
     [{ rotated: 'refresh-rotated', token: 'fresh' }],
     [],
   );
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   const { calls, rows, store } = mapStore(STORED);
   try {
     const opener = new GoogleGrantOpener({ app: APP, store });
@@ -155,7 +155,7 @@ test('a later rotation is persisted before the response that caused it returns',
     ['first', { rotated: 'refresh-rotated', token: 'second' }],
     resourceHits,
   );
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   const { calls, rows, store } = mapStore(STORED);
   // The store finishes a write only when the test lets it.
   const written = Promise.withResolvers<void>();
@@ -202,7 +202,7 @@ test('a persist failure rejects the request that rotated and every later one', a
     ],
     [],
   );
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   const { refuseWrites, store } = mapStore(STORED);
   try {
     const opener = new GoogleGrantOpener({ app: APP, store });
@@ -227,7 +227,7 @@ test('a persist failure rejects the request that rotated and every later one', a
 
 test('a grant Google will not refresh is reported as revoked and never written', async () => {
   const server = googleServer([], []);
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   const { calls, store } = mapStore(STORED);
   try {
     const opener = new GoogleGrantOpener({ app: APP, store });
@@ -244,7 +244,7 @@ test('a grant Google will not refresh is reported as revoked and never written',
 
 test('a missing or malformed grant names its ref', async () => {
   const server = googleServer([], []);
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   const { rows, store } = mapStore();
   try {
     const opener = new GoogleGrantOpener({ app: APP, store });
@@ -270,7 +270,7 @@ test('a missing or malformed grant names its ref', async () => {
 test('concurrent opens of one ref and scope set share a single read and refresh', async () => {
   const tokenRequests: URLSearchParams[] = [];
   const server = googleServer(['fresh', 'later'], [], undefined, tokenRequests);
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   const { calls, store } = mapStore(STORED);
   try {
     const opener = new GoogleGrantOpener({ app: APP, store });
@@ -296,7 +296,7 @@ test('concurrent opens of one ref and scope set share a single read and refresh'
 test('concurrent opens with different scopes never share a session or a token', async () => {
   const tokenRequests: URLSearchParams[] = [];
   const server = googleServer(['one', 'two'], [], undefined, tokenRequests);
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   const { store } = mapStore(STORED);
   try {
     const opener = new GoogleGrantOpener({ app: APP, store });
@@ -325,7 +325,7 @@ test('the re-authentication refusal counts as revoked too', async () => {
     error: 'invalid_grant',
     error_description: 'reauth related error (invalid_rapt)',
   });
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   const { store } = mapStore(STORED);
   try {
     const opener = new GoogleGrantOpener({ app: APP, store });
@@ -341,7 +341,7 @@ test('the re-authentication refusal counts as revoked too', async () => {
 
 test('other token-endpoint refusals pass through unchanged', async () => {
   const server = googleServer([], [], { error: 'invalid_client' });
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   const { store } = mapStore(STORED);
   try {
     const opener = new GoogleGrantOpener({ app: APP, store });

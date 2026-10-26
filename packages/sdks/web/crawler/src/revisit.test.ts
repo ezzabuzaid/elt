@@ -25,7 +25,7 @@ import {
 // Synthetic upstream sites make page bodies and failures reproducible offline.
 function mockWeb(...handlers: Parameters<typeof setupServer>) {
   const server = setupServer(...handlers);
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   return {
     [Symbol.dispose]() {
       server.close();

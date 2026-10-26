@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { Docker, TestRun } from '@zukhruf/testing/docker';
 import { Postgres } from '@zukhruf/testing/postgres';
 import { http } from 'msw';
 import { setupServer } from 'msw/node';
@@ -18,7 +17,7 @@ import { GoogleGrant, GoogleOAuthApp } from '@workspace/google-auth';
 import { GoogleHealthSource } from './google-health-source.ts';
 
 const databases = new Postgres({
-  docker: new Docker({ testRun: TestRun.fromEnvironment(process.env) }),
+  environment: process.env,
 });
 
 const RAW = 'google_health';
@@ -178,7 +177,7 @@ function google(account: Account) {
       });
     }),
   );
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   return { requests, [Symbol.dispose]: () => server.close() };
 }
 

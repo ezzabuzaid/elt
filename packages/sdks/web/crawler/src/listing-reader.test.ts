@@ -21,7 +21,7 @@ import {
 // Only HTTP is controlled; the crawler and its parsers run for real.
 function site(...handlers: HttpHandler[]) {
   const server = setupServer(...handlers);
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   return { [Symbol.dispose]: () => server.close() };
 }
 

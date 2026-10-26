@@ -138,7 +138,7 @@ test('revoke hands the refresh token to Google', async () => {
       return HttpResponse.json({});
     }),
   );
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   try {
     await APP.revoke(new GoogleGrant(CREDENTIAL));
 

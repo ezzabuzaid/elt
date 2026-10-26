@@ -3,7 +3,6 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { gzipSync } from 'node:zlib';
 
-import { Docker, TestRun } from '@zukhruf/testing/docker';
 import { Postgres } from '@zukhruf/testing/postgres';
 import { type PathParams, http } from 'msw';
 import { setupServer } from 'msw/node';
@@ -20,7 +19,7 @@ import { GoogleGrant, GoogleOAuthApp } from '@workspace/google-auth';
 import { SearchConsoleSource } from './search-console-source.ts';
 
 const databases = new Postgres({
-  docker: new Docker({ testRun: TestRun.fromEnvironment(process.env) }),
+  environment: process.env,
 });
 
 const SITE = 'sc-domain:example.com';
@@ -115,7 +114,7 @@ function google({
       }),
     ),
   );
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   return {
     calls,
     fetched,
@@ -2122,7 +2121,7 @@ test('a grant Google no longer refreshes is a config failure, asked once', async
       return Response.json({});
     }),
   );
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   try {
     await using database = await databases.database();
     const warehouse = {

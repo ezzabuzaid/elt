@@ -26,9 +26,9 @@ const enumRestrictedSyntax = [
 const mswUnhandledRequestSyntax = [
   {
     selector:
-      'Program:has(ImportDeclaration[source.value="msw/node"]) CallExpression[callee.property.name="listen"]:matches([arguments.length=0], [arguments.0.type="ObjectExpression"]):not(:has(Property[key.name="onUnhandledRequest"] > Literal[value="error"]))',
+      'Program:has(ImportDeclaration[source.value="msw/node"]) CallExpression[callee.property.name="listen"]:matches([arguments.length=0], [arguments.0.type="ObjectExpression"]):not(:has(Property[key.name="onUnhandledFrame"] > Literal[value="error"]))',
     message:
-      "msw: server.listen() must pass { onUnhandledRequest: 'error' } so an unstubbed request fails the test instead of reaching the network.",
+      "msw: server.listen() must pass { onUnhandledFrame: 'error' } so an unstubbed request fails the test instead of reaching the network.",
   },
 ];
 

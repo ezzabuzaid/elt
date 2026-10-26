@@ -19,6 +19,6 @@
     "google-auth-library": "^11.1.0"
   },
   "devDependencies": {
-    "msw": "^2.15.0"
+    "msw": "^3.0.3"
   }
 }

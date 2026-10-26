@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { Docker, TestRun } from '@zukhruf/testing/docker';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
@@ -15,8 +14,7 @@ import { Automation } from './automation.ts';
 import { Automations } from './automations.ts';
 import { NotifyAutomation } from './notify-automation.ts';
 
-const docker = new Docker({ testRun: TestRun.fromEnvironment(process.env) });
-const postgresql = new Postgres({ docker });
+const postgresql = new Postgres({ environment: process.env });
 
 async function createThings(sql: postgres.Sql): Promise<void> {
   await sql`CREATE TABLE things (key text PRIMARY KEY, kind text, text text)`;

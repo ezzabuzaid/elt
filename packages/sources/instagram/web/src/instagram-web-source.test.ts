@@ -659,7 +659,7 @@ function instagram(world: World) {
       });
     }),
   );
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   return { calls, downloads, [Symbol.dispose]: () => server.close() };
 }
 

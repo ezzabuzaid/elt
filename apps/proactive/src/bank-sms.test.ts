@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 
-import { Docker, TestRun } from '@zukhruf/testing/docker';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
@@ -11,8 +10,7 @@ import { Eca } from '@workspace/eca';
 import { MissingMidMonthCredit } from './missing-mid-month-credit.ts';
 import { SpendSpike } from './spend-spike.ts';
 
-const docker = new Docker({ testRun: TestRun.fromEnvironment(process.env) });
-const postgresql = new Postgres({ docker });
+const postgresql = new Postgres({ environment: process.env });
 
 async function createMessagesSchema(sql: postgres.Sql): Promise<void> {
   await sql`CREATE SCHEMA marts`;

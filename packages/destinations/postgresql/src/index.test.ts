@@ -13,7 +13,6 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
-import { Docker, TestRun } from '@zukhruf/testing/docker';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
@@ -65,7 +64,7 @@ async function installedHistory(url: string) {
 }
 
 const databases = new Postgres({
-  docker: new Docker({ testRun: TestRun.fromEnvironment(process.env) }),
+  environment: process.env,
 });
 
 // Emits whatever the test sets on `messages`, then an empty checkpoint.

@@ -4,15 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { Docker, TestRun } from '@zukhruf/testing/docker';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
 import { Automations } from './automations.ts';
 import { CareemCalories } from './careem-calories.ts';
 
-const docker = new Docker({ testRun: TestRun.fromEnvironment(process.env) });
-const postgresql = new Postgres({ docker });
+const postgresql = new Postgres({ environment: process.env });
 
 async function createMailSchema(sql: postgres.Sql): Promise<void> {
   // The marts views the Mail load publishes, with their column types as
