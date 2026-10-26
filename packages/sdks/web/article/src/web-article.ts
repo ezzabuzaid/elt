@@ -29,15 +29,46 @@ export class ArticleError extends Error {
   }
 }
 
+function mediaType(contentType: string | undefined) {
+  return contentType ? new MIMEType(contentType).essence : null;
+}
+
+function isHtml(
+  type: string | null,
+): type is 'text/html' | 'application/xhtml+xml' {
+  return type === 'text/html' || type === 'application/xhtml+xml';
+}
+
+function acceptHeader(types: readonly string[]) {
+  return types
+    .map((type, index) => `${type};q=${(1 / (index + 1)).toFixed(3)}`)
+    .join(', ');
+}
+
 export class WebArticle {
+  /** The Accept header for a page downloaded elsewhere and given to read(). */
+  readonly accept: string;
   readonly #extractions: readonly Extraction[];
   readonly #http: Got;
+  readonly #mediaTypes: readonly string[];
+  readonly #fallback: readonly string[] | undefined;
 
   constructor(extractions: readonly Extraction[], http: Got) {
     if (extractions.length === 0)
       throw new TypeError('At least one article extraction is required');
     this.#extractions = extractions.slice();
     this.#http = http;
+    this.#mediaTypes = [
+      ...new Set(
+        this.#extractions.flatMap((extraction) => extraction.mediaTypes),
+      ),
+    ];
+    const htmlTypes = this.#mediaTypes.filter(isHtml);
+    this.#fallback =
+      this.#mediaTypes[0] === 'text/markdown' && htmlTypes.length > 0
+        ? htmlTypes
+        : undefined;
+    this.accept = acceptHeader(this.#mediaTypes);
   }
 
   async fetch(url: string, signal: AbortSignal) {
@@ -45,57 +76,54 @@ export class WebArticle {
   }
 
   async download(url: string, signal: AbortSignal) {
-    const mediaTypes = [
-      ...new Set(
-        this.#extractions.flatMap((extraction) => extraction.mediaTypes),
-      ),
-    ];
-    const htmlTypes = mediaTypes.filter(
-      (type) => type === 'text/html' || type === 'application/xhtml+xml',
-    );
-    return this.#download(
-      url,
-      signal,
-      mediaTypes,
-      mediaTypes[0] === 'text/markdown' && htmlTypes.length > 0
-        ? htmlTypes
-        : undefined,
-    );
+    return this.#download(url, signal, this.#mediaTypes, this.#fallback);
+  }
+
+  async read(response: Response, signal: AbortSignal) {
+    return this.#read(response, signal, this.#mediaTypes, this.#fallback);
   }
 
   async #download(
     url: string,
     signal: AbortSignal,
     accepted: readonly string[],
-    fallback?: readonly string[],
+    fallback: readonly string[] | undefined,
   ): Promise<ArticleDownload> {
     try {
-      let response: Response<Buffer>;
-      try {
-        response = await this.#http(url, {
-          signal,
-          responseType: 'buffer',
-          headers: {
-            accept: accepted
-              .map((type, index) => `${type};q=${(1 / (index + 1)).toFixed(3)}`)
-              .join(', '),
-          },
-        });
-      } catch (error) {
-        signal.throwIfAborted();
-        if (
-          fallback &&
-          error instanceof HTTPError &&
-          error.response.statusCode === 406
-        )
-          return await this.#download(error.response.url, signal, fallback);
-        throw error;
-      }
-      url = response.url;
+      const response = await this.#http(url, {
+        signal,
+        responseType: 'buffer',
+        headers: { accept: acceptHeader(accepted) },
+      });
+      return await this.#read(response, signal, accepted, fallback);
+    } catch (cause) {
+      signal.throwIfAborted();
+      if (cause instanceof ArticleError) throw cause;
+      if (cause instanceof HTTPError)
+        return this.#read(cause.response, signal, accepted, fallback);
+      if (cause instanceof RequestError && cause.response)
+        url = cause.response.url;
+      throw new ArticleError(url, cause);
+    }
+  }
+
+  async #read(
+    response: Response,
+    signal: AbortSignal,
+    accepted: readonly string[],
+    fallback: readonly string[] | undefined,
+  ): Promise<ArticleDownload> {
+    const url = response.url;
+    try {
+      signal.throwIfAborted();
+      if (fallback && response.statusCode === 406)
+        return await this.#download(url, signal, fallback, undefined);
       // There is no cached representation to extract after a conditional response.
-      if (response.statusCode === 304) throw new HTTPError(response);
+      if (!response.ok || response.statusCode === 304)
+        throw new HTTPError(response);
       const contentType = response.headers['content-type'];
-      const type = contentType ? new MIMEType(contentType).essence : null;
+      const type = mediaType(contentType);
+      const nativeMarkdown = fallback !== undefined && type === 'text/markdown';
       const preferred =
         type === null
           ? []
@@ -104,11 +132,11 @@ export class WebArticle {
       return {
         // Alternate and fallback representations can change independently of this response.
         fingerprint:
-          alternatives.length > 0 || (fallback && type === 'text/markdown')
+          alternatives.length > 0 || nativeMarkdown
             ? null
             : createHash('sha256')
                 .update(JSON.stringify([url, contentType]))
-                .update(response.body)
+                .update(response.rawBody)
                 .digest('hex'),
         extract: async () => {
           try {
@@ -120,7 +148,7 @@ export class WebArticle {
                 alternatives,
                 signal,
               );
-              if (article && fallback && type === 'text/markdown') {
+              if (article && nativeMarkdown) {
                 try {
                   const companion = await this.#http(url, {
                     signal,
@@ -134,14 +162,13 @@ export class WebArticle {
                   return article;
                 }
               }
-              if (article !== null || !fallback || type !== 'text/markdown')
-                return article;
+              if (article !== null || !nativeMarkdown) return article;
             } catch (error) {
               signal.throwIfAborted();
-              if (!fallback || type !== 'text/markdown') throw error;
+              if (!nativeMarkdown) throw error;
             }
             return await (
-              await this.#download(url, signal, fallback)
+              await this.#download(url, signal, fallback, undefined)
             ).extract();
           } catch (cause) {
             signal.throwIfAborted();
@@ -153,24 +180,22 @@ export class WebArticle {
     } catch (cause) {
       signal.throwIfAborted();
       if (cause instanceof ArticleError) throw cause;
-      if (cause instanceof RequestError && cause.response)
-        url = cause.response.url;
       throw new ArticleError(url, cause);
     }
   }
 
   async #withHTML(
     native: Article,
-    response: Response<Buffer>,
+    response: Response,
     signal: AbortSignal,
   ): Promise<Article> {
     const contentType = response.headers['content-type'];
-    const type = contentType ? new MIMEType(contentType).essence : null;
-    if (type !== 'text/html' && type !== 'application/xhtml+xml') return native;
+    const type = mediaType(contentType);
+    if (!isHtml(type)) return native;
     let html: Article | null;
     try {
       html = await this.#extract(
-        { url: response.url, body: response.body, contentType },
+        { url: response.url, body: response.rawBody, contentType },
         signal,
         this.#extractions.filter((extraction) =>
           extraction.mediaTypes.includes(type),
@@ -196,14 +221,10 @@ export class WebArticle {
     };
   }
 
-  #alternatives(response: Response<Buffer>, preferred: readonly string[]) {
+  #alternatives(response: Response, preferred: readonly string[]) {
     if (preferred.length === 0) return [];
-    const page: ArticlePage = {
-      url: response.url,
-      body: response.body,
-      contentType: response.headers['content-type'],
-    };
-    const { url } = page;
+    const { url } = response;
+    const contentType = response.headers['content-type'];
     const linkSelectors = [{ rel: 'alternate', types: [...preferred] }];
     const headers = new Headers();
     if (response.headers.link)
@@ -214,11 +235,8 @@ export class WebArticle {
           : response.headers.link,
       );
     const alternatives = discoverUrisFromHeaders(headers, { linkSelectors });
-    const type = page.contentType
-      ? new MIMEType(page.contentType).essence
-      : null;
-    if (type === 'text/html' || type === 'application/xhtml+xml') {
-      const dom = new JSDOM(page.body, { url, contentType: page.contentType });
+    if (isHtml(mediaType(contentType))) {
+      const dom = new JSDOM(response.rawBody, { url, contentType });
       try {
         alternatives.push(
           ...discoverUrisFromHtml(dom.serialize(), {
@@ -237,14 +255,14 @@ export class WebArticle {
   }
 
   async #extractResponse(
-    response: Response<Buffer>,
+    response: Response,
     preferred: readonly string[],
     alternatives: readonly string[],
     signal: AbortSignal,
   ) {
     const page: ArticlePage = {
       url: response.url,
-      body: response.body,
+      body: response.rawBody,
       contentType: response.headers['content-type'],
     };
     const { url } = page;
