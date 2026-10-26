@@ -1,3 +1,4 @@
+import { untilAborted } from '@zukhruf/async';
 import PQueue from 'p-queue';
 
 import type { Sizing } from './sizing.ts';
@@ -64,7 +65,7 @@ export class Pool<T extends Worker> implements AsyncDisposable {
       const slot = this.#running().find(({ busy }) => !busy)!;
       slot.busy = true;
       try {
-        const worker = await abortable(this.#borrow(slot), stop);
+        const worker = await untilAborted(this.#borrow(slot), stop);
         const kill = () => {
           worker.kill();
           this.#lost(slot);
@@ -191,13 +192,4 @@ export class Pool<T extends Worker> implements AsyncDisposable {
     await Promise.all([...this.#workers].map((worker) => worker.close()));
     await this.#queue.onIdle();
   }
-}
-
-function abortable<V>(promise: Promise<V>, signal: AbortSignal): Promise<V> {
-  const aborted = Promise.withResolvers<never>();
-  const abort = () => aborted.reject(signal.reason);
-  signal.addEventListener('abort', abort, { once: true });
-  return Promise.race([promise, aborted.promise]).finally(() =>
-    signal.removeEventListener('abort', abort),
-  );
 }

@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "@zukhruf/async": "0.3.41",
     "p-queue": "10.0.0"
   }
 }
