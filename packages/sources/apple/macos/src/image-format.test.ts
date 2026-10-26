@@ -106,16 +106,29 @@ test('the warmed parser preserves OCR, concurrent responses and image errors, an
   const stop = new AbortController();
   stop.abort();
   await assert.rejects(parser.parse(note, stop.signal), { name: 'AbortError' });
+  // One read for each worker, so the killed worker has one in flight. Which
+  // worker serves which read is the pool's choice, and PIDs wrap, so the
+  // test counts outcomes instead of naming the read that fails.
   const pid = pids[0]!;
   const format = new ImageFormat(vision);
-  const failed = assert.rejects(
-    format.text(receipt),
-    /Vision worker exited \(SIGKILL\)/,
+  const reads = Array.from({ length: workers }, () =>
+    format.text(receipt).then(
+      (text) => ({ text }),
+      (error: Error) => ({ error }),
+    ),
   );
-  const other = format.text(note);
+  await inFlight();
   process.kill(pid, 'SIGKILL');
-  await failed;
-  assert.equal(await other, 'Meet tomorrow');
+  const outcomes = await Promise.all(reads);
+  const failures = outcomes.flatMap((outcome) =>
+    'error' in outcome ? [outcome.error.message] : [],
+  );
+  assert.equal(failures.length, 1, 'only the killed worker fails its read');
+  assert.match(failures[0]!, /Vision worker exited \(SIGKILL\)/);
+  assert.deepEqual(
+    outcomes.flatMap((outcome) => ('text' in outcome ? [outcome.text] : [])),
+    Array.from({ length: workers - 1 }, () => 'Invoice 4821 due Friday'),
+  );
   assert.deepEqual(
     await Promise.all([parser.parse(receipt), parser.parse(note)]),
     ['Invoice 4821 due Friday', 'Meet tomorrow'],
