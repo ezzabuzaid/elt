@@ -1,8 +1,6 @@
 import { hash } from 'node:crypto';
 import { setInterval } from 'node:timers/promises';
 
-import { HTTPError } from 'got';
-import { pMapIterable } from 'p-map';
 import { z } from 'zod';
 
 import {
@@ -23,10 +21,12 @@ import {
   WebArticle,
 } from '@workspace/sdk-web-article';
 import {
-  type LinkedPage,
-  WebDiscovery,
-  WebLinks,
-} from '@workspace/sdk-web-discovery';
+  ArchiveReader,
+  LinkReader,
+  ListingReader,
+  type PageLocation,
+  WebCrawler,
+} from '@workspace/sdk-web-crawler';
 
 import { webHttp } from './http/web-http.ts';
 
@@ -107,18 +107,18 @@ const catalog = new Catalog([
   }),
 ]);
 
+const location = z.object({
+  url: z.url({ protocol: /^https?$/ }),
+  listingUrl: z.url({ protocol: /^https?$/ }),
+  lastModified: z.string().nullable(),
+});
+
 const saved = z.object({
-  after: z.string().nullable(),
   diff: z.unknown(),
-  pending: z.array(
-    z.object({
-      url: z.url({ protocol: /^https?$/ }),
-      listingUrl: z.url({ protocol: /^https?$/ }),
-      lastModified: z.string().nullable(),
-      depth: z.number().int().nonnegative(),
-      follow: z.boolean(),
-    }),
-  ),
+  // The unfinished crawl's snapshot; null once a crawl finishes.
+  crawl: z.unknown(),
+  // Failed pages, handed to the next crawl so a page that leaves every listing is not lost.
+  retry: z.array(location),
 });
 
 export class WebSource extends Source {
@@ -186,185 +186,131 @@ export class WebSource extends Source {
     const inputUrl = z.string().parse(partition?.inputUrl);
     const previous =
       state === null
-        ? { after: null, diff: null, pending: [] }
+        ? { diff: null, crawl: null, retry: [] }
         : saved.parse(state);
     let diff: unknown = previous.diff;
-    let after = previous.after;
-    const pending = new Map<string, LinkedPage>(
-      previous.pending.map((page) => [page.url, page]),
-    );
     await using client = await webHttp(signal);
     const { http, signal: requestSignal } = client;
-    const errors: ArticleError[] = [];
-    await using links = await WebLinks.open({ maxDepth: 3, maxPages: 100 });
-    const pages = await new WebDiscovery(http, links).discover(
-      inputUrl,
-      requestSignal,
+    const article = new WebArticle(
+      [new MarkdownExtraction(), new HTMLExtraction()],
+      http,
     );
-    const listed = new Map(pages.map((page) => [page.url, page]));
-    const includes = (url: string) =>
-      this.#include === undefined ||
-      this.#include.some((pattern) => pattern.test(url));
-    let batch: LinkedPage[] = [
-      ...new Map(
-        [
-          ...previous.pending,
-          ...pages.map((page) => ({ ...page, depth: 0, follow: true })),
-        ].map((page) => [page.url, page]),
-      ).values(),
-    ]
-      .toSorted((a, b) => (a.url < b.url ? -1 : a.url > b.url ? 1 : 0))
-      .filter(
-        (page) =>
-          pending.has(page.url) ||
-          (includes(page.url) &&
-            (previous.after === null || page.url > previous.after)),
-      );
-    const scheduled = new Set([
-      ...pages.filter((page) => includes(page.url)).map((page) => page.url),
-      ...batch.map((page) => page.url),
-    ]);
-    const attempted = new Set<string>();
-    const collect = async () => {
-      for (const page of await links.take(http, scheduled, requestSignal)) {
-        scheduled.add(page.url);
-        if (includes(page.url) || page.follow)
-          pending.set(page.url, { ...page, ...listed.get(page.url) });
-      }
-    };
-    await collect();
-    batch = [
-      ...new Map(
-        [...pending.values(), ...batch].map((page) => [page.url, page]),
-      ).values(),
-    ];
-    batch.sort((a, b) => (a.url < b.url ? -1 : a.url > b.url ? 1 : 0));
-    while (batch.length > 0) {
-      for await (const result of pMapIterable(
-        batch,
-        async (page) => {
-          try {
-            const reader = new WebArticle(
-              includes(page.url)
-                ? [new MarkdownExtraction(), new HTMLExtraction()]
-                : [new HTMLExtraction()],
-              http.extend({
-                hooks: {
-                  afterResponse: [
-                    (response) =>
-                      page.follow
-                        ? links.collect(response, page.depth)
-                        : response,
-                  ],
-                },
-              }),
-            );
-            return {
-              page,
-              download: await reader.download(page.url, requestSignal),
-            };
-          } catch (error) {
-            requestSignal.throwIfAborted();
-            if (!(error instanceof ArticleError)) throw error;
-            if (
-              page.depth > 0 &&
-              error.cause instanceof HTTPError &&
-              [404, 410].includes(error.cause.response.statusCode)
-            )
-              return { page, download: null };
-            return { page, error };
-          }
+    const crawler = new WebCrawler(
+      http.extend({
+        hooks: {
+          beforeRequest: [
+            (options) => {
+              if (options.context.page === true)
+                options.headers.accept = article.accept;
+            },
+          ],
         },
-        { concurrency: 4 },
-      )) {
-        const { page } = result;
-        attempted.add(page.url);
-        if (listed.has(page.url) && (after === null || page.url > after))
-          after = page.url;
-        try {
-          if (result.error) throw result.error;
-          const { download } = result;
-          if (download === null || !includes(page.url)) {
-            pending.delete(page.url);
-            await collect();
-            yield {
-              type: 'STATE',
-              stream: configuration.stream.name,
-              state: { after, diff, pending: [...pending.values()] },
-            };
-            continue;
-          }
-          for await (const message of diffGroupedSnapshot(
-            configuration,
-            [
-              {
-                key: page.url,
-                fingerprint:
-                  download.fingerprint === null
-                    ? null
-                    : hash(
-                        'sha256',
-                        JSON.stringify([
-                          download.fingerprint,
-                          page.listingUrl,
-                          page.lastModified,
-                        ]),
-                      ),
-                async *records() {
-                  const article = await download.extract();
-                  yield* validateRecords(
-                    configuration.stream,
-                    article === null
-                      ? []
-                      : [
-                          {
-                            ...article,
-                            inputUrl,
-                            pageUrl: page.url,
-                            listingUrl: page.listingUrl,
-                            lastModified: page.lastModified,
-                            // Readability's public result permits undefined metadata; stream cells use null.
-                            title: article.title ?? null,
-                            byline: article.byline ?? null,
-                            publishedTime: article.publishedTime ?? null,
-                            excerpt: article.excerpt ?? null,
-                            siteName: article.siteName ?? null,
-                            lang: article.lang ?? null,
-                            dir: article.dir ?? null,
-                          },
-                        ],
-                    'Web',
-                  );
-                },
-              },
-            ],
-            diff,
-            { continues: true, signal },
-          )) {
-            if ('type' in message && message.type === 'STATE') {
-              diff = message.state;
-              pending.delete(page.url);
-              await collect();
-              yield {
-                ...message,
-                state: { after, diff, pending: [...pending.values()] },
-              };
-            } else yield message;
-          }
-        } catch (error) {
-          requestSignal.throwIfAborted();
-          if (!(error instanceof ArticleError)) throw error;
-          pending.set(page.url, page);
-          errors.push(error);
-          await collect();
-          yield {
-            type: 'STATE',
-            stream: configuration.stream.name,
-            state: { after, diff, pending: [...pending.values()] },
-          };
-        }
+      }),
+      [
+        new ListingReader(),
+        new ArchiveReader(),
+        new LinkReader({ maxDepth: 3, maxPages: 100 }),
+      ],
+    );
+    // Every run, fresh or resumed, tries the saved failures again and collects its own.
+    const options = {
+      signal: requestSignal,
+      include: this.#include,
+      pages: previous.retry,
+    };
+    const crawl =
+      previous.crawl === null
+        ? crawler.run([inputUrl], options)
+        : crawler.resume(previous.crawl, options);
+    const retry = new Map<string, PageLocation>();
+    const errors: Error[] = [];
+    const progress = () => ({
+      diff,
+      crawl: crawl.snapshot(),
+      retry: [...retry.values()],
+    });
+    for await (const entry of crawl) {
+      const page = {
+        url: entry.url,
+        listingUrl: entry.listingUrl,
+        lastModified: entry.lastModified,
+      };
+      if ('error' in entry) {
+        errors.push(entry.error);
+        // A failed listing returns with the next crawl; only pages need keeping.
+        if (entry.page) retry.set(page.url, page);
+        yield {
+          type: 'STATE',
+          stream: configuration.stream.name,
+          state: progress(),
+        };
+        continue;
       }
-      batch = [...pending.values()].filter((page) => !attempted.has(page.url));
+      try {
+        const download = await article.read(entry.response, requestSignal);
+        for await (const message of diffGroupedSnapshot(
+          configuration,
+          [
+            {
+              key: page.url,
+              fingerprint:
+                download.fingerprint === null
+                  ? null
+                  : hash(
+                      'sha256',
+                      JSON.stringify([
+                        download.fingerprint,
+                        page.listingUrl,
+                        page.lastModified,
+                      ]),
+                    ),
+              async *records() {
+                const extracted = await download.extract();
+                yield* validateRecords(
+                  configuration.stream,
+                  extracted === null
+                    ? []
+                    : [
+                        {
+                          ...extracted,
+                          inputUrl,
+                          pageUrl: page.url,
+                          listingUrl: page.listingUrl,
+                          lastModified: page.lastModified,
+                          // Readability's public result permits undefined metadata; stream cells use null.
+                          title: extracted.title ?? null,
+                          byline: extracted.byline ?? null,
+                          publishedTime: extracted.publishedTime ?? null,
+                          excerpt: extracted.excerpt ?? null,
+                          siteName: extracted.siteName ?? null,
+                          lang: extracted.lang ?? null,
+                          dir: extracted.dir ?? null,
+                        },
+                      ],
+                  'Web',
+                );
+              },
+            },
+          ],
+          diff,
+          { continues: true, signal },
+        )) {
+          if ('type' in message && message.type === 'STATE') {
+            diff = message.state;
+            yield { ...message, state: progress() };
+          } else yield message;
+        }
+      } catch (error) {
+        requestSignal.throwIfAborted();
+        if (!(error instanceof ArticleError)) throw error;
+        errors.push(error);
+        retry.set(page.url, page);
+        yield {
+          type: 'STATE',
+          stream: configuration.stream.name,
+          state: progress(),
+        };
+      }
     }
     requestSignal.throwIfAborted();
     for await (const message of diffGroupedSnapshot(configuration, [], diff, {
@@ -374,9 +320,9 @@ export class WebSource extends Source {
         yield {
           ...message,
           state: {
-            after: null,
             diff: message.state,
-            pending: [...pending.values()],
+            crawl: null,
+            retry: [...retry.values()],
           },
         };
       else yield message;

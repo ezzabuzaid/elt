@@ -10,6 +10,6 @@
     { "path": "../../../elt" },
     { "path": "../../../destinations/sqlite" },
     { "path": "../../../sdks/web/article" },
-    { "path": "../../../sdks/web/discovery" }
+    { "path": "../../../sdks/web/crawler" }
   ]
 }

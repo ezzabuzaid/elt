@@ -104,7 +104,7 @@ test('ordinary links reach unlisted articles while feed pages and unchanged reru
   assert.equal(revalidated, 2);
 });
 
-test('new URLs before the cursor survive interruption without downloading the parent again', async () => {
+test('new URLs survive interruption, and only the page in flight downloads again', async () => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -179,7 +179,9 @@ test('new URLs before the cursor survive interruption without downloading the pa
   requests.length = 0;
   const resumed = new Pipeline({ connections: [connection], history });
   assert.equal((await resumed.run())[0]?.count, 1);
-  assert.ok(!requests.includes('/articles/z'));
+  // The parent was in flight when the run stopped: it downloads once more, and the diff writes nothing for it.
+  assert.equal(requests.filter((url) => url === '/articles/z').length, 1);
+  assert.ok(!requests.includes('/') && !requests.includes('/feed'));
   assert.equal(requests.filter((url) => url === '/articles/a').length, 1);
   assert.equal(
     database.connection.prepare('SELECT count(*) AS count FROM articles').get()
@@ -188,11 +190,15 @@ test('new URLs before the cursor survive interruption without downloading the pa
   );
 });
 
-test('Markdown companion responses discover articles and cap secondary feed pagination', async () => {
+test('Markdown pages supply links, and feeds declared on crawled pages are read completely', async () => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
     requests.push(request.url);
+    const article = (text: string, head = '') =>
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(`${head}<article><p>${text}</p></article>`);
     if (request.url === '/')
       response
         .writeHead(200, { 'content-type': 'text/html' })
@@ -208,29 +214,34 @@ test('Markdown companion responses discover articles and cap secondary feed pagi
         response
           .writeHead(200, { 'content-type': 'text/markdown' })
           .end(
-            '# Published observations\n\nThe complete original research is available in this native Markdown article.',
+            '# Published observations\n\nThe complete original research is available in this native Markdown article. See [related research](/articles/extra).',
           );
-      else
-        response
-          .writeHead(200, { 'content-type': 'text/html' })
-          .end(
-            '<article><p>The published observations have an HTML companion.</p></article><link rel="alternate" type="application/feed+json" href="/extra/1">',
-          );
-    } else if (request.url === '/extra/1')
+      else article('The published observations have an HTML companion.');
+    } else if (request.url === '/articles/extra')
+      article(
+        'The linked page supplies another complete published research article.',
+        '<link rel="alternate" type="application/feed+json" href="/extra/1">',
+      );
+    else if (request.url === '/extra/1' || request.url === '/extra/2')
       response.writeHead(200, { 'content-type': 'application/feed+json' }).end(
         JSON.stringify({
           version: 'https://jsonfeed.org/version/1.1',
           title: 'Extra',
-          items: [{ id: 'extra', url: '/articles/extra' }],
-          next_url: '/extra/2',
+          ...(request.url === '/extra/1'
+            ? {
+                items: [{ id: 'second', url: '/articles/second' }],
+                next_url: '/extra/2',
+              }
+            : { items: [{ id: 'third', url: '/articles/third' }] }),
         }),
       );
-    else if (request.url === '/articles/extra')
-      response
-        .writeHead(200, { 'content-type': 'text/html' })
-        .end(
-          '<article><p>The secondary feed supplies another complete published research article.</p></article>',
-        );
+    else if (
+      request.url === '/articles/second' ||
+      request.url === '/articles/third'
+    )
+      article(
+        `The secondary feed page ${request.url} supplies complete published research.`,
+      );
     else response.writeHead(404).end();
   });
   await using database = await new Sqlite().database();
@@ -262,8 +273,9 @@ test('Markdown companion responses discover articles and cap secondary feed pagi
       }),
     ],
   });
-  assert.equal((await ingestion.run())[0]?.count, 2);
+  assert.equal((await ingestion.run())[0]?.count, 4);
+  // The crawl's Markdown download, then the article reader's HTML companion for metadata.
   assert.equal(requests.filter((url) => url === '/articles/native').length, 2);
   assert.equal(requests.filter((url) => url === '/articles/extra').length, 1);
-  assert.ok(!requests.includes('/extra/2'));
+  assert.equal(requests.filter((url) => url === '/extra/2').length, 1);
 });

@@ -4,7 +4,11 @@ import { test } from 'node:test';
 import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
-import { WebDiscovery } from '@workspace/sdk-web-discovery';
+import {
+  ArchiveReader,
+  ListingReader,
+  WebCrawler,
+} from '@workspace/sdk-web-crawler';
 
 import { HTMLExtraction, WebArticle } from './index.ts';
 
@@ -54,7 +58,12 @@ test('a discovered article retains its introductory summary before the main body
 
   try {
     const signal = AbortSignal.timeout(5000);
-    const pages = await new WebDiscovery(got).discover(upstream.origin, signal);
+    const pages = await Array.fromAsync(
+      new WebCrawler(got, [new ListingReader(), new ArchiveReader()]).run(
+        [upstream.origin],
+        { signal },
+      ),
+    );
     assert.equal(pages.length, 1);
     const page = pages[0];
     assert.ok(page);
@@ -111,9 +120,11 @@ test('a feed article retains a figure caption containing a descriptive link', as
 
   try {
     const signal = AbortSignal.timeout(5000);
-    const pages = await new WebDiscovery(got).discover(
-      `${upstream.origin}/feed.xml`,
-      signal,
+    const pages = await Array.fromAsync(
+      new WebCrawler(got, [new ListingReader(), new ArchiveReader()]).run(
+        [`${upstream.origin}/feed.xml`],
+        { signal },
+      ),
     );
     assert.equal(pages.length, 1);
     const page = pages[0];
@@ -184,9 +195,11 @@ test('a feed article retains acknowledgments and an authorship disclosure after 
 
   try {
     const signal = AbortSignal.timeout(5000);
-    const pages = await new WebDiscovery(got).discover(
-      `${upstream.origin}/feed.xml`,
-      signal,
+    const pages = await Array.fromAsync(
+      new WebCrawler(got, [new ListingReader(), new ArchiveReader()]).run(
+        [`${upstream.origin}/feed.xml`],
+        { signal },
+      ),
     );
     assert.equal(pages.length, 1);
     const page = pages[0];

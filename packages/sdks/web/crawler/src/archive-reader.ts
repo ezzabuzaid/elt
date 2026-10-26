@@ -1,12 +1,15 @@
-import { anchorAttributes, anchorLabels, linkSelectors } from 'feedscout/feeds';
-import {
-  discoverUrisFromHeaders,
-  discoverUrisFromHtml,
-} from 'feedscout/methods';
+import { discoverUrisFromHeaders } from 'feedscout/methods';
 import { JSDOM } from 'jsdom';
+import { z } from 'zod';
+
+import { decodeSitemap } from '@workspace/codec-sitemap';
 
 import { paginationLinks } from './listing.ts';
+import { type Finding, Reader, type Visit, isHtml } from './reader.ts';
 import { webUrl } from './web-url.ts';
+
+const noteSchema = z.object({ kind: z.literal('archive') });
+type Note = z.infer<typeof noteSchema>;
 
 const calendarPath = new RegExp(
   `/\\d{4}(?:/(?:0?[1-9]|1[0-2]|${Array.from({ length: 12 }, (_, month) => {
@@ -18,7 +21,62 @@ const calendarPath = new RegExp(
   'i',
 );
 
-export function readHtml(html: string, url: string, headers: Headers) {
+/** HTML archives: archive indexes, calendar pages and pagination, and the pages they list. */
+export class ArchiveReader extends Reader<Note, null> {
+  readonly notes = noteSchema;
+  readonly states = z.null();
+
+  open() {
+    return null;
+  }
+
+  wants() {
+    return false;
+  }
+
+  read({
+    response,
+    headers,
+    type,
+    request,
+    note,
+  }: Visit<Note>): readonly Finding<Note>[] {
+    if (response.statusCode !== 200 || !isHtml(type)) return [];
+    const { archives, pages } = readArchive(
+      decodeSitemap(response.rawBody),
+      response.url,
+      headers,
+    );
+    // A starting page lists pages when it links archives or is an archive itself.
+    const listing =
+      note !== null ||
+      (request.start &&
+        (archives.size > 0 ||
+          /\/archives?\/?$/i.test(new URL(response.url).pathname)));
+    return [
+      ...(listing
+        ? [...pages].map((url) => ({
+            url,
+            lastModified: null,
+            page: true,
+            linked: false,
+            tolerate: [],
+            note: null,
+          }))
+        : []),
+      ...[...archives].map((url) => ({
+        url,
+        lastModified: null,
+        page: false,
+        linked: !request.start && note === null,
+        tolerate: [404, 410],
+        note: { kind: 'archive' as const },
+      })),
+    ];
+  }
+}
+
+function readArchive(html: string, url: string, headers: Headers) {
   const dom = new JSDOM(html, { url });
   try {
     const document = dom.window.document;
@@ -47,14 +105,6 @@ export function readHtml(html: string, url: string, headers: Headers) {
       )
         archives.add(webUrl(target.href, url));
     }
-    const links = new Set<string>();
-    for (const link of document.querySelectorAll<HTMLAnchorElement>(
-      'a[href]',
-    )) {
-      const target = URL.parse(link.href);
-      if (target && target.origin === origin)
-        links.add(webUrl(target.href, url));
-    }
     for (const navigation of document.querySelectorAll(
       'nav, footer, [role="navigation"]',
     ))
@@ -68,58 +118,8 @@ export function readHtml(html: string, url: string, headers: Headers) {
       const page = webUrl(target.href, url);
       if (!archives.has(page)) pages.add(page);
     }
-    return { archives, pages, links };
+    return { archives, pages };
   } finally {
     dom.window.close();
   }
-}
-
-export function readFeedLinks(html: string, url: string, headers: Headers) {
-  const feeds: { url: string; kind: 'listing' | 'candidate' }[] = [];
-  for (const { kind, selectors } of [
-    {
-      kind: 'listing',
-      selectors: [
-        ...linkSelectors.map((selector) =>
-          selector.types === undefined
-            ? selector
-            : {
-                ...selector,
-                types: selector.types.filter(
-                  (type) => type !== 'application/json',
-                ),
-              },
-        ),
-        { rel: 'sitemap' },
-      ],
-    },
-    {
-      kind: 'candidate',
-      selectors: [{ rel: 'alternate', types: ['application/json'] }],
-    },
-  ] satisfies {
-    kind: 'listing' | 'candidate';
-    selectors: typeof linkSelectors;
-  }[]) {
-    for (const uri of [
-      ...discoverUrisFromHtml(html, {
-        baseUrl: url,
-        linkSelectors: selectors,
-        anchorUris: [],
-        anchorIgnoredUris: [],
-        anchorLabels:
-          kind === 'candidate'
-            ? anchorLabels.map(
-                (label) => new RegExp(`\\b${RegExp.escape(label)}\\b`, 'i'),
-              )
-            : [],
-        anchorAttributes: kind === 'candidate' ? anchorAttributes : [],
-      }),
-      ...discoverUrisFromHeaders(headers, {
-        linkSelectors: selectors,
-      }),
-    ])
-      feeds.push({ url: webUrl(uri, url), kind });
-  }
-  return feeds;
 }

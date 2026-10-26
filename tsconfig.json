@@ -192,10 +192,7 @@
       "path": "./packages/sdks/macos/speech-models"
     },
     {
-      "path": "./packages/sdks/web/discovery"
-    },
-    {
-      "path": "./packages/sdks/web/links"
+      "path": "./packages/sdks/web/crawler"
     },
     {
       "path": "./packages/sdks/web/article"

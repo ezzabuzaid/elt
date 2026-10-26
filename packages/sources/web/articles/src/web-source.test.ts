@@ -12,6 +12,7 @@ import {
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { ArticleError } from '@workspace/sdk-web-article';
+import { CrawlError } from '@workspace/sdk-web-crawler';
 
 import { WebSource } from './web-source.ts';
 
@@ -226,112 +227,87 @@ test('temporary listing and article failures recover within one pipeline run', a
   ]);
 });
 
-test(
-  'failed articles do not block later articles or later refreshes',
-  { timeout: 10_000 },
-  async () => {
-    const laterFinished = Promise.withResolvers<void>();
-    const requests: string[] = [];
-    let failing = true;
-    let added = false;
-    await using upstream = await new HttpServer().start(
-      async (request, response) => {
-        const url = new URL(
-          request.url ?? '/',
-          `http://${request.headers.host}`,
-        );
-        requests.push(url.pathname);
-        if (url.pathname === '/feed.xml') {
-          response.setHeader('content-type', 'application/rss+xml');
-          response.end(
-            `<rss><channel>${(added ? ['c', 'b', 'a', 'aa'] : ['c', 'b', 'a']).map((name) => `<item><link>${url.origin}/${name}</link></item>`).join('')}</channel></rss>`,
-          );
-        } else if (url.pathname === '/b' && failing) {
-          response.writeHead(404).end();
-        } else {
-          if (url.pathname === '/a' && failing) await laterFinished.promise;
-          response.setHeader('content-type', 'text/html');
-          response.end(
-            `<article><p>Research article ${url.pathname} contains the complete published observations.</p></article>`,
-          );
-          if (url.pathname === '/c') laterFinished.resolve();
-        }
-      },
-    );
-    await using database = await new Sqlite().database();
-    await using checkpoints = await new Sqlite().database();
-    const options = {
-      inputs: [`${upstream.origin}/feed.xml`],
-      pollIntervalMs: 60_000,
-    };
-    const first = await pipeline(
-      new WebSource(options),
-      database.path,
-      checkpoints.path,
-    );
-    try {
-      await assert.rejects(
-        first.run({ signal: AbortSignal.timeout(4000) }),
-        (error) => {
-          assert(error instanceof PipelineError);
-          assert.equal(error.results[0]?.count, 2);
-          assert.equal(error.results[0]?.failures.length, 1);
-          assert.match(error.message, /\/b/);
-          return true;
-        },
+test('failed articles do not block later articles or later refreshes', async () => {
+  const requests: string[] = [];
+  let failing = true;
+  let added = false;
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    requests.push(url.pathname);
+    if (url.pathname === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel>${(added ? ['c', 'b', 'a', 'aa'] : ['c', 'b', 'a']).map((name) => `<item><link>${url.origin}/${name}</link></item>`).join('')}</channel></rss>`,
       );
-      assert.deepEqual(
-        database.connection
-          .prepare('SELECT pageUrl FROM articles ORDER BY pageUrl')
-          .all()
-          .map((row) => row.pageUrl),
-        [`${upstream.origin}/a`, `${upstream.origin}/c`],
+    } else if (url.pathname === '/b' && failing) {
+      response.writeHead(404).end();
+    } else {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<article><p>Research article ${url.pathname} contains the complete published observations.</p></article>`,
       );
-      assert(
-        requests.includes('/c'),
-        'a later download must finish while the first is waiting',
-      );
-      assert.equal(
-        requests.filter((path) => path === '/b').length,
-        1,
-        '404 must not retry within the same run',
-      );
-      added = true;
-      const refresh = await pipeline(
-        new WebSource(options),
-        database.path,
-        checkpoints.path,
-      );
-      await assert.rejects(refresh.run(), (error) => {
-        assert(error instanceof PipelineError);
-        assert.equal(
-          error.results[0]?.count,
-          1,
-          'a failed URL must not starve new URLs before the previous cursor',
-        );
-        return true;
-      });
-      failing = false;
-      requests.length = 0;
-      const resumed = await pipeline(
-        new WebSource(options),
-        database.path,
-        checkpoints.path,
-      );
-      assert.equal((await resumed.run())[0]?.count, 1);
-      assert.deepEqual(requests, ['/feed.xml', '/a', '/aa', '/b', '/c']);
-      assert.deepEqual(
-        database.connection
-          .prepare('SELECT pageUrl FROM articles ORDER BY pageUrl')
-          .all()
-          .map((row) => row.pageUrl),
-        ['a', 'aa', 'b', 'c'].map((name) => `${upstream.origin}/${name}`),
-      );
-    } finally {
-      laterFinished.resolve();
     }
-  },
-);
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const options = {
+    inputs: [`${upstream.origin}/feed.xml`],
+    pollIntervalMs: 60_000,
+  };
+  const first = await pipeline(
+    new WebSource(options),
+    database.path,
+    checkpoints.path,
+  );
+  await assert.rejects(first.run(), (error) => {
+    assert(error instanceof PipelineError);
+    assert.equal(error.results[0]?.count, 2);
+    assert.equal(error.results[0]?.failures.length, 1);
+    assert.match(error.message, /\/b/);
+    return true;
+  });
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT pageUrl FROM articles ORDER BY pageUrl')
+      .all()
+      .map((row) => row.pageUrl),
+    [`${upstream.origin}/a`, `${upstream.origin}/c`],
+  );
+  // Feed order: the article after the failure still downloads, and a 404 is not retried within the run.
+  assert.deepEqual(requests, ['/feed.xml', '/c', '/b', '/a']);
+  added = true;
+  const refresh = await pipeline(
+    new WebSource(options),
+    database.path,
+    checkpoints.path,
+  );
+  await assert.rejects(refresh.run(), (error) => {
+    assert(error instanceof PipelineError);
+    assert.equal(
+      error.results[0]?.count,
+      1,
+      'a failed URL must not starve new URLs',
+    );
+    return true;
+  });
+  failing = false;
+  requests.length = 0;
+  const resumed = await pipeline(
+    new WebSource(options),
+    database.path,
+    checkpoints.path,
+  );
+  assert.equal((await resumed.run())[0]?.count, 1);
+  // The listing is read first, then the earlier failure, then the feed's pages in feed order.
+  assert.deepEqual(requests, ['/feed.xml', '/b', '/c', '/a', '/aa']);
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT pageUrl FROM articles ORDER BY pageUrl')
+      .all()
+      .map((row) => row.pageUrl),
+    ['a', 'aa', 'b', 'c'].map((name) => `${upstream.origin}/${name}`),
+  );
+});
 
 test(
   'failed URLs survive feed rollover and cancellation during a later retry',
@@ -389,14 +365,15 @@ test(
       const failure = error.results[0]?.failures[0];
       assert.deepEqual(failure?.partition, { inputUrl: options.inputs[0] });
       assert(failure?.error instanceof AggregateError);
-      assert.deepEqual(
-        failure.error.errors.map((item: unknown) => {
-          assert(item instanceof ArticleError);
-          assert(item.cause instanceof Error);
-          return item.url;
-        }),
-        [`${upstream.origin}/a`, `${upstream.origin}/b`],
-      );
+      // The download of /a fails in the crawler; /b downloads but holds no article.
+      const [download, extraction, ...rest] = failure.error.errors;
+      assert.deepEqual(rest, []);
+      assert(download instanceof CrawlError);
+      assert(download.cause instanceof Error);
+      assert.equal(download.url, `${upstream.origin}/a`);
+      assert(extraction instanceof ArticleError);
+      assert(extraction.cause instanceof Error);
+      assert.equal(extraction.url, `${upstream.origin}/b`);
       return true;
     });
 
@@ -443,8 +420,14 @@ test(
       database.path,
       checkpoints.path,
     );
-    assert.equal((await resumed.run())[0]?.count, 2);
-    assert.deepEqual(requests, ['/feed.json', '/b', '/c', '/d', '/e']);
+    // The interrupted crawl resumes without reading the feed again: /a, handed out last, downloads once more unchanged.
+    assert.equal((await resumed.run())[0]?.count, 1);
+    assert.deepEqual(requests, ['/a', '/b']);
+    requests.length = 0;
+    // The crawl finished, so the next run reads the feed again. /c and /d come back as records:
+    // the scan that just finished saw a feed without them, so the diff no longer holds their fingerprints.
+    assert.equal((await resumed.run())[0]?.count, 3);
+    assert.deepEqual(requests, ['/feed.json', '/c', '/d', '/e']);
     assert.deepEqual(
       database.connection
         .prepare('SELECT pageUrl FROM articles ORDER BY pageUrl')
@@ -531,7 +514,9 @@ test(
       checkpoints.path,
     );
     assert.equal((await resumed.run())[0]?.count, 1);
-    assert.deepEqual(requests, ['/feed.xml', '/d']);
+    // The second run stopped after the retried /a, before it reached /c, the first run's last page.
+    // Neither the feed nor the checkpointed /b is downloaded again.
+    assert.deepEqual(requests, ['/a', '/c', '/d']);
     assert.equal(
       database.connection
         .prepare('SELECT count(*) AS count FROM articles')
@@ -599,44 +584,29 @@ test(
 );
 
 test(
-  'cancellation stops streaming downloads and queued requests after an article failure',
+  'cancellation stops a streaming download and queued requests after an article failure',
   { timeout: 10_000 },
   async () => {
     const streaming = Promise.withResolvers<void>();
-    const failed = Promise.withResolvers<void>();
-    const closed = [
-      Promise.withResolvers<void>(),
-      Promise.withResolvers<void>(),
-    ];
+    const closed = Promise.withResolvers<void>();
     const requests: string[] = [];
-    let active = 0;
-    await using upstream = await new HttpServer().start(
-      async (request, response) => {
-        const url = new URL(
-          request.url ?? '/',
-          `http://${request.headers.host}`,
+    await using upstream = await new HttpServer().start((request, response) => {
+      const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+      requests.push(url.pathname);
+      if (url.pathname === '/feed.xml') {
+        response.setHeader('content-type', 'application/rss+xml');
+        response.end(
+          `<rss><channel>${['a', 'b', 'c', 'd', 'e'].map((name) => `<item><link>${url.origin}/${name}</link></item>`).join('')}</channel></rss>`,
         );
-        requests.push(url.pathname);
-        if (url.pathname === '/feed.xml') {
-          response.setHeader('content-type', 'application/rss+xml');
-          response.end(
-            `<rss><channel>${['a', 'b', 'c', 'd', 'e'].map((name) => `<item><link>${url.origin}/${name}</link></item>`).join('')}</channel></rss>`,
-          );
-        } else if (url.pathname === '/a') {
-          await streaming.promise;
-          response.writeHead(404).end();
-          failed.resolve();
-        } else if (url.pathname === '/b' || url.pathname === '/c') {
-          const finished = closed[url.pathname === '/b' ? 0 : 1];
-          assert(finished);
-          response.once('close', () => finished.resolve());
-          response.writeHead(200, { 'content-type': 'text/html' });
-          response.write('<article><p>A download that has not finished');
-          active++;
-          if (active === 2) streaming.resolve();
-        } else response.writeHead(500).end('This request should never start');
-      },
-    );
+      } else if (url.pathname === '/a') {
+        response.writeHead(404).end();
+      } else if (url.pathname === '/b') {
+        response.once('close', () => closed.resolve());
+        response.writeHead(200, { 'content-type': 'text/html' });
+        response.write('<article><p>A download that has not finished');
+        streaming.resolve();
+      } else response.writeHead(500).end('This request should never start');
+    });
     await using database = await new Sqlite().database();
     await using checkpoints = await new Sqlite().database();
     const ingestion = await pipeline(
@@ -654,13 +624,12 @@ test(
       (error) => error === reason,
     );
     try {
-      await failed.promise;
+      await streaming.promise;
       controller.abort(reason);
       await stopped;
-      await Promise.all(closed.map((item) => item.promise));
-      assert.deepEqual(requests.toSorted(), ['/a', '/b', '/c', '/feed.xml']);
+      await closed.promise;
+      assert.deepEqual(requests, ['/feed.xml', '/a', '/b']);
     } finally {
-      streaming.resolve();
       controller.abort(reason);
       await stopped;
     }
@@ -668,11 +637,11 @@ test(
 );
 
 test(
-  'a slow first article bounds prefetched results instead of downloading the whole feed',
+  'a slow article holds back later downloads instead of prefetching the feed',
   { timeout: 15_000 },
   async () => {
     const release = Promise.withResolvers<void>();
-    const prefetched = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
     const requests: string[] = [];
     await using upstream = await new HttpServer().start(
       async (request, response) => {
@@ -687,12 +656,14 @@ test(
           );
         } else {
           requests.push(url.pathname);
-          if (url.pathname === '/a') await release.promise;
+          if (url.pathname === '/a') {
+            entered.resolve();
+            await release.promise;
+          }
           response.setHeader('content-type', 'text/html');
           response.end(
             `<article><p>Published observations from ${url.pathname} are retained in their complete form.</p></article>`,
           );
-          if (url.pathname === '/d') prefetched.resolve();
         }
       },
     );
@@ -709,12 +680,13 @@ test(
     const controller = new AbortController();
     const running = ingestion.run({ signal: controller.signal });
     try {
-      await prefetched.promise;
-      // A full rate-limit window lets an unbounded producer expose extra downloads.
+      await entered.promise;
+      // A full rate-limit window lets a prefetching producer expose extra downloads.
       await setTimeout(1100);
-      assert.deepEqual(requests.toSorted(), ['/a', '/b', '/c', '/d']);
+      assert.deepEqual(requests, ['/a']);
       release.resolve();
       assert.equal((await running)[0]?.count, 6);
+      assert.deepEqual(requests, ['/a', '/b', '/c', '/d', '/e', '/f']);
     } finally {
       release.resolve();
       controller.abort();
@@ -861,15 +833,15 @@ test(
         database.path,
         checkpoints.path,
       );
-      await resumed.run();
+      // The crawl resumes without the feed; /a, handed out last, downloads once more and writes nothing.
+      assert.equal((await resumed.run())[0]?.count, 1);
       assert.equal(
         database.connection
           .prepare('SELECT count(*) AS count FROM articles')
           .get()?.count,
         2,
       );
-      assert(!requests.includes('/a'));
-      assert(requests.includes('/b'));
+      assert.deepEqual(requests, ['/a', '/b']);
     } finally {
       controller.abort(reason);
       await stopped;

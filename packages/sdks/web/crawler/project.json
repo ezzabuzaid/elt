@@ -1,0 +1,13 @@
+{
+  "name": "sdk-web-crawler",
+  "sourceRoot": "packages/sdks/web/crawler/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test {args} \"packages/sdks/web/crawler/dist/*.test.js\""
+    }
+  }
+}

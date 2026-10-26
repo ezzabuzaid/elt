@@ -1,6 +1,6 @@
 # Web article fetching and extraction
 
-`WebArticle.fetch(url, signal)` downloads one page and extracts readable content and metadata. It accepts URLs returned by `@workspace/sdk-web-discovery` and contains no publisher rules.
+`WebArticle.fetch(url, signal)` downloads one page and extracts readable content and metadata. `WebArticle.read(response, signal)` extracts from a Got response that someone else downloaded, such as a page from `@workspace/sdk-web-crawler`. The SDK contains no publisher rules.
 
 ```ts
 import got from 'got';
@@ -10,20 +10,33 @@ import {
   MarkdownExtraction,
   WebArticle,
 } from '@workspace/sdk-web-article';
-import { WebDiscovery } from '@workspace/sdk-web-discovery';
+import { ListingReader, WebCrawler } from '@workspace/sdk-web-crawler';
 
 const signal = AbortSignal.timeout(30_000);
-const pages = await new WebDiscovery(got).discover(
-  'https://www.anthropic.com/',
-  signal,
-);
 const reader = new WebArticle(
   [new MarkdownExtraction(), new HTMLExtraction()],
   got,
 );
-const page = pages.find((page) => page.url.includes('/news/'));
-if (page) {
-  const article = await reader.fetch(page.url, signal);
+const crawler = new WebCrawler(
+  got.extend({
+    hooks: {
+      beforeRequest: [
+        (options) => {
+          // Pages the crawl hands back ask for the reader's preferred format.
+          if (options.context.page === true)
+            options.headers.accept = reader.accept;
+        },
+      ],
+    },
+  }),
+  [new ListingReader()],
+);
+for await (const entry of crawler.run(['https://www.anthropic.com/'], {
+  signal,
+  include: [new URLPattern('https://www.anthropic.com/news/*')],
+})) {
+  if ('error' in entry) continue;
+  const article = await (await reader.read(entry.response, signal)).extract();
   // article.content: sanitized HTML; article.markdown: Markdown
   // article.textContent: readable plain text
 }
@@ -31,7 +44,7 @@ if (page) {
 
 The example's publisher and URL selection belong to the caller. The constructor takes an ordered array of extraction instances and a Got client; use `got.extend(...)` for timeouts, retries or request hooks. Got owns HTTP retries. When negotiated Markdown is unusable, the reader makes one HTML-only attempt. A raw 304 without a Got-cached representation fails; with Got caching, revalidation restores the response body before it reaches the SDK. The SDK does not render JavaScript, retrieve authenticated content, schedule crawls or store checkpoints.
 
-`WebArticle.download(url, signal)` returns a lazy extraction with `fingerprint` and `extract()`. The fingerprint covers response bytes, final URL and Content-Type. A caller can compare it with committed input state before running extraction. Got can restore those same bytes after HTTP cache revalidation, so a 304 and an identical 200 have the same fingerprint. Advertised alternate representations and negotiated Markdown with HTML fallback return a null fingerprint: their additional responses can change independently and must remain eligible for extraction. Cancellation and attributed errors also apply when extraction is deferred.
+`WebArticle.download(url, signal)` and `read(response, signal)` return a lazy extraction with `fingerprint` and `extract()`. The fingerprint covers response bytes, final URL and Content-Type. A caller can compare it with committed input state before running extraction. Got can restore those same bytes after HTTP cache revalidation, so a 304 and an identical 200 have the same fingerprint. Advertised alternate representations and negotiated Markdown with HTML fallback return a null fingerprint: their additional responses can change independently and must remain eligible for extraction. Cancellation and attributed errors also apply when extraction is deferred.
 
 ## Extraction chain
 
@@ -116,7 +129,7 @@ REJECTED: Crawlee for content selection. Its crawler requires an extraction hand
 
 RETAINED: jsdom decoding and base URLs, Readability metadata, native sanitization, text/table conversion, attributed errors, cancellation, navigation exclusion and the link-only acceptance check. Removed Readability content selection and its link-density tuning. Content selection and whitespace normalization remain package-owned. The ordered extraction chain supplies Markdown and HTML extraction.
 
-Five public regressions first failed and then passed: introductory summary retention; descriptive caption text and link retention; acknowledgments/authorship disclosure retention; unchanged inline punctuation and preformatted spacing; identical HTML when ignored comments and surrounding whitespace change. Tests exercise `WebArticle.fetch`, and the content regressions also exercise discovery, through real HTTP. The full article suite includes short posts, link-only pages, tables, metadata, charset, cancellation and sanitization.
+Five public regressions first failed and then passed: introductory summary retention; descriptive caption text and link retention; acknowledgments/authorship disclosure retention; unchanged inline punctuation and preformatted spacing; identical HTML when ignored comments and surrounding whitespace change. Tests exercise `WebArticle.fetch`, and the content regressions also exercise the crawler's listing readers, through real HTTP. The full article suite includes short posts, link-only pages, tables, metadata, charset, cancellation and sanitization.
 
 Live verification evidence is recorded in the [web source reference](../../../sources/web/articles/docs/reference.md). Those checks use the actual source, ELT engine and SQLite destination. Downloads remain buffered and CPU parsing remains synchronous; cancellation does not interrupt a synchronous parse. No complete-crawl quality guarantee is implied by the sampled sites.
 

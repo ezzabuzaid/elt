@@ -372,25 +372,35 @@ Manage permissions in **System Settings → Privacy & Security**. Calendar and R
 
 ## Development
 
-### Website and feed discovery
+### Website and feed crawling
 
-`@workspace/sdk-web-discovery` accepts a website, sitemap or feed URL:
+`@workspace/sdk-web-crawler` accepts website, sitemap and feed URLs:
 
 ```ts
 import got from 'got';
 
-import { WebDiscovery } from '@workspace/sdk-web-discovery';
+import {
+  ArchiveReader,
+  LinkReader,
+  ListingReader,
+  WebCrawler,
+} from '@workspace/sdk-web-crawler';
 
-const pages = await new WebDiscovery(got).discover(
-  'https://www.anthropic.com/',
-  AbortSignal.timeout(60_000),
-);
-// [{ url, lastModified, listingUrl }]
+const crawler = new WebCrawler(got, [
+  new ListingReader(),
+  new ArchiveReader(),
+  new LinkReader({ maxDepth: 3, maxPages: 100 }),
+]);
+for await (const entry of crawler.run(['https://www.anthropic.com/'], {
+  signal: AbortSignal.timeout(600_000),
+})) {
+  // { url, listingUrl, lastModified, response } or { url, ..., error }
+}
 ```
 
-Discovery returns candidate pages without publisher-specific filters. It follows advertised sitemaps and feeds; article classification, content fetching and destination loading are separate steps. See the [API, supported formats and live verification](packages/sdks/web/discovery/README.md).
+The crawler hands back pages without publisher-specific filters. It reads sitemaps, feeds and archives completely and follows links within limits; article extraction and destination loading are separate steps. `crawl.snapshot()` and `crawler.resume(snapshot, options)` continue an interrupted crawl. See the [engine, readers and formats](packages/sdks/web/crawler/README.md).
 
-Pass a discovered page URL to `new WebArticle([new MarkdownExtraction(), new HTMLExtraction()], got).fetch(page.url, signal)` from `@workspace/sdk-web-article` to fetch its content and extract sanitized HTML, readable text, metadata and its declared canonical URL. It prefers native Markdown and falls back to HTML, using Marked, Defuddle, Mozilla Readability, jsdom, DOMPurify and html-to-text. See the [article API, public tests and live quality findings](packages/sdks/web/article/README.md).
+Pass a crawled page's response to `new WebArticle([new MarkdownExtraction(), new HTMLExtraction()], got).read(entry.response, signal)`, or a URL to `fetch(url, signal)`, from `@workspace/sdk-web-article` to read its content and extract sanitized HTML, readable text, metadata and its declared canonical URL. It prefers native Markdown and falls back to HTML, using Marked, Defuddle, Mozilla Readability, jsdom, DOMPurify and html-to-text. See the [article API, public tests and live quality findings](packages/sdks/web/article/README.md).
 
 ### Workspace
 
@@ -414,7 +424,7 @@ packages/sdks/whatsapp/desktop/    WhatsApp for Mac SDK (sdk-whatsapp-desktop)
 packages/sources/whatsapp/desktop/ WhatsApp for Mac source (source-whatsapp-desktop)
 packages/sdks/chromium/cookies/   Chromium browser cookie store SDK (sdk-chromium-cookies)
 packages/sdks/instagram/web/      instagram.com web API SDK (sdk-instagram-web)
-packages/sdks/web/discovery/      Website, sitemap and feed discovery (sdk-web-discovery)
+packages/sdks/web/crawler/        Website, sitemap, feed and link crawling (sdk-web-crawler)
 packages/sdks/web/article/        Page fetching and article extraction (sdk-web-article)
 packages/sources/instagram/web/   Instagram source (source-instagram-web)
 packages/sources/apple/   One package per Apple source (source-apple-<name>), and the shared

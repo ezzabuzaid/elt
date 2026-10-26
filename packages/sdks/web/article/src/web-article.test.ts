@@ -5,7 +5,11 @@ import { brotliCompressSync, gzipSync } from 'node:zlib';
 import { HttpServer } from '@zukhruf/testing/http';
 import got, { HTTPError, TimeoutError } from 'got';
 
-import { WebDiscovery } from '@workspace/sdk-web-discovery';
+import {
+  ArchiveReader,
+  ListingReader,
+  WebCrawler,
+} from '@workspace/sdk-web-crawler';
 
 import { ArticleError, HTMLExtraction, WebArticle } from './index.ts';
 
@@ -55,13 +59,15 @@ test('chosen websites and feeds compose with extraction without merging URL vari
         response.writeHead(404).end();
     }
   });
-  const discovery = new WebDiscovery(got);
+  const crawler = new WebCrawler(got, [
+    new ListingReader(),
+    new ArchiveReader(),
+  ]);
   const reader = new WebArticle([new HTMLExtraction()], got);
   for (const input of ['/', '/feed.xml']) {
     const signal = AbortSignal.timeout(5000);
-    const pages = await discovery.discover(
-      `${upstream.origin}${input}`,
-      signal,
+    const pages = await Array.fromAsync(
+      crawler.run([`${upstream.origin}${input}`], { signal }),
     );
     assert.deepEqual(
       pages.map((page) => page.url),
