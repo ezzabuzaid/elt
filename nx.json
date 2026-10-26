@@ -10,7 +10,7 @@
         },
         "build": {
           "targetName": "build",
-          "configName": "tsconfig.json"
+          "configName": "tsconfig.lib.json"
         }
       }
     },

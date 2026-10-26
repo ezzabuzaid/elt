@@ -7,7 +7,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/sdks/instagram/web/dist/*.test.js\""
+      "command": "node --test {args} \"packages/sdks/instagram/web/src/*.test.ts\""
     }
   }
 }

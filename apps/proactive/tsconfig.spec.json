@@ -1,0 +1,49 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist/spec",
+    "emitDeclarationOnly": true,
+    "rewriteRelativeImportExtensions": false,
+    "tsBuildInfoFile": "dist/spec/tsconfig.spec.tsbuildinfo"
+  },
+  "include": ["src/**/*.test.ts"],
+  "references": [
+    {
+      "path": "./tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/sdks/apple/accounts/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/sdks/apple/eventkit/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/sdks/apple/mail/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/sources/apple/calendar/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/sources/apple/mail/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/sources/slack/desktop/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/sources/whatsapp/desktop/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/sources/apple/messages/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/destinations/postgresql/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/elt/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/eca/tsconfig.lib.json"
+    }
+  ]
+}

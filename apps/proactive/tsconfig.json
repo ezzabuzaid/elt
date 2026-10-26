@@ -1,34 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist",
-    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
-  },
-  "include": ["src/**/*.ts"],
+  "files": [],
+  "include": [],
   "references": [
-    { "path": "../../packages/sdks/apple/accounts" },
-    { "path": "../../packages/sdks/apple/eventkit" },
-    { "path": "../../packages/sdks/apple/mail" },
-    { "path": "../../packages/sources/apple/calendar" },
-    { "path": "../../packages/sources/apple/mail" },
     {
-      "path": "../../packages/sources/slack/desktop"
+      "path": "./tsconfig.lib.json"
     },
     {
-      "path": "../../packages/sources/whatsapp/desktop"
-    },
-    {
-      "path": "../../packages/sources/apple/messages"
-    },
-    {
-      "path": "../../packages/destinations/postgresql"
-    },
-    {
-      "path": "../../packages/elt"
-    },
-    {
-      "path": "../../packages/eca"
+      "path": "./tsconfig.spec.json"
     }
   ]
 }

@@ -1,20 +1,10 @@
 {
   "extends": "../../../../tsconfig.base.json",
-  "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist",
-    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
-  },
-  "include": ["src/**/*.ts"],
+  "files": [],
+  "include": [],
   "references": [
     {
-      "path": "../launch-services"
-    },
-    {
-      "path": "../../../codecs/plist"
-    },
-    {
-      "path": "../../../codecs/apple-reference-date"
+      "path": "./tsconfig.lib.json"
     }
   ]
 }

@@ -30,8 +30,10 @@ import {
 
 const execFile = promisify(execFileCallback);
 
-// The helper this package compiles, beside this file in dist.
-const helper = fileURLToPath(new URL('./eventkit-helper', import.meta.url));
+// The helper this package compiles, through its package export.
+const helper = fileURLToPath(
+  import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+);
 
 const january = {
   startAt: '2025-01-01T00:00:00.000Z',

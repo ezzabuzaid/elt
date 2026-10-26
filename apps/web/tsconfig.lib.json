@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "rootDir": ".",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo",
+    "jsx": "react-jsx",
+    "types": ["node", "vite/client"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "frontend/src/**/*.ts",
+    "frontend/src/**/*.tsx",
+    "frontend/vite.config.mts"
+  ],
+  "references": [
+    {
+      "path": "../../packages/sources/web/articles/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/destinations/sqlite/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/elt/tsconfig.lib.json"
+    }
+  ]
+}

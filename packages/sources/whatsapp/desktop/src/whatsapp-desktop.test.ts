@@ -3335,7 +3335,7 @@ test('large WhatsApp passes stream payloads and reuse compact metadata within a 
       env: {
         ...process.env,
         SOURCE: pathToFileURL(
-          join(import.meta.dirname, 'whatsapp-desktop-source.js'),
+          join(import.meta.dirname, 'whatsapp-desktop-source.ts'),
         ).href,
         CONTAINER: whatsapp.container,
         OUT: directory.path,

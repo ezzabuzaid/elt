@@ -104,7 +104,7 @@ function runPasses(
       cwd: join(import.meta.dirname, '..'),
       env: {
         ...process.env,
-        DESTINATION: pathToFileURL(join(import.meta.dirname, 'index.js')).href,
+        DESTINATION: pathToFileURL(join(import.meta.dirname, 'index.ts')).href,
         OUT: out,
         STREAMS: String(streams),
         KEYS: String(keys),

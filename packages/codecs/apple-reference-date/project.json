@@ -7,7 +7,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/codecs/apple-reference-date/dist/*.test.js\""
+      "command": "node --test {args} \"packages/codecs/apple-reference-date/src/*.test.ts\""
     }
   }
 }

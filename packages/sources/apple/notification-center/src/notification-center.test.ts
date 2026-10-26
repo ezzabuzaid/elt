@@ -1016,7 +1016,7 @@ test('a Notification Center pass over a large store holds one notification at a 
       env: {
         ...process.env,
         SOURCE: pathToFileURL(
-          join(import.meta.dirname, 'apple-notification-center-source.js'),
+          join(import.meta.dirname, 'apple-notification-center-source.ts'),
         ).href,
         STORE: path,
         OUT: dir.path,

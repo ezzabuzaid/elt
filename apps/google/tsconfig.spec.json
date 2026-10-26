@@ -1,0 +1,31 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist/spec",
+    "emitDeclarationOnly": true,
+    "rewriteRelativeImportExtensions": false,
+    "tsBuildInfoFile": "dist/spec/tsconfig.spec.tsbuildinfo"
+  },
+  "include": ["src/**/*.test.ts"],
+  "references": [
+    {
+      "path": "./tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/sources/google/health/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/sources/google/search-console/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/google-auth/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/destinations/postgresql/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/elt/tsconfig.lib.json"
+    }
+  ]
+}

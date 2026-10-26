@@ -1052,7 +1052,7 @@ test('a Call History pass over a large store holds one call at a time, so it loa
       env: {
         ...process.env,
         SOURCE: pathToFileURL(
-          join(import.meta.dirname, 'apple-call-history-source.js'),
+          join(import.meta.dirname, 'apple-call-history-source.ts'),
         ).href,
         STORE: path,
         OUT: dir.path,

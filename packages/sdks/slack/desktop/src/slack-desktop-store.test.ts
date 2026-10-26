@@ -42,7 +42,7 @@ async function read(home: string, directory?: string) {
     [
       '--input-type=module',
       '--eval',
-      `import { SlackDesktopStore } from ${JSON.stringify(new URL('./slack-desktop-store.js', import.meta.url).href)};
+      `import { SlackDesktopStore } from ${JSON.stringify(new URL('./slack-desktop-store.ts', import.meta.url).href)};
        const store = new SlackDesktopStore(${JSON.stringify(directory) ?? ''});
        console.log(JSON.stringify({ clients: await store.clients(), downloads: await store.downloads(), version: store.version() }));`,
     ],

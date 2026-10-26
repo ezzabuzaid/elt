@@ -47,7 +47,7 @@ test('HTTP resource scope exit cancels queued requests without caller cancellati
       `
 import assert from 'node:assert/strict';
 import { setImmediate } from 'node:timers/promises';
-import { webHttp } from ${JSON.stringify(new URL('./web-http.js', import.meta.url).href)};
+import { webHttp } from ${JSON.stringify(new URL('./web-http.ts', import.meta.url).href)};
 const [origin] = process.argv.slice(1);
 const rejected = [];
 {

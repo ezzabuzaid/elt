@@ -7,7 +7,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/sources/apple/call-history/dist/*.test.js\""
+      "command": "node --test {args} \"packages/sources/apple/call-history/src/*.test.ts\""
     }
   }
 }

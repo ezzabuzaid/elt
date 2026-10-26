@@ -1289,7 +1289,7 @@ test('a Messages pass over a large chat.db holds one message at a time, so it lo
       env: {
         ...process.env,
         SOURCE: pathToFileURL(
-          join(import.meta.dirname, 'apple-messages-source.js'),
+          join(import.meta.dirname, 'apple-messages-source.ts'),
         ).href,
         CHAT: chat,
         OUT: directory.path,

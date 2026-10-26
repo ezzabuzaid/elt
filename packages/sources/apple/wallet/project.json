@@ -7,7 +7,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/sources/apple/wallet/dist/*.test.js\""
+      "command": "node --test {args} \"packages/sources/apple/wallet/src/*.test.ts\""
     }
   }
 }

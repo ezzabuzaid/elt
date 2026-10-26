@@ -31,7 +31,9 @@ function ocr() {
     startup: new LeaderFirst(),
     create: () =>
       new VisionWorker(
-        fileURLToPath(new URL('vision-worker', import.meta.url)),
+        fileURLToPath(
+          import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
+        ),
       ),
   });
 }

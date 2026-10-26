@@ -970,7 +970,7 @@ test('a Notes pass over a large store holds one note at a time, so it loads in a
       env: {
         ...process.env,
         SOURCE: pathToFileURL(
-          join(import.meta.dirname, 'apple-notes-source.js'),
+          join(import.meta.dirname, 'apple-notes-source.ts'),
         ).href,
         STORE: path,
         OUT: scratch.path,

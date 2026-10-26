@@ -5,7 +5,7 @@ import { test } from 'node:test';
 
 import postgres from 'postgres';
 
-const entry = join(import.meta.dirname, 'main.js');
+const entry = join(import.meta.dirname, '../dist/main.js');
 
 test('without an OAuth client the app names the variables to set and exits 1', () => {
   const env = Object.fromEntries(

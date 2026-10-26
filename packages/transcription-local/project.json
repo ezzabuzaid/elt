@@ -22,7 +22,7 @@
     },
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/transcription-local/dist/*.test.js\""
+      "command": "node --test {args} \"packages/transcription-local/src/*.test.ts\""
     }
   }
 }

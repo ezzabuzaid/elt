@@ -2955,7 +2955,7 @@ test('a Safari pass over a large History.db holds one visit at a time, so it loa
       env: {
         ...process.env,
         SOURCE: pathToFileURL(
-          join(import.meta.dirname, 'apple-safari-source.js'),
+          join(import.meta.dirname, 'apple-safari-source.ts'),
         ).href,
         DIRECTORY: location.directory,
         CONTAINER: location.container,

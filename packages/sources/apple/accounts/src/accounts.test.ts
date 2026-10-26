@@ -901,7 +901,7 @@ test('an Accounts pass over a large store holds one authorization at a time, so 
       env: {
         ...process.env,
         SOURCE: pathToFileURL(
-          join(import.meta.dirname, 'apple-accounts-source.js'),
+          join(import.meta.dirname, 'apple-accounts-source.ts'),
         ).href,
         STORE: path,
         OUT: dir.path,

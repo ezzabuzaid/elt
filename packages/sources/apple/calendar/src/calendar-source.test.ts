@@ -2151,7 +2151,7 @@ test('a Calendar pass over a large ICS export holds one record of a stream at a 
       env: {
         ...process.env,
         SOURCE: pathToFileURL(
-          join(import.meta.dirname, 'apple-calendar-source.js'),
+          join(import.meta.dirname, 'apple-calendar-source.ts'),
         ).href,
         HELPER: stub.path,
         OUT: directory.path,

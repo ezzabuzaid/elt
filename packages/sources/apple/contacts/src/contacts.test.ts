@@ -1827,7 +1827,7 @@ test('a Contacts pass over a large store holds one contact at a time, so it load
       env: {
         ...process.env,
         SOURCE: pathToFileURL(
-          join(import.meta.dirname, 'apple-contacts-source.js'),
+          join(import.meta.dirname, 'apple-contacts-source.ts'),
         ).href,
         STORE: directory,
         PREFERENCES: preferences,

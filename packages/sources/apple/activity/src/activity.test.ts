@@ -1609,7 +1609,7 @@ test('an Activity pass over a large knowledgeC holds one event at a time, so it 
       env: {
         ...process.env,
         SOURCE: pathToFileURL(
-          join(import.meta.dirname, 'apple-activity-source.js'),
+          join(import.meta.dirname, 'apple-activity-source.ts'),
         ).href,
         BIOME: location.biome,
         KNOWLEDGE: location.knowledge,

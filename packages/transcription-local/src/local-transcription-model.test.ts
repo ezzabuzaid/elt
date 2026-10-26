@@ -12,7 +12,9 @@ import { Fixed, OnDemand, Parallel, Pool } from '@workspace/pool';
 import { LocalTranscriptionModel } from './local-transcription-model.ts';
 import { TranscriptionWorker } from './transcription-worker.ts';
 
-const helper = fileURLToPath(new URL('transcribe-local', import.meta.url));
+const helper = fileURLToPath(
+  import.meta.resolve('@workspace/transcription-local/transcribe-local'),
+);
 
 test('real decoding and native model failures reject, and disposing the engines rejects further work', async () => {
   await using directory = await mkdtempDisposable(

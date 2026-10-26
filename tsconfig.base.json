@@ -5,6 +5,8 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
     "types": ["node"],
     "composite": true,

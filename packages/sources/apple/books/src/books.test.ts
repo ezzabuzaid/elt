@@ -2586,7 +2586,7 @@ test('a Books pass over a large annotation store holds one annotation at a time,
       env: {
         ...process.env,
         SOURCE: pathToFileURL(
-          join(import.meta.dirname, 'apple-books-source.js'),
+          join(import.meta.dirname, 'apple-books-source.ts'),
         ).href,
         CONTAINER: location.container,
         GROUP_CONTAINER: location.groupContainer,

@@ -7,7 +7,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/sources/apple/notification-center/dist/*.test.js\""
+      "command": "node --test {args} \"packages/sources/apple/notification-center/src/*.test.ts\""
     }
   }
 }

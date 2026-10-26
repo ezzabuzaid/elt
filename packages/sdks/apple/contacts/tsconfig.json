@@ -1,14 +1,10 @@
 {
   "extends": "../../../../tsconfig.base.json",
-  "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist",
-    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
-  },
-  "include": ["src/**/*.ts"],
+  "files": [],
+  "include": [],
   "references": [
     {
-      "path": "../../../codecs/plist"
+      "path": "./tsconfig.lib.json"
     }
   ]
 }

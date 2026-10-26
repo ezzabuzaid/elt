@@ -7,7 +7,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test {args} packages/google-auth/dist/*.test.js"
+      "command": "node --test {args} \"packages/google-auth/src/*.test.ts\""
     }
   }
 }

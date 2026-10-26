@@ -6,7 +6,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test --test-global-setup=docker-global-setup.ts {args} apps/proactive/dist/*.test.js"
+      "command": "node --test --test-global-setup=docker-global-setup.ts {args} \"apps/proactive/src/*.test.ts\""
     },
     "start": {
       "dependsOn": ["build"],
