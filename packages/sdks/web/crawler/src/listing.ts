@@ -19,7 +19,10 @@ export const paginationLinks = [
   'next-archive',
 ].map((rel) => ({ rel }));
 
-export function readListing(text: string): SitemapListing {
+/** A listing, and for a feed the time its items cover, which it rolls off later. */
+type Listing = SitemapListing & { readonly span: number | null };
+
+export function readListing(text: string): Listing {
   if (detectJsonFeed(text)) {
     const feed = parseJsonFeed(text);
     return {
@@ -27,6 +30,11 @@ export function readListing(text: string): SitemapListing {
         item.url === undefined ? [] : [{ url: item.url, lastModified: null }],
       ),
       sitemaps: feed.next_url === undefined ? [] : [feed.next_url],
+      span: span(
+        (feed.items ?? []).map(
+          (item) => item.date_published ?? item.date_modified,
+        ),
+      ),
     };
   }
   if (detectRdfFeed(text)) {
@@ -39,14 +47,14 @@ export function readListing(text: string): SitemapListing {
         item.link === undefined ? [] : [{ url: item.link, lastModified: null }],
       ),
       sitemaps: [],
+      span: null,
     };
   }
   const listing = parseSitemap(text);
-  const links = detectAtomFeed(text)
-    ? parseAtomFeed(text).links
-    : detectRssFeed(text)
-      ? parseRssFeed(text).atom?.links
-      : undefined;
+  const atom = detectAtomFeed(text) ? parseAtomFeed(text) : undefined;
+  const rss =
+    atom === undefined && detectRssFeed(text) ? parseRssFeed(text) : undefined;
+  const links = atom?.links ?? rss?.atom?.links;
   return {
     ...listing,
     sitemaps: [
@@ -54,10 +62,24 @@ export function readListing(text: string): SitemapListing {
       ...(links ?? []).flatMap((link) =>
         link.href !== undefined &&
         link.rel !== undefined &&
-        ['next', 'prev', 'prev-archive', 'next-archive'].includes(link.rel)
+        paginationLinks.some(({ rel }) => rel === link.rel)
           ? [link.href]
           : [],
       ),
     ],
+    span: span(
+      atom
+        ? (atom.entries ?? []).map((entry) => entry.published ?? entry.updated)
+        : (rss?.items ?? []).map((item) => item.pubDate),
+    ),
   };
+}
+
+// From the oldest publication date to the newest; null with fewer than two dates, as a sitemap has.
+function span(dates: readonly (string | undefined)[]): number | null {
+  const times = dates.flatMap((date) => {
+    const time = date === undefined ? Number.NaN : Date.parse(date);
+    return Number.isNaN(time) ? [] : [time];
+  });
+  return times.length < 2 ? null : Math.max(...times) - Math.min(...times);
 }

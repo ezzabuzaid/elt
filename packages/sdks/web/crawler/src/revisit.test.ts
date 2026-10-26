@@ -551,3 +551,37 @@ test('nextDue gives when the next crawl has a known URL due, starting URLs inclu
   // The start is due a day later; /a failed, so it is due two hours later.
   assert.equal(crawl.nextDue(), 2 * hour);
 });
+
+test('a feed is due again within half the time its items cover, whatever the policy, so it rolls no item off unseen', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 0 });
+  let dated = true;
+  using server = mockWeb(
+    http.get('https://site.test/*', ({ request }) =>
+      pathOf(request.url) === '/feed.xml'
+        ? HttpResponse.xml(
+            `<rss version="2.0"><channel><title>Feed</title>${[10, 8, 6]
+              .map(
+                (hours) =>
+                  `<item><link>https://site.test/${hours}</link>${dated ? `<pubDate>${new Date(Date.UTC(2026, 9, 26, hours)).toUTCString()}</pubDate>` : ''}</item>`,
+              )
+              .join('')}</channel></rss>`,
+          )
+        : HttpResponse.html('<p>Page</p>'),
+    ),
+  );
+  const crawler = new WebCrawler(got, [new ListingReader()]);
+
+  const crawl = crawler.crawl(['https://site.test/feed.xml'], null, options());
+  await crawled(crawl);
+  dated = false;
+  const undated = crawler.crawl(
+    ['https://site.test/feed.xml'],
+    null,
+    options(),
+  );
+  await crawled(undated);
+
+  // The items cover four hours, so the feed is due within two; its pages a day later.
+  assert.equal(crawl.nextDue(), 2 * hour);
+  assert.equal(undated.nextDue(), day);
+});

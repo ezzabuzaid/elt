@@ -85,6 +85,12 @@ export type Visit<Note> = {
   readonly note: Note | null;
   /** This reader asked for the download through wants(). */
   readonly wanted: boolean;
+  /**
+   * The response says that its URL must be visited again within this many
+   * milliseconds, whatever the revisit policy, such as a feed that would
+   * otherwise roll items off before the next visit.
+   */
+  revisitWithin(within: number): void;
 };
 
 /**

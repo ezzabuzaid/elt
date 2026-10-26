@@ -68,7 +68,7 @@ export class ListingReader extends Reader<Note, State> {
   }
 
   async read(
-    { response, headers, type, request, note }: Visit<Note>,
+    { response, headers, type, request, note, revisitWithin }: Visit<Note>,
     state: State,
   ): Promise<readonly Finding<Note>[]> {
     if (note?.kind === 'robots') {
@@ -118,6 +118,8 @@ export class ListingReader extends Reader<Note, State> {
         throw error;
       }
       state.listed = true;
+      // A feed rolls its oldest items off; visited again within half the time they cover, it loses none (#2936).
+      if (listing.span !== null) revisitWithin(listing.span / 2);
       return [
         ...listing.pages.map((page) => ({
           url: webUrl(page.url, response.url),

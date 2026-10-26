@@ -368,6 +368,15 @@ class CrawlRun implements Crawl {
       const type =
         headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ??
         null;
+      // A reader can bring this URL's next visit forward, whatever the policy,
+      // as for a feed that would roll items off before the visit.
+      const revisitWithin = (within: number) => {
+        if (this.#visit === null) return;
+        const { before, after } = this.#visit;
+        const limit = this.#at + within;
+        if (after.due === null || limit < after.due)
+          this.#visit = { before, after: { ...after, due: limit } };
+      };
       // Readers are independent: one that cannot read the response is reported
       // for it, and the others still read it. The page itself did not fail.
       for (const [index, reader] of this.#readers.entries()) {
@@ -380,6 +389,7 @@ class CrawlRun implements Crawl {
               request: entry,
               note: entry.notes[index],
               wanted: wanted[index] === true,
+              revisitWithin,
             },
             this.#states[index],
           ))
