@@ -4,14 +4,17 @@ import { test } from 'node:test';
 import got, { HTTPError, type Response } from 'got';
 import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
+import { z } from 'zod';
 
 import {
+  ArchiveReader,
   type Crawl,
   CrawlError,
   type CrawlFailure,
   type CrawledPage,
   LinkReader,
   ListingReader,
+  Reader,
   WebCrawler,
 } from './index.ts';
 
@@ -679,4 +682,188 @@ test('a snapshot taken at a progress entry resumes without downloading the docum
     '/keep/3',
     '/keep/bad',
   ]);
+});
+
+test('a page labeled Latin-1 in its Content-Type is handed back, and every reader reads it by that charset', async () => {
+  const requests: string[] = [];
+  using server = mockWeb(
+    http.get('https://site.test/*', ({ request }) => {
+      const path = pathOf(request.url);
+      requests.push(path);
+      if (path === '/') return HttpResponse.html('<a href="/latin">Latin</a>');
+      if (path === '/latin')
+        return new HttpResponse(
+          Buffer.from(
+            // Only ArchiveReader reads <link rel="archives">, and only LinkReader reads anchors.
+            '<link rel="alternate" type="application/rss+xml" href="/flux-café.xml"><link rel="archives" href="/archives/café/"><a href="/café">Café</a>',
+            'latin1',
+          ),
+          { headers: { 'content-type': 'text/html; charset=iso-8859-1' } },
+        );
+      if (path === '/flux-caf%C3%A9.xml')
+        return HttpResponse.xml(
+          '<rss version="2.0"><channel><title>Journal</title><link>https://site.test/</link><description>Updates</description></channel></rss>',
+        );
+      if (path === '/robots.txt')
+        return new HttpResponse(null, { status: 404 });
+      return HttpResponse.html('<p>Page</p>');
+    }),
+  );
+  const entries = await results(
+    new WebCrawler(got, [
+      new ListingReader(),
+      new ArchiveReader(),
+      new LinkReader({ maxDepth: 2, maxPages: 10 }),
+    ]).run(['https://site.test/'], { signal: AbortSignal.timeout(5000) }),
+  );
+  assert.deepEqual(
+    entries.filter((entry) => 'error' in entry),
+    [],
+  );
+  const pages = entries.map((entry) => pathOf(entry.url));
+  // Decoded as Latin-1, the byte E9 is é; any other decoding would request a different path.
+  assert.ok(
+    pages.includes('/latin') && pages.includes('/caf%C3%A9'),
+    pages.join(' '),
+  );
+  assert.ok(requests.includes('/flux-caf%C3%A9.xml'), requests.join(' '));
+  assert.ok(requests.includes('/archives/caf%C3%A9/'), requests.join(' '));
+});
+
+test('a page labeled only by its <meta charset> is read by that charset', async () => {
+  const requests: string[] = [];
+  using server = mockWeb(
+    http.get('https://site.test/*', ({ request }) => {
+      const path = pathOf(request.url);
+      requests.push(path);
+      if (path === '/') return HttpResponse.html('<a href="/meta">Meta</a>');
+      if (path === '/meta')
+        return new HttpResponse(
+          Buffer.from(
+            '<meta charset="windows-1252"><a href="/café">Café</a>',
+            'latin1',
+          ),
+          { headers: { 'content-type': 'text/html' } },
+        );
+      return HttpResponse.html('<p>Page</p>');
+    }),
+  );
+  await results(
+    new WebCrawler(got, [new LinkReader({ maxDepth: 2, maxPages: 10 })]).run(
+      ['https://site.test/'],
+      { signal: AbortSignal.timeout(5000) },
+    ),
+  );
+  assert.ok(requests.includes('/caf%C3%A9'), requests.join(' '));
+});
+
+test('an unlabeled page is read as UTF-8, and one that is not valid UTF-8 is still handed back with its links followed', async () => {
+  using server = mockWeb(
+    http.get('https://site.test/*', ({ request }) => {
+      const path = pathOf(request.url);
+      if (path === '/')
+        return HttpResponse.html(
+          '<a href="/legacy">Legacy</a><a href="/modern">Modern</a>',
+        );
+      if (path === '/modern')
+        return new HttpResponse(Buffer.from('<a href="/café">Café</a>'), {
+          headers: { 'content-type': 'text/html' },
+        });
+      if (path === '/legacy')
+        return new HttpResponse(
+          Buffer.from('<p>Café</p><a href="/next">Next</a>', 'latin1'),
+          { headers: { 'content-type': 'text/html' } },
+        );
+      return HttpResponse.html('<p>Page</p>');
+    }),
+  );
+  const entries = await results(
+    new WebCrawler(got, [new LinkReader({ maxDepth: 2, maxPages: 10 })]).run(
+      ['https://site.test/'],
+      { signal: AbortSignal.timeout(5000) },
+    ),
+  );
+  assert.deepEqual(
+    entries.map((entry) =>
+      'error' in entry ? `failure ${pathOf(entry.url)}` : pathOf(entry.url),
+    ),
+    ['/legacy', '/modern', '/next', '/caf%C3%A9'],
+  );
+});
+
+test('a reader that throws on a response does not stop the readers after it or drop the page', async () => {
+  // A reader that cannot read anything, placed before the built-in readers.
+  class BrokenReader extends Reader<never, null> {
+    readonly notes = z.never();
+    readonly states = z.null();
+    open() {
+      return null;
+    }
+    wants() {
+      return false;
+    }
+    read(): never {
+      throw new Error('The reader broke');
+    }
+  }
+  using server = mockWeb(
+    http.get('https://site.test/*', ({ request }) => {
+      const path = pathOf(request.url);
+      if (path === '/') return HttpResponse.html('<a href="/page">Page</a>');
+      if (path === '/page')
+        return HttpResponse.html('<a href="/next">Next</a>');
+      return HttpResponse.html('<p>Leaf</p>');
+    }),
+  );
+  const entries = await results(
+    new WebCrawler(got, [
+      new BrokenReader(),
+      new LinkReader({ maxDepth: 2, maxPages: 10 }),
+    ]).run(['https://site.test/'], { signal: AbortSignal.timeout(5000) }),
+  );
+  assert.deepEqual(
+    entries.flatMap((entry) => ('error' in entry ? [] : [pathOf(entry.url)])),
+    ['/page', '/next'],
+  );
+  assert.deepEqual(
+    entries.flatMap((entry) =>
+      'error' in entry
+        ? [[pathOf(entry.error.url), entry.page, String(entry.error.cause)]]
+        : [],
+    ),
+    [
+      ['/', false, 'Error: The reader broke'],
+      ['/page', false, 'Error: The reader broke'],
+      ['/next', false, 'Error: The reader broke'],
+    ],
+  );
+});
+
+test('a declared listing that one reader cannot read keeps what the other readers find in it', async () => {
+  using server = mockWeb(
+    http.get('https://site.test/*', ({ request }) => {
+      const path = pathOf(request.url);
+      if (path === '/')
+        return HttpResponse.html('<link rel="sitemap" href="/map">');
+      if (path === '/map')
+        return HttpResponse.html('<a href="/found">Found</a>');
+      if (path === '/robots.txt')
+        return new HttpResponse(null, { status: 404 });
+      return HttpResponse.html('<p>Leaf</p>');
+    }),
+  );
+  const entries = await results(
+    new WebCrawler(got, [
+      new ListingReader(),
+      new LinkReader({ maxDepth: 2, maxPages: 10 }),
+    ]).run(['https://site.test/'], { signal: AbortSignal.timeout(5000) }),
+  );
+  assert.deepEqual(
+    entries.map((entry) =>
+      'error' in entry
+        ? `failure ${pathOf(entry.error.url)}`
+        : pathOf(entry.url),
+    ),
+    ['failure /map', '/found'],
+  );
 });

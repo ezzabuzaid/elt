@@ -38,7 +38,7 @@ for await (const entry of crawl) {
 - **Priorities**: every finding has one. Starting URLs and listings (`robots.txt`, sitemaps, feeds) go strictly first, so their provenance and `lastModified` reach pages before the pages download. Pages, links and archive backfill then share the downloads by smooth weighted round-robin, 4:2:1: the deterministic form of the biased front-queue selector in a crawl frontier (Introduction to Information Retrieval §20.2.3). Backfill never blocks new pages and still progresses. A URL found again with a more urgent priority moves up.
 - **Provenance**: `listingUrl` is the final URL of the response that first named the URL. A listing's provenance replaces a link's while the URL is pending.
 - **Hops** count ordinary links from a starting or listed page. When a URL is both a document and a page, its page findings decide its hops. `LinkReader` limits them.
-- **Failures**: a reader states which statuses are ordinary answers for each URL it finds, for example 404 for a dead link. Any other failure is handed out as `{ url, listingUrl, lastModified, error, page }`, and the crawl continues. `page` is true when the failed URL is a page the crawl would have handed back, so a caller can keep it for a later crawl; a failed listing is found again from the starting URLs. A reader that throws, such as on a malformed declared sitemap, also produces a failure. Cancellation throws the signal's exact reason.
+- **Failures**: a reader states which statuses are ordinary answers for each URL it finds, for example 404 for a dead link. Any other failure is handed out as `{ url, listingUrl, lastModified, error, page }`, and the crawl continues. `page` is true when the failed URL is a page the crawl would have handed back, so a caller can keep it for a later crawl; a failed listing is found again from the starting URLs. A reader that throws, such as on a malformed declared sitemap, produces a failure for that URL with `page: false`; the other readers still read the response, and a page is still handed back. Cancellation throws the signal's exact reason.
 - **Identity**: fragments are removed. Queries and trailing slashes stay meaningful. Each found URL is requested once; `url` is the URL as found, and `response.url` is the final URL.
 - Got hooks can read `options.context.page`. It is true when the download is a page handed back and no reader reads it as a document. It is false for starting URLs, documents and pages downloaded only for a reader, so a feed that is also a page keeps the representation its reader needs.
 - **Progress**: every downloaded URL that is not handed back as a page or failure produces `{ progress: url }`. Take a snapshot there to keep the work done on documents.
@@ -61,6 +61,8 @@ for await (const entry of crawl) {
 
 `LinkReader({ maxDepth, maxPages })` takes non-negative safe integers. Pages at zero hops always contribute links: starting pages, and the pages and archives that a listing or a starting page names. Any other page contributes links only when `LinkReader` admits it: within `maxDepth` hops, on a starting origin, and within `maxPages` admitted pages. Admission happens before the download, so `maxPages` also counts admitted pages that fail or are not HTML. A linked page that returns 404 or 410 is skipped.
 
+Readers decode HTML and Markdown pages by their byte order mark, their `Content-Type` charset or their `<meta charset>`, in that order (the WHATWG encoding sniffing algorithm, through `html-encoding-sniffer`). An unlabeled page is read as UTF-8; bytes that do not decode become U+FFFD rather than failing the page. Listings are decoded as UTF-8, as the sitemaps protocol requires.
+
 No JavaScript runs. Article extraction, checkpoints and destinations are outside this package.
 
 ## Package ownership
@@ -73,6 +75,7 @@ No JavaScript runs. Article extraction, checkpoints and destinations are outside
 | `feedscout`                      | Feed and sitemap declarations, anchors, HTTP `Link` headers, feed validation     |
 | Feedsmith, `fast-xml-parser`     | JSON Feed and RDF items, feed pagination, strict RDF validation                  |
 | jsdom                            | Archive HTML                                                                     |
+| `html-encoding-sniffer`          | Page encoding: byte order mark, transport charset, `<meta>` prescan              |
 | `marked`                         | Markdown links                                                                   |
 | zod                              | Snapshot validation                                                              |
 

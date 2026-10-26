@@ -2,14 +2,13 @@ import { discoverUrisFromHtml } from 'feedscout/methods';
 import { lexer, walkTokens } from 'marked';
 import { z } from 'zod';
 
-import { decodeSitemap } from '@workspace/codec-sitemap';
-
 import {
   type CrawlRequest,
   type Finding,
   Reader,
   type Visit,
   isHtml,
+  pageText,
 } from './reader.ts';
 import { httpUrl } from './web-url.ts';
 
@@ -71,7 +70,7 @@ export class LinkReader extends Reader<never, State> {
     // Starting and listed pages always contribute links; others only when admitted.
     if ((request.hops > 0 && !wanted) || !state.origins.includes(origin))
       return [];
-    const text = decodeSitemap(response.rawBody);
+    const text = pageText(response);
     const links = markdown
       ? markdownLinks(text)
       : discoverUrisFromHtml(text, {

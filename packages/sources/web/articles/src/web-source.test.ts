@@ -1240,3 +1240,42 @@ test('explicit URL patterns restrict article downloads and preserve matching que
   );
   assert.equal((await ingestion.run())[0]?.count, 0);
 });
+
+test('a Latin-1 article page is stored with its text and leaves nothing to retry', async () => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    if (url.pathname === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel><item><link>${url.origin}/cafe</link></item></channel></rss>`,
+      );
+    } else if (url.pathname === '/cafe') {
+      response.setHeader('content-type', 'text/html; charset=iso-8859-1');
+      response.end(
+        Buffer.from(
+          '<article><h1>Café notes</h1><p>The café on the corner publishes a complete report every morning, with notes on each crème brûlée it serves.</p></article>',
+          'latin1',
+        ),
+      );
+    } else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      inputs: [`${upstream.origin}/feed.xml`],
+      pollIntervalMs: 60_000,
+    }),
+    database.path,
+    checkpoints.path,
+  );
+  // A crawl or article failure would reject the run and keep the page for a retry.
+  assert.equal((await ingestion.run())[0]?.count, 1);
+  assert.match(
+    String(
+      database.connection.prepare('SELECT textContent FROM articles').get()
+        ?.textContent,
+    ),
+    /crème brûlée/,
+  );
+});

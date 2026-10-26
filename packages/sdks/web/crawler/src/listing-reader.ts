@@ -16,7 +16,13 @@ import { z } from 'zod';
 import { decodeSitemap } from '@workspace/codec-sitemap';
 
 import { paginationLinks, readListing } from './listing.ts';
-import { type Finding, Reader, type Visit, isHtml } from './reader.ts';
+import {
+  type Finding,
+  Reader,
+  type Visit,
+  isHtml,
+  pageText,
+} from './reader.ts';
 import { httpUrl, webUrl } from './web-url.ts';
 
 // candidate: a possible feed, read only if Feedscout validates it.
@@ -132,7 +138,7 @@ export class ListingReader extends Reader<Note, State> {
       ];
     }
     if (response.statusCode !== 200 || !isHtml(type)) return [];
-    const text = decodeSitemap(response.rawBody);
+    const text = pageText(response);
     const declared = readDeclarations(text, response.url, headers);
     const feed = (url: string, kind: 'listing' | 'candidate') =>
       document(

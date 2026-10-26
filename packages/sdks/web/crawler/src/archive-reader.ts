@@ -2,10 +2,14 @@ import { discoverUrisFromHeaders } from 'feedscout/methods';
 import { JSDOM } from 'jsdom';
 import { z } from 'zod';
 
-import { decodeSitemap } from '@workspace/codec-sitemap';
-
 import { paginationLinks } from './listing.ts';
-import { type Finding, Reader, type Visit, isHtml } from './reader.ts';
+import {
+  type Finding,
+  Reader,
+  type Visit,
+  isHtml,
+  pageText,
+} from './reader.ts';
 import { webUrl } from './web-url.ts';
 
 const noteSchema = z.object({ kind: z.literal('archive') });
@@ -43,7 +47,7 @@ export class ArchiveReader extends Reader<Note, null> {
   }: Visit<Note>): readonly Finding<Note>[] {
     if (response.statusCode !== 200 || !isHtml(type)) return [];
     const { archives, pages } = readArchive(
-      decodeSitemap(response.rawBody),
+      pageText(response),
       response.url,
       headers,
     );

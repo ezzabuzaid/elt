@@ -254,8 +254,10 @@ class CrawlRun implements Crawl {
       const type =
         headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ??
         null;
-      try {
-        for (const [index, reader] of this.#readers.entries())
+      // Readers are independent: one that cannot read the response is reported
+      // for it, and the others still read it. The page itself did not fail.
+      for (const [index, reader] of this.#readers.entries()) {
+        try {
           for (const finding of await reader.read(
             {
               response,
@@ -268,10 +270,10 @@ class CrawlRun implements Crawl {
             this.#states[index],
           ))
             this.#enqueue(this.#entry(finding, entry, response.url, index));
-      } catch (cause) {
-        signal.throwIfAborted();
-        yield this.#failure(entry, page, response.url, cause);
-        continue;
+        } catch (cause) {
+          signal.throwIfAborted();
+          yield this.#failure(entry, false, response.url, cause);
+        }
       }
       signal.throwIfAborted();
       yield included && !failed

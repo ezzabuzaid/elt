@@ -1,4 +1,7 @@
+import { MIMEType } from 'node:util';
+
 import type { Response } from 'got';
+import sniffHtmlEncoding from 'html-encoding-sniffer';
 import type { z } from 'zod';
 
 export type PageLocation = {
@@ -43,6 +46,26 @@ export type Finding<Note> = {
 
 export function isHtml(type: string | null) {
   return type === 'text/html' || type === 'application/xhtml+xml';
+}
+
+/**
+ * The text of an HTML or Markdown page, decoded by its byte order mark, its
+ * Content-Type charset or its <meta charset>, in that order (the WHATWG
+ * encoding sniffing algorithm). An unlabeled page is read as UTF-8, and bytes
+ * that do not decode become U+FFFD rather than failing the page.
+ */
+export function pageText(response: Response) {
+  const contentType = response.headers['content-type'];
+  const charset =
+    contentType === undefined
+      ? undefined
+      : (new MIMEType(contentType).params.get('charset') ?? undefined);
+  return new TextDecoder(
+    sniffHtmlEncoding(response.rawBody, {
+      transportLayerEncodingLabel: charset,
+      defaultEncoding: 'UTF-8',
+    }),
+  ).decode(response.rawBody);
 }
 
 export type Visit<Note> = {
