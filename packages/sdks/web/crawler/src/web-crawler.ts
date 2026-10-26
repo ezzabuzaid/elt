@@ -207,22 +207,10 @@ class CrawlRun implements Crawl {
     const { signal } = this.#options;
     signal.throwIfAborted();
     for (;;) {
-      const entry = this.#next();
-      if (!entry) break;
-      const included = entry.page && this.#includes(entry.url);
+      const next = this.#next();
+      if (!next) break;
+      const { entry, included, wanted } = next;
       const page = included && !entry.document;
-      const wanted = this.#readers.map((reader, index) =>
-        reader.wants(entry, this.#states[index]),
-      );
-      if (
-        !entry.start &&
-        !entry.document &&
-        !included &&
-        !wanted.includes(true)
-      ) {
-        this.#known.delete(entry.url);
-        continue;
-      }
       let response: Response;
       try {
         response = await this.#http(entry.url, {
@@ -287,11 +275,30 @@ class CrawlRun implements Crawl {
     }
   }
 
+  // The next entry worth a download. One nobody needs is dropped without
+  // using its lane's turn, so turns are spent on downloads: a lane full of
+  // skipped links cannot hand its share to backfill.
   #next() {
-    const [entry] = this.#lane()?.values() ?? [];
-    if (entry) this.#lanes[entry.priority].delete(entry.url);
-    this.#current = entry ?? null;
-    return entry;
+    for (let lane = this.#lane(); lane; lane = this.#lane())
+      for (const entry of lane.values()) {
+        lane.delete(entry.url);
+        const included = entry.page && this.#includes(entry.url);
+        const wanted = this.#readers.map((reader, index) =>
+          reader.wants(entry, this.#states[index]),
+        );
+        if (
+          entry.start ||
+          entry.document ||
+          included ||
+          wanted.includes(true)
+        ) {
+          this.#current = entry;
+          return { entry, included, wanted };
+        }
+        this.#known.delete(entry.url);
+      }
+    this.#current = null;
+    return undefined;
   }
 
   // Listings go strictly first: they are bounded, and their provenance must

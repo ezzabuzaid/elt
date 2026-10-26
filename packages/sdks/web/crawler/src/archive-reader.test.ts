@@ -397,6 +397,44 @@ test('an archive that returns a feed is not read as a listing', async () => {
   assert.ok(entries.every((entry) => !entry.url.endsWith('/item')));
 });
 
+// The shape of a classifieds category page: many links outside `include` before the listings.
+test('links nobody downloads do not use up turns, so listings are not starved behind them', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    assert.ok(request.url);
+    requests.push(request.url);
+    response.setHeader('content-type', 'text/html');
+    const page = /^\/m\?page=(\d+)$/.exec(request.url);
+    if (request.url === '/m')
+      response.end(
+        `<link rel="next" href="/m?page=2"><main>${Array.from({ length: 40 }, (_, index) => `<a href="/tag/${index + 1}">Tag</a>`).join('')}<a href="/search/1">1</a><a href="/search/2">2</a><a href="/search/3">3</a></main>`,
+      );
+    else if (page)
+      response.end(
+        Number(page[1]) < 10
+          ? `<link rel="next" href="/m?page=${Number(page[1]) + 1}">`
+          : '<p>Last page</p>',
+      );
+    else response.end('<p>A listing.</p>');
+  });
+  for await (const entry of new WebCrawler(got, [new ArchiveReader()]).run(
+    [`${upstream.origin}/m`],
+    {
+      signal: AbortSignal.timeout(5000),
+      include: [new URLPattern({ pathname: '/search/*' })],
+    },
+  ))
+    assert.ok(!('error' in entry));
+  // Without the fix, the 40 skipped tags use 40 page turns, so ten archive pages download first.
+  assert.ok(
+    ['/search/1', '/search/2', '/search/3'].every(
+      (listing) => requests.indexOf(listing) < requests.indexOf('/m?page=3'),
+    ),
+    requests.join(' '),
+  );
+  assert.equal(requests.filter((url) => url.startsWith('/tag/')).length, 0);
+});
+
 test('new feed pages are handed back before a long archive chain finishes, and the chain still completes', async () => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
