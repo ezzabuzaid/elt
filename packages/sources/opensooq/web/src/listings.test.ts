@@ -127,7 +127,8 @@ function service(id: string) {
 }
 
 // A listing page: the page-wide Organization, BreadcrumbList and FAQPage objects, then the given objects.
-// Like every live listing page on 2026-10-26, it links other listings as related ads.
+// Like every live listing page on 2026-10-26, it links its city/brand/model/year filter in the breadcrumb and its year filter in the basic info
+// (copied from the live page of 289081186, with the breadcrumb made relative), and other listings as related ads.
 function listingPage(objects: object[], ad = 'Sponsored') {
   return `<html><head>${[
     {
@@ -156,7 +157,7 @@ function listingPage(objects: object[], ad = 'Sponsored') {
     )
     .join(
       '',
-    )}</head><body><div class="ad">${ad}</div><h1>Listing</h1><section><h2>Related ads</h2><a href="/en/search/287909099">Related ad</a></section></body></html>`;
+    )}</head><body><ol><li itemProp="itemListElement"><a data-ghost="breadcrumb" href="/en/amman/cars/motorcycles/o38719-Taro/T9-150/2024"><span>2024</span></a></li></ol><div class="ad">${ad}</div><h1>Listing</h1><section id="listingViewBasicInfo"><ul><li><span>Year</span><a href="/en/cars/motorcycles/2024" aria-label="Year: 2024">2024</a></li></ul></section><section><h2>Related ads</h2><a href="/en/search/287909099">Related ad</a></section></body></html>`;
 }
 
 // A category with two listing pages: page 1 links two listings and rel="next" to page 2, which links one more.
@@ -342,6 +343,66 @@ test('every listing of a category without pagination is stored, and nothing else
     '/en/search/287909010',
     '/en/search/287909011',
   ]);
+});
+
+test('a category crawl reads only the category and its next pages, not the filters and the other-language category they link', async () => {
+  // The live page of /en/cars/motorcycles/2000 on 2026-10-26 links its Arabic twin twice: an hreflang alternate and the language switch.
+  // That category fits on one page; the rel="next" link is the one the live /en/cars/motorcycles carries (backlog #2993).
+  // The year filters and the city/brand/model/year filters are linked from the listing pages (listingPage).
+  const twin = '/ar/دراجات-نارية/دراجات/2000';
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', 'http://localhost');
+    requests.push(`${url.pathname}${url.search}`);
+    const listing = /^\/(?:en|ar)\/search\/(\d+)$/.exec(url.pathname);
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    if (url.pathname === '/en/cars/motorcycles/2000' && url.search === '')
+      response.end(
+        `<html><head><link rel="next" href="/en/cars/motorcycles/2000?page=2"><link href="${twin}" rel="alternate" hrefLang="ar-jo"></head><body><nav><a id="change_lang_link" href="${twin}">عربي</a></nav><main><a href="/en/search/289081186">Taro T9</a><a href="/en/search/289120264">QJ</a></main></body></html>`,
+      );
+    else if (
+      url.pathname === '/en/cars/motorcycles/2000' &&
+      url.search === '?page=2'
+    )
+      response.end(
+        '<html><body><main><a href="/en/search/289165164">For sale</a></main></body></html>',
+      );
+    else if (listing)
+      response.end(listingPage([motorcycle(listing[1] ?? '', '700')]));
+    // A filter or the twin: a category of other listings.
+    else
+      response.end(
+        '<html><body><main><a href="/en/search/289999001">Other</a><a href="/ar/search/289999002">Other</a></main></body></html>',
+      );
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      stream: listings,
+      inputs: [`${upstream.origin}/en/cars/motorcycles/2000`],
+      pollIntervalMs: 60_000,
+    }),
+    database.path,
+    checkpoints.path,
+  );
+
+  await ingestion.run();
+
+  assert.deepEqual(requests.toSorted(), [
+    '/en/cars/motorcycles/2000',
+    '/en/cars/motorcycles/2000?page=2',
+    '/en/search/289081186',
+    '/en/search/289120264',
+    '/en/search/289165164',
+  ]);
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT id FROM opensooq_listings ORDER BY id')
+      .all()
+      .map((row) => row.id),
+    ['289081186', '289120264', '289165164'],
+  );
 });
 
 test('listings of every real schema.org shape are stored with their mapped fields', async () => {
