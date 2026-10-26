@@ -14,7 +14,9 @@ export function SitesPanel({ activity }: { activity: Activity }) {
   const sync = useMutation({ mutationFn: api.sync });
   const clear = useMutation({ mutationFn: api.clear });
   if (settings.data === undefined)
-    return <p className="note">{settings.error?.message ?? 'Loading'}</p>;
+    return settings.error === null ? null : (
+      <p className="error">{settings.error.message}</p>
+    );
   const current = settings.data;
   const update = (change: Partial<Settings>) =>
     save.mutate({ ...current, ...change });
@@ -49,6 +51,7 @@ export function SitesPanel({ activity }: { activity: Activity }) {
         </button>
         <button
           type="button"
+          className="quiet"
           disabled={busy || current.inputs.length === 0}
           onClick={() => clear.mutate()}
         >

@@ -39,7 +39,15 @@ export function ArticleView({
         </nav>
       </header>
       {data === undefined ? (
-        <p className="note">{article.error?.message ?? 'Loading'}</p>
+        article.error === null ? (
+          <div className="skeleton reader-skeleton" aria-busy="true">
+            <span />
+            <span />
+            <span />
+          </div>
+        ) : (
+          <p className="error">{article.error.message}</p>
+        )
       ) : (
         <>
           <h1>{data.title ?? pageUrl}</h1>
@@ -78,11 +86,13 @@ export function ArticleView({
           </dl>
           {tab === 'Reader' && (
             <div
-              className="body"
+              className="body prose"
               lang={data.lang ?? undefined}
               dir={data.dir ?? undefined}
               // The source stores sanitized article HTML in content.
-              dangerouslySetInnerHTML={{ __html: data.content }}
+              dangerouslySetInnerHTML={{
+                __html: withoutRepeatedTitle(data.content, data.title),
+              }}
             />
           )}
           {tab === 'Markdown' && <pre className="body">{data.markdown}</pre>}
@@ -91,4 +101,14 @@ export function ArticleView({
       )}
     </article>
   );
+}
+
+// Extracted article HTML usually opens with the same heading the page
+// already shows above the fields.
+function withoutRepeatedTitle(content: string, title: string | null): string {
+  const parsed = new DOMParser().parseFromString(content, 'text/html');
+  const heading = parsed.querySelector('h1');
+  if (title !== null && heading?.textContent.trim() === title.trim())
+    heading.remove();
+  return parsed.body.innerHTML;
 }
