@@ -31,10 +31,10 @@ export const api = {
   clear: () => request('/api/clear', { method: 'POST' }),
   articles: async () =>
     z.array(articleSummarySchema).parse(await request('/api/articles')),
-  article: async (inputUrl: string, pageUrl: string) =>
+  article: async (inputUrl: string, articleUrl: string) =>
     articleSchema.parse(
       await request(
-        `/api/article?${new URLSearchParams({ inputUrl, pageUrl })}`,
+        `/api/article?${new URLSearchParams({ inputUrl, articleUrl })}`,
       ),
     ),
   history: async () => historySchema.parse(await request('/api/history')),

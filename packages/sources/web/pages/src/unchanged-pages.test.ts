@@ -99,6 +99,7 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
                 ...article,
                 inputUrl: upstream.origin,
                 pageUrl: upstream.origin,
+                articleUrl: upstream.origin,
               };
           },
         },
@@ -204,7 +205,7 @@ test('restarted source keeps unchanged rows and detects listing metadata and art
 function articles(include?: readonly string[]) {
   return new WebStream({
     name: 'articles',
-    primaryKey: ['pageUrl'],
+    primaryKey: ['articleUrl'],
     readers: [
       new ListingReader(),
       new ArchiveReader(),

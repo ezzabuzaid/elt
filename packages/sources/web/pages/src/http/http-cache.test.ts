@@ -22,7 +22,7 @@ import { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } from ${JS
 const [input, path, checkpoints, id, syncMode] = process.argv.slice(1);
 const stream = new WebStream({
   name: 'articles',
-  primaryKey: ['pageUrl'],
+  primaryKey: ['articleUrl'],
   readers: [new ListingReader(), new ArchiveReader(), new LinkReader({ maxDepth: 3, maxPages: 100 })],
   extractor: new ArticleExtractor(),
 });

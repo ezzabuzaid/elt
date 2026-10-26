@@ -390,7 +390,7 @@ test('an interruption during a long stretch of archive pages keeps the progress 
 function articles(include?: readonly string[]) {
   return new WebStream({
     name: 'articles',
-    primaryKey: ['pageUrl'],
+    primaryKey: ['articleUrl'],
     readers: [
       new ListingReader(),
       new ArchiveReader(),

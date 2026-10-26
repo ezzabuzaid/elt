@@ -163,6 +163,79 @@ test('the pipeline prefers native Markdown, keeps HTML fallback and writes nothi
   assert.equal((await ingestion.run())[0]?.count, 0);
 });
 
+test('an article that a feed and a sitemap list with and without a trailing slash is stored once, and an unchanged rerun writes nothing', async () => {
+  // Like ezz.sh live on 2026-10-26: rss.xml and sitemap-0.xml name the two forms, both answer 200 and declare one canonical URL.
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    requests.push(request.url ?? '');
+    if (request.url === '/robots.txt')
+      response.end(`Sitemap: ${upstream.origin}/sitemap.xml`);
+    else if (request.url === '/sitemap.xml')
+      response
+        .writeHead(200, { 'content-type': 'application/xml' })
+        .end(
+          `<urlset><url><loc>${upstream.origin}/posts/ways-of-writing/</loc></url></urlset>`,
+        );
+    else if (request.url === '/feed.xml')
+      response
+        .writeHead(200, { 'content-type': 'application/rss+xml' })
+        .end(
+          '<rss><channel><item><link>/posts/ways-of-writing</link></item></channel></rss>',
+        );
+    else if (request.url === '/')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<link rel="alternate" type="application/rss+xml" href="/feed.xml">',
+        );
+    else if (request.url?.startsWith('/posts/ways-of-writing'))
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<title>Ways of writing</title><link rel="canonical" href="/posts/ways-of-writing/"><article><h1>Ways of writing</h1><p>Writing every day keeps the ideas moving.</p></article>',
+        );
+    else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      stream: articles(),
+      inputs: [upstream.origin],
+      pollIntervalMs: 60_000,
+    }),
+    database.path,
+    checkpoints.path,
+  );
+  await ingestion.run();
+
+  assert.deepEqual(
+    requests.filter((url) => url.startsWith('/posts/')).toSorted(),
+    ['/posts/ways-of-writing', '/posts/ways-of-writing/'],
+  );
+  assert.deepEqual(
+    {
+      ...database.connection
+        .prepare('SELECT count(*) AS rows FROM articles')
+        .get(),
+    },
+    { rows: 1 },
+  );
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT articleUrl, title FROM articles')
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      {
+        articleUrl: `${upstream.origin}/posts/ways-of-writing/`,
+        title: 'Ways of writing',
+      },
+    ],
+  );
+  assert.equal((await ingestion.run())[0]?.count, 0);
+});
+
 async function pipeline(source: WebSource, path: string, checkpoints: string) {
   const destination = new SQLiteDestination({ path });
   const history = new SQLiteSyncHistory();
@@ -885,7 +958,7 @@ test('chosen websites and feeds persist article metadata, make unchanged reruns 
     } else if (url.pathname === '/a' || url.pathname === '/b') {
       response.setHeader('content-type', 'text/html');
       response.end(
-        `<html lang="en"><head><title>Field notes ${url.pathname}</title><meta name="author" content="Research Team"><meta property="article:published_time" content="2026-10-24T09:00:00Z"><link rel="canonical" href="/shared-identity"></head><body><article><p>${revised ? 'Revised' : 'Original'} research findings from ${url.pathname} with evidence and reproducible observations.</p></article></body></html>`,
+        `<html lang="en"><head><title>Field notes ${url.pathname}</title><meta name="author" content="Research Team"><meta property="article:published_time" content="2026-10-24T09:00:00Z"><link rel="canonical" href="/notes${url.pathname}"></head><body><article><p>${revised ? 'Revised' : 'Original'} research findings from ${url.pathname} with evidence and reproducible observations.</p></article></body></html>`,
       );
     } else response.writeHead(404).end();
   });
@@ -907,7 +980,7 @@ test('chosen websites and feeds persist article metadata, make unchanged reruns 
     assert.deepEqual(
       database.connection
         .prepare(
-          'SELECT inputUrl, pageUrl, url, canonicalUrl, title, byline, publishedTime, lang, textContent FROM articles',
+          'SELECT inputUrl, pageUrl, url, canonicalUrl, articleUrl, title, byline, publishedTime, lang, textContent FROM articles',
         )
         .all()
         .map((row) => ({ ...row })),
@@ -916,7 +989,8 @@ test('chosen websites and feeds persist article metadata, make unchanged reruns 
           inputUrl: `${upstream.origin}${input}`,
           pageUrl: `${upstream.origin}/a`,
           url: `${upstream.origin}/a`,
-          canonicalUrl: `${upstream.origin}/shared-identity`,
+          canonicalUrl: `${upstream.origin}/notes/a`,
+          articleUrl: `${upstream.origin}/notes/a`,
           title: 'Field notes /a',
           byline: 'Research Team',
           publishedTime: '2026-10-24T09:00:00Z',
@@ -1223,7 +1297,7 @@ test('explicit URL patterns restrict article downloads and preserve matching que
     } else if (url.pathname === '/articles/report') {
       response.setHeader('content-type', 'text/html');
       response.end(
-        `<link rel="canonical" href="/articles/report"><article><p>Report edition ${url.searchParams.get('edition')} contains independently published observations.</p></article>`,
+        `<article><p>Report edition ${url.searchParams.get('edition')} contains independently published observations.</p></article>`,
       );
     } else response.writeHead(503).end('Out of scope');
   });
@@ -1246,17 +1320,21 @@ test('explicit URL patterns restrict article downloads and preserve matching que
   );
   assert.deepEqual(
     database.connection
-      .prepare('SELECT pageUrl, textContent FROM articles ORDER BY pageUrl')
+      .prepare(
+        'SELECT pageUrl, articleUrl, textContent FROM articles ORDER BY pageUrl',
+      )
       .all()
       .map((row) => ({ ...row })),
     [
       {
         pageUrl: `${upstream.origin}/articles/report?edition=one`,
+        articleUrl: `${upstream.origin}/articles/report?edition=one`,
         textContent:
           'Report edition one contains independently published observations.',
       },
       {
         pageUrl: `${upstream.origin}/articles/report?edition=two`,
+        articleUrl: `${upstream.origin}/articles/report?edition=two`,
         textContent:
           'Report edition two contains independently published observations.',
       },
@@ -1308,7 +1386,7 @@ test('a Latin-1 article page is stored with its text and leaves nothing to retry
 function articles(include?: readonly string[]) {
   return new WebStream({
     name: 'articles',
-    primaryKey: ['pageUrl'],
+    primaryKey: ['articleUrl'],
     readers: [
       new ListingReader(),
       new ArchiveReader(),

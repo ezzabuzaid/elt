@@ -6,7 +6,7 @@ import { HistoryPanel } from './history-panel.tsx';
 import { SitesPanel } from './sites-panel.tsx';
 import { useActivity } from './use-activity.ts';
 
-export type ArticleKey = { inputUrl: string; pageUrl: string };
+export type ArticleKey = { inputUrl: string; articleUrl: string };
 
 export function App() {
   const activity = useActivity();

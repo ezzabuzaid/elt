@@ -60,7 +60,7 @@ const pipeline = async () => {
   const source = new WebSource({
     stream: new WebStream({
       name: 'articles',
-      primaryKey: ['pageUrl'],
+      primaryKey: ['articleUrl'],
       readers: [
         new ListingReader(),
         new ArchiveReader(),
@@ -187,7 +187,7 @@ const app = new Hono()
           z.array(articleSummarySchema).parse(
             database
               .prepare(
-                `SELECT inputUrl, pageUrl, listingUrl, lastModified, title, byline, publishedTime, excerpt, siteName, length
+                `SELECT inputUrl, articleUrl, pageUrl, listingUrl, lastModified, title, byline, publishedTime, excerpt, siteName, length
                 FROM articles ORDER BY publishedTime IS NULL, publishedTime DESC, title`,
               )
               .all(),
@@ -200,8 +200,10 @@ const app = new Hono()
     const article = read(
       (database) =>
         database
-          .prepare('SELECT * FROM articles WHERE inputUrl = ? AND pageUrl = ?')
-          .get(c.req.query('inputUrl') ?? '', c.req.query('pageUrl') ?? ''),
+          .prepare(
+            'SELECT * FROM articles WHERE inputUrl = ? AND articleUrl = ?',
+          )
+          .get(c.req.query('inputUrl') ?? '', c.req.query('articleUrl') ?? ''),
       undefined,
     );
     return article === undefined

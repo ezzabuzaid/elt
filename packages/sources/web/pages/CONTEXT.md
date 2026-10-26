@@ -36,6 +36,10 @@ _Avoid_: Parser, scraper, wrapper
 One row that the extractor returns for a page. The source adds the provenance columns to it.
 _Avoid_: Item, entry (the crawler hands back entries), result
 
+**Article URL**:
+The identity of an article that `ArticleExtractor` gives: the canonical URL that the page declares, or its final URL when it declares none. Two pages with one article URL are one article.
+_Avoid_: Page URL (the page URL is the URL as the crawl found it), canonical URL alone (a page can declare none)
+
 **Provenance**:
 The four columns that the source adds to each record: `inputUrl`, `pageUrl`, `listingUrl` and `lastModified`.
 _Avoid_: Metadata (the article extractor has its own metadata)

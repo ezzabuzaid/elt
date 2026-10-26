@@ -7,7 +7,7 @@ import type { ArticleKey } from './app.tsx';
 const tabs = ['Reader', 'Markdown', 'Text'] as const;
 
 export function ArticleView({
-  article: { inputUrl, pageUrl },
+  article: { inputUrl, articleUrl },
   onBack,
 }: {
   article: ArticleKey;
@@ -15,8 +15,8 @@ export function ArticleView({
 }) {
   const [tab, setTab] = useState<(typeof tabs)[number]>('Reader');
   const article = useQuery({
-    queryKey: ['article', inputUrl, pageUrl],
-    queryFn: () => api.article(inputUrl, pageUrl),
+    queryKey: ['article', inputUrl, articleUrl],
+    queryFn: () => api.article(inputUrl, articleUrl),
   });
   const { data } = article;
   return (
@@ -50,7 +50,7 @@ export function ArticleView({
         )
       ) : (
         <>
-          <h1>{data.title ?? pageUrl}</h1>
+          <h1>{data.title ?? data.pageUrl}</h1>
           <dl className="fields">
             {(
               [

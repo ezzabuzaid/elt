@@ -60,11 +60,14 @@ export function ArticleList({ onOpen }: { onOpen: (key: ArticleKey) => void }) {
       )}
       <ul className="articles">
         {shown.map((article) => (
-          <li key={`${article.inputUrl} ${article.pageUrl}`}>
+          <li key={`${article.inputUrl} ${article.articleUrl}`}>
             <button
               type="button"
               onClick={() =>
-                onOpen({ inputUrl: article.inputUrl, pageUrl: article.pageUrl })
+                onOpen({
+                  inputUrl: article.inputUrl,
+                  articleUrl: article.articleUrl,
+                })
               }
             >
               <strong>{article.title ?? shortUrl(article.pageUrl)}</strong>

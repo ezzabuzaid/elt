@@ -14,10 +14,15 @@ const nullableText = { type: ['string', 'null'] } as const;
 /** One readable article per page, native Markdown first. */
 export class ArticleExtractor extends RecordExtractor {
   readonly properties = {
+    articleUrl: {
+      ...text,
+      description:
+        'The article identity: the declared canonical URL, or the final URL when the page declares none. Two URLs of one article, such as with and without a trailing slash, have one articleUrl.',
+    },
     url: { ...text, description: 'Final HTTP response URL after redirects.' },
     canonicalUrl: {
       ...nullableText,
-      description: 'Declared HTTP(S) canonical URL, not used to merge records.',
+      description: 'Declared HTTP(S) canonical URL.',
     },
     title: { ...nullableText, description: 'Extracted article title.' },
     byline: {
@@ -71,6 +76,7 @@ export class ArticleExtractor extends RecordExtractor {
               : [
                   {
                     ...extracted,
+                    articleUrl: extracted.canonicalUrl ?? extracted.url,
                     // Readability's public result permits undefined metadata; stream cells use null.
                     title: extracted.title ?? null,
                     byline: extracted.byline ?? null,

@@ -29,6 +29,7 @@ export type Activity = z.infer<typeof activitySchema>;
 
 export const articleSummarySchema = z.object({
   inputUrl: z.string(),
+  articleUrl: z.string(),
   pageUrl: z.string(),
   listingUrl: z.string(),
   lastModified: text,

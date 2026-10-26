@@ -23,7 +23,7 @@ import { WebStream } from '@workspace/source-web-pages/web-stream';
 const source = new WebSource({
   stream: new WebStream({
     name: 'articles',
-    primaryKey: ['pageUrl'],
+    primaryKey: ['articleUrl'],
     readers: [
       new ListingReader(),
       new ArchiveReader(),
@@ -73,7 +73,7 @@ Every record of the stream carries the page's provenance: `inputUrl`, the chosen
 
 A `RecordExtractor` declares the JSON Schema `properties` of its records, without the provenance columns, and `open(http)` returns one run per input crawl: the run's `accept` is the Accept header for the pages that the crawl hands back, or null for the client's default, and `read(response, signal)` returns the page's `fingerprint` and a `records()` function. The fingerprint is known before records are extracted, so an unchanged page skips extraction; it is null when other responses can change the output. An error that the extractor throws for a page is a failure of that page.
 
-`ArticleExtractor` stores sanitized HTML (`content`), Markdown (`markdown`), readable text (`textContent`), extraction metadata, the discovered and final response URLs, the declared canonical URL, and listing provenance. The source prioritizes native Markdown through HTTP content negotiation and advertised alternatives, then falls back to HTML. Native `markdown` retains the publisher’s body after removing front matter. A readable HTML counterpart supplies normalized `content` and `textContent` and fills missing metadata; advertised alternatives reuse HTML already downloaded, while negotiated Markdown requires one additional HTML request. If that optional counterpart is unavailable, HTML and text are sanitized derivatives of the native body. For HTML-only responses, Markdown is converted from the sanitized selected article. Raw native Markdown can retain publisher boilerplate or raw HTML even when the normalized fields are clean, so later renderers must sanitize it. With the primary key `pageUrl`, canonical declarations do not merge records.
+`ArticleExtractor` stores sanitized HTML (`content`), Markdown (`markdown`), readable text (`textContent`), extraction metadata, the discovered and final response URLs, the declared canonical URL, and listing provenance. The source prioritizes native Markdown through HTTP content negotiation and advertised alternatives, then falls back to HTML. Native `markdown` retains the publisher’s body after removing front matter. A readable HTML counterpart supplies normalized `content` and `textContent` and fills missing metadata; advertised alternatives reuse HTML already downloaded, while negotiated Markdown requires one additional HTML request. If that optional counterpart is unavailable, HTML and text are sanitized derivatives of the native body. For HTML-only responses, Markdown is converted from the sanitized selected article. Raw native Markdown can retain publisher boilerplate or raw HTML even when the normalized fields are clean, so later renderers must sanitize it. Its `articleUrl` is the declared canonical URL, or the final URL when the page declares none. With the primary key `articleUrl`, two URLs of one article, such as with and without a trailing slash, give one record ([ADR 0007](./docs/adr/0007-an-article-is-keyed-by-its-canonical-url.md)).
 
 The stream's readers decide what the crawler finds. With the readers in the example, the crawler reads sitemaps, feeds and HTML archives completely, wherever they are declared, and follows same-origin links in HTML and Markdown pages within three hops and 100 admitted linked pages per input crawl. It downloads each found URL once and hands back only pages that match the stream's `include` patterns; other pages are downloaded only to follow their links. Pages handed back ask for the extractor's `accept`; `ArticleExtractor` asks for native Markdown first. An interrupted crawl resumes from its snapshot; failed pages return in the next crawl. See the [crawler rules](../../../sdks/web/crawler/README.md).
 
@@ -95,3 +95,4 @@ Within each input, the crawler downloads one page at a time. A shared `p-queue` 
 - [ADR 0004: A failed page is tried again on the next run](./docs/adr/0004-a-failed-page-is-tried-again-on-the-next-run.md)
 - [ADR 0005: An absent page is not a deletion](./docs/adr/0005-an-absent-page-is-not-a-deletion.md)
 - [ADR 0006: The HTTP cache is Keyv on Node's SQLite driver](./docs/adr/0006-the-http-cache-is-keyv-on-node-sqlite.md)
+- [ADR 0007: An article is keyed by its canonical URL](./docs/adr/0007-an-article-is-keyed-by-its-canonical-url.md)
