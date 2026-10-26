@@ -29,6 +29,13 @@ const calendarPath = new RegExp(
 export class ArchiveReader extends Reader<Note, null> {
   readonly notes = noteSchema;
   readonly states = z.null();
+  readonly #startsAreArchives: boolean;
+
+  /** `starts: 'archives'` takes every starting page for an archive, such as a category whose pages fit on one page. */
+  constructor(options: { readonly starts?: 'archives' } = {}) {
+    super();
+    this.#startsAreArchives = options.starts === 'archives';
+  }
 
   open() {
     return null;
@@ -51,11 +58,12 @@ export class ArchiveReader extends Reader<Note, null> {
       response.url,
       headers,
     );
-    // A starting page lists pages when it links archives or is an archive itself.
+    // A starting page lists pages when the caller declares it an archive, links archives or is an archive itself.
     const listing =
       note !== null ||
       (request.start &&
-        (archives.size > 0 ||
+        (this.#startsAreArchives ||
+          archives.size > 0 ||
           /\/archives?\/?$/i.test(new URL(response.url).pathname)));
     return [
       ...(listing

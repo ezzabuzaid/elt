@@ -195,6 +195,36 @@ test('advertised content indexes work without archive-shaped URLs', async () => 
   );
 });
 
+test('a starting page declared an archive lists its pages without pagination or archive links, and the pages it lists do not', async () => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/category')
+      response.end(
+        '<nav><a href="/about">About</a></nav><main><a href="/item/1">One</a><a href="/item/2">Two</a></main>',
+      );
+    else if (request.url === '/item/1')
+      response.end('<main><a href="/item/3">A related item</a></main>');
+    else if (request.url?.startsWith('/item/')) response.end('<p>An item.</p>');
+    else response.writeHead(404).end();
+  });
+  assert.deepEqual(
+    (
+      await crawl(
+        new WebCrawler(got.extend({ retry: { limit: 0 } }), [
+          new ArchiveReader({ starts: 'archives' }),
+        ]),
+        `${upstream.origin}/category`,
+        AbortSignal.timeout(5000),
+      )
+    ).map(location),
+    ['/item/1', '/item/2'].map((path) => ({
+      url: `${upstream.origin}${path}`,
+      lastModified: null,
+      listingUrl: `${upstream.origin}/category`,
+    })),
+  );
+});
+
 test('a starting HTML archive follows HTTP pagination links and resolves redirected listings', async () => {
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');
