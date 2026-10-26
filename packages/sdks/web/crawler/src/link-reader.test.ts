@@ -37,7 +37,7 @@ function pathOf(entry: CrawledPage | CrawlFailure) {
 async function results(crawl: Crawl) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
   for await (const entry of crawl)
-    if (!('progress' in entry)) entries.push(entry);
+    if (!('progress' in entry) && !('deferred' in entry)) entries.push(entry);
   return entries;
 }
 
@@ -60,8 +60,9 @@ test('depth and page limits bound which pages contribute links, while every foun
   ] satisfies [{ maxDepth: number; maxPages: number }, string[]][]) {
     requests.length = 0;
     const pages = await results(
-      new WebCrawler(got, [new LinkReader(limits)]).run(
+      new WebCrawler(got, [new LinkReader(limits)]).crawl(
         ['https://site.test/'],
+        null,
         {
           signal: AbortSignal.timeout(5000),
         },
@@ -105,8 +106,9 @@ test('Markdown pages contribute their links on the starting origin', async () =>
     }),
   );
   const pages = await results(
-    new WebCrawler(got, [new LinkReader({ maxDepth: 2, maxPages: 100 })]).run(
+    new WebCrawler(got, [new LinkReader({ maxDepth: 2, maxPages: 100 })]).crawl(
       ['https://site.test/'],
+      null,
       { signal: AbortSignal.timeout(5000) },
     ),
   );
@@ -136,7 +138,9 @@ test('feed-only starts do not turn their articles into new link roots', async ()
       new ArchiveReader(),
       new PaginationReader(),
       new LinkReader({ maxDepth: 3, maxPages: 100 }),
-    ]).run([`${upstream.origin}/feed`], { signal: AbortSignal.timeout(5000) }),
+    ]).crawl([`${upstream.origin}/feed`], null, {
+      signal: AbortSignal.timeout(5000),
+    }),
   );
   assert.deepEqual(pages.map(pathOf), ['/article']);
   assert.deepEqual(requests, ['/feed', '/article']);
@@ -166,7 +170,7 @@ test('archive pages contribute their links, and declarations with non-HTTP URLs 
       new ArchiveReader(),
       new PaginationReader(),
       new LinkReader({ maxDepth: 3, maxPages: 100 }),
-    ]).run([upstream.origin], { signal: AbortSignal.timeout(5000) }),
+    ]).crawl([upstream.origin], null, { signal: AbortSignal.timeout(5000) }),
   );
   assert.deepEqual(pages.map(pathOf), ['/archive/', '/article']);
 });

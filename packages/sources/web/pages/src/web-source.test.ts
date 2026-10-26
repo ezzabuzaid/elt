@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { type TestContext, test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 
 import { HttpServer } from '@zukhruf/testing/http';
@@ -13,11 +13,14 @@ import {
 } from '@workspace/elt-sqlite';
 import { ArticleError } from '@workspace/sdk-web-article';
 import {
+  AlwaysRevisit,
   ArchiveReader,
   CrawlError,
   LinkReader,
   ListingReader,
   PaginationReader,
+  day,
+  hour,
 } from '@workspace/sdk-web-crawler';
 
 import { ArticleExtractor } from './article-extractor.ts';
@@ -384,8 +387,8 @@ test('failed articles do not block later articles or later refreshes', async () 
     checkpoints.path,
   );
   assert.equal((await resumed.run())[0]?.count, 1);
-  // The listing is read first, then the earlier failure, then the feed's pages in feed order.
-  assert.deepEqual(requests, ['/feed.xml', '/b', '/c', '/a', '/aa']);
+  // The listing is read first, then its pages in feed order; the earlier failure is one of them.
+  assert.deepEqual(requests, ['/feed.xml', '/c', '/b', '/a', '/aa']);
   assert.deepEqual(
     database.connection
       .prepare('SELECT pageUrl FROM articles ORDER BY pageUrl')
@@ -507,14 +510,14 @@ test(
       database.path,
       checkpoints.path,
     );
-    // The interrupted crawl resumes without reading the feed again: /a, handed out last, downloads once more unchanged.
+    // The interrupted crawl resumes without reading the feed again: /a, handed out last, downloads once more
+    // unchanged, then the known pages that the feed no longer names, unchanged too.
     assert.equal((await resumed.run())[0]?.count, 1);
-    assert.deepEqual(requests, ['/a', '/b']);
+    assert.deepEqual(requests, ['/a', '/b', '/c', '/d']);
     requests.length = 0;
-    // The crawl finished, so the next run reads the feed again. /c and /d come back as records:
-    // the scan that just finished saw a feed without them, so the diff no longer holds their fingerprints.
-    assert.equal((await resumed.run())[0]?.count, 3);
-    assert.deepEqual(requests, ['/feed.json', '/c', '/d', '/e']);
+    // The crawl finished, so the next run reads the feed again: only /e is new.
+    assert.equal((await resumed.run())[0]?.count, 1);
+    assert.deepEqual(requests, ['/feed.json', '/c', '/d', '/e', '/a', '/b']);
     assert.deepEqual(
       database.connection
         .prepare('SELECT pageUrl FROM articles ORDER BY pageUrl')
@@ -527,89 +530,6 @@ test(
         .prepare('SELECT listingUrl FROM articles WHERE pageUrl = ?')
         .get(`${upstream.origin}/b`)?.listingUrl,
       options.inputs[0],
-    );
-  },
-);
-
-test(
-  'interrupted retries do not rewind past successfully checkpointed articles',
-  { timeout: 15_000 },
-  async () => {
-    let phase = 0;
-    const requests: string[] = [];
-    await using upstream = await new HttpServer().start((request, response) => {
-      const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
-      requests.push(url.pathname);
-      if (url.pathname === '/feed.xml') {
-        response.setHeader('content-type', 'application/rss+xml');
-        response.end(
-          `<rss><channel>${['a', 'b', 'c', 'd'].map((name) => `<item><link>${url.origin}/${name}</link></item>`).join('')}</channel></rss>`,
-        );
-      } else if (phase === 0 && url.pathname === '/a') {
-        response.writeHead(404).end();
-      } else if (phase < 2 && url.pathname === '/d') {
-        response.writeHead(200, { 'content-type': 'text/html' });
-        response.write('<article><p>A download still in progress');
-      } else {
-        response.setHeader('content-type', 'text/html');
-        response.end(
-          `<article><p>Completed article ${url.pathname} remains available across interruptions and retries.</p></article>`,
-        );
-      }
-    });
-    await using database = await new Sqlite().database();
-    await using checkpoints = await new Sqlite().database();
-    const options = {
-      stream: articles(),
-      inputs: [`${upstream.origin}/feed.xml`],
-      pollIntervalMs: 60_000,
-    };
-    for (const count of [2, 1]) {
-      const ingestion = await pipeline(
-        new WebSource(options),
-        database.path,
-        checkpoints.path,
-      );
-      const controller = new AbortController();
-      const reason = new Error('Interrupt after committed progress');
-      const observed = new Pipeline({
-        connections: ingestion.connections,
-        history: ingestion.history,
-        observer: {
-          begin: () => ({
-            progress: (progress) => {
-              if (progress.committed.count === count) controller.abort(reason);
-            },
-            finish: () => {},
-            fail: () => {},
-          }),
-        },
-      });
-      try {
-        await assert.rejects(
-          observed.run({ signal: controller.signal }),
-          (error) => error === reason,
-        );
-      } finally {
-        controller.abort(reason);
-      }
-      phase++;
-    }
-    requests.length = 0;
-    const resumed = await pipeline(
-      new WebSource(options),
-      database.path,
-      checkpoints.path,
-    );
-    assert.equal((await resumed.run())[0]?.count, 1);
-    // The second run stopped after the retried /a, before it reached /c, the first run's last page.
-    // Neither the feed nor the checkpointed /b is downloaded again.
-    assert.deepEqual(requests, ['/a', '/c', '/d']);
-    assert.equal(
-      database.connection
-        .prepare('SELECT count(*) AS count FROM articles')
-        .get()?.count,
-      4,
     );
   },
 );
@@ -1384,6 +1304,68 @@ test('a Latin-1 article page is stored with its text and leaves nothing to retry
   );
 });
 
+test('by default an incremental crawl requests a known page again only when it is due, and the page keeps its row meanwhile', async (t) => {
+  const later = shiftedClock(t);
+  const requests: string[] = [];
+  let revision = 1;
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    requests.push(url.pathname);
+    if (url.pathname === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel><item><link>${url.origin}/a</link></item></channel></rss>`,
+      );
+    } else {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<article><p>Revision ${revision} of the research article holds the complete published observations.</p></article>`,
+      );
+    }
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const options = {
+    stream: new WebStream({
+      name: 'articles',
+      primaryKey: ['articleUrl'],
+      readers: [new ListingReader()],
+      extractor: new ArticleExtractor(),
+    }),
+    inputs: [`${upstream.origin}/feed.xml`],
+    pollIntervalMs: 60_000,
+  };
+  const run = async () =>
+    (
+      await (
+        await pipeline(new WebSource(options), database.path, checkpoints.path)
+      ).run()
+    )[0]?.count;
+  const text = () =>
+    database.connection
+      .prepare('SELECT textContent FROM articles')
+      .all()
+      .map((row) => String(row.textContent));
+
+  assert.equal(await run(), 1);
+  revision = 2;
+  later(hour);
+  requests.length = 0;
+  const early = await run();
+  const earlyRequests = requests.splice(0);
+  const earlyText = text();
+  later(day - hour);
+  const due = await run();
+
+  assert.equal(early, 0);
+  assert.deepEqual(earlyRequests, ['/feed.xml']);
+  assert.match(earlyText.join(), /Revision 1/);
+  assert.equal(due, 1);
+  assert.deepEqual(requests, ['/feed.xml', '/a']);
+  assert.equal(text().length, 1);
+  assert.match(text().join(), /Revision 2/);
+});
+
 function articles(include?: readonly string[]) {
   return new WebStream({
     name: 'articles',
@@ -1394,7 +1376,19 @@ function articles(include?: readonly string[]) {
       new PaginationReader(),
       new LinkReader({ maxDepth: 3, maxPages: 100 }),
     ],
+    // These tests are about one crawl's pages, so every crawl requests every page.
+    revisit: new AlwaysRevisit(),
     include: include?.map((pattern) => new URLPattern(pattern)),
     extractor: new ArticleExtractor(),
   });
+}
+
+// Revisits wait hours or days, so a test moves Date.now forward; it keeps ticking, as the HTTP rate limit needs.
+function shiftedClock(t: TestContext) {
+  const now = Date.now.bind(Date);
+  let shift = 0;
+  t.mock.method(Date, 'now', () => now() + shift);
+  return (ms: number) => {
+    shift += ms;
+  };
 }

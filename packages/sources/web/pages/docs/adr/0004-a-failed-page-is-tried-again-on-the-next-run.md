@@ -1,5 +1,7 @@
 # A failed page is tried again on the next run
 
+Superseded by [ADR 0008](./0008-a-known-page-is-requested-again-when-its-revisit-policy-says.md).
+
 A page can fail: its download fails after the retries of Got, or the extractor cannot read it. A feed rolls over, so a failed page can leave every listing before the next run. When the source forgets that page, its records are lost and nobody sees it.
 
 Thus the crawl continues after a failure, and the source keeps each failed page in the `retry` part of the state. The next crawl gets these pages through the `pages` option of the crawler and hands them back before other pages. A page that then succeeds leaves `retry`, also when it gives no records. The source does not keep a failed listing, because the next crawl finds it again from the input. After the crawl, the source throws one `AggregateError` with all the failures. The engine reports it as a `PipelineError`, with the committed count of the input.

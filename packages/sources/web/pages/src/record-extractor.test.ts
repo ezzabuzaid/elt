@@ -11,7 +11,7 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
-import { ListingReader } from '@workspace/sdk-web-crawler';
+import { AlwaysRevisit, ListingReader } from '@workspace/sdk-web-crawler';
 
 import { RecordExtractor } from './record-extractor.ts';
 import { WebSource } from './web-source.ts';
@@ -52,6 +52,7 @@ function sections(accept: string | null) {
     name: 'sections',
     primaryKey: ['id'],
     readers: [new ListingReader()],
+    revisit: new AlwaysRevisit(),
     extractor: new SectionExtractor(accept),
   });
 }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { type TestContext, test } from 'node:test';
 
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
@@ -10,6 +10,7 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { day, hour } from '@workspace/sdk-web-crawler';
 import { type ExtractorRun } from '@workspace/source-web-pages/record-extractor';
 import { WebSource } from '@workspace/source-web-pages/web-source';
 import { WebStream } from '@workspace/source-web-pages/web-stream';
@@ -502,7 +503,8 @@ test('listings of every real schema.org shape are stored with their mapped field
   );
 });
 
-test('a listing page without an object for its listing fails, and the next run tries it again', async () => {
+test('a listing page without an object for its listing fails, and the next run tries it again', async (t) => {
+  const later = shiftedClock(t);
   let broken = true;
   await using upstream = await category({
     '287909010': () => [motorcycle('287909010', '4499')],
@@ -539,6 +541,8 @@ test('a listing page without an object for its listing fails, and the next run t
   broken = false;
   upstream.requests.length = 0;
 
+  // A failed listing is due again two hours later.
+  later(2 * hour);
   const retry = await pipeline(source(), database.path, checkpoints.path);
   assert.equal((await retry.run())[0]?.count, 1);
 
@@ -552,7 +556,8 @@ test('a listing page without an object for its listing fails, and the next run t
   );
 });
 
-test('a listing whose offer has no price fails, and the next run tries it again', async () => {
+test('a listing whose offer has no price fails, and the next run tries it again', async (t) => {
+  const later = shiftedClock(t);
   let broken = true;
   await using upstream = await category({
     '287909010': () => [motorcycle('287909010', '4499')],
@@ -592,6 +597,8 @@ test('a listing whose offer has no price fails, and the next run tries it again'
   broken = false;
   upstream.requests.length = 0;
 
+  // A failed listing is due again two hours later.
+  later(2 * hour);
   const retry = await pipeline(source(), database.path, checkpoints.path);
   assert.equal((await retry.run())[0]?.count, 1);
 
@@ -606,7 +613,8 @@ test('a listing whose offer has no price fails, and the next run tries it again'
   );
 });
 
-test('an unchanged rerun writes nothing', async () => {
+test('an unchanged rerun writes nothing', async (t) => {
+  const later = shiftedClock(t);
   await using upstream = await market({ ad: 'Sponsored', price: '4499' });
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
@@ -621,6 +629,8 @@ test('an unchanged rerun writes nothing', async () => {
   );
   assert.equal((await ingestion.run())[0]?.count, 3);
 
+  // A day later the listings are due again.
+  later(day);
   const rerun = await ingestion.run();
 
   assert.equal(rerun[0]?.count, 0);
@@ -647,7 +657,8 @@ class CountedExtractor extends OpenSooqExtractor {
   }
 }
 
-test('a listing page whose markup changes outside its JSON-LD is not extracted again', async () => {
+test('a listing page whose markup changes outside its JSON-LD is not extracted again', async (t) => {
+  const later = shiftedClock(t);
   const page = { ad: 'Sponsored: helmets', price: '4499' };
   await using upstream = await market(page);
   await using database = await new Sqlite().database();
@@ -672,13 +683,16 @@ test('a listing page whose markup changes outside its JSON-LD is not extracted a
   assert.equal(extractor.extractions, 3);
   page.ad = 'Sponsored: gloves';
 
+  // A day later the listings are due again.
+  later(day);
   const rerun = await ingestion.run();
 
   assert.equal(rerun[0]?.count, 0);
   assert.equal(extractor.extractions, 3);
 });
 
-test('a listing whose JSON-LD changes is written again with the new values', async () => {
+test('a listing whose JSON-LD changes is written again with the new values', async (t) => {
+  const later = shiftedClock(t);
   const page = { ad: 'Sponsored', price: '4499' };
   await using upstream = await market(page);
   await using database = await new Sqlite().database();
@@ -695,6 +709,8 @@ test('a listing whose JSON-LD changes is written again with the new values', asy
   assert.equal((await ingestion.run())[0]?.count, 3);
   page.price = '4299';
 
+  // A day later the listings are due again.
+  later(day);
   const rerun = await ingestion.run();
 
   assert.equal(rerun[0]?.count, 3);
@@ -741,3 +757,13 @@ test('the listing stored is the JSON-LD object whose url has the listing id of t
     [{ id: '287909020', title: 'TARO RANGER 401cc 287909020', price: 4499 }],
   );
 });
+
+// Revisits wait hours or days, so a test moves Date.now forward; it keeps ticking, as the HTTP rate limit needs.
+function shiftedClock(t: TestContext) {
+  const now = Date.now.bind(Date);
+  let shift = 0;
+  t.mock.method(Date, 'now', () => now() + shift);
+  return (ms: number) => {
+    shift += ms;
+  };
+}

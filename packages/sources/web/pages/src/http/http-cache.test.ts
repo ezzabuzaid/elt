@@ -16,7 +16,7 @@ const scan = `
 import { ArticleExtractor } from ${JSON.stringify(import.meta.resolve('@workspace/source-web-pages/article-extractor'))};
 import { WebSource } from ${JSON.stringify(import.meta.resolve('@workspace/source-web-pages/web-source'))};
 import { WebStream } from ${JSON.stringify(import.meta.resolve('@workspace/source-web-pages/web-stream'))};
-import { ArchiveReader, LinkReader, ListingReader, PaginationReader } from ${JSON.stringify(import.meta.resolve('@workspace/sdk-web-crawler'))};
+import { AlwaysRevisit, ArchiveReader, LinkReader, ListingReader, PaginationReader } from ${JSON.stringify(import.meta.resolve('@workspace/sdk-web-crawler'))};
 import { Connection, Copy, Pipeline } from ${JSON.stringify(import.meta.resolve('@workspace/elt'))};
 import { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } from ${JSON.stringify(import.meta.resolve('@workspace/elt-sqlite'))};
 const [input, path, checkpoints, id, syncMode] = process.argv.slice(1);
@@ -24,6 +24,7 @@ const stream = new WebStream({
   name: 'articles',
   primaryKey: ['articleUrl'],
   readers: [new ListingReader(), new ArchiveReader(), new PaginationReader(), new LinkReader({ maxDepth: 3, maxPages: 100 })],
+  revisit: new AlwaysRevisit(),
   extractor: new ArticleExtractor(),
 });
 const source = new WebSource({ stream, inputs: [input], pollIntervalMs: 60000 });

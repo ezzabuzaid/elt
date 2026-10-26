@@ -49,13 +49,25 @@ A value that changes when the records of a page can change. The extractor gives 
 _Avoid_: Hash, ETag (an ETag is an HTTP validator), version
 
 **Failure**:
-A page that the crawl could not download, or that the extractor could not read. The source keeps it and gives it to the next crawl.
+A page that the crawl could not download, or that the extractor could not read. The crawler keeps it in the crawl memento, and the revisit policy makes it due again.
 _Avoid_: Error page, dead link
 
 **State**:
-What the source saves for one input: the diff, the crawl snapshot and the failures to try again. The engine keeps it in the checkpoint store.
+What the source saves for one input: the diff and the crawl memento. The engine keeps it in the checkpoint store.
 _Avoid_: Cursor (the stream has no cursor field)
 
 **Crawl snapshot**:
 The plain data of an unfinished crawl: its frontier and the state of its readers. It is null when the crawl is complete.
 _Avoid_: Snapshot alone (elt uses snapshot for the records of a complete read)
+
+**Crawl memento**:
+What the crawler gives back as plain data: the crawl snapshot, and every URL that a crawl visited, with the digest of its last body and when it is due again. The source keeps it in its state.
+_Avoid_: Visited set, history alone (a revisit policy has its own history of each URL)
+
+**Revisit policy**:
+The rule that decides when a known URL is due again, across crawls. The web stream gives it; a full refresh uses `AlwaysRevisit`.
+_Avoid_: Schedule alone, refresh interval (the source's poll interval is how often it checks)
+
+**Deferred page**:
+A known page that the crawl did not request because it is not due, and whose last download succeeded. Its row stays.
+_Avoid_: Skipped page, cached page

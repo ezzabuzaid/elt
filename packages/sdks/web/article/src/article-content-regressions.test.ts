@@ -65,11 +65,13 @@ test('a discovered article retains its introductory summary before the main body
           new ListingReader(),
           new ArchiveReader(),
           new PaginationReader(),
-        ]).run([upstream.origin], { signal }),
+        ]).crawl([upstream.origin], null, { signal }),
       )
     )
-      // Progress entries only mark documents the crawl read for its readers.
-      .flatMap((entry) => ('progress' in entry ? [] : [entry]));
+      // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
+      .flatMap((entry) =>
+        'progress' in entry || 'deferred' in entry ? [] : [entry],
+      );
     assert.equal(pages.length, 1);
     const page = pages[0];
     assert.ok(page);
@@ -132,11 +134,13 @@ test('a feed article retains a figure caption containing a descriptive link', as
           new ListingReader(),
           new ArchiveReader(),
           new PaginationReader(),
-        ]).run([`${upstream.origin}/feed.xml`], { signal }),
+        ]).crawl([`${upstream.origin}/feed.xml`], null, { signal }),
       )
     )
-      // Progress entries only mark documents the crawl read for its readers.
-      .flatMap((entry) => ('progress' in entry ? [] : [entry]));
+      // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
+      .flatMap((entry) =>
+        'progress' in entry || 'deferred' in entry ? [] : [entry],
+      );
     assert.equal(pages.length, 1);
     const page = pages[0];
     assert.ok(page);
@@ -212,11 +216,13 @@ test('a feed article retains acknowledgments and an authorship disclosure after 
           new ListingReader(),
           new ArchiveReader(),
           new PaginationReader(),
-        ]).run([`${upstream.origin}/feed.xml`], { signal }),
+        ]).crawl([`${upstream.origin}/feed.xml`], null, { signal }),
       )
     )
-      // Progress entries only mark documents the crawl read for its readers.
-      .flatMap((entry) => ('progress' in entry ? [] : [entry]));
+      // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
+      .flatMap((entry) =>
+        'progress' in entry || 'deferred' in entry ? [] : [entry],
+      );
     assert.equal(pages.length, 1);
     const page = pages[0];
     assert.ok(page);

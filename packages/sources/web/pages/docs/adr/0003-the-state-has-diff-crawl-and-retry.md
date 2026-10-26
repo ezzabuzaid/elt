@@ -1,5 +1,7 @@
 # The state has diff, crawl and retry
 
+Superseded by [ADR 0008](./0008-a-known-page-is-requested-again-when-its-revisit-policy-says.md).
+
 The engine saves one state for each input, after it commits the records that came before that state. Three owners know parts of what the next run needs. The diff of the engine knows the committed pages and their fingerprints. The crawler knows its frontier. Only the source knows which pages failed.
 
 Thus the state has one part for each owner:

@@ -43,10 +43,10 @@ function allReaders(limits: { maxDepth: number; maxPages: number }) {
 // Progress entries only mark URLs read for the readers; these tests assert pages and failures.
 async function crawl(crawler: WebCrawler, start: string) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
-  for await (const entry of crawler.run([start], {
+  for await (const entry of crawler.crawl([start], null, {
     signal: AbortSignal.timeout(5000),
   }))
-    if (!('progress' in entry)) entries.push(entry);
+    if (!('progress' in entry) && !('deferred' in entry)) entries.push(entry);
   return entries;
 }
 
@@ -374,7 +374,9 @@ test('cancellation stops requests and preserves the caller reason', async () => 
     );
     if (stage === 'before') controller.abort(reason);
     await assert.rejects(
-      Array.fromAsync(listings().run([index], { signal: controller.signal })),
+      Array.fromAsync(
+        listings().crawl([index], null, { signal: controller.signal }),
+      ),
       (error: unknown) => error === reason,
     );
     assert.deepEqual(
@@ -1086,7 +1088,7 @@ test('a feed on a crawled page keeps the caller reason on cancellation', async (
   const stop = new AbortController(),
     reason = new Error('stop feed');
   const result = Array.fromAsync(
-    allReaders({ maxDepth: 3, maxPages: 100 }).run([upstream.origin], {
+    allReaders({ maxDepth: 3, maxPages: 100 }).crawl([upstream.origin], null, {
       signal: stop.signal,
     }),
   );

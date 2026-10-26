@@ -70,11 +70,13 @@ test('chosen websites and feeds compose with extraction without merging URL vari
     const signal = AbortSignal.timeout(5000);
     const pages = (
       await Array.fromAsync(
-        crawler.run([`${upstream.origin}${input}`], { signal }),
+        crawler.crawl([`${upstream.origin}${input}`], null, { signal }),
       )
     )
-      // Progress entries only mark documents the crawl read for its readers.
-      .flatMap((entry) => ('progress' in entry ? [] : [entry]));
+      // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
+      .flatMap((entry) =>
+        'progress' in entry || 'deferred' in entry ? [] : [entry],
+      );
     assert.deepEqual(
       pages.map((page) => page.url),
       [

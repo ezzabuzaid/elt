@@ -28,8 +28,8 @@ async function crawl(
   include?: URLPattern[],
 ) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
-  for await (const entry of crawler.run([start], { signal, include }))
-    if (!('progress' in entry)) entries.push(entry);
+  for await (const entry of crawler.crawl([start], null, { signal, include }))
+    if (!('progress' in entry) && !('deferred' in entry)) entries.push(entry);
   return entries;
 }
 
@@ -269,7 +269,7 @@ test('a crawl stopped inside the pagination and resumed from its snapshot reads 
     else response.end('<p>An item.</p>');
   });
   const crawler = pagination();
-  const first = crawler.run([`${upstream.origin}/category`], {
+  const first = crawler.crawl([`${upstream.origin}/category`], null, {
     signal: AbortSignal.timeout(5000),
   });
   for await (const entry of first) if (!('progress' in entry)) break;
@@ -277,10 +277,10 @@ test('a crawl stopped inside the pagination and resumed from its snapshot reads 
   requests.length = 0;
 
   const resumed: (CrawledPage | CrawlFailure)[] = [];
-  for await (const entry of crawler.resume(snapshot, {
+  for await (const entry of crawler.crawl([], snapshot, {
     signal: AbortSignal.timeout(5000),
   }))
-    if (!('progress' in entry)) resumed.push(entry);
+    if (!('progress' in entry) && !('deferred' in entry)) resumed.push(entry);
 
   assert.deepEqual(
     resumed

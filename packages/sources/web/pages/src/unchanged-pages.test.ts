@@ -23,6 +23,7 @@ import {
   WebArticle,
 } from '@workspace/sdk-web-article';
 import {
+  AlwaysRevisit,
   ArchiveReader,
   LinkReader,
   ListingReader,
@@ -213,6 +214,8 @@ function articles(include?: readonly string[]) {
       new PaginationReader(),
       new LinkReader({ maxDepth: 3, maxPages: 100 }),
     ],
+    // These tests are about one crawl's pages, so every crawl requests every page.
+    revisit: new AlwaysRevisit(),
     include: include?.map((pattern) => new URLPattern(pattern)),
     extractor: new ArticleExtractor(),
   });

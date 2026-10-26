@@ -3,6 +3,8 @@
 Find pages on the public web from the websites, sitemaps and feeds you choose. One engine downloads; readers read responses and find more URLs. There is no elt dependency.
 
 ```ts
+import { readFile, writeFile } from 'node:fs/promises';
+
 import got from 'got';
 
 import {
@@ -19,15 +21,21 @@ const crawler = new WebCrawler(got.extend({ timeout: { request: 30_000 } }), [
   new PaginationReader(),
   new LinkReader({ maxDepth: 3, maxPages: 100 }),
 ]);
-const crawl = crawler.run(['https://example.com/news'], {
+const memento = await readFile('crawl.json', 'utf8').then(
+  JSON.parse,
+  () => null,
+);
+const crawl = crawler.crawl(['https://example.com/news'], memento, {
   signal: AbortSignal.timeout(600_000),
 });
 for await (const entry of crawl) {
   if ('progress' in entry) continue; // a URL read for the readers
+  if ('deferred' in entry) continue; // a known page that is not due
   if ('error' in entry)
     console.error(entry.error); // CrawlError: url, cause
-  else console.log(entry.url, entry.listingUrl, entry.response.statusCode);
+  else console.log(entry.url, entry.change, entry.response.statusCode);
 }
+await writeFile('crawl.json', JSON.stringify(crawl.snapshot()));
 ```
 
 ## Engine
@@ -41,12 +49,31 @@ for await (const entry of crawl) {
 - **Priorities**: every finding has one. Starting URLs and listings (`robots.txt`, sitemaps, feeds) go strictly first, so their provenance and `lastModified` reach pages before the pages download. Pages, links and archive backfill then share the downloads by smooth weighted round-robin, 4:2:1: the deterministic form of the biased front-queue selector in a crawl frontier (Introduction to Information Retrieval §20.2.3). Backfill never blocks new pages and still progresses. A URL found again with a more urgent priority moves up.
 - **Provenance**: `listingUrl` is the final URL of the response that first named the URL. A listing's provenance replaces a link's while the URL is pending.
 - **Hops** count ordinary links from a starting or listed page. When a URL is both a document and a page, its page findings decide its hops. `LinkReader` limits them.
-- **Failures**: a reader states which statuses are ordinary answers for each URL it finds, for example 404 for a dead link. Any other failure is handed out as `{ url, listingUrl, lastModified, error, page }`, and the crawl continues. `page` is true when the failed URL is a page the crawl would have handed back, so a caller can keep it for a later crawl; a failed listing is found again from the starting URLs. A reader that throws, such as on a malformed declared sitemap, produces a failure for that URL with `page: false`; the other readers still read the response, and a page is still handed back. Cancellation throws the signal's exact reason.
+- **Failures**: a reader states which statuses are ordinary answers for each URL it finds, for example 404 for a dead link. Any other failure is handed out as `{ url, listingUrl, lastModified, error, page }`, and the crawl continues. `page` is true when the failed URL is a page the crawl would have handed back. The memento keeps every failed URL, and the revisit policy makes it due again. A reader that throws, such as on a malformed declared sitemap, produces a failure for that URL with `page: false`; the other readers still read the response, and a page is still handed back. Cancellation throws the signal's exact reason.
 - **Identity**: fragments are removed. Queries and trailing slashes stay meaningful. Each found URL is requested once; `url` is the URL as found, and `response.url` is the final URL.
 - Got hooks can read `options.context.page`. It is true when the download is a page handed back and no reader reads it as a document. It is false for starting URLs, documents and pages downloaded only for a reader, so a feed that is also a page keeps the representation its reader needs.
 - **Progress**: every downloaded URL that is not handed back as a page or failure produces `{ progress: url }`. Take a snapshot there to keep the work done on documents.
 
-`run(starts, { signal, include, pages })` starts a crawl. `pages` adds known pages, such as earlier failures, as listed pages ahead of other pages. `crawl.snapshot()` returns the crawl so far as plain data, and `crawler.resume(snapshot, { signal, include, pages })` continues it; `pages` there returns pages even when the snapshot already tried them. The entry handed out last stays pending in a snapshot until you request the next one, so a snapshot taken at any time loses nothing; an older snapshot only repeats some work. Storage of snapshots is yours.
+`crawl(starts, memento, { signal, include })` continues the memento's unfinished crawl, or starts a new crawl. A null memento knows no URL. `crawl.snapshot()` returns the memento as plain data: the unfinished crawl, or null once it is complete, and every URL that a crawl visited, with its body digest and when it is due again. The entry handed out last stays pending in a snapshot until you request the next one, so a snapshot taken at any time loses nothing; an older snapshot only repeats some work. Storage of the memento is yours.
+
+## Revisits
+
+A new crawl requests the starting URLs and every URL that its readers find. A known URL that is not due stays out of the crawl, whatever finds it; it spends no reader budget. A known URL that is due and that no listing names in this crawl goes in after the crawl's own findings, as in Nutch's generate step, so a page that leaves every listing is not lost. Starting URLs are always due, because readers learn from them, such as `LinkReader`'s origins.
+
+- **Change**: the crawler compares the SHA-256 of each body with the last one. A handed-back page carries `change`: `unknown` on its first download or after a failure, then `modified` or `unmodified`.
+- **Deferred**: after the pages, the crawl hands out `{ deferred: { url, listingUrl, lastModified } }` for each known page that matches `include`, that it did not request, and whose last download succeeded. The page still exists, unchanged as far as the crawl knows.
+- **Fail**: `crawl.fail(url)` tells the crawler that you could not use a page it handed back, so the page is due again as a failed one. This is a negative acknowledgement.
+- **Timing**: a visit is timed at the start of its crawl, so a URL due one interval later is due in the crawl that starts then.
+
+A `RevisitPolicy` decides when a URL is due; the third argument of `new WebCrawler` sets it, and `AdaptiveRevisit` is the default. A failed URL is due two hours later, as StormCrawler's `fetchInterval.fetch.error`. A gone URL, 404 or 410, is due a day later, as Nutch asks gone pages again. A listing that gives a page another `lastModified` than at the last visit makes the page due at once.
+
+| Policy            | A URL is due                                                                                                                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AdaptiveRevisit` | One day after its first download; then the interval grows by half while the body is unchanged, up to 14 days, and moves halfway to one hour when it changed (StormCrawler's `AdaptiveScheduler`) |
+| `FixedRevisit`    | One fixed interval after each visit (Nutch's `DefaultFetchSchedule`)                                                                                                                             |
+| `AlwaysRevisit`   | In every crawl, failed and gone URLs too, as a full refresh needs                                                                                                                                |
+
+A policy's history is plain data that its `histories` schema parses, so the memento can carry it. Write a subclass of `RevisitPolicy` for another rule: implement `visited`, and override `due` to read a hint before the download.
 
 ## Readers
 

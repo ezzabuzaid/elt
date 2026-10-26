@@ -14,7 +14,7 @@ import {
   diffGroupedSnapshot,
   validateRecords,
 } from '@workspace/elt';
-import { type PageLocation, WebCrawler } from '@workspace/sdk-web-crawler';
+import { AlwaysRevisit, WebCrawler } from '@workspace/sdk-web-crawler';
 
 import { webHttp } from './http/web-http.ts';
 import type { WebStream } from './web-stream.ts';
@@ -40,21 +40,13 @@ const provenance = {
   },
 } as const;
 
-const location = z.object({
-  url: z.url({ protocol: /^https?$/ }),
-  listingUrl: z.url({ protocol: /^https?$/ }),
-  lastModified: z.string().nullable(),
-});
-
 const saved = z.object({
   diff: z.unknown(),
-  // The unfinished crawl's snapshot; null once a crawl finishes.
+  // The crawler's memento: its unfinished crawl and every URL it visited, failed pages too.
   crawl: z.unknown(),
-  // Failed pages, handed to the next crawl so a page that leaves every listing is not lost.
-  retry: z.array(location),
 });
 
-// A page that the stream's extractor could not read: recorded and retried, while the other pages continue.
+// A page that the stream's extractor could not read: recorded and failed back to the crawler, while the other pages continue.
 class PageFailure extends Error {
   readonly failure: Error;
   constructor(failure: Error) {
@@ -163,9 +155,7 @@ export class WebSource extends Source {
   ): AsyncGenerator<SourceMessage> {
     const inputUrl = z.string().parse(partition?.inputUrl);
     const previous =
-      state === null
-        ? { diff: null, crawl: null, retry: [] }
-        : saved.parse(state);
+      state === null ? { diff: null, crawl: null } : saved.parse(state);
     let diff: unknown = previous.diff;
     await using client = await webHttp(signal);
     const { http, signal: requestSignal } = client;
@@ -182,25 +172,24 @@ export class WebSource extends Source {
         },
       }),
       this.#stream.readers,
+      // A full refresh replaces the collection, so it must see every page that still exists.
+      configuration.syncMode === 'full_refresh'
+        ? new AlwaysRevisit()
+        : this.#stream.revisit,
     );
-    // Every run, fresh or resumed, tries the saved failures again and collects its own.
-    const options = {
+    const crawl = crawler.crawl([inputUrl], previous.crawl, {
       signal: requestSignal,
       include: this.#stream.include,
-      pages: previous.retry,
-    };
-    const crawl =
-      previous.crawl === null
-        ? crawler.run([inputUrl], options)
-        : crawler.resume(previous.crawl, options);
-    const retry = new Map<string, PageLocation>();
+    });
     const errors: Error[] = [];
     let savedAt = performance.now();
     const checkpoint = () => {
       savedAt = performance.now();
-      return { diff, crawl: crawl.snapshot(), retry: [...retry.values()] };
+      return { diff, crawl: crawl.snapshot() };
     };
     for await (const entry of crawl) {
+      // A page that is not due keeps its row; the diff forgets its fingerprint, so it is extracted again when due (#3011).
+      if ('deferred' in entry) continue;
       if ('progress' in entry) {
         // Listings and archives hand out no pages, so their progress is saved on an interval.
         if (performance.now() - savedAt >= 1_000)
@@ -211,15 +200,8 @@ export class WebSource extends Source {
           };
         continue;
       }
-      const page = {
-        url: entry.url,
-        listingUrl: entry.listingUrl,
-        lastModified: entry.lastModified,
-      };
       if ('error' in entry) {
         errors.push(entry.error);
-        // A failed listing returns with the next crawl; only pages need keeping.
-        if (entry.page) retry.set(page.url, page);
         yield {
           type: 'STATE',
           stream: configuration.stream.name,
@@ -235,7 +217,7 @@ export class WebSource extends Source {
           configuration,
           [
             {
-              key: page.url,
+              key: entry.url,
               fingerprint:
                 output.fingerprint === null
                   ? null
@@ -243,8 +225,8 @@ export class WebSource extends Source {
                       'sha256',
                       JSON.stringify([
                         output.fingerprint,
-                        page.listingUrl,
-                        page.lastModified,
+                        entry.listingUrl,
+                        entry.lastModified,
                       ]),
                     ),
               async *records() {
@@ -254,9 +236,9 @@ export class WebSource extends Source {
                   records.map((record) => ({
                     ...record,
                     inputUrl,
-                    pageUrl: page.url,
-                    listingUrl: page.listingUrl,
-                    lastModified: page.lastModified,
+                    pageUrl: entry.url,
+                    listingUrl: entry.listingUrl,
+                    lastModified: entry.lastModified,
                   })),
                   'Web',
                 );
@@ -275,7 +257,7 @@ export class WebSource extends Source {
         requestSignal.throwIfAborted();
         if (!(error instanceof PageFailure)) throw error;
         errors.push(error.failure);
-        retry.set(page.url, page);
+        crawl.fail(entry.url);
         yield {
           type: 'STATE',
           stream: configuration.stream.name,
@@ -290,11 +272,7 @@ export class WebSource extends Source {
       if ('type' in message && message.type === 'STATE')
         yield {
           ...message,
-          state: {
-            diff: message.state,
-            crawl: null,
-            retry: [...retry.values()],
-          },
+          state: { diff: message.state, crawl: crawl.snapshot() },
         };
       else yield message;
     if (errors.length > 0)

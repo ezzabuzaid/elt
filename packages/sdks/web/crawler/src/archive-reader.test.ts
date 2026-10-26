@@ -25,8 +25,8 @@ function listings() {
 // Progress entries only mark URLs read for the readers; these tests assert pages and failures.
 async function crawl(crawler: WebCrawler, start: string, signal: AbortSignal) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
-  for await (const entry of crawler.run([start], { signal }))
-    if (!('progress' in entry)) entries.push(entry);
+  for await (const entry of crawler.crawl([start], null, { signal }))
+    if (!('progress' in entry) && !('deferred' in entry)) entries.push(entry);
   return entries;
 }
 
@@ -445,7 +445,7 @@ test('links nobody downloads do not use up turns, so listings are not starved be
   for await (const entry of new WebCrawler(got, [
     new ArchiveReader(),
     new PaginationReader(),
-  ]).run([`${upstream.origin}/m`], {
+  ]).crawl([`${upstream.origin}/m`], null, {
     signal: AbortSignal.timeout(5000),
     include: [new URLPattern({ pathname: '/search/*' })],
   }))
@@ -488,11 +488,12 @@ test('new feed pages are handed back before a long archive chain finishes, and t
     } else response.writeHead(404).end();
   });
   const handed: string[] = [];
-  for await (const entry of listings().run([upstream.origin], {
+  for await (const entry of listings().crawl([upstream.origin], null, {
     signal: AbortSignal.timeout(5000),
     include: [new URLPattern({ pathname: '/new/*' })],
   }))
-    if (!('progress' in entry)) handed.push(location(entry).url);
+    if (!('progress' in entry) && !('deferred' in entry))
+      handed.push(location(entry).url);
   assert.deepEqual(
     handed,
     Array.from(
@@ -543,11 +544,12 @@ test('archive backfill keeps progressing while many listed pages wait', async ()
     } else response.writeHead(404).end();
   });
   const handed: string[] = [];
-  for await (const entry of listings().run([upstream.origin], {
+  for await (const entry of listings().crawl([upstream.origin], null, {
     signal: AbortSignal.timeout(5000),
     include: [new URLPattern({ pathname: '/new/*' })],
   }))
-    if (!('progress' in entry)) handed.push(location(entry).url);
+    if (!('progress' in entry) && !('deferred' in entry))
+      handed.push(location(entry).url);
   assert.equal(handed.length, 30);
   const waiting = requests.slice(0, requests.lastIndexOf('/new/30'));
   // Pages weigh 4 and backfill 1: one archive page in every five downloads,
@@ -583,10 +585,11 @@ test('a URL found as an archive and then listed as a page downloads in the page 
     else response.writeHead(404).end();
   });
   const handed: string[] = [];
-  for await (const entry of listings().run([upstream.origin], {
+  for await (const entry of listings().crawl([upstream.origin], null, {
     signal: AbortSignal.timeout(5000),
   }))
-    if (!('progress' in entry)) handed.push(location(entry).url);
+    if (!('progress' in entry) && !('deferred' in entry))
+      handed.push(location(entry).url);
   assert.deepEqual(handed, [`${upstream.origin}/2020/`]);
   // As backfill, /2020/ would wait behind the nineteen years found before it.
   assert.deepEqual(requests.slice(0, 5), [

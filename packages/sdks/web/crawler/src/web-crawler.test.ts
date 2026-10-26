@@ -44,7 +44,7 @@ function pageOf(entry: CrawledPage | CrawlFailure): CrawledPage {
 async function results(crawl: Crawl) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
   for await (const entry of crawl)
-    if (!('progress' in entry)) entries.push(entry);
+    if (!('progress' in entry) && !('deferred' in entry)) entries.push(entry);
   return entries;
 }
 
@@ -91,7 +91,9 @@ test('crawls links itself and preserves URL identity, provenance and Got respons
     await results(
       new WebCrawler(client, [
         new LinkReader({ maxDepth: 3, maxPages: 100 }),
-      ]).run(['https://site.test/'], { signal: AbortSignal.timeout(5000) }),
+      ]).crawl(['https://site.test/'], null, {
+        signal: AbortSignal.timeout(5000),
+      }),
     )
   ).map(pageOf);
   // The starting page is read but not handed back; link elements and Link headers belong to ArchiveReader.
@@ -140,10 +142,11 @@ test('each found URL is requested once and keeps the URL as found, including red
   );
   const pages = (
     await results(
-      new WebCrawler(got, [new LinkReader({ maxDepth: 3, maxPages: 100 })]).run(
-        ['https://site.test/'],
-        { signal: AbortSignal.timeout(5000) },
-      ),
+      new WebCrawler(got, [
+        new LinkReader({ maxDepth: 3, maxPages: 100 }),
+      ]).crawl(['https://site.test/'], null, {
+        signal: AbortSignal.timeout(5000),
+      }),
     )
   ).map(pageOf);
   // /target is requested twice: once through the alias's redirect, once as itself.
@@ -161,37 +164,6 @@ test('each found URL is requested once and keeps the URL as found, including red
       ['https://site.test/target', 'https://site.test/target'],
       ['https://site.test/external', 'https://remote.test/page'],
     ],
-  );
-});
-
-test('a known page is handed back with its supplied provenance when a link finds it again', async () => {
-  const requests: string[] = [];
-  using server = mockWeb(
-    http.get('https://site.test/*', ({ request }) => {
-      requests.push(request.url);
-      return HttpResponse.html('<a href="/article">Article</a>');
-    }),
-  );
-  const location = {
-    url: 'https://site.test/article',
-    listingUrl: 'https://site.test/map.xml',
-    lastModified: '2026-10-20',
-  };
-  const pages = (
-    await results(
-      new WebCrawler(got, [new LinkReader({ maxDepth: 1, maxPages: 1 })]).run(
-        ['https://site.test/'],
-        { signal: AbortSignal.timeout(5000), pages: [location, location] },
-      ),
-    )
-  ).map(pageOf);
-  assert.deepEqual(requests, [
-    'https://site.test/',
-    'https://site.test/article',
-  ]);
-  assert.deepEqual(
-    pages.map(({ response, ...metadata }) => metadata),
-    [location],
   );
 });
 
@@ -217,7 +189,9 @@ test('failures are handed out with their URL while independent pages continue, a
     new LinkReader({ maxDepth: 3, maxPages: 100 }),
   ]);
   const entries = await results(
-    crawler.run(['https://site.test/'], { signal: AbortSignal.timeout(5000) }),
+    crawler.crawl(['https://site.test/'], null, {
+      signal: AbortSignal.timeout(5000),
+    }),
   );
   assert.equal(entries.length, 2);
   const [failure, good] = entries;
@@ -231,7 +205,7 @@ test('failures are handed out with their URL while independent pages continue, a
   broken = false;
   const retried = (
     await results(
-      crawler.run(['https://site.test/'], {
+      crawler.crawl(['https://site.test/'], null, {
         signal: AbortSignal.timeout(5000),
       }),
     )
@@ -253,7 +227,7 @@ test('a failed starting URL is handed out as a failure', async () => {
   const entries = await results(
     new WebCrawler(got.extend({ retry: { limit: 0 } }), [
       new LinkReader({ maxDepth: 3, maxPages: 100 }),
-    ]).run(['https://site.test/missing'], {
+    ]).crawl(['https://site.test/missing'], null, {
       signal: AbortSignal.timeout(5000),
     }),
   );
@@ -279,10 +253,10 @@ test('consumer backpressure and early break stop fetching, and crawls remain iso
   const crawler = new WebCrawler(got, [
     new LinkReader({ maxDepth: 3, maxPages: 100 }),
   ]);
-  for await (const entry of crawler.run(['https://site.test/'], {
+  for await (const entry of crawler.crawl(['https://site.test/'], null, {
     signal: AbortSignal.timeout(5000),
   })) {
-    if ('progress' in entry) continue;
+    if ('progress' in entry || 'deferred' in entry) continue;
     assert.equal(pageOf(entry).url, 'https://site.test/child');
     assert.deepEqual(requests, ['/', '/child']);
     break;
@@ -290,12 +264,12 @@ test('consumer backpressure and early break stop fetching, and crawls remain iso
   assert.deepEqual(requests, ['/', '/child']);
   const [first, second] = await Promise.all([
     results(
-      crawler.run(['https://site.test/'], {
+      crawler.crawl(['https://site.test/'], null, {
         signal: AbortSignal.timeout(5000),
       }),
     ),
     results(
-      crawler.run(['https://site.test/'], {
+      crawler.crawl(['https://site.test/'], null, {
         signal: AbortSignal.timeout(5000),
       }),
     ),
@@ -331,7 +305,7 @@ test(
       new LinkReader({ maxDepth: 3, maxPages: 100 }),
     ]);
     const run = Array.fromAsync(
-      crawler.run(['https://site.test/slow'], {
+      crawler.crawl(['https://site.test/slow'], null, {
         signal: AbortSignal.any([stop.signal, AbortSignal.timeout(5000)]),
       }),
     );
@@ -341,7 +315,9 @@ test(
       await assert.rejects(run, (error) => error === reason);
       await assert.rejects(
         Array.fromAsync(
-          crawler.run(['https://site.test/unused'], { signal: stop.signal }),
+          crawler.crawl(['https://site.test/unused'], null, {
+            signal: stop.signal,
+          }),
         ),
         (error) => error === reason,
       );
@@ -359,13 +335,13 @@ test('validates readers and starting URLs and accepts an empty crawl', async () 
   ]);
   assert.deepEqual(
     await Array.fromAsync(
-      crawler.run([], { signal: AbortSignal.timeout(5000) }),
+      crawler.crawl([], null, { signal: AbortSignal.timeout(5000) }),
     ),
     [],
   );
   for (const input of ['relative', 'file:///etc/hosts', 'ftp://site.test/feed'])
     assert.throws(() =>
-      crawler.run([input], { signal: AbortSignal.timeout(5000) }),
+      crawler.crawl([input], null, { signal: AbortSignal.timeout(5000) }),
     );
 });
 
@@ -384,8 +360,9 @@ test('include hands back only matching pages and never requests non-matching pag
   );
   const pages = (
     await results(
-      new WebCrawler(got, [new LinkReader({ maxDepth: 1, maxPages: 1 })]).run(
+      new WebCrawler(got, [new LinkReader({ maxDepth: 1, maxPages: 1 })]).crawl(
         ['https://site.test/'],
+        null,
         {
           signal: AbortSignal.timeout(5000),
           include: [new URLPattern({ pathname: '/keep/*' })],
@@ -433,7 +410,7 @@ test('Got hooks see options.context.page only for handed-back pages that no read
       new WebCrawler(client, [
         new ListingReader(),
         new LinkReader({ maxDepth: 1, maxPages: 100 }),
-      ]).run(['https://site.test/'], {
+      ]).crawl(['https://site.test/'], null, {
         signal: AbortSignal.timeout(5000),
         include: [new URLPattern({ pathname: '/keep/*' })],
       }),
@@ -472,12 +449,12 @@ test('a snapshot resumes the crawl without repeating finished work and hands out
   const crawler = new WebCrawler(got, [
     new LinkReader({ maxDepth: 3, maxPages: 100 }),
   ]);
-  const first = crawler.run(['https://site.test/'], {
+  const first = crawler.crawl(['https://site.test/'], null, {
     signal: AbortSignal.timeout(5000),
   });
   const handed: string[] = [];
   for await (const entry of first) {
-    if ('progress' in entry) continue;
+    if ('progress' in entry || 'deferred' in entry) continue;
     handed.push(pathOf(pageOf(entry).url));
     if (handed.length === 2) break;
   }
@@ -486,7 +463,7 @@ test('a snapshot resumes the crawl without repeating finished work and hands out
   requests.length = 0;
   const resumed = (
     await results(
-      crawler.resume(snapshot, { signal: AbortSignal.timeout(5000) }),
+      crawler.crawl([], snapshot, { signal: AbortSignal.timeout(5000) }),
     )
   ).map(pageOf);
   assert.deepEqual(
@@ -514,7 +491,7 @@ test('a failure is marked as a page only for a page include matches, not for a s
     new WebCrawler(got.extend({ retry: { limit: 0 } }), [
       new ListingReader(),
       new LinkReader({ maxDepth: 1, maxPages: 100 }),
-    ]).run(['https://site.test/', 'https://site.test/missing'], {
+    ]).crawl(['https://site.test/', 'https://site.test/missing'], null, {
       signal: AbortSignal.timeout(5000),
       include: [new URLPattern({ pathname: '/keep/*' })],
     }),
@@ -530,67 +507,6 @@ test('a failure is marked as a page only for a page include matches, not for a s
     '/keep/bad': true,
   });
   assert.equal(failures.length, 3);
-});
-
-test('resume hands back a page that already failed in the snapshot crawl before the remaining pending pages', async () => {
-  let broken = true;
-  const requests: string[] = [];
-  using server = mockWeb(
-    http.get('https://site.test/*', ({ request }) => {
-      const path = pathOf(request.url);
-      requests.push(path);
-      if (path === '/')
-        return HttpResponse.html(
-          '<a href="/p1">1</a><a href="/p2">2</a><a href="/p3">3</a>',
-        );
-      if (path === '/p1' && broken)
-        return new HttpResponse(null, { status: 503 });
-      return HttpResponse.html('<p>Page</p>');
-    }),
-  );
-  const crawler = new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-    new LinkReader({ maxDepth: 3, maxPages: 100 }),
-  ]);
-  const first = crawler.run(['https://site.test/'], {
-    signal: AbortSignal.timeout(5000),
-  });
-  const failed: CrawlFailure[] = [];
-  for await (const entry of first) {
-    if ('progress' in entry) continue;
-    if ('error' in entry) failed.push(entry);
-    else {
-      assert.equal(pathOf(entry.url), '/p2');
-      break;
-    }
-  }
-  assert.deepEqual(
-    failed.map((failure) => pathOf(failure.url)),
-    ['/p1'],
-  );
-  const snapshot = JSON.parse(JSON.stringify(first.snapshot()));
-  broken = false;
-  requests.length = 0;
-  const resumed = (
-    await results(
-      crawler.resume(snapshot, {
-        signal: AbortSignal.timeout(5000),
-        pages: failed.map(({ url, listingUrl, lastModified }) => ({
-          url,
-          listingUrl,
-          lastModified,
-        })),
-      }),
-    )
-  ).map(pageOf);
-  assert.deepEqual(
-    resumed.map((page) => [pathOf(page.url), page.listingUrl]),
-    [
-      ['/p1', 'https://site.test/'],
-      ['/p2', 'https://site.test/'],
-      ['/p3', 'https://site.test/'],
-    ],
-  );
-  assert.deepEqual(requests, ['/p1', '/p2', '/p3']);
 });
 
 function progressSite(requests: string[]) {
@@ -628,7 +544,7 @@ test('every downloaded URL that is not handed back as a page or failure is hande
   const requests: string[] = [];
   using server = progressSite(requests);
   const entries = await Array.fromAsync(
-    progressCrawler().run(['https://site.test/'], {
+    progressCrawler().crawl(['https://site.test/'], null, {
       signal: AbortSignal.timeout(5000),
       include: [new URLPattern({ pathname: '/keep/*' })],
     }),
@@ -637,7 +553,7 @@ test('every downloaded URL that is not handed back as a page or failure is hande
     'progress' in entry ? [pathOf(entry.progress)] : [],
   );
   const handed = entries.flatMap((entry) =>
-    'progress' in entry ? [] : [pathOf(entry.url)],
+    'progress' in entry || 'deferred' in entry ? [] : [pathOf(entry.url)],
   );
   // The starting page, the feed, robots.txt's tolerated 404 and a page read only for its links.
   assert.deepEqual(progress, ['/', '/feed.xml', '/robots.txt', '/hub']);
@@ -658,13 +574,13 @@ test('a snapshot taken at a progress entry resumes without downloading the docum
     include: [new URLPattern({ pathname: '/keep/*' })],
   };
   const crawler = progressCrawler();
-  const first = crawler.run(['https://site.test/'], options);
+  const first = crawler.crawl(['https://site.test/'], null, options);
   for await (const entry of first)
     if ('progress' in entry && pathOf(entry.progress) === '/robots.txt') break;
   assert.deepEqual(requests, ['/', '/feed.xml', '/robots.txt']);
   const snapshot = JSON.parse(JSON.stringify(first.snapshot()));
   requests.length = 0;
-  const resumed = await results(crawler.resume(snapshot, options));
+  const resumed = await results(crawler.crawl([], snapshot, options));
   // The progress entry's own URL is unfinished until the next entry is requested, so it is read once more.
   assert.equal(requests[0], '/robots.txt');
   assert.ok(!requests.includes('/'), requests.join(' '));
@@ -716,7 +632,9 @@ test('a page labeled Latin-1 in its Content-Type is handed back, and every reade
       new ArchiveReader(),
       new PaginationReader(),
       new LinkReader({ maxDepth: 2, maxPages: 10 }),
-    ]).run(['https://site.test/'], { signal: AbortSignal.timeout(5000) }),
+    ]).crawl(['https://site.test/'], null, {
+      signal: AbortSignal.timeout(5000),
+    }),
   );
   assert.deepEqual(
     entries.filter((entry) => 'error' in entry),
@@ -751,8 +669,9 @@ test('a page labeled only by its <meta charset> is read by that charset', async 
     }),
   );
   await results(
-    new WebCrawler(got, [new LinkReader({ maxDepth: 2, maxPages: 10 })]).run(
+    new WebCrawler(got, [new LinkReader({ maxDepth: 2, maxPages: 10 })]).crawl(
       ['https://site.test/'],
+      null,
       { signal: AbortSignal.timeout(5000) },
     ),
   );
@@ -780,8 +699,9 @@ test('an unlabeled page is read as UTF-8, and one that is not valid UTF-8 is sti
     }),
   );
   const entries = await results(
-    new WebCrawler(got, [new LinkReader({ maxDepth: 2, maxPages: 10 })]).run(
+    new WebCrawler(got, [new LinkReader({ maxDepth: 2, maxPages: 10 })]).crawl(
       ['https://site.test/'],
+      null,
       { signal: AbortSignal.timeout(5000) },
     ),
   );
@@ -821,7 +741,9 @@ test('a reader that throws on a response does not stop the readers after it or d
     new WebCrawler(got, [
       new BrokenReader(),
       new LinkReader({ maxDepth: 2, maxPages: 10 }),
-    ]).run(['https://site.test/'], { signal: AbortSignal.timeout(5000) }),
+    ]).crawl(['https://site.test/'], null, {
+      signal: AbortSignal.timeout(5000),
+    }),
   );
   assert.deepEqual(
     entries.flatMap((entry) => ('error' in entry ? [] : [pathOf(entry.url)])),
@@ -858,7 +780,9 @@ test('a declared listing that one reader cannot read keeps what the other reader
     new WebCrawler(got, [
       new ListingReader(),
       new LinkReader({ maxDepth: 2, maxPages: 10 }),
-    ]).run(['https://site.test/'], { signal: AbortSignal.timeout(5000) }),
+    ]).crawl(['https://site.test/'], null, {
+      signal: AbortSignal.timeout(5000),
+    }),
   );
   assert.deepEqual(
     entries.map((entry) =>
