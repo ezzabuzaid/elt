@@ -14,7 +14,7 @@
     "@workspace/google-auth": "0.0.1",
     "@workspace/sdk-google-search-console": "0.0.1",
     "@zukhruf/mutex": "^0.3.40",
-    "@zukhruf/snapshot-differential": "0.3.28"
+    "@zukhruf/snapshot-differential": "0.3.46"
   },
   "devDependencies": {
     "@workspace/elt-postgresql": "0.0.1",

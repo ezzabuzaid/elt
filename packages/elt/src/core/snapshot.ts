@@ -2,6 +2,7 @@ import { scheduler } from 'node:timers/promises';
 
 import {
   DeletionPolicy,
+  type KeptGroup,
   type SnapshotChange,
   SnapshotDifferential,
   type SnapshotGroup,
@@ -12,6 +13,9 @@ import type { CopyConfiguration } from './copy-configuration.ts';
 import { Deduplication } from './deduplication.ts';
 import type { DeleteMessage, StateMessage } from './source.ts';
 import type { Stream } from './stream.ts';
+
+// A group the source lists without reading, because it knows the group did not change.
+export type { KeptGroup };
 
 export type SnapshotDiffOptions = {
   // What a vanished key means. A stream that emits deletions names one, such
@@ -64,20 +68,29 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
 
 // diffSnapshot for a scan whose records come from inputs the source can
 // fingerprint cheaply: in an incremental copy, a group whose fingerprint
-// matches the last committed scan keeps its records without reading them.
+// matches the last committed scan, and a kept group, which the source knows
+// did not change, keep their records without reading them.
 export async function* diffGroupedSnapshot<
   Data extends Record<string, unknown>,
 >(
   { stream, syncMode }: CopyConfiguration,
-  groups: AsyncIterable<SnapshotGroup<Data>> | Iterable<SnapshotGroup<Data>>,
+  groups:
+    | AsyncIterable<SnapshotGroup<Data> | KeptGroup>
+    | Iterable<SnapshotGroup<Data> | KeptGroup>,
   state: unknown,
   options: SnapshotDiffOptions,
 ): AsyncGenerator<SnapshotMessage<Data>> {
   const differential = differentialOf<Data>(stream, options);
   if (syncMode !== 'incremental') {
-    for await (const group of groups)
+    for await (const group of groups) {
+      // A full refresh replaces its target, so it must read every group.
+      if ('kept' in group)
+        throw new TypeError(
+          `Stream ${stream.name} kept group ${group.key} in a full refresh, which reads every group`,
+        );
       for await (const data of group.records())
         yield { stream: stream.name, data };
+    }
     return;
   }
   for await (const change of differential.diffGroups(

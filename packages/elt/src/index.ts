@@ -54,6 +54,7 @@ export {
 export {
   diffGroupedSnapshot,
   diffSnapshot,
+  type KeptGroup,
   type SnapshotDiffOptions,
 } from './core/snapshot.ts';
 export {

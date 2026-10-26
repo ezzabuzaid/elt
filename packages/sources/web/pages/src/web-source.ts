@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   Catalog,
   type CopyConfiguration,
+  type KeptGroup,
   type Partition,
   Source,
   type SourceMessage,
@@ -199,14 +200,18 @@ export class WebSource extends Source {
         include: this.#stream.include,
       });
       const errors: Error[] = [];
+      // Pages that are not due: the scan keeps their records unread.
+      const kept: KeptGroup[] = [];
       let savedAt = performance.now();
       const checkpoint = () => {
         savedAt = performance.now();
         return { diff, crawl: crawl.snapshot() };
       };
       for await (const entry of crawl) {
-        // A page that is not due keeps its row; the diff forgets its fingerprint, so it is extracted again when due (#3011).
-        if ('deferred' in entry) continue;
+        if ('deferred' in entry) {
+          kept.push({ key: entry.deferred.url, kept: true });
+          continue;
+        }
         if ('progress' in entry) {
           // Listings and archives hand out no pages, so their progress is saved on an interval.
           if (performance.now() - savedAt >= 1_000)
@@ -283,9 +288,14 @@ export class WebSource extends Source {
         }
       }
       requestSignal.throwIfAborted();
-      for await (const message of diffGroupedSnapshot(configuration, [], diff, {
-        signal,
-      }))
+      for await (const message of diffGroupedSnapshot(
+        configuration,
+        kept,
+        diff,
+        {
+          signal,
+        },
+      ))
         if ('type' in message && message.type === 'STATE')
           yield {
             ...message,

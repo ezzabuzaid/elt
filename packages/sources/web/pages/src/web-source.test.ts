@@ -1406,6 +1406,55 @@ test('by default an incremental crawl requests a known page again only when it i
   assert.match(text().join(), /Revision 2/);
 });
 
+test('a page that was not due keeps its fingerprint, so once due and unchanged it is not loaded again', async (t) => {
+  const later = shiftedClock(t);
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    requests.push(url.pathname);
+    if (url.pathname === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel><item><link>${url.origin}/a</link></item></channel></rss>`,
+      );
+    } else {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        '<article><p>The research article holds the complete published observations.</p></article>',
+      );
+    }
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const options = {
+    stream: new WebStream({
+      name: 'articles',
+      primaryKey: ['articleUrl'],
+      readers: [new ListingReader()],
+      extractor: new ArticleExtractor(),
+    }),
+    inputs: [`${upstream.origin}/feed.xml`],
+  };
+  const run = async () =>
+    (
+      await (
+        await pipeline(new WebSource(options), database.path, checkpoints.path)
+      ).run()
+    )[0]?.count;
+
+  const first = await run();
+  later(hour);
+  const deferred = await run();
+  later(day - hour);
+  requests.length = 0;
+  const due = await run();
+
+  assert.equal(first, 1);
+  assert.equal(deferred, 0);
+  assert.deepEqual(requests, ['/feed.xml', '/a']);
+  assert.equal(due, 0);
+});
+
 function articles(include?: readonly string[]) {
   return new WebStream({
     name: 'articles',
