@@ -22,8 +22,15 @@ import {
   HTMLExtraction,
   WebArticle,
 } from '@workspace/sdk-web-article';
+import {
+  ArchiveReader,
+  LinkReader,
+  ListingReader,
+} from '@workspace/sdk-web-crawler';
 
+import { ArticleExtractor } from './article-extractor.ts';
 import { WebSource } from './web-source.ts';
+import { WebStream } from './web-stream.ts';
 
 test('committed groups skip extraction after 304 and identical 200, but fresh and full scans extract', async () => {
   let revision = 1;
@@ -50,6 +57,7 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
     }
   });
   const source = new WebSource({
+    stream: articles(),
     inputs: [upstream.origin],
     pollIntervalMs: 60_000,
   });
@@ -144,6 +152,7 @@ test('restarted source keeps unchanged rows and detects listing metadata and art
   await using checkpoints = await new Sqlite().database();
   async function run() {
     const source = new WebSource({
+      stream: articles(),
       inputs: [`${upstream.origin}/sitemap.xml`],
       pollIntervalMs: 60_000,
     });
@@ -191,3 +200,17 @@ test('restarted source keeps unchanged rows and detects listing metadata and art
   );
   assert.equal((await run())[0]?.count, 0);
 });
+
+function articles(include?: readonly string[]) {
+  return new WebStream({
+    name: 'articles',
+    primaryKey: ['pageUrl'],
+    readers: [
+      new ListingReader(),
+      new ArchiveReader(),
+      new LinkReader({ maxDepth: 3, maxPages: 100 }),
+    ],
+    include: include?.map((pattern) => new URLPattern(pattern)),
+    extractor: new ArticleExtractor(),
+  });
+}

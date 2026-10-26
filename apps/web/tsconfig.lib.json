@@ -17,7 +17,10 @@
   ],
   "references": [
     {
-      "path": "../../packages/sources/web/articles/tsconfig.lib.json"
+      "path": "../../packages/sdks/web/crawler/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/sources/web/pages/tsconfig.lib.json"
     },
     {
       "path": "../../packages/destinations/sqlite/tsconfig.lib.json"

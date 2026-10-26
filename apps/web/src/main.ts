@@ -16,7 +16,14 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
-import { WebSource } from '@workspace/source-web-articles/web-source';
+import {
+  ArchiveReader,
+  LinkReader,
+  ListingReader,
+} from '@workspace/sdk-web-crawler';
+import { ArticleExtractor } from '@workspace/source-web-pages/article-extractor';
+import { WebSource } from '@workspace/source-web-pages/web-source';
+import { WebStream } from '@workspace/source-web-pages/web-stream';
 
 import {
   type Activity,
@@ -51,8 +58,21 @@ const readSettings = async () =>
 const pipeline = async () => {
   const { inputs, include } = await readSettings();
   const source = new WebSource({
+    stream: new WebStream({
+      name: 'articles',
+      primaryKey: ['pageUrl'],
+      readers: [
+        new ListingReader(),
+        new ArchiveReader(),
+        new LinkReader({ maxDepth: 3, maxPages: 100 }),
+      ],
+      include:
+        include.length === 0
+          ? undefined
+          : include.map((pattern) => new URLPattern(pattern)),
+      extractor: new ArticleExtractor(),
+    }),
     inputs,
-    include: include.length === 0 ? undefined : include,
     pollIntervalMs: 60 * 60_000,
   });
   return new Pipeline({

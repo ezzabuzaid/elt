@@ -1,12 +1,24 @@
 {
-  "name": "@workspace/source-web-articles",
+  "name": "@workspace/source-web-pages",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "exports": {
+    "./article-extractor": {
+      "types": "./dist/article-extractor.d.ts",
+      "default": "./dist/article-extractor.js"
+    },
+    "./record-extractor": {
+      "types": "./dist/record-extractor.d.ts",
+      "default": "./dist/record-extractor.js"
+    },
     "./web-source": {
       "types": "./dist/web-source.d.ts",
       "default": "./dist/web-source.js"
+    },
+    "./web-stream": {
+      "types": "./dist/web-stream.d.ts",
+      "default": "./dist/web-stream.js"
     }
   },
   "dependencies": {

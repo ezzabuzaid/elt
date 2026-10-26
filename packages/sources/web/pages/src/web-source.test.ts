@@ -12,9 +12,16 @@ import {
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { ArticleError } from '@workspace/sdk-web-article';
-import { CrawlError } from '@workspace/sdk-web-crawler';
+import {
+  ArchiveReader,
+  CrawlError,
+  LinkReader,
+  ListingReader,
+} from '@workspace/sdk-web-crawler';
 
+import { ArticleExtractor } from './article-extractor.ts';
 import { WebSource } from './web-source.ts';
+import { WebStream } from './web-stream.ts';
 
 test('native articles persist clean text and refresh independently changing HTML metadata', async () => {
   let date = '2026-10-24';
@@ -41,6 +48,7 @@ test('native articles persist clean text and refresh independently changing HTML
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
       pollIntervalMs: 60_000,
     }),
@@ -86,6 +94,7 @@ test('archive articles persist Markdown and an unchanged rerun writes no records
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const source = new WebSource({
+    stream: articles(),
     inputs: [upstream.origin],
     pollIntervalMs: 60_000,
   });
@@ -127,6 +136,7 @@ test('the pipeline prefers native Markdown, keeps HTML fallback and writes nothi
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
       pollIntervalMs: 60_000,
     }),
@@ -206,6 +216,7 @@ test('temporary listing and article failures recover within one pipeline run', a
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
       pollIntervalMs: 60_000,
     }),
@@ -251,6 +262,7 @@ test('failed articles do not block later articles or later refreshes', async () 
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const options = {
+    stream: articles(),
     inputs: [`${upstream.origin}/feed.xml`],
     pollIntervalMs: 60_000,
   };
@@ -351,6 +363,7 @@ test(
     await using database = await new Sqlite().database();
     await using checkpoints = await new Sqlite().database();
     const options = {
+      stream: articles(),
       inputs: [`${upstream.origin}/feed.json`],
       pollIntervalMs: 60_000,
     };
@@ -473,6 +486,7 @@ test(
     await using database = await new Sqlite().database();
     await using checkpoints = await new Sqlite().database();
     const options = {
+      stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
       pollIntervalMs: 60_000,
     };
@@ -555,6 +569,7 @@ test(
     await using checkpoints = await new Sqlite().database();
     const ingestion = await pipeline(
       new WebSource({
+        stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
         pollIntervalMs: 60_000,
       }),
@@ -611,6 +626,7 @@ test(
     await using checkpoints = await new Sqlite().database();
     const ingestion = await pipeline(
       new WebSource({
+        stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
         pollIntervalMs: 60_000,
       }),
@@ -671,6 +687,7 @@ test(
     await using checkpoints = await new Sqlite().database();
     const ingestion = await pipeline(
       new WebSource({
+        stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
         pollIntervalMs: 60_000,
       }),
@@ -725,6 +742,7 @@ test('a completed scan retains successful articles and retries failures on the n
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const options = {
+    stream: articles(),
     inputs: [`${upstream.origin}/feed.json`],
     pollIntervalMs: 60_000,
   };
@@ -801,6 +819,7 @@ test(
     await using database = await new Sqlite().database();
     await using checkpoints = await new Sqlite().database();
     const options = {
+      stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
       pollIntervalMs: 60_000,
     };
@@ -875,6 +894,7 @@ test('chosen websites and feeds persist article metadata, make unchanged reruns 
     await using database = await new Sqlite().database();
     await using checkpoints = await new Sqlite().database();
     const options = {
+      stream: articles(),
       inputs: [`${upstream.origin}${input}`],
       pollIntervalMs: 60_000,
     };
@@ -1004,6 +1024,7 @@ test('feed rollover retains articles and independent inputs keep their own progr
   await using checkpoints = await new Sqlite().database();
   const first = await pipeline(
     new WebSource({
+      stream: articles(),
       inputs: [`${upstream.origin}/two.json`, `${upstream.origin}/one.json`],
       pollIntervalMs: 60_000,
     }),
@@ -1021,6 +1042,7 @@ test('feed rollover retains articles and independent inputs keep their own progr
   failing = false;
   const extended = await pipeline(
     new WebSource({
+      stream: articles(),
       inputs: [
         `${upstream.origin}/one.json`,
         `${upstream.origin}/two.json`,
@@ -1074,6 +1096,7 @@ test('a failed full refresh tries later articles and preserves the last complete
   });
   await using database = await new Sqlite().database();
   const source = new WebSource({
+    stream: articles(),
     inputs: [`${upstream.origin}/sitemap.xml`],
     pollIntervalMs: 60_000,
   });
@@ -1146,6 +1169,7 @@ test(
     await using checkpoints = await new Sqlite().database();
     const ingestion = await pipeline(
       new WebSource({
+        stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
         pollIntervalMs: 100,
       }),
@@ -1206,8 +1230,8 @@ test('explicit URL patterns restrict article downloads and preserve matching que
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const options = {
+    stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [`${upstream.origin}/feed.json`],
-    include: [`${upstream.origin}/articles/*`],
     pollIntervalMs: 60_000,
   };
   const ingestion = await pipeline(
@@ -1263,6 +1287,7 @@ test('a Latin-1 article page is stored with its text and leaves nothing to retry
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
       pollIntervalMs: 60_000,
     }),
@@ -1279,3 +1304,17 @@ test('a Latin-1 article page is stored with its text and leaves nothing to retry
     /crème brûlée/,
   );
 });
+
+function articles(include?: readonly string[]) {
+  return new WebStream({
+    name: 'articles',
+    primaryKey: ['pageUrl'],
+    readers: [
+      new ListingReader(),
+      new ArchiveReader(),
+      new LinkReader({ maxDepth: 3, maxPages: 100 }),
+    ],
+    include: include?.map((pattern) => new URLPattern(pattern)),
+    extractor: new ArticleExtractor(),
+  });
+}

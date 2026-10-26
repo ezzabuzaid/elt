@@ -1,0 +1,13 @@
+{
+  "name": "source-opensooq-web",
+  "sourceRoot": "packages/sources/opensooq/web/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test --test-global-setup=docker-global-setup.ts {args} \"packages/sources/opensooq/web/src/**/*.test.ts\""
+    }
+  }
+}

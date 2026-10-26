@@ -13,11 +13,20 @@ import { Sqlite } from '@zukhruf/testing/sqlite';
 
 // A new Node process for each scan proves the production cache survives restart.
 const scan = `
-import { WebSource } from ${JSON.stringify(import.meta.resolve('@workspace/source-web-articles/web-source'))};
+import { ArticleExtractor } from ${JSON.stringify(import.meta.resolve('@workspace/source-web-pages/article-extractor'))};
+import { WebSource } from ${JSON.stringify(import.meta.resolve('@workspace/source-web-pages/web-source'))};
+import { WebStream } from ${JSON.stringify(import.meta.resolve('@workspace/source-web-pages/web-stream'))};
+import { ArchiveReader, LinkReader, ListingReader } from ${JSON.stringify(import.meta.resolve('@workspace/sdk-web-crawler'))};
 import { Connection, Copy, Pipeline } from ${JSON.stringify(import.meta.resolve('@workspace/elt'))};
 import { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } from ${JSON.stringify(import.meta.resolve('@workspace/elt-sqlite'))};
 const [input, path, checkpoints, id, syncMode] = process.argv.slice(1);
-const source = new WebSource({ inputs: [input], pollIntervalMs: 60000 });
+const stream = new WebStream({
+  name: 'articles',
+  primaryKey: ['pageUrl'],
+  readers: [new ListingReader(), new ArchiveReader(), new LinkReader({ maxDepth: 3, maxPages: 100 })],
+  extractor: new ArticleExtractor(),
+});
+const source = new WebSource({ stream, inputs: [input], pollIntervalMs: 60000 });
 const destination = new SQLiteDestination({ path });
 const history = new SQLiteSyncHistory();
 await history.install([destination]);

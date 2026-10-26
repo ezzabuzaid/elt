@@ -10,8 +10,15 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import {
+  ArchiveReader,
+  LinkReader,
+  ListingReader,
+} from '@workspace/sdk-web-crawler';
 
+import { ArticleExtractor } from './article-extractor.ts';
 import { WebSource } from './web-source.ts';
+import { WebStream } from './web-stream.ts';
 
 test('ordinary links reach unlisted articles while feed pages and unchanged reruns survive', async () => {
   const requests: string[] = [];
@@ -54,8 +61,8 @@ test('ordinary links reach unlisted articles while feed pages and unchanged reru
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const source = new WebSource({
+    stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [upstream.origin],
-    include: [`${upstream.origin}/articles/*`],
     pollIntervalMs: 60_000,
   });
   const destination = new SQLiteDestination({ path: database.path });
@@ -136,8 +143,8 @@ test('new URLs survive interruption, and only the page in flight downloads again
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const source = new WebSource({
+    stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [upstream.origin],
-    include: [`${upstream.origin}/articles/*`],
     pollIntervalMs: 60000,
   });
   const destination = new SQLiteDestination({ path: database.path }),
@@ -247,8 +254,8 @@ test('Markdown pages supply links, and feeds declared on crawled pages are read 
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const source = new WebSource({
+    stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [upstream.origin],
-    include: [`${upstream.origin}/articles/*`],
     pollIntervalMs: 60000,
   });
   const destination = new SQLiteDestination({ path: database.path }),
@@ -314,8 +321,8 @@ test('an interruption during a long stretch of archive pages keeps the progress 
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const source = new WebSource({
+    stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [upstream.origin],
-    include: [`${upstream.origin}/articles/*`],
     pollIntervalMs: 60000,
   });
   const destination = new SQLiteDestination({ path: database.path }),
@@ -379,3 +386,17 @@ test('an interruption during a long stretch of archive pages keeps the progress 
     1,
   );
 });
+
+function articles(include?: readonly string[]) {
+  return new WebStream({
+    name: 'articles',
+    primaryKey: ['pageUrl'],
+    readers: [
+      new ListingReader(),
+      new ArchiveReader(),
+      new LinkReader({ maxDepth: 3, maxPages: 100 }),
+    ],
+    include: include?.map((pattern) => new URLPattern(pattern)),
+    extractor: new ArticleExtractor(),
+  });
+}

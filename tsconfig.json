@@ -198,7 +198,10 @@
       "path": "./packages/sdks/web/article"
     },
     {
-      "path": "./packages/sources/web/articles"
+      "path": "./packages/sources/web/pages"
+    },
+    {
+      "path": "./packages/sources/opensooq/web"
     },
     {
       "path": "./apps/web"

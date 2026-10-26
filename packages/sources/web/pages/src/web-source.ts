@@ -14,98 +14,31 @@ import {
   diffGroupedSnapshot,
   validateRecords,
 } from '@workspace/elt';
-import {
-  ArticleError,
-  HTMLExtraction,
-  MarkdownExtraction,
-  WebArticle,
-} from '@workspace/sdk-web-article';
-import {
-  ArchiveReader,
-  LinkReader,
-  ListingReader,
-  type PageLocation,
-  WebCrawler,
-} from '@workspace/sdk-web-crawler';
+import { type PageLocation, WebCrawler } from '@workspace/sdk-web-crawler';
 
 import { webHttp } from './http/web-http.ts';
+import type { WebStream } from './web-stream.ts';
 
-const text = { type: 'string' } as const;
-const nullableText = { type: ['string', 'null'] } as const;
-const properties = {
+const provenance = {
   inputUrl: {
-    ...text,
+    type: 'string',
     description: 'The chosen website, sitemap or feed; the partition key.',
   },
   pageUrl: {
-    ...text,
+    type: 'string',
     description:
-      'Discovered page URL, preserving queries and trailing slashes; the article key within this input.',
+      'Discovered page URL, preserving queries and trailing slashes.',
   },
   listingUrl: {
-    ...text,
+    type: 'string',
     description: 'The listing that first supplied the page URL.',
   },
   lastModified: {
-    ...nullableText,
+    type: ['string', 'null'],
     description:
       'Raw sitemap modification hint, not a change cursor or publication date.',
   },
-  url: { ...text, description: 'Final HTTP response URL after redirects.' },
-  canonicalUrl: {
-    ...nullableText,
-    description: 'Declared HTTP(S) canonical URL, not used to merge records.',
-  },
-  title: { ...nullableText, description: 'Extracted article title.' },
-  byline: {
-    ...nullableText,
-    description: 'Author metadata as supplied by the page.',
-  },
-  publishedTime: {
-    ...nullableText,
-    description:
-      'Publication metadata as supplied, without date inference or conversion.',
-  },
-  content: { ...text, description: 'Sanitized article HTML.' },
-  markdown: {
-    ...text,
-    description:
-      'Native Markdown body when available, otherwise converted from sanitized article HTML.',
-  },
-  textContent: {
-    ...text,
-    description: 'Readable article text, with paragraph and table structure.',
-  },
-  length: {
-    type: 'integer',
-    minimum: 0,
-    description: 'Length of textContent in JavaScript string units.',
-  },
-  excerpt: {
-    ...nullableText,
-    description: 'Extracted description or first-paragraph excerpt.',
-  },
-  siteName: { ...nullableText, description: 'Publisher metadata.' },
-  lang: { ...nullableText, description: 'Declared content language.' },
-  dir: { ...nullableText, description: 'Declared content direction.' },
 } as const;
-
-const catalog = new Catalog([
-  new Stream({
-    name: 'articles',
-    jsonSchema: {
-      type: 'object',
-      description:
-        'One readable article per chosen input and discovered URL. Incremental scans retain articles absent from later listings.',
-      properties,
-      required: Object.keys(properties),
-    },
-    primaryKey: ['inputUrl', 'pageUrl'],
-    partitionKey: ['inputUrl'],
-    supportedSyncModes: ['full_refresh', 'incremental'],
-    sourceDefinedCursor: true,
-  }),
-]);
 
 const location = z.object({
   url: z.url({ protocol: /^https?$/ }),
@@ -121,19 +54,32 @@ const saved = z.object({
   retry: z.array(location),
 });
 
+// A page that the stream's extractor could not read: recorded and retried, while the other pages continue.
+class PageFailure extends Error {
+  readonly failure: Error;
+  constructor(failure: Error) {
+    super(failure.message, { cause: failure });
+    this.failure = failure;
+  }
+}
+
+function pageFailure(error: unknown): never {
+  throw Error.isError(error) ? new PageFailure(error) : error;
+}
+
 export class WebSource extends Source {
-  readonly identity = 'web-articles';
-  protected readonly catalog = catalog;
+  readonly identity = 'web-pages';
+  protected readonly catalog: Catalog;
+  readonly #stream: WebStream;
   readonly #inputs: readonly string[];
   readonly #pollIntervalMs: number;
-  readonly #include: readonly URLPattern[] | undefined;
-  readonly #patterns: readonly string[] | undefined;
   constructor(options: {
+    stream: WebStream;
     inputs: readonly string[];
     pollIntervalMs: number;
-    include?: readonly string[];
   }) {
     super();
+    this.#stream = options.stream;
     this.#inputs = z
       .array(z.url({ protocol: /^https?$/ }))
       .min(1)
@@ -144,16 +90,48 @@ export class WebSource extends Source {
       .positive()
       .max(2 ** 31 - 1)
       .parse(options.pollIntervalMs);
-    this.#patterns = options.include?.slice();
-    this.#include = this.#patterns?.map((pattern) => new URLPattern(pattern));
+    const properties = {
+      ...provenance,
+      ...options.stream.extractor.properties,
+    };
+    this.catalog = new Catalog([
+      new Stream({
+        name: options.stream.name,
+        jsonSchema: {
+          type: 'object',
+          description:
+            'Records extracted from the pages crawled for each chosen input. Incremental scans retain records absent from later listings.',
+          properties,
+          required: Object.keys(properties),
+        },
+        primaryKey: ['inputUrl', ...options.stream.primaryKey],
+        partitionKey: ['inputUrl'],
+        supportedSyncModes: ['full_refresh', 'incremental'],
+        sourceDefinedCursor: true,
+      }),
+    ]);
   }
   coverage() {
+    const { include } = this.#stream;
     return {
       description:
-        'Articles from chosen websites and feeds matching the configured URL patterns; listing disappearance does not imply deletion.',
+        'Records extracted from the pages crawled from chosen websites and feeds that match the configured URL patterns; listing disappearance does not imply deletion.',
       selection: {
         inputs: this.#inputs,
-        ...(this.#patterns === undefined ? {} : { include: this.#patterns }),
+        ...(include === undefined
+          ? {}
+          : {
+              include: include.map((pattern) => ({
+                protocol: pattern.protocol,
+                username: pattern.username,
+                password: pattern.password,
+                hostname: pattern.hostname,
+                port: pattern.port,
+                pathname: pattern.pathname,
+                search: pattern.search,
+                hash: pattern.hash,
+              })),
+            }),
       },
     };
   }
@@ -191,31 +169,24 @@ export class WebSource extends Source {
     let diff: unknown = previous.diff;
     await using client = await webHttp(signal);
     const { http, signal: requestSignal } = client;
-    const article = new WebArticle(
-      [new MarkdownExtraction(), new HTMLExtraction()],
-      http,
-    );
+    const run = this.#stream.extractor.open(http);
     const crawler = new WebCrawler(
       http.extend({
         hooks: {
           beforeRequest: [
             (options) => {
-              if (options.context.page === true)
-                options.headers.accept = article.accept;
+              if (options.context.page === true && run.accept !== null)
+                options.headers.accept = run.accept;
             },
           ],
         },
       }),
-      [
-        new ListingReader(),
-        new ArchiveReader(),
-        new LinkReader({ maxDepth: 3, maxPages: 100 }),
-      ],
+      this.#stream.readers,
     );
     // Every run, fresh or resumed, tries the saved failures again and collects its own.
     const options = {
       signal: requestSignal,
-      include: this.#include,
+      include: this.#stream.include,
       pages: previous.retry,
     };
     const crawl =
@@ -257,46 +228,36 @@ export class WebSource extends Source {
         continue;
       }
       try {
-        const download = await article.read(entry.response, requestSignal);
+        const output = await run
+          .read(entry.response, requestSignal)
+          .catch(pageFailure);
         for await (const message of diffGroupedSnapshot(
           configuration,
           [
             {
               key: page.url,
               fingerprint:
-                download.fingerprint === null
+                output.fingerprint === null
                   ? null
                   : hash(
                       'sha256',
                       JSON.stringify([
-                        download.fingerprint,
+                        output.fingerprint,
                         page.listingUrl,
                         page.lastModified,
                       ]),
                     ),
               async *records() {
-                const extracted = await download.extract();
+                const records = await output.records().catch(pageFailure);
                 yield* validateRecords(
                   configuration.stream,
-                  extracted === null
-                    ? []
-                    : [
-                        {
-                          ...extracted,
-                          inputUrl,
-                          pageUrl: page.url,
-                          listingUrl: page.listingUrl,
-                          lastModified: page.lastModified,
-                          // Readability's public result permits undefined metadata; stream cells use null.
-                          title: extracted.title ?? null,
-                          byline: extracted.byline ?? null,
-                          publishedTime: extracted.publishedTime ?? null,
-                          excerpt: extracted.excerpt ?? null,
-                          siteName: extracted.siteName ?? null,
-                          lang: extracted.lang ?? null,
-                          dir: extracted.dir ?? null,
-                        },
-                      ],
+                  records.map((record) => ({
+                    ...record,
+                    inputUrl,
+                    pageUrl: page.url,
+                    listingUrl: page.listingUrl,
+                    lastModified: page.lastModified,
+                  })),
                   'Web',
                 );
               },
@@ -312,8 +273,8 @@ export class WebSource extends Source {
         }
       } catch (error) {
         requestSignal.throwIfAborted();
-        if (!(error instanceof ArticleError)) throw error;
-        errors.push(error);
+        if (!(error instanceof PageFailure)) throw error;
+        errors.push(error.failure);
         retry.set(page.url, page);
         yield {
           type: 'STATE',
