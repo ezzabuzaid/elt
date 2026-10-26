@@ -10,29 +10,36 @@ import {
 
 const listingPath = new URLPattern({ pathname: '/:lang/search/:id(\\d+)' });
 
+// The listing object's image. Product listings (Pets, Fashion) had no datePublished live on 2026-10-26.
+const image = z.object({
+  contentUrl: z.url(),
+  contentLocation: z.string(),
+  datePublished: z.string().optional(),
+});
+
 // The schema.org object a listing page describes its listing with; the page also embeds Organization, BreadcrumbList and FAQPage objects.
-const listingSchema = z.object({
+// Live on 2026-10-26 the shapes were Motorcycle, Product, Residence and Service; Residence keeps its image under photo.
+const fields = {
   '@type': z.string(),
   name: z.string(),
-  sku: z.number().int(),
-  description: z.string(),
-  image: z.object({
-    contentUrl: z.url(),
-    contentLocation: z.string().optional(),
-    datePublished: z.string().optional(),
-  }),
+  url: z.url(),
+  // Residence listings (Property) had no description live on 2026-10-26.
+  description: z.string().optional(),
+  // Product, Residence and Service listings had no itemCondition live on 2026-10-26.
   itemCondition: z.string().optional(),
-  offers: z
-    .object({
-      price: z
-        .string()
-        .regex(/^\d+(?:\.\d+)?$/)
-        .transform(Number),
-      priceCurrency: z.string().optional(),
-      availability: z.string().optional(),
-    })
-    .optional(),
-});
+  offers: z.object({
+    price: z
+      .string()
+      .regex(/^\d+(?:\.\d+)?$/)
+      .transform(Number),
+    priceCurrency: z.string(),
+    availability: z.string(),
+  }),
+};
+const listingSchema = z.union([
+  z.object({ ...fields, image }),
+  z.object({ ...fields, photo: image }),
+]);
 
 const text = { type: 'string' } as const;
 const nullableText = { type: ['string', 'null'] } as const;
@@ -42,7 +49,10 @@ export class OpenSooqExtractor extends RecordExtractor {
   readonly properties = {
     id: { ...text, description: 'Listing id, the number in the listing URL.' },
     title: { ...text, description: 'Listing title.' },
-    description: { ...text, description: 'Listing description.' },
+    description: {
+      ...nullableText,
+      description: 'Listing description; null when the listing has none.',
+    },
     url: {
       ...text,
       description: 'Final HTTP response URL of the listing page.',
@@ -51,18 +61,15 @@ export class OpenSooqExtractor extends RecordExtractor {
       ...text,
       description: 'schema.org type of the listed item, such as Motorcycle.',
     },
-    price: {
-      type: ['number', 'null'],
-      description:
-        'Asking price in currency; null when the listing has no offer.',
-    },
+    price: { type: 'number', description: 'Asking price in currency.' },
     currency: {
-      ...nullableText,
+      ...text,
       description: 'ISO 4217 currency code of the price.',
     },
     location: {
-      ...nullableText,
-      description: 'Listing location as given, such as "Amman, Jordan".',
+      ...text,
+      description:
+        'Listing location as the image gives it, such as "Amman, Jordan".',
     },
     imageUrls: {
       type: 'array',
@@ -72,17 +79,17 @@ export class OpenSooqExtractor extends RecordExtractor {
     condition: {
       ...nullableText,
       description:
-        'schema.org item condition URL, such as https://schema.org/NewCondition.',
+        'schema.org item condition URL, such as https://schema.org/NewCondition; null when the listing has none.',
     },
     availability: {
-      ...nullableText,
+      ...text,
       description:
         'schema.org availability URL, such as https://schema.org/InStock.',
     },
     publishedAt: {
       ...nullableText,
       description:
-        'Publication date as the page gives it (day-month-year), without conversion.',
+        'Publication date as the image gives it (day-month-year), without conversion; null when the image has none.',
     },
   } as const;
 
@@ -97,40 +104,45 @@ export class OpenSooqExtractor extends RecordExtractor {
           url: response.url,
           contentType: response.headers['content-type'],
         });
-        let found: unknown;
+        let objects: unknown[];
         try {
-          found = [
+          objects = [
             ...dom.window.document.querySelectorAll(
               'script[type="application/ld+json"]',
             ),
-          ]
-            .flatMap((script): unknown => JSON.parse(script.textContent))
-            .find(
-              (value) =>
-                typeof value === 'object' &&
-                value !== null &&
-                'sku' in value &&
-                value.sku === Number(id),
-            );
+          ].flatMap((script): unknown => JSON.parse(script.textContent));
         } finally {
           dom.window.close();
         }
+        // The listing object is the one whose url is this listing's path; its url is http while the page is https.
+        const found = objects.find(
+          (value) =>
+            typeof value === 'object' &&
+            value !== null &&
+            'url' in value &&
+            typeof value.url === 'string' &&
+            listingPath.exec(value.url)?.pathname.groups.id === id,
+        );
         if (found === undefined)
-          return { fingerprint: null, records: async () => [] };
+          throw new Error(
+            `${response.url} has no JSON-LD object whose url is its listing path`,
+          );
         const listing = listingSchema.parse(found);
+        const { contentUrl, contentLocation, datePublished } =
+          'image' in listing ? listing.image : listing.photo;
         const record = {
-          id: String(listing.sku),
+          id,
           title: listing.name,
-          description: listing.description,
+          description: listing.description ?? null,
           url: response.url,
           type: listing['@type'],
-          price: listing.offers?.price ?? null,
-          currency: listing.offers?.priceCurrency ?? null,
-          location: listing.image.contentLocation ?? null,
-          imageUrls: [listing.image.contentUrl],
+          price: listing.offers.price,
+          currency: listing.offers.priceCurrency,
+          location: contentLocation,
+          imageUrls: [contentUrl],
           condition: listing.itemCondition ?? null,
-          availability: listing.offers?.availability ?? null,
-          publishedAt: listing.image.datePublished ?? null,
+          availability: listing.offers.availability,
+          publishedAt: datePublished ?? null,
         };
         return {
           // From the listing's data and the URL it is stored under, so ads and timestamps elsewhere in the page are no change.
