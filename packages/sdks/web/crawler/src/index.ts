@@ -1,6 +1,7 @@
 export { ArchiveReader } from './archive-reader.ts';
 export { LinkReader } from './link-reader.ts';
 export { ListingReader } from './listing-reader.ts';
+export { PaginationReader } from './pagination-reader.ts';
 export {
   Reader,
   type CrawlRequest,
