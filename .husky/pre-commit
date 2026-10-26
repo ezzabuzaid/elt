@@ -1,8 +1,1 @@
-#!/usr/bin/env sh
-set -e
-
-# Checks only what the commit holds and changes nothing: concurrent sessions
-# edit this checkout, so formatting, syncing or staging files here would
-# commit their work. Keeping tsconfig references in sync is the committer's
-# job (`nx sync`); Nx refuses every task while the workspace is out of sync.
-node .husky/check-staged-format.mjs
+pre-commit.ts
