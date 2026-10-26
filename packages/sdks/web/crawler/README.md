@@ -9,12 +9,14 @@ import {
   ArchiveReader,
   LinkReader,
   ListingReader,
+  PaginationReader,
   WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
 const crawler = new WebCrawler(got.extend({ timeout: { request: 30_000 } }), [
   new ListingReader(),
   new ArchiveReader(),
+  new PaginationReader(),
   new LinkReader({ maxDepth: 3, maxPages: 100 }),
 ]);
 const crawl = crawler.run(['https://example.com/news'], {
@@ -35,6 +37,7 @@ for await (const entry of crawl) {
 - **Starting URLs** are downloaded and read, but not handed back. A failed starting URL is an error.
 - **Pages** are URLs a reader marks as pages. The crawl hands back a page with its Got response when the page matches `include`, or always when you omit `include`. The engine downloads a page that does not match only when a reader `wants` it.
 - **Documents** are URLs a reader reads itself, such as sitemaps.
+- **Lists** are HTML pages that list pages, such as archives. Only the reader that finds a URL knows it is a list, so it says so on its finding; the engine carries that to the request, and a reader of lists reads every request that a reader found as a list. A list can also be a page.
 - **Priorities**: every finding has one. Starting URLs and listings (`robots.txt`, sitemaps, feeds) go strictly first, so their provenance and `lastModified` reach pages before the pages download. Pages, links and archive backfill then share the downloads by smooth weighted round-robin, 4:2:1: the deterministic form of the biased front-queue selector in a crawl frontier (Introduction to Information Retrieval §20.2.3). Backfill never blocks new pages and still progresses. A URL found again with a more urgent priority moves up.
 - **Provenance**: `listingUrl` is the final URL of the response that first named the URL. A listing's provenance replaces a link's while the URL is pending.
 - **Hops** count ordinary links from a starting or listed page. When a URL is both a document and a page, its page findings decide its hops. `LinkReader` limits them.
@@ -47,22 +50,22 @@ for await (const entry of crawl) {
 
 ## Readers
 
-| Reader             | Reads                                                 | Finds                                                                                                                                                                                                                                                              |
-| ------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ListingReader`    | Starting pages, `robots.txt`, sitemaps and feeds      | Feed and sitemap declarations in HTML and HTTP `Link` headers, labeled feed anchors, `robots.txt` sitemaps, a `/sitemap.xml` guess, and the pages, child sitemaps and pagination of XML url sets and indexes, text lists, RSS 2.0, Atom, RSS 1.0/RDF and JSON Feed |
-| `ArchiveReader`    | Every HTML page                                       | Archive links (`rel="archives"`, `next`, `prev`, archive paths, year and month indexes, labels such as "Older posts"), and the pages an archive or a starting archive lists outside `nav`, `footer` and navigation landmarks                                       |
-| `PaginationReader` | Starting pages and the pages their pagination reaches | Pagination links (`rel="next"`, `prev`, `next-archive`, `prev-archive`) in link elements, anchors and HTTP `Link` headers, and the pages each of these pages lists outside `nav`, `footer` and navigation landmarks                                                |
-| `LinkReader`       | HTML and Markdown pages                               | Anchors and Markdown links on the starting pages' origins                                                                                                                                                                                                          |
+| Reader             | Reads                                            | Finds                                                                                                                                                                                                                                                              |
+| ------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ListingReader`    | Starting pages, `robots.txt`, sitemaps and feeds | Feed and sitemap declarations in HTML and HTTP `Link` headers, labeled feed anchors, `robots.txt` sitemaps, a `/sitemap.xml` guess, and the pages, child sitemaps and pagination of XML url sets and indexes, text lists, RSS 2.0, Atom, RSS 1.0/RDF and JSON Feed |
+| `ArchiveReader`    | Every HTML page                                  | Archives that the page links, as lists: `rel="archives"`, archive paths, year and month indexes, and labels such as "Older posts"                                                                                                                                  |
+| `PaginationReader` | Starting pages and lists                         | The pages each list links outside `nav`, `footer` and navigation landmarks, and its pagination (`rel="next"`, `prev`, `next-archive`, `prev-archive` in link elements, anchors and HTTP `Link` headers), as lists                                                  |
+| `LinkReader`       | HTML and Markdown pages                          | Anchors and Markdown links on the starting pages' origins                                                                                                                                                                                                          |
 
 `ListingReader` documents have the `listing` priority and the pages they list `page`. `ArchiveReader` archives and `PaginationReader` pagination are `backfill`, and the pages they list `page`. `LinkReader` links are `link`.
 
 `ListingReader` reads every listing completely, wherever it was declared. On a page that was not a starting page, a cross-origin feed needs an explicit declaration or Feedscout's feed URL hints. A declared listing that fails or is malformed is an error. A possible feed, such as a labeled anchor or a generic JSON alternate, is read only when Feedscout's `defaultExtractFn` validates it. A missing `robots.txt` is ordinary. The `/sitemap.xml` guess happens when `robots.txt` lists no sitemap, the starting page declares no listing, and no listing was read before it. A missing or unreadable guess, such as a soft 404 page, is ignored.
 
-`ArchiveReader` follows archives completely; discovered archive pages that return 404 or 410 are skipped. Calendar months match 1–12 or English month names from the platform's date formatter. A starting page is an archive when it links archives or its path names one.
+`ArchiveReader` guesses archives on every HTML page and finds them as lists; it lists no pages and follows no pagination, so give `PaginationReader` with it. Discovered archives that return 404 or 410 are skipped. Calendar months match 1–12 or English month names from the platform's date formatter.
 
-`PaginationReader` reads paginated lists, such as the categories of a marketplace, and guesses nothing. It reads only the starting pages and the pages that their pagination reaches, so the links of a listed page, and paths that look like archives, do not change the crawl. A starting page without pagination still lists its pages. A pagination page that fails is an error. Use it in place of `ArchiveReader` when the site's paths only look like archives: OpenSooq's year filters, such as `/en/cars/motorcycles/2024`, end in a year.
+`PaginationReader` reads lists and guesses nothing. It reads the starting pages, the URLs another reader found as lists, such as `ArchiveReader`'s archives, and the pages that their pagination reaches. It hands back the pages each list links and follows the list's pagination completely; the links of other pages do not change the crawl. A list without pagination still lists its pages. A listed page that returns 404 or 410 is skipped, such as a sold listing that a category still links; a pagination page that fails is an error. Use it alone when the site's paths only look like archives: OpenSooq's year filters, such as `/en/cars/motorcycles/2024`, end in a year.
 
-`LinkReader({ maxDepth, maxPages })` takes non-negative safe integers. Pages at zero hops always contribute links: starting pages, and the pages and archives that a listing or a starting page names. Any other page contributes links only when `LinkReader` admits it: within `maxDepth` hops, on a starting origin, and within `maxPages` admitted pages. Admission happens before the download, so `maxPages` also counts admitted pages that fail or are not HTML. A linked page that returns 404 or 410 is skipped.
+`LinkReader({ maxDepth, maxPages })` takes non-negative safe integers. Pages at zero hops always contribute links: starting pages, and the pages and lists that a listing or a list at zero hops names. Any other page contributes links only when `LinkReader` admits it: within `maxDepth` hops, on a starting origin, and within `maxPages` admitted pages. Admission happens before the download, so `maxPages` also counts admitted pages that fail or are not HTML. A linked page that returns 404 or 410 is skipped.
 
 Readers decode HTML and Markdown pages by their byte order mark, their `Content-Type` charset or their `<meta charset>`, in that order (the WHATWG encoding sniffing algorithm, through `html-encoding-sniffer`). An unlabeled page is read as UTF-8; bytes that do not decode become U+FFFD rather than failing the page. Listings are decoded as UTF-8, as the sitemaps protocol requires.
 

@@ -45,6 +45,8 @@ const entrySchema = z.object({
   page: z.boolean(),
   // Some reader reads it as a document.
   document: z.boolean(),
+  // Some reader found it as a list of pages.
+  list: z.boolean(),
   priority: z.enum(priorities),
   // Its provenance came from a link, so a listing's provenance replaces it.
   linked: z.boolean(),
@@ -103,6 +105,7 @@ export class WebCrawler {
             start: true,
             page: false,
             document: true,
+            list: false,
             priority: 'listing' as const,
             linked: false,
             tolerate: [],
@@ -144,6 +147,7 @@ export class WebCrawler {
       start: false,
       page: true,
       document: false,
+      list: false,
       priority: 'page',
       linked: false,
       tolerate: [],
@@ -368,6 +372,7 @@ class CrawlRun implements Crawl {
       start: false,
       page: finding.page,
       document: !finding.page,
+      list: finding.list,
       priority: finding.priority,
       linked: finding.linked,
       tolerate: finding.tolerate,
@@ -394,6 +399,7 @@ class CrawlRun implements Crawl {
     }
     pending.start ||= next.start;
     pending.document ||= next.document;
+    pending.list ||= next.list;
     // The most urgent finding decides when the URL downloads.
     if (
       priorities.indexOf(next.priority) < priorities.indexOf(pending.priority)

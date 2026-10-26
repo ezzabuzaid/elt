@@ -26,6 +26,7 @@ import {
   ArchiveReader,
   LinkReader,
   ListingReader,
+  PaginationReader,
 } from '@workspace/sdk-web-crawler';
 
 import { ArticleExtractor } from './article-extractor.ts';
@@ -209,6 +210,7 @@ function articles(include?: readonly string[]) {
     readers: [
       new ListingReader(),
       new ArchiveReader(),
+      new PaginationReader(),
       new LinkReader({ maxDepth: 3, maxPages: 100 }),
     ],
     include: include?.map((pattern) => new URLPattern(pattern)),

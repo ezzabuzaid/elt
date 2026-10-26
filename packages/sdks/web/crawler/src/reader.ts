@@ -20,6 +20,8 @@ export type CrawlRequest = PageLocation & {
   readonly start: boolean;
   /** The caller gets this URL back as a page. */
   readonly page: boolean;
+  /** Some reader found the URL as a list of pages, such as an archive. */
+  readonly list: boolean;
 };
 
 /**
@@ -35,6 +37,11 @@ export type Finding<Note> = {
   readonly lastModified: string | null;
   /** False for a document only a reader reads, such as a sitemap. */
   readonly page: boolean;
+  /**
+   * An HTML page that lists pages, such as an archive. Only the reader that
+   * finds the URL knows this; readers of lists read it from the request.
+   */
+  readonly list: boolean;
   /** Found through a link: one more hop, and a listing's provenance replaces it. */
   readonly linked: boolean;
   /** Failure statuses that are ordinary answers rather than errors. */

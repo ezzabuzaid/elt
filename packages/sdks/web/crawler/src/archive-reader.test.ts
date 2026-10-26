@@ -10,6 +10,7 @@ import {
   type CrawledPage,
   LinkReader,
   ListingReader,
+  PaginationReader,
   WebCrawler,
 } from './index.ts';
 
@@ -17,6 +18,7 @@ function listings() {
   return new WebCrawler(got.extend({ retry: { limit: 0 } }), [
     new ListingReader(),
     new ArchiveReader(),
+    new PaginationReader(),
   ]);
 }
 
@@ -80,6 +82,12 @@ test('website archives discover older posts beyond the feed, following paginatio
       location,
     ),
     [
+      // The starting page is a list, and an archive it links is one of its pages too.
+      {
+        url: `${upstream.origin}/archive/`,
+        lastModified: null,
+        listingUrl: `${upstream.origin}/`,
+      },
       {
         url: `${upstream.origin}/recent`,
         lastModified: null,
@@ -151,6 +159,12 @@ test('dead discovered archive links do not discard history, while a dead startin
       (entry) => ('error' in entry ? entry.error.url : location(entry)),
     ),
     [
+      // The starting page lists its archives; the dead ones are skipped as pages too.
+      {
+        url: `${upstream.origin}/2001/`,
+        lastModified: null,
+        listingUrl: `${upstream.origin}/`,
+      },
       {
         url: `${upstream.origin}/old-story`,
         lastModified: null,
@@ -186,6 +200,12 @@ test('advertised content indexes work without archive-shaped URLs', async () => 
       (entry) => ('error' in entry ? entry.error.url : location(entry)),
     ),
     [
+      // The starting page is a list, and the content index it links is one of its pages too.
+      {
+        url: `${upstream.origin}/writing`,
+        lastModified: null,
+        listingUrl: `${upstream.origin}/`,
+      },
       {
         url: `${upstream.origin}/early-report`,
         lastModified: null,
@@ -296,6 +316,10 @@ test('a self-linked archive and calendar indexes expose the full history', async
   assert.deepEqual(
     pages.map((page) => location(page).url).sort(),
     [
+      // Lists hand back the archives they link as pages too.
+      '/2001/',
+      '/2001/02/',
+      '/2001/Jan/',
       '/2001/02/03/second/',
       '/2001/Jan/2/first/',
       '/2001/essays/',
@@ -338,6 +362,7 @@ test('archives found on a crawled page are followed, and keep that page as prove
       new WebCrawler(got.extend({ retry: { limit: 0 } }), [
         new ListingReader(),
         new ArchiveReader(),
+        new PaginationReader(),
         new LinkReader({ maxDepth: 3, maxPages: 100 }),
       ]),
       upstream.origin,
@@ -417,13 +442,13 @@ test('links nobody downloads do not use up turns, so listings are not starved be
       );
     else response.end('<p>A listing.</p>');
   });
-  for await (const entry of new WebCrawler(got, [new ArchiveReader()]).run(
-    [`${upstream.origin}/m`],
-    {
-      signal: AbortSignal.timeout(5000),
-      include: [new URLPattern({ pathname: '/search/*' })],
-    },
-  ))
+  for await (const entry of new WebCrawler(got, [
+    new ArchiveReader(),
+    new PaginationReader(),
+  ]).run([`${upstream.origin}/m`], {
+    signal: AbortSignal.timeout(5000),
+    include: [new URLPattern({ pathname: '/search/*' })],
+  }))
     assert.ok(!('error' in entry));
   // Without the fix, the 40 skipped tags use 40 page turns, so ten archive pages download first.
   assert.ok(
@@ -525,10 +550,11 @@ test('archive backfill keeps progressing while many listed pages wait', async ()
     if (!('progress' in entry)) handed.push(location(entry).url);
   assert.equal(handed.length, 30);
   const waiting = requests.slice(0, requests.lastIndexOf('/new/30'));
-  // Pages weigh 4 and backfill 1: one archive page in every five downloads.
+  // Pages weigh 4 and backfill 1: one archive page in every five downloads,
+  // plus /archive/1, which the starting page also lists as a page.
   assert.equal(
     waiting.filter((url) => url.startsWith('/archive/')).length,
-    7,
+    8,
     requests.join(' '),
   );
   assert.deepEqual(
@@ -545,7 +571,8 @@ test('a URL found as an archive and then listed as a page downloads in the page 
     response.setHeader('content-type', 'text/html');
     if (request.url === '/')
       response.end(
-        `<link rel="alternate" type="application/rss+xml" href="/feed.xml"><main>${Array.from({ length: 20 }, (_, index) => `<a href="/${2001 + index}/">${2001 + index}</a>`).join('')}</main>`,
+        // The years sit in navigation, so the starting page, a list, does not list them as pages.
+        `<link rel="alternate" type="application/rss+xml" href="/feed.xml"><nav>${Array.from({ length: 20 }, (_, index) => `<a href="/${2001 + index}/">${2001 + index}</a>`).join('')}</nav>`,
       );
     else if (request.url === '/feed.xml') {
       response.setHeader('content-type', 'application/rss+xml');

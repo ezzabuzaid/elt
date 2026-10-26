@@ -8,6 +8,7 @@ import got, { HTTPError, TimeoutError } from 'got';
 import {
   ArchiveReader,
   ListingReader,
+  PaginationReader,
   WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
@@ -62,6 +63,7 @@ test('chosen websites and feeds compose with extraction without merging URL vari
   const crawler = new WebCrawler(got, [
     new ListingReader(),
     new ArchiveReader(),
+    new PaginationReader(),
   ]);
   const reader = new WebArticle([new HTMLExtraction()], got);
   for (const input of ['/', '/feed.xml']) {

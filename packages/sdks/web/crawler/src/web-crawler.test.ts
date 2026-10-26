@@ -14,6 +14,7 @@ import {
   type CrawledPage,
   LinkReader,
   ListingReader,
+  PaginationReader,
   Reader,
   WebCrawler,
 } from './index.ts';
@@ -713,6 +714,7 @@ test('a page labeled Latin-1 in its Content-Type is handed back, and every reade
     new WebCrawler(got, [
       new ListingReader(),
       new ArchiveReader(),
+      new PaginationReader(),
       new LinkReader({ maxDepth: 2, maxPages: 10 }),
     ]).run(['https://site.test/'], { signal: AbortSignal.timeout(5000) }),
   );

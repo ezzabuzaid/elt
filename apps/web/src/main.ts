@@ -20,6 +20,7 @@ import {
   ArchiveReader,
   LinkReader,
   ListingReader,
+  PaginationReader,
 } from '@workspace/sdk-web-crawler';
 import { ArticleExtractor } from '@workspace/source-web-pages/article-extractor';
 import { WebSource } from '@workspace/source-web-pages/web-source';
@@ -64,6 +65,7 @@ const pipeline = async () => {
       readers: [
         new ListingReader(),
         new ArchiveReader(),
+        new PaginationReader(),
         new LinkReader({ maxDepth: 3, maxPages: 100 }),
       ],
       include:

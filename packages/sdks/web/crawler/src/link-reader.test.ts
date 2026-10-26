@@ -13,6 +13,7 @@ import {
   type CrawledPage,
   LinkReader,
   ListingReader,
+  PaginationReader,
   WebCrawler,
 } from './index.ts';
 
@@ -133,6 +134,7 @@ test('feed-only starts do not turn their articles into new link roots', async ()
     new WebCrawler(got, [
       new ListingReader(),
       new ArchiveReader(),
+      new PaginationReader(),
       new LinkReader({ maxDepth: 3, maxPages: 100 }),
     ]).run([`${upstream.origin}/feed`], { signal: AbortSignal.timeout(5000) }),
   );
@@ -162,6 +164,7 @@ test('archive pages contribute their links, and declarations with non-HTTP URLs 
     new WebCrawler(got.extend({ retry: { limit: 0 } }), [
       new ListingReader(),
       new ArchiveReader(),
+      new PaginationReader(),
       new LinkReader({ maxDepth: 3, maxPages: 100 }),
     ]).run([upstream.origin], { signal: AbortSignal.timeout(5000) }),
   );

@@ -89,6 +89,7 @@ export class LinkReader extends Reader<never, State> {
       url,
       lastModified: null,
       page: true,
+      list: false,
       linked: true,
       tolerate: [404, 410],
       note: null,

@@ -5,8 +5,11 @@ import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
 import {
+  ArchiveReader,
   type CrawlFailure,
   type CrawledPage,
+  LinkReader,
+  ListingReader,
   PaginationReader,
   WebCrawler,
 } from './index.ts';
@@ -18,9 +21,14 @@ function pagination() {
 }
 
 // Progress entries only mark URLs read for the readers; these tests assert pages and failures.
-async function crawl(crawler: WebCrawler, start: string, signal: AbortSignal) {
+async function crawl(
+  crawler: WebCrawler,
+  start: string,
+  signal: AbortSignal,
+  include?: URLPattern[],
+) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
-  for await (const entry of crawler.run([start], { signal }))
+  for await (const entry of crawler.run([start], { signal, include }))
     if (!('progress' in entry)) entries.push(entry);
   return entries;
 }
@@ -32,13 +40,56 @@ function location(entry: CrawledPage | CrawlFailure) {
 }
 
 test('a failing page of the pagination is handed out as a failure, and the pages listed before it are kept', async () => {
+  // A declared next page that is gone is a failure too, unlike a listed page.
+  for (const status of [500, 404]) {
+    await using upstream = await new HttpServer().start((request, response) => {
+      response.setHeader('content-type', 'text/html');
+      if (request.url === '/category')
+        response.end(
+          '<head><link rel="next" href="/category?page=2"></head><main><a href="/item/1">One</a></main>',
+        );
+      else if (request.url === '/category?page=2')
+        response.writeHead(status).end();
+      else response.end('<p>An item.</p>');
+    });
+
+    const entries = await crawl(
+      pagination(),
+      `${upstream.origin}/category`,
+      AbortSignal.timeout(5000),
+    );
+
+    assert.deepEqual(
+      entries.flatMap((entry) =>
+        'error' in entry ? [{ url: entry.url, page: entry.page }] : [],
+      ),
+      [{ url: `${upstream.origin}/category?page=2`, page: false }],
+      String(status),
+    );
+    assert.deepEqual(
+      entries.filter((entry) => !('error' in entry)).map(location),
+      [
+        {
+          url: `${upstream.origin}/item/1`,
+          lastModified: null,
+          listingUrl: `${upstream.origin}/category`,
+        },
+      ],
+    );
+  }
+});
+
+test('a listed page that is gone is skipped, not a failure', async () => {
+  const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
+    requests.push(request.url ?? '');
     response.setHeader('content-type', 'text/html');
     if (request.url === '/category')
       response.end(
-        '<head><link rel="next" href="/category?page=2"></head><main><a href="/item/1">One</a></main>',
+        '<main><a href="/item/1">One</a><a href="/item/sold">Sold</a><a href="/item/removed">Removed</a></main>',
       );
-    else if (request.url === '/category?page=2') response.writeHead(500).end();
+    else if (request.url === '/item/sold') response.writeHead(404).end();
+    else if (request.url === '/item/removed') response.writeHead(410).end();
     else response.end('<p>An item.</p>');
   });
 
@@ -48,21 +99,123 @@ test('a failing page of the pagination is handed out as a failure, and the pages
     AbortSignal.timeout(5000),
   );
 
-  assert.deepEqual(
-    entries.flatMap((entry) =>
-      'error' in entry ? [{ url: entry.url, page: entry.page }] : [],
-    ),
-    [{ url: `${upstream.origin}/category?page=2`, page: false }],
+  assert.deepEqual(entries.map(location), [
+    {
+      url: `${upstream.origin}/item/1`,
+      lastModified: null,
+      listingUrl: `${upstream.origin}/category`,
+    },
+  ]);
+  assert.ok(requests.includes('/item/sold'), requests.join(' '));
+  assert.ok(requests.includes('/item/removed'), requests.join(' '));
+});
+
+test('a /sitemap.xml guess answered by a soft 404 page is not read as a list', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    requests.push(request.url ?? '');
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/')
+      response.end('<main><a href="/news/1">News</a></main>');
+    else if (request.url === '/robots.txt') response.writeHead(404).end();
+    // The site's page template, answered with 200 for a missing sitemap.
+    else if (request.url === '/sitemap.xml')
+      response.end(
+        '<main><h1>Page not found</h1><a href="/offers">Offers</a></main>',
+      );
+    else response.end('<p>A page.</p>');
+  });
+
+  const pages = await crawl(
+    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
+      new ListingReader(),
+      new PaginationReader(),
+    ]),
+    `${upstream.origin}/`,
+    AbortSignal.timeout(5000),
   );
+
   assert.deepEqual(
-    entries.filter((entry) => !('error' in entry)).map(location),
-    [
-      {
-        url: `${upstream.origin}/item/1`,
+    pages.map(location).map((page) => page.url),
+    [`${upstream.origin}/news/1`],
+  );
+  assert.ok(requests.includes('/sitemap.xml'), requests.join(' '));
+  assert.ok(!requests.includes('/offers'), requests.join(' '));
+});
+
+test('an archive that ArchiveReader finds and that fits on one page hands back the posts it lists, whatever the order of the readers', async () => {
+  // In the second order, PaginationReader finds /2024/ as a page before ArchiveReader finds it as a list.
+  for (const readers of [
+    [new ArchiveReader(), new PaginationReader()],
+    [new PaginationReader(), new ArchiveReader()],
+  ]) {
+    await using upstream = await new HttpServer().start((request, response) => {
+      response.setHeader('content-type', 'text/html');
+      if (request.url === '/') response.end('<a href="/2024/">2024</a>');
+      // A year archive without pagination.
+      else if (request.url === '/2024/')
+        response.end(
+          '<main><a href="/posts/a">A</a><a href="/posts/b">B</a></main>',
+        );
+      else response.end('<p>A post.</p>');
+    });
+
+    const pages = await crawl(
+      new WebCrawler(got.extend({ retry: { limit: 0 } }), readers),
+      `${upstream.origin}/`,
+      AbortSignal.timeout(5000),
+      [new URLPattern({ pathname: '/posts/*' })],
+    );
+
+    assert.deepEqual(
+      pages.map(location),
+      ['/posts/a', '/posts/b'].map((path) => ({
+        url: `${upstream.origin}${path}`,
         lastModified: null,
-        listingUrl: `${upstream.origin}/category`,
-      },
-    ],
+        listingUrl: `${upstream.origin}/2024/`,
+      })),
+      readers.map((reader) => reader.constructor.name).join(', '),
+    );
+  }
+});
+
+test('an archive that a later page of a list declares is no hop, so link limits count from the list', async () => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/category')
+      response.end(
+        '<head><link rel="next" href="/category?page=2"></head><main><a href="/item/1">One</a></main>',
+      );
+    else if (request.url === '/category?page=2')
+      response.end(
+        '<head><link rel="archives" href="/2024/"></head><main><a href="/item/2">Two</a></main>',
+      );
+    // Only LinkReader reads links in navigation, and only on pages within its depth.
+    else if (request.url === '/2024/')
+      response.end(
+        '<nav><a href="/about">About</a></nav><main><a href="/posts/a">A</a></main>',
+      );
+    else response.end('<p>A page.</p>');
+  });
+
+  const pages = await crawl(
+    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
+      new PaginationReader(),
+      new ArchiveReader(),
+      new LinkReader({ maxDepth: 0, maxPages: 100 }),
+    ]),
+    `${upstream.origin}/category`,
+    AbortSignal.timeout(5000),
+  );
+
+  assert.deepEqual(
+    pages
+      .map(location)
+      .map((page) => page.url)
+      .toSorted(),
+    ['/about', '/item/1', '/item/2', '/posts/a'].map(
+      (path) => `${upstream.origin}${path}`,
+    ),
   );
 });
 

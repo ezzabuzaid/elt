@@ -383,12 +383,14 @@ import {
   ArchiveReader,
   LinkReader,
   ListingReader,
+  PaginationReader,
   WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
 const crawler = new WebCrawler(got, [
   new ListingReader(),
   new ArchiveReader(),
+  new PaginationReader(),
   new LinkReader({ maxDepth: 3, maxPages: 100 }),
 ]);
 for await (const entry of crawler.run(['https://www.anthropic.com/'], {

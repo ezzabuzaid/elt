@@ -12,16 +12,14 @@ import {
 } from './reader.ts';
 import { webUrl } from './web-url.ts';
 
-const noteSchema = z.object({ kind: z.literal('pagination') });
-type Note = z.infer<typeof noteSchema>;
-
 /**
- * Paginated lists, such as categories: the starting pages, the pages their
- * declared pagination reaches, and the pages each of them lists. It guesses
- * nothing from paths or labels, and reads no other page.
+ * Lists of pages, such as categories and archives: the starting pages, the
+ * pages a reader found as lists, and the pages their declared pagination
+ * reaches. It hands back the pages each list links, follows the list's
+ * pagination, and reads no other page.
  */
-export class PaginationReader extends Reader<Note, null> {
-  readonly notes = noteSchema;
+export class PaginationReader extends Reader<null, null> {
+  readonly notes = z.null();
   readonly states = z.null();
 
   open() {
@@ -37,11 +35,10 @@ export class PaginationReader extends Reader<Note, null> {
     headers,
     type,
     request,
-    note,
-  }: Visit<Note>): readonly Finding<Note>[] {
-    if (!request.start && note === null) return [];
+  }: Visit<null>): readonly Finding<null>[] {
+    if (!request.start && !request.list) return [];
     if (response.statusCode !== 200 || !isHtml(type)) return [];
-    const { pagination, pages } = readPagination(
+    const { pagination, pages } = readList(
       pageText(response),
       response.url,
       headers,
@@ -51,8 +48,10 @@ export class PaginationReader extends Reader<Note, null> {
         url,
         lastModified: null,
         page: true,
+        list: false,
         linked: false,
-        tolerate: [],
+        // An item that a list still links but that is gone, such as a sold listing, is an ordinary answer.
+        tolerate: [404, 410],
         note: null,
         priority: 'page' as const,
       })),
@@ -60,9 +59,10 @@ export class PaginationReader extends Reader<Note, null> {
         url,
         lastModified: null,
         page: false,
+        list: true,
         linked: false,
         tolerate: [],
-        note: { kind: 'pagination' as const },
+        note: null,
         // Later pages are backfill: they share downloads with the pages already listed instead of going first.
         priority: 'backfill' as const,
       })),
@@ -70,8 +70,7 @@ export class PaginationReader extends Reader<Note, null> {
   }
 }
 
-// Copied from readArchive in archive-reader.ts without its archive guesses (docs/copied-code.md).
-function readPagination(html: string, url: string, headers: Headers) {
+function readList(html: string, url: string, headers: Headers) {
   const dom = new JSDOM(html, { url });
   try {
     const document = dom.window.document;

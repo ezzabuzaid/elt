@@ -7,6 +7,7 @@ import got from 'got';
 import {
   ArchiveReader,
   ListingReader,
+  PaginationReader,
   WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
@@ -60,10 +61,11 @@ test('a discovered article retains its introductory summary before the main body
     const signal = AbortSignal.timeout(5000);
     const pages = (
       await Array.fromAsync(
-        new WebCrawler(got, [new ListingReader(), new ArchiveReader()]).run(
-          [upstream.origin],
-          { signal },
-        ),
+        new WebCrawler(got, [
+          new ListingReader(),
+          new ArchiveReader(),
+          new PaginationReader(),
+        ]).run([upstream.origin], { signal }),
       )
     )
       // Progress entries only mark documents the crawl read for its readers.
@@ -126,10 +128,11 @@ test('a feed article retains a figure caption containing a descriptive link', as
     const signal = AbortSignal.timeout(5000);
     const pages = (
       await Array.fromAsync(
-        new WebCrawler(got, [new ListingReader(), new ArchiveReader()]).run(
-          [`${upstream.origin}/feed.xml`],
-          { signal },
-        ),
+        new WebCrawler(got, [
+          new ListingReader(),
+          new ArchiveReader(),
+          new PaginationReader(),
+        ]).run([`${upstream.origin}/feed.xml`], { signal }),
       )
     )
       // Progress entries only mark documents the crawl read for its readers.
@@ -205,10 +208,11 @@ test('a feed article retains acknowledgments and an authorship disclosure after 
     const signal = AbortSignal.timeout(5000);
     const pages = (
       await Array.fromAsync(
-        new WebCrawler(got, [new ListingReader(), new ArchiveReader()]).run(
-          [`${upstream.origin}/feed.xml`],
-          { signal },
-        ),
+        new WebCrawler(got, [
+          new ListingReader(),
+          new ArchiveReader(),
+          new PaginationReader(),
+        ]).run([`${upstream.origin}/feed.xml`], { signal }),
       )
     )
       // Progress entries only mark documents the crawl read for its readers.
