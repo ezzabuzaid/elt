@@ -224,12 +224,22 @@ export class WebSource extends Source {
         : crawler.resume(previous.crawl, options);
     const retry = new Map<string, PageLocation>();
     const errors: Error[] = [];
-    const progress = () => ({
-      diff,
-      crawl: crawl.snapshot(),
-      retry: [...retry.values()],
-    });
+    let savedAt = performance.now();
+    const checkpoint = () => {
+      savedAt = performance.now();
+      return { diff, crawl: crawl.snapshot(), retry: [...retry.values()] };
+    };
     for await (const entry of crawl) {
+      if ('progress' in entry) {
+        // Listings and archives hand out no pages, so their progress is saved on an interval.
+        if (performance.now() - savedAt >= 1_000)
+          yield {
+            type: 'STATE',
+            stream: configuration.stream.name,
+            state: checkpoint(),
+          };
+        continue;
+      }
       const page = {
         url: entry.url,
         listingUrl: entry.listingUrl,
@@ -242,7 +252,7 @@ export class WebSource extends Source {
         yield {
           type: 'STATE',
           stream: configuration.stream.name,
-          state: progress(),
+          state: checkpoint(),
         };
         continue;
       }
@@ -297,7 +307,7 @@ export class WebSource extends Source {
         )) {
           if ('type' in message && message.type === 'STATE') {
             diff = message.state;
-            yield { ...message, state: progress() };
+            yield { ...message, state: checkpoint() };
           } else yield message;
         }
       } catch (error) {
@@ -308,7 +318,7 @@ export class WebSource extends Source {
         yield {
           type: 'STATE',
           stream: configuration.stream.name,
-          state: progress(),
+          state: checkpoint(),
         };
       }
     }

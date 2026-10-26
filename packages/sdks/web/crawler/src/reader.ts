@@ -19,6 +19,13 @@ export type CrawlRequest = PageLocation & {
   readonly page: boolean;
 };
 
+/**
+ * How soon the crawl downloads a finding. Listings go first; the other levels
+ * share the downloads by weight, so archive backfill never blocks new pages.
+ */
+export const priorities = ['listing', 'page', 'link', 'backfill'] as const;
+export type Priority = (typeof priorities)[number];
+
 /** One URL a reader found in a response. */
 export type Finding<Note> = {
   readonly url: string;
@@ -31,6 +38,7 @@ export type Finding<Note> = {
   readonly tolerate: readonly number[] | 'any';
   /** The finding reader's own record of why it wants the response. */
   readonly note: Note | null;
+  readonly priority: Priority;
 };
 
 export function isHtml(type: string | null) {

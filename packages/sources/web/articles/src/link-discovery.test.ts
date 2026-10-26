@@ -279,3 +279,103 @@ test('Markdown pages supply links, and feeds declared on crawled pages are read 
   assert.equal(requests.filter((url) => url === '/articles/extra').length, 1);
   assert.equal(requests.filter((url) => url === '/extra/2').length, 1);
 });
+
+test('an interruption during a long stretch of archive pages keeps the progress saved up to a second before it', async () => {
+  const requests: { url: string; at: number }[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    assert.ok(request.url);
+    requests.push({ url: request.url, at: performance.now() });
+    const archive = /^\/archive\/(\d+)$/.exec(request.url);
+    if (request.url === '/')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end('<a href="/archive/1">Archives</a>');
+    else if (archive) {
+      const number = Number(archive[1]);
+      // Each archive page is slow, so the chain is a long stretch without pages.
+      setTimeout(() => {
+        if (response.destroyed) return;
+        response
+          .writeHead(200, { 'content-type': 'text/html' })
+          .end(
+            number < 12
+              ? `<a rel="next" href="/archive/${number + 1}">Next</a>`
+              : '<main><a href="/articles/first">The first article</a></main>',
+          );
+      }, 250);
+    } else if (request.url === '/articles/first')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<article><p>The first article contains complete published research observations.</p></article>',
+        );
+    else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const source = new WebSource({
+    inputs: [upstream.origin],
+    include: [`${upstream.origin}/articles/*`],
+    pollIntervalMs: 60000,
+  });
+  const destination = new SQLiteDestination({ path: database.path }),
+    history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  const connection = new Connection({
+    name: 'web',
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({ path: checkpoints.path }),
+    steps: (await source.discover()).streams.map(
+      (stream) =>
+        new Copy(stream, destination.table(stream.name), {
+          id: 'archive-progress',
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+        }),
+    ),
+  });
+  const stop = new AbortController(),
+    reason = new Error('stop during the archive chain');
+  let stoppedAt = 0;
+  const timer = setTimeout(() => {
+    stoppedAt = performance.now();
+    stop.abort(reason);
+  }, 4000);
+  try {
+    await assert.rejects(
+      new Pipeline({ connections: [connection], history }).run({
+        signal: stop.signal,
+      }),
+      (error) => error === reason,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+  const read = requests.filter(({ url }) => url.startsWith('/archive/'));
+  // The source starts at most two requests a second, so about five archive pages are read.
+  assert.ok(read.length >= 4, `${read.length} archive pages before the stop`);
+  assert.ok(!read.some(({ url }) => url === '/archive/12'));
+  const firstRun = new Map(read.map(({ url, at }) => [url, at]));
+  requests.length = 0;
+  assert.equal(
+    (await new Pipeline({ connections: [connection], history }).run())[0]
+      ?.count,
+    1,
+  );
+  const again = requests.flatMap(({ url }) => {
+    const at = firstRun.get(url);
+    return at === undefined ? [] : [{ url, before: stoppedAt - at }];
+  });
+  assert.ok(!requests.some(({ url }) => url === '/'));
+  // Progress is saved at most once a second; the archive page in flight at the last save, up to one
+  // request slot and one slow download earlier, is read once more.
+  assert.ok(
+    again.every(({ before }) => before <= 2000),
+    JSON.stringify(again),
+  );
+  assert.deepEqual(
+    requests.filter(({ url }) => url === '/archive/12').length,
+    1,
+  );
+});

@@ -35,7 +35,7 @@ for await (const entry of crawler.run(['https://www.anthropic.com/'], {
   signal,
   include: [new URLPattern('https://www.anthropic.com/news/*')],
 })) {
-  if ('error' in entry) continue;
+  if ('error' in entry || 'progress' in entry) continue;
   const article = await (await reader.read(entry.response, signal)).extract();
   // article.content: sanitized HTML; article.markdown: Markdown
   // article.textContent: readable plain text

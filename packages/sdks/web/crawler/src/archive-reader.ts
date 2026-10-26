@@ -62,6 +62,7 @@ export class ArchiveReader extends Reader<Note, null> {
             linked: false,
             tolerate: [],
             note: null,
+            priority: 'page' as const,
           }))
         : []),
       ...[...archives].map((url) => ({
@@ -71,6 +72,8 @@ export class ArchiveReader extends Reader<Note, null> {
         linked: !request.start && note === null,
         tolerate: [404, 410],
         note: { kind: 'archive' as const },
+        // Archives are backfill: they share downloads with new pages instead of going first.
+        priority: 'backfill' as const,
       })),
     ];
   }

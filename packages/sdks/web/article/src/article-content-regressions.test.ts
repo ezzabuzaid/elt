@@ -58,12 +58,16 @@ test('a discovered article retains its introductory summary before the main body
 
   try {
     const signal = AbortSignal.timeout(5000);
-    const pages = await Array.fromAsync(
-      new WebCrawler(got, [new ListingReader(), new ArchiveReader()]).run(
-        [upstream.origin],
-        { signal },
-      ),
-    );
+    const pages = (
+      await Array.fromAsync(
+        new WebCrawler(got, [new ListingReader(), new ArchiveReader()]).run(
+          [upstream.origin],
+          { signal },
+        ),
+      )
+    )
+      // Progress entries only mark documents the crawl read for its readers.
+      .flatMap((entry) => ('progress' in entry ? [] : [entry]));
     assert.equal(pages.length, 1);
     const page = pages[0];
     assert.ok(page);
@@ -120,12 +124,16 @@ test('a feed article retains a figure caption containing a descriptive link', as
 
   try {
     const signal = AbortSignal.timeout(5000);
-    const pages = await Array.fromAsync(
-      new WebCrawler(got, [new ListingReader(), new ArchiveReader()]).run(
-        [`${upstream.origin}/feed.xml`],
-        { signal },
-      ),
-    );
+    const pages = (
+      await Array.fromAsync(
+        new WebCrawler(got, [new ListingReader(), new ArchiveReader()]).run(
+          [`${upstream.origin}/feed.xml`],
+          { signal },
+        ),
+      )
+    )
+      // Progress entries only mark documents the crawl read for its readers.
+      .flatMap((entry) => ('progress' in entry ? [] : [entry]));
     assert.equal(pages.length, 1);
     const page = pages[0];
     assert.ok(page);
@@ -195,12 +203,16 @@ test('a feed article retains acknowledgments and an authorship disclosure after 
 
   try {
     const signal = AbortSignal.timeout(5000);
-    const pages = await Array.fromAsync(
-      new WebCrawler(got, [new ListingReader(), new ArchiveReader()]).run(
-        [`${upstream.origin}/feed.xml`],
-        { signal },
-      ),
-    );
+    const pages = (
+      await Array.fromAsync(
+        new WebCrawler(got, [new ListingReader(), new ArchiveReader()]).run(
+          [`${upstream.origin}/feed.xml`],
+          { signal },
+        ),
+      )
+    )
+      // Progress entries only mark documents the crawl read for its readers.
+      .flatMap((entry) => ('progress' in entry ? [] : [entry]));
     assert.equal(pages.length, 1);
     const page = pages[0];
     assert.ok(page);

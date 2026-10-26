@@ -20,8 +20,12 @@ function listings() {
   ]);
 }
 
-function crawl(crawler: WebCrawler, start: string, signal: AbortSignal) {
-  return Array.fromAsync(crawler.run([start], { signal }));
+// Progress entries only mark URLs read for the readers; these tests assert pages and failures.
+async function crawl(crawler: WebCrawler, start: string, signal: AbortSignal) {
+  const entries: (CrawledPage | CrawlFailure)[] = [];
+  for await (const entry of crawler.run([start], { signal }))
+    if (!('progress' in entry)) entries.push(entry);
+  return entries;
 }
 
 function location(entry: CrawledPage | CrawlFailure) {
@@ -391,4 +395,141 @@ test('an archive that returns a feed is not read as a listing', async () => {
   );
   assert.ok(!requests.includes('/item'));
   assert.ok(entries.every((entry) => !entry.url.endsWith('/item')));
+});
+
+test('new feed pages are handed back before a long archive chain finishes, and the chain still completes', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    assert.ok(request.url);
+    requests.push(request.url);
+    response.setHeader('content-type', 'text/html');
+    const archive = /^\/archive\/(\d+)$/.exec(request.url);
+    if (request.url === '/')
+      response.end(
+        '<link rel="alternate" type="application/rss+xml" href="/feed.xml">',
+      );
+    else if (request.url === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel>${Array.from({ length: 6 }, (_, index) => `<item><link>/new/${index + 1}</link></item>`).join('')}</channel></rss>`,
+      );
+    } else if (request.url.startsWith('/new/'))
+      response.end(
+        '<main><p>A new article.</p></main><a href="/archive/1">Older posts</a>',
+      );
+    else if (archive) {
+      const number = Number(archive[1]);
+      response.end(
+        `<main><a href="/old/${number}">An old article</a></main>${number < 20 ? `<a rel="next" href="/archive/${number + 1}">Next</a>` : ''}`,
+      );
+    } else response.writeHead(404).end();
+  });
+  const handed: string[] = [];
+  for await (const entry of listings().run([upstream.origin], {
+    signal: AbortSignal.timeout(5000),
+    include: [new URLPattern({ pathname: '/new/*' })],
+  }))
+    if (!('progress' in entry)) handed.push(location(entry).url);
+  assert.deepEqual(
+    handed,
+    Array.from(
+      { length: 6 },
+      (_, index) => `${upstream.origin}/new/${index + 1}`,
+    ),
+  );
+  const archives = Array.from(
+    { length: 20 },
+    (_, index) => `/archive/${index + 1}`,
+  );
+  assert.deepEqual(
+    requests.filter((url) => url.startsWith('/archive/')),
+    archives,
+  );
+  // Before, archives went strictly first: the whole chain ran between /new/1 and /new/2.
+  assert.ok(
+    requests.lastIndexOf('/new/6') < requests.indexOf('/archive/20'),
+    requests.join(' '),
+  );
+});
+
+test('archive backfill keeps progressing while many listed pages wait', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    assert.ok(request.url);
+    requests.push(request.url);
+    response.setHeader('content-type', 'text/html');
+    const archive = /^\/archive\/(\d+)$/.exec(request.url);
+    if (request.url === '/')
+      response.end(
+        '<link rel="alternate" type="application/rss+xml" href="/feed.xml"><a href="/archive/1">Archives</a>',
+      );
+    else if (request.url === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel>${Array.from({ length: 30 }, (_, index) => `<item><link>/new/${index + 1}</link></item>`).join('')}</channel></rss>`,
+      );
+    } else if (request.url.startsWith('/new/'))
+      response.end('<p>A new article.</p>');
+    else if (archive) {
+      const number = Number(archive[1]);
+      response.end(
+        number < 30
+          ? `<a rel="next" href="/archive/${number + 1}">Next</a>`
+          : '<p>The first archive page.</p>',
+      );
+    } else response.writeHead(404).end();
+  });
+  const handed: string[] = [];
+  for await (const entry of listings().run([upstream.origin], {
+    signal: AbortSignal.timeout(5000),
+    include: [new URLPattern({ pathname: '/new/*' })],
+  }))
+    if (!('progress' in entry)) handed.push(location(entry).url);
+  assert.equal(handed.length, 30);
+  const waiting = requests.slice(0, requests.lastIndexOf('/new/30'));
+  // Pages weigh 4 and backfill 1: one archive page in every five downloads.
+  assert.equal(
+    waiting.filter((url) => url.startsWith('/archive/')).length,
+    7,
+    requests.join(' '),
+  );
+  assert.deepEqual(
+    requests.filter((url) => url.startsWith('/archive/')),
+    Array.from({ length: 30 }, (_, index) => `/archive/${index + 1}`),
+  );
+});
+
+test('a URL found as an archive and then listed as a page downloads in the page lane', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    assert.ok(request.url);
+    requests.push(request.url);
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/')
+      response.end(
+        `<link rel="alternate" type="application/rss+xml" href="/feed.xml"><main>${Array.from({ length: 20 }, (_, index) => `<a href="/${2001 + index}/">${2001 + index}</a>`).join('')}</main>`,
+      );
+    else if (request.url === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        '<rss><channel><item><link>/2020/</link></item></channel></rss>',
+      );
+    } else if (/^\/\d{4}\/$/.test(request.url)) response.end('<p>A year.</p>');
+    else response.writeHead(404).end();
+  });
+  const handed: string[] = [];
+  for await (const entry of listings().run([upstream.origin], {
+    signal: AbortSignal.timeout(5000),
+  }))
+    if (!('progress' in entry)) handed.push(location(entry).url);
+  assert.deepEqual(handed, [`${upstream.origin}/2020/`]);
+  // As backfill, /2020/ would wait behind the nineteen years found before it.
+  assert.deepEqual(requests.slice(0, 5), [
+    '/',
+    '/feed.xml',
+    '/robots.txt',
+    '/2020/',
+    '/2001/',
+  ]);
+  assert.equal(requests.filter((url) => url === '/2020/').length, 1);
 });

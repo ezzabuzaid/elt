@@ -40,10 +40,14 @@ function allReaders(limits: { maxDepth: number; maxPages: number }) {
   ]);
 }
 
-function crawl(crawler: WebCrawler, start: string) {
-  return Array.fromAsync(
-    crawler.run([start], { signal: AbortSignal.timeout(5000) }),
-  );
+// Progress entries only mark URLs read for the readers; these tests assert pages and failures.
+async function crawl(crawler: WebCrawler, start: string) {
+  const entries: (CrawledPage | CrawlFailure)[] = [];
+  for await (const entry of crawler.run([start], {
+    signal: AbortSignal.timeout(5000),
+  }))
+    if (!('progress' in entry)) entries.push(entry);
+  return entries;
 }
 
 function location(entry: CrawledPage | CrawlFailure) {

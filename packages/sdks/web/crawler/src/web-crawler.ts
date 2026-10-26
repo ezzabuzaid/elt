@@ -1,7 +1,13 @@
 import { type Got, HTTPError, RequestError, type Response } from 'got';
 import { z } from 'zod';
 
-import type { Finding, PageLocation, Reader } from './reader.ts';
+import {
+  type Finding,
+  type PageLocation,
+  type Priority,
+  type Reader,
+  priorities,
+} from './reader.ts';
 import { webUrl } from './web-url.ts';
 
 export class CrawlError extends Error {
@@ -23,6 +29,12 @@ export type CrawlFailure = PageLocation & {
   /** The URL is a page the crawl would have handed back, not a starting URL or a document. */
   readonly page: boolean;
 };
+/** A URL the crawl downloaded for its readers without handing it back: a moment to take a snapshot. */
+export type CrawlProgress = { readonly progress: string };
+
+// Smooth weighted round-robin weights (nginx's deterministic form of the
+// biased front-queue selector, Introduction to Information Retrieval §20.2.3).
+const weights = { page: 4, link: 2, backfill: 1 } as const;
 
 const entrySchema = z.object({
   url: z.string(),
@@ -31,8 +43,9 @@ const entrySchema = z.object({
   hops: z.number().int().nonnegative(),
   start: z.boolean(),
   page: z.boolean(),
-  // Some reader reads it as a document; documents are downloaded before pages.
+  // Some reader reads it as a document.
   document: z.boolean(),
+  priority: z.enum(priorities),
   // Its provenance came from a link, so a listing's provenance replaces it.
   linked: z.boolean(),
   tolerate: z.union([z.array(z.number().int()).readonly(), z.literal('any')]),
@@ -55,7 +68,9 @@ export type CrawlOptions = {
   readonly pages?: readonly PageLocation[];
 };
 
-export interface Crawl extends AsyncIterable<CrawledPage | CrawlFailure> {
+export interface Crawl extends AsyncIterable<
+  CrawledPage | CrawlFailure | CrawlProgress
+> {
   /** The crawl so far as plain data. The entry handed out last stays unfinished until the next is requested. */
   snapshot(): CrawlSnapshot;
 }
@@ -88,6 +103,7 @@ export class WebCrawler {
             start: true,
             page: false,
             document: true,
+            priority: 'listing' as const,
             linked: false,
             tolerate: [],
             notes: this.#readers.map(() => null),
@@ -128,6 +144,7 @@ export class WebCrawler {
       start: false,
       page: true,
       document: false,
+      priority: 'page',
       linked: false,
       tolerate: [],
       notes: this.#readers.map(() => null),
@@ -140,8 +157,17 @@ class CrawlRun implements Crawl {
   readonly #readers: readonly Reader<unknown, unknown>[];
   readonly #options: CrawlOptions;
   readonly #states: unknown[];
-  readonly #documents = new Map<string, Entry>();
-  readonly #pages = new Map<string, Entry>();
+  readonly #lanes: Record<Priority, Map<string, Entry>> = {
+    listing: new Map(),
+    page: new Map(),
+    link: new Map(),
+    backfill: new Map(),
+  };
+  readonly #credit: Record<keyof typeof weights, number> = {
+    page: 0,
+    link: 0,
+    backfill: 0,
+  };
   // Every URL pending or downloaded; a skipped page leaves so a later finding can still bring it in.
   readonly #known = new Set<string>();
   #current: Entry | null = null;
@@ -166,15 +192,18 @@ class CrawlRun implements Crawl {
     return structuredClone({
       pending: [
         ...(this.#current ? [this.#current] : []),
-        ...this.#documents.values(),
-        ...this.#pages.values(),
+        ...priorities.flatMap((priority) => [
+          ...this.#lanes[priority].values(),
+        ]),
       ],
       known: [...this.#known],
       states: this.#states,
     });
   }
 
-  async *[Symbol.asyncIterator](): AsyncGenerator<CrawledPage | CrawlFailure> {
+  async *[Symbol.asyncIterator](): AsyncGenerator<
+    CrawledPage | CrawlFailure | CrawlProgress
+  > {
     const { signal } = this.#options;
     signal.throwIfAborted();
     for (;;) {
@@ -207,13 +236,9 @@ class CrawlRun implements Crawl {
         signal.throwIfAborted();
         const errorResponse =
           cause instanceof RequestError ? cause.response : undefined;
-        if (!this.#tolerates(entry, errorResponse?.statusCode))
-          yield this.#failure(
-            entry,
-            page,
-            errorResponse?.url ?? entry.url,
-            cause,
-          );
+        yield this.#tolerates(entry, errorResponse?.statusCode)
+          ? { progress: entry.url }
+          : this.#failure(entry, page, errorResponse?.url ?? entry.url, cause);
         continue;
       }
       signal.throwIfAborted();
@@ -249,22 +274,44 @@ class CrawlRun implements Crawl {
         continue;
       }
       signal.throwIfAborted();
-      if (included && !failed)
-        yield {
-          url: entry.url,
-          listingUrl: entry.listingUrl,
-          lastModified: entry.lastModified,
-          response,
-        };
+      yield included && !failed
+        ? {
+            url: entry.url,
+            listingUrl: entry.listingUrl,
+            lastModified: entry.lastModified,
+            response,
+          }
+        : { progress: entry.url };
     }
   }
 
   #next() {
-    const lane = this.#documents.size > 0 ? this.#documents : this.#pages;
-    const [entry] = lane.values();
-    if (entry) lane.delete(entry.url);
+    const [entry] = this.#lane()?.values() ?? [];
+    if (entry) this.#lanes[entry.priority].delete(entry.url);
     this.#current = entry ?? null;
     return entry;
+  }
+
+  // Listings go strictly first: they are bounded, and their provenance must
+  // reach pages before the pages download. The other lanes share by weight:
+  // each waiting lane gains its weight, the richest goes and pays the total.
+  #lane() {
+    if (this.#lanes.listing.size > 0) return this.#lanes.listing;
+    let total = 0;
+    let chosen: keyof typeof weights | undefined;
+    for (const lane of ['page', 'link', 'backfill'] as const) {
+      if (this.#lanes[lane].size === 0) {
+        this.#credit[lane] = 0;
+        continue;
+      }
+      this.#credit[lane] += weights[lane];
+      total += weights[lane];
+      if (chosen === undefined || this.#credit[lane] > this.#credit[chosen])
+        chosen = lane;
+    }
+    if (chosen === undefined) return undefined;
+    this.#credit[chosen] -= total;
+    return this.#lanes[chosen];
   }
 
   #includes(url: string) {
@@ -312,6 +359,7 @@ class CrawlRun implements Crawl {
       start: false,
       page: finding.page,
       document: !finding.page,
+      priority: finding.priority,
       linked: finding.linked,
       tolerate: finding.tolerate,
       notes,
@@ -319,11 +367,13 @@ class CrawlRun implements Crawl {
   }
 
   #enqueue(next: Entry) {
-    const pending = this.#documents.get(next.url) ?? this.#pages.get(next.url);
+    const pending = priorities
+      .map((priority) => this.#lanes[priority].get(next.url))
+      .find((entry) => entry !== undefined);
     if (!pending) {
       if (this.#known.has(next.url)) return;
       this.#known.add(next.url);
-      (next.document ? this.#documents : this.#pages).set(next.url, next);
+      this.#lanes[next.priority].set(next.url, next);
       return;
     }
     // A URL that is also a page counts the hops of its page findings; a document's do not lower them.
@@ -334,11 +384,15 @@ class CrawlRun implements Crawl {
       pending.page = true;
     }
     pending.start ||= next.start;
-    if (!pending.document && next.document) {
-      this.#pages.delete(pending.url);
-      this.#documents.set(pending.url, pending);
-    }
     pending.document ||= next.document;
+    // The most urgent finding decides when the URL downloads.
+    if (
+      priorities.indexOf(next.priority) < priorities.indexOf(pending.priority)
+    ) {
+      this.#lanes[pending.priority].delete(pending.url);
+      pending.priority = next.priority;
+      this.#lanes[pending.priority].set(pending.url, pending);
+    }
     if (pending.linked && !next.linked) {
       pending.listingUrl = next.listingUrl;
       pending.lastModified = next.lastModified;

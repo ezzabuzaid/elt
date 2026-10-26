@@ -93,6 +93,7 @@ export class LinkReader extends Reader<never, State> {
       linked: true,
       tolerate: [404, 410],
       note: null,
+      priority: 'link' as const,
     }));
   }
 }

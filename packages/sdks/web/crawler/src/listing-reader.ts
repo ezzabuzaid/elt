@@ -36,7 +36,15 @@ function document(
   tolerate: readonly number[] | 'any',
   linked: boolean,
 ): Finding<Note> {
-  return { url, lastModified: null, page: false, linked, tolerate, note };
+  return {
+    url,
+    lastModified: null,
+    page: false,
+    linked,
+    tolerate,
+    note,
+    priority: 'listing',
+  };
 }
 
 /** Published lists of pages: robots.txt, sitemaps and feeds, with their pagination. */
@@ -111,6 +119,7 @@ export class ListingReader extends Reader<Note, State> {
           linked: false,
           tolerate: [],
           note: null,
+          priority: 'page' as const,
         })),
         ...[
           ...listing.sitemaps,

@@ -21,6 +21,7 @@ const crawl = crawler.run(['https://example.com/news'], {
   signal: AbortSignal.timeout(600_000),
 });
 for await (const entry of crawl) {
+  if ('progress' in entry) continue; // a URL read for the readers
   if ('error' in entry)
     console.error(entry.error); // CrawlError: url, cause
   else console.log(entry.url, entry.listingUrl, entry.response.statusCode);
@@ -33,12 +34,14 @@ for await (const entry of crawl) {
 
 - **Starting URLs** are downloaded and read, but not handed back. A failed starting URL is an error.
 - **Pages** are URLs a reader marks as pages. The crawl hands back a page with its Got response when the page matches `include`, or always when you omit `include`. The engine downloads a page that does not match only when a reader `wants` it.
-- **Documents** are URLs a reader reads itself, such as sitemaps. They go before pages, so listings supply their provenance and `lastModified` before the pages download.
+- **Documents** are URLs a reader reads itself, such as sitemaps.
+- **Priorities**: every finding has one. Starting URLs and listings (`robots.txt`, sitemaps, feeds) go strictly first, so their provenance and `lastModified` reach pages before the pages download. Pages, links and archive backfill then share the downloads by smooth weighted round-robin, 4:2:1: the deterministic form of the biased front-queue selector in a crawl frontier (Introduction to Information Retrieval §20.2.3). Backfill never blocks new pages and still progresses. A URL found again with a more urgent priority moves up.
 - **Provenance**: `listingUrl` is the final URL of the response that first named the URL. A listing's provenance replaces a link's while the URL is pending.
 - **Hops** count ordinary links from a starting or listed page. When a URL is both a document and a page, its page findings decide its hops. `LinkReader` limits them.
 - **Failures**: a reader states which statuses are ordinary answers for each URL it finds, for example 404 for a dead link. Any other failure is handed out as `{ url, listingUrl, lastModified, error, page }`, and the crawl continues. `page` is true when the failed URL is a page the crawl would have handed back, so a caller can keep it for a later crawl; a failed listing is found again from the starting URLs. A reader that throws, such as on a malformed declared sitemap, also produces a failure. Cancellation throws the signal's exact reason.
 - **Identity**: fragments are removed. Queries and trailing slashes stay meaningful. Each found URL is requested once; `url` is the URL as found, and `response.url` is the final URL.
 - Got hooks can read `options.context.page`. It is true when the download is a page handed back and no reader reads it as a document. It is false for starting URLs, documents and pages downloaded only for a reader, so a feed that is also a page keeps the representation its reader needs.
+- **Progress**: every downloaded URL that is not handed back as a page or failure produces `{ progress: url }`. Take a snapshot there to keep the work done on documents.
 
 `run(starts, { signal, include, pages })` starts a crawl. `pages` adds known pages, such as earlier failures, as listed pages ahead of other pages. `crawl.snapshot()` returns the crawl so far as plain data, and `crawler.resume(snapshot, { signal, include, pages })` continues it; `pages` there returns pages even when the snapshot already tried them. The entry handed out last stays pending in a snapshot until you request the next one, so a snapshot taken at any time loses nothing; an older snapshot only repeats some work. Storage of snapshots is yours.
 
@@ -49,6 +52,8 @@ for await (const entry of crawl) {
 | `ListingReader` | Starting pages, `robots.txt`, sitemaps and feeds | Feed and sitemap declarations in HTML and HTTP `Link` headers, labeled feed anchors, `robots.txt` sitemaps, a `/sitemap.xml` guess, and the pages, child sitemaps and pagination of XML url sets and indexes, text lists, RSS 2.0, Atom, RSS 1.0/RDF and JSON Feed |
 | `ArchiveReader` | Every HTML page                                  | Archive links (`rel="archives"`, `next`, `prev`, archive paths, year and month indexes, labels such as "Older posts"), and the pages an archive or a starting archive lists outside `nav`, `footer` and navigation landmarks                                       |
 | `LinkReader`    | HTML and Markdown pages                          | Anchors and Markdown links on the starting pages' origins                                                                                                                                                                                                          |
+
+`ListingReader` documents have the `listing` priority and the pages they list `page`. `ArchiveReader` archives are `backfill` and the pages they list `page`. `LinkReader` links are `link`.
 
 `ListingReader` reads every listing completely, wherever it was declared. On a page that was not a starting page, a cross-origin feed needs an explicit declaration or Feedscout's feed URL hints. A declared listing that fails or is malformed is an error. A possible feed, such as a labeled anchor or a generic JSON alternate, is read only when Feedscout's `defaultExtractFn` validates it. A missing `robots.txt` is ordinary. The `/sitemap.xml` guess happens when `robots.txt` lists no sitemap, the starting page declares no listing, and no listing was read before it. A missing or unreadable guess, such as a soft 404 page, is ignored.
 

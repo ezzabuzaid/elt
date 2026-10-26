@@ -66,9 +66,13 @@ test('chosen websites and feeds compose with extraction without merging URL vari
   const reader = new WebArticle([new HTMLExtraction()], got);
   for (const input of ['/', '/feed.xml']) {
     const signal = AbortSignal.timeout(5000);
-    const pages = await Array.fromAsync(
-      crawler.run([`${upstream.origin}${input}`], { signal }),
-    );
+    const pages = (
+      await Array.fromAsync(
+        crawler.run([`${upstream.origin}${input}`], { signal }),
+      )
+    )
+      // Progress entries only mark documents the crawl read for its readers.
+      .flatMap((entry) => ('progress' in entry ? [] : [entry]));
     assert.deepEqual(
       pages.map((page) => page.url),
       [
