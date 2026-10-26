@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { availableParallelism } from 'node:os';
 import { createInterface } from 'node:readline';
 import { test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 
 import {
+  Fixed,
+  Gradient,
+  HillClimbing,
   LeaderFirst,
   OnDemand,
   OrderedReady,
   Parallel,
   Pool,
+  Resources,
+  type Sample,
+  type Sizing,
   type Worker,
 } from './index.ts';
 
@@ -24,7 +31,8 @@ lines.on('line', (line) => {
     if (line === 'fail') process.exit(3);
     return;
   }
-  if (line !== 'hang') process.stdout.write(line + '\\n');
+  if (line.startsWith('sleep ')) setTimeout(() => process.stdout.write(line + '\\n'), Number(line.slice(6)));
+  else if (line !== 'hang') process.stdout.write(line + '\\n');
 });
 `;
 
@@ -95,7 +103,7 @@ async function eventually(check: () => boolean): Promise<void> {
 test('an on-demand pool starts no worker until a job needs one, then reuses it', async () => {
   const created: EchoWorker[] = [];
   await using pool = new Pool({
-    size: 2,
+    size: new Fixed(2),
     startup: new OnDemand(),
     create: () => {
       const worker = new EchoWorker();
@@ -125,7 +133,7 @@ test('an on-demand pool starts no worker until a job needs one, then reuses it',
 test('a parallel pool starts every worker at once', async () => {
   const created: EchoWorker[] = [];
   await using pool = new Pool({
-    size: 3,
+    size: new Fixed(3),
     startup: new Parallel(),
     create: () => {
       const worker = new EchoWorker();
@@ -142,7 +150,7 @@ test('a parallel pool starts every worker at once', async () => {
 test('an ordered-ready pool starts each worker after the previous one is ready', async () => {
   const created: EchoWorker[] = [];
   await using pool = new Pool({
-    size: 3,
+    size: new Fixed(3),
     startup: new OrderedReady(),
     create: () => {
       const worker = new EchoWorker();
@@ -168,7 +176,7 @@ test('an ordered-ready pool starts each worker after the previous one is ready',
 test('a leader-first pool starts the others together once the first is ready, and replaces a crashed worker at once', async () => {
   const created: EchoWorker[] = [];
   await using pool = new Pool({
-    size: 3,
+    size: new Fixed(3),
     startup: new LeaderFirst(),
     create: () => {
       const worker = new EchoWorker();
@@ -201,7 +209,7 @@ test('a leader-first pool starts the others together once the first is ready, an
 test('a job aborted while it runs kills only its worker, which the next job replaces', async () => {
   const created: EchoWorker[] = [];
   await using pool = new Pool({
-    size: 2,
+    size: new Fixed(2),
     startup: new Parallel(),
     create: () => {
       const worker = new EchoWorker();
@@ -230,7 +238,7 @@ test('a job aborted while it runs kills only its worker, which the next job repl
 
 test('a queued job aborted before its turn never runs', async () => {
   await using pool = new Pool({
-    size: 1,
+    size: new Fixed(1),
     startup: new Parallel(),
     create: () => {
       const worker = new EchoWorker();
@@ -261,7 +269,7 @@ test('a queued job aborted before its turn never runs', async () => {
 test('a job aborted while its worker warms up leaves the warm-up running for later jobs', async () => {
   const created: EchoWorker[] = [];
   await using pool = new Pool({
-    size: 1,
+    size: new Fixed(1),
     startup: new LeaderFirst(),
     create: () => {
       const worker = new EchoWorker();
@@ -285,7 +293,7 @@ test('a job aborted while its worker warms up leaves the warm-up running for lat
 test('a worker that fails to start fails the job waiting for it, and the next job starts another', async () => {
   const created: EchoWorker[] = [];
   await using pool = new Pool({
-    size: 1,
+    size: new Fixed(1),
     startup: new OnDemand(),
     create: () => {
       const worker = new EchoWorker();
@@ -307,7 +315,7 @@ test('a worker that fails to start fails the job waiting for it, and the next jo
 test('disposing a pool stops every worker, rejects waiting and later jobs, and starts no replacement', async () => {
   const created: EchoWorker[] = [];
   const pool = new Pool({
-    size: 2,
+    size: new Fixed(2),
     startup: new OrderedReady(),
     create: () => {
       const worker = new EchoWorker();
@@ -333,4 +341,183 @@ test('disposing a pool stops every worker, rejects waiting and later jobs, and s
   );
   assert.equal(created.length, 1, 'the second worker must never start');
   assert.ok(created.every((worker) => worker.dead));
+});
+
+test('a resources sizing runs one worker per CPU while each finds its memory free, and at least one', async () => {
+  for (const [memoryPerWorker, expected] of [
+    [Number.MAX_SAFE_INTEGER, 1],
+    [1, availableParallelism()],
+  ] as const) {
+    const created: EchoWorker[] = [];
+    await using pool = new Pool({
+      size: new Resources({ memoryPerWorker }),
+      startup: new Parallel(),
+      create: () => {
+        const worker = new EchoWorker();
+        worker.release();
+        created.push(worker);
+        return worker;
+      },
+    });
+    await pool.ready;
+    assert.equal(created.length, expected);
+  }
+});
+
+// One window at the current size: jobs finishing at the given rate a second,
+// each taking the given milliseconds, until at least twenty jobs and two
+// seconds passed. Returns the clock after it.
+function window(
+  sizing: Sizing,
+  start: number,
+  perSecond: number,
+  milliseconds = 1,
+) {
+  const jobs = Math.max(20, Math.ceil(2 * perSecond));
+  for (let job = 0; job <= jobs; job++) {
+    const finished = start + (job * 1000) / perSecond;
+    sizing.record({
+      started: finished - milliseconds,
+      finished,
+      measurable: true,
+    });
+  }
+  return start + (jobs * 1000) / perSecond + 1;
+}
+
+test('hill climbing tries one more worker between two windows at its size and keeps it while it adds a tenth more throughput', () => {
+  const sizing = new HillClimbing({ memoryPerWorker: 1 });
+  assert.ok(sizing.ceiling >= 4, 'this test needs four CPUs');
+  assert.deepEqual([sizing.current, sizing.kept], [2, 2]);
+
+  let clock = window(sizing, 0, 10);
+  assert.deepEqual([sizing.current, sizing.kept], [3, 3], 'it tries three');
+  clock = window(sizing, clock, 14);
+  assert.deepEqual(
+    [sizing.current, sizing.kept],
+    [2, 3],
+    'it measures two again, keeping the third worker alive',
+  );
+  clock = window(sizing, clock, 10);
+  assert.deepEqual([sizing.current, sizing.kept], [3, 3], 'three paid');
+
+  clock = window(sizing, clock, 14);
+  clock = window(sizing, clock, 14.7);
+  clock = window(sizing, clock, 14);
+  // Four added only 5%: it keeps three and learns no more.
+  assert.deepEqual([sizing.current, sizing.kept], [3, 3]);
+  window(sizing, clock, 100);
+  assert.deepEqual([sizing.current, sizing.kept], [3, 3]);
+});
+
+test('hill climbing is not fooled by work that gets slower while it measures', () => {
+  const sizing = new HillClimbing({ memoryPerWorker: 1 });
+  assert.ok(sizing.ceiling >= 3, 'this test needs three CPUs');
+  // Two workers manage 24 fast files a second at first and 8 slow ones later;
+  // three, measured between, manage half again what two do at that point.
+  let clock = window(sizing, 0, 24);
+  clock = window(sizing, clock, 24);
+  window(sizing, clock, 8);
+  assert.equal(sizing.current, 3);
+});
+
+test('a climbing sizing learns nothing from jobs that were not measurable or from windows under two seconds, and never passes its ceiling', () => {
+  const idle = new HillClimbing({ memoryPerWorker: 1 });
+  const fast = new Gradient({ memoryPerWorker: 1 });
+  for (let job = 0; job < 1000; job++) {
+    idle.record({ started: job, finished: job + 1, measurable: false });
+    fast.record({ started: job, finished: job + 1, measurable: true });
+  }
+  assert.deepEqual([idle.current, fast.current], [2, 2]);
+
+  const small = new HillClimbing({ memoryPerWorker: Number.MAX_SAFE_INTEGER });
+  assert.equal(small.ceiling, 1);
+  window(small, 0, 10);
+  assert.deepEqual([small.current, small.kept], [1, 1]);
+});
+
+test('gradient keeps one more worker while a job takes at most half again the time it took with two', () => {
+  const sizing = new Gradient({ memoryPerWorker: 1 });
+  assert.ok(sizing.ceiling >= 4, 'this test needs four CPUs');
+
+  let clock = window(sizing, 0, 10, 10);
+  clock = window(sizing, clock, 10, 14);
+  clock = window(sizing, clock, 10, 10);
+  assert.equal(sizing.current, 3, 'a job took 1.4 times as long: three pay');
+
+  clock = window(sizing, clock, 10, 14);
+  clock = window(sizing, clock, 10, 15.4);
+  window(sizing, clock, 10, 14);
+  // Four would make a job take 1.54 times as long as with two.
+  assert.deepEqual([sizing.current, sizing.kept], [3, 3]);
+});
+
+test('a hill-climbing pool grows past its first two workers while a backlog of slow jobs waits', async () => {
+  const created: EchoWorker[] = [];
+  await using pool = new Pool({
+    // Room for four workers on any Mac with four CPUs.
+    size: new HillClimbing({
+      memoryPerWorker: Math.floor(process.availableMemory() / 4),
+    }),
+    startup: new Parallel(),
+    create: () => {
+      const worker = new EchoWorker();
+      worker.release();
+      created.push(worker);
+      return worker;
+    },
+  });
+  assert.ok(availableParallelism() >= 4, 'this test needs four CPUs');
+  await pool.ready;
+  assert.equal(created.length, 2);
+
+  // Each job waits 20 ms in its worker, so every worker added adds as much.
+  await Promise.all(
+    Array.from({ length: 1500 }, () =>
+      pool.use((worker) => worker.echo('sleep 20')),
+    ),
+  );
+  assert.ok(created.length > 2, `the pool kept ${created.length} workers`);
+});
+
+// A sizing the test steers.
+class Steered implements Sizing {
+  readonly ceiling = 2;
+  current = 2;
+  kept = 2;
+
+  record(_sample: Sample): void {}
+}
+
+test('a pool keeps alive a worker it stops running while the sizing keeps it, and closes it once the sizing does not', async () => {
+  const created: EchoWorker[] = [];
+  const sizing = new Steered();
+  await using pool = new Pool({
+    size: sizing,
+    startup: new Parallel(),
+    create: () => {
+      const worker = new EchoWorker();
+      worker.release();
+      created.push(worker);
+      return worker;
+    },
+  });
+  await pool.ready;
+  const run = (text: string) => pool.use((worker) => worker.echo(text));
+  assert.deepEqual(await Promise.all([run('a'), run('b')]), ['a', 'b']);
+
+  sizing.current = 1;
+  assert.equal(await run('c'), 'c');
+  sizing.current = 2;
+  assert.deepEqual(await Promise.all([run('d'), run('e')]), ['d', 'e']);
+  assert.equal(created.length, 2, 'the kept worker needed no new warm-up');
+  assert.ok(created.every((worker) => !worker.dead));
+
+  sizing.current = 1;
+  sizing.kept = 1;
+  assert.equal(await run('f'), 'f');
+  await created[1]!.closed;
+  assert.equal(created[0]!.dead, false);
+  assert.equal(await run('g'), 'g');
+  assert.equal(created.length, 2);
 });

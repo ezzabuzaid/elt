@@ -39,7 +39,7 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
-import { LeaderFirst, Pool } from '@workspace/pool';
+import { Fixed, LeaderFirst, Pool } from '@workspace/pool';
 import {
   AccountsStore,
   AccountsUnavailableError,
@@ -2355,7 +2355,7 @@ test('Mail watches index commits and file-only downloads, and cancels', async ()
 
 test('Mail tracking pixels keep exact local files and database bytes with null OCR text', async () => {
   await using ocr = new Pool({
-    size: 2,
+    size: new Fixed(2),
     startup: new LeaderFirst(),
     create: () =>
       new VisionWorker(

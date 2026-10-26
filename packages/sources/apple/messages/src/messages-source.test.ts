@@ -30,7 +30,7 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
-import { LeaderFirst, Pool } from '@workspace/pool';
+import { Fixed, LeaderFirst, Pool } from '@workspace/pool';
 import { ImageFormat } from '@workspace/source-apple-macos/image-format';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 import { VisionWorker } from '@workspace/source-apple-macos/vision';
@@ -414,7 +414,7 @@ const messagesRows = (path: string, sql: string) => {
 
 test('the document parser reads every attachment kind and throws only on unreadable files', async () => {
   await using ocr = new Pool({
-    size: 2,
+    size: new Fixed(2),
     startup: new LeaderFirst(),
     create: () =>
       new VisionWorker(
@@ -622,7 +622,7 @@ test('Messages scope filters chat and native dates before decoding attachments a
 
 test('Messages exports every stream by guid, decodes archived text and streams local attachments', async () => {
   await using ocr = new Pool({
-    size: 2,
+    size: new Fixed(2),
     startup: new LeaderFirst(),
     create: () =>
       new VisionWorker(

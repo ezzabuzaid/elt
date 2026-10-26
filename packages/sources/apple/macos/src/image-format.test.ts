@@ -8,7 +8,7 @@ import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { LeaderFirst, Pool } from '@workspace/pool';
+import { Fixed, LeaderFirst, Pool } from '@workspace/pool';
 
 import { ImageFormat } from './document-formats/image-format.ts';
 import { MacOSDocumentParser } from './macos-document-parser.ts';
@@ -27,7 +27,7 @@ const inFlight = () =>
 // The pool hosts build, sized to three workers on every Mac.
 function ocr() {
   return new Pool({
-    size: workers,
+    size: new Fixed(workers),
     startup: new LeaderFirst(),
     create: () =>
       new VisionWorker(

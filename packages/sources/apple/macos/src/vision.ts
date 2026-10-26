@@ -11,17 +11,16 @@ const response = z.union([
   z.object({ error: z.string() }),
 ]);
 
-export function visionConcurrency(cpus: number, memory: number): number {
-  // Leave headroom for imports and Vision allocations outside worker RSS.
-  return Math.max(1, Math.min(cpus, Math.floor(memory / (2 * 1024 ** 3))));
-}
-
 // One native Vision process, which keeps its models loaded. JSON Lines over
 // stdio follows the local transcription worker: no listener, one response per
 // request, and the process exit carries native diagnostics. Vision compiles
 // its models once per helper binary and caches them, so a host pools these
 // workers with LeaderFirst: the first fills that cache and the others read it.
 export class VisionWorker implements Worker {
+  // The memory a host sizes its pool by: a worker's own and the allocations
+  // Vision makes for it outside the process, with headroom for the imports.
+  static readonly memory = 2 * 1024 ** 3;
+
   readonly #child;
   readonly #lines;
   readonly #closed: Promise<Error>;

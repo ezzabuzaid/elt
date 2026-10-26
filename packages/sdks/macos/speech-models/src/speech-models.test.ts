@@ -14,7 +14,7 @@ import { type TestContext, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { Parallel, Pool } from '@workspace/pool';
+import { Fixed, Parallel, Pool } from '@workspace/pool';
 import { LocalTranscriptionModel } from '@workspace/transcription-local';
 import { TranscriptionWorker } from '@workspace/transcription-local/transcription-worker';
 
@@ -204,7 +204,7 @@ async function transcribe(
   const path = join(directory.path, 'note.aiff');
   await promisify(execFile)('say', ['-v', voice, '-o', path, text]);
   await using engines = new Pool({
-    size: 1,
+    size: new Fixed(1),
     startup: new Parallel(),
     create: () =>
       new TranscriptionWorker(

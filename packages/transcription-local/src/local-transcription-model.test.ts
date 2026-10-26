@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { OnDemand, Parallel, Pool } from '@workspace/pool';
+import { Fixed, OnDemand, Parallel, Pool } from '@workspace/pool';
 
 import { LocalTranscriptionModel } from './local-transcription-model.ts';
 import { TranscriptionWorker } from './transcription-worker.ts';
@@ -26,7 +26,7 @@ test('real decoding and native model failures reject, and disposing the engines 
     language: 'ar',
   };
   await using engines = new Pool({
-    size: 1,
+    size: new Fixed(1),
     startup: new Parallel(),
     create: () => new TranscriptionWorker(helper, configuration),
   });
@@ -65,7 +65,7 @@ test('a cancelled call never borrows an engine and invalid configuration is refu
   };
   let engines = 0;
   await using pool = new Pool({
-    size: 1,
+    size: new Fixed(1),
     startup: new OnDemand(),
     create: () => {
       engines++;
@@ -100,7 +100,7 @@ test('a cancelled call never borrows an engine and invalid configuration is refu
 
 test('a model is named by its name and language, not by where its file is, so a store moved to another Mac keeps its transcripts', async () => {
   await using engines = new Pool({
-    size: 1,
+    size: new Fixed(1),
     startup: new OnDemand(),
     create: (): TranscriptionWorker => {
       throw new Error('Naming a model starts no engine');
