@@ -371,7 +371,7 @@ function window(
   sizing: Sizing,
   start: number,
   perSecond: number,
-  milliseconds = 1,
+  milliseconds: number,
 ) {
   const jobs = Math.max(20, Math.ceil(2 * perSecond));
   for (let job = 0; job <= jobs; job++) {
@@ -390,23 +390,23 @@ test('hill climbing tries one more worker between two windows at its size and ke
   assert.ok(sizing.ceiling >= 4, 'this test needs four CPUs');
   assert.deepEqual([sizing.current, sizing.kept], [2, 2]);
 
-  let clock = window(sizing, 0, 10);
+  let clock = window(sizing, 0, 10, 1);
   assert.deepEqual([sizing.current, sizing.kept], [3, 3], 'it tries three');
-  clock = window(sizing, clock, 14);
+  clock = window(sizing, clock, 14, 1);
   assert.deepEqual(
     [sizing.current, sizing.kept],
     [2, 3],
     'it measures two again, keeping the third worker alive',
   );
-  clock = window(sizing, clock, 10);
+  clock = window(sizing, clock, 10, 1);
   assert.deepEqual([sizing.current, sizing.kept], [3, 3], 'three paid');
 
-  clock = window(sizing, clock, 14);
-  clock = window(sizing, clock, 14.7);
-  clock = window(sizing, clock, 14);
+  clock = window(sizing, clock, 14, 1);
+  clock = window(sizing, clock, 14.7, 1);
+  clock = window(sizing, clock, 14, 1);
   // Four added only 5%: it keeps three and learns no more.
   assert.deepEqual([sizing.current, sizing.kept], [3, 3]);
-  window(sizing, clock, 100);
+  window(sizing, clock, 100, 1);
   assert.deepEqual([sizing.current, sizing.kept], [3, 3]);
 });
 
@@ -415,9 +415,9 @@ test('hill climbing is not fooled by work that gets slower while it measures', (
   assert.ok(sizing.ceiling >= 3, 'this test needs three CPUs');
   // Two workers manage 24 fast files a second at first and 8 slow ones later;
   // three, measured between, manage half again what two do at that point.
-  let clock = window(sizing, 0, 24);
-  clock = window(sizing, clock, 24);
-  window(sizing, clock, 8);
+  let clock = window(sizing, 0, 24, 1);
+  clock = window(sizing, clock, 24, 1);
+  window(sizing, clock, 8, 1);
   assert.equal(sizing.current, 3);
 });
 
@@ -432,7 +432,7 @@ test('a climbing sizing learns nothing from jobs that were not measurable or fro
 
   const small = new HillClimbing({ memoryPerWorker: Number.MAX_SAFE_INTEGER });
   assert.equal(small.ceiling, 1);
-  window(small, 0, 10);
+  window(small, 0, 10, 1);
   assert.deepEqual([small.current, small.kept], [1, 1]);
 });
 
@@ -480,13 +480,16 @@ test('a hill-climbing pool grows past its first two workers while a backlog of s
   assert.ok(created.length > 2, `the pool kept ${created.length} workers`);
 });
 
-// A sizing the test steers.
+// A sizing the test steers, which keeps every sample the pool reports.
 class Steered implements Sizing {
   readonly ceiling = 2;
   current = 2;
   kept = 2;
+  readonly samples: Sample[] = [];
 
-  record(_sample: Sample): void {}
+  record(sample: Sample): void {
+    this.samples.push(sample);
+  }
 }
 
 test('a pool keeps alive a worker it stops running while the sizing keeps it, and closes it once the sizing does not', async () => {
@@ -520,4 +523,33 @@ test('a pool keeps alive a worker it stops running while the sizing keeps it, an
   assert.equal(created[0]!.dead, false);
   assert.equal(await run('g'), 'g');
   assert.equal(created.length, 2);
+});
+
+test('a job that started before the pool resized does not count toward the new size, and one after does', async () => {
+  const sizing = new Steered();
+  await using pool = new Pool({
+    size: sizing,
+    startup: new Parallel(),
+    create: () => {
+      const worker = new EchoWorker();
+      worker.release();
+      return worker;
+    },
+  });
+  await pool.ready;
+  const slow = pool.use((worker) => worker.echo('sleep 400'));
+  const fast = pool.use(async (worker) => {
+    const text = await worker.echo('sleep 50');
+    sizing.current = 1;
+    return text;
+  });
+  // Waiting jobs make the times measurable once the slow job ends.
+  const waiting = Array.from({ length: 3 }, () =>
+    pool.use((worker) => worker.echo('sleep 10')),
+  );
+
+  await Promise.all([slow, fast, ...waiting]);
+  const [, beforeResize, afterResize] = sizing.samples;
+  assert.equal(beforeResize!.measurable, false);
+  assert.equal(afterResize!.measurable, true);
 });
