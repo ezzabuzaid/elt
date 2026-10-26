@@ -1,7 +1,11 @@
 export { AdaptiveRevisit } from './adaptive-revisit.ts';
 export { AlwaysRevisit } from './always-revisit.ts';
 export { ArchiveReader } from './archive-reader.ts';
+export { ChangeRateRevisit } from './change-rate-revisit.ts';
+export { CompositeRevisit } from './composite-revisit.ts';
 export { FixedRevisit } from './fixed-revisit.ts';
+export { HintRevisit } from './hint-revisit.ts';
+export { IntervalRevisit } from './interval-revisit.ts';
 export { LinkReader } from './link-reader.ts';
 export { ListingReader } from './listing-reader.ts';
 export { PaginationReader } from './pagination-reader.ts';

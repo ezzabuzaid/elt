@@ -1,13 +1,10 @@
 import { z } from 'zod';
 
-import {
-  type Revisit,
-  RevisitPolicy,
-  type Schedule,
-} from './revisit-policy.ts';
+import { IntervalRevisit } from './interval-revisit.ts';
+import { type Revisit, type Schedule } from './revisit-policy.ts';
 
 /** Every URL is due one fixed interval after its visit, as Nutch's DefaultFetchSchedule. */
-export class FixedRevisit extends RevisitPolicy<null> {
+export class FixedRevisit extends IntervalRevisit<null> {
   readonly histories = z.null();
   readonly #every: number;
 

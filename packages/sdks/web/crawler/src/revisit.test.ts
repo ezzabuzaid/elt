@@ -8,9 +8,12 @@ import { setupServer } from 'msw/node';
 import {
   AdaptiveRevisit,
   AlwaysRevisit,
+  ChangeRateRevisit,
+  CompositeRevisit,
   type Crawl,
   type CrawlRequest,
   FixedRevisit,
+  HintRevisit,
   LinkReader,
   ListingReader,
   type RevisitPolicy,
@@ -433,4 +436,99 @@ test('AdaptiveRevisit starts at one day, grows by half while unchanged up to fou
   assert.equal(unchanged.due, 1.5 * day);
   assert.equal(longest.due, 14 * day);
   assert.equal(changed.due, (day + hour) / 2);
+});
+
+test('HintRevisit makes a URL due when its response stops being fresh, between one hour and fourteen days, and a day later when it declares nothing', () => {
+  const policy = new HintRevisit();
+  const due = (headers: Record<string, string> | null) =>
+    policy.schedule(
+      {
+        request,
+        outcome: 'unknown',
+        headers: headers === null ? null : new Headers(headers),
+        at: 0,
+      },
+      null,
+    ).due;
+  // A response with no Date header is as old as its arrival, now.
+  // The response ages while the policy reads it, so compare whole seconds.
+  assert.equal(
+    Math.round((due({ 'cache-control': 'max-age=7200' }) ?? 0) / 1000),
+    7200,
+  );
+  assert.equal(due({ 'cache-control': 'max-age=60' }), hour);
+  assert.equal(due({ 'cache-control': 'max-age=31536000' }), 14 * day);
+  assert.equal(due({}), day);
+  assert.equal(due(null), day);
+});
+
+test('ChangeRateRevisit waits the estimated time between changes: the longest for a URL that never changed, shorter the more visits found a change', () => {
+  const policy = new ChangeRateRevisit();
+  const visits = (outcomes: ('modified' | 'unmodified')[]) => {
+    let schedule = policy.schedule(
+      { request, outcome: 'unknown', headers: null, at: 0 },
+      null,
+    );
+    let at = 0;
+    for (const outcome of outcomes) {
+      at += day;
+      schedule = policy.schedule(
+        { request, outcome, headers: null, at },
+        schedule.history,
+      );
+    }
+    return (schedule.due ?? 0) - at;
+  };
+
+  const first = policy.schedule(
+    { request, outcome: 'unknown', headers: null, at: 0 },
+    null,
+  );
+  const never = visits(['unmodified', 'unmodified', 'unmodified']);
+  const sometimes = visits([
+    'modified',
+    'unmodified',
+    'unmodified',
+    'unmodified',
+  ]);
+  const always = visits(['modified', 'modified', 'modified', 'modified']);
+
+  assert.equal(first.due, day);
+  assert.equal(never, 14 * day);
+  // One change in four daily visits: -log(3.5 / 4.5) changes a day, about four days apart.
+  assert.equal(Math.round(sometimes), Math.round(day / -Math.log(3.5 / 4.5)));
+  // Every visit found a change: -log(0.5 / 4.5) changes a day, about half a day apart.
+  assert.equal(Math.round(always), Math.round(day / -Math.log(0.5 / 4.5)));
+});
+
+test('CompositeRevisit routes a URL to the first matching policy or the fallback, each with its own failure rule, and starts a URL whose route changed with no history', () => {
+  const policy = new CompositeRevisit(
+    [[new URLPattern('https://site.test/feed*'), new AlwaysRevisit()]],
+    new AdaptiveRevisit(),
+  );
+  const feed = { ...request, url: 'https://site.test/feed.xml' };
+  const visit = (
+    on: CrawlRequest,
+    outcome: 'unknown' | 'failed',
+    history: Parameters<typeof policy.schedule>[1],
+  ) => policy.schedule({ request: on, outcome, headers: null, at: 0 }, history);
+
+  const article = visit(request, 'unknown', null);
+  const feedFailure = visit(feed, 'failed', null);
+  const moved = visit(feed, 'unknown', article.history);
+
+  assert.deepEqual(article, {
+    due: day,
+    history: { route: 1, history: { interval: day } },
+  });
+  assert.equal(feedFailure.due, 0);
+  assert.deepEqual(moved.history, { route: 0, history: null });
+  assert.equal(
+    policy.due(
+      request,
+      { due: day, history: article.history, lastModified: null },
+      hour,
+    ),
+    false,
+  );
 });

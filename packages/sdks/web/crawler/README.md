@@ -65,15 +65,19 @@ A new crawl requests the starting URLs and every URL that its readers find. A kn
 - **Fail**: `crawl.fail(url)` tells the crawler that you could not use a page it handed back, so the page is due again as a failed one. This is a negative acknowledgement.
 - **Timing**: a visit is timed at the start of its crawl, so a URL due one interval later is due in the crawl that starts then.
 
-A `RevisitPolicy` decides when a URL is due; the third argument of `new WebCrawler` sets it, and `AdaptiveRevisit` is the default. A failed URL is due two hours later, as StormCrawler's `fetchInterval.fetch.error`. A gone URL, 404 or 410, is due a day later, as Nutch asks gone pages again. A listing that gives a page another `lastModified` than at the last visit makes the page due at once.
+A `RevisitPolicy` decides when a URL is due; the third argument of `new WebCrawler` sets it, and `AdaptiveRevisit` is the default. A listing that gives a page another `lastModified` than at the last visit makes the page due at once. In the policies below, which extend `IntervalRevisit`, a failed URL is due two hours later, as StormCrawler's `fetchInterval.fetch.error`, and a gone URL, 404 or 410, a day later, as Nutch asks gone pages again.
 
-| Policy            | A URL is due                                                                                                                                                                                     |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AdaptiveRevisit` | One day after its first download; then the interval grows by half while the body is unchanged, up to 14 days, and moves halfway to one hour when it changed (StormCrawler's `AdaptiveScheduler`) |
-| `FixedRevisit`    | One fixed interval after each visit (Nutch's `DefaultFetchSchedule`)                                                                                                                             |
-| `AlwaysRevisit`   | In every crawl, failed and gone URLs too, as a full refresh needs                                                                                                                                |
+| Policy              | A URL is due                                                                                                                                                                                                                 |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AdaptiveRevisit`   | One day after its first download; then the interval grows by half while the body is unchanged, up to 14 days, and moves halfway to one hour when it changed (StormCrawler's `AdaptiveScheduler`)                             |
+| `FixedRevisit`      | One fixed interval after each visit (Nutch's `DefaultFetchSchedule`)                                                                                                                                                         |
+| `HintRevisit`       | When its response stops being fresh by the lifetime its server declares (RFC 9111: `Cache-Control: max-age`, `Expires`, or the heuristic from `Last-Modified`), between one hour and 14 days; a day when it declares nothing |
+| `ChangeRateRevisit` | After the estimated time between its changes, from how many compared visits found a change (Cho and Garcia-Molina's estimator), between one hour and 14 days                                                                 |
+| `AlwaysRevisit`     | In every crawl, failed and gone URLs too, as a full refresh needs                                                                                                                                                            |
 
-A policy's history is plain data that its `histories` schema parses, so the memento can carry it. Write a subclass of `RevisitPolicy` for another rule: implement `visited`, and override `due` to read a hint before the download.
+`CompositeRevisit` routes each URL to the policy of the first `URLPattern` that matches it, or to a fallback, for example `FixedRevisit` for a feed and `AdaptiveRevisit` for its articles. Each routed policy keeps its own failure rule and history.
+
+A policy's history is plain data that its `histories` schema parses, so the memento can carry it. For another rule, extend `IntervalRevisit` and implement `visited`, or extend `RevisitPolicy` and implement `schedule` to decide failed and gone URLs too. Override `due` to read a hint before the download.
 
 ## Readers
 

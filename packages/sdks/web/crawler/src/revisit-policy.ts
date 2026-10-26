@@ -33,29 +33,19 @@ export type Known<History> = Schedule<History> & {
 };
 
 /**
- * When a known URL is requested again, across crawls. The crawler detects
- * change and stores each URL's schedule; a policy decides only when the URL
- * is due. Its history is plain data, so the crawl memento can carry it.
+ * When a known URL is requested again, across crawls, as Nutch's
+ * FetchSchedule. The crawler detects change and stores each URL's schedule;
+ * a policy decides only when the URL is due. Its history is plain data, so
+ * the crawl memento can carry it.
  */
 export abstract class RevisitPolicy<History> {
   abstract readonly histories: z.ZodType<History>;
-  /** How long a failed URL waits, as StormCrawler's fetchInterval.fetch.error. */
-  protected readonly retryAfter: number = 2 * hour;
-  /**
-   * How long a gone URL waits. A listing can still name a page that answers
-   * 404 and comes back later, so it is asked again, as Nutch's
-   * setPageGoneSchedule does, not never, as StormCrawler's default does.
-   */
-  protected readonly goneAfter: number = day;
 
   /** After a visit. */
-  schedule(revisit: Revisit, history: History | null): Schedule<History> {
-    if (revisit.outcome === 'failed')
-      return { due: revisit.at + this.retryAfter, history };
-    if (revisit.outcome === 'gone')
-      return { due: revisit.at + this.goneAfter, history };
-    return this.visited({ ...revisit, outcome: revisit.outcome }, history);
-  }
+  abstract schedule(
+    revisit: Revisit,
+    history: History | null,
+  ): Schedule<History>;
 
   /**
    * Whether a known URL is due in the crawl that starts at `at`. A listing
@@ -69,10 +59,4 @@ export abstract class RevisitPolicy<History> {
         request.lastModified !== known.lastModified)
     );
   }
-
-  /** After a download that succeeded. */
-  protected abstract visited(
-    revisit: Revisit & { readonly outcome: Change },
-    history: History | null,
-  ): Schedule<History>;
 }

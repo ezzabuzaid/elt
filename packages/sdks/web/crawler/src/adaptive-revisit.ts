@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
+import { IntervalRevisit } from './interval-revisit.ts';
 import {
   type Change,
   type Revisit,
-  RevisitPolicy,
   type Schedule,
   day,
   hour,
@@ -24,7 +24,7 @@ const rate = 0.5;
  * AdaptiveScheduler and Nutch's AdaptiveFetchSchedule. A shorter interval
  * moves toward the shortest one, so it slows near it.
  */
-export class AdaptiveRevisit extends RevisitPolicy<History> {
+export class AdaptiveRevisit extends IntervalRevisit<History> {
   readonly histories = historySchema;
 
   protected visited(
