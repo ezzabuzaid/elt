@@ -202,6 +202,9 @@
     },
     {
       "path": "./packages/sources/web/articles"
+    },
+    {
+      "path": "./apps/web"
     }
   ]
 }

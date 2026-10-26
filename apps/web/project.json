@@ -1,0 +1,22 @@
+{
+  "name": "web",
+  "sourceRoot": "apps/web/src",
+  "projectType": "application",
+  "targets": {
+    "format": {},
+    "build-client": {
+      "command": "vite build --config apps/web/frontend/vite.config.mts",
+      "dependsOn": ["^build"],
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/frontend/**/*",
+        "{projectRoot}/src/contract.ts"
+      ],
+      "outputs": ["{projectRoot}/dist/client"]
+    },
+    "start": {
+      "dependsOn": ["build", "build-client"],
+      "command": "node apps/web/dist/src/main.js"
+    }
+  }
+}
