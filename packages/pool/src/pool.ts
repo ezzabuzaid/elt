@@ -15,9 +15,10 @@ interface Slot<T> {
 }
 
 // Lends workers to jobs, one job per worker at a time. The sizing decides how
-// many workers run and the startup when they start; a dead worker is replaced
-// when a job next needs its slot. The owner disposes the pool, which stops
-// every worker.
+// many workers run and the startup when they start. A worker that exits is
+// replaced: at once when the startup is eager and the worker was idle,
+// otherwise when a job next needs its slot. The owner disposes the pool,
+// which stops every worker.
 export class Pool<T extends Worker> implements AsyncDisposable {
   readonly #create: () => T;
   readonly #startup: Startup;
@@ -103,7 +104,7 @@ export class Pool<T extends Worker> implements AsyncDisposable {
       if (slot.worker === creation) slot.worker = undefined;
       throw error;
     }
-    if (!worker.dead) return worker;
+    if (slot.ready) return worker;
     if (slot.worker === creation) slot.worker = undefined;
     this.#lost(slot);
     await this.#close(worker);
@@ -148,14 +149,25 @@ export class Pool<T extends Worker> implements AsyncDisposable {
       }
     });
     const settle = () => settled.resolve();
-    created.then(() => {
+    created.then((worker) => {
       if (slot.worker === created) {
         slot.ready = true;
         this.#check();
       }
       settle();
+      void worker.exited().then(() => this.#ended(slot, created, worker));
     }, settle);
     return created;
+  }
+
+  #ended(slot: Slot<T>, creation: Promise<T>, worker: T): void {
+    if (slot.worker !== creation) return;
+    this.#lost(slot);
+    if (slot.busy || this.#stopped.signal.aborted || !this.#startup.eager)
+      return;
+    slot.worker = undefined;
+    void this.#close(worker);
+    if (slot.index < this.#sizing.current) slot.worker = this.#spawn(slot);
   }
 
   #lost(slot: Slot<T>): void {

@@ -26,7 +26,6 @@ export class VisionWorker implements Worker {
   readonly #closed: Promise<Error>;
   readonly ready: Promise<void>;
   #stderr = '';
-  dead = false;
 
   constructor(helper: string) {
     this.#child = spawn(helper);
@@ -37,13 +36,7 @@ export class VisionWorker implements Worker {
       this.#stderr = (this.#stderr + chunk.toString()).slice(-16384);
     });
     this.#closed = new Promise((finish) => {
-      this.#child.once('error', (error) => {
-        this.dead = true;
-        finish(error);
-      });
-      this.#child.once('exit', () => {
-        this.dead = true;
-      });
+      this.#child.once('error', finish);
       this.#child.once('close', (code, signal) =>
         finish(
           new Error(
@@ -85,8 +78,11 @@ export class VisionWorker implements Worker {
     }
   }
 
+  exited(): Promise<Error> {
+    return this.#closed;
+  }
+
   kill(): void {
-    this.dead = true;
     this.#child.kill();
   }
 

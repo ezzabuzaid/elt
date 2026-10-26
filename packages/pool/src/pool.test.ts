@@ -61,6 +61,10 @@ class EchoWorker implements Worker {
     return this.#child.pid!;
   }
 
+  exited(): Promise<void> {
+    return this.closed;
+  }
+
   release(): void {
     this.#child.stdin.write('go\n');
   }
@@ -552,4 +556,32 @@ test('a job that started before the pool resized does not count toward the new s
   const [, beforeResize, afterResize] = sizing.samples;
   assert.equal(beforeResize!.measurable, false);
   assert.equal(afterResize!.measurable, true);
+});
+
+test('an eager pool replaces an idle worker that exits on its own, before any job needs it', async () => {
+  const created: EchoWorker[] = [];
+  await using pool = new Pool({
+    size: new Fixed(2),
+    startup: new Parallel(),
+    create: () => {
+      const worker = new EchoWorker();
+      worker.release();
+      created.push(worker);
+      return worker;
+    },
+  });
+  await pool.ready;
+
+  process.kill(created[0]!.pid, 'SIGKILL');
+  await eventually(() => created.length === 3);
+  await created[2]!.ready;
+
+  assert.deepEqual(
+    await Promise.all([
+      pool.use((worker) => worker.echo('a')),
+      pool.use((worker) => worker.echo('b')),
+    ]),
+    ['a', 'b'],
+  );
+  assert.equal(created.length, 3);
 });

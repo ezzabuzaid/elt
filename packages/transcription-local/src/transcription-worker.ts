@@ -24,7 +24,6 @@ export class TranscriptionWorker implements Worker {
   readonly #lines;
   readonly #closed: Promise<Error>;
   #stderr = '';
-  #dead = false;
 
   constructor(
     helper: string,
@@ -42,12 +41,8 @@ export class TranscriptionWorker implements Worker {
       this.#stderr = (this.#stderr + chunk.toString()).slice(-16384);
     });
     this.#closed = new Promise((finish) => {
-      this.#child.once('error', (error) => {
-        this.#dead = true;
-        finish(error);
-      });
+      this.#child.once('error', finish);
       this.#child.once('close', (code, signal) => {
-        this.#dead = true;
         finish(
           new Error(
             `Local transcription exited (${signal ?? code}): ${this.#stderr.trim()}`,
@@ -66,8 +61,8 @@ export class TranscriptionWorker implements Worker {
     await execute(helper, ['--help']);
   }
 
-  get dead(): boolean {
-    return this.#dead;
+  exited(): Promise<Error> {
+    return this.#closed;
   }
 
   async read(path: string) {
@@ -85,7 +80,6 @@ export class TranscriptionWorker implements Worker {
   }
 
   kill(): void {
-    this.#dead = true;
     this.#child.kill('SIGKILL');
   }
 
