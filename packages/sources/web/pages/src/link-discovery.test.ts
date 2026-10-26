@@ -65,7 +65,6 @@ test('ordinary links reach unlisted articles while feed pages and unchanged reru
   const source = new WebSource({
     stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [upstream.origin],
-    pollIntervalMs: 60_000,
   });
   const destination = new SQLiteDestination({ path: database.path });
   const history = new SQLiteSyncHistory();
@@ -147,7 +146,6 @@ test('new URLs survive interruption, and only the page in flight downloads again
   const source = new WebSource({
     stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [upstream.origin],
-    pollIntervalMs: 60000,
   });
   const destination = new SQLiteDestination({ path: database.path }),
     history = new SQLiteSyncHistory();
@@ -258,7 +256,6 @@ test('Markdown pages supply links, and feeds declared on crawled pages are read 
   const source = new WebSource({
     stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [upstream.origin],
-    pollIntervalMs: 60000,
   });
   const destination = new SQLiteDestination({ path: database.path }),
     history = new SQLiteSyncHistory();
@@ -325,7 +322,6 @@ test('an interruption during a long stretch of archive pages keeps the progress 
   const source = new WebSource({
     stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [upstream.origin],
-    pollIntervalMs: 60000,
   });
   const destination = new SQLiteDestination({ path: database.path }),
     history = new SQLiteSyncHistory();

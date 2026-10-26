@@ -16,6 +16,7 @@ import {
   AlwaysRevisit,
   ArchiveReader,
   CrawlError,
+  FixedRevisit,
   LinkReader,
   ListingReader,
   PaginationReader,
@@ -54,7 +55,6 @@ test('native articles persist clean text and refresh independently changing HTML
     new WebSource({
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -100,7 +100,6 @@ test('archive articles persist Markdown and an unchanged rerun writes no records
   const source = new WebSource({
     stream: articles(),
     inputs: [upstream.origin],
-    pollIntervalMs: 60_000,
   });
   const ingestion = await pipeline(source, database.path, checkpoints.path);
   assert.equal((await ingestion.run())[0]?.count, 1);
@@ -142,7 +141,6 @@ test('the pipeline prefers native Markdown, keeps HTML fallback and writes nothi
     new WebSource({
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -206,7 +204,6 @@ test('an article that a feed and a sitemap list with and without a trailing slas
     new WebSource({
       stream: articles(),
       inputs: [upstream.origin],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -295,7 +292,6 @@ test('temporary listing and article failures recover within one pipeline run', a
     new WebSource({
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -341,7 +337,6 @@ test('failed articles do not block later articles or later refreshes', async () 
   const options = {
     stream: articles(),
     inputs: [`${upstream.origin}/feed.xml`],
-    pollIntervalMs: 60_000,
   };
   const first = await pipeline(
     new WebSource(options),
@@ -442,7 +437,6 @@ test(
     const options = {
       stream: articles(),
       inputs: [`${upstream.origin}/feed.json`],
-      pollIntervalMs: 60_000,
     };
     const first = await pipeline(
       new WebSource(options),
@@ -565,7 +559,6 @@ test(
       new WebSource({
         stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
-        pollIntervalMs: 60_000,
       }),
       database.path,
       checkpoints.path,
@@ -622,7 +615,6 @@ test(
       new WebSource({
         stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
-        pollIntervalMs: 60_000,
       }),
       database.path,
       checkpoints.path,
@@ -683,7 +675,6 @@ test(
       new WebSource({
         stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
-        pollIntervalMs: 60_000,
       }),
       database.path,
       checkpoints.path,
@@ -738,7 +729,6 @@ test('a completed scan retains successful articles and retries failures on the n
   const options = {
     stream: articles(),
     inputs: [`${upstream.origin}/feed.json`],
-    pollIntervalMs: 60_000,
   };
   const first = await pipeline(
     new WebSource(options),
@@ -815,7 +805,6 @@ test(
     const options = {
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
-      pollIntervalMs: 60_000,
     };
     const first = await pipeline(
       new WebSource(options),
@@ -890,7 +879,6 @@ test('chosen websites and feeds persist article metadata, make unchanged reruns 
     const options = {
       stream: articles(),
       inputs: [`${upstream.origin}${input}`],
-      pollIntervalMs: 60_000,
     };
     const first = await pipeline(
       new WebSource(options),
@@ -1021,7 +1009,6 @@ test('feed rollover retains articles and independent inputs keep their own progr
     new WebSource({
       stream: articles(),
       inputs: [`${upstream.origin}/two.json`, `${upstream.origin}/one.json`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -1043,7 +1030,6 @@ test('feed rollover retains articles and independent inputs keep their own progr
         `${upstream.origin}/two.json`,
         `${upstream.origin}/three.json`,
       ],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -1093,7 +1079,6 @@ test('a failed full refresh tries later articles and preserves the last complete
   const source = new WebSource({
     stream: articles(),
     inputs: [`${upstream.origin}/sitemap.xml`],
-    pollIntervalMs: 60_000,
   });
   const destination = new SQLiteDestination({ path: database.path });
   const history = new SQLiteSyncHistory();
@@ -1143,6 +1128,58 @@ test('a failed full refresh tries later articles and preserves the last complete
 });
 
 test(
+  'a watch checks again only when a known URL is due, so by default it does not crawl again soon after a crawl',
+  { timeout: 10_000 },
+  async () => {
+    const requests: string[] = [];
+    await using upstream = await new HttpServer().start((request, response) => {
+      const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+      requests.push(url.pathname);
+      if (url.pathname === '/feed.xml') {
+        response.setHeader('content-type', 'application/rss+xml');
+        response.end(
+          `<rss><channel><item><link>${url.origin}/article</link></item></channel></rss>`,
+        );
+      } else {
+        response.setHeader('content-type', 'text/html');
+        response.end(
+          '<article><p>An observation with enough readable content to keep the article.</p></article>',
+        );
+      }
+    });
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const ingestion = await pipeline(
+      new WebSource({
+        stream: new WebStream({
+          name: 'articles',
+          primaryKey: ['articleUrl'],
+          readers: [new ListingReader()],
+          extractor: new ArticleExtractor(),
+        }),
+        inputs: [`${upstream.origin}/feed.xml`],
+      }),
+      database.path,
+      checkpoints.path,
+    );
+    const controller = new AbortController();
+    const watch = ingestion.watch({ signal: controller.signal });
+    try {
+      assert.equal((await watch.next()).done, false);
+      const first = requests.splice(0);
+      // AdaptiveRevisit makes the feed and the article due a day later.
+      await setTimeout(300);
+
+      assert.deepEqual(first, ['/feed.xml', '/article']);
+      assert.deepEqual(requests, []);
+    } finally {
+      controller.abort();
+      await watch.return(undefined);
+    }
+  },
+);
+
+test(
   'pipeline watching refreshes edited articles and stops when cancelled',
   { timeout: 10_000 },
   async () => {
@@ -1164,9 +1201,15 @@ test(
     await using checkpoints = await new Sqlite().database();
     const ingestion = await pipeline(
       new WebSource({
-        stream: articles(),
+        stream: new WebStream({
+          name: 'articles',
+          primaryKey: ['articleUrl'],
+          readers: [new ListingReader()],
+          // What a poll interval was: one interval for every URL.
+          revisit: new FixedRevisit({ every: 100 }),
+          extractor: new ArticleExtractor(),
+        }),
         inputs: [`${upstream.origin}/feed.xml`],
-        pollIntervalMs: 100,
       }),
       database.path,
       checkpoints.path,
@@ -1227,7 +1270,6 @@ test('explicit URL patterns restrict article downloads and preserve matching que
   const options = {
     stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [`${upstream.origin}/feed.json`],
-    pollIntervalMs: 60_000,
   };
   const ingestion = await pipeline(
     new WebSource(options),
@@ -1288,7 +1330,6 @@ test('a Latin-1 article page is stored with its text and leaves nothing to retry
     new WebSource({
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -1333,7 +1374,6 @@ test('by default an incremental crawl requests a known page again only when it i
       extractor: new ArticleExtractor(),
     }),
     inputs: [`${upstream.origin}/feed.xml`],
-    pollIntervalMs: 60_000,
   };
   const run = async () =>
     (

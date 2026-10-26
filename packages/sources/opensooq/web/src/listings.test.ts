@@ -246,7 +246,6 @@ test('every listing of a paginated category is stored with its JSON-LD fields', 
     new WebSource({
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -295,7 +294,6 @@ test('listings that a listing page links as related ads are neither downloaded n
     new WebSource({
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -324,7 +322,6 @@ test('every listing of a category without pagination is stored, and nothing else
     new WebSource({
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -382,7 +379,6 @@ test('a category crawl reads only the category and its next pages, not the filte
     new WebSource({
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles/2000`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -419,7 +415,6 @@ test('listings of every real schema.org shape are stored with their mapped field
     new WebSource({
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -518,7 +513,6 @@ test('a listing page without an object for its listing fails, and the next run t
     new WebSource({
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
-      pollIntervalMs: 60_000,
     });
   const ingestion = await pipeline(source(), database.path, checkpoints.path);
 
@@ -574,7 +568,6 @@ test('a listing whose offer has no price fails, and the next run tries it again'
     new WebSource({
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
-      pollIntervalMs: 60_000,
     });
   const ingestion = await pipeline(source(), database.path, checkpoints.path);
 
@@ -622,7 +615,6 @@ test('an unchanged rerun writes nothing', async (t) => {
     new WebSource({
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -674,7 +666,6 @@ test('a listing page whose markup changes outside its JSON-LD is not extracted a
         extractor,
       }),
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -701,7 +692,6 @@ test('a listing whose JSON-LD changes is written again with the new values', asy
     new WebSource({
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -741,7 +731,6 @@ test('the listing stored is the JSON-LD object whose url has the listing id of t
     new WebSource({
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,

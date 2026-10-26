@@ -99,7 +99,6 @@ test('every record an extractor returns for a page is stored with the page prove
     new WebSource({
       stream: sections(null),
       inputs: [input],
-      pollIntervalMs: 60_000,
     }),
     database.path,
     checkpoints.path,
@@ -130,7 +129,6 @@ test('the discovered stream holds the provenance columns and the extractor prope
   const source = new WebSource({
     stream,
     inputs: ['https://example.com/'],
-    pollIntervalMs: 60_000,
   });
 
   const discovered = (await source.discover()).get('sections');
@@ -179,7 +177,6 @@ for (const accept of ['application/vnd.sections+json', null])
       new WebSource({
         stream: sections(accept),
         inputs: [`${upstream.origin}/sitemap.xml`],
-        pollIntervalMs: 60_000,
       }),
       database.path,
       checkpoints.path,

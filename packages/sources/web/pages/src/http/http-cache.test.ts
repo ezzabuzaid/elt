@@ -27,7 +27,7 @@ const stream = new WebStream({
   revisit: new AlwaysRevisit(),
   extractor: new ArticleExtractor(),
 });
-const source = new WebSource({ stream, inputs: [input], pollIntervalMs: 60000 });
+const source = new WebSource({ stream, inputs: [input] });
 const destination = new SQLiteDestination({ path });
 const history = new SQLiteSyncHistory();
 await history.install([destination]);

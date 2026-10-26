@@ -64,6 +64,7 @@ A new crawl requests the starting URLs and every URL that its readers find. A kn
 - **Deferred**: after the pages, the crawl hands out `{ deferred: { url, listingUrl, lastModified } }` for each known page that matches `include`, that it did not request, and whose last download succeeded. The page still exists, unchanged as far as the crawl knows.
 - **Fail**: `crawl.fail(url)` tells the crawler that you could not use a page it handed back, so the page is due again as a failed one. This is a negative acknowledgement.
 - **Timing**: a visit is timed at the start of its crawl, so a URL due one interval later is due in the crawl that starts then.
+- **Next crawl**: `crawl.nextDue()` gives when the next crawl has a known URL due, starting URLs included, or null when none ever is. Start the next crawl then.
 
 A `RevisitPolicy` decides when a URL is due; the third argument of `new WebCrawler` sets it, and `AdaptiveRevisit` is the default. A listing that gives a page another `lastModified` than at the last visit makes the page due at once. In the policies below, which extend `IntervalRevisit`, a failed URL is due two hours later, as StormCrawler's `fetchInterval.fetch.error`, and a gone URL, 404 or 410, a day later, as Nutch asks gone pages again.
 

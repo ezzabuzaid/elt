@@ -75,7 +75,6 @@ const pipeline = async () => {
       extractor: new ArticleExtractor(),
     }),
     inputs,
-    pollIntervalMs: 60 * 60_000,
   });
   return new Pipeline({
     history,

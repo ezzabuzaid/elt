@@ -61,7 +61,6 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
   const source = new WebSource({
     stream: articles(),
     inputs: [upstream.origin],
-    pollIntervalMs: 60_000,
   });
   const stream = (await source.discover()).get('articles');
   const incremental = new CopyConfiguration(stream, {
@@ -157,7 +156,6 @@ test('restarted source keeps unchanged rows and detects listing metadata and art
     const source = new WebSource({
       stream: articles(),
       inputs: [`${upstream.origin}/sitemap.xml`],
-      pollIntervalMs: 60_000,
     });
     const destination = new SQLiteDestination({ path: database.path });
     const history = new SQLiteSyncHistory();

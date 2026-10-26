@@ -1,5 +1,5 @@
 import { hash } from 'node:crypto';
-import { setInterval } from 'node:timers/promises';
+import { setTimeout } from 'node:timers/promises';
 
 import { z } from 'zod';
 
@@ -64,24 +64,16 @@ export class WebSource extends Source {
   protected readonly catalog: Catalog;
   readonly #stream: WebStream;
   readonly #inputs: readonly string[];
-  readonly #pollIntervalMs: number;
-  constructor(options: {
-    stream: WebStream;
-    inputs: readonly string[];
-    pollIntervalMs: number;
-  }) {
+  // Each input's earliest due URL, as its last crawl left it; null when its crawl failed or nothing is ever due.
+  readonly #due = new Map<string, number | null>();
+  #extracted = Promise.withResolvers<void>();
+  constructor(options: { stream: WebStream; inputs: readonly string[] }) {
     super();
     this.#stream = options.stream;
     this.#inputs = z
       .array(z.url({ protocol: /^https?$/ }))
       .min(1)
       .parse(options.inputs);
-    this.#pollIntervalMs = z
-      .number()
-      .int()
-      .positive()
-      .max(2 ** 31 - 1)
-      .parse(options.pollIntervalMs);
     const properties = {
       ...provenance,
       ...options.stream.extractor.properties,
@@ -136,15 +128,38 @@ export class WebSource extends Source {
   protected override partitions() {
     return this.#inputs.map((inputUrl) => ({ inputUrl }));
   }
+  // The source checks again when its earliest known URL is due, as each
+  // input's last crawl left it. The watch runs a crawl beside this loop, so
+  // the loop waits until every input's crawl since the last check has ended.
   protected async *observe({
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     yield streams;
-    for await (const selected of setInterval(this.#pollIntervalMs, streams, {
-      signal,
-    }))
-      yield selected;
+    for (;;) {
+      const extracted = this.#extracted.promise;
+      const next =
+        this.#due.size < this.#inputs.length
+          ? Infinity
+          : Math.min(...[...this.#due.values()].map((due) => due ?? Infinity));
+      if (next > Date.now()) {
+        const waiting = new AbortController();
+        try {
+          await Promise.race([
+            setTimeout(Math.min(next - Date.now(), 2 ** 31 - 1), undefined, {
+              signal: AbortSignal.any([signal, waiting.signal]),
+            }),
+            extracted,
+          ]);
+        } finally {
+          waiting.abort();
+        }
+        signal.throwIfAborted();
+        continue;
+      }
+      this.#due.clear();
+      yield streams;
+    }
   }
   protected async *extract(
     configuration: CopyConfiguration,
@@ -154,131 +169,140 @@ export class WebSource extends Source {
     signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const inputUrl = z.string().parse(partition?.inputUrl);
-    const previous =
-      state === null ? { diff: null, crawl: null } : saved.parse(state);
-    let diff: unknown = previous.diff;
-    await using client = await webHttp(signal);
-    const { http, signal: requestSignal } = client;
-    const run = this.#stream.extractor.open(http);
-    const crawler = new WebCrawler(
-      http.extend({
-        hooks: {
-          beforeRequest: [
-            (options) => {
-              if (options.context.page === true && run.accept !== null)
-                options.headers.accept = run.accept;
-            },
-          ],
-        },
-      }),
-      this.#stream.readers,
-      // A full refresh replaces the collection, so it must see every page that still exists.
-      configuration.syncMode === 'full_refresh'
-        ? new AlwaysRevisit()
-        : this.#stream.revisit,
-    );
-    const crawl = crawler.crawl([inputUrl], previous.crawl, {
-      signal: requestSignal,
-      include: this.#stream.include,
-    });
-    const errors: Error[] = [];
-    let savedAt = performance.now();
-    const checkpoint = () => {
-      savedAt = performance.now();
-      return { diff, crawl: crawl.snapshot() };
-    };
-    for await (const entry of crawl) {
-      // A page that is not due keeps its row; the diff forgets its fingerprint, so it is extracted again when due (#3011).
-      if ('deferred' in entry) continue;
-      if ('progress' in entry) {
-        // Listings and archives hand out no pages, so their progress is saved on an interval.
-        if (performance.now() - savedAt >= 1_000)
+    let due: number | null = null;
+    try {
+      const previous =
+        state === null ? { diff: null, crawl: null } : saved.parse(state);
+      let diff: unknown = previous.diff;
+      await using client = await webHttp(signal);
+      const { http, signal: requestSignal } = client;
+      const run = this.#stream.extractor.open(http);
+      const crawler = new WebCrawler(
+        http.extend({
+          hooks: {
+            beforeRequest: [
+              (options) => {
+                if (options.context.page === true && run.accept !== null)
+                  options.headers.accept = run.accept;
+              },
+            ],
+          },
+        }),
+        this.#stream.readers,
+        // A full refresh replaces the collection, so it must see every page that still exists.
+        configuration.syncMode === 'full_refresh'
+          ? new AlwaysRevisit()
+          : this.#stream.revisit,
+      );
+      const crawl = crawler.crawl([inputUrl], previous.crawl, {
+        signal: requestSignal,
+        include: this.#stream.include,
+      });
+      const errors: Error[] = [];
+      let savedAt = performance.now();
+      const checkpoint = () => {
+        savedAt = performance.now();
+        return { diff, crawl: crawl.snapshot() };
+      };
+      for await (const entry of crawl) {
+        // A page that is not due keeps its row; the diff forgets its fingerprint, so it is extracted again when due (#3011).
+        if ('deferred' in entry) continue;
+        if ('progress' in entry) {
+          // Listings and archives hand out no pages, so their progress is saved on an interval.
+          if (performance.now() - savedAt >= 1_000)
+            yield {
+              type: 'STATE',
+              stream: configuration.stream.name,
+              state: checkpoint(),
+            };
+          continue;
+        }
+        if ('error' in entry) {
+          errors.push(entry.error);
           yield {
             type: 'STATE',
             stream: configuration.stream.name,
             state: checkpoint(),
           };
-        continue;
-      }
-      if ('error' in entry) {
-        errors.push(entry.error);
-        yield {
-          type: 'STATE',
-          stream: configuration.stream.name,
-          state: checkpoint(),
-        };
-        continue;
-      }
-      try {
-        const output = await run
-          .read(entry.response, requestSignal)
-          .catch(pageFailure);
-        for await (const message of diffGroupedSnapshot(
-          configuration,
-          [
-            {
-              key: entry.url,
-              fingerprint:
-                output.fingerprint === null
-                  ? null
-                  : hash(
-                      'sha256',
-                      JSON.stringify([
-                        output.fingerprint,
-                        entry.listingUrl,
-                        entry.lastModified,
-                      ]),
-                    ),
-              async *records() {
-                const records = await output.records().catch(pageFailure);
-                yield* validateRecords(
-                  configuration.stream,
-                  records.map((record) => ({
-                    ...record,
-                    inputUrl,
-                    pageUrl: entry.url,
-                    listingUrl: entry.listingUrl,
-                    lastModified: entry.lastModified,
-                  })),
-                  'Web',
-                );
-              },
-            },
-          ],
-          diff,
-          { continues: true, signal },
-        )) {
-          if ('type' in message && message.type === 'STATE') {
-            diff = message.state;
-            yield { ...message, state: checkpoint() };
-          } else yield message;
+          continue;
         }
-      } catch (error) {
-        requestSignal.throwIfAborted();
-        if (!(error instanceof PageFailure)) throw error;
-        errors.push(error.failure);
-        crawl.fail(entry.url);
-        yield {
-          type: 'STATE',
-          stream: configuration.stream.name,
-          state: checkpoint(),
-        };
+        try {
+          const output = await run
+            .read(entry.response, requestSignal)
+            .catch(pageFailure);
+          for await (const message of diffGroupedSnapshot(
+            configuration,
+            [
+              {
+                key: entry.url,
+                fingerprint:
+                  output.fingerprint === null
+                    ? null
+                    : hash(
+                        'sha256',
+                        JSON.stringify([
+                          output.fingerprint,
+                          entry.listingUrl,
+                          entry.lastModified,
+                        ]),
+                      ),
+                async *records() {
+                  const records = await output.records().catch(pageFailure);
+                  yield* validateRecords(
+                    configuration.stream,
+                    records.map((record) => ({
+                      ...record,
+                      inputUrl,
+                      pageUrl: entry.url,
+                      listingUrl: entry.listingUrl,
+                      lastModified: entry.lastModified,
+                    })),
+                    'Web',
+                  );
+                },
+              },
+            ],
+            diff,
+            { continues: true, signal },
+          )) {
+            if ('type' in message && message.type === 'STATE') {
+              diff = message.state;
+              yield { ...message, state: checkpoint() };
+            } else yield message;
+          }
+        } catch (error) {
+          requestSignal.throwIfAborted();
+          if (!(error instanceof PageFailure)) throw error;
+          errors.push(error.failure);
+          crawl.fail(entry.url);
+          yield {
+            type: 'STATE',
+            stream: configuration.stream.name,
+            state: checkpoint(),
+          };
+        }
       }
+      requestSignal.throwIfAborted();
+      for await (const message of diffGroupedSnapshot(configuration, [], diff, {
+        signal,
+      }))
+        if ('type' in message && message.type === 'STATE')
+          yield {
+            ...message,
+            state: { diff: message.state, crawl: crawl.snapshot() },
+          };
+        else yield message;
+      due = crawl.nextDue();
+      if (errors.length > 0)
+        throw new AggregateError(
+          errors,
+          errors.map((error) => error.message).join('; '),
+        );
+    } finally {
+      this.#due.set(inputUrl, due);
+      const { resolve } = this.#extracted;
+      this.#extracted = Promise.withResolvers();
+      resolve();
     }
-    requestSignal.throwIfAborted();
-    for await (const message of diffGroupedSnapshot(configuration, [], diff, {
-      signal,
-    }))
-      if ('type' in message && message.type === 'STATE')
-        yield {
-          ...message,
-          state: { diff: message.state, crawl: crawl.snapshot() },
-        };
-      else yield message;
-    if (errors.length > 0)
-      throw new AggregateError(
-        errors,
-        errors.map((error) => error.message).join('; '),
-      );
   }
 }

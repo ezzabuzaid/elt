@@ -532,3 +532,22 @@ test('CompositeRevisit routes a URL to the first matching policy or the fallback
     false,
   );
 });
+
+test('nextDue gives when the next crawl has a known URL due, starting URLs included, and null before any visit', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 0 });
+  using server = mockWeb(
+    http.get('https://site.test/*', ({ request }) =>
+      pathOf(request.url) === '/'
+        ? HttpResponse.html('<a href="/a">A</a>')
+        : new HttpResponse(null, { status: 400 }),
+    ),
+  );
+  const crawl = siteCrawler().crawl(['https://site.test/'], null, options());
+  const before = crawl.nextDue();
+
+  await crawled(crawl);
+
+  assert.equal(before, null);
+  // The start is due a day later; /a failed, so it is due two hours later.
+  assert.equal(crawl.nextDue(), 2 * hour);
+});

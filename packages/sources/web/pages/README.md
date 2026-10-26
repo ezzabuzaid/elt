@@ -35,7 +35,6 @@ const source = new WebSource({
     extractor: new ArticleExtractor(),
   }),
   inputs: ['https://www.anthropic.com/'],
-  pollIntervalMs: 3_600_000,
 });
 const destination = new SQLiteDestination({ path: './articles.sqlite' });
 const history = new SQLiteSyncHistory();
@@ -85,7 +84,7 @@ Incremental reruns revalidate the selected pages that are due, then use `diffGro
 
 An interrupted crawl resumes from its saved snapshot, and the page handed out last is handed out again. Progress through listings and archives is saved at most once a second, so an interruption there repeats at most about a second of work. A completed crawl keeps only its known URLs, so the next refresh starts a new crawl and can find new URLs anywhere. `WebStream`'s `revisit` sets when a known page is due; the default, the crawler's `AdaptiveRevisit`, requests an unchanged page again after one day and then after longer intervals, up to 14 days, and a page whose sitemap `lastModified` changed at once. A page that is not due keeps its row; it is extracted again when it is due. Failed pages are due again even after they leave every listing. A full refresh uses `AlwaysRevisit`, so it requests every known page. Feed rollover and empty extraction do not delete previously loaded records. Full refresh attempts the selected pages but replaces the collection only after a successful pass.
 
-`Pipeline.watch({ signal })` polls at the required `pollIntervalMs`, using the same extraction and checkpoint path. One-shot `run()` does not start a watcher. The host chooses SQLite, Postgres, or another destination.
+`Pipeline.watch({ signal })` checks again when the earliest known URL of an input is due, as its last crawl left it, using the same extraction and checkpoint path. A failed crawl leaves its input to the watch's own retries. `AlwaysRevisit` gives no interval, so a watched full refresh crawls again as soon as its crawl ends; give a watched stream a policy with an interval, such as `FixedRevisit`. One-shot `run()` does not start a watcher. The host chooses SQLite, Postgres, or another destination.
 
 Within each input, the crawler downloads one page at a time. A shared `p-queue` gate permits at most two request starts per rolling second, including listings, redirects and retries. Got supplies its standard selective retry/backoff policy and a 30-second timeout per HTTP attempt, starting after the rate-limit wait. The caller’s abort signal bounds the whole run; cancellation and stopping consumption cancel queued and in-flight downloads. A failed listing or page is recorded and the crawl continues; validation and persistence failures stop the run. These limits apply per crawl, not globally across separate pipelines. There is no crawl-delay policy or robots exclusion enforcement. The crawler's robots support locates sitemaps. HTML extraction retains the SDK's limitations, including no JavaScript rendering. Each save of the state grows with the listing; backlog item 2920 records this.
 

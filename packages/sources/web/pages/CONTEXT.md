@@ -66,7 +66,7 @@ _Avoid_: Visited set, history alone (a revisit policy has its own history of eac
 
 **Revisit policy**:
 The rule that decides when a known URL is due again, across crawls. The web stream gives it; a full refresh uses `AlwaysRevisit`.
-_Avoid_: Schedule alone, refresh interval (the source's poll interval is how often it checks)
+_Avoid_: Schedule alone, poll interval (a watch checks again when the earliest known URL is due)
 
 **Deferred page**:
 A known page that the crawl did not request because it is not due, and whose last download succeeded. Its row stays.

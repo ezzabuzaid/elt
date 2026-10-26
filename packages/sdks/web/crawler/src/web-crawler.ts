@@ -102,6 +102,8 @@ export interface Crawl extends AsyncIterable<
   snapshot(): CrawlMemento;
   /** The caller could not use a page it was handed back, so the page is due again as a failed one. */
   fail(url: string): void;
+  /** When the next crawl has a known URL due, starting URLs included; null when none ever is. */
+  nextDue(): number | null;
 }
 
 export class WebCrawler {
@@ -294,6 +296,15 @@ class CrawlRun implements Crawl {
     const after = this.#schedule(entry, 'failed', null, null, before);
     if (visit) this.#visit = { before, after };
     else this.#urls.set(url, after);
+  }
+
+  nextDue(): number | null {
+    const known = [...this.#urls.values()];
+    if (this.#visit) known.push(this.#visit.after);
+    let next: number | null = null;
+    for (const { due } of known)
+      if (due !== null && (next === null || due < next)) next = due;
+    return next;
   }
 
   async *[Symbol.asyncIterator](): AsyncGenerator<
