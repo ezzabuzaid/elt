@@ -15,6 +15,7 @@
     }
   },
   "dependencies": {
+    "@zukhruf/fs": "^0.3.47",
     "gaxios": "7.3.1",
     "google-auth-library": "^11.1.0"
   },

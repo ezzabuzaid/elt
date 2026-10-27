@@ -27,6 +27,6 @@
     "@types/html-to-text": "9.0.4",
     "@types/jsdom": "^28.0.3",
     "@workspace/sdk-web-crawler": "0.0.1",
-    "@zukhruf/testing": "0.3.46"
+    "@zukhruf/testing": "^0.3.47"
   }
 }

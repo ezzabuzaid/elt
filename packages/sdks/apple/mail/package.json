@@ -12,8 +12,8 @@
   "dependencies": {
     "@workspace/codec-plist": "0.0.1",
     "@zone-eu/mailsplit": "5.4.19",
-    "@zukhruf/sqlite-data-version": "0.3.39",
-    "@zukhruf/sqlite-snapshot": "0.3.31",
+    "@zukhruf/sqlite-data-version": "^0.3.47",
+    "@zukhruf/sqlite-snapshot": "^0.3.47",
     "libmime": "5.4.6"
   },
   "devDependencies": {

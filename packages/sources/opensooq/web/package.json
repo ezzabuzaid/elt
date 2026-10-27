@@ -24,6 +24,6 @@
   "devDependencies": {
     "@types/jsdom": "28.0.3",
     "@workspace/elt-sqlite": "0.0.1",
-    "@zukhruf/testing": "0.3.46"
+    "@zukhruf/testing": "^0.3.47"
   }
 }
