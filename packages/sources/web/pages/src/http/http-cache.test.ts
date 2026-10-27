@@ -99,6 +99,11 @@ test('production cache survives process restarts, revalidates fresh responses an
         ? 'no-store'
         : `public, max-age=${freshness}`,
     );
+    // The site has no robots.txt.
+    if (path === '/robots.txt') {
+      response.writeHead(404).end();
+      return;
+    }
     if (path === '/modified') response.setHeader('last-modified', modified);
     else if (path !== '/unvalidated') response.setHeader('etag', etag);
     const conditional =

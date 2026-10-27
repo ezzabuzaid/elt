@@ -235,6 +235,7 @@ test('pagination on a listed page is not followed, and neither are its other lin
         '<head><link rel="next" href="/related?page=2"></head><main><a rel="next" href="/item/1/photos/2">More photos</a><a href="/item/3">A related item</a></main>',
       );
     } else if (request.url === '/item/2') response.end('<p>An item.</p>');
+    else if (request.url === '/robots.txt') response.writeHead(404).end();
     else response.end('<main><a href="/item/9">Another item</a></main>');
   });
 
@@ -248,7 +249,12 @@ test('pagination on a listed page is not followed, and neither are its other lin
     pages.map(location).map((page) => page.url),
     [`${upstream.origin}/item/1`, `${upstream.origin}/item/2`],
   );
-  assert.deepEqual(requests.toSorted(), ['/category', '/item/1', '/item/2']);
+  assert.deepEqual(requests.toSorted(), [
+    '/category',
+    '/item/1',
+    '/item/2',
+    '/robots.txt',
+  ]);
 });
 
 test('a crawl stopped inside the pagination and resumed from its snapshot reads the rest of the chain', async () => {

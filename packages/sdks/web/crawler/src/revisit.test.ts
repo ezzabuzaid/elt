@@ -23,8 +23,12 @@ import {
 } from './index.ts';
 
 // Synthetic upstream sites make page bodies and failures reproducible offline.
+// They have no robots.txt, so the requests they record are the crawl's pages.
 function mockWeb(...handlers: Parameters<typeof setupServer>) {
-  const server = setupServer(...handlers);
+  const server = setupServer(
+    http.get('*/robots.txt', () => new HttpResponse(null, { status: 404 })),
+    ...handlers,
+  );
   server.listen({ onUnhandledFrame: 'error' });
   return {
     [Symbol.dispose]() {

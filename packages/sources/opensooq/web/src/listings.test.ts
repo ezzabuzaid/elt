@@ -336,10 +336,12 @@ test('every listing of a category without pagination is stored, and nothing else
       .map((row) => row.id),
     ['287909010', '287909011'],
   );
+  // The crawl reads the site's robots.txt before its first request there.
   assert.deepEqual(upstream.requests.toSorted(), [
     '/en/category',
     '/en/search/287909010',
     '/en/search/287909011',
+    '/robots.txt',
   ]);
 });
 
@@ -386,12 +388,14 @@ test('a category crawl reads only the category and its next pages, not the filte
 
   await ingestion.run();
 
+  // The crawl reads the site's robots.txt before its first request there.
   assert.deepEqual(requests.toSorted(), [
     '/en/cars/motorcycles/2000',
     '/en/cars/motorcycles/2000?page=2',
     '/en/search/289081186',
     '/en/search/289120264',
     '/en/search/289165164',
+    '/robots.txt',
   ]);
   assert.deepEqual(
     database.connection

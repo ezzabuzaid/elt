@@ -30,6 +30,13 @@ function mockWeb(...handlers: Parameters<typeof setupServer>) {
   };
 }
 
+// A site without robots.txt, answered before the handlers that record requests,
+// for tests whose readers do not read robots.txt themselves.
+const noRobots = http.get(
+  '*/robots.txt',
+  () => new HttpResponse(null, { status: 404 }),
+);
+
 function pathOf(url: string) {
   const { pathname, search } = new URL(url);
   return pathname + search;
@@ -52,6 +59,7 @@ test('crawls links itself and preserves URL identity, provenance and Got respons
   const requests: string[] = [];
   const responses = new Map<string, Response>();
   using server = mockWeb(
+    noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -125,6 +133,7 @@ test('crawls links itself and preserves URL identity, provenance and Got respons
 test('each found URL is requested once for each role it adds and keeps the URL as found, including redirect aliases', async () => {
   const requests: string[] = [];
   using server = mockWeb(
+    noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -230,6 +239,7 @@ test('failures are handed out with their URL while independent pages continue, a
 
 test('a failed starting URL is handed out as a failure', async () => {
   using server = mockWeb(
+    noRobots,
     http.get(
       'https://site.test/missing',
       () => new HttpResponse(null, { status: 404 }),
@@ -251,6 +261,7 @@ test('a failed starting URL is handed out as a failure', async () => {
 test('consumer backpressure and early break stop fetching, and crawls remain isolated', async () => {
   const requests: string[] = [];
   using server = mockWeb(
+    noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -303,6 +314,7 @@ test(
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     using server = mockWeb(
+      noRobots,
       http.get('https://site.test/slow', async () => {
         entered.resolve();
         // MSW's synthetic Request.signal does not mirror Node request aborts.
@@ -359,6 +371,7 @@ test('validates readers and starting URLs and accepts an empty crawl', async () 
 test('include hands back only matching pages and never requests non-matching pages beyond the link limits', async () => {
   const requests: string[] = [];
   using server = mockWeb(
+    noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -446,6 +459,7 @@ test('Got hooks see options.context.page only for handed-back pages that no read
 test('a snapshot resumes the crawl without repeating finished work and hands out the last entry again', async () => {
   const requests: string[] = [];
   using server = mockWeb(
+    noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -568,13 +582,18 @@ test('every downloaded URL that is not handed back as a page or failure is hande
   );
   // The starting page, the feed, robots.txt's tolerated 404 and a page read only for its links.
   assert.deepEqual(progress, ['/', '/feed.xml', '/robots.txt', '/hub']);
+  // The crawl reads the origin's rules before its first request, without a progress entry.
+  assert.equal(requests[0], '/robots.txt');
   assert.deepEqual(handed.toSorted(), [
     '/keep/1',
     '/keep/2',
     '/keep/3',
     '/keep/bad',
   ]);
-  assert.deepEqual(requests.toSorted(), [...progress, ...handed].toSorted());
+  assert.deepEqual(
+    requests.slice(1).toSorted(),
+    [...progress, ...handed].toSorted(),
+  );
 });
 
 test('a snapshot taken at a progress entry resumes without downloading the documents read before it', async () => {
@@ -588,11 +607,12 @@ test('a snapshot taken at a progress entry resumes without downloading the docum
   const first = crawler.crawl(['https://site.test/'], null, options);
   for await (const entry of first)
     if ('progress' in entry && pathOf(entry.progress) === '/robots.txt') break;
-  assert.deepEqual(requests, ['/', '/feed.xml', '/robots.txt']);
+  assert.deepEqual(requests, ['/robots.txt', '/', '/feed.xml', '/robots.txt']);
   const snapshot = JSON.parse(JSON.stringify(first.snapshot()));
   requests.length = 0;
   const resumed = await results(crawler.crawl([], snapshot, options));
-  // The progress entry's own URL is unfinished until the next entry is requested, so it is read once more.
+  // The progress entry's own URL is unfinished until the next entry is requested, so it is read once more;
+  // the resumed crawl then reads the origin's rules again for its pages.
   assert.equal(requests[0], '/robots.txt');
   assert.ok(!requests.includes('/'), requests.join(' '));
   assert.ok(!requests.includes('/feed.xml'), requests.join(' '));
@@ -602,6 +622,7 @@ test('a snapshot taken at a progress entry resumes without downloading the docum
     '/keep/2',
     '/keep/3',
     '/keep/bad',
+    '/robots.txt',
     '/robots.txt',
   ]);
   assert.deepEqual(resumed.map((entry) => pathOf(entry.url)).toSorted(), [

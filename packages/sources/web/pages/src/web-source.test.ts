@@ -265,6 +265,11 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
 test('temporary listing and article failures recover within one pipeline run', async () => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
+    // The site has no robots.txt.
+    if (request.url === '/robots.txt') {
+      response.writeHead(404).end();
+      return;
+    }
     const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
     const retried = requests.includes(url.pathname);
     requests.push(url.pathname);
@@ -316,6 +321,11 @@ test('failed articles do not block later articles or later refreshes', async () 
   let failing = true;
   let added = false;
   await using upstream = await new HttpServer().start((request, response) => {
+    // The site has no robots.txt.
+    if (request.url === '/robots.txt') {
+      response.writeHead(404).end();
+      return;
+    }
     const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
     requests.push(url.pathname);
     if (url.pathname === '/feed.xml') {
@@ -400,6 +410,11 @@ test(
     let phase = 0;
     const requests: string[] = [];
     await using upstream = await new HttpServer().start((request, response) => {
+      // The site has no robots.txt.
+      if (request.url === '/robots.txt') {
+        response.writeHead(404).end();
+        return;
+      }
       const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
       requests.push(url.pathname);
       if (url.pathname === '/feed.json') {
@@ -534,6 +549,11 @@ test(
   async () => {
     const requests: { path: string; at: number }[] = [];
     await using upstream = await new HttpServer().start((request, response) => {
+      // The site has no robots.txt.
+      if (request.url === '/robots.txt') {
+        response.writeHead(404).end();
+        return;
+      }
       const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
       const retried = requests.some((item) => item.path === url.pathname);
       requests.push({ path: url.pathname, at: performance.now() });
@@ -593,6 +613,11 @@ test(
     const closed = Promise.withResolvers<void>();
     const requests: string[] = [];
     await using upstream = await new HttpServer().start((request, response) => {
+      // The site has no robots.txt.
+      if (request.url === '/robots.txt') {
+        response.writeHead(404).end();
+        return;
+      }
       const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
       requests.push(url.pathname);
       if (url.pathname === '/feed.xml') {
@@ -647,6 +672,11 @@ test(
     const requests: string[] = [];
     await using upstream = await new HttpServer().start(
       async (request, response) => {
+        // The site has no robots.txt.
+        if (request.url === '/robots.txt') {
+          response.writeHead(404).end();
+          return;
+        }
         const url = new URL(
           request.url ?? '/',
           `http://${request.headers.host}`,
@@ -781,6 +811,11 @@ test(
     let blocking = true;
     const requests: string[] = [];
     await using upstream = await new HttpServer().start((request, response) => {
+      // The site has no robots.txt.
+      if (request.url === '/robots.txt') {
+        response.writeHead(404).end();
+        return;
+      }
       const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
       requests.push(url.pathname);
       if (url.pathname === '/feed.xml') {
@@ -1133,6 +1168,11 @@ test(
   async () => {
     const requests: string[] = [];
     await using upstream = await new HttpServer().start((request, response) => {
+      // The site has no robots.txt.
+      if (request.url === '/robots.txt') {
+        response.writeHead(404).end();
+        return;
+      }
       const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
       requests.push(url.pathname);
       if (url.pathname === '/feed.xml') {
@@ -1243,6 +1283,11 @@ test(
 test('explicit URL patterns restrict article downloads and preserve matching query variants', async () => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
+    // The site has no robots.txt.
+    if (request.url === '/robots.txt') {
+      response.writeHead(404).end();
+      return;
+    }
     const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
     requests.push(url.pathname + url.search);
     if (url.pathname === '/feed.json') {
@@ -1350,6 +1395,11 @@ test('by default an incremental crawl requests a known page again only when it i
   const requests: string[] = [];
   let revision = 1;
   await using upstream = await new HttpServer().start((request, response) => {
+    // The site has no robots.txt.
+    if (request.url === '/robots.txt') {
+      response.writeHead(404).end();
+      return;
+    }
     const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
     requests.push(url.pathname);
     if (url.pathname === '/feed.xml') {
@@ -1410,6 +1460,11 @@ test('a page that was not due keeps its fingerprint, so once due and unchanged i
   const later = shiftedClock(t);
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
+    // The site has no robots.txt.
+    if (request.url === '/robots.txt') {
+      response.writeHead(404).end();
+      return;
+    }
     const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
     requests.push(url.pathname);
     if (url.pathname === '/feed.xml') {
@@ -1460,6 +1515,11 @@ test('a host that answers 429 stops the crawl there, keeps the loaded rows, and 
   const requests: string[] = [];
   let blocking = true;
   await using upstream = await new HttpServer().start((request, response) => {
+    // The site has no robots.txt.
+    if (request.url === '/robots.txt') {
+      response.writeHead(404).end();
+      return;
+    }
     const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
     requests.push(url.pathname);
     if (url.pathname === '/feed.xml') {

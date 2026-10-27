@@ -1,6 +1,15 @@
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { setTimeout } from 'node:timers/promises';
 
-import { type Got, HTTPError, RequestError, type Response } from 'got';
+import {
+  type Got,
+  HTTPError,
+  MaxRedirectsError,
+  RequestError,
+  type Response,
+} from 'got';
+import type robotsTxt from 'robots-parser';
 import { z } from 'zod';
 
 import { AdaptiveRevisit } from './adaptive-revisit.ts';
@@ -252,6 +261,12 @@ class CrawlRun implements Crawl {
   readonly #held = new Map<string, Entry>();
   // 403 answers in a row, by origin.
   readonly #forbidden = new Map<string, number>();
+  // Each origin's robots.txt rules (RFC 9309), read once per crawl.
+  readonly #robots = new Map<string, Robots>();
+  // When the last request to each origin started, for its Crawl-delay.
+  readonly #started = new Map<string, number>();
+  // The client's user agent, which robots.txt groups name.
+  readonly #agent: string;
   // The page handed back last, added to #handed with its visit, as the entry stays pending.
   #hand: string | null = null;
   #current: Entry | null = null;
@@ -290,6 +305,8 @@ class CrawlRun implements Crawl {
     },
   ) {
     this.#http = http;
+    const agent = http.defaults.options.headers['user-agent'];
+    this.#agent = typeof agent === 'string' ? agent : '*';
     this.#readers = readers;
     this.#revisit = revisit;
     this.#options = options;
@@ -361,11 +378,16 @@ class CrawlRun implements Crawl {
       if (until <= now) this.#blocked.delete(origin);
     for (;;) {
       this.#commit();
-      const next = this.#next();
+      const next = await this.#next();
       if (!next) break;
+      if ('failure' in next) {
+        yield next.failure;
+        continue;
+      }
       const { entry, included, wanted } = next;
       const before = this.#urls.get(entry.url);
       const page = included && !entry.document;
+      await this.#pace(new URL(entry.url).origin);
       let response: Response;
       try {
         response = await this.#http(entry.url, {
@@ -543,19 +565,52 @@ class CrawlRun implements Crawl {
     this.#visit = null;
   }
 
-  // The next entry worth a download. One nobody needs is dropped without
-  // using its lane's turn, so turns are spent on downloads: a lane full of
-  // skipped links cannot hand its share to backfill.
-  #next() {
+  // The next entry worth a download. One nobody needs, or that robots.txt
+  // disallows, is dropped without using its lane's turn, so turns are spent on
+  // downloads: a lane full of skipped links cannot hand its share to backfill.
+  async #next(): Promise<
+    | {
+        readonly entry: Entry;
+        readonly included: boolean;
+        readonly wanted: readonly boolean[];
+      }
+    | { readonly failure: CrawlFailure }
+    | undefined
+  > {
     for (;;) {
       for (let lane = this.#lane(); lane; lane = this.#lane())
         for (const entry of lane.values()) {
           lane.delete(entry.url);
-          if (this.#blocked.has(new URL(entry.url).origin)) {
+          const { origin } = new URL(entry.url);
+          if (this.#blocked.has(origin)) {
             this.#held.set(entry.url, entry);
             continue;
           }
           const included = entry.page && this.#includes(entry.url);
+          const robotsUrl = `${origin}/robots.txt`;
+          if (entry.url !== robotsUrl) {
+            const robots = await this.#rules(origin);
+            if ('until' in robots) {
+              // Unreachable rules disallow everything for now (RFC 9309
+              // §2.3.1.4): the origin's breaker opens, as for a 429.
+              this.#blocked.set(origin, robots.until);
+              this.#held.set(entry.url, entry);
+              this.#current = null;
+              return {
+                failure: this.#failure(
+                  entry,
+                  included && !entry.document,
+                  robotsUrl,
+                  new Error(
+                    `${origin} could not give its robots.txt (${Error.isError(robots.cause) ? robots.cause.message : String(robots.cause)}), so the crawl requests nothing there until ${new Date(robots.until).toISOString()}`,
+                    { cause: robots.cause },
+                  ),
+                ),
+              };
+            }
+            // A disallowed URL is no failure: the crawl leaves it out, and the revisit policy does not schedule it.
+            if (robots.isAllowed(entry.url, this.#agent) === false) continue;
+          }
           // A reader's budget counts admissions, and a second download of a URL is none.
           const wanted = this.#again.delete(entry.url)
             ? this.#readers.map(() => false)
@@ -601,6 +656,67 @@ class CrawlRun implements Crawl {
     if (chosen === undefined) return undefined;
     this.#credit[chosen] -= total;
     return this.#lanes[chosen];
+  }
+
+  // An origin's rules, from its robots.txt through the client, so its HTTP
+  // cache applies. Got follows the redirects; RFC 9309 §2.3.1.2 asks for five.
+  async #rules(
+    origin: string,
+  ): Promise<Robots | { readonly until: number; readonly cause: unknown }> {
+    const known = this.#robots.get(origin);
+    if (known) return known;
+    const { signal } = this.#options;
+    const url = `${origin}/robots.txt`;
+    this.#started.set(origin, performance.now());
+    let body = '';
+    try {
+      const response = await this.#http(url, {
+        signal,
+        responseType: 'text',
+        throwHttpErrors: false,
+        maxRedirects: 5,
+        context: { page: false },
+      });
+      // A 5xx answer disallows everything until the server is back; a 4xx one
+      // allows everything, except a 429, which asks to slow down, so it holds
+      // the origin as Google's crawler treats it and as a page's 429 does.
+      if (response.statusCode >= 500 || response.statusCode === 429)
+        return {
+          until: blockedUntil(response.headers['retry-after'] ?? null),
+          cause: new HTTPError(response),
+        };
+      if (response.ok) body = response.body;
+    } catch (cause) {
+      signal.throwIfAborted();
+      // More redirects than five make the rules unavailable, as a 4xx does.
+      if (!(cause instanceof MaxRedirectsError))
+        return { until: blockedUntil(null), cause };
+    }
+    const robots = robotsParser(url, body);
+    this.#robots.set(origin, robots);
+    return robots;
+  }
+
+  // Waits out the origin's Crawl-delay since its last request started. Bing
+  // and Yandex honor the directive; RFC 9309 does not define it.
+  async #pace(origin: string) {
+    const { signal } = this.#options;
+    const delay = Math.min(
+      this.#robots.get(origin)?.getCrawlDelay(this.#agent) ?? 0,
+      maxCrawlDelay,
+    );
+    const until = (this.#started.get(origin) ?? 0) + delay * 1000;
+    // A timer can fire up to a millisecond early by the high-resolution clock.
+    for (
+      let wait = until - performance.now();
+      wait > 0;
+      wait = until - performance.now()
+    )
+      await setTimeout(wait, undefined, { signal }).catch((error: unknown) => {
+        signal.throwIfAborted();
+        throw error;
+      });
+    this.#started.set(origin, performance.now());
   }
 
   #includes(url: string) {
@@ -726,6 +842,17 @@ class CrawlRun implements Crawl {
 
 // 403 answers in a row from one origin that make a block.
 const forbiddenRun = 3;
+
+// The longest Crawl-delay the crawl honors, in seconds.
+const maxCrawlDelay = 60;
+
+// robots-parser is CommonJS, but its types declare an ES default export
+// ("masquerading as ESM"), so the types of a default import do not match
+// what Node gives; require gives the parser as its types describe it.
+const robotsParser: typeof robotsTxt.default = createRequire(import.meta.url)(
+  'robots-parser',
+);
+type Robots = ReturnType<typeof robotsParser>;
 
 // When a block ends, by its Retry-After in seconds or as an HTTP-date (RFC 9110 §10.2.3); an hour without one.
 function blockedUntil(retryAfter: string | null) {

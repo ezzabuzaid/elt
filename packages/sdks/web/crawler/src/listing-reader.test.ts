@@ -19,8 +19,12 @@ import {
 
 // Public sites cannot reliably produce each failure or cancellation stage.
 // Only HTTP is controlled; the crawler and its parsers run for real.
+// A site whose handlers do not answer robots.txt has none.
 function site(...handlers: HttpHandler[]) {
-  const server = setupServer(...handlers);
+  const server = setupServer(
+    ...handlers,
+    http.get('*/robots.txt', () => new HttpResponse(null, { status: 404 })),
+  );
   server.listen({ onUnhandledFrame: 'error' });
   return { [Symbol.dispose]: () => server.close() };
 }
@@ -930,7 +934,14 @@ test('a URL declared as both a page and a feed is fetched once and serves both r
       'https://site.test/',
     )
   ).map(location);
-  assert.deepEqual(requests, ['/', '/feed', '/robots.txt', '/article']);
+  // The crawl reads the origin's rules first; ListingReader reads robots.txt again for sitemaps.
+  assert.deepEqual(requests, [
+    '/robots.txt',
+    '/',
+    '/feed',
+    '/robots.txt',
+    '/article',
+  ]);
   assert.deepEqual(
     found.map((page) => new URL(page.url).pathname),
     ['/feed', '/article'],
@@ -992,6 +1003,8 @@ test('declared remote feeds contribute pages without expanding the remote origin
         );
       if (path === '/wiki/Atom_(standard)')
         return HttpResponse.html('<p>An encyclopedia page.</p>');
+      if (path === '/robots.txt')
+        return new HttpResponse(null, { status: 404 });
       assert.equal(path, '/article');
       return HttpResponse.html('<a href="/unrelated">Unrelated</a>');
     }),
@@ -1004,6 +1017,7 @@ test('declared remote feeds contribute pages without expanding the remote origin
   ).map(location);
   // A starting page's labeled anchors are possible feeds on any origin; Feedscout rejects the wiki page.
   assert.deepEqual(requests, [
+    '/robots.txt',
     '/feed',
     '/wiki/Atom_(standard)',
     '/rss/blog/123',
@@ -1030,6 +1044,7 @@ test('cross-origin feeds on crawled pages need a declaration or a feed-path hint
       response
         .writeHead(200, { 'content-type': 'text/html' })
         .end('<a href="/unrelated">Unrelated</a>');
+    else if (request.url === '/robots.txt') response.writeHead(404).end();
     else response.writeHead(503).end();
   });
   await using upstream = await new HttpServer().start((request, response) => {
@@ -1050,7 +1065,12 @@ test('cross-origin feeds on crawled pages need a declaration or a feed-path hint
     upstream.origin,
   );
   // /published is on a remote origin, so its links are not followed.
-  assert.deepEqual(remoteRequests, ['/feed', '/rss/blog/123', '/published']);
+  assert.deepEqual(remoteRequests, [
+    '/robots.txt',
+    '/feed',
+    '/rss/blog/123',
+    '/published',
+  ]);
   assert.deepEqual(pages(entries), [
     {
       url: `${upstream.origin}/article`,

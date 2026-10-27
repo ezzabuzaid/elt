@@ -31,6 +31,13 @@ function where(url: string) {
   return host + pathname;
 }
 
+// The page requests, without the sitemaps and robots.txt files the crawl reads.
+function pagesOf(requests: readonly string[]) {
+  return requests.filter(
+    (at) => !at.endsWith('/sitemap.xml') && !at.endsWith('/robots.txt'),
+  );
+}
+
 // A sitemap on site.test lists /a, /b and /c, and one on other.test lists /x.
 // The blocked path answers with the block; every other page is an article.
 function sites(
@@ -41,6 +48,8 @@ function sites(
     const at = where(request.url);
     requests.push(at);
     const { origin, pathname } = new URL(request.url);
+    if (pathname === '/robots.txt')
+      return new HttpResponse(null, { status: 404 });
     if (pathname === '/sitemap.xml')
       return HttpResponse.xml(
         `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${(origin === 'https://site.test' ? ['/a', '/b', '/c'] : ['/x']).map((path) => `<url><loc>${origin}${path}</loc></url>`).join('')}</urlset>`,
@@ -96,10 +105,11 @@ test('a 429 with Retry-After stops requests to its origin, reports the block onc
 
   const first = await crawled(crawler().crawl(starts, null, options()));
 
-  assert.deepEqual(
-    requests.filter((at) => !at.endsWith('/sitemap.xml')),
-    ['site.test/a', 'site.test/b', 'other.test/x'],
-  );
+  assert.deepEqual(pagesOf(requests), [
+    'site.test/a',
+    'site.test/b',
+    'other.test/x',
+  ]);
   assert.deepEqual(first.pages, ['site.test/a', 'other.test/x']);
   assert.equal(first.failures.length, 1);
   assert.equal(first.failures[0]?.url, 'site.test/b');
@@ -146,7 +156,12 @@ test('a crawl resumed before its block ends requests nothing there, and one resu
   assert.deepEqual(early.failures, []);
   assert.equal(early.nextDue, 120_000);
   assert.notEqual(early.memento.crawl, null);
-  assert.deepEqual(requests, ['site.test/b', 'site.test/c']);
+  // A resumed crawl reads the origin's rules again.
+  assert.deepEqual(requests, [
+    'site.test/robots.txt',
+    'site.test/b',
+    'site.test/c',
+  ]);
   assert.deepEqual(late.pages, ['site.test/b', 'site.test/c']);
   assert.deepEqual(late.failures, []);
   assert.equal(late.memento.crawl, null);
@@ -159,6 +174,8 @@ test('three 403s in a row without Retry-After block their origin for an hour', a
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       requests.push(pathname);
+      if (pathname === '/robots.txt')
+        return new HttpResponse(null, { status: 404 });
       if (pathname === '/sitemap.xml')
         return HttpResponse.xml(
           `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${['/a', '/b', '/c', '/d'].map((path) => `<url><loc>https://site.test${path}</loc></url>`).join('')}</urlset>`,
@@ -171,7 +188,7 @@ test('three 403s in a row without Retry-After block their origin for an hour', a
     crawler().crawl(['https://site.test/sitemap.xml'], null, options()),
   );
 
-  assert.deepEqual(requests, ['/sitemap.xml', '/a', '/b', '/c']);
+  assert.deepEqual(requests, ['/robots.txt', '/sitemap.xml', '/a', '/b', '/c']);
   assert.equal(first.failures.length, 3);
   assert.match(
     first.failures[2]?.message ?? '',
@@ -187,10 +204,12 @@ test('a single 403 is a failure of its page, not a block, so the rest of its ori
 
   const first = await crawled(crawler().crawl(starts, null, options()));
 
-  assert.deepEqual(
-    requests.filter((at) => !at.endsWith('/sitemap.xml')),
-    ['site.test/a', 'site.test/b', 'site.test/c', 'other.test/x'],
-  );
+  assert.deepEqual(pagesOf(requests), [
+    'site.test/a',
+    'site.test/b',
+    'site.test/c',
+    'other.test/x',
+  ]);
   assert.equal(first.failures.length, 1);
   assert.doesNotMatch(
     first.failures[0]?.message ?? '',
@@ -213,10 +232,7 @@ test('a 429 with an HTTP-date Retry-After blocks its origin until that date', as
   const first = await crawled(crawler().crawl(starts, null, options()));
 
   assert.equal(first.nextDue, 300_000);
-  assert.deepEqual(
-    requests.filter((at) => !at.endsWith('/sitemap.xml')),
-    ['site.test/a', 'other.test/x'],
-  );
+  assert.deepEqual(pagesOf(requests), ['site.test/a', 'other.test/x']);
 });
 
 test('a block reached through a redirect also stops requests to the origin that redirected', async (t) => {
@@ -226,6 +242,8 @@ test('a block reached through a redirect also stops requests to the origin that 
     http.get('http://site.test/*', ({ request }) => {
       requests.push(request.url);
       const { pathname } = new URL(request.url);
+      if (pathname === '/robots.txt')
+        return new HttpResponse(null, { status: 404 });
       if (pathname === '/sitemap.xml')
         return HttpResponse.xml(
           `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${['/a', '/b'].map((path) => `<url><loc>http://site.test${path}</loc></url>`).join('')}</urlset>`,
@@ -249,6 +267,7 @@ test('a block reached through a redirect also stops requests to the origin that 
   );
 
   assert.deepEqual(requests, [
+    'http://site.test/robots.txt',
     'http://site.test/sitemap.xml',
     'http://site.test/a',
     'https://site.test/a',
@@ -271,7 +290,8 @@ test('a tolerated 404 opens no breaker, so the rest of its origin still download
         return HttpResponse.html(
           '<a href="/gone">Gone</a><a href="/b">B</a><a href="/after">After</a>',
         );
-      if (pathname === '/gone') return new HttpResponse(null, { status: 404 });
+      if (pathname === '/gone' || pathname === '/robots.txt')
+        return new HttpResponse(null, { status: 404 });
       return HttpResponse.html('<p>Page</p>');
     }),
   );
@@ -283,6 +303,7 @@ test('a tolerated 404 opens no breaker, so the rest of its origin still download
   );
 
   assert.deepEqual(requests, [
+    'site.test/robots.txt',
     'site.test/',
     'site.test/gone',
     'site.test/b',

@@ -18,8 +18,12 @@ import {
 } from './index.ts';
 
 // Synthetic upstream sites make link graphs reproducible offline.
+// They have no robots.txt, so the requests they record are the crawl's pages and listings.
 function mockWeb(...handlers: Parameters<typeof setupServer>) {
-  const server = setupServer(...handlers);
+  const server = setupServer(
+    http.get('*/robots.txt', () => new HttpResponse(null, { status: 404 })),
+    ...handlers,
+  );
   server.listen({ onUnhandledFrame: 'error' });
   return {
     [Symbol.dispose]() {
@@ -121,7 +125,8 @@ test('feed-only starts do not turn their articles into new link roots', async ()
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
     requests.push(request.url);
-    if (request.url === '/feed')
+    if (request.url === '/robots.txt') response.writeHead(404).end();
+    else if (request.url === '/feed')
       response
         .writeHead(200, { 'content-type': 'application/rss+xml' })
         .end(
@@ -143,7 +148,7 @@ test('feed-only starts do not turn their articles into new link roots', async ()
     }),
   );
   assert.deepEqual(pages.map(pathOf), ['/article']);
-  assert.deepEqual(requests, ['/feed', '/article']);
+  assert.deepEqual(requests, ['/robots.txt', '/feed', '/article']);
 });
 
 test('archive pages contribute their links, and declarations with non-HTTP URLs are ignored', async () => {
