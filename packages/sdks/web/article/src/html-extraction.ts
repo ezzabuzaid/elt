@@ -108,6 +108,33 @@ export class HTMLExtraction extends Extraction {
         useAsync: false,
       },
     );
+    // Readability reads JSON-LD only when @context is a string or names a
+    // @vocab, while JSON-LD 1.1 also allows an array, as Fortune declares it;
+    // the array's schema.org IRI stands for it (mozilla/readability#1030).
+    for (const script of dom.window.document.querySelectorAll(
+      'script[type="application/ld+json"]',
+    )) {
+      let data: unknown;
+      try {
+        data = JSON.parse(script.textContent);
+      } catch {
+        continue;
+      }
+      if (
+        typeof data !== 'object' ||
+        data === null ||
+        !('@context' in data) ||
+        !Array.isArray(data['@context'])
+      )
+        continue;
+      const schema: unknown = data['@context'].find(
+        (entry: unknown) =>
+          typeof entry === 'string' &&
+          /^https?:\/\/schema\.org\/?$/.test(entry),
+      );
+      if (schema !== undefined)
+        script.textContent = JSON.stringify({ ...data, '@context': schema });
+    }
     // Readability accepts dateline substrings as bylines; remove that hint after content selection.
     for (const attribute of ['class', 'id']) {
       for (const element of dom.window.document.querySelectorAll(

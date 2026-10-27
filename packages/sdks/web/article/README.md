@@ -76,7 +76,7 @@ The reader does not guess `.md` paths, and it uses no browser and no model.
 1. jsdom decodes the bytes by their charset and builds a new DOM. Every attempt starts from the original bytes.
 2. The navigation landmarks `nav` and `[role="navigation"]` are removed.
 3. Defuddle selects the content ([ADR 0001](./docs/adr/0001-defuddle-selects-the-content-and-readability-gives-the-metadata.md)). Its cleanup follows the markup of the page ([ADR 0002](./docs/adr/0002-defuddle-cleanup-is-off-inside-declared-article-boundaries.md)).
-4. The `dateline` hints are removed ([ADR 0007](./docs/adr/0007-the-dateline-hint-is-removed-before-readability-reads-the-page.md)), and Readability reads the metadata.
+4. The `dateline` hints are removed ([ADR 0007](./docs/adr/0007-the-dateline-hint-is-removed-before-readability-reads-the-page.md)), a JSON-LD `@context` array becomes its schema.org IRI ([ADR 0009](./docs/adr/0009-a-json-ld-context-array-is-given-to-readability-as-its-schema-org-iri.md)), and Readability reads the metadata.
 5. html-minifier-next collapses whitespace and removes comments. It keeps the spaces between inline words and the exact content of `pre`.
 6. DOMPurify sanitizes the HTML with its default policy, and it removes `footer` elements. Readability reads the metadata first, so an author in a footer stays.
 7. The acceptance check rejects a page of links only ([ADR 0003](./docs/adr/0003-a-page-of-links-only-is-not-an-article.md)).
@@ -151,3 +151,4 @@ The SDK does not infer a publication date from prose, URL paths, HTTP timestamps
 - [ADR 0006: Front matter is data, read as YAML 1.2](./docs/adr/0006-front-matter-is-data-read-as-yaml-1-2.md)
 - [ADR 0007: The dateline hint is removed before Readability reads the page](./docs/adr/0007-the-dateline-hint-is-removed-before-readability-reads-the-page.md)
 - [ADR 0008: The fingerprint is known before extraction](./docs/adr/0008-the-fingerprint-is-known-before-extraction.md)
+- [ADR 0009: A JSON-LD context array is given to Readability as its schema.org IRI](./docs/adr/0009-a-json-ld-context-array-is-given-to-readability-as-its-schema-org-iri.md)
