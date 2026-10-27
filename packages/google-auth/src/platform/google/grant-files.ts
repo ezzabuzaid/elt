@@ -1,6 +1,7 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
+
+import { atomicWrite, isErrno } from '@zukhruf/fs';
 
 import type { GoogleOAuthCredential } from '../../credential.ts';
 import type {
@@ -10,8 +11,8 @@ import type {
 
 /**
  * Grants as owner-only JSON files under one directory, the same posture gcloud
- * uses for its own refresh token. A write lands through a temporary file and a
- * rename, so a crash leaves the previous grant rather than a torn one.
+ * uses for its own refresh token. A write replaces the file in one step, so a
+ * crash leaves the previous grant rather than a torn one.
  */
 export class GrantFiles implements GoogleGrantVaultStore {
   readonly directory: string;
@@ -26,7 +27,7 @@ export class GrantFiles implements GoogleGrantVaultStore {
     try {
       return JSON.parse(await readFile(this.#path(ref), 'utf8'));
     } catch (error) {
-      if (isMissing(error)) return undefined;
+      if (isErrno(error, 'ENOENT')) return undefined;
       throw error;
     }
   }
@@ -37,16 +38,7 @@ export class GrantFiles implements GoogleGrantVaultStore {
   ): Promise<void> {
     const path = this.#path(ref);
     await mkdir(dirname(path), { mode: 0o700, recursive: true });
-    const staging = `${path}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(staging, JSON.stringify(value), {
-        flag: 'wx',
-        mode: 0o600,
-      });
-      await rename(staging, path);
-    } finally {
-      await rm(staging, { force: true });
-    }
+    await atomicWrite(path, JSON.stringify(value), { mode: 0o600 });
   }
 
   async remove(ref: string): Promise<void> {
@@ -60,12 +52,4 @@ export class GrantFiles implements GoogleGrantVaultStore {
       throw new TypeError(`Grant ref escapes the grant directory: ${ref}`);
     return path;
   }
-}
-
-function isMissing(error: unknown): boolean {
-  return (
-    error !== null &&
-    typeof error === 'object' &&
-    Reflect.get(error, 'code') === 'ENOENT'
-  );
 }
