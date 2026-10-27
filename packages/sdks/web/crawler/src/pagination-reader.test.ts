@@ -347,6 +347,235 @@ test('the pagination of a starting page is read to its end, both ways, from link
   );
 });
 
+test('undeclared pagination by page number is read to its last page, and a linked page that is gone is no failure', async () => {
+  // The CMS forms: WordPress, Ghost and Hugo /page/N/, Django and Drupal ?page=N, WordPress ?paged=N.
+  for (const at of [
+    (page: number) => (page === 1 ? '/tag/x/' : `/tag/x/page/${page}/`),
+    (page: number) => (page === 1 ? '/tag/x' : `/tag/x?page=${page}`),
+    (page: number) => (page === 1 ? '/tag/x' : `/tag/x?paged=${page}`),
+  ]) {
+    await using upstream = await new HttpServer().start((request, response) => {
+      response.setHeader('content-type', 'text/html');
+      switch (request.url) {
+        // As on Fortune: numbered links in navigation, and a page 0 that answers 404.
+        case at(1):
+          response.end(
+            `<main><a href="/item/1">One</a></main><nav><a href="${at(0)}">0</a><a href="${at(2)}">2</a></nav>`,
+          );
+          break;
+        // As on Ars Technica: a "Load more" link in the content.
+        case at(2):
+          response.end(
+            `<main><a href="/item/2">Two</a><a href="${at(3)}">Load more</a></main>`,
+          );
+          break;
+        case at(3):
+          response.end(
+            `<main><a href="/item/3">Three</a><a href="${at(2)}">Previous</a></main>`,
+          );
+          break;
+        case at(0):
+          response.writeHead(404).end();
+          break;
+        default:
+          response.end('<p>An item.</p>');
+      }
+    });
+
+    const pages = await crawl(
+      pagination(),
+      `${upstream.origin}${at(1)}`,
+      AbortSignal.timeout(5000),
+    );
+
+    assert.deepEqual(
+      pages.map(location).toSorted((a, b) => a.url.localeCompare(b.url)),
+      [1, 2, 3].map((page) => ({
+        url: `${upstream.origin}/item/${page}`,
+        lastModified: null,
+        listingUrl: `${upstream.origin}${at(page)}`,
+      })),
+      at(2),
+    );
+  }
+});
+
+test('a year, a filter, the pages of another list and the list without its slash are pages, not pagination', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    requests.push(request.url ?? '');
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/tag/x/')
+      response.end(
+        '<main><a href="/item/1">One</a><a href="/tag/x/2022">2022</a><a href="/tag/x/?sort=new">Newest</a><a href="/tag/other/page/2/">More on other</a><a href="/tag/x">All of x</a></main>',
+      );
+    else if (request.url === '/tag/x/2022')
+      response.end('<main><a href="/item/from-year">Year</a></main>');
+    else if (request.url === '/tag/x/?sort=new')
+      response.end('<main><a href="/item/from-filter">Filter</a></main>');
+    else if (request.url === '/tag/other/page/2/')
+      response.end('<main><a href="/item/from-other">Other</a></main>');
+    else if (request.url === '/tag/x')
+      response.end('<main><a href="/item/from-self">Self</a></main>');
+    else response.end('<p>An item.</p>');
+  });
+
+  const pages = await crawl(
+    pagination(),
+    `${upstream.origin}/tag/x/`,
+    AbortSignal.timeout(5000),
+  );
+
+  assert.deepEqual(
+    pages.map(location).toSorted((a, b) => a.url.localeCompare(b.url)),
+    [
+      '/item/1',
+      '/tag/other/page/2/',
+      '/tag/x',
+      '/tag/x/?sort=new',
+      '/tag/x/2022',
+    ].map((path) => ({
+      url: `${upstream.origin}${path}`,
+      lastModified: null,
+      listingUrl: `${upstream.origin}/tag/x/`,
+    })),
+  );
+  for (const path of [
+    '/item/from-year',
+    '/item/from-filter',
+    '/item/from-other',
+    '/item/from-self',
+  ])
+    assert.ok(!requests.includes(path), requests.join(' '));
+});
+
+test('a list that links itself and its first page is downloaded once when the URL patterns do not select it', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    requests.push(request.url ?? '');
+    response.setHeader('content-type', 'text/html');
+    // As on Fortune: each page links its own number outside navigation.
+    if (request.url === '/tag/x/')
+      response.end(
+        '<main><a href="/item/1">One</a><a href="/tag/x/">1</a><a href="/tag/x/page/2/">2</a></main>',
+      );
+    else if (request.url === '/tag/x/page/2/')
+      response.end(
+        '<main><a href="/item/2">Two</a><a href="/tag/x/">1</a><a href="/tag/x/page/2/">2</a></main>',
+      );
+    else response.end('<p>An item.</p>');
+  });
+
+  const pages = await crawl(
+    pagination(),
+    `${upstream.origin}/tag/x/`,
+    AbortSignal.timeout(5000),
+    [new URLPattern({ pathname: '/item/*' })],
+  );
+
+  assert.deepEqual(
+    pages.map(location).map((page) => page.url),
+    [`${upstream.origin}/item/1`, `${upstream.origin}/item/2`],
+  );
+  assert.deepEqual(
+    requests.filter((path) => path.startsWith('/tag/')),
+    ['/tag/x/', '/tag/x/page/2/'],
+  );
+});
+
+test('a declared pagination form is followed in place of the page-number rule', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    requests.push(request.url ?? '');
+    response.setHeader('content-type', 'text/html');
+    // jekyll-paginate names its pages /page2/; a /page/N/ link is then no pagination.
+    if (request.url === '/tag/x/')
+      response.end(
+        '<main><a href="/item/1">One</a></main><nav><a href="/tag/x/page2/">2</a><a href="/tag/x/page/9/">9</a></nav>',
+      );
+    else if (request.url === '/tag/x/page2/')
+      response.end('<main><a href="/item/2">Two</a></main>');
+    else if (request.url === '/tag/x/page/9/')
+      response.end('<main><a href="/item/from-rule">Nine</a></main>');
+    else response.end('<p>An item.</p>');
+  });
+
+  const pages = await crawl(
+    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
+      new PaginationReader({
+        pagination: [new URLPattern({ pathname: '/tag/:tag/page:n/' })],
+      }),
+    ]),
+    `${upstream.origin}/tag/x/`,
+    AbortSignal.timeout(5000),
+  );
+
+  assert.deepEqual(
+    pages.map(location).toSorted((a, b) => a.url.localeCompare(b.url)),
+    [
+      ['/item/1', '/tag/x/'],
+      ['/item/2', '/tag/x/page2/'],
+    ].map(([path, listing]) => ({
+      url: `${upstream.origin}${path}`,
+      lastModified: null,
+      listingUrl: `${upstream.origin}${listing}`,
+    })),
+  );
+  assert.ok(!requests.includes('/item/from-rule'), requests.join(' '));
+});
+
+test('a list hands back its links to the origins it is given, and requests no other origin', async () => {
+  const sister: string[] = [];
+  const other: string[] = [];
+  // As deepmind.google/blog, whose cards link posts on blog.google.
+  await using blog = await new HttpServer().start((request, response) => {
+    sister.push(request.url ?? '');
+    response.setHeader('content-type', 'text/html');
+    response.end('<p>A post.</p>');
+  });
+  await using elsewhere = await new HttpServer().start((request, response) => {
+    other.push(request.url ?? '');
+    response.end();
+  });
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/blog/')
+      response.end(
+        `<main><a href="/blog/own">Own</a><a href="${blog.origin}/post/1">Sister</a><a href="${elsewhere.origin}/post/2">Elsewhere</a></main>`,
+      );
+    else response.end('<p>A post.</p>');
+  });
+
+  const pages = await crawl(
+    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
+      new PaginationReader({ origins: [blog.origin] }),
+    ]),
+    `${upstream.origin}/blog/`,
+    AbortSignal.timeout(5000),
+  );
+
+  assert.deepEqual(
+    pages.map(location).toSorted((a, b) => a.url.localeCompare(b.url)),
+    [`${blog.origin}/post/1`, `${upstream.origin}/blog/own`]
+      .toSorted()
+      .map((url) => ({
+        url,
+        lastModified: null,
+        listingUrl: `${upstream.origin}/blog/`,
+      })),
+  );
+  assert.ok(sister.includes('/post/1'), sister.join(' '));
+  assert.deepEqual(other, []);
+});
+
+test('an origin with a path is refused, as it would widen to the whole origin', () => {
+  assert.throws(
+    () =>
+      new PaginationReader({ origins: ['https://blog.google/technology/'] }),
+    TypeError,
+  );
+});
+
 test('a starting page without pagination hands back the pages it lists outside navigation', async () => {
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');

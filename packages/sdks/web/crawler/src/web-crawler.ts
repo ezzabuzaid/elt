@@ -786,8 +786,11 @@ class CrawlRun implements Crawl {
             : this.#urls.get(next.url)
         )?.entry;
         if (visited === undefined) return;
+        // A page role matters only for a page the crawl hands back, and every
+        // reader already reads a starting URL as it reads a list.
         const addsRole =
-          (next.page && !visited.page) || (next.list && !visited.list);
+          (next.page && !visited.page && this.#includes(next.url)) ||
+          (next.list && !visited.list && !visited.start);
         if (!addsRole) return;
         const again = { ...visited, priority: next.priority };
         merge(again, next);
