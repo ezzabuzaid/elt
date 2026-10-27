@@ -8,7 +8,7 @@ export const listings = new WebStream({
   name: 'opensooq_listings',
   primaryKey: ['id'],
   // Not ListingReader: OpenSooq's robots.txt lists the sitemaps of 20 country sites.
-  // Not ArchiveReader: its year archives would take every year filter and the other language's category, which end in a year too.
+  // Not ArchiveReader: OpenSooq has no year archives, and a year filter such as /en/cars/motorcycles/2024 is not one.
   readers: [new PaginationReader()],
   include: [new URLPattern({ pathname: '/:lang/search/*' })],
   extractor: new OpenSooqExtractor(),

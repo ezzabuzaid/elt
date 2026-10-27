@@ -18,7 +18,7 @@ const image = z.object({
 });
 
 // The schema.org object a listing page describes its listing with; the page also embeds Organization, BreadcrumbList and FAQPage objects.
-// Live on 2026-10-26 the shapes were Motorcycle, Product, Residence and Service; Residence keeps its image under photo.
+// Live on 2026-10-26 the shapes were Motorcycle, Product, Residence, Service and Vehicle; Residence keeps its image under photo.
 const fields = {
   '@type': z.string(),
   name: z.string(),
