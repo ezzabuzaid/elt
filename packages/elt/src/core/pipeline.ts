@@ -139,7 +139,9 @@ export class Pipeline<Target extends DestinationTarget> {
   }
 
   // Once signal aborts, each pass stops at its next message and is recorded as
-  // cancelled, and the run rejects with the signal's reason, as fetch does.
+  // cancelled, and the run rejects with the signal's reason, as fetch does. A
+  // stop that comes after the passes ended only stops the derived data
+  // catching up: the run ends as its passes did, and the next refresh goes on.
   async run(options?: {
     readonly signal?: AbortSignal;
   }): Promise<CopyResult<Target>[]> {
