@@ -1,3 +1,4 @@
+export { ComputedDataset } from './computed-dataset.ts';
 export { installSQLiteCatalog } from './sqlite-catalog.ts';
 export { SQLiteCheckpointStore } from './sqlite-checkpoint-store.ts';
 export { SQLiteColumn } from './sqlite-column.ts';

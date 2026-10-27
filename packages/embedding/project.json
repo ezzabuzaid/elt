@@ -1,0 +1,13 @@
+{
+  "name": "embedding",
+  "sourceRoot": "packages/embedding/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test {args} \"packages/embedding/src/*.test.ts\""
+    }
+  }
+}

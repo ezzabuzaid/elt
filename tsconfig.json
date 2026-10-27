@@ -205,6 +205,9 @@
     },
     {
       "path": "./apps/web"
+    },
+    {
+      "path": "./packages/embedding"
     }
   ]
 }

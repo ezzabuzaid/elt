@@ -18,6 +18,13 @@ export {
 } from './core/destination.ts';
 export { DerivedDataset } from './core/derived-dataset.ts';
 export { DocumentParser } from './core/document-parser.ts';
+export { DocumentText } from './core/document-text.ts';
+export {
+  type LoadedRow,
+  Rule,
+  type RuleColumn,
+  type RuleResult,
+} from './core/rule.ts';
 export type { ObservedPass, PassObserver } from './core/pass-observer.ts';
 export { FileContent } from './core/file-content.ts';
 export { fileExtension } from './core/file-extension.ts';

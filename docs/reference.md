@@ -536,7 +536,7 @@ The columns declare what to extract. `Copy` collects those declarations; `Source
 
 ### Attachment text
 
-A copy can store files with no parse: an `attachmentRef` column and no `content` column. The import then never waits on parsing, and a file the parser cannot read fails no copy. Text read from the stored copies afterwards is auxiliary to the load, not a source: its input is what the pipeline wrote. elt has no hook for work after a commit yet (backlog #2618), so the caller reads after each pass, from the rows the pass committed. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) does this into an `attachment_text` table that SQL joins on `attachmentRef = ref`:
+A copy can store files with no parse: an `attachmentRef` column and no `content` column. The import then never waits on parsing, and a file the parser cannot read fails no copy. Text read from the stored copies afterwards is derived data, not a source: its input is what the pipeline wrote. Declare it as a [computed dataset](#derived-datasets) with the `DocumentText` rule; the pipeline reads the files after each pass. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) keeps an `attachment_text` view this way, which SQL joins on `attachmentRef = ref`:
 
 ```sql
 SELECT a.id, t.content
@@ -544,7 +544,7 @@ FROM attachments a JOIN attachment_text t ON t.ref = a.attachmentRef
 WHERE t.content LIKE '%invoice%';
 ```
 
-A stored copy is content-addressed within its field, so one file attached in three chats is one copy; the same bytes stored by two streams are two copies. A parser whose identity changes reads the copies it handles again.
+A stored copy is content-addressed within its field, so one file attached in three chats is one copy; the same bytes stored by two streams are two copies. A parser whose identity changes reads the copies it handles again; a format the parser stops handling keeps the text it read.
 
 ### Explicit database byte storage
 
@@ -743,6 +743,65 @@ Coverage is the source's own statement, `coverage(stream): ExtractionCoverage` w
 A source also says how current each stream's upstream is, `currentAsOf(stream): Promise<Date | null>`, as a replica reports the last change it replayed (`pg_last_xact_replay_timestamp()`) and a Beam source reports its watermark. `null` means the upstream is current whenever it is read; every source states it, and none inherits it. A `Date` means the upstream itself was current only as of then: an app's store that the app writes only while it runs stays as of when the app last wrote it. The pipeline asks before each pass and records the answer with each copy that loads; `current_as_of` is then never later than that time. A copy whose source cannot tell fails with that error and is not read, and the pass's other copies load. WhatsApp answers with each store's last write while WhatsApp is closed and `null` while it runs; Notes does the same with `NoteStore.sqlite`; Slack and Teams always answer with their store's last write, because they save only now and then and only while they run; Mail always answers with its index's last write, because Mail's daemon writes it while Mail.app is closed too. Safari answers for its history and iCloud Tabs streams with the last write to that store (every profile's `History.db`, or `CloudTabs.db`) while Safari is closed and `null` while it runs, because only Safari syncs them; its tab groups and bookmarks sync through helpers that run without it, so they and its other streams answer `null`. Wallet answers with passd's last fetch of the iCloud `passes` zone (`cloud_store_zone.fetch_timestamp`), because passd fetches it once a day, and `null` on a Mac that has never fetched it. Search Console answers `null`: it reads Google's fresh days too and marks each row `settled` or not, so its rows match Google's whenever it reads. Every other source answers `null`. Airbyte has no such statement: its "Data fresh as of" is the time its last sync finished.
 
 `PostgresSyncHistory({ url })` from `elt-postgresql` records into the [warehouse](#warehouse-marts) tables `_warehouse.sync_attempts`, `_warehouse.extraction_coverage` and `_warehouse.stream_checks`, the last holding each stream's latest check by a watch that found it unchanged. Its `install()`, which the pipeline calls before every run and watch, creates those tables and publishes the `marts` views `sync_attempts`, `extraction_coverage`, `sync_status`, `stream_status` and `catalog`; it is safe to repeat. It grants nothing. It records Postgres destinations only and refuses any other connection during preflight.
+
+## Derived datasets
+
+A derived dataset is data that a pipeline keeps in step with what its copies load, and can always make again from it (Kleppmann, _Designing Data-Intensive Applications_, part III; Estuary calls it a derivation). Declare it beside the connections: `new Pipeline({ history, connections, derived: [...] })`. The pipeline refreshes each derived dataset in the order of the list: after the passes of a run, also when some copies failed, and after each pass of a watch, in the background. A watch runs one refresh at a time. A pass that commits during a refresh asks for one more, so no pass waits for it. A run that stops on an abort, or on an error that no history recorded, does not refresh. A dataset's own failure, such as SQL that SQLite refuses, rejects the run, or stops the watch, as itself.
+
+There are two kinds, as a dbt model is materialized as a view or as a table:
+
+```ts
+import { DocumentText } from '@workspace/elt';
+import { ComputedDataset, View } from '@workspace/elt-sqlite';
+import { Embedding } from '@workspace/embedding';
+
+const derived = [
+  // Computed on read: SQLite runs the query on each read.
+  new View({
+    into: destination,
+    name: 'record_count',
+    description: 'How many records loaded.',
+    columns: { n: 'Number of records.' },
+    sql: 'SELECT count(*) AS n FROM records',
+  }),
+  // Computed on write: a rule makes one stored row for each input.
+  new ComputedDataset({
+    into: destination,
+    name: 'attachment_text',
+    description: 'The text of each stored file.',
+    from: [attachments],
+    compute: new DocumentText({
+      parser: () => parser,
+      files: files.directory,
+      column: 'attachmentRef',
+    }),
+  }),
+  new ComputedDataset({
+    into: destination,
+    name: 'listing_vectors',
+    description: 'The vector of each listing.',
+    from: [listings],
+    compute: new Embedding({
+      model,
+      key: 'id',
+      fields: ['title', 'description'],
+    }),
+  }),
+];
+```
+
+A `View` names no inputs: its SQL reads them. It appears once its query compiles, so a reader never finds a view that fails. While a table or reader view that a copy of the pipeline makes in that file is missing, the view waits for it. Any other error of its query, such as a misspelled table, fails the refresh. Its columns must match its description exactly, as every described view's must, and the catalog lists them. A view declared after a computed dataset can read that dataset's view.
+
+A `ComputedDataset` reads every row that the copies of its `from` targets loaded, and gives each row to its rule. The rule gives the row's key and input, or no input. The dataset keeps one row for each key in the table `raw_<name>`, which readers query through the view `<name>`: the key, `input_hash` (SHA-256 of the input), `rule` (the identity of what made the row, such as the parser of the format or the model), `status`, `error`, and the rule's own columns. `status` is `computed` when the rule made the row, `empty` when it found nothing to keep, and `failed` when it failed on that input; `error` then says why. A refresh makes again each row whose input or rule identity changed and each failed row, and deletes each row whose key no input has any more. A rule that does not handle an input (identity `null`) keeps a row that it made before, and stores a new one as `empty` with the rule `unsupported`. The rule computes in batches, and each batch commits on its own, so readers see rows as they land. A rule's failure on one input never fails the load. The table is made again when its declaration changes, since a refresh makes it again from the inputs.
+
+`Rule<Input, Output>` is the port: `key` (the key column and its description), `output` (the rule's columns, `text` or `blob`), `batch`, `read(row)`, `identity(input)` and `compute(inputs, signal)`, which gives a value, `empty`, an `error`, or `gone` (the input disappeared, so no row is written) for each input. Two rules exist:
+
+| Rule                                      | Package                | Input                                                | Output                                                                                                                                              |
+| ----------------------------------------- | ---------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DocumentText({ parser, files, column })` | `@workspace/elt`       | a stored file's ref in `column`, relative to `files` | `content`, the text a `DocumentParser` reads; the parser's `identityFor(file)` is the row's identity                                                |
+| `Embedding({ model, key, fields })`       | `@workspace/embedding` | the text of `fields`, joined by line breaks          | `vector`, a unit vector of float32 values in the platform's byte order from an AI SDK embedding model; the model's provider and id are the identity |
+
+An `Embedding` vector is the form that `VectorSearch` of `@zukhruf/embeddings` reads. To search, declare a view that gives `id`, `vector` and `published_at`, and give its name to `VectorSearch`. On 2026-10-27, 42 OpenSooq listings crawled by `source-opensooq-web` got their vectors from EmbeddingGemma 2 in one run, and `nearest` of a bicycle listing gave other bicycle listings first; a second run made no vector again.
 
 ## Postgres destination
 

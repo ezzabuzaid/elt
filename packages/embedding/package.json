@@ -1,0 +1,20 @@
+{
+  "name": "@workspace/embedding",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/embedding.d.ts",
+      "default": "./dist/embedding.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "ai": "7.0.148"
+  },
+  "devDependencies": {
+    "@ai-sdk/provider": "4.0.31",
+    "@workspace/elt-sqlite": "0.0.1"
+  }
+}
