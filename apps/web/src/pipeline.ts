@@ -26,7 +26,9 @@ export const connector = 'web';
 // Every site is one partition of a single WebSource, so one connection is the
 // articles table's only writer.
 const destination = new SQLiteDestination({ path: articlesPath });
-const history = new SQLiteSyncHistory();
+// Passes run only inside the 'sync' flight, so no other process runs one: a
+// pass left running belongs to a server that stopped, and is recorded as failed.
+const history = new SQLiteSyncHistory({ soleWriter: true });
 const checkpoints = new SQLiteCheckpointStore({
   path: join(directory, 'checkpoints.sqlite'),
 });
