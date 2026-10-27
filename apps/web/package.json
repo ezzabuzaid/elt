@@ -11,6 +11,7 @@
     "@workspace/elt-sqlite": "0.0.1",
     "@workspace/sdk-web-crawler": "0.0.1",
     "@workspace/source-web-pages": "0.0.1",
+    "@zukhruf/single-flight": "^0.3.47",
     "hono": "4.13.14",
     "react": "19.3.1",
     "react-dom": "19.3.1",

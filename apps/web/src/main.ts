@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
+import { SingleFlight } from '@zukhruf/single-flight';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
@@ -44,7 +45,8 @@ const settingsPath = join(directory, 'sites.json');
 const articlesPath = join(directory, 'articles.sqlite');
 const checkpointsPath = join(directory, 'checkpoints.sqlite');
 const connector = 'web';
-await mkdir(directory, { recursive: true });
+const flightsDirectory = join(directory, 'flights');
+await mkdir(flightsDirectory, { recursive: true });
 
 // Every site is one partition of a single WebSource, so one connection is the
 // articles table's only writer.
@@ -117,15 +119,13 @@ const publish = (next: Activity) => {
   changes.emit('change', next);
 };
 
-// A second pass over the same table while one runs would make two writers.
-const exclusive = (kind: 'syncing' | 'clearing', work: () => Promise<void>) => {
-  if (activity.current.kind !== 'idle') return false;
-  publish(kind === 'syncing' ? { kind, progress: null } : { kind });
-  void work()
-    .catch((error: unknown) => console.error(error))
-    .finally(() => publish({ kind: 'idle' }));
-  return true;
-};
+// A Sync or Clear while the same one runs joins it, in this process or another
+// that uses the folder. A Clear during a Sync is refused by elt's checkpoint
+// lock.
+const flights = new SingleFlight<void>({
+  directory: flightsDirectory,
+  codec: { encode: () => '', decode: () => undefined },
+});
 
 const read = <T>(query: (database: DatabaseSync) => T, empty: T): T => {
   using database = new DatabaseSync(articlesPath, {
@@ -156,22 +156,29 @@ const app = new Hono()
   .post('/api/sync', async (c) => {
     if ((await readSettings()).inputs.length === 0)
       return c.json({ error: 'Add a site first' }, 400);
-    const started = exclusive('syncing', async () => {
-      await (await pipeline()).run();
-    });
-    if (!started)
-      return c.json({ error: `Already ${activity.current.kind}` }, 409);
+    void flights
+      .run('sync', async () => {
+        publish({ kind: 'syncing', progress: null });
+        try {
+          await (await pipeline()).run();
+        } finally {
+          publish({ kind: 'idle' });
+        }
+      })
+      .catch((error: unknown) => console.error(error));
     return c.body(null, 202);
   })
   .post('/api/clear', async (c) => {
     if ((await readSettings()).inputs.length === 0)
       return c.json({ error: 'Add a site first' }, 400);
-    const started = exclusive('clearing', async () => {
-      await (await pipeline()).clear();
-    });
-    if (!started)
-      return c.json({ error: `Already ${activity.current.kind}` }, 409);
-    return c.body(null, 202);
+    try {
+      await flights.run('clear', async () => {
+        await (await pipeline()).clear();
+      });
+    } catch (error) {
+      return c.json({ error: String(error) }, 500);
+    }
+    return c.body(null, 204);
   })
   .get('/api/activity', (c) =>
     streamSSE(c, async (stream) => {

@@ -12,7 +12,15 @@ export function SitesPanel({ activity }: { activity: Activity }) {
     onSuccess: (saved) => queryClient.setQueryData(['settings'], saved),
   });
   const sync = useMutation({ mutationFn: api.sync });
-  const clear = useMutation({ mutationFn: api.clear });
+  const clear = useMutation({
+    mutationFn: api.clear,
+    onSuccess: () =>
+      Promise.all(
+        [['articles'], ['history']].map((queryKey) =>
+          queryClient.invalidateQueries({ queryKey }),
+        ),
+      ),
+  });
   if (settings.data === undefined)
     return settings.error === null ? null : (
       <p className="error">{settings.error.message}</p>
@@ -52,7 +60,7 @@ export function SitesPanel({ activity }: { activity: Activity }) {
         <button
           type="button"
           className="quiet"
-          disabled={busy || current.inputs.length === 0}
+          disabled={busy || clear.isPending || current.inputs.length === 0}
           onClick={() => clear.mutate()}
         >
           Clear
@@ -66,7 +74,6 @@ export function SitesPanel({ activity }: { activity: Activity }) {
 
 function ActivityLine({ activity }: { activity: Activity }) {
   if (activity.kind === 'idle') return null;
-  if (activity.kind === 'clearing') return <p className="activity">Clearing</p>;
   const { progress } = activity;
   return (
     <dl className="activity">

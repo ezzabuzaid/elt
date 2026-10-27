@@ -12,7 +12,9 @@ const failure = z.object({ error: z.string() });
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(path, init);
-  const body: unknown = response.status === 202 ? null : await response.json();
+  const body: unknown = [202, 204].includes(response.status)
+    ? null
+    : await response.json();
   if (!response.ok) throw new Error(failure.parse(body).error);
   return body;
 }

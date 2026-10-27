@@ -13,7 +13,6 @@ export type Settings = z.infer<typeof settingsSchema>;
 
 export const activitySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('idle') }),
-  z.object({ kind: z.literal('clearing') }),
   z.object({
     kind: z.literal('syncing'),
     progress: z
