@@ -603,3 +603,44 @@ test('a URL found as an archive and then listed as a page downloads in the page 
   ]);
   assert.equal(requests.filter((url) => url === '/2020/').length, 1);
 });
+
+test('a calendar archive is a real year at the start of the path, so numeric ids and model-year filters are pages', async () => {
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    assert.ok(request.url);
+    requests.push(request.url);
+    response.setHeader('content-type', 'text/html');
+    const lists: Record<string, string> = {
+      '/': '<main><a href="/2025/Oct/">October</a><a href="/blog/2024/">2024</a><a href="/en/2023/05/">May</a><a href="/products/2048">Helmet</a><a href="/en/search/1001">Bike</a><a href="/en/cars/motorcycles/2022">2022 models</a></main>',
+      '/2025/Oct/': '<main><a href="/2025/Oct/26/post/">Post</a></main>',
+      '/blog/2024/': '<main><a href="/blog/2024/note/">Note</a></main>',
+      '/en/2023/05/': '<main><a href="/en/2023/05/essay/">Essay</a></main>',
+      '/en/cars/motorcycles/2022':
+        '<main><a href="/en/search/7">Listed by the filter</a></main>',
+    };
+    const list = lists[request.url];
+    if (list === undefined && request.url.endsWith('.xml'))
+      response.writeHead(404).end();
+    else response.end(list ?? '<main><p>A page</p></main>');
+  });
+
+  const pages = (
+    await crawl(listings(), `${upstream.origin}/`, AbortSignal.timeout(5000))
+  ).map((entry) => new URL(location(entry).url).pathname);
+
+  // The three archives are read as lists, so their pages come back.
+  for (const path of [
+    '/2025/Oct/26/post/',
+    '/blog/2024/note/',
+    '/en/2023/05/essay/',
+  ])
+    assert.ok(pages.includes(path), path);
+  // Short numeric ids and a model-year filter are pages, not archives.
+  for (const path of [
+    '/products/2048',
+    '/en/search/1001',
+    '/en/cars/motorcycles/2022',
+  ])
+    assert.ok(pages.includes(path), path);
+  assert.ok(!requests.includes('/en/search/7'), requests.join(' '));
+});
