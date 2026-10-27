@@ -1,3 +1,4 @@
+import { EventEmitter, on } from 'node:events';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -108,11 +109,12 @@ const pipeline = async () => {
   });
 };
 
+// EventEmitter keeps no last value, and a page that connects mid-sync needs it.
 const activity: { current: Activity } = { current: { kind: 'idle' } };
-const listeners = new Set<(activity: Activity) => void>();
+const changes = new EventEmitter<{ change: [Activity] }>();
 const publish = (next: Activity) => {
   activity.current = next;
-  for (const listener of listeners) listener(next);
+  changes.emit('change', next);
 };
 
 // A second pass over the same table while one runs would make two writers.
@@ -173,12 +175,16 @@ const app = new Hono()
   })
   .get('/api/activity', (c) =>
     streamSSE(c, async (stream) => {
-      const send = (next: Activity) =>
-        void stream.writeSSE({ data: JSON.stringify(next) });
-      send(activity.current);
-      listeners.add(send);
-      await new Promise<void>((resolve) => stream.onAbort(resolve));
-      listeners.delete(send);
+      const { signal } = c.req.raw;
+      // Subscribed before the first write, so a change during it is buffered.
+      const next = on(changes, 'change', { signal });
+      await stream.writeSSE({ data: JSON.stringify(activity.current) });
+      try {
+        for await (const [change] of next)
+          await stream.writeSSE({ data: JSON.stringify(change) });
+      } catch (error) {
+        if (!signal.aborted) throw error;
+      }
     }),
   )
   .get('/api/articles', (c) =>
