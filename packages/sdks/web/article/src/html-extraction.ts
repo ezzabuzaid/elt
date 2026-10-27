@@ -7,6 +7,7 @@ import { type ConstructorOptions, JSDOM } from 'jsdom';
 import { NodeHtmlMarkdown } from 'node-html-markdown';
 
 import { type Article, type ArticlePage, Extraction } from './extraction.ts';
+import { listsPages } from './list-page.ts';
 
 export type ArticleSelection = Omit<
   NonNullable<ReturnType<Readability['parse']>>,
@@ -14,7 +15,40 @@ export type ArticleSelection = Omit<
 > & {
   readonly content: string;
   readonly canonicalUrl: string | null;
+  /** What the page declares itself, or null when it declares neither. */
+  readonly declared: 'article' | 'list' | null;
 };
+
+// schema.org's Article and its subtypes.
+const articleTypes = new Set([
+  'Article',
+  'AdvertiserContentArticle',
+  'NewsArticle',
+  'AnalysisNewsArticle',
+  'AskPublicNewsArticle',
+  'BackgroundNewsArticle',
+  'OpinionNewsArticle',
+  'ReportageNewsArticle',
+  'ReviewNewsArticle',
+  'Report',
+  'SatiricalArticle',
+  'ScholarlyArticle',
+  'MedicalScholarlyArticle',
+  'SocialMediaPosting',
+  'BlogPosting',
+  'LiveBlogPosting',
+  'DiscussionForumPosting',
+  'TechArticle',
+  'APIReference',
+]);
+
+// schema.org's CollectionPage and its subtypes.
+const collectionTypes = new Set([
+  'CollectionPage',
+  'MediaGallery',
+  'ImageGallery',
+  'VideoGallery',
+]);
 
 export class HTMLExtraction extends Extraction {
   readonly mediaTypes = ['text/html', 'application/xhtml+xml'];
@@ -28,9 +62,10 @@ export class HTMLExtraction extends Extraction {
     if (page.contentType) options.contentType = page.contentType;
     const dom = new JSDOM(page.body, options);
     try {
-      const article = await this.select(dom, signal);
+      const selection = await this.select(dom, signal);
       signal.throwIfAborted();
-      if (!article) return null;
+      if (!selection) return null;
+      const { declared, ...article } = selection;
       const content = createDOMPurify(dom.window).sanitize(
         await minify(article.content, {
           collapseWhitespace: true,
@@ -63,6 +98,10 @@ export class HTMLExtraction extends Extraction {
         textContent,
         length: textContent.length,
         url: page.url,
+        list:
+          declared === null
+            ? listsPages(content, page.url)
+            : declared === 'list',
       };
     } finally {
       dom.window.close();
@@ -149,10 +188,31 @@ export class HTMLExtraction extends Extraction {
       charThreshold: 1,
     }).parse();
     if (!article || !extracted.content) return null;
+    // Defuddle gives the top-level JSON-LD objects of the page, whatever their @context.
+    const data: unknown = extracted.schemaOrgData;
+    const types = (Array.isArray(data) ? data : [data]).flatMap(
+      (item: unknown) =>
+        typeof item === 'object' && item !== null && '@type' in item
+          ? [item['@type']].flat()
+          : [],
+    );
+    const declares = (names: ReadonlySet<string>) =>
+      types.some((type) => typeof type === 'string' && names.has(type));
+    let declared: ArticleSelection['declared'] = null;
+    if (declares(articleTypes)) declared = 'article';
+    else if (declares(collectionTypes)) declared = 'list';
+    // The schema.org type is the more specific: the-decoder.com's tag pages declare og:type article and a CollectionPage.
+    else if (
+      extracted.metaTags?.some(
+        (tag) => tag.property === 'og:type' && tag.content === 'article',
+      )
+    )
+      declared = 'article';
     return {
       ...article,
       content: extracted.content,
       canonicalUrl: canonicalUrl && canonicalUrl.href,
+      declared,
     };
   }
 }

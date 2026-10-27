@@ -97,15 +97,16 @@ Each call owns its DOM and closes it, so one reader can read pages concurrently.
 
 The exported `Article` type is the contract for every extraction. `HTMLExtraction` keeps the field names of Mozilla Readability and its null values for missing metadata.
 
-| Field                                | Meaning                                                                                      |
-| ------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `url`                                | Final HTTP response URL, including its query                                                 |
-| `canonicalUrl`                       | Resolved HTTP(S) HTML canonical declaration, without a fragment; null when absent or invalid |
-| `content`                            | Extracted HTML with insignificant whitespace normalized, then sanitized                      |
-| `markdown`                           | Markdown converted from that same sanitized HTML, including links and pipe tables            |
-| `textContent`, `length`              | Text with paragraph breaks and formatted data tables; its JavaScript string length           |
-| `title`, `byline`, `publishedTime`   | Readability's title, author text and raw publication metadata                                |
-| `excerpt`, `siteName`, `lang`, `dir` | Readability's description, publisher, language and text direction                            |
+| Field                                | Meaning                                                                                                                                                     |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`                                | Final HTTP response URL, including its query                                                                                                                |
+| `canonicalUrl`                       | Resolved HTTP(S) HTML canonical declaration, without a fragment; null when absent or invalid                                                                |
+| `content`                            | Extracted HTML with insignificant whitespace normalized, then sanitized                                                                                     |
+| `markdown`                           | Markdown converted from that same sanitized HTML, including links and pipe tables                                                                           |
+| `textContent`, `length`              | Text with paragraph breaks and formatted data tables; its JavaScript string length                                                                          |
+| `title`, `byline`, `publishedTime`   | Readability's title, author text and raw publication metadata                                                                                               |
+| `excerpt`, `siteName`, `lang`, `dir` | Readability's description, publisher, language and text direction                                                                                           |
+| `list`                               | The page lists other pages of its origin, such as a category or an archive ([ADR 0010](./docs/adr/0010-a-page-that-lists-pages-is-labeled-not-rejected.md)) |
 
 For native Markdown, `markdown` is the body of the publisher. It can hold navigation, footer text or raw HTML even when `content` and `textContent` are clean, so sanitize it before you render it. Relative URLs resolve against the representation that gives the content.
 
@@ -152,3 +153,4 @@ The SDK does not infer a publication date from prose, URL paths, HTTP timestamps
 - [ADR 0007: The dateline hint is removed before Readability reads the page](./docs/adr/0007-the-dateline-hint-is-removed-before-readability-reads-the-page.md)
 - [ADR 0008: The fingerprint is known before extraction](./docs/adr/0008-the-fingerprint-is-known-before-extraction.md)
 - [ADR 0009: A JSON-LD context array is given to Readability as its schema.org IRI](./docs/adr/0009-a-json-ld-context-array-is-given-to-readability-as-its-schema-org-iri.md)
+- [ADR 0010: A page that lists pages is labeled, not rejected](./docs/adr/0010-a-page-that-lists-pages-is-labeled-not-rejected.md)

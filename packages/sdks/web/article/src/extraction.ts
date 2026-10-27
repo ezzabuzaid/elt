@@ -18,6 +18,8 @@ export type Article = {
   readonly markdown: string;
   readonly textContent: string;
   readonly length: number;
+  /** The page lists other pages of its origin, such as a category or an archive, rather than being one article. */
+  readonly list: boolean;
 };
 
 export abstract class Extraction {

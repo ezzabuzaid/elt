@@ -59,3 +59,7 @@ _Avoid_: ETag (an ETag is an HTTP validator), version
 **Acceptance check**:
 The rule that an HTML article must keep prose after the links outside `article`, `[role="article"]` and `table` are removed.
 _Avoid_: Readerable check (Readability's `isProbablyReaderable` is not used)
+
+**List**:
+A page that lists other pages of its origin, such as a category, a tag page or an archive. Its article has `list` set to true. The page declares it with a schema.org `CollectionPage`, or, when the page declares no type, more than a third of the article's words are links to two or more pages of its origin.
+_Avoid_: Listing (the web source uses listing for the response that first named a page), index, hub

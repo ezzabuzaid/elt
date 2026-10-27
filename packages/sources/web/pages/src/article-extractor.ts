@@ -56,6 +56,11 @@ export class ArticleExtractor extends RecordExtractor {
     siteName: { ...nullableText, description: 'Publisher metadata.' },
     lang: { ...nullableText, description: 'Declared content language.' },
     dir: { ...nullableText, description: 'Declared content direction.' },
+    list: {
+      type: 'boolean',
+      description:
+        'The page lists other pages of its origin, such as a category or an archive, rather than being one article: it declares a schema.org CollectionPage, or, when it declares no type, more than a third of its words link two or more of those pages.',
+    },
   } as const;
 
   open(http: Got): ExtractorRun {

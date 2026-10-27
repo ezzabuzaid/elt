@@ -8,6 +8,7 @@ import { Marked } from 'marked';
 import { isDocument, parseDocument } from 'yaml';
 
 import { type Article, type ArticlePage, Extraction } from './extraction.ts';
+import { listsPages } from './list-page.ts';
 
 export class MarkdownExtraction extends Extraction {
   readonly mediaTypes = ['text/markdown'];
@@ -87,6 +88,7 @@ export class MarkdownExtraction extends Extraction {
         markdown,
         textContent,
         length: textContent.length,
+        list: listsPages(content, page.url),
       };
     } finally {
       dom.window.close();

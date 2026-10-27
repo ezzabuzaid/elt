@@ -42,6 +42,7 @@ test('a non-HTML extraction receives response bytes and returns its article unch
     markdown: '# Café report\n\nA **short** post.',
     textContent: 'Café report\n\nA short post.',
     length: 26,
+    list: false,
   };
   // A test-local extraction verifies the public extension receives untouched bytes.
   class MarkdownExtraction extends Extraction {

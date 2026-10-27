@@ -1349,6 +1349,51 @@ test('explicit URL patterns restrict article downloads and preserve matching que
   assert.equal((await ingestion.run())[0]?.count, 0);
 });
 
+test('a category page that matches the URL patterns is stored as a list, beside the articles it links', async () => {
+  // As anthropic.com/news: its category pages match the same pattern as its articles.
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/robots.txt') response.writeHead(404).end();
+    else if (request.url === '/news')
+      response.end(
+        '<main><a href="/news/features">Features</a><a href="/news/claude-code">Claude Code</a></main>',
+      );
+    else if (request.url === '/news/features')
+      response.end(`<html><head><title>Features</title><meta property="og:type" content="website"></head><body><main><article><h1>Features</h1><ul>
+        <li><a href="/news/claude-code"><h3>Claude Code</h3><p>How the team builds the tool.</p></a></li>
+        <li><a href="/news/memory"><h3>Memory</h3><p>Claude now remembers your projects.</p></a></li>
+      </ul></article></main></body></html>`);
+    else
+      response.end(
+        `<html><head><title>${request.url}</title></head><body><article><h1>${request.url}</h1><p>A report on what changed and why it matters.</p></article></body></html>`,
+      );
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      stream: articles([`${upstream.origin}/news/*`]),
+      inputs: [`${upstream.origin}/news`],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+
+  await ingestion.run();
+
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT pageUrl, list FROM articles ORDER BY pageUrl')
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      ['/news/claude-code', 0],
+      ['/news/features', 1],
+      ['/news/memory', 0],
+    ].map(([path, list]) => ({ pageUrl: `${upstream.origin}${path}`, list })),
+  );
+});
+
 test('a Latin-1 article page is stored with its text and leaves nothing to retry', async () => {
   await using upstream = await new HttpServer().start((request, response) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
