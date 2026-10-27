@@ -88,7 +88,7 @@ export class MarkdownExtraction extends Extraction {
         markdown,
         textContent,
         length: textContent.length,
-        list: listsPages(content, page.url),
+        list: listsPages(content, page.url) !== null,
       };
     } finally {
       dom.window.close();

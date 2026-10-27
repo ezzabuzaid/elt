@@ -80,6 +80,7 @@ export class HTMLExtraction extends Extraction {
       ))
         link.remove();
       if (!prose.textContent?.trim()) return null;
+      const shape = listsPages(content, page.url);
       const textContent = convert(content, {
         wordwrap: false,
         selectors: [{ selector: 'table', format: 'dataTable' }],
@@ -98,10 +99,12 @@ export class HTMLExtraction extends Extraction {
         textContent,
         length: textContent.length,
         url: page.url,
+        // Cards outweigh a declared article: a blog index keeps its CMS's
+        // Article or og:type article (css-tricks.com, smashingmagazine.com).
         list:
-          declared === null
-            ? listsPages(content, page.url)
-            : declared === 'list',
+          declared === 'list' ||
+          shape === 'cards' ||
+          (declared === null && shape === 'links'),
       };
     } finally {
       dom.window.close();

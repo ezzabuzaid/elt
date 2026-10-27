@@ -59,7 +59,7 @@ export class ArticleExtractor extends RecordExtractor {
     list: {
       type: 'boolean',
       description:
-        'The page lists other pages of its origin, such as a category or an archive, rather than being one article: it declares a schema.org CollectionPage, or, when it declares no type, more than a third of its words link two or more of those pages.',
+        'The page lists other pages, such as a category, an archive or a blog index, rather than being one article: it declares a schema.org CollectionPage, or its content is two or more linked article cards that hold most of its words, or, when it declares no type, more than a third of its words link two or more pages of its origin.',
     },
   } as const;
 
