@@ -1,15 +1,17 @@
 import { mkdir, open } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname } from 'node:path';
 
 import KeyvSqlite from '@keyv/sqlite';
 import got from 'got';
 import { Keyv } from 'keyv';
 import PQueue from 'p-queue';
 
-export async function webHttp(signal: AbortSignal | undefined) {
+export async function webHttp(
+  cachePath: string,
+  signal: AbortSignal | undefined,
+) {
   await using resources = new AsyncDisposableStack();
-  const cachePath = resolve('.cache/web-http.sqlite');
-  await mkdir(resolve('.cache'), { recursive: true, mode: 0o700 });
+  await mkdir(dirname(cachePath), { recursive: true, mode: 0o700 });
   const file = resources.use(await open(cachePath, 'a', 0o600));
   await file.chmod(0o600);
   const cache = new Keyv<unknown>({

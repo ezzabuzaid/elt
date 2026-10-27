@@ -65,12 +65,19 @@ export class WebSource extends Source {
   protected readonly catalog: Catalog;
   readonly #stream: WebStream;
   readonly #inputs: readonly string[];
+  // Where the HTTP cache lives is the host's decision, like a destination's path.
+  readonly #cachePath: string;
   // Each input's earliest due URL, as its last crawl left it; null when its crawl failed or nothing is ever due.
   readonly #due = new Map<string, number | null>();
   #extracted = Promise.withResolvers<void>();
-  constructor(options: { stream: WebStream; inputs: readonly string[] }) {
+  constructor(options: {
+    stream: WebStream;
+    inputs: readonly string[];
+    cachePath: string;
+  }) {
     super();
     this.#stream = options.stream;
+    this.#cachePath = z.string().min(1).parse(options.cachePath);
     this.#inputs = z
       .array(z.url({ protocol: /^https?$/ }))
       .min(1)
@@ -175,7 +182,7 @@ export class WebSource extends Source {
       const previous =
         state === null ? { diff: null, crawl: null } : saved.parse(state);
       let diff: unknown = previous.diff;
-      await using client = await webHttp(signal);
+      await using client = await webHttp(this.#cachePath, signal);
       const { http, signal: requestSignal } = client;
       const run = this.#stream.extractor.open(http);
       const crawler = new WebCrawler(

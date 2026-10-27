@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtempDisposable, stat } from 'node:fs/promises';
+import { mkdtempDisposable, readdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -19,7 +19,7 @@ import { WebStream } from ${JSON.stringify(import.meta.resolve('@workspace/sourc
 import { AlwaysRevisit, ArchiveReader, LinkReader, ListingReader, PaginationReader } from ${JSON.stringify(import.meta.resolve('@workspace/sdk-web-crawler'))};
 import { Connection, Copy, Pipeline } from ${JSON.stringify(import.meta.resolve('@workspace/elt'))};
 import { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } from ${JSON.stringify(import.meta.resolve('@workspace/elt-sqlite'))};
-const [input, path, checkpoints, id, syncMode] = process.argv.slice(1);
+const [input, path, checkpoints, id, syncMode, cachePath] = process.argv.slice(1);
 const stream = new WebStream({
   name: 'articles',
   primaryKey: ['articleUrl'],
@@ -27,7 +27,7 @@ const stream = new WebStream({
   revisit: new AlwaysRevisit(),
   extractor: new ArticleExtractor(),
 });
-const source = new WebSource({ stream, inputs: [input] });
+const source = new WebSource({ stream, inputs: [input], cachePath });
 const destination = new SQLiteDestination({ path });
 const history = new SQLiteSyncHistory();
 const result = await new Pipeline({ history, connections: [new Connection({
@@ -57,10 +57,10 @@ test('HTTP resource scope exit cancels queued requests without caller cancellati
 import assert from 'node:assert/strict';
 import { setImmediate } from 'node:timers/promises';
 import { webHttp } from ${JSON.stringify(new URL('./web-http.ts', import.meta.url).href)};
-const [origin] = process.argv.slice(1);
+const [origin, cachePath] = process.argv.slice(1);
 const rejected = [];
 {
-  await using client = await webHttp(undefined);
+  await using client = await webHttp(cachePath, undefined);
   assert.equal(client.signal.aborted, false);
   await client.http(origin + '/first', { signal: client.signal });
   await client.http(origin + '/second', { signal: client.signal });
@@ -73,6 +73,7 @@ const rejected = [];
 await Promise.all(rejected);
 `,
       upstream.origin,
+      join(directory.path, 'web-http.sqlite'),
     ],
     { cwd: directory.path, timeout: 10_000 },
   );
@@ -137,7 +138,8 @@ test('production cache survives process restarts, revalidates fresh responses an
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   await using directory = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
-  const cachePath = join(directory.path, '.cache/web-http.sqlite');
+  await using cwd = await mkdtempDisposable(join(tmpdir(), 'web-cwd-'));
+  const cachePath = join(directory.path, 'http', 'web-http.sqlite');
   async function run(
     checkpointPath = checkpoints.path,
     syncMode = 'incremental',
@@ -154,8 +156,9 @@ test('production cache survives process restarts, revalidates fresh responses an
         checkpointPath,
         'articles',
         syncMode,
+        cachePath,
       ],
-      { cwd: directory.path, timeout: 30000 },
+      { cwd: cwd.path, timeout: 30000 },
     );
     assert.equal(requests.length, 6);
     return JSON.parse(result.stdout);
@@ -167,10 +170,9 @@ test('production cache survives process restarts, revalidates fresh responses an
     ),
   );
   assert.equal((await stat(cachePath)).mode & 0o777, 0o600);
-  assert.equal(
-    (await stat(join(directory.path, '.cache'))).mode & 0o777,
-    0o700,
-  );
+  assert.equal((await stat(join(directory.path, 'http'))).mode & 0o777, 0o700);
+  // The host chose where the cache lives, so nothing lands in the working directory.
+  assert.deepEqual(await readdir(cwd.path), []);
   using cache = new DatabaseSync(cachePath);
   freshness = 7200;
   assert.deepEqual(await run(), [0]);
@@ -257,6 +259,7 @@ test('persistent HTTP cache respects negotiated Markdown and HTML metadata', asy
         checkpoints.path,
         'articles',
         'incremental',
+        join(directory.path, 'web-http.sqlite'),
       ],
       { cwd: directory.path, timeout: 30000 },
     );
@@ -295,7 +298,7 @@ for (const revalidate of [false, true])
             revalidate ? '"article"' : undefined,
           );
           using cache = new DatabaseSync(
-            join(directory.path, '.cache/web-http.sqlite'),
+            join(directory.path, 'web-http.sqlite'),
           );
           cache.exec('DROP TABLE keyv');
         }
@@ -321,6 +324,7 @@ for (const revalidate of [false, true])
           checkpoints.path,
           'articles',
           'incremental',
+          join(directory.path, 'web-http.sqlite'),
         ],
         { cwd: directory.path, timeout: 30000 },
       );

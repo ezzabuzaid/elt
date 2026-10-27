@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempDisposable } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { HttpServer } from '@zukhruf/testing/http';
@@ -36,6 +39,7 @@ import { WebSource } from './web-source.ts';
 import { WebStream } from './web-stream.ts';
 
 test('committed groups skip extraction after 304 and identical 200, but fresh and full scans extract', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   let revision = 1;
   let extractions = 0;
   let revalidated = 0;
@@ -60,6 +64,7 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
     }
   });
   const source = new WebSource({
+    cachePath: join(cache.path, 'web-http.sqlite'),
     stream: articles(),
     inputs: [upstream.origin],
   });
@@ -134,6 +139,7 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
 });
 
 test('restarted source keeps unchanged rows and detects listing metadata and article edits', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   let lastModified = '2026-10-01';
   let revision = 1;
   await using upstream = await new HttpServer().start((request, response) => {
@@ -155,6 +161,7 @@ test('restarted source keeps unchanged rows and detects listing metadata and art
   await using checkpoints = await new Sqlite().database();
   async function run() {
     const source = new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles(),
       inputs: [`${upstream.origin}/sitemap.xml`],
     });
@@ -203,6 +210,7 @@ test('restarted source keeps unchanged rows and detects listing metadata and art
 });
 
 test('an unchanged native-Markdown page requested again on a due visit loads nothing and is not extracted again', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const requests: string[] = [];
   let extractions = 0;
   class CountedArticles extends ArticleExtractor {
@@ -249,6 +257,7 @@ test('an unchanged native-Markdown page requested again on a due visit loads not
   await using checkpoints = await new Sqlite().database();
   async function run() {
     const source = new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles(new CountedArticles()),
       inputs: [`${upstream.origin}/sitemap.xml`],
     });

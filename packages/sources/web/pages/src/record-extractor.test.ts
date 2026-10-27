@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempDisposable } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { HttpServer } from '@zukhruf/testing/http';
@@ -82,6 +85,7 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
 }
 
 test('every record an extractor returns for a page is stored with the page provenance', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   await using upstream = await new HttpServer().start((request, response) => {
     if (request.url === '/sitemap.xml')
       response
@@ -96,6 +100,7 @@ test('every record an extractor returns for a page is stored with the page prove
   const input = `${upstream.origin}/sitemap.xml`;
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: sections(null),
       inputs: [input],
     }),
@@ -124,8 +129,10 @@ test('every record an extractor returns for a page is stored with the page prove
 });
 
 test('the discovered stream holds the provenance columns and the extractor properties under the input and stream keys', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const stream = sections(null);
   const source = new WebSource({
+    cachePath: join(cache.path, 'web-http.sqlite'),
     stream,
     inputs: ['https://example.com/'],
   });
@@ -158,6 +165,7 @@ test('the discovered stream holds the provenance columns and the extractor prope
 
 for (const accept of ['application/vnd.sections+json', null])
   test(`an extractor's ${accept === null ? 'null Accept leaves the client default' : 'Accept reaches only the pages handed back'}`, async () => {
+    await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
     const accepts = new Map<string, string | undefined>();
     await using upstream = await new HttpServer().start((request, response) => {
       accepts.set(request.url ?? '/', request.headers.accept);
@@ -174,6 +182,7 @@ for (const accept of ['application/vnd.sections+json', null])
     await using checkpoints = await new Sqlite().database();
     const ingestion = await pipeline(
       new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
         stream: sections(accept),
         inputs: [`${upstream.origin}/sitemap.xml`],
       }),

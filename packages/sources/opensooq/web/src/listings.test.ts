@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempDisposable } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
 
 import { HttpServer } from '@zukhruf/testing/http';
@@ -238,11 +241,13 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
 }
 
 test('every listing of a paginated category is stored with its JSON-LD fields', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   await using upstream = await market({ ad: 'Sponsored', price: '4499' });
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
     }),
@@ -286,11 +291,13 @@ test('every listing of a paginated category is stored with its JSON-LD fields', 
 });
 
 test('listings that a listing page links as related ads are neither downloaded nor stored', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   await using upstream = await market({ ad: 'Sponsored', price: '4499' });
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
     }),
@@ -311,6 +318,7 @@ test('listings that a listing page links as related ads are neither downloaded n
 });
 
 test('every listing of a category without pagination is stored, and nothing else is downloaded', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   await using upstream = await category({
     '287909010': () => [motorcycle('287909010', '4499')],
     '287909011': () => [motorcycle('287909011', '3999')],
@@ -319,6 +327,7 @@ test('every listing of a category without pagination is stored, and nothing else
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
     }),
@@ -345,6 +354,7 @@ test('every listing of a category without pagination is stored, and nothing else
 });
 
 test('a category crawl reads only the category and its next pages, not the filters and the other-language category they link', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   // The live page of /en/cars/motorcycles/2000 on 2026-10-26 links its Arabic twin twice: an hreflang alternate and the language switch.
   // That category fits on one page; the rel="next" link is the one the live /en/cars/motorcycles carries (backlog #2993).
   // The year filters and the city/brand/model/year filters are linked from the listing pages (listingPage).
@@ -378,6 +388,7 @@ test('a category crawl reads only the category and its next pages, not the filte
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles/2000`],
     }),
@@ -406,6 +417,7 @@ test('a category crawl reads only the category and its next pages, not the filte
 });
 
 test('listings of every real schema.org shape are stored with their mapped fields', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   await using upstream = await category({
     '287909010': () => [motorcycle('287909010', '4499')],
     '287800001': () => [product('287800001')],
@@ -416,6 +428,7 @@ test('listings of every real schema.org shape are stored with their mapped field
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
     }),
@@ -502,6 +515,7 @@ test('listings of every real schema.org shape are stored with their mapped field
 });
 
 test('a listing page without an object for its listing fails, and the next run tries it again', async (t) => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const later = shiftedClock(t);
   let broken = true;
   await using upstream = await category({
@@ -514,6 +528,7 @@ test('a listing page without an object for its listing fails, and the next run t
   await using checkpoints = await new Sqlite().database();
   const source = () =>
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
     });
@@ -554,6 +569,7 @@ test('a listing page without an object for its listing fails, and the next run t
 });
 
 test('a listing whose offer has no price fails, and the next run tries it again', async (t) => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const later = shiftedClock(t);
   let broken = true;
   await using upstream = await category({
@@ -569,6 +585,7 @@ test('a listing whose offer has no price fails, and the next run tries it again'
   await using checkpoints = await new Sqlite().database();
   const source = () =>
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
     });
@@ -610,12 +627,14 @@ test('a listing whose offer has no price fails, and the next run tries it again'
 });
 
 test('an unchanged rerun writes nothing', async (t) => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const later = shiftedClock(t);
   await using upstream = await market({ ad: 'Sponsored', price: '4499' });
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
     }),
@@ -653,6 +672,7 @@ class CountedExtractor extends OpenSooqExtractor {
 }
 
 test('a listing page whose markup changes outside its JSON-LD is not extracted again', async (t) => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const later = shiftedClock(t);
   const page = { ad: 'Sponsored: helmets', price: '4499' };
   await using upstream = await market(page);
@@ -661,6 +681,7 @@ test('a listing page whose markup changes outside its JSON-LD is not extracted a
   const extractor = new CountedExtractor();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: new WebStream({
         name: listings.name,
         primaryKey: listings.primaryKey,
@@ -686,6 +707,7 @@ test('a listing page whose markup changes outside its JSON-LD is not extracted a
 });
 
 test('a listing whose JSON-LD changes is written again with the new values', async (t) => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const later = shiftedClock(t);
   const page = { ad: 'Sponsored', price: '4499' };
   await using upstream = await market(page);
@@ -693,6 +715,7 @@ test('a listing whose JSON-LD changes is written again with the new values', asy
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
     }),
@@ -721,6 +744,7 @@ test('a listing whose JSON-LD changes is written again with the new values', asy
 });
 
 test('the listing stored is the JSON-LD object whose url has the listing id of the page', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   await using upstream = await category({
     // Another listing's object comes first, as a related ad would.
     '287909020': () => [
@@ -732,6 +756,7 @@ test('the listing stored is the JSON-LD object whose url has the listing id of t
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
     }),

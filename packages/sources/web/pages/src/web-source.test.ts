@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempDisposable } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 
@@ -29,6 +32,7 @@ import { WebSource } from './web-source.ts';
 import { WebStream } from './web-stream.ts';
 
 test('native articles persist clean text and refresh independently changing HTML metadata', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   let date = '2026-10-24';
   const markdown =
     '# Field report\n\nRead the [findings](/findings).\n\nSubscribe for updates.';
@@ -53,6 +57,7 @@ test('native articles persist clean text and refresh independently changing HTML
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
     }),
@@ -84,6 +89,7 @@ test('native articles persist clean text and refresh independently changing HTML
 });
 
 test('archive articles persist Markdown and an unchanged rerun writes no records', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');
     if (request.url === '/') response.end('<a href="/archive/">Archive</a>');
@@ -98,6 +104,7 @@ test('archive articles persist Markdown and an unchanged rerun writes no records
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const source = new WebSource({
+    cachePath: join(cache.path, 'web-http.sqlite'),
     stream: articles(),
     inputs: [upstream.origin],
   });
@@ -112,6 +119,7 @@ test('archive articles persist Markdown and an unchanged rerun writes no records
 });
 
 test('the pipeline prefers native Markdown, keeps HTML fallback and writes nothing on an unchanged rerun', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   await using upstream = await new HttpServer().start((request, response) => {
     if (request.url === '/feed.xml') {
       assert(!request.headers.accept?.includes('text/markdown'));
@@ -139,6 +147,7 @@ test('the pipeline prefers native Markdown, keeps HTML fallback and writes nothi
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
     }),
@@ -166,6 +175,7 @@ test('the pipeline prefers native Markdown, keeps HTML fallback and writes nothi
 });
 
 test('an article that a feed and a sitemap list with and without a trailing slash is stored once, and an unchanged rerun writes nothing', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   // Like ezz.sh live on 2026-10-26: rss.xml and sitemap-0.xml name the two forms, both answer 200 and declare one canonical URL.
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
@@ -202,6 +212,7 @@ test('an article that a feed and a sitemap list with and without a trailing slas
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles(),
       inputs: [upstream.origin],
     }),
@@ -262,6 +273,7 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
 }
 
 test('temporary listing and article failures recover within one pipeline run', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     // The site has no robots.txt.
@@ -294,6 +306,7 @@ test('temporary listing and article failures recover within one pipeline run', a
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
     }),
@@ -316,6 +329,7 @@ test('temporary listing and article failures recover within one pipeline run', a
 });
 
 test('failed articles do not block later articles or later refreshes', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const requests: string[] = [];
   let failing = true;
   let added = false;
@@ -344,6 +358,7 @@ test('failed articles do not block later articles or later refreshes', async () 
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const options = {
+    cachePath: join(cache.path, 'web-http.sqlite'),
     stream: articles(),
     inputs: [`${upstream.origin}/feed.xml`],
   };
@@ -406,6 +421,7 @@ test(
   'failed URLs survive feed rollover and cancellation during a later retry',
   { timeout: 15_000 },
   async () => {
+    await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
     let phase = 0;
     const requests: string[] = [];
     await using upstream = await new HttpServer().start((request, response) => {
@@ -449,6 +465,7 @@ test(
     await using database = await new Sqlite().database();
     await using checkpoints = await new Sqlite().database();
     const options = {
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles(),
       inputs: [`${upstream.origin}/feed.json`],
     };
@@ -546,6 +563,7 @@ test(
   'listing, redirect and retry requests share the request-start rate limit',
   { timeout: 10_000 },
   async () => {
+    await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
     const requests: { path: string; at: number }[] = [];
     await using upstream = await new HttpServer().start((request, response) => {
       // The site has no robots.txt.
@@ -576,6 +594,7 @@ test(
     await using checkpoints = await new Sqlite().database();
     const ingestion = await pipeline(
       new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
         stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
       }),
@@ -608,6 +627,7 @@ test(
   'cancellation stops a streaming download and queued requests after an article failure',
   { timeout: 10_000 },
   async () => {
+    await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
     const streaming = Promise.withResolvers<void>();
     const closed = Promise.withResolvers<void>();
     const requests: string[] = [];
@@ -637,6 +657,7 @@ test(
     await using checkpoints = await new Sqlite().database();
     const ingestion = await pipeline(
       new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
         stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
       }),
@@ -666,6 +687,7 @@ test(
   'a slow article holds back later downloads instead of prefetching the feed',
   { timeout: 15_000 },
   async () => {
+    await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
     const release = Promise.withResolvers<void>();
     const entered = Promise.withResolvers<void>();
     const requests: string[] = [];
@@ -702,6 +724,7 @@ test(
     await using checkpoints = await new Sqlite().database();
     const ingestion = await pipeline(
       new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
         stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
       }),
@@ -727,6 +750,7 @@ test(
 );
 
 test('a completed scan retains successful articles and retries failures on the next refresh', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   let failing = true;
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
@@ -756,6 +780,7 @@ test('a completed scan retains successful articles and retries failures on the n
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const options = {
+    cachePath: join(cache.path, 'web-http.sqlite'),
     stream: articles(),
     inputs: [`${upstream.origin}/feed.json`],
   };
@@ -805,6 +830,7 @@ test(
   'cancelling an active download preserves committed progress for a new pipeline',
   { timeout: 10_000 },
   async () => {
+    await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
     const downloading = Promise.withResolvers<void>();
     const closed = Promise.withResolvers<void>();
     let blocking = true;
@@ -837,6 +863,7 @@ test(
     await using database = await new Sqlite().database();
     await using checkpoints = await new Sqlite().database();
     const options = {
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
     };
@@ -886,6 +913,7 @@ test(
 );
 
 test('chosen websites and feeds persist article metadata, make unchanged reruns empty, and replace changed articles', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   let revised = false;
   await using upstream = await new HttpServer().start((request, response) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
@@ -911,6 +939,7 @@ test('chosen websites and feeds persist article metadata, make unchanged reruns 
     await using database = await new Sqlite().database();
     await using checkpoints = await new Sqlite().database();
     const options = {
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles(),
       inputs: [`${upstream.origin}${input}`],
     };
@@ -1007,6 +1036,7 @@ test('chosen websites and feeds persist article metadata, make unchanged reruns 
 });
 
 test('feed rollover retains articles and independent inputs keep their own progress when one fails', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   let failing = true;
   let rolled = false;
   await using upstream = await new HttpServer().start((request, response) => {
@@ -1041,6 +1071,7 @@ test('feed rollover retains articles and independent inputs keep their own progr
   await using checkpoints = await new Sqlite().database();
   const first = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles(),
       inputs: [`${upstream.origin}/two.json`, `${upstream.origin}/one.json`],
     }),
@@ -1058,6 +1089,7 @@ test('feed rollover retains articles and independent inputs keep their own progr
   failing = false;
   const extended = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles(),
       inputs: [
         `${upstream.origin}/one.json`,
@@ -1090,6 +1122,7 @@ test('feed rollover retains articles and independent inputs keep their own progr
 });
 
 test('a failed full refresh tries later articles and preserves the last complete collection', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   let revised = false;
   let failing = false;
   const requests: string[] = [];
@@ -1111,6 +1144,7 @@ test('a failed full refresh tries later articles and preserves the last complete
   });
   await using database = await new Sqlite().database();
   const source = new WebSource({
+    cachePath: join(cache.path, 'web-http.sqlite'),
     stream: articles(),
     inputs: [`${upstream.origin}/sitemap.xml`],
   });
@@ -1164,6 +1198,7 @@ test(
   'a watch checks again only when a known URL is due, so by default it does not crawl again soon after a crawl',
   { timeout: 10_000 },
   async () => {
+    await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
     const requests: string[] = [];
     await using upstream = await new HttpServer().start((request, response) => {
       // The site has no robots.txt.
@@ -1189,6 +1224,7 @@ test(
     await using checkpoints = await new Sqlite().database();
     const ingestion = await pipeline(
       new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
         stream: new WebStream({
           name: 'articles',
           primaryKey: ['articleUrl'],
@@ -1221,6 +1257,7 @@ test(
   'pipeline watching refreshes edited articles and stops when cancelled',
   { timeout: 10_000 },
   async () => {
+    await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
     let body =
       'Original observation with enough readable content to keep the article.';
     await using upstream = await new HttpServer().start((request, response) => {
@@ -1239,6 +1276,7 @@ test(
     await using checkpoints = await new Sqlite().database();
     const ingestion = await pipeline(
       new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
         stream: new WebStream({
           name: 'articles',
           primaryKey: ['articleUrl'],
@@ -1279,6 +1317,7 @@ test(
 );
 
 test('explicit URL patterns restrict article downloads and preserve matching query variants', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     // The site has no robots.txt.
@@ -1311,6 +1350,7 @@ test('explicit URL patterns restrict article downloads and preserve matching que
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const options = {
+    cachePath: join(cache.path, 'web-http.sqlite'),
     stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [`${upstream.origin}/feed.json`],
   };
@@ -1350,6 +1390,7 @@ test('explicit URL patterns restrict article downloads and preserve matching que
 });
 
 test('a category page that matches the URL patterns is stored as a list, beside the articles it links', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   // As anthropic.com/news: its category pages match the same pattern as its articles.
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');
@@ -1372,6 +1413,7 @@ test('a category page that matches the URL patterns is stored as a list, beside 
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles([`${upstream.origin}/news/*`]),
       inputs: [`${upstream.origin}/news`],
     }),
@@ -1395,6 +1437,7 @@ test('a category page that matches the URL patterns is stored as a list, beside 
 });
 
 test('a Latin-1 article page is stored with its text and leaves nothing to retry', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   await using upstream = await new HttpServer().start((request, response) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
     if (url.pathname === '/feed.xml') {
@@ -1416,6 +1459,7 @@ test('a Latin-1 article page is stored with its text and leaves nothing to retry
   await using checkpoints = await new Sqlite().database();
   const ingestion = await pipeline(
     new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
     }),
@@ -1434,6 +1478,7 @@ test('a Latin-1 article page is stored with its text and leaves nothing to retry
 });
 
 test('by default an incremental crawl requests a known page again only when it is due, and the page keeps its row meanwhile', async (t) => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const later = shiftedClock(t);
   const requests: string[] = [];
   let revision = 1;
@@ -1460,6 +1505,7 @@ test('by default an incremental crawl requests a known page again only when it i
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const options = {
+    cachePath: join(cache.path, 'web-http.sqlite'),
     stream: new WebStream({
       name: 'articles',
       primaryKey: ['articleUrl'],
@@ -1500,6 +1546,7 @@ test('by default an incremental crawl requests a known page again only when it i
 });
 
 test('a page that was not due keeps its fingerprint, so once due and unchanged it is not loaded again', async (t) => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const later = shiftedClock(t);
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
@@ -1525,6 +1572,7 @@ test('a page that was not due keeps its fingerprint, so once due and unchanged i
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const options = {
+    cachePath: join(cache.path, 'web-http.sqlite'),
     stream: new WebStream({
       name: 'articles',
       primaryKey: ['articleUrl'],
@@ -1554,6 +1602,7 @@ test('a page that was not due keeps its fingerprint, so once due and unchanged i
 });
 
 test('a host that answers 429 stops the crawl there, keeps the loaded rows, and the run after the block loads only the rest', async (t) => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const later = shiftedClock(t);
   const requests: string[] = [];
   let blocking = true;
@@ -1583,6 +1632,7 @@ test('a host that answers 429 stops the crawl there, keeps the loaded rows, and 
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const options = {
+    cachePath: join(cache.path, 'web-http.sqlite'),
     stream: articles(),
     inputs: [`${upstream.origin}/feed.xml`],
   };

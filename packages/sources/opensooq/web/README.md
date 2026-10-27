@@ -9,6 +9,7 @@ import { WebSource } from '@workspace/source-web-pages/web-source';
 const source = new WebSource({
   stream: listings,
   inputs: ['https://jo.opensooq.com/en/cars/motorcycles'],
+  cachePath: './web-http.sqlite',
 });
 ```
 

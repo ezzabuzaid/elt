@@ -52,6 +52,7 @@ export default async function pipeline() {
       extractor: new ArticleExtractor(),
     }),
     inputs,
+    cachePath: join(directory, 'web-http.sqlite'),
   });
   return new Pipeline({
     history,
