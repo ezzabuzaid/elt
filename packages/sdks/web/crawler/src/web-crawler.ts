@@ -81,6 +81,8 @@ const mementoSchema = z.object({
       at: z.number(),
       pending: z.array(entrySchema),
       known: z.array(z.string()),
+      // URLs this crawl handed back as pages: each is handed back once.
+      handed: z.array(z.string()),
       states: z.array(z.unknown()),
     })
     .nullable(),
@@ -152,12 +154,14 @@ export class WebCrawler {
       states: unknown[],
       entries: Entry[],
       crawled: readonly string[],
+      handed: readonly string[],
     ) =>
       new CrawlRun(this.#http, this.#readers, this.#revisit, options, {
         at,
         states,
         entries,
         crawled,
+        handed,
         known,
         revisits: [...known.values()].flatMap(({ entry }) =>
           startUrls.includes(entry.url) ? [] : [{ ...entry, start: false }],
@@ -171,6 +175,7 @@ export class WebCrawler {
         ),
         crawl.pending.map((entry) => this.#restore(entry)),
         crawl.known,
+        crawl.handed,
       );
     return run(
       Date.now(),
@@ -189,6 +194,7 @@ export class WebCrawler {
         tolerate: [],
         notes: this.#readers.map(() => null),
       })),
+      [],
       [],
     );
   }
@@ -224,6 +230,11 @@ class CrawlRun implements Crawl {
   };
   // Every URL pending or downloaded in this crawl; a skipped page leaves so a later finding can still bring it in.
   readonly #known = new Set<string>();
+  readonly #handed: Set<string>;
+  // URLs this crawl downloads again for a role they add: no reader admits them a second time.
+  readonly #again = new Set<string>();
+  // The page handed back last, added to #handed with its visit, as the entry stays pending.
+  #hand: string | null = null;
   #current: Entry | null = null;
   // The last visit's schedule, kept out of the URLs until the next entry is requested, as the entry stays pending.
   #visit: {
@@ -244,6 +255,7 @@ class CrawlRun implements Crawl {
       states,
       entries,
       crawled,
+      handed,
       known,
       revisits,
     }: {
@@ -251,6 +263,7 @@ class CrawlRun implements Crawl {
       readonly states: unknown[];
       readonly entries: readonly Entry[];
       readonly crawled: readonly string[];
+      readonly handed: readonly string[];
       readonly known: Map<string, KnownUrl>;
       readonly revisits: Entry[];
     },
@@ -263,7 +276,9 @@ class CrawlRun implements Crawl {
     this.#states = states;
     this.#urls = known;
     this.#revisits = revisits;
-    for (const entry of entries) this.#enqueue(entry);
+    this.#handed = new Set(handed);
+    // Pending entries were admitted when found; one may be a URL this crawl already downloaded.
+    for (const entry of entries) this.#add(entry);
     for (const url of crawled) this.#known.add(url);
   }
 
@@ -280,6 +295,7 @@ class CrawlRun implements Crawl {
               ]),
             ],
             known: [...this.#known],
+            handed: [...this.#handed],
             states: this.#states,
           },
       urls: Object.fromEntries(this.#urls),
@@ -400,15 +416,17 @@ class CrawlRun implements Crawl {
         }
       }
       signal.throwIfAborted();
-      yield included && !failed
-        ? {
-            url: entry.url,
-            listingUrl: entry.listingUrl,
-            lastModified: entry.lastModified,
-            response,
-            change,
-          }
-        : { progress: entry.url };
+      // A URL downloaded again for a role it adds is a page already handed back.
+      if (included && !failed && !this.#handed.has(entry.url)) {
+        this.#hand = entry.url;
+        yield {
+          url: entry.url,
+          listingUrl: entry.listingUrl,
+          lastModified: entry.lastModified,
+          response,
+          change,
+        };
+      } else yield { progress: entry.url };
     }
     for (const [url, { entry, digest }] of this.#urls)
       if (
@@ -455,6 +473,8 @@ class CrawlRun implements Crawl {
   }
 
   #commit() {
+    if (this.#hand !== null) this.#handed.add(this.#hand);
+    this.#hand = null;
     if (this.#visit === null) return;
     this.#urls.set(this.#visit.after.entry.url, this.#visit.after);
     this.#visit = null;
@@ -469,9 +489,12 @@ class CrawlRun implements Crawl {
         for (const entry of lane.values()) {
           lane.delete(entry.url);
           const included = entry.page && this.#includes(entry.url);
-          const wanted = this.#readers.map((reader, index) =>
-            reader.wants(entry, this.#states[index]),
-          );
+          // A reader's budget counts admissions, and a second download of a URL is none.
+          const wanted = this.#again.delete(entry.url)
+            ? this.#readers.map(() => false)
+            : this.#readers.map((reader, index) =>
+                reader.wants(entry, this.#states[index]),
+              );
           if (
             entry.start ||
             entry.document ||
@@ -570,57 +593,91 @@ class CrawlRun implements Crawl {
   // only a starting URL always goes in. Reader admission comes after, so a
   // URL left out spends no reader budget.
   #enqueue(next: Entry) {
-    const pending = priorities
-      .map((priority) => this.#lanes[priority].get(next.url))
-      .find((entry) => entry !== undefined);
-    if (!pending) {
-      if (this.#known.has(next.url)) return;
-      const known = this.#urls.get(next.url);
-      if (
-        known !== undefined &&
-        !next.start &&
-        !this.#revisit.due(
-          next,
-          { ...known, lastModified: known.entry.lastModified },
-          this.#at,
+    if (this.#pending(next.url) === undefined) {
+      if (this.#known.has(next.url)) {
+        // This crawl downloaded the URL: it goes again only for a role that
+        // download did not have, with every role, so Got's cache revalidates it.
+        const visited = (
+          this.#visit?.after.entry.url === next.url
+            ? this.#visit.after
+            : this.#urls.get(next.url)
+        )?.entry;
+        if (visited === undefined) return;
+        const addsRole =
+          (next.page && !visited.page) || (next.list && !visited.list);
+        if (!addsRole) return;
+        const again = { ...visited, priority: next.priority };
+        merge(again, next);
+        next = again;
+        this.#again.add(next.url);
+      } else {
+        const known = this.#urls.get(next.url);
+        if (
+          known !== undefined &&
+          !next.start &&
+          !this.#revisit.due(
+            next,
+            { ...known, lastModified: known.entry.lastModified },
+            this.#at,
+          )
         )
-      )
-        return;
+          return;
+      }
+    }
+    this.#add(next);
+  }
+
+  #add(next: Entry) {
+    const pending = this.#pending(next.url);
+    if (!pending) {
       this.#known.add(next.url);
       this.#lanes[next.priority].set(next.url, next);
       return;
     }
-    // A URL that is also a page counts the hops of its page findings; a document's do not lower them.
-    if (next.page === pending.page)
-      pending.hops = Math.min(pending.hops, next.hops);
-    else if (next.page) {
-      pending.hops = next.hops;
-      pending.page = true;
-    }
-    pending.start ||= next.start;
-    pending.document ||= next.document;
-    pending.list ||= next.list;
-    // The most urgent finding decides when the URL downloads.
-    if (
-      priorities.indexOf(next.priority) < priorities.indexOf(pending.priority)
-    ) {
-      this.#lanes[pending.priority].delete(pending.url);
-      pending.priority = next.priority;
+    const { priority } = pending;
+    merge(pending, next);
+    if (pending.priority !== priority) {
+      this.#lanes[priority].delete(pending.url);
       this.#lanes[pending.priority].set(pending.url, pending);
     }
-    if (pending.linked && !next.linked) {
-      pending.listingUrl = next.listingUrl;
-      pending.lastModified = next.lastModified;
-      pending.linked = false;
-    }
-    const { tolerate } = next;
-    if (pending.tolerate === 'any') pending.tolerate = tolerate;
-    else if (tolerate !== 'any')
-      pending.tolerate = pending.tolerate.filter((status) =>
-        tolerate.includes(status),
-      );
-    pending.notes = pending.notes.map(
-      (note, index) => note ?? next.notes[index],
-    );
   }
+
+  #pending(url: string) {
+    return priorities
+      .map((priority) => this.#lanes[priority].get(url))
+      .find((entry) => entry !== undefined);
+  }
+}
+
+// Folds a finding into an entry for the same URL: roles only grow.
+function merge(pending: Entry, next: Entry) {
+  // A starting URL has no provenance of its own: its first page finding gives it one.
+  if (
+    (pending.linked && !next.linked) ||
+    (pending.start && !pending.page && next.page)
+  ) {
+    pending.listingUrl = next.listingUrl;
+    pending.lastModified = next.lastModified;
+    pending.linked = next.linked;
+  }
+  // A URL that is also a page counts the hops of its page findings; a document's do not lower them.
+  if (next.page === pending.page)
+    pending.hops = Math.min(pending.hops, next.hops);
+  else if (next.page) {
+    pending.hops = next.hops;
+    pending.page = true;
+  }
+  pending.start ||= next.start;
+  pending.document ||= next.document;
+  pending.list ||= next.list;
+  // The most urgent finding decides when the URL downloads.
+  if (priorities.indexOf(next.priority) < priorities.indexOf(pending.priority))
+    pending.priority = next.priority;
+  const { tolerate } = next;
+  if (pending.tolerate === 'any') pending.tolerate = tolerate;
+  else if (tolerate !== 'any')
+    pending.tolerate = pending.tolerate.filter((status) =>
+      tolerate.includes(status),
+    );
+  pending.notes = pending.notes.map((note, index) => note ?? next.notes[index]);
 }

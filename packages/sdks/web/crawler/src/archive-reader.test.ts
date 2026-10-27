@@ -316,6 +316,8 @@ test('a self-linked archive and calendar indexes expose the full history', async
   assert.deepEqual(
     pages.map((page) => location(page).url).sort(),
     [
+      // The starting page links itself, so it is a page too.
+      '/',
       // Lists hand back the archives they link as pages too.
       '/2001/',
       '/2001/02/',

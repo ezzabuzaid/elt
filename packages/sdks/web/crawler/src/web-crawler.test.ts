@@ -96,10 +96,18 @@ test('crawls links itself and preserves URL identity, provenance and Got respons
       }),
     )
   ).map(pageOf);
-  // The starting page is read but not handed back; link elements and Link headers belong to ArchiveReader.
+  // /docs/one links the starting page, so the start is a page too and comes back last; link elements and Link headers belong to ArchiveReader.
   assert.deepEqual(
     pages.map((page) => pathOf(page.url)),
-    ['/docs/one', '/post', '/post/', '/post?a=1&b=2', '/post?b=2&a=1', '/leaf'],
+    [
+      '/docs/one',
+      '/post',
+      '/post/',
+      '/post?a=1&b=2',
+      '/post?b=2&a=1',
+      '/leaf',
+      '/',
+    ],
   );
   assert.deepEqual(requests, ['/', ...pages.map((page) => pathOf(page.url))]);
   assert.equal(
@@ -114,7 +122,7 @@ test('crawls links itself and preserves URL identity, provenance and Got respons
   }
 });
 
-test('each found URL is requested once and keeps the URL as found, including redirect aliases', async () => {
+test('each found URL is requested once for each role it adds and keeps the URL as found, including redirect aliases', async () => {
   const requests: string[] = [];
   using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
@@ -149,12 +157,14 @@ test('each found URL is requested once and keeps the URL as found, including red
       }),
     )
   ).map(pageOf);
-  // /target is requested twice: once through the alias's redirect, once as itself.
+  // /target is requested twice: once through the alias's redirect, once as itself. / links itself as /#part,
+  // so the start is requested again as a page.
   assert.deepEqual(requests, [
     '/',
     '/alias',
     '/target',
     '/target',
+    '/',
     '/external',
   ]);
   assert.deepEqual(
@@ -162,6 +172,7 @@ test('each found URL is requested once and keeps the URL as found, including red
     [
       ['https://site.test/alias', 'https://site.test/target'],
       ['https://site.test/target', 'https://site.test/target'],
+      ['https://site.test/', 'https://site.test/'],
       ['https://site.test/external', 'https://remote.test/page'],
     ],
   );

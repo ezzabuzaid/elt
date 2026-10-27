@@ -42,7 +42,7 @@ await writeFile('crawl.json', JSON.stringify(crawl.snapshot()));
 
 `WebCrawler` owns the crawl frontier: the URLs still to download, and every URL already pending or downloaded. It downloads each URL once through the Got client you supply. Got owns redirects, retries, timeouts, caching and rate limiting. The engine gives each response to every reader, in the order you list them, and adds what they find to the frontier. It has no format knowledge.
 
-- **Starting URLs** are downloaded and read, but not handed back. A failed starting URL is an error.
+- **Starting URLs** are downloaded and read. A starting URL is handed back as a page only when a reader finds it as one, such as a sitemap that lists it or a page that links it, as Nutch and StormCrawler treat a seed like any other URL. A failed starting URL is an error.
 - **Pages** are URLs a reader marks as pages. The crawl hands back a page with its Got response when the page matches `include`, or always when you omit `include`. The engine downloads a page that does not match only when a reader `wants` it.
 - **Documents** are URLs a reader reads itself, such as sitemaps.
 - **Lists** are HTML pages that list pages, such as archives. Only the reader that finds a URL knows it is a list, so it says so on its finding; the engine carries that to the request, and a reader of lists reads every request that a reader found as a list. A list can also be a page.
@@ -50,7 +50,7 @@ await writeFile('crawl.json', JSON.stringify(crawl.snapshot()));
 - **Provenance**: `listingUrl` is the final URL of the response that first named the URL. A listing's provenance replaces a link's while the URL is pending.
 - **Hops** count ordinary links from a starting or listed page. When a URL is both a document and a page, its page findings decide its hops. `LinkReader` limits them.
 - **Failures**: a reader states which statuses are ordinary answers for each URL it finds, for example 404 for a dead link. Any other failure is handed out as `{ url, listingUrl, lastModified, error, page }`, and the crawl continues. `page` is true when the failed URL is a page the crawl would have handed back. The memento keeps every failed URL, and the revisit policy makes it due again. A reader that throws, such as on a malformed declared sitemap, produces a failure for that URL with `page: false`; the other readers still read the response, and a page is still handed back. Cancellation throws the signal's exact reason.
-- **Identity**: fragments are removed. Queries and trailing slashes stay meaningful. Each found URL is requested once; `url` is the URL as found, and `response.url` is the final URL.
+- **Identity**: fragments are removed. Queries and trailing slashes stay meaningful. Each found URL is requested once per role it adds: when a reader finds a downloaded URL as a page or a list and the download was not one, the crawl requests it again with both roles, and Got's cache makes that a revalidation. A URL is handed back as a page at most once per crawl, also across a snapshot. `url` is the URL as found, and `response.url` is the final URL.
 - Got hooks can read `options.context.page`. It is true when the download is a page handed back and no reader reads it as a document. It is false for starting URLs, documents and pages downloaded only for a reader, so a feed that is also a page keeps the representation its reader needs.
 - **Progress**: every downloaded URL that is not handed back as a page or failure produces `{ progress: url }`. Take a snapshot there to keep the work done on documents.
 
