@@ -1,21 +1,21 @@
 import type { Hono } from 'hono';
 
-import type { Services } from '../services.ts';
+import activity from '../activity.ts';
+import flights from '../flights.ts';
+import pipeline from '../pipeline.ts';
+import settings from '../settings.ts';
 
-export default function (
-  router: Hono,
-  { readSettings, flights, pipeline, publish }: Services,
-) {
+export default function (router: Hono) {
   router.post('/sync', async (c) => {
-    if ((await readSettings()).inputs.length === 0)
+    if ((await settings.read()).inputs.length === 0)
       return c.json({ error: 'Add a site first' }, 400);
     void flights
       .run('sync', async () => {
-        publish({ kind: 'syncing', progress: null });
+        activity.publish({ kind: 'syncing', progress: null });
         try {
           await (await pipeline()).run();
         } finally {
-          publish({ kind: 'idle' });
+          activity.publish({ kind: 'idle' });
         }
       })
       .catch((error: unknown) => console.error(error));
@@ -23,7 +23,7 @@ export default function (
   });
 
   router.post('/clear', async (c) => {
-    if ((await readSettings()).inputs.length === 0)
+    if ((await settings.read()).inputs.length === 0)
       return c.json({ error: 'Add a site first' }, 400);
     try {
       await flights.run('clear', async () => {

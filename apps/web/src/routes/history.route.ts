@@ -1,10 +1,9 @@
-import { DatabaseSync } from 'node:sqlite';
-
 import type { Hono } from 'hono';
 import { z } from 'zod';
 
 import { attemptSchema } from '../contract.ts';
-import type { Services } from '../services.ts';
+import db from '../db.ts';
+import { connector } from '../pipeline.ts';
 
 const json = z.string().transform((value) => z.json().parse(JSON.parse(value)));
 const attemptRow = attemptSchema.extend({
@@ -12,12 +11,19 @@ const attemptRow = attemptSchema.extend({
   failures: json.nullable(),
 });
 
-export default function (router: Hono, { articlesPath, connector }: Services) {
+// The pipeline installs its history views when the first Sync starts.
+const installed = () =>
+  db.prepare(`SELECT 1 FROM sqlite_schema WHERE name = 'sync_status'`).get() !==
+  undefined;
+
+export default function (router: Hono) {
   router.get('/history', (c) => {
-    using database = new DatabaseSync(articlesPath, {
-      readOnly: true,
-      timeout: 5_000,
-    });
+    if (!installed())
+      return c.json({
+        currentAsOf: null,
+        lastSuccessfulSyncAt: null,
+        attempts: [],
+      });
     const status = z
       .object({
         current_as_of: z.string().nullable(),
@@ -25,14 +31,14 @@ export default function (router: Hono, { articlesPath, connector }: Services) {
       })
       .optional()
       .parse(
-        database
+        db
           .prepare(
             'SELECT current_as_of, last_successful_sync_at FROM sync_status WHERE connector = ?',
           )
           .get(connector),
       );
     const attempts = z.array(attemptRow).parse(
-      database
+      db
         .prepare(
           `SELECT a.attempt_id, a.started_at, a.completed_at, a.status, a.error, a.failure_type,
             c.description, c.selection, c.written_count, c.deleted_count, c.failures
