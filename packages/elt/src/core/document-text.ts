@@ -22,9 +22,10 @@ export class DocumentText extends Rule<string, string> {
         'The text the parser extracted. NULL unless status is computed.',
     },
   } as const;
-  // Files decode concurrently; an image read beyond the OCR workers waits in
-  // the host's pool.
-  override readonly batch = availableParallelism();
+  // One file per call, as many at once as the Mac has cores; an image read
+  // beyond the OCR workers waits in the host's pool.
+  override readonly batch = 1;
+  override readonly concurrency = availableParallelism();
   readonly #parser: () => DocumentParser;
   readonly #files: string;
   readonly #column: string;

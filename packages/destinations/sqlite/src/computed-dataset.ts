@@ -224,33 +224,47 @@ export class ComputedDataset<
         continue;
       due.push({ id, input, inputHash, rule });
     }
-    for (
-      let start = 0;
-      start < due.length && signal?.aborted !== true;
-      start += this.#rule.batch
-    ) {
-      const batch = due.slice(start, start + this.#rule.batch);
-      const results = await this.#rule.compute(
-        batch.map(({ input }) => input),
-        signal,
-      );
-      // Each batch commits on its own, so readers see rows as they land.
-      transaction(
-        database,
-        () => {
-          batch.forEach(({ id, inputHash, rule }, index) => {
-            const result = results[index];
-            if (result === undefined || 'gone' in result) return;
-            if ('value' in result)
-              store(id, inputHash, rule, 'computed', null, result.value);
-            else if ('error' in result)
-              store(id, inputHash, rule, 'failed', result.error, {});
-            else store(id, inputHash, rule, 'empty', null, {});
-          });
-        },
-        { mode: 'immediate' },
-      );
-    }
+    // A pool of calls, each taking the next batch once its own committed, so
+    // a slow call holds only its place, as a worker pool keeps its other
+    // workers busy. A call that fails stops the pool taking more.
+    const failures: unknown[] = [];
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: this.#rule.concurrency }, async () => {
+        while (failures.length === 0 && signal?.aborted !== true) {
+          const batch = due.slice(next, next + this.#rule.batch);
+          next += this.#rule.batch;
+          if (batch.length === 0) return;
+          let results;
+          try {
+            results = await this.#rule.compute(
+              batch.map(({ input }) => input),
+              signal,
+            );
+          } catch (error) {
+            failures.push(error);
+            return;
+          }
+          // Each call commits on its own, so readers see rows as they land.
+          transaction(
+            database,
+            () => {
+              batch.forEach(({ id, inputHash, rule }, index) => {
+                const result = results[index];
+                if (result === undefined || 'gone' in result) return;
+                if ('value' in result)
+                  store(id, inputHash, rule, 'computed', null, result.value);
+                else if ('error' in result)
+                  store(id, inputHash, rule, 'failed', result.error, {});
+                else store(id, inputHash, rule, 'empty', null, {});
+              });
+            },
+            { mode: 'immediate' },
+          );
+        }
+      }),
+    );
+    if (failures.length > 0) throw failures[0];
   }
 
   // Each input by key, from the rows the copies loaded into each relation of

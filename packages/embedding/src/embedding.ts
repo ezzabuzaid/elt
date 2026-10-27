@@ -23,6 +23,8 @@ export class Embedding extends Rule<string, Uint8Array> {
   // Rows embedded and committed together; the model's own limit on values in
   // one call splits a batch further inside embedMany.
   override readonly batch = 64;
+  // One call at a time: a local model server answers one call at a time.
+  override readonly concurrency = 1;
   readonly #model: EmbeddingModel;
   readonly #fields: readonly string[];
 

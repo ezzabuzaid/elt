@@ -73,10 +73,13 @@ class Files extends Source {
 class TextParser extends DocumentParser {
   readonly parsed: string[] = [];
   readonly failing = new Set<string>();
+  // Files whose read waits until their promise settles.
+  readonly holding = new Map<string, Promise<void>>();
   handles = true;
 
   async parse(path: string): Promise<string | null> {
     this.parsed.push(basename(path));
+    await this.holding.get(basename(path));
     if (this.failing.has(basename(path)))
       throw new Error(`${basename(path)} is damaged`);
     const text = await readFile(path, 'utf8');
@@ -285,4 +288,42 @@ test('a format the parser stops handling keeps the text read before, and a file 
     ],
   );
   assert.deepEqual(files.parser().parsed, ['a.txt']);
+});
+
+test('a file that is slow to read holds only its own place: the text of the files read after it lands while it is still being read', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-computed-'),
+  );
+  const files = await filesImport(scratch.path);
+  const names = Array.from({ length: 40 }, (_, index) => `f${index}.txt`);
+  for (const name of ['slow.txt', ...names])
+    await files.file(name, `text of ${name}`);
+  files.source.rows = ['slow.txt', ...names].map((ref, index) => ({
+    id: String(index),
+    ref,
+  }));
+  const released = Promise.withResolvers<void>();
+  files.parser().holding.set('slow.txt', released.promise);
+
+  const running = files.pipeline.run();
+  let landed: unknown[] = [];
+  for (let tries = 0; landed.length < names.length; tries++) {
+    if (tries > 1000)
+      assert.fail(
+        `only ${landed.length} of ${names.length} files landed while slow.txt was read`,
+      );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    landed = files.read("SELECT ref FROM file_text WHERE status = 'computed'");
+  }
+  const whileHeld = files.read(
+    "SELECT ref FROM file_text WHERE ref = 'slow.txt'",
+  );
+  released.resolve();
+  await running;
+
+  assert.deepEqual(whileHeld, []);
+  assert.deepEqual(
+    files.read("SELECT ref, status FROM file_text WHERE ref = 'slow.txt'"),
+    [{ ref: 'slow.txt', status: 'computed' }],
+  );
 });

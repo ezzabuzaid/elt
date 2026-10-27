@@ -28,8 +28,12 @@ export abstract class Rule<Input, Output> {
   };
   // The columns the rule adds to each output row.
   abstract readonly output: Readonly<Record<string, RuleColumn>>;
-  // How many inputs one compute call takes, such as files parsed at once.
+  // How many inputs one compute call takes, such as the texts of one model
+  // call, and how many calls run at once, such as files parsed side by side.
+  // The rows of a call commit as soon as it settles, so a slow call holds
+  // only its own place, never the calls after it.
   abstract readonly batch: number;
+  abstract readonly concurrency: number;
 
   // The key and input of one loaded row, or null when the row has none, such
   // as an attachment row with no stored file.
