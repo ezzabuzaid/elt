@@ -1455,6 +1455,75 @@ test('a page that was not due keeps its fingerprint, so once due and unchanged i
   assert.equal(due, 0);
 });
 
+test('a host that answers 429 stops the crawl there, keeps the loaded rows, and the run after the block loads only the rest', async (t) => {
+  const later = shiftedClock(t);
+  const requests: string[] = [];
+  let blocking = true;
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    requests.push(url.pathname);
+    if (url.pathname === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel>${['a', 'b', 'c', 'd'].map((name) => `<item><link>${url.origin}/${name}</link></item>`).join('')}</channel></rss>`,
+      );
+    } else if (url.pathname === '/c' && blocking) {
+      // Longer than Got's 30-second request timeout, so Got does not retry it.
+      response.writeHead(429, { 'retry-after': '120' }).end();
+    } else {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<article><p>Research article ${url.pathname} contains the complete published observations.</p></article>`,
+      );
+    }
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const options = {
+    stream: articles(),
+    inputs: [`${upstream.origin}/feed.xml`],
+  };
+  const rows = () =>
+    database.connection
+      .prepare('SELECT pageUrl FROM articles ORDER BY pageUrl')
+      .all()
+      .map((row) => String(row.pageUrl).slice(upstream.origin.length));
+
+  const blocked = await pipeline(
+    new WebSource(options),
+    database.path,
+    checkpoints.path,
+  )
+    .then((ingestion) => ingestion.run())
+    .then(
+      () => assert.fail('the blocked run must not succeed'),
+      (error: unknown) => error,
+    );
+  const blockedRequests = requests.splice(0);
+  const blockedRows = rows();
+  later(120_000);
+  blocking = false;
+  const resumed = await (
+    await pipeline(new WebSource(options), database.path, checkpoints.path)
+  ).run();
+  const resumedRequests = requests.splice(0);
+  // The scan that the block interrupted kept /a and /b, so the next crawl finds them unchanged.
+  const refresh = await (
+    await pipeline(new WebSource(options), database.path, checkpoints.path)
+  ).run();
+
+  assert(blocked instanceof PipelineError);
+  assert.equal(blocked.results[0]?.count, 2);
+  assert.equal(blocked.results[0]?.failures.length, 1);
+  assert.match(blocked.message, new RegExp(`${upstream.origin}.*429`));
+  assert.deepEqual(blockedRequests, ['/feed.xml', '/a', '/b', '/c']);
+  assert.deepEqual(blockedRows, ['/a', '/b']);
+  assert.equal(resumed[0]?.count, 2);
+  assert.deepEqual(resumedRequests, ['/c', '/d']);
+  assert.equal(refresh[0]?.count, 0);
+  assert.deepEqual(rows(), ['/a', '/b', '/c', '/d']);
+});
+
 function articles(include?: readonly string[]) {
   return new WebStream({
     name: 'articles',

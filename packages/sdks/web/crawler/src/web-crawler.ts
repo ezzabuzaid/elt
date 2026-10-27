@@ -11,7 +11,12 @@ import {
   type Reader,
   priorities,
 } from './reader.ts';
-import type { Change, Outcome, RevisitPolicy } from './revisit-policy.ts';
+import {
+  type Change,
+  type Outcome,
+  type RevisitPolicy,
+  hour,
+} from './revisit-policy.ts';
 import { webUrl } from './web-url.ts';
 
 export class CrawlError extends Error {
@@ -84,6 +89,8 @@ const mementoSchema = z.object({
       // URLs this crawl handed back as pages: each is handed back once.
       handed: z.array(z.string()),
       states: z.array(z.unknown()),
+      // Origins that answered 403 or 429, with when their breaker closes.
+      blocked: z.record(z.string(), z.number()),
     })
     .nullable(),
   // Every URL a crawl visited, across crawls, with when it is due again.
@@ -155,6 +162,7 @@ export class WebCrawler {
       entries: Entry[],
       crawled: readonly string[],
       handed: readonly string[],
+      blocked: Record<string, number>,
     ) =>
       new CrawlRun(this.#http, this.#readers, this.#revisit, options, {
         at,
@@ -162,6 +170,7 @@ export class WebCrawler {
         entries,
         crawled,
         handed,
+        blocked,
         known,
         revisits: [...known.values()].flatMap(({ entry }) =>
           startUrls.includes(entry.url) ? [] : [{ ...entry, start: false }],
@@ -176,6 +185,7 @@ export class WebCrawler {
         crawl.pending.map((entry) => this.#restore(entry)),
         crawl.known,
         crawl.handed,
+        crawl.blocked,
       );
     return run(
       Date.now(),
@@ -196,6 +206,7 @@ export class WebCrawler {
       })),
       [],
       [],
+      {},
     );
   }
 
@@ -233,6 +244,14 @@ class CrawlRun implements Crawl {
   readonly #handed: Set<string>;
   // URLs this crawl downloads again for a role they add: no reader admits them a second time.
   readonly #again = new Set<string>();
+  // A circuit breaker per origin that answered 403 or 429 (Nygard, Release It!):
+  // while open, the crawl requests nothing there. One opened in this crawl
+  // stays open to its end, as Nutch clears a blocked host's queue for the round.
+  readonly #blocked: Map<string, number>;
+  // Pending entries of a blocked origin, out of the lanes until a later crawl resumes them.
+  readonly #held = new Map<string, Entry>();
+  // 403 answers in a row, by origin.
+  readonly #forbidden = new Map<string, number>();
   // The page handed back last, added to #handed with its visit, as the entry stays pending.
   #hand: string | null = null;
   #current: Entry | null = null;
@@ -256,6 +275,7 @@ class CrawlRun implements Crawl {
       entries,
       crawled,
       handed,
+      blocked,
       known,
       revisits,
     }: {
@@ -264,6 +284,7 @@ class CrawlRun implements Crawl {
       readonly entries: readonly Entry[];
       readonly crawled: readonly string[];
       readonly handed: readonly string[];
+      readonly blocked: Record<string, number>;
       readonly known: Map<string, KnownUrl>;
       readonly revisits: Entry[];
     },
@@ -277,6 +298,7 @@ class CrawlRun implements Crawl {
     this.#urls = known;
     this.#revisits = revisits;
     this.#handed = new Set(handed);
+    this.#blocked = new Map(Object.entries(blocked));
     // Pending entries were admitted when found; one may be a URL this crawl already downloaded.
     for (const entry of entries) this.#add(entry);
     for (const url of crawled) this.#known.add(url);
@@ -293,10 +315,12 @@ class CrawlRun implements Crawl {
               ...priorities.flatMap((priority) => [
                 ...this.#lanes[priority].values(),
               ]),
+              ...this.#held.values(),
             ],
             known: [...this.#known],
             handed: [...this.#handed],
             states: this.#states,
+            blocked: Object.fromEntries(this.#blocked),
           },
       urls: Object.fromEntries(this.#urls),
     });
@@ -315,6 +339,9 @@ class CrawlRun implements Crawl {
   }
 
   nextDue(): number | null {
+    // A crawl held back by its breakers continues when the first one closes.
+    if (!this.#complete && this.#held.size > 0)
+      return Math.min(...this.#blocked.values());
     const known = [...this.#urls.values()];
     if (this.#visit) known.push(this.#visit.after);
     let next: number | null = null;
@@ -328,6 +355,10 @@ class CrawlRun implements Crawl {
   > {
     const { signal } = this.#options;
     signal.throwIfAborted();
+    // Breakers close by the clock when the crawl runs, not when it started.
+    const now = Date.now();
+    for (const [origin, until] of this.#blocked)
+      if (until <= now) this.#blocked.delete(origin);
     for (;;) {
       this.#commit();
       const next = this.#next();
@@ -359,12 +390,42 @@ class CrawlRun implements Crawl {
       for (const [name, value] of Object.entries(response.headers))
         if (value !== undefined)
           headers.set(name, Array.isArray(value) ? value.join(', ') : value);
-      const failed = !response.ok || response.statusCode === 304;
+      const { statusCode } = response;
+      const origin = new URL(response.url).origin;
+      const tolerated = this.#tolerates(entry, statusCode);
+      // A 403 can close one page, such as a members-only one, so only a run
+      // of them, as Nutch's fetcher.max.exceptions.per.queue counts, is a block.
+      const forbidden =
+        statusCode === 403 && !tolerated
+          ? (this.#forbidden.get(origin) ?? 0) + 1
+          : 0;
+      this.#forbidden.set(origin, forbidden);
+      if (!tolerated && (statusCode === 429 || forbidden >= forbiddenRun)) {
+        // A block is the host's, not the page's: the URL goes back to the
+        // frontier, and the revisit policy does not schedule it.
+        const until = blockedUntil(headers.get('retry-after'));
+        this.#blocked.set(origin, until);
+        // A redirect reached the blocked origin, so requests to the URL's own origin would too.
+        this.#blocked.set(new URL(entry.url).origin, until);
+        this.#held.set(entry.url, entry);
+        this.#current = null;
+        yield this.#failure(
+          entry,
+          page,
+          response.url,
+          new Error(
+            `${origin} answered ${statusCode}, so the crawl requests nothing there until ${new Date(until).toISOString()}`,
+            { cause: new HTTPError(response) },
+          ),
+        );
+        continue;
+      }
+      const failed = !response.ok || statusCode === 304;
       let change: Change = 'unknown';
       if (failed)
         this.#visited(
           entry,
-          [404, 410].includes(response.statusCode) ? 'gone' : 'failed',
+          [404, 410].includes(statusCode) ? 'gone' : 'failed',
           headers,
           null,
           before,
@@ -377,7 +438,7 @@ class CrawlRun implements Crawl {
           change = before.digest === digest ? 'unmodified' : 'modified';
         this.#visited(entry, change, headers, digest, before);
       }
-      if (failed && !this.#tolerates(entry, response.statusCode)) {
+      if (failed && !tolerated) {
         yield this.#failure(entry, page, response.url, new HTTPError(response));
         continue;
       }
@@ -428,6 +489,8 @@ class CrawlRun implements Crawl {
         };
       } else yield { progress: entry.url };
     }
+    // Entries of a blocked origin remain: the crawl is unfinished.
+    if (this.#held.size > 0) return;
     for (const [url, { entry, digest }] of this.#urls)
       if (
         entry.page &&
@@ -488,6 +551,10 @@ class CrawlRun implements Crawl {
       for (let lane = this.#lane(); lane; lane = this.#lane())
         for (const entry of lane.values()) {
           lane.delete(entry.url);
+          if (this.#blocked.has(new URL(entry.url).origin)) {
+            this.#held.set(entry.url, entry);
+            continue;
+          }
           const included = entry.page && this.#includes(entry.url);
           // A reader's budget counts admissions, and a second download of a URL is none.
           const wanted = this.#again.delete(entry.url)
@@ -628,6 +695,11 @@ class CrawlRun implements Crawl {
   }
 
   #add(next: Entry) {
+    const held = this.#held.get(next.url);
+    if (held) {
+      merge(held, next);
+      return;
+    }
     const pending = this.#pending(next.url);
     if (!pending) {
       this.#known.add(next.url);
@@ -643,10 +715,24 @@ class CrawlRun implements Crawl {
   }
 
   #pending(url: string) {
-    return priorities
-      .map((priority) => this.#lanes[priority].get(url))
-      .find((entry) => entry !== undefined);
+    return (
+      this.#held.get(url) ??
+      priorities
+        .map((priority) => this.#lanes[priority].get(url))
+        .find((entry) => entry !== undefined)
+    );
   }
+}
+
+// 403 answers in a row from one origin that make a block.
+const forbiddenRun = 3;
+
+// When a block ends, by its Retry-After in seconds or as an HTTP-date (RFC 9110 §10.2.3); an hour without one.
+function blockedUntil(retryAfter: string | null) {
+  const value = retryAfter?.trim() ?? '';
+  if (/^\d+$/.test(value)) return Date.now() + Number(value) * 1000;
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? Date.now() + hour : date;
 }
 
 // Folds a finding into an entry for the same URL: roles only grow.

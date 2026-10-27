@@ -288,20 +288,29 @@ export class WebSource extends Source {
         }
       }
       requestSignal.throwIfAborted();
-      for await (const message of diffGroupedSnapshot(
-        configuration,
-        kept,
-        diff,
-        {
-          signal,
-        },
-      ))
-        if ('type' in message && message.type === 'STATE')
-          yield {
-            ...message,
-            state: { diff: message.state, crawl: crawl.snapshot() },
-          };
-        else yield message;
+      // A crawl that a blocked host left unfinished has not reached every
+      // group, so the scan goes on in the next run rather than ending here.
+      if (crawl.snapshot().crawl !== null)
+        yield {
+          type: 'STATE',
+          stream: configuration.stream.name,
+          state: checkpoint(),
+        };
+      else
+        for await (const message of diffGroupedSnapshot(
+          configuration,
+          kept,
+          diff,
+          {
+            signal,
+          },
+        ))
+          if ('type' in message && message.type === 'STATE')
+            yield {
+              ...message,
+              state: { diff: message.state, crawl: crawl.snapshot() },
+            };
+          else yield message;
       due = crawl.nextDue();
       if (errors.length > 0)
         throw new AggregateError(
