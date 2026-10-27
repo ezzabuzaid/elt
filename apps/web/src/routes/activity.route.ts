@@ -14,7 +14,9 @@ export default function (router: Hono) {
           await stream.writeSSE({ data: JSON.stringify(change) });
         }
       } catch (error) {
-        if (!signal.aborted) throw error;
+        if (!signal.aborted) {
+          throw error;
+        }
       }
     }),
   );

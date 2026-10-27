@@ -1,3 +1,4 @@
+import { validate } from '@sdk-it/hono/runtime';
 import type { Hono } from 'hono';
 import { z } from 'zod';
 
@@ -25,16 +26,25 @@ export default function (router: Hono) {
     ),
   );
 
-  router.get('/article', (c) => {
-    const article = loaded()
-      ? db
-          .prepare(
-            'SELECT * FROM articles WHERE inputUrl = ? AND articleUrl = ?',
-          )
-          .get(c.req.query('inputUrl') ?? '', c.req.query('articleUrl') ?? '')
-      : undefined;
-    return article === undefined
-      ? c.json({ error: 'No such article' }, 404)
-      : c.json(articleSchema.parse(article));
-  });
+  router.get(
+    '/article',
+    validate((payload) => ({
+      inputUrl: { select: payload.query.inputUrl, against: z.string() },
+      articleUrl: { select: payload.query.articleUrl, against: z.string() },
+    })),
+    (c) => {
+      const { inputUrl, articleUrl } = c.var.input;
+      const article = loaded()
+        ? db
+            .prepare(
+              'SELECT * FROM articles WHERE inputUrl = ? AND articleUrl = ?',
+            )
+            .get(inputUrl, articleUrl)
+        : undefined;
+      if (article === undefined) {
+        return c.json({ error: 'No such article' }, 404);
+      }
+      return c.json(articleSchema.parse(article));
+    },
+  );
 }

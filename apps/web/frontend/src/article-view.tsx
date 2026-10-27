@@ -108,7 +108,8 @@ export function ArticleView({
 function withoutRepeatedTitle(content: string, title: string | null): string {
   const parsed = new DOMParser().parseFromString(content, 'text/html');
   const heading = parsed.querySelector('h1');
-  if (title !== null && heading?.textContent.trim() === title.trim())
+  if (title !== null && heading?.textContent.trim() === title.trim()) {
     heading.remove();
+  }
   return parsed.body.innerHTML;
 }

@@ -116,5 +116,11 @@ export default [
       reportUnusedDisableDirectives: 'error',
     },
   },
+  {
+    // Braces on every if, else and loop body. Scoped to apps/web until the
+    // rest of elt is converted.
+    files: ['apps/web/**/*.ts', 'apps/web/**/*.tsx', 'apps/web/**/*.mts'],
+    rules: { curly: ['error', 'all'] },
+  },
   ...personalConfig,
 ];

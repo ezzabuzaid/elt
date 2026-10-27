@@ -18,12 +18,13 @@ const installed = () =>
 
 export default function (router: Hono) {
   router.get('/history', (c) => {
-    if (!installed())
+    if (!installed()) {
       return c.json({
         currentAsOf: null,
         lastSuccessfulSyncAt: null,
         attempts: [],
       });
+    }
     const status = z
       .object({
         current_as_of: z.string().nullable(),

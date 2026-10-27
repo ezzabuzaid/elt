@@ -10,11 +10,12 @@ export function useActivity(): Activity {
     const events = new EventSource('/api/activity');
     events.onmessage = (event: MessageEvent<string>) => {
       setActivity(activitySchema.parse(JSON.parse(event.data)));
-      for (const queryKey of [['articles'], ['history']])
+      for (const queryKey of [['articles'], ['history']]) {
         void queryClient.invalidateQueries(
           { queryKey },
           { cancelRefetch: false },
         );
+      }
     };
     return () => events.close();
   }, [queryClient]);

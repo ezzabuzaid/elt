@@ -6,8 +6,9 @@ import { formatTime } from './format.ts';
 
 export function HistoryPanel() {
   const history = useQuery({ queryKey: ['history'], queryFn: api.history });
-  if (history.data === undefined || history.data.attempts.length === 0)
+  if (history.data === undefined || history.data.attempts.length === 0) {
     return null;
+  }
   const { currentAsOf, attempts } = history.data;
   return (
     <section className="history">

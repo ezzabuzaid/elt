@@ -21,10 +21,11 @@ export function SitesPanel({ activity }: { activity: Activity }) {
         ),
       ),
   });
-  if (settings.data === undefined)
+  if (settings.data === undefined) {
     return settings.error === null ? null : (
       <p className="error">{settings.error.message}</p>
     );
+  }
   const current = settings.data;
   const update = (change: Partial<Settings>) =>
     save.mutate({ ...current, ...change });
@@ -73,7 +74,9 @@ export function SitesPanel({ activity }: { activity: Activity }) {
 }
 
 function ActivityLine({ activity }: { activity: Activity }) {
-  if (activity.kind === 'idle') return null;
+  if (activity.kind === 'idle') {
+    return null;
+  }
   const { progress } = activity;
   return (
     <dl className="activity">

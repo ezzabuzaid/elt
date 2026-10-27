@@ -19,7 +19,9 @@ export function EditableList({
   const add = (event: FormEvent) => {
     event.preventDefault();
     const item = draft.trim();
-    if (item !== '' && !items.includes(item)) onChange([...items, item]);
+    if (item !== '' && !items.includes(item)) {
+      onChange([...items, item]);
+    }
     setDraft('');
   };
   return (

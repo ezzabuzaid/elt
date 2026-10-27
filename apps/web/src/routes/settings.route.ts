@@ -1,5 +1,5 @@
+import { validate } from '@sdk-it/hono/runtime';
 import type { Hono } from 'hono';
-import { z } from 'zod';
 
 import { settingsSchema } from '../contract.ts';
 import settings from '../settings.ts';
@@ -7,11 +7,21 @@ import settings from '../settings.ts';
 export default function (router: Hono) {
   router.get('/settings', async (c) => c.json(await settings.read()));
 
-  router.put('/settings', async (c) => {
-    const parsed = settingsSchema.safeParse(await c.req.json());
-    if (!parsed.success)
-      return c.json({ error: z.prettifyError(parsed.error) }, 400);
-    await settings.save(parsed.data);
-    return c.json(parsed.data);
-  });
+  router.put(
+    '/settings',
+    validate((payload) => ({
+      inputs: {
+        select: payload.body.inputs,
+        against: settingsSchema.shape.inputs,
+      },
+      include: {
+        select: payload.body.include,
+        against: settingsSchema.shape.include,
+      },
+    })),
+    async (c) => {
+      await settings.save(c.var.input);
+      return c.json(c.var.input);
+    },
+  );
 }
