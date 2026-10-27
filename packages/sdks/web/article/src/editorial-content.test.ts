@@ -145,36 +145,101 @@ test('an incidental entry widget does not replace semantic article content', asy
 });
 
 test('a short linked post retains the outbound resource in its title row', async () => {
-  const upstream = await new HttpServer().start((_request, response) => {
+  // A classic WordPress theme puts the post's .entry inside its .post: still one post.
+  for (const { open, close } of [
+    { open: '<div class="entry">', close: '</div>' },
+    { open: '<div class="post"><div class="entry">', close: '</div></div>' },
+  ]) {
+    const upstream = await new HttpServer().start((_request, response) => {
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(`<html><head><title>Tool: Soil Viewer</title></head><body>
+        ${open}<div>
+          <div><a href="/category/tools">Tool</a> <span><a href="https://tools.example.org/soil-viewer">Soil Viewer</a></span></div>
+          <div><p>I built this tool to compare readings from the garden sensors.</p>
+            <blockquote><p>Plot the measurements on a map and highlight sudden changes.</p></blockquote>
+            <p>The viewer makes it easier to find disconnected cables before the next field visit.</p>
+            <p>Each sensor appears beside its most recent reading. Select a point to see the measurements from the previous week, compare nearby sensors, and inspect the notes recorded during maintenance. The chart keeps missing observations visible instead of connecting them with a line, so a failed sensor cannot look like a successful measurement.</p>
+          </div>
+        </div>${close}
+      </body></html>`);
+    });
+    try {
+      const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+        upstream.origin,
+        AbortSignal.timeout(5000),
+      );
+      assert.ok(article, open);
+      assert.ok(
+        article.content.includes(
+          'href="https://tools.example.org/soil-viewer"',
+        ),
+        open,
+      );
+      assert.match(
+        article.textContent,
+        /Soil Viewer \[https:\/\/tools.example.org\/soil-viewer\]/,
+        open,
+      );
+      assert.match(article.textContent, /Plot the measurements on a map/, open);
+    } finally {
+      await upstream[Symbol.asyncDispose]();
+    }
+  }
+});
+
+test('a short link post keeps its prose when a hidden link card and a members-only notice hold more words', async () => {
+  // kottke.org's markup, trimmed: one sentence of prose, a link card that is
+  // hidden from assistive technology, and a modal for non-members.
+  await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
-    response.end(`<html><head><title>Tool: Soil Viewer</title></head><body>
-      <div class="entry"><div>
-        <div><a href="/category/tools">Tool</a> <span><a href="https://tools.example.org/soil-viewer">Soil Viewer</a></span></div>
-        <div><p>I built this tool to compare readings from the garden sensors.</p>
-          <blockquote><p>Plot the measurements on a map and highlight sudden changes.</p></blockquote>
-          <p>The viewer makes it easier to find disconnected cables before the next field visit.</p>
-          <p>Each sensor appears beside its most recent reading. Select a point to see the measurements from the previous week, compare nearby sensors, and inspect the notes recorded during maintenance. The chart keeps missing observations visible instead of connecting them with a line, so a failed sensor cannot look like a successful measurement.</p>
-        </div>
+    response.end(`<html><head><title>Lego is considering making this fan-created Daft Punk set into an official set.</title></head><body>
+      <div class="big-hug"><div class="grid-container">
+        <div class="grid-item"><nav><a href="/">Home</a> <a href="/archive">Archive</a></nav></div>
+        <div class="grid-item"><div class="post">
+          <div class="post-meta">posted <time datetime="2025-11-06T16:20:36Z">Nov 6 @ 11:20 AM</time> by <a href="http://www.kottke.org">Jason Kottke</a></div>
+          <p>Lego is considering making <a href="https://ideas.lego.com/product-ideas/4248139c">this fan-created Daft Punk set</a> into an official set. YES PLEASE.</p>
+          <div class="url-card">
+            <a href="https://ideas.lego.com/product-ideas/4248139c" aria-hidden="true"><div class="url-card-image"><img src="/images/unfurls/thumb-47799.jpg" alt=""></div></a>
+            <a href="https://ideas.lego.com/product-ideas/4248139c" aria-hidden="true"><div class="url-card-content"><div class="url-card-title">Daft Punk Concert<span class="url-card-url"> · ideas.lego.com</span></div>
+              <div class="url-card-description">4 years ago, this set won the Grand Prize in the global LEGO competition Music To Our Ears!, though it wasn’t selected to become an official set. But now we’re feeling inspired to Get Lucky and try One More Time after seeing the Daft Punk making their LEGO debut in the upcoming film Piece By Piece, robot-rocking their amazing helmets alongside Pharrell Williams.</div></div></a>
+          </div>
+        </div></div>
       </div></div>
+      <div class="modal"><div class="modal-content"><p>In order to comment or fave, you need to be a kottke.org member. <a href="/members">Check out your membership options</a>.</p>
+        <p class="smaller">Note: If you are a member and tried to log in, it didn't work, and now you're stuck in a neverending login loop of death, try disabling any ad blockers or extensions. Or try logging out and then back in. If that doesn't work, email me and we'll sort it out together.</p></div></div>
     </body></html>`);
   });
-  try {
-    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
-      upstream.origin,
-      AbortSignal.timeout(5000),
-    );
-    assert.ok(article);
-    assert.ok(
-      article.content.includes('href="https://tools.example.org/soil-viewer"'),
-    );
-    assert.match(
-      article.textContent,
-      /Soil Viewer \[https:\/\/tools.example.org\/soil-viewer\]/,
-    );
-    assert.match(article.textContent, /Plot the measurements on a map/);
-  } finally {
-    await upstream[Symbol.asyncDispose]();
-  }
+
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+    upstream.origin,
+    AbortSignal.timeout(5000),
+  );
+
+  assert.ok(article);
+  assert.match(
+    article.textContent,
+    /Lego is considering making this fan-created Daft Punk set/,
+  );
+  assert.doesNotMatch(article.textContent, /neverending login loop/);
+});
+
+test('a page of several posts is not taken for its first post', async () => {
+  await using upstream = await new HttpServer().start((_request, response) => {
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    response.end(`<html><head><title>Field notes</title></head><body>
+      <div class="h-entry"><h2><a href="/notes/first">First visit</a></h2><p>We measured the soil in every plot of the garden and found the moisture lower than in the spring.</p></div>
+      <div class="h-entry"><h2><a href="/notes/second">Second visit</a></h2><p>The north beds dried faster than the south beds, so we moved the second probe to the shade.</p></div>
+    </body></html>`);
+  });
+
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+    upstream.origin,
+    AbortSignal.timeout(5000),
+  );
+
+  assert.ok(article);
+  assert.match(article.textContent, /moisture lower than in the spring/);
+  assert.match(article.textContent, /moved the second probe to the shade/);
 });
 
 test('a short post excludes surrounding sponsorship, recommendations and site footer', async () => {

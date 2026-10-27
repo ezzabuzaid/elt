@@ -5,7 +5,7 @@ The default options of Defuddle removed parts of real articles. Its exact-select
 Thus the options follow the markup of the page:
 
 - When the page declares an `article`, a `main` or an ARIA article or main, exact-selector removal is off.
-- When a page has no such markup, `.h-entry`, `.hentry` and `.entry` select the post. Inside that post, exact-selector removal and low-score removal are off.
+- When a page has no such markup and has one post, `.h-entry`, `.hentry`, `.entry` or `.post` select it. An `.entry` inside a `.post`, as classic WordPress themes give it, is the same post. Inside that post, exact-selector removal and low-score removal are off.
 - On a page without either, both cleanups stay on.
 - Partial-selector removal and standardization are always off. Asynchronous requests of Defuddle are off.
 
@@ -20,4 +20,6 @@ Thus the options follow the markup of the page:
 - An aside inside a declared article stays in the article.
 - On a page without declared boundaries, navigation, ads and related posts are still removed.
 - An incidental `.entry` widget cannot replace a declared article or main element.
+- A page of several posts, such as a list, is read as a page without markup: its first post is not its content.
+- On kottke.org a post has one sentence and a link card that is hidden from assistive technology. Without the `.post` hint, Defuddle's retry for short content took the hidden card for the article, and the acceptance check then rejected the page (backlog item 3208). With the hint, the article is the post and its card.
 - These are options of Defuddle, not rules for a publisher.

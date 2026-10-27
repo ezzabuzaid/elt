@@ -123,15 +123,21 @@ export class HTMLExtraction extends Extraction {
     if (canonicalUrl && !['http:', 'https:'].includes(canonicalUrl.protocol))
       canonicalUrl = null;
     if (canonicalUrl) canonicalUrl.hash = '';
-    // Post-class hints apply only where semantic article/main markup is absent.
+    // Post-class hints apply only where semantic article/main markup is
+    // absent, and only on a page of one post: the first of several posts is
+    // not the page's content. An .entry inside a .post is the same post.
     const postSelector =
-      'body:not(:has(article, main, [role="article"], [role="main"])) :is(.h-entry, .hentry, .entry)';
-    const markedPost = dom.window.document.querySelector(postSelector);
+      'body:not(:has(article, main, [role="article"], [role="main"])) :is(.h-entry, .hentry, .entry, .post)';
+    const posts = [...dom.window.document.querySelectorAll(postSelector)];
+    const outermostPosts = posts.filter(
+      (post) => !posts.some((other) => other !== post && other.contains(post)),
+    );
+    const markedPost = outermostPosts.length === 1;
     const extracted = await Defuddle(
       dom.serialize(),
       dom.window.document.baseURI,
       {
-        contentSelector: postSelector,
+        contentSelector: markedPost ? postSelector : undefined,
         // Declared content boundaries can contain editorial asides.
         removeExactSelectors:
           !markedPost &&
