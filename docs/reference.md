@@ -2046,7 +2046,7 @@ import {
 } from '@workspace/elt-sqlite';
 import { SlackDesktopSource } from '@workspace/source-slack-desktop/slack-desktop-source';
 
-// ~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack
+// Finds the store of the Slack build on this Mac; new SlackDesktopSource(directory) chooses one.
 const source = new SlackDesktopSource();
 const destination = new SQLiteDestination({ path: './outputs/slack.sqlite' });
 
@@ -2074,7 +2074,7 @@ await new Pipeline({
 }).run();
 ```
 
-The source reads what the Slack desktop app (Mac App Store build) keeps on this Mac, from its own store, with the `@workspace/sdk-slack-desktop` SDK: no Slack API, token or network. A Context Compiler import loads every stream into its `data.sqlite`, read through its `<snake_stream>` views.
+The source reads what the Slack desktop app keeps on this Mac, from its own store, with the `@workspace/sdk-slack-desktop` SDK: no Slack API, token or network. A Context Compiler import loads every stream into its `data.sqlite`, read through its `<snake_stream>` views.
 
 The app is Electron, and its web client saves its Redux state in the IndexedDB of `https://app.slack.com`: one record, `persist:slack-client-<workspace>-<user>`, in the object store `reduxPersistenceStore` of the database `reduxPersistence`, per signed-in workspace. Four packages read it, each owning one layer:
 
@@ -2087,9 +2087,15 @@ The app is Electron, and its web client saves its Redux state in the IndexedDB o
 
 Slack 4.52.171 runs Electron 44 (Chromium 152, V8 15.2), whose V8 writes format 16; Node 26's `v8.Deserializer` refuses it, and 16 changed only how buffer and view sizes are written. Chromium keeps IndexedDB in LevelDB for apps on disk; a move to SQLite exists behind flags off by default as of Chromium main on 2026-10-08.
 
+### Where the store is
+
+Slack has two builds for macOS, and both keep the same store in Electron's user data folder. The build from slack.com keeps it in `~/Library/Application Support/Slack`. The Mac App Store build keeps it in `~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack`. A folder has a store when its IndexedDB folder has a `CURRENT` file.
+
+Each `SlackDesktopSource` finds its folder one time, when it is made (`slackDesktopDirectory()` of the SDK). When both folders have a store, for example after the user changed builds and the old build left its folder, the source uses the store whose files changed last. When no folder has a store, the source uses the folder that gave an access error, so the read reports the missing grant. When no folder gave an error, it uses the slack.com folder. To choose a folder, give it to the constructor: `new SlackDesktopSource(directory)`.
+
 ### Access
 
-The app's container needs [Full Disk Access](#full-disk-access) (or macOS's consent to read another app's data). Without it, or without the app, reading fails with `SlackDesktopUnavailableError`, which names the grant, and fails every stream. Bytes in no format the reader knows (a V8 format above 16, a log record whose checksum fails, a slice of another shape) fail with `SlackDesktopFormatError`, which names the record and field. Either way nothing is deleted. The app's own state, `storage/root-state.json`, is a separate file that only `downloads` reads: one that is not JSON, or whose downloads have another shape, fails only `downloads`, and a damaged IndexedDB fails every stream but `downloads`. A missing `root-state.json` means no downloads.
+The Mac App Store build's container needs [Full Disk Access](#full-disk-access) (or macOS's consent to read another app's data). Without it, or without the app, reading fails with `SlackDesktopUnavailableError`, which names the grant, and fails every stream. Bytes in no format the reader knows (a V8 format above 16, a log record whose checksum fails, a slice of another shape) fail with `SlackDesktopFormatError`, which names the record and field. Either way nothing is deleted. The app's own state, `storage/root-state.json`, is a separate file that only `downloads` reads: one that is not JSON, or whose downloads have another shape, fails only `downloads`, and a damaged IndexedDB fails every stream but `downloads`. A missing `root-state.json` means no downloads.
 
 ### Streams
 
@@ -2117,7 +2123,7 @@ The app's container needs [Full Disk Access](#full-disk-access) (or macOS's cons
 | `userGroupMemberships`   | user group the app checked the signed-in user's membership of               |
 | `downloads`              | file the app downloaded, with its bytes while the file is still there       |
 
-Every key carries `workspaceId`. A message's `ts` is Slack's own ID, seconds and microseconds as Slack writes them; `sentAt` is the same instant as a [`date-time` with `precision` 6](#string-formats). `blocks`, attachment `fields` and preference values stay JSON as Slack holds them. A message saved for later carries `savedState` (such as `in_progress`), `savedTodoState` (such as `saved`) and `isSavedArchived`, from the `saved` object the app keeps on the message; the app keeps no list of saved items (`saved.list` and `saved.itemMap` stay empty), so a saved message it does not hold is not known. A snippet's `content` is its whole text. A pin's `pinnedBy` and `pinnedAt` come from the conversation's `pinned_items`, which the app keeps with each pinned message when it loads the pin list, else from the pinned message's own `pinned_info`; both are seconds, and both are NULL when the app holds neither. They live only in `pins`, not on `messages`, so the two cannot disagree. `downloads` reads the app's own state, `storage/root-state.json`, not the IndexedDB: `downloads[<workspace>][<file>]` with `downloadState`, `progress`, `startTime` and `endTime` in milliseconds, and `downloadPath`, the file in `~/Library/Containers/com.tinyspeck.slackmacgap/Data/Downloads` unless the user saved it elsewhere. With file reads, a download carries that file while it is still a file at that path; a moved or deleted one carries none. Objects the client marks `isNonExistent` are its note that a message or member is gone, not a record. Left out: the client's UI state (`view`, `modal`, `searchUi` and the like) and `sundryStorage`, which holds only a cache watermark.
+Every key carries `workspaceId`. A message's `ts` is Slack's own ID, seconds and microseconds as Slack writes them; `sentAt` is the same instant as a [`date-time` with `precision` 6](#string-formats). `blocks`, attachment `fields` and preference values stay JSON as Slack holds them. A message saved for later carries `savedState` (such as `in_progress`), `savedTodoState` (such as `saved`) and `isSavedArchived`, from the `saved` object the app keeps on the message; the app keeps no list of saved items (`saved.list` and `saved.itemMap` stay empty), so a saved message it does not hold is not known. A snippet's `content` is its whole text. A pin's `pinnedBy` and `pinnedAt` come from the conversation's `pinned_items`, which the app keeps with each pinned message when it loads the pin list, else from the pinned message's own `pinned_info`; both are seconds, and both are NULL when the app holds neither. They live only in `pins`, not on `messages`, so the two cannot disagree. `downloads` reads the app's own state, `storage/root-state.json`, not the IndexedDB: `downloads[<workspace>][<file>]` with `downloadState`, `progress`, `startTime` and `endTime` in milliseconds, and `downloadPath`, the file in the Downloads folder of the build unless the user saved it elsewhere (for the Mac App Store build, `~/Library/Containers/com.tinyspeck.slackmacgap/Data/Downloads`). With file reads, a download carries that file while it is still a file at that path; a moved or deleted one carries none. Objects the client marks `isNonExistent` are its note that a message or member is gone, not a record. Left out: the client's UI state (`view`, `modal`, `searchUi` and the like) and `sundryStorage`, which holds only a cache watermark.
 
 ### What the app holds, and deletions
 
@@ -2150,7 +2156,7 @@ Also on 2026-10-09, January's record showed each shape the newer streams read, e
 
 Files, Lists and thread replies were checked on 2026-10-09 against the record already on disk for Delivery Associates, reading types and counts only: 13 files (a List, hosted files and snippets) with 2 shares, 10 messages sharing files by ID, 2 List rows whose cells sit under column IDs the List file's `list_metadata.schema` names, and 1 reply in the channel-message shape with `_hidden_reply`.
 
-Not yet verified on real data: calendar events, since no calendar is connected to Slack in either workspace and connecting one is the account owner's consent; the Slack build from slack.com, which keeps its data under `~/Library/Application Support/Slack`; and how the store compacts, since the live database never wrote a table while it was watched (tests cover tables written as LevelDB writes them).
+Not yet verified on real data: calendar events, since no calendar is connected to Slack in either workspace and connecting one is the account owner's consent; the store of the Slack build from slack.com, because the test Mac has only the Mac App Store build; and how the store compacts, since the live database never wrote a table while it was watched (tests cover tables written as LevelDB writes them).
 
 ## Microsoft Teams
 
