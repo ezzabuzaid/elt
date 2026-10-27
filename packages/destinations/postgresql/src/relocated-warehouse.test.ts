@@ -80,7 +80,6 @@ class Notes extends Source {
 // One pass into the warehouse at url, its checkpoints beside the rows.
 async function passInto(url: string, source: Notes) {
   const history = new PostgresSyncHistory({ url });
-  await history.install();
   const destination = new PostgresDestination({ url, schema: 'notes' });
   return new Pipeline({
     history,

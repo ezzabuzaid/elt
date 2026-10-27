@@ -6,7 +6,6 @@ import {
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-  installPostgresCatalog,
 } from '@workspace/elt-postgresql';
 import {
   GOOGLE_HEALTH_SCOPES,
@@ -60,14 +59,11 @@ const healthDestination = new PostgresDestination({
   schema: healthSchema,
 });
 
-const history = new PostgresSyncHistory({ url: warehouseUrl });
-await history.install();
-await installPostgresCatalog({ url: warehouseUrl, schema: 'marts' });
 const { streams } = await source.discover();
 const { streams: healthStreams } = await health.discover();
 
 await new Pipeline({
-  history,
+  history: new PostgresSyncHistory({ url: warehouseUrl }),
   connections: [
     new Connection({
       name: 'google-search-console',

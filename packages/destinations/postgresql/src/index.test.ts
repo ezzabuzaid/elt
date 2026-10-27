@@ -55,14 +55,6 @@ abstract class LiveSource<
   }
 }
 
-// A sync history installed in the database at url, as a host installs it
-// before the first pass.
-async function installedHistory(url: string) {
-  const history = new PostgresSyncHistory({ url });
-  await history.install();
-  return history;
-}
-
 const databases = new Postgres({
   environment: process.env,
 });
@@ -328,7 +320,7 @@ test('Postgres stores per-field attachment references and reconciles only the fi
       },
     );
     const pipeline = new Pipeline({
-      history: await installedHistory(database.connectionString),
+      history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
           name: 'test',
@@ -459,7 +451,7 @@ test('renamed file columns keep their original bytes and stored files through la
       schema: 'raw',
     });
     const pipeline = new Pipeline({
-      history: await installedHistory(database.connectionString),
+      history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
           name: 'test',
@@ -563,7 +555,7 @@ test('schema annotations follow each copy, including projections, append history
     c.text('title'),
   ]);
   const full = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -574,7 +566,7 @@ test('schema annotations follow each copy, including projections, append history
     ],
   });
   const history = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -645,7 +637,7 @@ test('schema annotations follow each copy, including projections, append history
   const revisedSource = new Messages(revised);
   revisedSource.messages = rows(revised, [record]);
   await new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -669,7 +661,7 @@ test('schema annotations follow each copy, including projections, append history
   const plainSource = new Messages(unschematized);
   plainSource.messages = rows(unschematized, [record]);
   await new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -692,7 +684,7 @@ test('schema annotations follow each copy, including projections, append history
 
 test('invalid schema annotations fail before extraction or storage access', async () => {
   await using database = await databases.database();
-  const history = await installedHistory(database.connectionString);
+  const history = new PostgresSyncHistory({ url: database.connectionString });
   const destination = new PostgresDestination({
     url: 'postgres://unused/unused',
     schema: 'raw',
@@ -784,7 +776,7 @@ test('file text and bounded original bytes survive replay, replacement and delet
   assert.ok(fileColumn);
   const store = new PostgresFileStore(destination.schema, table, fileColumn);
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -961,7 +953,7 @@ test('a copy creates its schema and a table typed from the stream schema', async
   });
 
   const [result] = await new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -1053,7 +1045,7 @@ test('overwrite replaces rows while readers keep seeing the previous load', asyn
     url: database.connectionString,
     schema: 'raw',
   });
-  const history = await installedHistory(database.connectionString);
+  const history = new PostgresSyncHistory({ url: database.connectionString });
   const load = (source: Source) =>
     new Pipeline({
       history,
@@ -1119,7 +1111,7 @@ test('append keeps every load', async () => {
   const source = new Messages(stream);
   source.messages = rows(stream, [{ id: 'a' }]);
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -1173,7 +1165,7 @@ test('cursor_newer keeps the greatest cursor by byte order; replace keeps the ne
     url: database.connectionString,
     schema: 'raw',
   });
-  const history = await installedHistory(database.connectionString);
+  const history = new PostgresSyncHistory({ url: database.connectionString });
   const load = (
     table: string,
     dedupPolicy: 'cursor_newer' | 'replace',
@@ -1283,7 +1275,7 @@ test('deletions remove keyed rows in source order', async () => {
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -1358,7 +1350,7 @@ test('a source failure commits nothing: no table, rows or owner', async () => {
 
   await assert.rejects(
     new Pipeline({
-      history: await installedHistory(database.connectionString),
+      history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
           name: 'test',
@@ -1418,7 +1410,7 @@ test('a table has one writer, even when another loads only its own partitions', 
     url: database.connectionString,
     schema: 'raw',
   });
-  const history = await installedHistory(database.connectionString);
+  const history = new PostgresSyncHistory({ url: database.connectionString });
   const upsert = (id: string, source: Owned) =>
     new Pipeline({
       history,
@@ -1450,7 +1442,7 @@ test('a table has one writer, even when another loads only its own partitions', 
   );
   await assert.rejects(
     new Pipeline({
-      history: await installedHistory(database.connectionString),
+      history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
           name: 'test',
@@ -1472,7 +1464,7 @@ test('a table has one writer, even when another loads only its own partitions', 
   );
   await sql`DROP TABLE raw.records`;
   await new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -1514,7 +1506,7 @@ test('an overwrite rebuilds a table whose key column is stored as another type r
     url: database.connectionString,
     schema: 'raw',
   });
-  const history = await installedHistory(database.connectionString);
+  const history = new PostgresSyncHistory({ url: database.connectionString });
   const dedup = (primaryKey: string[]) =>
     new Pipeline({
       history,
@@ -1599,7 +1591,7 @@ test('a stored column that is NOT NULL where the stream allows null is relaxed i
   const stored = await oid();
 
   await new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -1658,7 +1650,7 @@ test('an explicit primary key a target gains or drops after a reset is added to 
     url: database.connectionString,
     schema: 'raw',
   });
-  const history = await installedHistory(database.connectionString);
+  const history = new PostgresSyncHistory({ url: database.connectionString });
   const run = (keyed: boolean, data: readonly object[]) => {
     source.messages = rows(stream, data);
     return new Pipeline({
@@ -1757,7 +1749,7 @@ test('a file column the target drops takes its stored chunks with it, whether it
       url: database.connectionString,
       schema: 'raw',
     });
-    const history = await installedHistory(database.connectionString);
+    const history = new PostgresSyncHistory({ url: database.connectionString });
     const run = (withBytes: boolean) => {
       // A target that stores no file is sent none.
       source.messages = [
@@ -1876,7 +1868,7 @@ test('an explicit column naming a field the stream does not declare fails before
 
   await assert.rejects(
     new Pipeline({
-      history: await installedHistory(database.connectionString),
+      history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
           name: 'test',
@@ -1928,7 +1920,7 @@ test('a reader view over an undescribed field it renamed names the field, before
 
   await assert.rejects(
     new Pipeline({
-      history: await installedHistory(database.connectionString),
+      history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
           name: 'test',
@@ -2047,7 +2039,7 @@ test('a checkpoint that cannot be saved after its rows commit is reported with t
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -2130,7 +2122,7 @@ test('a copy commits at each checkpoint, its rows share one loaded_at, and no ch
     schema: 'raw',
   });
   const running = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -2283,7 +2275,7 @@ test('clear empties a table and keeps views on it, releasing its owner and check
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -2466,7 +2458,7 @@ test('a stream that fails publishes none of its staged rows while its sibling co
     snapshot: [record('snapshot', 'old', 1)],
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -2573,7 +2565,7 @@ test("a failing partition's flushed rows are discarded while the next partition 
   });
 
   const error = await new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -2649,7 +2641,7 @@ test('a staged unit merges like its operations applied one at a time, under repl
   });
 
   await new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -2764,7 +2756,7 @@ test('every field name is sanitized as Airbyte does, around the names Postgres k
   });
 
   await new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -2866,7 +2858,7 @@ test('a key named last merges like its operations applied one at a time', async 
   });
 
   await new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -2939,7 +2931,7 @@ test('renamed columns keep their table across runs, and a field added upstream i
     url: database.connectionString,
     schema: 'raw',
   });
-  const history = await installedHistory(database.connectionString);
+  const history = new PostgresSyncHistory({ url: database.connectionString });
   const run = (stream: Stream, script: readonly Scripted[]) =>
     new Pipeline({
       history,
@@ -3056,7 +3048,7 @@ test('a key and cursor past 63 bytes merge under their renamed columns, which th
   });
 
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -3158,7 +3150,7 @@ test('a checkpoint lost between commit and save replays to the same rows', async
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -3253,7 +3245,7 @@ test('array fields load as native arrays of their item type, in order, and an un
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -3411,7 +3403,7 @@ test("a statement that fails in one stream's merge does not erase a sibling's st
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -3530,7 +3522,7 @@ test('year 0000, which ISO counts astronomically, loads as 1 BC, and year 0001 s
   });
 
   await new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -3588,7 +3580,6 @@ test('each recorded failure keeps the causes its error chains, such as why a con
     schema: 'raw',
   });
   const history = new PostgresSyncHistory({ url: database.connectionString });
-  await history.install();
   const pipeline = new Pipeline({
     history,
     connections: [
@@ -3661,7 +3652,6 @@ test('a watch whose poll fails records the failure with the causes its error cha
     schema: 'raw',
   });
   const history = new PostgresSyncHistory({ url: database.connectionString });
-  await history.install();
   const pipeline = new Pipeline({
     history,
     connections: [
@@ -3727,7 +3717,6 @@ test('warehouse sync history distinguishes unchanged success, partial commits, f
     bad: [checkpoint('bad', {})],
   });
   const history = new PostgresSyncHistory({ url: database.connectionString });
-  await history.install();
   const pipeline = new Pipeline({
     history,
     connections: [
@@ -3871,13 +3860,13 @@ test('warehouse sync history distinguishes unchanged success, partial commits, f
   };
   await run();
   assert.equal((await status()).status, 'succeeded');
-  // A new process installs the history again and keeps what was recorded.
+  // A new process runs the pipeline again, which installs the history again
+  // and keeps what was recorded.
   source.scripts = {
     good: [checkpoint('good', {})],
     bad: [checkpoint('bad', {})],
   };
   const restarted = new PostgresSyncHistory({ url: database.connectionString });
-  await restarted.install();
   await new Pipeline({
     history: restarted,
     connections: pipeline.connections,
@@ -3942,7 +3931,6 @@ test('warehouse records failed partitions and validation errors without fabricat
     destinationSyncMode: 'append_dedup',
   });
   const history = new PostgresSyncHistory({ url: database.connectionString });
-  await history.install();
   const connection = { name: 'sites', source, destination, steps: [copy] };
   await assert.rejects(
     new Pipeline({
@@ -4033,7 +4021,6 @@ test('one pipeline loads each connection into its own schema, and a failing conn
     });
   };
   const history = new PostgresSyncHistory({ url: database.connectionString });
-  await history.install();
   const pipeline = new Pipeline({
     history,
     connections: [
@@ -4110,7 +4097,6 @@ test('each watch pass is recorded under its own connection when it completes', a
     });
   };
   const history = new PostgresSyncHistory({ url: database.connectionString });
-  await history.install();
   const pipeline = new Pipeline({
     history,
     connections: [connection('notes'), connection('mail')],
@@ -4165,7 +4151,6 @@ test('stream_status keeps each stream own latest outcome when a watch pass reads
     schema: 'raw',
   });
   const history = new PostgresSyncHistory({ url: database.connectionString });
-  await history.install();
   const pipeline = new Pipeline({
     history,
     connections: [
@@ -4226,7 +4211,7 @@ test('stream_status keeps each stream own latest outcome when a watch pass reads
 
 // A described stream loaded with a stored file field and a reader view.
 async function readerNotes(url: string, files: LocalFiles) {
-  const history = await installedHistory(url);
+  const history = new PostgresSyncHistory({ url: url });
   const stream = new Stream({
     name: 'notes',
     jsonSchema: {
@@ -4375,6 +4360,73 @@ test('a reader view shows exactly the loaded columns and their descriptions, fol
   }
 });
 
+test('a run publishes the catalog in marts, which lists each reader view and its columns under their descriptions', async () => {
+  const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-catalog-pg-'));
+  try {
+    await using database = await databases.database();
+    await using clients = new AsyncDisposableStack();
+    const sql = clients.adopt(
+      postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+      (sql) => sql.end(),
+    );
+    const files = new LocalFiles({ directory: join(scratch.path, 'files') });
+    const { source, pipeline } = await readerNotes(
+      database.connectionString,
+      files,
+    );
+    source.messages = [
+      { stream: 'notes', data: { id: 1, title: 'First' }, file: null },
+    ];
+
+    await pipeline.run();
+
+    assert.deepEqual(
+      [
+        ...(await sql`SELECT kind, name, data_type, description FROM marts.catalog
+          WHERE name = 'notes' OR name LIKE 'notes.%' ORDER BY name`),
+      ],
+      [
+        {
+          kind: 'view',
+          name: 'notes',
+          data_type: null,
+          description: (
+            await sql`SELECT obj_description('marts.notes'::regclass) AS description`
+          )[0]?.description,
+        },
+        {
+          kind: 'column',
+          name: 'notes.id',
+          data_type: 'bigint',
+          description: 'Note ID.',
+        },
+        {
+          kind: 'column',
+          name: 'notes.loaded_at',
+          data_type: 'timestamp with time zone',
+          description: (
+            await sql`SELECT col_description('marts.notes'::regclass, 4) AS description`
+          )[0]?.description,
+        },
+        {
+          kind: 'column',
+          name: 'notes.ref',
+          data_type: 'text',
+          description: `${files.reference} NULL when the source file is unavailable.`,
+        },
+        {
+          kind: 'column',
+          name: 'notes.title',
+          data_type: 'text',
+          description: 'Note title.',
+        },
+      ],
+    );
+  } finally {
+    await scratch[Symbol.asyncDispose]();
+  }
+});
+
 test('a reader view needs every column described and refuses a view it did not create', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
@@ -4483,7 +4535,7 @@ test('string formats load exactly: microsecond times typed, finer ones as text t
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -4610,7 +4662,7 @@ test('tables and reader views whose names sanitize alike, or pass 63 bytes, stay
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -4712,7 +4764,7 @@ test('a reset of a partition named by a renamed field replaces only that partiti
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -4831,7 +4883,7 @@ test('a reset replaces its partition, or the whole table, at the next commit; a 
     destinationSyncMode: 'append_dedup',
   } as const;
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -4923,7 +4975,7 @@ test('a stream whose shape changes is evolved in place under its reader view, ke
   });
   const received: unknown[] = [];
   // Each run discovers its stream anew, as a database source does.
-  const history = await installedHistory(database.connectionString);
+  const history = new PostgresSyncHistory({ url: database.connectionString });
   const pipeline = (
     properties: Properties,
     data: readonly object[],
@@ -5126,7 +5178,7 @@ test('a load holds no transaction while the source reads, so a run over many tab
   });
 
   await new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -5220,7 +5272,7 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -5324,7 +5376,7 @@ test('rows past one JSON string stage in batches by size, and a record too large
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(database.connectionString),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
         name: 'test',
@@ -5423,7 +5475,6 @@ async function checkedPipeline(url: string, sql: postgres.Sql) {
   const source = new CheckedSource();
   const destination = new PostgresDestination({ url, schema: 'checked' });
   const history = new PostgresSyncHistory({ url });
-  await history.install();
   const pipeline = new Pipeline({
     history,
     connections: [

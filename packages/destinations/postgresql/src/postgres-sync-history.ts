@@ -11,6 +11,7 @@ import {
   passError,
   passFailureType,
   passStatus,
+  readerCatalog,
   recordedFailure,
 } from '@workspace/elt';
 
@@ -20,10 +21,29 @@ import {
   syncHistoryViews,
 } from './postgres-sync-history-schema.ts';
 import type { PostgresTable } from './postgres-table.ts';
-import { publishPostgresViews } from './postgres-views.ts';
+import { type PostgresView, publishPostgresViews } from './postgres-views.ts';
+
+// Lists what readers of marts can query, from the comments every load and
+// publication writes there.
+const catalog: PostgresView = {
+  ...readerCatalog,
+  query: `SELECT CASE c.relkind WHEN 'v' THEN 'view' ELSE 'table' END AS kind,
+      c.relname::text AS name, NULL::text AS data_type,
+      obj_description(c.oid, 'pg_class') AS description
+    FROM pg_class c
+    WHERE c.relnamespace = 'marts'::regnamespace AND c.relkind IN ('v', 'r')
+    UNION ALL
+    SELECT 'column', c.relname || '.' || a.attname,
+      format_type(a.atttypid, a.atttypmod), col_description(c.oid, a.attnum)
+    FROM pg_class c
+    JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+    WHERE c.relnamespace = 'marts'::regnamespace AND c.relkind IN ('v', 'r')
+    ORDER BY 2`,
+};
 
 // Records every pass in the _warehouse schema, and shows readers that history
-// through views in marts. Who may read marts is the database's own grant.
+// and the catalog through views in marts. Who may read marts is the
+// database's own grant.
 export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
   readonly #url: string;
 
@@ -91,7 +111,8 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
     };
   }
 
-  // Creates the history's tables and publishes its views; safe to repeat.
+  // Creates the history's tables and publishes its views and the catalog;
+  // safe to repeat.
   override async install(): Promise<void> {
     await this.#write(async (transaction) => {
       await transaction`SELECT pg_advisory_xact_lock(hashtextextended('elt:sync-history', 0))`;
@@ -99,7 +120,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
         await transaction.unsafe(statement);
       await publishPostgresViews(transaction, {
         schema: 'marts',
-        views: syncHistoryViews,
+        views: [...syncHistoryViews, catalog],
       });
     });
   }

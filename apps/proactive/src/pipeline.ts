@@ -5,7 +5,6 @@ import {
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-  installPostgresCatalog,
 } from '@workspace/elt-postgresql';
 import {
   AccountsStore,
@@ -32,9 +31,6 @@ const schema = 'apple_messages';
 // needs, to the terminal that runs proactive.
 const source = new AppleMessagesSource();
 const destination = new PostgresDestination({ url: warehouseUrl, schema });
-const history = new PostgresSyncHistory({ url: warehouseUrl });
-await history.install();
-await installPostgresCatalog({ url: warehouseUrl, schema: 'marts' });
 const { streams } = await source.discover();
 const slack = new SlackDesktopSource();
 const slackDestination = new PostgresDestination({
@@ -73,7 +69,7 @@ const mailDestination = new PostgresDestination({
 });
 
 export default new Pipeline({
-  history,
+  history: new PostgresSyncHistory({ url: warehouseUrl }),
   connections: [
     new Connection({
       name: 'apple-messages',

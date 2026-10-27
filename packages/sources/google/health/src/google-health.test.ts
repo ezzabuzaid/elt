@@ -312,7 +312,6 @@ test('every stream loads into a table of its own, and a type the account has no 
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   using _google = google({ profile });
   const source = new GoogleHealthSource({ requester: signedIn() });
   const { streams } = await source.discover();
@@ -363,7 +362,6 @@ test('a point deleted or changed upstream is gone or changed after the next run,
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const account: Account = {
     devices: [
       {
@@ -453,7 +451,6 @@ test('an Apple Watch point relayed from Apple Health and a Fitbit point at the s
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const sampleTime = {
     civilTime: {
       date: { day: 14, month: 10, year: 2026 },
@@ -519,7 +516,6 @@ test('a daily type and the rollups start on the day the user joined, and the rol
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   using _google = google({
     everyDay: {
       'daily-heart-rate-zones': (date) => ({
@@ -570,7 +566,6 @@ test('an account with no Google Health profile fails the run as a config failure
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   using _google = google({
     profile,
     answer: () =>
@@ -627,7 +622,6 @@ test('a measured instant to the microsecond, a session instant to the nanosecond
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const workout = exercise('e1', 'Morning walk');
   // As live on 2026-10-15: an exercise an app wrote, to the nanosecond.
   workout.exercise.interval.startTime = '2026-07-01T15:55:06.688527107Z';
@@ -704,7 +698,6 @@ test('a stream whose read fails keeps the rows its last run loaded, while the ot
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const account: Account = {
     points: {
       'heart-rate': [
@@ -812,7 +805,6 @@ test("each exercise's TCX export loads beside it, and an exercise Google keeps n
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const tcx = '<?xml version="1.0"?><TrainingCenterDatabase/>';
   using _google = google({
     points: {
@@ -897,7 +889,6 @@ test('a value Google could not compute, which it sends as the string NaN, loads 
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   // As live on 2026-10-15: a night before the baseline exists.
   using _google = google({
     points: {
@@ -951,7 +942,6 @@ test('a child list comes from the same read as its parent, though Google answers
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   // Each read of sleep gets a different night: a child stream that read on
   // its own would describe another night than its parent's row.
   const nights = [

@@ -169,7 +169,6 @@ for (const snapshot of [false, true])
     const history = new PostgresSyncHistory({
       url: warehouse.connectionString,
     });
-    await history.install();
     await admin.request().batch(`
       ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
       CREATE TABLE dbo.orders (id int PRIMARY KEY, total decimal(9, 2) NOT NULL);
@@ -235,7 +234,6 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
     (client) => client.end(),
   );
   const history = new PostgresSyncHistory({ url: warehouse.connectionString });
-  await history.install();
   const sha8 = (name: string) =>
     createHash('sha256').update(name).digest('hex').slice(0, 8);
   // A name past 63 bytes keeps its first 54, `_` and a hash of the name.
@@ -336,7 +334,6 @@ test('a truncated Change Tracking table, whose history no longer reaches the las
     (client) => client.end(),
   );
   const history = new PostgresSyncHistory({ url: warehouse.connectionString });
-  await history.install();
   await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.items (id int PRIMARY KEY, name nvarchar(10) NOT NULL);
@@ -381,7 +378,6 @@ test('a column added to a Change Tracking table reaches every row: the table loa
     (client) => client.end(),
   );
   const history = new PostgresSyncHistory({ url: warehouse.connectionString });
-  await history.install();
   await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.items (id int PRIMARY KEY, name nvarchar(10) NOT NULL);
@@ -432,7 +428,6 @@ test('a column added to a rowversion table reaches every stored row, and a row d
     (client) => client.end(),
   );
   const history = new PostgresSyncHistory({ url: warehouse.connectionString });
-  await history.install();
   await admin.request().batch(`
     CREATE TABLE dbo.events (id int PRIMARY KEY, kind varchar(10) NOT NULL, stamp rowversion);
     INSERT dbo.events (id, kind) VALUES (1, 'open'), (2, 'open');`);
@@ -495,7 +490,6 @@ test('a rowversion table loads inserts and updates, a row still being written ar
     (client) => client.end(),
   );
   const history = new PostgresSyncHistory({ url: warehouse.connectionString });
-  await history.install();
   await admin.request().batch(`
     CREATE TABLE dbo.events (id int PRIMARY KEY, kind varchar(10) NOT NULL, stamp rowversion);
     INSERT dbo.events (id, kind) VALUES (1, 'open'), (2, 'open');`);
@@ -556,7 +550,6 @@ test('a table with no change signal is read in full each sync, so a deleted row 
     (client) => client.end(),
   );
   const history = new PostgresSyncHistory({ url: warehouse.connectionString });
-  await history.install();
   await admin.request().batch(`
     CREATE TABLE dbo.log (message nvarchar(20) NOT NULL);
     CREATE TABLE dbo.codes (code char(2) PRIMARY KEY, label nvarchar(20) NOT NULL);
@@ -609,7 +602,6 @@ test(
     const history = new PostgresSyncHistory({
       url: warehouse.connectionString,
     });
-    await history.install();
     // One page and five rows more; a lone surrogate on the second page fails
     // it. Pages follow id, so id 10003 is always on the second page.
     await admin.request().batch(`
@@ -664,7 +656,6 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
     (client) => client.end(),
   );
   const history = new PostgresSyncHistory({ url: warehouse.connectionString });
-  await history.install();
   await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.plain (id int PRIMARY KEY, name nvarchar(10) NOT NULL);
@@ -776,7 +767,6 @@ test('every type arrives in Postgres exactly, beside the offset and base type it
     (client) => client.end(),
   );
   const history = new PostgresSyncHistory({ url: warehouse.connectionString });
-  await history.install();
   await admin.request().batch(`
     CREATE TABLE dbo.everything (
       id bigint PRIMARY KEY, amount decimal(38, 10), cash money, wide float,
@@ -921,7 +911,6 @@ test('a column already named as a datetimeoffset or sql_variant sibling would be
     (client) => client.end(),
   );
   const history = new PostgresSyncHistory({ url: warehouse.connectionString });
-  await history.install();
   await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.clashing (

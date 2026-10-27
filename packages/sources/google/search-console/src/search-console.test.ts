@@ -344,7 +344,6 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -439,7 +438,6 @@ test('a restated day replaces the loaded row, and the next read starts at the la
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -546,7 +544,6 @@ test('a re-read deletes the query rows and days Google stopped reporting, and ke
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -645,7 +642,6 @@ test('a re-read day keeps its unchanged query and page rows beside the ones that
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -739,7 +735,6 @@ test('a search type whose re-read day reports nothing loses that day’s total, 
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -796,7 +791,6 @@ test('a fractional click count is refused rather than stored', async () => {
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -857,7 +851,6 @@ test('analytics pagination follows startRow until a short page', async () => {
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -922,7 +915,6 @@ test('sitemaps convert int64 text and second-precision times', async () => {
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -1045,7 +1037,6 @@ test('inspection covers every sitemap and search URL once, shared by all three s
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -1125,7 +1116,6 @@ test(
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
     const { destination, sql } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 1,
@@ -1207,7 +1197,6 @@ test('a feed report keeps an absent position as unknown, not as rank one', async
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -1282,7 +1271,6 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     breakdownMonths: 3,
@@ -1423,7 +1411,6 @@ test('two properties share tables through one source without deleting each other
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const pipeline = (siteUrls: string[], name: string) => {
     const source = new SearchConsoleSource({
@@ -1515,7 +1502,6 @@ test('an unverified property is not offered as a readable site', async () => {
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -1581,7 +1567,6 @@ test(
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
     const { destination } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 1,
@@ -1747,7 +1732,6 @@ test('an incremental sites copy deletes a property that is no longer listed', as
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -1840,7 +1824,6 @@ test('one source loads every property; a newly listed one backfills while the ot
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const run = (siteUrls: string[]) => {
     const source = new SearchConsoleSource({
@@ -1947,7 +1930,6 @@ test('a property without permission is reported by name while the others load an
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -2042,7 +2024,6 @@ test('a property Google refuses to the user is a config failure, and a quota ref
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, checkpoints } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -2135,7 +2116,6 @@ test('a grant Google no longer refreshes is a config failure, asked once', async
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
     const { destination, checkpoints } = warehouse;
     const source = new SearchConsoleSource({
       // The first call mints an access token, and Google refuses.
@@ -2219,7 +2199,6 @@ test(
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
     const { destination, sql } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 1,
@@ -2328,7 +2307,6 @@ test(
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
     const { destination, checkpoints, sql } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 1,
@@ -2448,7 +2426,6 @@ test('sitemaps in every format feed the inspection universe', async () => {
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
 
   await inspectionRun(
     new SearchConsoleSource({
@@ -2549,7 +2526,6 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
     const { destination, sql } = warehouse;
     const source = new SearchConsoleSource({
       requester: searchConsole.requester,
@@ -2615,7 +2591,6 @@ test(
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
     const { destination } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 2 ** 31,
@@ -2680,7 +2655,6 @@ test('an RSS item without a link lists no page', async () => {
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -2731,7 +2705,6 @@ test('a pass that cannot read a sitemap deletes no URL it may list, and the next
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   // The host builds a source for every run.
   const pass = async (sitemap: string | number, pages: string[]) => {
     using searchConsole = google({
@@ -2791,7 +2764,6 @@ test(
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
     const refreshMs = 2000;
     // The host builds a source for every run.
     const run = async () => {
@@ -2854,7 +2826,6 @@ test('the daily quota stops inspection cleanly, and no inspection stream makes a
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
     inspectionConcurrency: 1,
@@ -2910,7 +2881,6 @@ test('with inspections in flight the daily quota keeps what loaded, and a source
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   // The host builds a client and a source for every run.
   const run = async () => {
     const before = inspected(searchConsole).length;
@@ -3004,7 +2974,6 @@ test(
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
 
     await inspectionRun(source, warehouse, ['urlInspection']);
     // The other two streams load in a later read: they share one new
@@ -3084,7 +3053,6 @@ test('the three inspection streams read together inspect each URL once', async (
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
 
   await inspectionRun(source, warehouse, ALL_INSPECTIONS);
 
@@ -3146,7 +3114,6 @@ test('inspections run concurrently, and a URL Google rejects becomes a row', asy
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
 
   await inspectionRun(
     new SearchConsoleSource({
@@ -3195,7 +3162,6 @@ test('a server error during inspection fails the run and keeps none of its inspe
       schema: RAW,
     }),
   };
-  await warehouse.history.install();
   const run = () =>
     inspectionRun(
       new SearchConsoleSource({
@@ -3279,7 +3245,6 @@ test(
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
     const { destination, checkpoints } = warehouse;
     const refreshMs = 2000;
     const source = new SearchConsoleSource({
@@ -3386,7 +3351,6 @@ test(
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
     const { destination } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 5,
@@ -3491,7 +3455,6 @@ test(
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
     const { destination, checkpoints } = warehouse;
     const controller = new AbortController();
     const watching = new Pipeline({
@@ -3576,7 +3539,6 @@ test(
         schema: RAW,
       }),
     };
-    await warehouse.history.install();
     const { destination, checkpoints } = warehouse;
     const controller = new AbortController();
     const watching = new Pipeline({
