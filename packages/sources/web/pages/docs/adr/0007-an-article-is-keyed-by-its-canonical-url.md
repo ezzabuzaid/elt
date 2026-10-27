@@ -17,4 +17,4 @@ Thus `ArticleExtractor` gives an `articleUrl`: the canonical URL that the page d
 - The first crawl still downloads and extracts both URLs. Later crawls skip the extraction of both while they do not change ([ADR 0001](./0001-a-page-is-extracted-again-only-when-its-fingerprint-changes.md)).
 - The row holds the record of the URL that the crawl handed back last, with that URL as `pageUrl`.
 - A site that declares one canonical URL for different pages gets one row for all of them.
-- A page with a null fingerprint is extracted on each run. When two URLs of such a page are both in the crawl, each writes the row again, because their `pageUrl` differs.
+- When an extractor gives a null fingerprint, its page is extracted on each run. When two URLs of such a page are both in the crawl, each writes the row again, because their `pageUrl` differs. `ArticleExtractor` gives no null fingerprint.

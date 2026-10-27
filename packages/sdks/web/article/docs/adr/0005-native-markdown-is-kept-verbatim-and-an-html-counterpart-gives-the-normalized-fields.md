@@ -15,4 +15,4 @@ Thus `markdown` keeps the native body exactly, without its front matter. When th
 - `markdown` can hold navigation, footer text or raw HTML. A consumer that renders it must sanitize it.
 - Negotiated Markdown costs one more request.
 - When the HTML counterpart fails or has no article, the native article stays, with its normalized fields rendered from the native body.
-- An article from native Markdown has a null fingerprint ([ADR 0008](./0008-the-fingerprint-is-known-before-extraction.md)).
+- The fingerprint of native Markdown covers the HTML counterpart too ([ADR 0008](./0008-the-fingerprint-is-known-before-extraction.md)). The counterpart is also the HTML fallback, so the reader requests the page as HTML one time.

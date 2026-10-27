@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
-import got from 'got';
+import got, { type Got } from 'got';
 
 import {
   Connection,
@@ -31,6 +31,7 @@ import {
 } from '@workspace/sdk-web-crawler';
 
 import { ArticleExtractor } from './article-extractor.ts';
+import { type ExtractorRun } from './record-extractor.ts';
 import { WebSource } from './web-source.ts';
 import { WebStream } from './web-stream.ts';
 
@@ -202,7 +203,95 @@ test('restarted source keeps unchanged rows and detects listing metadata and art
   assert.equal((await run())[0]?.count, 0);
 });
 
-function articles(include?: readonly string[]) {
+test('an unchanged native-Markdown page requested again on a due visit loads nothing and is not extracted again', async () => {
+  const requests: string[] = [];
+  let extractions = 0;
+  class CountedArticles extends ArticleExtractor {
+    override open(http: Got): ExtractorRun {
+      const run = super.open(http);
+      return {
+        accept: run.accept,
+        async read(response, signal) {
+          const output = await run.read(response, signal);
+          return {
+            fingerprint: output.fingerprint,
+            records() {
+              extractions++;
+              return output.records();
+            },
+          };
+        },
+      };
+    }
+  }
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (request.url === '/robots.txt') response.writeHead(404).end();
+    else if (request.url === '/sitemap.xml')
+      response
+        .writeHead(200, { 'content-type': 'application/xml' })
+        .end(
+          `<urlset><url><loc>http://${request.headers.host}/article</loc></url></urlset>`,
+        );
+    else if (request.headers.accept?.startsWith('text/markdown')) {
+      requests.push('markdown');
+      response
+        .writeHead(200, { 'content-type': 'text/markdown' })
+        .end('# Field report\n\nPublished observations.');
+    } else {
+      requests.push('html');
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<meta name="author" content="Lina"><article><p>Published observations.</p></article>',
+        );
+    }
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  async function run() {
+    const source = new WebSource({
+      stream: articles(new CountedArticles()),
+      inputs: [`${upstream.origin}/sitemap.xml`],
+    });
+    const destination = new SQLiteDestination({ path: database.path });
+    const history = new SQLiteSyncHistory();
+    await history.install([destination]);
+    return new Pipeline({
+      history,
+      connections: [
+        new Connection({
+          name: 'web',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: checkpoints.path }),
+          steps: [
+            new Copy(
+              (await source.discover()).get('articles'),
+              destination.table('articles'),
+              {
+                id: 'web:articles',
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+              },
+            ),
+          ],
+        }),
+      ],
+    }).run();
+  }
+  assert.equal((await run())[0]?.count, 1);
+  assert.equal(extractions, 1);
+  assert.deepEqual(requests, ['markdown', 'html']);
+  assert.equal(
+    database.connection.prepare('SELECT byline FROM articles').get()?.byline,
+    'Lina',
+  );
+  assert.equal((await run())[0]?.count, 0);
+  assert.equal(extractions, 1);
+  assert.deepEqual(requests, ['markdown', 'html', 'markdown', 'html']);
+});
+
+function articles(extractor = new ArticleExtractor()) {
   return new WebStream({
     name: 'articles',
     primaryKey: ['articleUrl'],
@@ -214,7 +303,6 @@ function articles(include?: readonly string[]) {
     ],
     // These tests are about one crawl's pages, so every crawl requests every page.
     revisit: new AlwaysRevisit(),
-    include: include?.map((pattern) => new URLPattern(pattern)),
-    extractor: new ArticleExtractor(),
+    extractor,
   });
 }

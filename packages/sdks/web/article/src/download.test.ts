@@ -89,23 +89,26 @@ test('downloads defer real extraction and fingerprint revalidated bytes, redirec
   assert.equal(extractions, 1);
 });
 
-test('negotiated HTML is fingerprinted but independently changing alternatives remain eligible', async () => {
-  let alternate = false;
-  let revision = 1;
+test('native Markdown is fingerprinted with its HTML companion, which read() requests and extract() reuses', async () => {
+  const requests: string[] = [];
+  let markdown = 1;
+  let html = 1;
+  let companion = true;
   await using upstream = await new HttpServer().start((request, response) => {
-    if (request.url === '/article.md') {
-      response.setHeader('content-type', 'text/markdown');
-      response.end(`# Report\n\nPublished revision ${revision}.`);
+    if (request.headers.accept?.startsWith('text/markdown')) {
+      requests.push('markdown');
+      response
+        .writeHead(200, { 'content-type': 'text/markdown' })
+        .end(`# Report\n\nMarkdown revision ${markdown}.`);
     } else {
-      if (alternate)
-        response.setHeader(
-          'link',
-          '</article.md>; rel="alternate"; type="text/markdown"',
-        );
-      response.setHeader('content-type', 'text/html');
-      response.end(
-        '<article><p>The HTML report remains unchanged.</p></article>',
-      );
+      requests.push('html');
+      if (companion)
+        response
+          .writeHead(200, { 'content-type': 'text/html' })
+          .end(
+            `<meta name="author" content="Lina"><article><p>HTML revision ${html}.</p></article>`,
+          );
+      else response.writeHead(404).end();
     }
   });
   const reader = new WebArticle(
@@ -113,15 +116,99 @@ test('negotiated HTML is fingerprinted but independently changing alternatives r
     got,
   );
   const signal = AbortSignal.timeout(5000);
-  assert((await reader.download(upstream.origin, signal)).fingerprint);
-  alternate = true;
   const first = await reader.download(upstream.origin, signal);
-  assert.equal(first.fingerprint, null);
-  assert.match((await first.extract())?.markdown ?? '', /revision 1/);
-  revision++;
-  const second = await reader.download(upstream.origin, signal);
-  assert.equal(second.fingerprint, null);
-  assert.match((await second.extract())?.markdown ?? '', /revision 2/);
+  assert(first.fingerprint);
+  assert.deepEqual(requests, ['markdown', 'html']);
+  const article = await first.extract();
+  assert.equal(article?.markdown, '# Report\n\nMarkdown revision 1.');
+  assert.equal(article?.byline, 'Lina');
+  assert.equal(article?.textContent, 'HTML revision 1.');
+  assert.deepEqual(requests, ['markdown', 'html']);
+  const unchanged = await reader.download(upstream.origin, signal);
+  assert.equal(unchanged.fingerprint, first.fingerprint);
+  html++;
+  const editedHTML = await reader.download(upstream.origin, signal);
+  assert(editedHTML.fingerprint);
+  assert.notEqual(editedHTML.fingerprint, first.fingerprint);
+  markdown++;
+  const editedMarkdown = await reader.download(upstream.origin, signal);
+  assert(editedMarkdown.fingerprint);
+  assert.notEqual(editedMarkdown.fingerprint, editedHTML.fingerprint);
+  companion = false;
+  requests.length = 0;
+  const missing = await reader.download(upstream.origin, signal);
+  assert(missing.fingerprint);
+  assert.notEqual(missing.fingerprint, editedMarkdown.fingerprint);
+  assert.equal(
+    (await reader.download(upstream.origin, signal)).fingerprint,
+    missing.fingerprint,
+  );
+  const native = await missing.extract();
+  assert.equal(native?.markdown, '# Report\n\nMarkdown revision 2.');
+  assert.equal(native?.byline, null);
+  assert.deepEqual(requests, ['markdown', 'html', 'markdown', 'html']);
+});
+
+test('an HTML page is fingerprinted with its advertised Markdown alternate, which read() requests and extract() reuses', async () => {
+  const requests: string[] = [];
+  let alternate: 'none' | 'available' | 'missing' = 'none';
+  let markdown = 1;
+  let html = 1;
+  await using upstream = await new HttpServer().start((request, response) => {
+    requests.push(request.url ?? '');
+    if (request.url === '/article.md') {
+      if (alternate === 'missing') response.writeHead(404).end();
+      else
+        response
+          .writeHead(200, { 'content-type': 'text/markdown' })
+          .end(`# Report\n\nMarkdown revision ${markdown}.`);
+    } else {
+      if (alternate !== 'none')
+        response.setHeader(
+          'link',
+          '</article.md>; rel="alternate"; type="text/markdown"',
+        );
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(`<article><p>HTML revision ${html}.</p></article>`);
+    }
+  });
+  const reader = new WebArticle(
+    [new MarkdownExtraction(), new HTMLExtraction()],
+    got,
+  );
+  const signal = AbortSignal.timeout(5000);
+  const plain = await reader.download(upstream.origin, signal);
+  assert(plain.fingerprint);
+  alternate = 'available';
+  requests.length = 0;
+  const first = await reader.download(upstream.origin, signal);
+  assert(first.fingerprint);
+  assert.notEqual(first.fingerprint, plain.fingerprint);
+  assert.deepEqual(requests, ['/', '/article.md']);
+  const article = await first.extract();
+  assert.equal(article?.markdown, '# Report\n\nMarkdown revision 1.');
+  assert.equal(article?.textContent, 'HTML revision 1.');
+  assert.deepEqual(requests, ['/', '/article.md']);
+  const unchanged = await reader.download(upstream.origin, signal);
+  assert.equal(unchanged.fingerprint, first.fingerprint);
+  markdown++;
+  const editedMarkdown = await reader.download(upstream.origin, signal);
+  assert(editedMarkdown.fingerprint);
+  assert.notEqual(editedMarkdown.fingerprint, first.fingerprint);
+  html++;
+  const editedHTML = await reader.download(upstream.origin, signal);
+  assert(editedHTML.fingerprint);
+  assert.notEqual(editedHTML.fingerprint, editedMarkdown.fingerprint);
+  alternate = 'missing';
+  const missing = await reader.download(upstream.origin, signal);
+  assert(missing.fingerprint);
+  assert.notEqual(missing.fingerprint, editedHTML.fingerprint);
+  assert.equal(
+    (await reader.download(upstream.origin, signal)).fingerprint,
+    missing.fingerprint,
+  );
+  assert.equal((await missing.extract())?.markdown, 'HTML revision 2.');
 });
 
 test('deferred extraction retains attributed failures and cancellation', async () => {
@@ -168,12 +255,15 @@ test('an unchanged rejected Markdown response cannot hide an edited HTML fallbac
     got,
   );
   const signal = AbortSignal.timeout(5000);
+  const fingerprints = new Set<string>();
   for (revision = 1; revision <= 2; revision++) {
     const download = await reader.download(upstream.origin, signal);
-    assert.equal(download.fingerprint, null);
+    assert(download.fingerprint);
+    fingerprints.add(download.fingerprint);
     assert.equal(
       (await download.extract())?.textContent,
       `Fallback report revision ${revision}.`,
     );
   }
+  assert.equal(fingerprints.size, 2);
 });

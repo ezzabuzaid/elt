@@ -47,7 +47,7 @@ test('reading a downloaded response reuses its original bytes and defers extract
   assert.equal(fetched.fingerprint, download.fingerprint);
 });
 
-test('a supplied Markdown response retains independently changing HTML companions', async () => {
+test('a supplied Markdown response requests its HTML companion in read() and fingerprints its changes', async () => {
   const requests: string[] = [];
   let revision = 1;
   await using upstream = await new HttpServer().start((request, response) => {
@@ -77,16 +77,20 @@ test('a supplied Markdown response retains independently changing HTML companion
     [new MarkdownExtraction(), new HTMLExtraction()],
     http,
   );
+  const fingerprints = new Set<string>();
   for (revision = 1; revision <= 2; revision++) {
     const download = await reader.read(response, signal);
-    assert.equal(download.fingerprint, null);
-    assert.equal(requests.length, revision);
+    assert(download.fingerprint);
+    fingerprints.add(download.fingerprint);
+    assert.equal(requests.length, revision + 1);
     const article = await download.extract();
+    assert.equal(requests.length, revision + 1);
     assert.equal(article?.markdown, '# Native title\n\nPublisher content.');
     assert.equal(article?.title, 'Native title');
     assert.equal(article?.byline, 'Lina');
     assert.equal(article?.textContent, `Companion revision ${revision}.`);
   }
+  assert.equal(fingerprints.size, 2);
   assert.deepEqual(requests, ['markdown', 'html', 'html']);
 });
 
@@ -118,8 +122,8 @@ test('supplied HTML follows advertised Markdown and keeps the original HTML as i
       [new MarkdownExtraction(), new HTMLExtraction()],
       got,
     ).read(response, signal);
-    assert.equal(download.fingerprint, null);
-    assert.deepEqual(requests, ['/']);
+    assert(download.fingerprint);
+    assert.deepEqual(requests, ['/', '/native.md']);
     const article = await download.extract();
     assert.equal(article?.url, `${upstream.origin}/native.md`);
     assert.equal(article?.markdown, '# Native report\n\nOriginal Markdown.');

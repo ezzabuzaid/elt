@@ -50,7 +50,7 @@ The publisher and the URL selection in the example belong to the caller.
 
 - `new WebArticle(extractions, got)` takes the extraction chain and a Got client. An empty chain is not valid. Use `got.extend(...)` for timeouts, retries and request hooks.
 - `fetch(url, signal)` downloads a page and returns its article, or null when the page has no article.
-- `download(url, signal)` and `read(response, signal)` return a lazy extraction: a `fingerprint` and an `extract()` function. Compare the fingerprint with your committed state before you extract ([ADR 0008](./docs/adr/0008-the-fingerprint-is-known-before-extraction.md)).
+- `download(url, signal)` and `read(response, signal)` return a lazy extraction: a `fingerprint` and an `extract()` function. The reader requests every response that the extraction needs before it gives the fingerprint, and the fingerprint covers all of them. `extract()` makes no request. Compare the fingerprint with your committed state before you extract ([ADR 0008](./docs/adr/0008-the-fingerprint-is-known-before-extraction.md)).
 - `accept` is the Accept header for a page that you download yourself and give to `read()`.
 
 Got owns HTTP: redirects, decompression, retries, deadlines, cancellation and the HTTP cache. When Got revalidates a cached response and gets a 304, it gives back the cached body, so the page reads as an identical 200.
