@@ -68,7 +68,6 @@ test('ordinary links reach unlisted articles while feed pages and unchanged reru
   });
   const destination = new SQLiteDestination({ path: database.path });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const ingestion = new Pipeline({
     history,
     connections: [
@@ -149,7 +148,6 @@ test('new URLs survive interruption, and only the page in flight downloads again
   });
   const destination = new SQLiteDestination({ path: database.path }),
     history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const connection = new Connection({
     name: 'web',
     source,
@@ -259,7 +257,6 @@ test('Markdown pages supply links, and feeds declared on crawled pages are read 
   });
   const destination = new SQLiteDestination({ path: database.path }),
     history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const ingestion = new Pipeline({
     history,
     connections: [
@@ -325,7 +322,6 @@ test('an interruption during a long stretch of archive pages keeps the progress 
   });
   const destination = new SQLiteDestination({ path: database.path }),
     history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const connection = new Connection({
     name: 'web',
     source,

@@ -28,7 +28,6 @@ import {
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 import {
   type AccountDocument,
@@ -46,14 +45,6 @@ import {
 } from '@workspace/sdk-apple-eventkit/test';
 
 import { AppleRemindersSource } from './apple-reminders-source.ts';
-
-// A sync history installed in each destination's file, as a host installs it
-// before the first pass.
-async function installedHistory(...destinations: SQLiteDestination[]) {
-  const history = new SQLiteSyncHistory();
-  await history.install(destinations);
-  return history;
-}
 
 const execFile = promisify(execFileCallback);
 
@@ -108,8 +99,6 @@ async function appleImport(source: Source, directory: string) {
     ),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
-  installSQLiteCatalog({ path });
   const read = (sql: string) => {
     using database = new DatabaseSync(path, { readOnly: true });
     return database.prepare(sql).all();
@@ -737,7 +726,7 @@ test(
       path: join(scratch.path, 'reminders.sqlite'),
     });
     await new Pipeline({
-      history: await installedHistory(sqlite),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'test',
@@ -1121,7 +1110,7 @@ test('Reminders rejects malformed records and preserves its target on access or 
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'reminders.sqlite'),
   });
-  const history = await installedHistory(destination);
+  const history = new SQLiteSyncHistory();
   const run = () =>
     new Pipeline({
       history,
@@ -1221,7 +1210,7 @@ test(
       destinationSyncMode: 'append_dedup',
     });
     const pipeline = new Pipeline({
-      history: await installedHistory(sqlite),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'test',
@@ -1413,7 +1402,7 @@ test(
     const streams = (await source.discover()).streams;
 
     const outcomes = await new Pipeline({
-      history: await installedHistory(sqlite),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'live',
@@ -1464,7 +1453,6 @@ test(
     const data = join(dir.path, 'out.sqlite');
     const destination = new SQLiteDestination({ path: data });
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     const { streams } = await source.discover();
     const watching = new Pipeline({
       history,

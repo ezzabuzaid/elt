@@ -37,7 +37,6 @@ import {
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 import { Fixed, LeaderFirst, Pool } from '@workspace/pool';
 import {
@@ -55,14 +54,6 @@ import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-documen
 import { VisionWorker } from '@workspace/source-apple-macos/vision';
 
 import { AppleMailSource } from './apple-mail-source.ts';
-
-// A sync history installed in each destination's file, as a host installs it
-// before the first pass.
-async function installedHistory(...destinations: SQLiteDestination[]) {
-  const history = new SQLiteSyncHistory();
-  await history.install(destinations);
-  return history;
-}
 
 // A file column's chunk table, by the documented rule: _elt_files_ and the
 // first 40 hex digits of SHA-256 over the JSON of [table, column], both in
@@ -118,8 +109,6 @@ async function appleImport(source: Source, directory: string) {
     ),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
-  installSQLiteCatalog({ path });
   return {
     load: () => new Pipeline({ history, connections: [connection] }).run(),
     read: (sql: string) => {
@@ -761,7 +750,7 @@ async function pipeline(source: AppleMailSource, directory: string) {
   });
   const { streams } = await source.discover();
   return new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -2428,7 +2417,7 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
   });
   const files = new LocalFiles({ directory: join(dir.path, 'files') });
   await new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -2505,7 +2494,7 @@ test('A MIME attachment whose extension alone passes the 255-byte file name limi
   const files = new LocalFiles({ directory: join(dir.path, 'files') });
 
   await new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -2572,7 +2561,7 @@ test('An attachment Mail indexed before its message arrived, kept on disk under 
   const files = new LocalFiles({ directory: join(dir.path, 'files') });
 
   await new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -2746,7 +2735,7 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
 
   try {
     await new Pipeline({
-      history: await installedHistory(destination),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'live',
@@ -2850,7 +2839,6 @@ test('a Mail watch makes no pass while Mail and the Accounts store hold still, a
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const { streams } = await source.discover();
   const watching = new Pipeline({
     history,

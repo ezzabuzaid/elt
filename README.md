@@ -76,7 +76,6 @@ const destination = new SQLiteDestination({
   path: './outputs/notes.sqlite',
 });
 const history = new SQLiteSyncHistory();
-await history.install([destination]);
 
 const pipeline = new Pipeline({
   history,
@@ -125,7 +124,6 @@ const destination = new SQLiteDestination({
   path: './outputs/reminders.sqlite',
 });
 const history = new SQLiteSyncHistory();
-await history.install([destination]);
 
 await new Pipeline({
   history,

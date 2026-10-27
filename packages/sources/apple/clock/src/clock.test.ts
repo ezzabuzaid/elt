@@ -25,7 +25,6 @@ import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 import {
   type ClockLocation,
@@ -109,10 +108,8 @@ async function pipeline(
   const destination = new SQLiteDestination({
     path: join(directory, 'out.sqlite'),
   });
-  installSQLiteCatalog(destination);
   const streams = selected ?? (await source.discover()).streams;
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   return new Pipeline({
     history,
     connections: [
@@ -620,7 +617,6 @@ test('a Clock watch keeps every stream current while its stores hold still', asy
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const { streams } = await source.discover();
   const watching = new Pipeline({
     history,

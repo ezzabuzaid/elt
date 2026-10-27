@@ -683,7 +683,6 @@ async function pipeline(source: InstagramWebSource, directory: string) {
   const files = new LocalFiles({ directory: join(directory, 'files') });
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   return new Pipeline({
     history,
     connections: [

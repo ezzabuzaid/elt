@@ -28,7 +28,6 @@ import {
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 import { Fixed, LeaderFirst, Pool } from '@workspace/pool';
 import { ImageFormat } from '@workspace/source-apple-macos/image-format';
@@ -36,14 +35,6 @@ import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-documen
 import { VisionWorker } from '@workspace/source-apple-macos/vision';
 
 import { AppleMessagesSource } from './apple-messages-source.ts';
-
-// A sync history installed in each destination's file, as a host installs it
-// before the first pass.
-async function installedHistory(...destinations: SQLiteDestination[]) {
-  const history = new SQLiteSyncHistory();
-  await history.install(destinations);
-  return history;
-}
 
 // A file column's chunk table, by the documented rule: _elt_files_ and the
 // first 40 hex digits of SHA-256 over the JSON of [table, column], both in
@@ -101,8 +92,6 @@ async function appleImport(source: Source, directory: string) {
     ),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
-  installSQLiteCatalog({ path });
   const read = (sql: string) => {
     using database = new DatabaseSync(path, { readOnly: true });
     return database.prepare(sql).all();
@@ -485,7 +474,7 @@ test('the document parser reads every attachment kind and throws only on unreada
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -582,7 +571,7 @@ test('Messages scope filters chat and native dates before decoding attachments a
     path: join(scratch.path, 'out.sqlite'),
   });
   await new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'scope',
@@ -654,7 +643,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
   );
 
   const results = await new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -866,7 +855,7 @@ test('Messages loads edits and unsends incrementally and deletes removed message
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -1075,7 +1064,7 @@ test('a Messages watch loads each commit Messages makes while it keeps chat.db o
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -1261,7 +1250,6 @@ test('a Messages pass over a large chat.db holds one message at a time, so it lo
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     await new Pipeline({
       history,
       connections: [
@@ -1327,7 +1315,6 @@ test('a Messages watch keeps every stream current while chat.db holds still', as
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const { streams } = await source.discover();
   const watching = new Pipeline({
     history,

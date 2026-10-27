@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
+import { Declaration } from '@zukhruf/sqlite-drift';
 import { transaction } from '@zukhruf/sqlite-transaction';
 
 import type { ReaderRelation } from '@workspace/elt';
@@ -27,7 +28,9 @@ function text(value: string, what: string): void {
 /**
  * Publish ordinary views and their descriptions on a caller-owned connection,
  * inside its transaction when one is open. Supply trusted SQL and list
- * dependencies before dependents. Only the named views are replaced.
+ * dependencies before dependents. Only a named view whose stored definition
+ * differs is replaced, so a publication that changes nothing leaves the schema
+ * as it was.
  */
 export function publishSQLiteViews(
   database: DatabaseSync,
@@ -56,11 +59,12 @@ export function publishSQLiteViews(
   transaction(
     database,
     () => {
-      for (const view of views.toReversed())
-        database.exec(`DROP VIEW IF EXISTS ${quote(view.name)}`);
+      // A declaration refuses an element of more than one statement, so a
+      // query cannot append DDL.
+      new Declaration(views.map(viewDefinition), { rows: 'replace' }).apply(
+        database,
+      );
       for (const view of views) {
-        // A prepared statement runs one statement, so a query cannot append DDL.
-        database.prepare(viewDefinition(view)).run();
         const columns = database
           .prepare('SELECT "name" FROM pragma_table_info(?)')
           .all(view.name)

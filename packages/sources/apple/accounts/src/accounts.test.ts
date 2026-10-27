@@ -375,7 +375,6 @@ async function pipeline(source: AppleAccountsSource, directory: string) {
   });
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   return new Pipeline({
     history,
     connections: [
@@ -782,7 +781,6 @@ test('an Accounts watch keeps every stream current while the Accounts store hold
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const { streams } = await source.discover();
   const watching = new Pipeline({
     history,
@@ -873,7 +871,6 @@ test('an Accounts pass over a large store holds one authorization at a time, so 
     const destination = new SQLiteDestination({ path: process.env.OUT + '/out.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     await new Pipeline({
       history,
       connections: [

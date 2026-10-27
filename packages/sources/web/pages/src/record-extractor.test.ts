@@ -60,7 +60,6 @@ function sections(accept: string | null) {
 async function pipeline(source: WebSource, path: string, checkpoints: string) {
   const destination = new SQLiteDestination({ path });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   return new Pipeline({
     history,
     connections: [

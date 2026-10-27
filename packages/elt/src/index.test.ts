@@ -1352,9 +1352,11 @@ class MemoryHistory extends SyncHistory<NamedTarget> {
   readonly log: string[] = [];
   readonly #finished = new Map<string, PromiseWithResolvers<void>>();
 
-  // The tests that use it read passes; checks are the SQLite and Postgres
-  // histories' tests.
+  // The tests that use it read passes; checks and installs are the SQLite and
+  // Postgres histories' tests.
   protected override async recordChecks(): Promise<void> {}
+
+  override async install(): Promise<void> {}
 
   finished(connection: string): Promise<void> {
     return this.#pass(connection).promise;

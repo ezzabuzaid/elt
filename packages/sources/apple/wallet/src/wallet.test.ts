@@ -387,7 +387,6 @@ async function pipeline(source: AppleWalletSource, directory: string) {
   const files = new LocalFiles({ directory: join(directory, 'files') });
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   return new Pipeline({
     history,
     connections: [
@@ -1636,7 +1635,6 @@ test('a Wallet watch keeps every stream current while passd changes nothing', as
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const { streams } = await source.discover();
   const watching = new Pipeline({
     history,

@@ -28,7 +28,6 @@ import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 import {
   AppInFocus,
@@ -50,7 +49,6 @@ async function appleImport(source: Source, directory: string) {
   const destination = new SQLiteDestination({ path });
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const pipeline = new Pipeline({
     history,
     connections: [
@@ -78,7 +76,6 @@ async function appleImport(source: Source, directory: string) {
       }),
     ],
   });
-  installSQLiteCatalog({ path });
   return {
     load: async () =>
       Object.fromEntries(
@@ -1487,7 +1484,6 @@ test('an Activity watch keeps every stream current while its stores hold still',
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const { streams } = await source.discover();
   const watching = new Pipeline({
     history,
@@ -1581,7 +1577,6 @@ test('an Activity pass over a large knowledgeC holds one event at a time, so it 
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     await new Pipeline({
       history,
       connections: [

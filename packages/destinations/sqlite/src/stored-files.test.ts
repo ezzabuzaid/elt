@@ -71,7 +71,6 @@ test('stored file scopes flush when empty and remain usable across empty, null a
     path: join(scratch.path, 'out.sqlite'),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const pipeline = new Pipeline({
     history,
     connections: [

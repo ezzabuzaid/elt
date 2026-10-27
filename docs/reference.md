@@ -21,7 +21,6 @@ const notes = new AppleNotesSource();
 const sqlite = new SQLiteDestination({ path: './notes.sqlite' });
 const checkpoints = new SQLiteCheckpointStore({ path: './checkpoints.sqlite' });
 const history = new SQLiteSyncHistory();
-await history.install([sqlite]);
 
 const connection = new Connection({
   name: 'apple-notes',
@@ -656,7 +655,7 @@ Calendar's coverage declares its configured window for event-derived streams, th
 
 `apps/google/src/main.ts` is one inline entry, like `apps/proactive/src/pipeline.ts`. It reads `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`, opens the stored grant with `googleSession`, and makes a `SearchConsoleSource` for `sc-domain:ezz.sh`. It installs `PostgresSyncHistory` and `marts.catalog`, then runs a `Pipeline` with one `google-search-console` connection. That connection has one incremental `append_dedup` copy of each stream that `discover()` returns, with the id `search-console:<stream>`. Each copy loads `google_search_console.raw_<stream>` and keeps the reader view `marts.search_console_<snake_stream>`. The app runs one pass and stops. It catches no error: a missing variable, a refused grant or a `PipelineError` stops the app, and Node prints the error and exits with status 1. Search Console's coverage lives in `SearchConsoleSource.coverage(stream)`.
 
-Each application records every pass and its declared extraction coverage beside the data it loads: the Google app with `PostgresSyncHistory` in the warehouse, Context Compiler's hosts with `SQLiteSyncHistory` in each import's `data.sqlite`. `Pipeline` already includes failed streams and partitions in its errors.
+Each application records every pass and its declared extraction coverage beside the data it loads: the Google app with `PostgresSyncHistory` in the warehouse, Context Compiler's hosts with `SQLiteSyncHistory` in each import's `data.sqlite`. A host that knows no other process runs a pass of its connections, such as the leader of a connection's flight, constructs `new SQLiteSyncHistory({ soleWriter: true })`: its install then records every pass of those connections that began and never ended as `failed`, since the process running it ended first, as Airbyte fails a connection's unfinished jobs before it starts the next. Without it, such a pass stays `running`, because another process may still be running it. `Pipeline` already includes failed streams and partitions in its errors.
 
 ## Execution and failures
 
@@ -704,7 +703,6 @@ const url = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
 const warehouse = new PostgresDestination({ url, schema: 'apple_notes' });
 
 const history = new PostgresSyncHistory({ url });
-await history.install();
 
 const recorded = new Pipeline({
   history,
@@ -726,7 +724,7 @@ const recorded = new Pipeline({
 });
 ```
 
-A pass is one connection's read over the copies it selected. `validate(connection)` refuses, without I/O, a connection the history cannot record; the pipeline calls it during preflight. `begin(connection, copies)` receives each selected copy with its `coverage` and is durable when it resolves, before the read starts, so a pass that never finishes stays visible as unfinished rather than missing. It returns a `RecordedPass`: `finish(outcomes)` closes it with what each copy loaded, and `fail(error, failureType)` closes a pass that produced no outcomes, such as an invalid connection or a watcher that stopped. A pass ends `succeeded`, `partial`, `failed` or, when its run's signal stopped it, `cancelled`. A subclass implements `recordChecks(connection, streams, at)`, durable when it resolves; `checked()` calls it for a connection's first check at once and then at most once a minute, since every record is a write. The helpers `copyStatus`, `passStatus`, `passError` and `passFailureType` derive `succeeded`, `partial` or `failed` (`SyncStatus`), the pass's error text and its failure type from outcomes. `DeclaredCopy` and `RecordedPass` type the contract.
+A pass is one connection's read over the copies it selected. `validate(connection)` refuses, without I/O, a connection the history cannot record; the pipeline calls it during preflight. `install(connections)` brings the history's storage to its declaration (`SQLiteSyncHistory` also publishes the catalog in each file); the pipeline calls it during preflight too, after `validate` and before any read, on every run and watch, so no host calls it and it is safe to repeat. `begin(connection, copies)` receives each selected copy with its `coverage` and is durable when it resolves, before the read starts, so a pass that never finishes stays visible as unfinished rather than missing. It returns a `RecordedPass`: `finish(outcomes)` closes it with what each copy loaded, and `fail(error, failureType)` closes a pass that produced no outcomes, such as an invalid connection or a watcher that stopped. A pass ends `succeeded`, `partial`, `failed` or, when its run's signal stopped it, `cancelled`. A subclass implements `recordChecks(connection, streams, at)`, durable when it resolves; `checked()` calls it for a connection's first check at once and then at most once a minute, since every record is a write. The helpers `copyStatus`, `passStatus`, `passError` and `passFailureType` derive `succeeded`, `partial` or `failed` (`SyncStatus`), the pass's error text and its failure type from outcomes. `DeclaredCopy` and `RecordedPass` type the contract.
 
 To show passes while they run, such as in a terminal, pass a `PassObserver` as `Pipeline({ connections, history, observer })`. Its `begin(connection)` returns an `ObservedPass`. `progress(progress)` sees each copy as a `CopyProgress`: its `status` (`running`, then once `complete` or `incomplete`) and the records and deletions the source `emitted` and the destination `committed` so far. `finish(outcomes)` and `fail(error, failureType)` see how the pass ended, each after the history recorded it. The observer is advisory: the pipeline does not wait for it, and what it throws is ignored and never changes what loads or what the history records. Nothing persists what it sees.
 
@@ -744,7 +742,7 @@ Coverage is the source's own statement, `coverage(stream): ExtractionCoverage` w
 
 A source also says how current each stream's upstream is, `currentAsOf(stream): Promise<Date | null>`, as a replica reports the last change it replayed (`pg_last_xact_replay_timestamp()`) and a Beam source reports its watermark. `null` means the upstream is current whenever it is read; every source states it, and none inherits it. A `Date` means the upstream itself was current only as of then: an app's store that the app writes only while it runs stays as of when the app last wrote it. The pipeline asks before each pass and records the answer with each copy that loads; `current_as_of` is then never later than that time. A copy whose source cannot tell fails with that error and is not read, and the pass's other copies load. WhatsApp answers with each store's last write while WhatsApp is closed and `null` while it runs; Notes does the same with `NoteStore.sqlite`; Slack and Teams always answer with their store's last write, because they save only now and then and only while they run; Mail always answers with its index's last write, because Mail's daemon writes it while Mail.app is closed too. Safari answers for its history and iCloud Tabs streams with the last write to that store (every profile's `History.db`, or `CloudTabs.db`) while Safari is closed and `null` while it runs, because only Safari syncs them; its tab groups and bookmarks sync through helpers that run without it, so they and its other streams answer `null`. Wallet answers with passd's last fetch of the iCloud `passes` zone (`cloud_store_zone.fetch_timestamp`), because passd fetches it once a day, and `null` on a Mac that has never fetched it. Search Console answers `null`: it reads Google's fresh days too and marks each row `settled` or not, so its rows match Google's whenever it reads. Every other source answers `null`. Airbyte has no such statement: its "Data fresh as of" is the time its last sync finished.
 
-`PostgresSyncHistory({ url })` from `elt-postgresql` records into the [warehouse](#warehouse-marts) tables `_warehouse.sync_attempts`, `_warehouse.extraction_coverage` and `_warehouse.stream_checks`, the last holding each stream's latest check by a watch that found it unchanged. Its `install()` creates those tables and publishes the `marts` views `sync_attempts`, `extraction_coverage`, `sync_status` and `stream_status`; it is safe to repeat. Run it before the pipeline records its first pass. It grants nothing. It records Postgres destinations only and refuses any other connection during preflight.
+`PostgresSyncHistory({ url })` from `elt-postgresql` records into the [warehouse](#warehouse-marts) tables `_warehouse.sync_attempts`, `_warehouse.extraction_coverage` and `_warehouse.stream_checks`, the last holding each stream's latest check by a watch that found it unchanged. Its `install()`, which the pipeline calls, creates those tables and publishes the `marts` views `sync_attempts`, `extraction_coverage`, `sync_status` and `stream_status`; it is safe to repeat. Run it before the pipeline records its first pass. It grants nothing. It records Postgres destinations only and refuses any other connection during preflight.
 
 ## Postgres destination
 
@@ -845,7 +843,6 @@ const destination = new SQLiteDestination({
   path: './outputs/messages.sqlite',
 });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [
@@ -1003,7 +1000,6 @@ const destination = new SQLiteDestination({
   path: './outputs/contacts.sqlite',
 });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [
@@ -1295,7 +1291,6 @@ import { AppleSafariSource } from '@workspace/source-apple-safari/apple-safari-s
 const source = new AppleSafariSource(); // ~/Library/Safari and Safari's container
 const destination = new SQLiteDestination({ path: './outputs/safari.sqlite' });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [
@@ -1400,7 +1395,6 @@ const source = new AppleBooksSource(); // Books' container and its group contain
 const destination = new SQLiteDestination({ path: './outputs/books.sqlite' });
 const files = new LocalFiles({ directory: './outputs/books-files' });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [
@@ -1514,7 +1508,6 @@ const destination = new SQLiteDestination({
   path: './outputs/activity.sqlite',
 });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [
@@ -1635,7 +1628,6 @@ const destination = new SQLiteDestination({
   path: './outputs/accounts.sqlite',
 });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [
@@ -1726,7 +1718,6 @@ const destination = new SQLiteDestination({
   path: './outputs/calls.sqlite',
 });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [
@@ -1874,7 +1865,6 @@ const destination = new SQLiteDestination({
   path: './outputs/notifications.sqlite',
 });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [
@@ -1961,7 +1951,6 @@ import { AppleWalletSource } from '@workspace/source-apple-wallet/apple-wallet-s
 const source = new AppleWalletSource();
 const destination = new SQLiteDestination({ path: './outputs/wallet.sqlite' });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [
@@ -2050,7 +2039,6 @@ import { SlackDesktopSource } from '@workspace/source-slack-desktop/slack-deskto
 const source = new SlackDesktopSource();
 const destination = new SQLiteDestination({ path: './outputs/slack.sqlite' });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [
@@ -2172,7 +2160,6 @@ import { TeamsSource } from '@workspace/source-microsoft-teams/teams-source';
 const source = new TeamsSource();
 const destination = new SQLiteDestination({ path: './outputs/teams.sqlite' });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [
@@ -2301,7 +2288,6 @@ const destination = new SQLiteDestination({
   path: './outputs/whatsapp.sqlite',
 });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [
@@ -2455,7 +2441,6 @@ const destination = new SQLiteDestination({
   path: './outputs/instagram.sqlite',
 });
 
-await history.install([destination]);
 await new Pipeline({
   history,
   connections: [

@@ -52,7 +52,6 @@ await mkdir(flightsDirectory, { recursive: true });
 // articles table's only writer.
 const destination = new SQLiteDestination({ path: articlesPath });
 const history = new SQLiteSyncHistory();
-await history.install([destination]);
 
 const readSettings = async () =>
   existsSync(settingsPath)

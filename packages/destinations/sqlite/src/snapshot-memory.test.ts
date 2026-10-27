@@ -62,7 +62,6 @@ const passes = `
   const source = new Parameters();
   const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const pipeline = new Pipeline({
     history,
     connections: [new Connection({

@@ -1031,7 +1031,6 @@ async function pipeline(source: TeamsSource, directory: string) {
   });
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   return new Pipeline({
     history,
     connections: [

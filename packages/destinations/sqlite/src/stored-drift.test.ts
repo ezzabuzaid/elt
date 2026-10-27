@@ -110,7 +110,6 @@ function importIn(directory: string) {
     checkpoints: join(directory, 'checkpoints.sqlite'),
     // How many records the pass read.
     pass: async () => {
-      await history.install([destination]);
       const [result] = await pipeline.run();
       return result?.count;
     },

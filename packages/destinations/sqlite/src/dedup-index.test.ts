@@ -79,7 +79,6 @@ test('a deduplicating load that finds nothing new leaves the database schema as 
     path: join(scratch.path, 'data.sqlite'),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const pipeline = new Pipeline({
     connections: [
       new Connection({

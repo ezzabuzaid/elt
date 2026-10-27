@@ -38,7 +38,6 @@ const source = new WebSource({
 });
 const destination = new SQLiteDestination({ path: './articles.sqlite' });
 const history = new SQLiteSyncHistory();
-await history.install([destination]);
 
 const pipeline = new Pipeline({
   history,

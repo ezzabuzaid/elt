@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync } from 'node:fs';
 import { mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { HttpServer } from '@zukhruf/testing/http';
 
@@ -90,7 +92,6 @@ test('a pass and each of its streams read running while it runs and cancelled on
     path: join(scratch.path, 'data.sqlite'),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const connection = new Connection({
     name: 'waiting',
     source,
@@ -207,7 +208,6 @@ test("a pass that did not load says whether its failures are the user's to fix, 
     path: join(scratch.path, 'data.sqlite'),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const pipeline = new Pipeline({
     connections: [
       new Connection({
@@ -314,7 +314,6 @@ test('each recorded failure keeps the causes its error chains, such as why a con
     path: join(scratch.path, 'data.sqlite'),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const pipeline = new Pipeline({
     connections: [
       new Connection({
@@ -362,4 +361,120 @@ function stream(name: string) {
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh'],
   });
+}
+
+test('a pass a killed process left running stays running, until a history that is the sole writer of its connection starts the next run', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-passes-'));
+  const path = join(scratch.path, 'data.sqlite');
+  // A process that begins a pass of notes, then is killed while it reads.
+  const pass = `
+    import { Catalog, Connection, Copy, Pipeline, Source, Stream } from '@workspace/elt';
+    import { SQLiteDestination, SQLiteSyncHistory } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'index.ts')).href)};
+    class Hanging extends Source {
+      identity = 'hanging';
+      notes = new Stream({
+        name: 'notes',
+        jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+        supportedSyncModes: ['full_refresh'],
+      });
+      catalog = new Catalog([this.notes]);
+      coverage() { return { description: 'test', selection: {} }; }
+      async currentAsOf() { return null; }
+      async open() { return new AsyncDisposableStack(); }
+      async *observe({ streams }) { yield streams; }
+      async *extract() {
+        yield { stream: 'notes', data: { id: 'n1' } };
+        process.stdout.write('reading\\n');
+        await new Promise(() => setInterval(() => {}, 1 << 30));
+      }
+    }
+    const source = new Hanging();
+    const destination = new SQLiteDestination({ path: process.env.DATABASE });
+    await new Pipeline({
+      connections: [new Connection({ name: 'notes', source, destination, steps: [new Copy(source.notes, destination.table('notes'))] })],
+      history: new SQLiteSyncHistory(),
+    }).run();
+  `;
+  const killed = spawn(process.execPath, ['--input-type=module', '-e', pass], {
+    cwd: import.meta.dirname,
+    env: { ...process.env, DATABASE: path },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  const exited = once(killed, 'exit');
+  await Promise.race([
+    once(killed.stdout, 'data'),
+    exited.then(() => assert.fail('the process ended before its pass read')),
+  ]);
+  killed.kill('SIGKILL');
+  await exited;
+  const source = new Finishing();
+  const destination = new SQLiteDestination({ path });
+  const connection = new Connection({
+    name: 'notes',
+    source,
+    destination,
+    steps: [new Copy(source.notes, destination.table('notes'))],
+  });
+  const attempts = () => {
+    using database = new DatabaseSync(path, { readOnly: true });
+    return database
+      .prepare(
+        'SELECT status, error, failure_type FROM sync_attempts ORDER BY attempt_id',
+      )
+      .all()
+      .map((row) => ({ ...row }));
+  };
+
+  await new Pipeline({
+    connections: [connection],
+    history: new SQLiteSyncHistory(),
+  }).run();
+  const shared = attempts();
+  await new Pipeline({
+    connections: [connection],
+    history: new SQLiteSyncHistory({ soleWriter: true }),
+  }).run();
+  const sole = attempts();
+
+  const succeeded = { status: 'succeeded', error: null, failure_type: null };
+  assert.deepEqual(shared, [
+    { status: 'running', error: null, failure_type: null },
+    succeeded,
+  ]);
+  assert.deepEqual(sole, [
+    {
+      status: 'failed',
+      error: 'The process running this pass ended before the pass did',
+      failure_type: 'system',
+    },
+    succeeded,
+    succeeded,
+  ]);
+});
+
+// A source of notes that loads one note and ends.
+class Finishing extends LiveSource {
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
+  readonly identity = 'finishing';
+  readonly notes = new Stream({
+    name: 'notes',
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    supportedSyncModes: ['full_refresh'],
+  });
+  protected readonly catalog = new Catalog([this.notes]);
+
+  protected override async open() {
+    return new AsyncDisposableStack();
+  }
+
+  protected override async *observe({ streams }: SourceWatchOptions) {
+    yield streams;
+  }
+
+  protected override async *extract(configuration: CopyConfiguration) {
+    yield { stream: configuration.stream.name, data: { id: 'n1' } };
+  }
 }

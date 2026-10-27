@@ -36,7 +36,6 @@ import {
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
@@ -87,8 +86,6 @@ async function appleImport(source: Source, directory: string) {
     ),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
-  installSQLiteCatalog({ path });
   return {
     load: () => new Pipeline({ history, connections: [connection] }).run(),
     read: (sql: string) => {
@@ -2761,7 +2758,6 @@ test('Safari reads this Mac’s stores into SQLite', async (t) => {
   });
   const { streams } = await source.discover();
   const syncHistory = new SQLiteSyncHistory();
-  await syncHistory.install([destination]);
   const pipeline = new Pipeline({
     history: syncHistory,
     connections: [
@@ -2834,7 +2830,6 @@ test('while Safari is closed, a Safari watch makes no pass while its stores hold
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const { streams } = await source.discover();
   const watching = new Pipeline({
     history,
@@ -2927,7 +2922,6 @@ test('a Safari pass over a large History.db holds one visit at a time, so it loa
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     await new Pipeline({
       history,
       connections: [

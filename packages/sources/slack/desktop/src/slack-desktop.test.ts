@@ -43,14 +43,6 @@ import {
 
 import { SlackDesktopSource } from './slack-desktop-source.ts';
 
-// A sync history installed in each destination's file, as a host installs it
-// before the first pass.
-async function installedHistory(...destinations: SQLiteDestination[]) {
-  const history = new SQLiteSyncHistory();
-  await history.install(destinations);
-  return history;
-}
-
 type ClientRecord = {
   readonly team: string;
   readonly user: string;
@@ -698,7 +690,7 @@ async function pipeline(source: SlackDesktopSource, directory: string) {
   });
   const { streams } = await source.discover();
   return new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -1417,7 +1409,7 @@ test('downloads stay after Slack clears its list, with the file’s bytes while 
   const source = new SlackDesktopSource(store.directory);
   const destination = new SQLiteDestination({ path: out });
   const run = new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',

@@ -29,7 +29,6 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
   type SQLiteTable,
-  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 import { GaxiosError, type GoogleRequester } from '@workspace/google-auth';
 import {
@@ -55,14 +54,6 @@ import {
   CalendarIcsUnavailableError,
 } from './apple-calendar-source.ts';
 import { googleCalendarAttachments } from './google-calendar-attachments.ts';
-
-// A sync history installed in each destination's file, as a host installs it
-// before the first pass.
-async function installedHistory(...destinations: SQLiteDestination[]) {
-  const history = new SQLiteSyncHistory();
-  await history.install(destinations);
-  return history;
-}
 
 // A file column's chunk table, by the documented rule: _elt_files_ and the
 // first 40 hex digits of SHA-256 over the JSON of [table, column], both in
@@ -126,8 +117,6 @@ async function appleImport(source: Source, directory: string) {
     ),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
-  installSQLiteCatalog({ path });
   const read = (sql: string) => {
     using database = new DatabaseSync(path, { readOnly: true });
     return database.prepare(sql).all();
@@ -667,7 +656,7 @@ test(
       source.recurrenceRuleValues,
     ];
     const result = await new Pipeline({
-      history: await installedHistory(sqlite),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'test',
@@ -1038,7 +1027,7 @@ test(
       await assert.rejects(
         async () =>
           new Pipeline({
-            history: await installedHistory(sqlite),
+            history: new SQLiteSyncHistory(),
             connections: [
               new Connection({
                 name: 'test',
@@ -1060,7 +1049,7 @@ test(
     });
     await assert.rejects(
       new Pipeline({
-        history: await installedHistory(sqlite),
+        history: new SQLiteSyncHistory(),
         connections: [
           new Connection({
             name: 'test',
@@ -1090,7 +1079,7 @@ test('Calendar rejects malformed records and preserves prior rows on native fail
   const sqlite = new SQLiteDestination({
     path: join(scratch.path, 'calendar.sqlite'),
   });
-  const history = await installedHistory(sqlite);
+  const history = new SQLiteSyncHistory();
   const run = () =>
     new Pipeline({
       history,
@@ -1200,7 +1189,7 @@ test(
       path: join(scratch.path, 'calendar.sqlite'),
     });
     const pipeline = new Pipeline({
-      history: await installedHistory(sqlite),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'test',
@@ -1276,7 +1265,7 @@ test('Calendar snapshot incremental reconciles attendees who join and leave, whi
     path: join(scratch.path, 'calendar.sqlite'),
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(sqlite),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -1356,7 +1345,7 @@ test(
       destinationSyncMode: 'append_dedup',
     });
     const pipeline = new Pipeline({
-      history: await installedHistory(sqlite),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'test',
@@ -1533,7 +1522,7 @@ test(
       destinationSyncMode: 'append_dedup',
     });
     const pipeline = new Pipeline({
-      history: await installedHistory(sqlite),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'test',
@@ -1871,7 +1860,7 @@ test(
       source.icsProperties,
       source.icsParameters,
     ];
-    const history = await installedHistory(sqlite);
+    const history = new SQLiteSyncHistory();
     const run = () =>
       new Pipeline({
         history,
@@ -1956,7 +1945,7 @@ test(
     ];
 
     await new Pipeline({
-      history: await installedHistory(sqlite),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'test',
@@ -2027,7 +2016,7 @@ test('Calendar ICS streams keep attachments and vendor properties, which a test 
   ];
 
   const counts = await new Pipeline({
-    history: await installedHistory(sqlite),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -2131,7 +2120,6 @@ test('a Calendar pass over a large ICS export holds one record of a stream at a 
     });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     await new Pipeline({
       history,
       connections: [new Connection({
@@ -2237,7 +2225,7 @@ test(
       path: join(scratch.path, 'ics.sqlite'),
     });
     const pipeline = new Pipeline({
-      history: await installedHistory(sqlite),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'test',
@@ -2337,7 +2325,7 @@ test(
 
     assert.deepEqual(
       await new Pipeline({
-        history: await installedHistory(sqlite),
+        history: new SQLiteSyncHistory(),
         connections: [
           new Connection({
             name: 'test',
@@ -2422,7 +2410,7 @@ test(
     const files = new LocalFiles({ directory: join(scratch.path, 'files') });
 
     await new Pipeline({
-      history: await installedHistory(sqlite),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'test',
@@ -2483,7 +2471,7 @@ test(
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'a.sqlite'),
     });
-    const history = await installedHistory(sqlite);
+    const history = new SQLiteSyncHistory();
     const run = (copy: Copy<SQLiteTable>) =>
       new Pipeline({
         history,
@@ -2553,7 +2541,7 @@ test(
       },
     );
     const pipeline = new Pipeline({
-      history: await installedHistory(sqlite),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'test',
@@ -2647,7 +2635,7 @@ async function googleAttachmentFiles(
   });
   const files = new LocalFiles({ directory: join(directory, 'files') });
   await new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -3138,7 +3126,7 @@ test(
     const streams = (await source.discover()).streams;
 
     const outcomes = await new Pipeline({
-      history: await installedHistory(sqlite),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name: 'live',
@@ -3216,7 +3204,6 @@ test(
     const data = join(dir.path, 'out.sqlite');
     const destination = new SQLiteDestination({ path: data });
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     const { streams } = await source.discover();
     const watching = new Pipeline({
       history,

@@ -32,14 +32,6 @@ abstract class LiveSource<
   }
 }
 
-// A sync history installed in each destination's file, as a host installs it
-// before the first pass.
-async function installedHistory(...destinations: SQLiteDestination[]) {
-  const history = new SQLiteSyncHistory();
-  await history.install(destinations);
-  return history;
-}
-
 test('a full refresh checks a snapshot stream’s declaration as an incremental copy does', async () => {
   const deleting = new Stream({
     name: 'deleting',
@@ -106,7 +98,7 @@ test('a full refresh checks a snapshot stream’s declaration as an incremental 
     path: join(scratch.path, 'd.sqlite'),
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -207,7 +199,7 @@ test('a full refresh of a snapshot stream loads every record of each scan as sca
   });
   const copy = new Copy(items, destination.table('items'));
   const pipeline = new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -294,7 +286,7 @@ test('a full refresh of a grouped snapshot stream reads every group, also one wh
   });
   const copy = new Copy(items, destination.table('items'));
   const pipeline = new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',

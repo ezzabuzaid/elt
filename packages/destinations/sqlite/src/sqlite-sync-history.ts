@@ -17,6 +17,7 @@ import {
   recordedFailure,
 } from '@workspace/elt';
 
+import { installSQLiteCatalog } from './sqlite-catalog.ts';
 import { SQLiteDestination } from './sqlite-destination.ts';
 import {
   attempts,
@@ -33,11 +34,16 @@ import { publishSQLiteViews } from './sqlite-views.ts';
 const busyTimeout = 30_000;
 
 // Records every pass in the file its connection loads, beside the data, and
-// shows readers that history through views there. Run install() with every
-// destination before the pipeline records its first pass.
+// shows readers that history, and the catalog, through views there.
 export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
-  constructor() {
+  readonly #soleWriter: boolean;
+
+  // soleWriter: the caller knows that no other process runs a pass of its
+  // connections while this history is in use, such as the leader of a
+  // connection's flight.
+  constructor(options?: { readonly soleWriter?: boolean }) {
     super();
+    this.#soleWriter = options?.soleWriter === true;
     Object.freeze(this);
   }
 
@@ -97,13 +103,29 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
     };
   }
 
-  // Records every pass of connection that began and never ended as failed:
-  // the process running it ended first, so no outcome will come. As Airbyte
-  // fails a connection's unfinished jobs before it starts the next, only a
-  // caller that knows no other process runs a pass of connection calls it,
-  // such as the leader of the connection's flight; a pass still running
-  // would read failed until it records how it ended.
-  async failUnfinished(connection: Connection<SQLiteTable>): Promise<void> {
+  // Brings the history's tables to their declaration and publishes its views
+  // and the catalog in each connection's file. Tables another version
+  // declared otherwise are replaced, and their history with them. A sole
+  // writer then records every pass of its connections that began and never
+  // ended as failed: the process running it ended first, so no outcome will
+  // come, as Airbyte fails a connection's unfinished jobs before it starts the
+  // next. Any other caller leaves them running, since another process may
+  // still be running them.
+  override async install(
+    connections: readonly Connection<SQLiteTable>[],
+  ): Promise<void> {
+    for (const path of new Set(connections.map((each) => this.#path(each)))) {
+      write(path, (database) => {
+        syncHistoryTables.apply(database);
+        publishSQLiteViews(database, { views: syncHistoryViews });
+      });
+      installSQLiteCatalog({ path });
+    }
+    if (this.#soleWriter)
+      for (const connection of connections) this.#failUnfinished(connection);
+  }
+
+  #failUnfinished(connection: Connection<SQLiteTable>): void {
     const error = new Error(
       'The process running this pass ended before the pass did',
     );
@@ -116,17 +138,6 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
       for (const { id } of unfinished)
         fail(database, Number(id), error, 'system');
     });
-  }
-
-  // Brings the history's tables to their declaration and publishes its views
-  // in each file; safe to repeat. Tables another version declared otherwise
-  // are replaced, and their history with them.
-  async install(destinations: Iterable<SQLiteDestination>): Promise<void> {
-    for (const destination of destinations)
-      write(persistent(destination), (database) => {
-        syncHistoryTables.apply(database);
-        publishSQLiteViews(database, { views: syncHistoryViews });
-      });
   }
 
   #path({ name, destination }: Connection<SQLiteTable>): string {

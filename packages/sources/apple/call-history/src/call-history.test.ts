@@ -265,7 +265,6 @@ async function pipeline(source: AppleCallHistorySource, directory: string) {
   });
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   return new Pipeline({
     history,
     connections: [
@@ -930,7 +929,6 @@ test('a Call History watch keeps every stream current while callhistoryd changes
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const { streams } = await source.discover();
   const watching = new Pipeline({
     history,
@@ -1024,7 +1022,6 @@ test('a Call History pass over a large store holds one call at a time, so it loa
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     await new Pipeline({
       history,
       connections: [

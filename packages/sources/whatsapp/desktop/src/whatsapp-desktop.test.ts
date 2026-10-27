@@ -1037,7 +1037,6 @@ async function pipeline(
   const files = new LocalFiles({ directory: join(directory, 'files') });
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   return new Pipeline({
     history,
     connections: [
@@ -3304,7 +3303,6 @@ test('large WhatsApp passes stream payloads and reuse compact metadata within a 
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     const pipeline = new Pipeline({
       history,
       connections: [

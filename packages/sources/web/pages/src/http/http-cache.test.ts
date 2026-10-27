@@ -30,7 +30,6 @@ const stream = new WebStream({
 const source = new WebSource({ stream, inputs: [input] });
 const destination = new SQLiteDestination({ path });
 const history = new SQLiteSyncHistory();
-await history.install([destination]);
 const result = await new Pipeline({ history, connections: [new Connection({
   name: 'web', source, destination,
   checkpoints: new SQLiteCheckpointStore({ path: checkpoints }),

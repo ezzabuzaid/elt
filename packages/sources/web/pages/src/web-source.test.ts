@@ -240,7 +240,6 @@ test('an article that a feed and a sitemap list with and without a trailing slas
 async function pipeline(source: WebSource, path: string, checkpoints: string) {
   const destination = new SQLiteDestination({ path });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   return new Pipeline({
     history,
     connections: [
@@ -1117,7 +1116,6 @@ test('a failed full refresh tries later articles and preserves the last complete
   });
   const destination = new SQLiteDestination({ path: database.path });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const refresh = new Pipeline({
     history,
     connections: [

@@ -30,14 +30,6 @@ import {
 
 import { AppleNotesSource } from './apple-notes-source.ts';
 
-// A sync history installed in each destination's file, as a host installs it
-// before the first pass.
-async function installedHistory(...destinations: SQLiteDestination[]) {
-  const history = new SQLiteSyncHistory();
-  await history.install(destinations);
-  return history;
-}
-
 // The configured stream a full-refresh copy of stream reads.
 const configured = (stream: Stream) =>
   new Copy(
@@ -315,7 +307,7 @@ const notesPipeline = async (source: AppleNotesSource, directory: string) => {
   const destination = new SQLiteDestination({
     path: join(directory, 'notes.sqlite'),
   });
-  const history = await installedHistory(destination);
+  const history = new SQLiteSyncHistory();
   return {
     destination,
     pipeline: new Pipeline({
@@ -771,7 +763,7 @@ test('a Notes watch keeps Notes running and loads each commit while Notes keeps 
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -845,7 +837,6 @@ test('a Notes watch keeps every stream current while Notes runs and the note sto
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const { streams } = await source.discover();
   const watching = new Pipeline({
     history,
@@ -942,7 +933,6 @@ test('a Notes pass over a large store holds one note at a time, so it loads in a
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     await new Pipeline({
       history,
       connections: [

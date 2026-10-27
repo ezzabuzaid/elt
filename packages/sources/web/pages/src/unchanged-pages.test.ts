@@ -160,7 +160,6 @@ test('restarted source keeps unchanged rows and detects listing metadata and art
     });
     const destination = new SQLiteDestination({ path: database.path });
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     return new Pipeline({
       history,
       connections: [
@@ -255,7 +254,6 @@ test('an unchanged native-Markdown page requested again on a due visit loads not
     });
     const destination = new SQLiteDestination({ path: database.path });
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     return new Pipeline({
       history,
       connections: [

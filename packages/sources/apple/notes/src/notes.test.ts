@@ -22,7 +22,6 @@ import {
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 
 import { AppleNotesSource } from './apple-notes-source.ts';
@@ -72,8 +71,6 @@ async function appleImport(source: Source, directory: string) {
     ),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
-  installSQLiteCatalog({ path });
   const read = (sql: string) => {
     using database = new DatabaseSync(path, { readOnly: true });
     return database.prepare(sql).all();

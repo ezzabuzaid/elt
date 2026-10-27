@@ -33,7 +33,6 @@ import {
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 import {
   BooksSchemaError,
@@ -89,8 +88,6 @@ async function appleImport(source: Source, directory: string) {
     ),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
-  installSQLiteCatalog({ path });
   return {
     load: () => new Pipeline({ history, connections: [connection] }).run(),
     read: (sql: string) => {
@@ -2400,7 +2397,6 @@ test('Books reads this Mac’s stores into SQLite without opening iCloud placeho
   const files = new LocalFiles({ directory: join(scratch.path, 'files') });
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const pipeline = new Pipeline({
     history,
     connections: [
@@ -2472,7 +2468,6 @@ test('a Books watch keeps every stream current while its stores hold still', asy
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const { streams } = await source.discover();
   const watching = new Pipeline({
     history,
@@ -2558,7 +2553,6 @@ test('a Books pass over a large annotation store holds one annotation at a time,
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     await new Pipeline({
       history,
       connections: [

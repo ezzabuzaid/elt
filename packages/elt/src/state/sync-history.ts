@@ -44,6 +44,12 @@ export abstract class SyncHistory<Target extends DestinationTarget> {
   // Refuses, without I/O, a connection this history cannot record.
   validate(_connection: Connection<Target>): void {}
 
+  // Brings the history's storage to its declaration before the pipeline
+  // records anything; as Airbyte's destinations set up their tables before
+  // the first record, the pipeline calls it before every run or watch, so it
+  // is safe to repeat.
+  abstract install(connections: readonly Connection<Target>[]): Promise<void>;
+
   // Durable when it resolves, so a pass that never finishes stays visible as
   // unfinished rather than missing.
   abstract begin(

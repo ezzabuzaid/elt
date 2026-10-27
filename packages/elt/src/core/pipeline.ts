@@ -451,11 +451,13 @@ export class Pipeline<Target extends DestinationTarget> {
   }
 
   // Every declaration is checked before any connection reads, so a wiring
-  // mistake stops the whole pipeline; the connection it belongs to records it.
+  // mistake stops the whole pipeline; the connection it belongs to records it,
+  // in a history installed first.
   async #declare(): Promise<void> {
     this.#assertDistinct();
     for (const connection of this.connections)
       this.history.validate(connection);
+    await this.history.install(this.connections);
     for (const connection of this.connections)
       try {
         connection.validate();

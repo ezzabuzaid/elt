@@ -23,19 +23,10 @@ import {
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { AppleContactsSource } from './apple-contacts-source.ts';
-
-// A sync history installed in each destination's file, as a host installs it
-// before the first pass.
-async function installedHistory(...destinations: SQLiteDestination[]) {
-  const history = new SQLiteSyncHistory();
-  await history.install(destinations);
-  return history;
-}
 
 // A file column's chunk table, by the documented rule: _elt_files_ and the
 // first 40 hex digits of SHA-256 over the JSON of [table, column], both in
@@ -91,8 +82,6 @@ async function appleImport(source: Source, directory: string) {
     ),
   });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
-  installSQLiteCatalog({ path });
   return {
     load: () => new Pipeline({ history, connections: [connection] }).run(),
     read: (sql: string) => {
@@ -604,7 +593,7 @@ test('Contacts scope keeps only one container and its related records and images
     path: join(scratch.path, 'out.sqlite'),
   });
   await new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'scope',
@@ -655,7 +644,7 @@ test('a Contacts container scope keeps every stream to what belongs to that cont
   });
 
   const results = await new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'scope',
@@ -757,7 +746,7 @@ test('Contacts reads subscribed records, every custom value type, archived vCard
       path: join(scratch.path, `${name}.sqlite`),
     });
     await new Pipeline({
-      history: await installedHistory(destination),
+      history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
           name,
@@ -846,7 +835,7 @@ test('Contacts exports every stream of every account store by identifier', async
   });
 
   const results = await new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -1222,7 +1211,7 @@ test('Contacts loads edits incrementally, deletes removed rows and writes nothin
   });
   const all = await copies(source, destination);
   const pipeline = new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -1308,7 +1297,7 @@ test('Contacts refuses a store it cannot read instead of reading its account as 
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -1412,7 +1401,7 @@ test('Contacts rejects image data in an encoding it does not know', async () => 
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -1451,7 +1440,7 @@ test('a Contacts watch loads each commit contactsd makes and each account added'
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    history: await installedHistory(destination),
+    history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -1612,7 +1601,6 @@ test('a Contacts watch keeps every stream current while contactsd changes nothin
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
-  await history.install([destination]);
   const { streams } = await source.discover();
   const watching = new Pipeline({
     history,
@@ -1793,7 +1781,6 @@ test('a Contacts pass over a large store holds one contact at a time, so it load
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await history.install([destination]);
     let arrayBuffers = 0;
     const sample = setInterval(() => {
       arrayBuffers = Math.max(arrayBuffers, process.memoryUsage().arrayBuffers);

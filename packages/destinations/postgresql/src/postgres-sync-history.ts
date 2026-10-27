@@ -24,7 +24,6 @@ import { publishPostgresViews } from './postgres-views.ts';
 
 // Records every pass in the _warehouse schema, and shows readers that history
 // through views in marts. Who may read marts is the database's own grant.
-// Run install() before the pipeline records its first pass.
 export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
   readonly #url: string;
 
@@ -93,7 +92,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
   }
 
   // Creates the history's tables and publishes its views; safe to repeat.
-  async install(): Promise<void> {
+  override async install(): Promise<void> {
     await this.#write(async (transaction) => {
       await transaction`SELECT pg_advisory_xact_lock(hashtextextended('elt:sync-history', 0))`;
       for (const statement of syncHistoryTables)
