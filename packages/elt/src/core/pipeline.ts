@@ -8,6 +8,8 @@ import {
   type CopyResult,
   describeFailures,
 } from './copy.ts';
+import type { DerivedDataset } from './derived-dataset.ts';
+import { DerivedRefreshes } from './derived-refreshes.ts';
 import { interleave } from './interleave.ts';
 import type { PassObserver } from './pass-observer.ts';
 import { replicate } from './replication.ts';
@@ -88,15 +90,20 @@ export class Pipeline<Target extends DestinationTarget> {
   readonly connections: readonly Connection<Target>[];
   readonly history: SyncHistory<Target>;
   readonly observer?: PassObserver<Target>;
+  // In declared order, which is the order they refresh in.
+  readonly derived: readonly DerivedDataset<Target>[];
 
   constructor({
     connections,
     history,
     observer,
+    derived,
   }: {
     connections: readonly Connection<Target>[];
     history: SyncHistory<NoInfer<Target>>;
     observer?: PassObserver<NoInfer<Target>>;
+    // A pipeline that keeps no derived data declares none.
+    derived?: readonly DerivedDataset<NoInfer<Target>>[];
   }) {
     if (!connections.every((connection) => connection instanceof Connection))
       throw new TypeError(
@@ -105,6 +112,7 @@ export class Pipeline<Target extends DestinationTarget> {
     this.connections = Object.freeze([...connections]);
     this.history = history;
     this.observer = observer;
+    this.derived = Object.freeze([...(derived ?? [])]);
     Object.freeze(this);
   }
 
@@ -152,6 +160,11 @@ export class Pipeline<Target extends DestinationTarget> {
       pass.status === 'fulfilled' ? pass.value.outcomes : [],
     );
     if (results.some(({ cancelled }) => cancelled)) throw signal?.reason;
+    // Derived data follows what the copies committed, also when some copies
+    // failed; a dataset's own failure rejects the run as itself, since no
+    // history recorded it.
+    for (const dataset of this.derived)
+      await dataset.refresh({ connections: this.connections, signal });
     if (results.some(({ failures }) => failures.length > 0))
       throw new PipelineError(results);
     return results.map(({ failures: _, cancelled: __, ...result }) => result);
@@ -161,8 +174,8 @@ export class Pipeline<Target extends DestinationTarget> {
   // A connection whose watcher fails stops alone, and its failure is recorded;
   // the rest keep watching. Once every connection stopped, or signal aborts,
   // the recorded failures are thrown together as a WatchError. An error the
-  // sync history could not record stops every connection and rejects as
-  // itself.
+  // sync history could not record, or a derived dataset's own failure, stops
+  // every connection and rejects as itself.
   async *watch({
     signal,
   }: {
@@ -173,6 +186,12 @@ export class Pipeline<Target extends DestinationTarget> {
     const controller = new AbortController();
     const watching = AbortSignal.any([signal, controller.signal]);
     const stopped: unknown[] = [];
+    const refreshes = new DerivedRefreshes(
+      this.derived,
+      this.connections,
+      watching,
+      (error) => controller.abort(error),
+    );
     const passes = interleave(
       this.connections
         .filter(({ steps }) => steps.length > 0)
@@ -188,12 +207,16 @@ export class Pipeline<Target extends DestinationTarget> {
         let next = await passes.next();
         !next.done;
         next = await passes.next()
-      )
+      ) {
+        refreshes.request();
         yield next.value;
+      }
     } finally {
       controller.abort();
       await passes.return(undefined);
+      await refreshes.settled();
     }
+    if (refreshes.failure !== undefined) throw refreshes.failure.error;
     if (stopped.length > 0)
       throw new WatchError(stopped, stopped.map(message).join('; '));
   }
@@ -465,6 +488,7 @@ export class Pipeline<Target extends DestinationTarget> {
         await this.#recordFailure(connection, error);
         throw error;
       }
+    for (const dataset of this.derived) dataset.validate(this.connections);
   }
 
   #assertDistinct(): void {
@@ -476,6 +500,9 @@ export class Pipeline<Target extends DestinationTarget> {
       .filter((id) => id !== undefined);
     if (new Set(ids).size !== ids.length)
       throw new TypeError('Pipeline copy IDs must be distinct');
+    const derived = this.derived.map(({ name }) => name);
+    if (new Set(derived).size !== derived.length)
+      throw new TypeError('Pipeline derived dataset names must be distinct');
   }
 }
 

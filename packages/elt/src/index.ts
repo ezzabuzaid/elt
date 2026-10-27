@@ -16,6 +16,7 @@ export {
   type DestinationSyncMode,
   type Load,
 } from './core/destination.ts';
+export { DerivedDataset } from './core/derived-dataset.ts';
 export { DocumentParser } from './core/document-parser.ts';
 export type { ObservedPass, PassObserver } from './core/pass-observer.ts';
 export { FileContent } from './core/file-content.ts';
