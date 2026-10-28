@@ -20,7 +20,7 @@ A blog has two posts. Post 1 changes at each visit, and post 2 never changes. Th
 
 ```ts title="sync-or-watch.ts"
 import { once } from 'node:events';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -120,6 +120,7 @@ for await (const pass of pipeline.watch({ signal: stop.signal })) {
   if (passes === 2) stop.abort();
 }
 server.close();
+await rm(directory, { recursive: true, force: true });
 ```
 
 Output (the times change from run to run):

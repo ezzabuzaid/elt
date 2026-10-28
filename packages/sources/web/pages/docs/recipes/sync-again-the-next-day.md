@@ -18,7 +18,7 @@ A blog has two posts, and its sitemap gives the date when each post last changed
 
 ```ts title="sync-again.ts"
 import { once } from 'node:events';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -126,6 +126,7 @@ posts.set('/posts/1', {
 });
 await sync('day 2');
 server.close();
+await rm(directory, { recursive: true, force: true });
 ```
 
 Output:

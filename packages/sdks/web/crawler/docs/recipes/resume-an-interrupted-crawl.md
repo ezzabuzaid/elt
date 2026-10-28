@@ -17,7 +17,7 @@ A blog has a feed that names five posts. The first crawl stops while it reads po
 
 ```ts title="resume-a-crawl.ts"
 import { once } from 'node:events';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,7 +51,8 @@ const address = server.address();
 if (address === null || typeof address === 'string') throw new Error('No port');
 const origin = `http://127.0.0.1:${address.port}`;
 
-const file = join(await mkdtemp(join(tmpdir(), 'crawl-')), 'crawl.json');
+const directory = await mkdtemp(join(tmpdir(), 'crawl-'));
+const file = join(directory, 'crawl.json');
 const crawler = new WebCrawler(got.extend({ timeout: { request: 30_000 } }), [
   new ListingReader(),
 ]);
@@ -79,6 +80,7 @@ async function crawlUntil(name: string, stopAt: string | null) {
 await crawlUntil('first crawl', '/posts/3');
 await crawlUntil('second crawl', null);
 server.close();
+await rm(directory, { recursive: true, force: true });
 ```
 
 Output:

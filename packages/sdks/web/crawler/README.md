@@ -40,7 +40,7 @@ await writeFile('crawl.json', JSON.stringify(crawl.snapshot()));
 
 ## Engine
 
-`WebCrawler` owns the crawl frontier: the URLs still to download, and every URL already pending or downloaded. It downloads each URL once through the Got client you supply. Got owns redirects, retries, timeouts, caching and rate limiting. The engine gives each response to every reader, in the order you list them, and adds what they find to the frontier. It has no format knowledge.
+`WebCrawler` owns the crawl frontier: the URLs still to download, and every URL already pending or downloaded. It downloads each URL once through the Got client you supply. Got owns redirects, retries, timeouts and caching. The engine paces each origin: its `Crawl-delay` and its slowdown. The engine gives each response to every reader, in the order you list them, and adds what they find to the frontier. It has no format knowledge.
 
 - **Starting URLs** are downloaded and read. A starting URL is handed back as a page only when a reader finds it as one, such as a sitemap that lists it or a page that links it, as Nutch and StormCrawler treat a seed like any other URL. A failed starting URL is an error.
 - **Pages** are URLs a reader marks as pages. The crawl hands back a page with its Got response when the page matches `include`, or always when you omit `include`. The engine downloads a page that does not match only when a reader `wants` it.
