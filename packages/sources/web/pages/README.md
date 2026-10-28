@@ -90,6 +90,17 @@ Within each input, the crawler downloads one page at a time. A shared `p-queue` 
 
 ## Documentation
 
+**Recipes**: one use case each, with a full program that you can run.
+
+1. [Sync again the next day](./docs/recipes/sync-again-the-next-day.md)
+2. [Refresh from a Sync button or a watch](./docs/recipes/refresh-from-a-sync-button-or-a-watch.md)
+3. [Resume an interrupted crawl](../../../sdks/web/crawler/docs/recipes/resume-an-interrupted-crawl.md), with `@workspace/sdk-web-crawler`
+4. [Check some pages every hour and the rest by change](../../../sdks/web/crawler/docs/recipes/check-some-pages-every-hour.md), with `@workspace/sdk-web-crawler`
+5. [Write your own revisit policy](../../../sdks/web/crawler/docs/recipes/write-your-own-revisit-policy.md), with `@workspace/sdk-web-crawler`
+6. [Crawl a website that rate-limits you](../../../sdks/web/crawler/docs/recipes/crawl-a-website-that-rate-limits-you.md), with `@workspace/sdk-web-crawler`
+
+**Decisions**: the architecture decision records tell why the design is as it is.
+
 - [ADR 0001: A page is extracted again only when its fingerprint changes](./docs/adr/0001-a-page-is-extracted-again-only-when-its-fingerprint-changes.md)
 - [ADR 0002: The crawler owns the frontier](./docs/adr/0002-the-crawler-owns-the-frontier.md)
 - [ADR 0003: The state has diff, crawl and retry](./docs/adr/0003-the-state-has-diff-crawl-and-retry.md)

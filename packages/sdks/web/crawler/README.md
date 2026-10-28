@@ -82,7 +82,7 @@ A `RevisitPolicy` decides when a URL is due; the third argument of `new WebCrawl
 
 A policy schedules nothing: it only gives each known URL the time it is due. A crawl starts when the caller starts it, for example `pipeline.run()` from a sync button or the host's own scheduler, or when `Pipeline.watch()` wakes at `crawl.nextDue()`. A crawl requests only the known URLs that are due then.
 
-A policy's history is plain data that its `histories` schema parses, so the memento can carry it. For another rule, extend `IntervalRevisit` and implement `visited`, or extend `RevisitPolicy` and implement `schedule` to decide failed and gone URLs too. Override `due` to read a hint before the download.
+A policy's history is plain data that its `histories` schema parses, so the memento can carry it. For another rule, extend `IntervalRevisit` and implement `visited`, or extend `RevisitPolicy` and implement `schedule` to decide failed and gone URLs too. Override `due` to read a hint before the download. See [Write your own revisit policy](./docs/recipes/write-your-own-revisit-policy.md).
 
 ## Readers
 
@@ -110,6 +110,17 @@ A list hands back the pages it links on its own origin. Give `origins` for a lis
 Readers decode HTML and Markdown pages by their byte order mark, their `Content-Type` charset or their `<meta charset>`, in that order (the WHATWG encoding sniffing algorithm, through `html-encoding-sniffer`). An unlabeled page is read as UTF-8; bytes that do not decode become U+FFFD rather than failing the page. Listings are decoded as UTF-8, as the sitemaps protocol requires.
 
 No JavaScript runs. Article extraction, checkpoints and destinations are outside this package.
+
+## Recipes
+
+One use case each, with a full program that you can run.
+
+1. [Resume an interrupted crawl](./docs/recipes/resume-an-interrupted-crawl.md)
+2. [Check some pages every hour and the rest by change](./docs/recipes/check-some-pages-every-hour.md)
+3. [Write your own revisit policy](./docs/recipes/write-your-own-revisit-policy.md)
+4. [Crawl a website that rate-limits you](./docs/recipes/crawl-a-website-that-rate-limits-you.md)
+5. [Sync again the next day](../../../sources/web/pages/docs/recipes/sync-again-the-next-day.md), with `@workspace/source-web-pages`
+6. [Refresh from a Sync button or a watch](../../../sources/web/pages/docs/recipes/refresh-from-a-sync-button-or-a-watch.md), with `@workspace/source-web-pages`
 
 ## Package ownership
 
