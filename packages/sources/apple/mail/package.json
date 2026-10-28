@@ -19,6 +19,6 @@
   },
   "devDependencies": {
     "@workspace/elt-sqlite": "0.0.1",
-    "@zukhruf/pool": "^0.3.49"
+    "@zukhruf/pool": "^0.3.52"
   }
 }
