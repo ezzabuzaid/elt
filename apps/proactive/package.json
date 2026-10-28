@@ -17,6 +17,6 @@
     "postgres": "^3.4.9"
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.3.47"
+    "@zukhruf/testing": "^0.3.49"
   }
 }
