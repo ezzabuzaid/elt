@@ -2344,6 +2344,38 @@ test('a call, activity or saved entry gone from the part of its feed the app hol
   );
 });
 
+test('a file the app lists several times in one message loads as one file of that message', async () => {
+  const { dir, app, out } = await scratch();
+  await using _ = dir;
+  // A live store held one channel post whose files list repeated the same
+  // entry twelve times, byte for byte.
+  const repeated = (c: Chain): Chain =>
+    chain(
+      Object.values(c.messageMap).map((m) => {
+        if (m.id !== ids.hello) return m;
+        const [file]: unknown[] = JSON.parse(String(m.properties.files));
+        return {
+          ...m,
+          properties: {
+            ...m.properties,
+            files: JSON.stringify([file, file, file]),
+          },
+        };
+      }),
+    );
+  const base = account();
+  await app.save({ ...base, chains: base.chains.map(repeated) });
+  const source = new TeamsSource(app.directory);
+  const run = await pipeline(source, dir.path);
+
+  const loaded = counts(await run.run());
+
+  assert.deepEqual(loaded.messageFiles, { count: 1, deleted: 0 });
+  assert.deepEqual(rows(out, 'SELECT messageId, fileId FROM messageFiles'), [
+    { messageId: ids.hello, fileId: 'file-1' },
+  ]);
+});
+
 test('an import scope keeps the selected accounts, conversations and dates, and keeps what belongs to the account alone', async () => {
   const { dir, app, out } = await scratch();
   await using _ = dir;

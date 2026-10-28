@@ -77,7 +77,7 @@ function body(message: Fields): Body {
     cardsJson: properties?.json('cards') ?? null,
     reactions: properties?.list('emotions').flatMap(reactions) ?? [],
     mentions: properties?.parsedList('mentions').map(mention) ?? [],
-    files: properties?.parsedList('files').map(file) ?? [],
+    files: files(properties),
     links: properties?.parsedList('links').map(link) ?? [],
     quotes: properties?.list('qtdMsgs').map(quote) ?? [],
     pinnedBy: pinnedAt === null ? null : (pinned?.string('creatorId') ?? null),
@@ -101,6 +101,17 @@ function mention(mention: Fields, index: number): TeamsMention {
     kind: mention.string('mentionType'),
     displayName: mention.string('displayName'),
   };
+}
+
+// Teams can list one file several times in a message, each entry the same
+// byte for byte, so the message keeps it once. Entries that share an id but
+// differ stay apart.
+function files(properties: Fields | null): TeamsMessageFile[] {
+  if (properties === null) return [];
+  const entries = properties.parsedList('files').map(file);
+  return [
+    ...new Map(entries.map((entry) => [JSON.stringify(entry), entry])).values(),
+  ];
 }
 
 function file(file: Fields): TeamsMessageFile {
