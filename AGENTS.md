@@ -99,6 +99,10 @@ An SDK is the agnostic package that speaks one vendor store or API, such as `~/L
 
 Test against the real dependency: a real `Pipeline`, real SQLite or Postgres, a synthetic app database on disk. A test that needs data in a live store writes it there and deletes it, as the EventKit tests do with a temporary calendar. Fake a boundary only when the real one cannot produce the case, say why beside the fake, and make the fake a real stand-in outside the code under test, never a mock of a module: `StubEventKitHelper` is an executable the EventKit stores run instead of the compiled helper, because EventKit cannot create attendees and a test cannot deny access or remove the ICS export. A package that owns such a boundary exports its fake as a class under a `./test` subpath. Every other test helper lives in the test file that uses it; packages export no shared testing modules.
 
+## Each package owns its docs
+
+Document a package in the package, as the zukhruf packages do: `README.md`, a glossary in `CONTEXT.md`, decisions in `docs/adr/`, and recipes in `docs/recipes/` whose programs you ran and whose real output you pasted. Write in ASD-STE100 with the terms of the glossary, and add each new glossary to `CONTEXT-MAP.md`. `docs/reference.md` is being retired: add nothing to it, and move a section into its package when you change what it describes. Derived datasets went this way: they were first documented only in the reference, and `packages/elt` and `packages/destinations/sqlite` now show the shape.
+
 ## Read every changed file before reporting done
 
 Before calling a change finished, read each file it touched in full, not from memory, and remove what has no single concept or real consumer: forwarding wrappers, conversions of values whose types are known, defaults nobody overrides, exports nobody imports, and files left over from a split. Probe any claim that something cannot work before relying on it. Do this unprompted; the user should not have to audit file by file.
