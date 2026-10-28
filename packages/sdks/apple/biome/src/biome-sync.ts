@@ -1,8 +1,8 @@
 import type { SQLOutputValue } from 'node:sqlite';
 
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
-import { BiomeSchemaError, BiomeUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 
 // A device Biome syncs activity with, this Mac included.
 export type BiomeDevice = {
@@ -40,8 +40,7 @@ export class BiomeSync implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, BiomeUnavailableError);
-    this.#database.requireColumns(columns, BiomeSchemaError);
+    this.#database = appDatabase.snapshot(path, columns);
   }
 
   // Read as the caller iterates, like every read that feeds a stream.

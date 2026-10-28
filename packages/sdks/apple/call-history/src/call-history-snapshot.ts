@@ -1,12 +1,10 @@
-import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
 import { referenceDateInstant } from '@workspace/codec-apple-reference-date';
 
+import { appDatabase } from './app-database.ts';
 import { type Call, type Handle, callCategory, callKind } from './call.ts';
-import {
-  CallHistorySchemaError,
-  CallHistoryUnavailableError,
-} from './errors.ts';
+import { CallHistorySchemaError } from './errors.ts';
 
 // A party to one call, other than this device's user.
 export type Participant = {
@@ -116,8 +114,7 @@ export class CallHistorySnapshot implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, CallHistoryUnavailableError);
-    this.#database.requireColumns(requiredColumns, CallHistorySchemaError);
+    this.#database = appDatabase.snapshot(path, requiredColumns);
   }
 
   // Read as the caller iterates, as every read below: a store keeps tens of

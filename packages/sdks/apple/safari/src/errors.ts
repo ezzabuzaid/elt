@@ -8,15 +8,3 @@ export class SafariUnavailableError extends Error {
     );
   }
 }
-
-// Safari changes its stores between releases; reading one we have not
-// verified would silently misplace fields.
-export class SafariSchemaError extends Error {
-  override name = 'SafariSchemaError';
-
-  constructor(path: string, missing: readonly string[]) {
-    super(
-      `The Safari store at ${path} has a layout this reader does not read (missing ${missing.join(', ')}).`,
-    );
-  }
-}

@@ -1,8 +1,8 @@
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { ProtobufMessage } from '@workspace/codec-protobuf';
 
-import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import { bytes, instant, requiredText, unixSecondInstant } from './values.ts';
 
 // One of the account's privacy settings, as WhatsApp names its category and
@@ -66,8 +66,7 @@ class KeyValueSnapshot implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, WhatsAppUnavailableError);
-    this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
+    this.#database = appDatabase.snapshot(path, requiredColumns);
   }
 
   elements(namespace: string): IteratorObject<Element, undefined> {

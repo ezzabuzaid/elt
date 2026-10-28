@@ -1,5 +1,6 @@
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
+import { appDatabase } from './app-database.ts';
 import { type BookFile, bookFile } from './book-files.ts';
 import {
   type Row,
@@ -12,7 +13,6 @@ import {
   stored,
   text,
 } from './books-values.ts';
-import { BooksSchemaError, BooksUnavailableError } from './errors.ts';
 
 // The BKLibrary columns this reader reads; opening the library checks them.
 const libraryColumns = {
@@ -370,8 +370,7 @@ export class BooksLibrary implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, BooksUnavailableError);
-    this.#database.requireColumns(libraryColumns, BooksSchemaError);
+    this.#database = appDatabase.snapshot(path, libraryColumns);
   }
 
   // Every read returns rows as the caller iterates, so none holds a table.

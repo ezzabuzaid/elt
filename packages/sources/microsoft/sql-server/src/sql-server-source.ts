@@ -4,7 +4,6 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
-  type FailureType,
   type Partition,
   Source,
   type SourceMessage,
@@ -96,12 +95,10 @@ export class SqlServerSource extends Source<SqlServerSession> {
     return this.#database.open();
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof SqlServerPermissionError ||
-      error instanceof SqlServerUnavailableError
-      ? 'config'
-      : 'system';
-  }
+  protected override readonly configErrors = [
+    SqlServerPermissionError,
+    SqlServerUnavailableError,
+  ];
 
   coverage(stream: Stream): ExtractionCoverage {
     return this.#reader(stream).coverage();

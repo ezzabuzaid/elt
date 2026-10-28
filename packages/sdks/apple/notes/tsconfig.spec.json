@@ -20,6 +20,9 @@
     },
     {
       "path": "../../../codecs/apple-reference-date/tsconfig.lib.json"
+    },
+    {
+      "path": "../../macos/app-database/tsconfig.lib.json"
     }
   ]
 }

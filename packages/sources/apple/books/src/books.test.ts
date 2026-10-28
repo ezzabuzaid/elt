@@ -1260,7 +1260,7 @@ test('Books names Full Disk Access for an unreadable store, refuses an unknown l
   );
   assert.match(
     failed.assetDetails ?? '',
-    /missing ZBCASSETDETAIL\.ZREADINGPROGRESS/,
+    /lacks the columns ZBCASSETDETAIL\.ZREADINGPROGRESS/,
   );
   assert.match(
     failed.readingDays ?? '',
@@ -1510,31 +1510,34 @@ test('a malformed or missing Books store, column or value fails only the streams
   // A store missing a column a stream reads fails every stream of that store.
   assert.deepEqual(Object.keys(viewMode).sort(), library);
   for (const error of Object.values(viewMode)) {
-    assert.match(error, /^BooksSchemaError: /);
-    assert.match(error, /BKLibrary-1-091020131601\.sqlite /);
-    assert.match(error, /missing ZBKCOLLECTION\.ZVIEWMODE/);
+    assert.match(error, /^MissingColumnsError: /);
+    assert.match(error, /BKLibrary-1-091020131601\.sqlite" /);
+    assert.match(error, /lacks the columns ZBKCOLLECTION\.ZVIEWMODE/);
   }
   assert.deepEqual(Object.keys(note), ['annotations']);
-  assert.match(note.annotations ?? '', /^BooksSchemaError: /);
+  assert.match(note.annotations ?? '', /^MissingColumnsError: /);
   assert.match(
     note.annotations ?? '',
-    /AEAnnotation_v10312011_1727_local\.sqlite /,
+    /AEAnnotation_v10312011_1727_local\.sqlite" /,
   );
   assert.match(
     note.annotations ?? '',
-    /missing ZAEANNOTATION\.ZANNOTATIONNOTE/,
+    /lacks the columns ZAEANNOTATION\.ZANNOTATIONNOTE/,
   );
   assert.deepEqual(Object.keys(justify), ['themes']);
-  assert.match(justify.themes ?? '', /^BooksSchemaError: /);
-  assert.match(justify.themes ?? '', /BookTheme\.sqlite /);
-  assert.match(justify.themes ?? '', /missing ZBOOKTHEME\.ZJUSTIFY/);
+  assert.match(justify.themes ?? '', /^MissingColumnsError: /);
+  assert.match(justify.themes ?? '', /BookTheme\.sqlite" /);
+  assert.match(justify.themes ?? '', /lacks the columns ZBOOKTHEME\.ZJUSTIFY/);
   assert.deepEqual(Object.keys(genre), ['purchases']);
-  assert.match(genre.purchases ?? '', /^BooksSchemaError: /);
+  assert.match(genre.purchases ?? '', /^MissingColumnsError: /);
   assert.match(
     genre.purchases ?? '',
-    /BKJaliscoServerSource-v09182016\.sqlite /,
+    /BKJaliscoServerSource-v09182016\.sqlite" /,
   );
-  assert.match(genre.purchases ?? '', /missing ZBLJALISCOSERVERITEM\.ZGENRE/);
+  assert.match(
+    genre.purchases ?? '',
+    /lacks the columns ZBLJALISCOSERVERITEM\.ZGENRE/,
+  );
   // Z_PK only orders rows, so a table without it fails only its own stream,
   // when its query runs, and the store's other streams load.
   for (const [stream, failed] of Object.entries(unkeyed)) {

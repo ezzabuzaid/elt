@@ -1,8 +1,7 @@
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
-
 import { ProtobufMessage } from '@workspace/codec-protobuf';
 
-import { BooksSchemaError, BooksUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
+import { BooksSchemaError } from './errors.ts';
 
 // Books' reading history is a Coherence CRDT document (Apple's private CRDT
 // framework, wire format version 4) that bookdatastored syncs through
@@ -231,8 +230,7 @@ const noHistory: ReadingHistory = { months: [], days: [], streaks: [] };
 // says which of two live ones is current, so two refuse to read rather than
 // pick one; so does a document that is not bytes.
 export function readingHistory(path: string): ReadingHistory {
-  using database = new Snapshot(path, BooksUnavailableError);
-  database.requireColumns(readingHistoryColumns, BooksSchemaError);
+  using database = appDatabase.snapshot(path, readingHistoryColumns);
   const rows = database.all(
     "SELECT ZPROTODATA FROM ZCRDTMODELSYNCENTITY WHERE ZTYPE = 'ReadingHistoryModel' AND coalesce(ZDELETEDFLAG, 0) = 0",
   );

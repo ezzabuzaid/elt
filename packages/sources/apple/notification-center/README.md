@@ -64,7 +64,7 @@ A notification has its title, subtitle, body, thread, category, delivery and exp
 
 ## Access
 
-Give **Full Disk Access** to the process that runs the pipeline. Without it, all streams fail with `NotificationCenterUnavailableError`, which names the grant. If the store does not have a column that the reader uses, all streams fail with `NotificationCenterSchemaError`. This error names the missing columns.
+Give **Full Disk Access** to the process that runs the pipeline. Without it, all streams fail with `NotificationCenterUnavailableError`, which names the grant. If the store does not have a column that the reader uses, all streams fail with `MissingColumnsError`. This error names the missing columns.
 
 ## Scope
 

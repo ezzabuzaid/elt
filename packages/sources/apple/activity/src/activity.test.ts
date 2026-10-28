@@ -1085,7 +1085,7 @@ test('Activity names Full Disk Access for unreadable Biome folders, refuses an u
     );
     assert.match(
       failed.displayBacklight ?? '',
-      /missing ZOBJECT\.ZSECONDSFROMGMT/,
+      /lacks the columns ZOBJECT\.ZSECONDSFROMGMT/,
     );
     assert.deepEqual(failedStreams(failure), {
       config: [

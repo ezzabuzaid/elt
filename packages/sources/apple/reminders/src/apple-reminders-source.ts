@@ -3,7 +3,6 @@ import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
-  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -77,9 +76,7 @@ export class AppleRemindersSource extends Source<RemindersScan> {
     Object.freeze(this);
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof RemindersUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [RemindersUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

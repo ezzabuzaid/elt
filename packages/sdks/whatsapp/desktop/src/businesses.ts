@@ -1,9 +1,9 @@
-import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
 import { decodeArchive, isDictionary } from '@workspace/codec-plist';
 import { ProtobufMessage } from '@workspace/codec-protobuf';
 
-import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import {
   bytes,
   flag,
@@ -189,8 +189,7 @@ export class BusinessesSnapshot implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, WhatsAppUnavailableError);
-    this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
+    this.#database = appDatabase.snapshot(path, requiredColumns);
   }
 
   profiles(): IteratorObject<BusinessProfile, undefined> {

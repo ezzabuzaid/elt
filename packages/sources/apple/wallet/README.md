@@ -54,7 +54,7 @@ Every stream other than `passes` refers to the pass by `passId`.
 
 ## Access
 
-The source needs no grant. When the store does not open, for example on a Mac where Wallet was never used, every stream fails with `WalletUnavailableError`. When a passd column that the SDK reads is missing, every stream fails with `WalletSchemaError`. When a pass has no bundle, or the reader cannot decode its `pass.json`, the read fails with `PassBundleError`, which names the pass.
+The source needs no grant. When the store does not open, for example on a Mac where Wallet was never used, every stream fails with `WalletUnavailableError`. When a passd column that the SDK reads is missing, every stream fails with `MissingColumnsError`. When a pass has no bundle, or the reader cannot decode its `pass.json`, the read fails with `PassBundleError`, which names the pass.
 
 ## Limitations
 

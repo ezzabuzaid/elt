@@ -1,7 +1,7 @@
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
+import { appDatabase } from './app-database.ts';
 import { coreDataTime, flag, integer, stored, text } from './books-values.ts';
-import { BooksSchemaError, BooksUnavailableError } from './errors.ts';
 
 // The AEAnnotation columns this reader reads; opening the store checks them.
 const annotationsColumns = {
@@ -65,8 +65,7 @@ export class BooksAnnotations implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, BooksUnavailableError);
-    this.#database.requireColumns(annotationsColumns, BooksSchemaError);
+    this.#database = appDatabase.snapshot(path, annotationsColumns);
   }
 
   // Read as the caller iterates: a library keeps tens of thousands of

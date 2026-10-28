@@ -2,11 +2,11 @@ import { access } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { SQLOutputValue } from 'node:sqlite';
 
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { referenceDate } from '@workspace/codec-apple-reference-date';
 
-import { NotesSchemaError, NotesUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import { NoteDocument, decodeTable } from './note-document.ts';
 
 // Every Notes object lives in one Core Data table; Z_ENT names its entity, and
@@ -224,8 +224,7 @@ export class NoteStoreSnapshot implements Disposable {
 
   constructor(path: string) {
     this.#path = path;
-    this.#database = new Snapshot(path, NotesUnavailableError);
-    this.#database.requireColumns(requiredColumns, NotesSchemaError);
+    this.#database = appDatabase.snapshot(path, requiredColumns);
   }
 
   accounts(): NoteAccount[] {

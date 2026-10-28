@@ -3,7 +3,6 @@ import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
-  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -127,12 +126,10 @@ export class AppleActivitySource extends Source<ActivityScan> {
     );
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof BiomeUnavailableError ||
-      error instanceof KnowledgeUnavailableError
-      ? 'config'
-      : 'system';
-  }
+  protected override readonly configErrors = [
+    BiomeUnavailableError,
+    KnowledgeUnavailableError,
+  ];
 
   override coverage(stream: Stream): ExtractionCoverage {
     const { retentionDays } = readerOf(stream);

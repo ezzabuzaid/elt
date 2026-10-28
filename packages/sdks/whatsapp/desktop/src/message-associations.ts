@@ -1,6 +1,6 @@
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
-import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import { requiredText } from './values.ts';
 
 // A message WhatsApp shows as part of another of the same chat, such as a
@@ -30,8 +30,7 @@ export class MessageAssociationsSnapshot implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, WhatsAppUnavailableError);
-    this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
+    this.#database = appDatabase.snapshot(path, requiredColumns);
   }
 
   associations(): IteratorObject<MessageAssociation, undefined> {

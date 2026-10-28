@@ -15,16 +15,6 @@ export class MailSchemaError extends Error {
   override name = 'MailSchemaError';
 }
 
-// The Envelope Index lacks columns this reader reads: Mail changed its layout,
-// and reading on would misplace fields.
-export class MailLayoutError extends MailSchemaError {
-  constructor(path: string, missing: readonly string[]) {
-    super(
-      `The Mail index at ${path} has a layout this reader does not read (missing ${missing.join(', ')}).`,
-    );
-  }
-}
-
 export class MailChangingError extends Error {
   override name = 'MailChangingError';
 }

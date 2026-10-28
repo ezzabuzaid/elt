@@ -6,7 +6,6 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
-  type FailureType,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -119,9 +118,7 @@ export class TeamsSource extends Source<TeamsScan> {
     return new TeamsScan(await this.#store.clients(), this.scope);
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof TeamsUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [TeamsUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return {

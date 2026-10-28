@@ -95,7 +95,7 @@ All streams are snapshot streams. Use `incremental` with `append_dedup` and no `
 
 ## Access
 
-Give **Full Disk Access** to the process that runs the pipeline. If the store is missing or the process has no access, the read fails with `NotesUnavailableError`. If the store does not have a column that the reader uses, for example after a macOS release changes the layout, the read fails with `NotesSchemaError`. This error names the missing columns.
+Give **Full Disk Access** to the process that runs the pipeline. If the store is missing or the process has no access, the read fails with `NotesUnavailableError`. If the store does not have a column that the reader uses, for example after a macOS release changes the layout, the read fails with `MissingColumnsError`. This error names the missing columns.
 
 ## Scope
 

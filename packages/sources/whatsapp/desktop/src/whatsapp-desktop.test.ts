@@ -28,7 +28,6 @@ import {
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import {
-  WhatsAppSchemaError,
   WhatsAppUnavailableError,
   whatsappContainer,
 } from '@workspace/sdk-whatsapp-desktop';
@@ -2201,58 +2200,70 @@ test('a store WhatsApp has not created, or macOS denies, fails only the streams 
 });
 
 test('a store lacking a column or table this reader reads fails only that store’s streams, naming what is missing', async () => {
-  const breaks: [Store, string, RegExp][] = [
+  // A missing column is the package's MissingColumnsError; a missing
+  // relationship or entity is the SDK's own WhatsAppSchemaError.
+  const breaks: [Store, string, RegExp, string][] = [
     [
       'chatStorage',
       'ALTER TABLE ZWAMESSAGE DROP COLUMN ZTEXT',
       /ZWAMESSAGE\.ZTEXT/,
+      'MissingColumnsError',
     ],
     [
       'contacts',
       'ALTER TABLE ZWAADDRESSBOOKCONTACT DROP COLUMN ZFULLNAME',
       /ZWAADDRESSBOOKCONTACT\.ZFULLNAME/,
+      'MissingColumnsError',
     ],
     [
       'users',
       'ALTER TABLE ZWAZACCOUNT DROP COLUMN ZPHONENUMBER',
       /ZWAZACCOUNT\.ZPHONENUMBER/,
+      'MissingColumnsError',
     ],
     [
       'calls',
       'ALTER TABLE ZWACDCALLEVENTPARTICIPANT DROP COLUMN Z1PARTICIPANTS',
       /ZWACDCALLEVENTPARTICIPANT\.Z\*PARTICIPANTS/,
+      'WhatsAppSchemaError',
     ],
     [
       'messageAssociations',
       'ALTER TABLE message_parent_association DROP COLUMN sort',
       /message_parent_association\.sort/,
+      'MissingColumnsError',
     ],
     [
       'businesses',
       'ALTER TABLE ZWABIZPROFILEDATA DROP COLUMN ZEMAIL',
       /ZWABIZPROFILEDATA\.ZEMAIL/,
+      'MissingColumnsError',
     ],
     [
       'stickers',
       "DELETE FROM Z_PRIMARYKEY WHERE Z_NAME = 'WACDStoreStickerPack'",
       /Z_PRIMARYKEY\.WACDStoreStickerPack/,
+      'WhatsAppSchemaError',
     ],
     [
       'localKeyValue',
       'ALTER TABLE ZWAKEYVALUEELEMENT DROP COLUMN ZDATE',
       /ZWAKEYVALUEELEMENT\.ZDATE/,
+      'MissingColumnsError',
     ],
     [
       'backedUpKeyValue',
       'DROP TABLE ZWAKEYVALUEELEMENT',
       /ZWAKEYVALUEELEMENT\.Z_PK/,
+      'MissingColumnsError',
     ],
   ];
-  for (const [store, sql, named] of breaks) {
+  for (const [store, sql, named, name] of breaks) {
     const broken = await failedAfter((whatsapp) => whatsapp.exec(store, sql));
     assert.deepEqual(broken.streams, streamsOf[store], store);
     for (const error of broken.errors) {
-      assert.ok(error instanceof WhatsAppSchemaError, store);
+      assert.ok(error instanceof Error, store);
+      assert.equal(error.name, name, store);
       assert.match(error.message, named);
     }
     assert.equal(broken.messages, store === 'chatStorage' ? 0 : 7, store);

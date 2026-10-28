@@ -1,4 +1,4 @@
-import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
 import { referenceDateInstant } from '@workspace/codec-apple-reference-date';
 import {
@@ -9,10 +9,7 @@ import {
   parseBinaryPlist,
 } from '@workspace/codec-plist';
 
-import {
-  NotificationCenterSchemaError,
-  NotificationCenterUnavailableError,
-} from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import {
   type CategoryAction,
   type Notification,
@@ -35,11 +32,7 @@ export class NotificationCenterSnapshot implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, NotificationCenterUnavailableError);
-    this.#database.requireColumns(
-      requiredColumns,
-      NotificationCenterSchemaError,
-    );
+    this.#database = appDatabase.snapshot(path, requiredColumns);
   }
 
   // Read as the caller iterates: usernoted keeps every notification it has

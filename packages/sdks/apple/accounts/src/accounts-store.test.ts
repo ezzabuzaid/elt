@@ -6,8 +6,9 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
+
 import {
-  AccountsSchemaError,
   AccountsStore,
   AccountsUnavailableError,
   accountsStorePath,
@@ -449,7 +450,7 @@ test('a table in a layout this reader does not know fails only its own reads, an
   assert.throws(
     () => snapshot.authorizations(),
     (error: unknown) => {
-      assert.ok(error instanceof AccountsSchemaError);
+      assert.ok(error instanceof MissingColumnsError);
       assert.match(error.message, /ZAUTHORIZATION\.ZOPTIONS/);
       return true;
     },

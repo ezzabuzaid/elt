@@ -31,7 +31,7 @@ export {
 } from './books-location.ts';
 export { BooksPurchases, type Purchase } from './books-purchases.ts';
 export { BooksThemes, type Theme } from './books-themes.ts';
-export { BooksVersion } from './books-version.ts';
+export { type BooksVersion } from './books-version.ts';
 export { Books } from './books.ts';
 export { BooksSchemaError, BooksUnavailableError } from './errors.ts';
 export { type ReadingGoal } from './reading-goal.ts';

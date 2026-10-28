@@ -1,4 +1,4 @@
-export { NotesSchemaError, NotesUnavailableError } from './errors.ts';
+export { NotesUnavailableError } from './errors.ts';
 export {
   type NoteAttachmentReference,
   NoteDocument,

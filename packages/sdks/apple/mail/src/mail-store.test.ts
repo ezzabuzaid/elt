@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
-import { MailSchemaError, MailStore, MailUnavailableError } from './index.ts';
+import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
+
+import { MailStore, MailUnavailableError } from './index.ts';
 
 test('the store was last written when the index of its current version folder was, not an older folder', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'mail-store-'));
@@ -42,7 +44,7 @@ test('a store whose index is missing is unavailable, not a time', async () => {
   );
 });
 
-test('an index without a column the reader needs fails with MailSchemaError naming each missing table.column', async () => {
+test('an index without a column the reader needs fails with MissingColumnsError naming each missing table.column', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'mail-store-'));
   await writeFile(
     join(dir.path, 'PersistenceInfo.plist'),
@@ -58,16 +60,17 @@ test('an index without a column the reader needs fails with MailSchemaError nami
   );
 
   await assert.rejects(new MailStore(dir.path).open(), (error: unknown) => {
-    assert.ok(error instanceof MailSchemaError);
-    assert.equal(error.name, 'MailSchemaError');
+    assert.ok(error instanceof MissingColumnsError);
+    assert.equal(error.name, 'MissingColumnsError');
+    assert.equal(error.path, index);
     assert.ok(
       error.message.startsWith(
-        `The Mail index at ${index} has a layout this reader does not read (missing messages.global_message_id, messages.remote_id, `,
+        `The database at ${JSON.stringify(index)} lacks the columns messages.global_message_id, messages.remote_id, `,
       ),
     );
     assert.match(error.message, /\bmailboxes\.url\b/);
     assert.match(error.message, /\bserver_labels\.label\b/);
-    assert.match(error.message, /\bevents\.is_response_requested\)\.$/);
+    assert.match(error.message, /\bevents\.is_response_requested: /);
     assert.doesNotMatch(
       error.message,
       /[ (]messages\.(ROWID|message_id|subject)\b/,

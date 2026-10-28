@@ -48,7 +48,7 @@ The source has 24 streams:
 
 To read only some accounts, give container IDs as `collectionIds` in the second argument: `new AppleContactsSource(undefined, { collectionIds })`.
 
-Access: macOS protects the AddressBook folder with the Contacts privacy service. Give the app that runs the pipeline, such as the terminal, Contacts access or Full Disk Access. If you dismiss the Contacts prompt, macOS records a denial and does not show the prompt again. A store or `Sources` folder that the source cannot open fails the run with `ContactsUnavailableError` before a copy starts. A store without a column or entity that the source reads fails with `ContactsSchemaError`.
+Access: macOS protects the AddressBook folder with the Contacts privacy service. Give the app that runs the pipeline, such as the terminal, Contacts access or Full Disk Access. If you dismiss the Contacts prompt, macOS records a denial and does not show the prompt again. A store or `Sources` folder that the source cannot open fails the run with `ContactsUnavailableError` before a copy starts. A store without a column that the source reads fails with `MissingColumnsError`. A store without an entity that the source reads fails with `ContactsSchemaError`.
 
 Limitations:
 

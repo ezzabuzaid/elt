@@ -7,7 +7,6 @@ import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
-  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -137,9 +136,7 @@ export class AppleCalendarSource extends Source<CalendarScan> {
     Object.freeze(this);
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof CalendarUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [CalendarUnavailableError];
 
   override coverage(stream: Stream): ExtractionCoverage {
     if (!readerOf(stream).dated)

@@ -56,7 +56,7 @@ WhatsApp names a person by a JID: `<number>@s.whatsapp.net` or `<LID>@lid`. One 
 
 ## Access
 
-The group container needs Full Disk Access. Each store opens on its own. When a store is missing or macOS refuses it, only the streams of that store fail, with `WhatsAppUnavailableError`, which names the store and the grant. When a column that a reader reads is missing, the streams of that store fail with `WhatsAppSchemaError`, and the other stores load. In both cases, the source deletes nothing.
+The group container needs Full Disk Access. Each store opens on its own. When a store is missing or macOS refuses it, only the streams of that store fail, with `WhatsAppUnavailableError`, which names the store and the grant. When a column that a reader reads is missing, the streams of that store fail with `MissingColumnsError`, and the other stores load. In both cases, the source deletes nothing.
 
 ## Limitations
 

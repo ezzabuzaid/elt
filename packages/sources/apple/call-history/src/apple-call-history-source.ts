@@ -5,7 +5,6 @@ import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
-  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -70,9 +69,7 @@ export class AppleCallHistorySource extends Source<CallHistoryScan> {
     return new CallHistoryScan(this.#store.open(), this.scope);
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof CallHistoryUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [CallHistoryUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

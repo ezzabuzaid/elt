@@ -1,8 +1,8 @@
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { type PlistValue, parseBinaryPlist } from '@workspace/codec-plist';
 
-import { SafariSchemaError, SafariUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import {
   appleTime,
   counts,
@@ -138,8 +138,7 @@ export class ProfileHistory implements Disposable {
 
   constructor(path: string, profileId: string) {
     this.profileId = profileId;
-    this.#database = new Snapshot(path, SafariUnavailableError);
-    this.#database.requireColumns(historyColumns, SafariSchemaError);
+    this.#database = appDatabase.snapshot(path, historyColumns);
   }
 
   // Each read below yields its rows as the caller iterates them, so no read

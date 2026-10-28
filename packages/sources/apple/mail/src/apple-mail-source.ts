@@ -3,7 +3,6 @@ import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
-  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -227,12 +226,10 @@ export class AppleMailSource extends Source<MailScan> {
 
   // Full Disk Access opens both stores Mail reads: its own and the system's
   // Accounts store, which holds account settings.
-  override failureType(error: unknown): FailureType {
-    return error instanceof MailUnavailableError ||
-      error instanceof AccountsUnavailableError
-      ? 'config'
-      : 'system';
-  }
+  protected override readonly configErrors = [
+    MailUnavailableError,
+    AccountsUnavailableError,
+  ];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

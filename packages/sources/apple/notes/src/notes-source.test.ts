@@ -748,7 +748,7 @@ test('Notes names Full Disk Access when its store cannot be opened and refuses a
   });
   await assert.rejects(reading, (error) => {
     assert.ok(error instanceof Error);
-    assert.equal(error.name, 'NotesSchemaError');
+    assert.equal(error.name, 'MissingColumnsError');
     assert.match(error.message, /ZICCLOUDSYNCINGOBJECT\.ZTITLE1/);
     assert.equal(other.failureType(error), 'system');
     return true;

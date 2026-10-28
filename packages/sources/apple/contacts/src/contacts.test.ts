@@ -1352,7 +1352,7 @@ test('Contacts names the columns it needs when a store has another layout', asyn
   await assert.rejects(
     readFirst(new AppleContactsSource(directory)),
     (error: Error) => {
-      assert.equal(error.name, 'ContactsSchemaError');
+      assert.equal(error.name, 'MissingColumnsError');
       assert.match(error.message, /ACCOUNT-A.*ZABCDPHONENUMBER\.ZFULLNUMBER/);
       return true;
     },

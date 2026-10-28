@@ -1,9 +1,9 @@
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { referenceDate } from '@workspace/codec-apple-reference-date';
 
+import { appDatabase } from './app-database.ts';
 import { messageMediaFile } from './chat-storage.ts';
-import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
 import { flag, number, onDisk, requiredText, text } from './values.ts';
 
 // A status a contact or the account posted, with its text styling or link
@@ -103,8 +103,7 @@ export class StatusesSnapshot implements Disposable {
   readonly #container: string;
 
   constructor(path: string, container: string) {
-    this.#database = new Snapshot(path, WhatsAppUnavailableError);
-    this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
+    this.#database = appDatabase.snapshot(path, requiredColumns);
     this.#container = container;
   }
 

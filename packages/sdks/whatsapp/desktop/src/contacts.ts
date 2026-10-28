@@ -1,6 +1,6 @@
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
-import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import { instant, number, requiredText, text } from './values.ts';
 
 // A person in the Mac's address book whom WhatsApp found on WhatsApp, one per
@@ -72,8 +72,7 @@ export class ContactsSnapshot implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, WhatsAppUnavailableError);
-    this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
+    this.#database = appDatabase.snapshot(path, requiredColumns);
   }
 
   contacts(): IteratorObject<AddressBookContact, undefined> {

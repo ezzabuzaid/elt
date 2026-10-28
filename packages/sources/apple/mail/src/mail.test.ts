@@ -2123,7 +2123,7 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
     (error) =>
       error instanceof PipelineError &&
       error.cause instanceof Error &&
-      error.cause.name === 'MailSchemaError' &&
+      error.cause.name === 'MissingColumnsError' &&
       failureTypes(error).join() === 'system',
   );
   assert.deepEqual(

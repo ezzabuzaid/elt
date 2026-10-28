@@ -811,7 +811,8 @@ test('a store missing a column this reader reads fails every stream by name and 
     assert.ok(error instanceof PipelineError);
     assert.equal(error.errors.length, 5);
     for (const cause of error.errors) {
-      assert.ok(cause instanceof CallHistorySchemaError);
+      assert.ok(cause instanceof Error);
+      assert.equal(cause.name, 'MissingColumnsError');
       assert.match(cause.message, /ZCALLRECORD\.ZDURATION/);
     }
     return true;

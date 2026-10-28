@@ -14,7 +14,7 @@
     "@workspace/codec-plist": "0.0.1",
     "@workspace/codec-protobuf": "0.0.1",
     "@workspace/sdk-apple-launch-services": "0.0.1",
-    "@zukhruf/sqlite-data-version": "^0.3.49",
-    "@zukhruf/sqlite-snapshot": "^0.3.49"
+    "@workspace/sdk-macos-app-database": "0.0.1",
+    "@zukhruf/sqlite-snapshot": "^0.3.52"
   }
 }

@@ -1,9 +1,9 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { DataVersion } from '@zukhruf/sqlite-data-version';
+import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 
-import { SafariUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import {
   type SafariLocation,
   type SafariStore,
@@ -47,7 +47,7 @@ async function historyFiles(location: SafariLocation): Promise<string[]> {
 export class SafariVersion implements Disposable {
   readonly #location: SafariLocation;
   readonly #store: SafariStore;
-  readonly #databases = new Map<string, DataVersion>();
+  readonly #databases = new Map<string, AppDatabaseVersion>();
 
   constructor(location: SafariLocation, store: SafariStore) {
     this.#location = location;
@@ -78,7 +78,7 @@ export class SafariVersion implements Disposable {
   #version(path: string): number {
     let version = this.#databases.get(path);
     if (version === undefined) {
-      version = new DataVersion(path, SafariUnavailableError);
+      version = appDatabase.version(path);
       this.#databases.set(path, version);
     }
     return version.current;

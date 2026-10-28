@@ -4,7 +4,6 @@ export {
   type ChatMessageRow,
   type ChatPartRow,
   type ChatRow,
-  MessagesSchemaError,
   MessagesStore,
   MessagesUnavailableError,
   type MessageAttachmentRow,

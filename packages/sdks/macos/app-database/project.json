@@ -1,0 +1,13 @@
+{
+  "name": "sdk-macos-app-database",
+  "sourceRoot": "packages/sdks/macos/app-database/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test {args} \"packages/sdks/macos/app-database/src/*.test.ts\""
+    }
+  }
+}

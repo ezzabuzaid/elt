@@ -9,7 +9,6 @@ import {
 import type {
   CopyConfiguration,
   ExtractionCoverage,
-  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -155,9 +154,7 @@ export class AppleSafariSource extends Source<SafariScan> {
     );
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof SafariUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [SafariUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

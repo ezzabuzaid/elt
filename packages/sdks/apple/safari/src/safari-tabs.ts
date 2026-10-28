@@ -1,4 +1,4 @@
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import {
   type PlistValue,
@@ -6,7 +6,7 @@ import {
   parseBinaryPlist,
 } from '@workspace/codec-plist';
 
-import { SafariSchemaError, SafariUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import {
   type Dictionary,
   type Row,
@@ -71,8 +71,7 @@ const select = (table: keyof typeof tabsColumns, order: string) =>
 // SafariTabs.db open read-only and pinned to one moment, refused without the
 // columns this reader reads.
 export function tabsDatabase(path: string): Snapshot {
-  const database = new Snapshot(path, SafariUnavailableError);
-  database.requireColumns(tabsColumns, SafariSchemaError);
+  const database = appDatabase.snapshot(path, tabsColumns);
   return database;
 }
 

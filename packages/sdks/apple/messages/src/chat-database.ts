@@ -2,8 +2,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { SQLOutputValue } from 'node:sqlite';
 
-import { DataVersion } from '@zukhruf/sqlite-data-version';
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
+
+import {
+  AppDatabase,
+  type AppDatabaseVersion,
+} from '@workspace/sdk-macos-app-database';
 
 import {
   type ChatColumnKind,
@@ -44,17 +48,9 @@ export class MessagesUnavailableError extends Error {
   }
 }
 
-// chat.db's layout changes between macOS releases; reading one we have not
-// verified would misplace fields.
-export class MessagesSchemaError extends Error {
-  override name = 'MessagesSchemaError';
-
-  constructor(path: string, missing: readonly string[]) {
-    super(
-      `Messages history at ${path} has a layout this reader does not read (missing ${missing.join(', ')}).`,
-    );
-  }
-}
+const appDatabase = new AppDatabase({
+  unavailable: MessagesUnavailableError,
+});
 
 // Messages stores times since 2001-01-01 UTC, in nanoseconds since macOS 10.13
 // and in seconds before it and in attachment dates. Converted in SQL, because
@@ -167,8 +163,7 @@ export class ChatDatabase implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, MessagesUnavailableError);
-    this.#database.requireColumns(required, MessagesSchemaError);
+    this.#database = appDatabase.snapshot(path, required);
   }
 
   chats(): IteratorObject<ChatRow, undefined> {
@@ -353,7 +348,7 @@ export class MessagesStore {
     return new ChatDatabase(this.path);
   }
 
-  version(): DataVersion {
-    return new DataVersion(this.path, MessagesUnavailableError);
+  version(): AppDatabaseVersion {
+    return appDatabase.version(this.path);
   }
 }

@@ -5,7 +5,6 @@ import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
-  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -82,9 +81,7 @@ export class AppleNotesSource extends Source<NotesScan> {
     return new NotesScan(this.#store.open(), this.scope);
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof NotesUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [NotesUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

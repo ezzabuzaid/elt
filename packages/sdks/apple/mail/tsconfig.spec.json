@@ -14,6 +14,9 @@
     },
     {
       "path": "../../../codecs/plist/tsconfig.lib.json"
+    },
+    {
+      "path": "../../macos/app-database/tsconfig.lib.json"
     }
   ]
 }

@@ -6,7 +6,6 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
-  type FailureType,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -123,9 +122,7 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
     return new SlackDesktopScan(clients, downloads, this.scope);
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof SlackDesktopUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [SlackDesktopUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return {

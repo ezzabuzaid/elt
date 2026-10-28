@@ -1,8 +1,8 @@
 import type { SQLOutputValue } from 'node:sqlite';
 
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
-import { MailLayoutError, MailUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import {
   type MailColumnKind,
   type MailTable,
@@ -106,8 +106,7 @@ export class EnvelopeIndex implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, MailUnavailableError);
-    this.#database.requireColumns(required, MailLayoutError);
+    this.#database = appDatabase.snapshot(path, required);
   }
 
   *rows<T extends MailTable>(table: T): Generator<MailRow<T>, void, undefined> {

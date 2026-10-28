@@ -13,7 +13,7 @@ export {
   type SortValue,
 } from './cloud-tabs.ts';
 export { type Download, Downloads } from './downloads.ts';
-export { SafariSchemaError, SafariUnavailableError } from './errors.ts';
+export { SafariUnavailableError } from './errors.ts';
 export {
   type ClosedEntryFilter,
   type ClosedTab,

@@ -1,4 +1,4 @@
-export { KnowledgeSchemaError, KnowledgeUnavailableError } from './errors.ts';
+export { KnowledgeUnavailableError } from './errors.ts';
 export {
   type KnowledgeEvent,
   type KnowledgeSnapshot,

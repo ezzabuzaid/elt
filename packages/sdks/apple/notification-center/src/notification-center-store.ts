@@ -1,9 +1,9 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { DataVersion } from '@zukhruf/sqlite-data-version';
+import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 
-import { NotificationCenterUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import { NotificationCenterSnapshot } from './notification-center-snapshot.ts';
 
 // Where macOS keeps this user's Notification Center.
@@ -30,7 +30,7 @@ export class NotificationCenterStore {
 
   // A probe whose current value changes with each commit to the store, such
   // as usernoted delivering, withdrawing or badging.
-  version(): DataVersion {
-    return new DataVersion(this.#path, NotificationCenterUnavailableError);
+  version(): AppDatabaseVersion {
+    return appDatabase.version(this.#path);
   }
 }

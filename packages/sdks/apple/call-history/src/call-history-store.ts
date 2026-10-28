@@ -1,10 +1,10 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { DataVersion } from '@zukhruf/sqlite-data-version';
+import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 
+import { appDatabase } from './app-database.ts';
 import { CallHistorySnapshot } from './call-history-snapshot.ts';
-import { CallHistoryUnavailableError } from './errors.ts';
 
 // Where macOS keeps this user's call history.
 export const callHistoryStorePath = join(
@@ -28,7 +28,7 @@ export class CallHistoryStore {
 
   // A probe whose current value changes with each commit to the store, such
   // as callhistoryd recording a call or syncing one from iCloud.
-  version(): DataVersion {
-    return new DataVersion(this.#path, CallHistoryUnavailableError);
+  version(): AppDatabaseVersion {
+    return appDatabase.version(this.#path);
   }
 }

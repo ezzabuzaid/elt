@@ -11,9 +11,9 @@
   },
   "dependencies": {
     "@workspace/codec-plist": "0.0.1",
+    "@workspace/sdk-macos-app-database": "0.0.1",
     "@zone-eu/mailsplit": "5.4.19",
-    "@zukhruf/sqlite-data-version": "^0.3.49",
-    "@zukhruf/sqlite-snapshot": "^0.3.49",
+    "@zukhruf/sqlite-snapshot": "^0.3.52",
     "libmime": "5.4.6"
   },
   "devDependencies": {

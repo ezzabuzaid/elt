@@ -5,7 +5,6 @@ import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
-  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -92,9 +91,7 @@ export class AppleMessagesSource extends Source<MessagesScan> {
     return new MessagesScan(this.#store.open(), this.scope);
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof MessagesUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [MessagesUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

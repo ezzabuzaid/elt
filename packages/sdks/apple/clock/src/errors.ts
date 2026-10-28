@@ -7,11 +7,3 @@ export class ClockUnavailableError extends Error {
     );
   }
 }
-export class ClockSchemaError extends Error {
-  override name = 'ClockSchemaError';
-  constructor(path: string, missing: readonly string[]) {
-    super(
-      `The Clock store at ${path} has an unsupported layout (missing ${missing.join(', ')}).`,
-    );
-  }
-}

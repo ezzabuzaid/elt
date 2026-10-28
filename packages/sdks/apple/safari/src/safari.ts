@@ -1,8 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { lastWrite } from '@zukhruf/sqlite-data-version';
-
 import {
   type PlistValue,
   isBinaryPlist,
@@ -11,6 +9,7 @@ import {
   readPlist,
 } from '@workspace/codec-plist';
 
+import { appDatabase } from './app-database.ts';
 import { Bookmarks } from './bookmarks.ts';
 import { CloudTabs } from './cloud-tabs.ts';
 import { Downloads } from './downloads.ts';
@@ -111,11 +110,7 @@ export class Safari {
         ? this.#profiles().map(({ path }) => path)
         : [storeFiles(this.location).cloudTabs];
     return new Date(
-      Math.max(
-        ...files.map((file) =>
-          lastWrite(file, SafariUnavailableError).getTime(),
-        ),
-      ),
+      Math.max(...files.map((file) => appDatabase.lastWrite(file).getTime())),
     );
   }
 

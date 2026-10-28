@@ -86,7 +86,7 @@ Give **Full Disk Access** to the process that runs the pipeline. Mail needs it, 
 
 - If the process cannot read the Mail store, or `PersistenceInfo.plist` or `Envelope Index` is missing, the read fails with `MailUnavailableError`.
 - If the process cannot read the Accounts store, only `accounts` and `smtpServers` fail, with `AccountsUnavailableError`.
-- If `Envelope Index` does not have a column that the reader uses, the read fails with `MailSchemaError`. This error names each missing `table.column`.
+- If `Envelope Index` does not have a column that the reader uses, the read fails with `MissingColumnsError`. This error names each missing `table.column`.
 - If Mail changes a file during a read, the stream fails with `MailChangingError`. The next run tries again.
 
 ## Scope

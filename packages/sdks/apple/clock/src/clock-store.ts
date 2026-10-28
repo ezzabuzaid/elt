@@ -2,13 +2,14 @@ import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { DataVersion } from '@zukhruf/sqlite-data-version';
+import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 
+import { appDatabase } from './app-database.ts';
 import { ClockDatabase } from './clock-database.ts';
 import { stopwatches, worldClocks } from './clock-preferences.ts';
 import { ClockUnavailableError } from './errors.ts';
 
-export { ClockUnavailableError, ClockSchemaError } from './errors.ts';
+export { ClockUnavailableError } from './errors.ts';
 
 export type ClockLocation = {
   readonly database: string;
@@ -40,7 +41,10 @@ export class ClockStore {
     return ClockSnapshot.open(this.#location, stores);
   }
   version(store: ClockStoreKind): ClockVersion {
-    return new ClockVersion(this.#location[store], store);
+    const path = this.#location[store];
+    return store === 'database'
+      ? new ClockDatabaseVersion(appDatabase.version(path))
+      : new ClockPreferencesVersion(path);
   }
 }
 
@@ -101,16 +105,29 @@ export class ClockSnapshot implements AsyncDisposable {
 
 // SQLite sees WAL commits; preferences are atomically rewritten. A version
 // probe never loads records. Missing preference files still change on return.
-export class ClockVersion implements Disposable {
-  readonly #path: string;
-  readonly #database?: DataVersion;
-  constructor(path: string, store: ClockStoreKind) {
-    this.#path = path;
-    if (store === 'database')
-      this.#database = new DataVersion(path, ClockUnavailableError);
+export interface ClockVersion extends Disposable {
+  current(): Promise<string>;
+}
+
+class ClockDatabaseVersion implements ClockVersion {
+  readonly #version: AppDatabaseVersion;
+  constructor(version: AppDatabaseVersion) {
+    this.#version = version;
   }
   async current(): Promise<string> {
-    if (this.#database) return String(this.#database.current);
+    return String(this.#version.current);
+  }
+  [Symbol.dispose](): void {
+    this.#version[Symbol.dispose]();
+  }
+}
+
+class ClockPreferencesVersion implements ClockVersion {
+  readonly #path: string;
+  constructor(path: string) {
+    this.#path = path;
+  }
+  async current(): Promise<string> {
     try {
       const stats = await stat(this.#path, {
         bigint: true,
@@ -122,7 +139,6 @@ export class ClockVersion implements Disposable {
       throw new ClockUnavailableError(this.#path, cause);
     }
   }
-  [Symbol.dispose](): void {
-    this.#database?.[Symbol.dispose]();
-  }
+  // A stat holds nothing open.
+  [Symbol.dispose](): void {}
 }

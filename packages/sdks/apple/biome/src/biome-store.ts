@@ -2,8 +2,9 @@ import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { DataVersion } from '@zukhruf/sqlite-data-version';
+import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 
+import { appDatabase } from './app-database.ts';
 import { type BiomeSegment, segments } from './biome-segment.ts';
 import type { BiomeStream } from './biome-stream.ts';
 import { BiomeSync } from './biome-sync.ts';
@@ -66,7 +67,7 @@ export class BiomeStore {
   }
 
   // Biome commits the device list through a WAL it keeps open.
-  syncVersion(): DataVersion {
-    return new DataVersion(this.#sync, BiomeUnavailableError);
+  syncVersion(): AppDatabaseVersion {
+    return appDatabase.version(this.#sync);
   }
 }

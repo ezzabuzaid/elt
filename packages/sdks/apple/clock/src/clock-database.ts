@@ -1,6 +1,6 @@
-import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
-import { ClockSchemaError, ClockUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import {
   bytes,
   flag,
@@ -85,8 +85,7 @@ const columns = {
 export class ClockDatabase implements Disposable {
   readonly #database: Snapshot;
   constructor(path: string) {
-    this.#database = new Snapshot(path, ClockUnavailableError);
-    this.#database.requireColumns(columns, ClockSchemaError);
+    this.#database = appDatabase.snapshot(path, columns);
   }
 
   alarms() {

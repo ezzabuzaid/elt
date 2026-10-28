@@ -4,7 +4,6 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
-  type FailureType,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -166,9 +165,7 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
     );
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof WhatsAppUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [WhatsAppUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return {

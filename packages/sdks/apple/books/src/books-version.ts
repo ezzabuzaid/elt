@@ -1,14 +1,12 @@
 import { stat } from 'node:fs/promises';
 
-import { DataVersion } from '@zukhruf/sqlite-data-version';
+import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 
 import {
   type BooksLocation,
-  type BooksStore,
   sharedPreferences,
   storeFiles,
 } from './books-location.ts';
-import { BooksUnavailableError } from './errors.ts';
 
 // A preference file's identity on disk; a rewrite changes it. A missing file
 // reads as its own state, so its return is a change too.
@@ -22,24 +20,37 @@ async function fingerprint(path: string): Promise<string> {
 // through WALs they keep open, so a database reports each commit through
 // data_version, opened when the probe is; preference files are rewritten
 // whole, so a changed stat of either marks a new one.
-export class BooksVersion implements Disposable {
-  readonly #location: BooksLocation;
-  readonly #database: DataVersion | null;
+export interface BooksVersion extends Disposable {
+  current(): Promise<string>;
+}
 
-  constructor(location: BooksLocation, store: BooksStore) {
-    this.#location = location;
-    this.#database =
-      store === 'preferences'
-        ? null
-        : new DataVersion(storeFiles(location)[store], BooksUnavailableError);
+export class BooksDatabaseVersion implements BooksVersion {
+  readonly #version: AppDatabaseVersion;
+
+  constructor(version: AppDatabaseVersion) {
+    this.#version = version;
   }
 
   async current(): Promise<string> {
-    if (this.#database !== null) return String(this.#database.current);
-    return `${await fingerprint(storeFiles(this.#location).preferences)}|${await fingerprint(sharedPreferences(this.#location))}`;
+    return String(this.#version.current);
   }
 
   [Symbol.dispose](): void {
-    this.#database?.[Symbol.dispose]();
+    this.#version[Symbol.dispose]();
   }
+}
+
+export class BooksPreferencesVersion implements BooksVersion {
+  readonly #location: BooksLocation;
+
+  constructor(location: BooksLocation) {
+    this.#location = location;
+  }
+
+  async current(): Promise<string> {
+    return `${await fingerprint(storeFiles(this.#location).preferences)}|${await fingerprint(sharedPreferences(this.#location))}`;
+  }
+
+  // A stat holds nothing open.
+  [Symbol.dispose](): void {}
 }

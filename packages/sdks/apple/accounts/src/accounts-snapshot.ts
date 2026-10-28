@@ -1,4 +1,8 @@
-import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+import {
+  MissingColumnsError,
+  type Snapshot,
+  type SnapshotColumns,
+} from '@zukhruf/sqlite-snapshot';
 
 import {
   type PlistValue,
@@ -7,7 +11,8 @@ import {
 } from '@workspace/codec-plist';
 
 import { Account } from './account.ts';
-import { AccountsSchemaError, AccountsUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
+import { AccountsSchemaError } from './errors.ts';
 
 // A kind of account, such as com.apple.account.IMAP, and the data classes it
 // can offer.
@@ -136,7 +141,7 @@ export class AccountsSnapshot implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, AccountsUnavailableError);
+    this.#database = appDatabase.snapshot(path);
   }
 
   accounts(): Account[] {
@@ -338,7 +343,7 @@ export class AccountsSnapshot implements Disposable {
   #require(columns: SnapshotColumns): void {
     const missing = this.#database.missingColumns(columns);
     if (missing.length > 0)
-      throw new AccountsSchemaError(this.#database.path, missing);
+      throw new MissingColumnsError(this.#database.path, missing);
   }
 
   #dataclassNames(): Map<number, string> {

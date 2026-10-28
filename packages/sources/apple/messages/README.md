@@ -107,7 +107,7 @@ All streams are snapshot streams. Use `incremental` with `append_dedup` and no `
 
 ## Access
 
-Give **Full Disk Access** to the process that runs the pipeline, for example the terminal. If `chat.db` is missing or the process has no access, the read fails with `MessagesUnavailableError` before a copy starts. If `chat.db` does not have a column that the reader uses, for example after a macOS release changes the layout, the read fails with `MessagesSchemaError`. This error names each missing `table.column`.
+Give **Full Disk Access** to the process that runs the pipeline, for example the terminal. If `chat.db` is missing or the process has no access, the read fails with `MessagesUnavailableError` before a copy starts. If `chat.db` does not have a column that the reader uses, for example after a macOS release changes the layout, the read fails with `MissingColumnsError`. This error names each missing `table.column`.
 
 ## Scope
 

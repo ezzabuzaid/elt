@@ -48,7 +48,7 @@ await new Pipeline({
 
 The first argument is the path of the store. The second argument is the scope: `startAt` (inclusive) and `endAt` (exclusive) select calls by `startedAt`. `callTimers` always loads in full.
 
-Access: the store needs Full Disk Access for the app that runs the pipeline, such as the terminal. Without it, every stream fails with `CallHistoryUnavailableError`, which names the grant. If the store does not have a column that the source reads, every stream fails with `CallHistorySchemaError`.
+Access: the store needs Full Disk Access for the app that runs the pipeline, such as the terminal. Without it, every stream fails with `CallHistoryUnavailableError`, which names the grant. If the store does not have a column that the source reads, every stream fails with `MissingColumnsError`.
 
 Limitations:
 

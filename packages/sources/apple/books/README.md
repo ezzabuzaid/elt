@@ -50,7 +50,7 @@ await new Pipeline({
 
 To copy the bytes of the books, give the `bookFiles` copy a column from `source.bookFiles.file`. The reference shows an example.
 
-Access: on macOS 27, a terminal without Full Disk Access read both containers and iCloud Drive. macOS can ask a process of another app for access to the data of other apps. Full Disk Access covers both cases. A store that the source cannot open fails only its own streams, with `BooksUnavailableError`. A store that does not have a column that the source reads fails with `BooksSchemaError`.
+Access: on macOS 27, a terminal without Full Disk Access read both containers and iCloud Drive. macOS can ask a process of another app for access to the data of other apps. Full Disk Access covers both cases. A store that the source cannot open fails only its own streams, with `BooksUnavailableError`. A store that does not have a column that the source reads fails with `MissingColumnsError`.
 
 Limitations:
 

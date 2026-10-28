@@ -6,7 +6,6 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
-  type FailureType,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -69,11 +68,9 @@ export class AppleNotificationCenterSource extends Source<NotificationCenterScan
     return new NotificationCenterScan(this.#store.open(), this.scope);
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof NotificationCenterUnavailableError
-      ? 'config'
-      : 'system';
-  }
+  protected override readonly configErrors = [
+    NotificationCenterUnavailableError,
+  ];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

@@ -5,7 +5,6 @@ import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import {
   Catalog,
   type CopyConfiguration,
-  type FailureType,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -87,9 +86,7 @@ export class AppleClockSource extends Source<ClockSnapshot> {
       new Set(streams.map((stream) => readerOf(stream).store)),
     );
   }
-  override failureType(error: unknown): FailureType {
-    return error instanceof ClockUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [ClockUnavailableError];
   override coverage() {
     return localAppleStoreCoverage;
   }

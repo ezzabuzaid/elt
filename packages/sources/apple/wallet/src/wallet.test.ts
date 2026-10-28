@@ -31,7 +31,6 @@ import {
 } from '@workspace/elt-sqlite';
 import {
   PassBundleError,
-  WalletSchemaError,
   WalletUnavailableError,
   walletStorePath,
 } from '@workspace/sdk-apple-wallet';
@@ -563,7 +562,8 @@ test('a store missing a column this reader reads fails every stream by name and 
     assert.ok(error instanceof PipelineError);
     assert.equal(error.errors.length, streamNames.length);
     for (const cause of error.errors) {
-      assert.ok(cause instanceof WalletSchemaError);
+      assert.ok(cause instanceof Error);
+      assert.equal(cause.name, 'MissingColumnsError');
       assert.match(cause.message, /pass_annotations\.archived_timestamp/);
     }
     assert.deepEqual(failureTypes(error), ['system']);

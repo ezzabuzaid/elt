@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
+import { appDatabase } from './app-database.ts';
 import type {
   Chat,
   ChatPushConfig,
@@ -16,7 +17,6 @@ import type {
   ProfilePicture,
   PushName,
 } from './chat-records.ts';
-import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
 import { quotedMessage } from './message-metadata.ts';
 import {
   bytes,
@@ -208,8 +208,7 @@ export class ChatStorageSnapshot implements Disposable {
   readonly #fileIdentity: string;
 
   constructor(path: string, container: string) {
-    this.#database = new Snapshot(path, WhatsAppUnavailableError);
-    this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
+    this.#database = appDatabase.snapshot(path, requiredColumns);
     this.#container = container;
     try {
       const file = statSync(path, { bigint: true });

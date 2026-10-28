@@ -8,7 +8,6 @@ import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
-  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -117,9 +116,7 @@ export class AppleBooksSource extends Source<BooksScan> {
     );
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof BooksUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [BooksUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return localAppleStoreCoverage;

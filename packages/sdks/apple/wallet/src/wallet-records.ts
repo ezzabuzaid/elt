@@ -1,8 +1,8 @@
-import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+import { type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
 import { referenceDateInstant } from '@workspace/codec-apple-reference-date';
 
-import { WalletSchemaError, WalletUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import type { WalletRecord } from './pass.ts';
 
 const requiredColumns = {
@@ -14,8 +14,7 @@ const requiredColumns = {
 // database and closed at once: passd commits through a rollback journal, so
 // a reader holding the database blocks its writes.
 export function walletRecords(path: string): WalletRecord[] {
-  using database = new Snapshot(path, WalletUnavailableError);
-  database.requireColumns(requiredColumns, WalletSchemaError);
+  using database = appDatabase.snapshot(path, requiredColumns);
   return database
     .all(
       `SELECT pass.unique_id AS id,

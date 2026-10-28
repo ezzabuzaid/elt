@@ -2082,7 +2082,10 @@ test('Safari names Full Disk Access for an unreadable store, refuses an unknown 
     failed.bookmarks ?? '',
     /Bookmarks\.plist cannot be read\. Allow the process that runs the export Full Disk Access/,
   );
-  assert.match(failed.historyVisits ?? '', /missing history_visits\.score/);
+  assert.match(
+    failed.historyVisits ?? '',
+    /lacks the columns history_visits\.score/,
+  );
   assert.deepEqual(failedStreams(failure), {
     config: ['bookmarks', 'readingListItems'],
     system: [
@@ -2119,7 +2122,7 @@ test('Safari names Full Disk Access for an unreadable store, refuses an unknown 
   );
   assert.ok(status instanceof StreamStatus);
   assert.ok(status.error instanceof Error);
-  assert.equal(status.error.name, 'SafariSchemaError');
+  assert.equal(status.error.name, 'MissingColumnsError');
 });
 
 test('a Safari watch wakes only the streams of the store that changed, while Safari keeps its databases open', async () => {

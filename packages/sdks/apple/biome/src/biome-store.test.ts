@@ -5,11 +5,9 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
-import {
-  BiomeSchemaError,
-  BiomeStore,
-  BiomeUnavailableError,
-} from './index.ts';
+import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
+
+import { BiomeStore, BiomeUnavailableError } from './index.ts';
 
 test('a Biome whose streams folder is missing or denied fails with BiomeUnavailableError naming Full Disk Access', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'biome-'));
@@ -42,7 +40,7 @@ test('a Biome whose streams folder is missing or denied fails with BiomeUnavaila
   }
 });
 
-test('a device list without a column the reader needs fails with BiomeSchemaError naming each missing column', async () => {
+test('a device list without a column the reader needs fails with MissingColumnsError naming each missing column', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'biome-'));
   await mkdir(join(scratch.path, 'sync'));
   {
@@ -55,8 +53,8 @@ test('a device list without a column the reader needs fails with BiomeSchemaErro
   assert.throws(
     () => new BiomeStore(scratch.path).sync(),
     (error: unknown) =>
-      error instanceof BiomeSchemaError &&
-      /missing DevicePeer\.platform, DevicePeer\.last_sync_date\)/.test(
+      error instanceof MissingColumnsError &&
+      /lacks the columns DevicePeer\.platform, DevicePeer\.last_sync_date: /.test(
         error.message,
       ),
   );

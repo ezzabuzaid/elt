@@ -1786,6 +1786,54 @@ test('an observer sees each pass end once its history recorded it, and a stopped
   ]);
 });
 
+test('a failure is config when the source lists its class in configErrors, and system when it does not', async () => {
+  class WatcherDeniedError extends Error {}
+  // Each watcher loads one pass, then fails with its own error.
+  class Failing extends ContextSource {
+    protected override readonly configErrors = [WatcherDeniedError];
+    readonly #error: Error;
+
+    constructor(error: Error) {
+      super();
+      this.#error = error;
+    }
+
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+      throw this.#error;
+    }
+  }
+  const observed: string[] = [];
+  const watch = (name: string, source: ContextSource) =>
+    new Pipeline({
+      history: new MemoryHistory(),
+      observer: {
+        begin: () => ({
+          progress: () => {},
+          finish: () => {},
+          fail: (_error, failureType) =>
+            observed.push(`${name} ${failureType}`),
+        }),
+      },
+      connections: [leftOnly(name, source)],
+    }).watch({ signal: AbortSignal.timeout(5000) });
+
+  await assert.rejects(async () => {
+    for await (const _ of watch(
+      'denied',
+      new Failing(new WatcherDeniedError('watcher denied')),
+    ));
+  }, /Connection denied: watcher denied/);
+  await assert.rejects(async () => {
+    for await (const _ of watch(
+      'lost',
+      new Failing(new Error('watcher lost')),
+    ));
+  }, /Connection lost: watcher lost/);
+
+  assert.deepEqual(observed, ['denied config', 'lost system']);
+});
+
 test('a connection whose watcher fails stops alone and is recorded; the others keep watching', async () => {
   const history = new MemoryHistory();
   const steady = new ContextSource();

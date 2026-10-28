@@ -5,10 +5,11 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
+
 import {
   AppIntents,
   DisplayIsBacklit,
-  KnowledgeSchemaError,
   KnowledgeStore,
   KnowledgeUnavailableError,
 } from './index.ts';
@@ -47,8 +48,8 @@ test('a layout without a column fails only the reads that need it, and the other
   assert.throws(
     backlight,
     (error: unknown) =>
-      error instanceof KnowledgeSchemaError &&
-      /missing ZOBJECT\.ZVALUEINTEGER\)/.test(error.message),
+      error instanceof MissingColumnsError &&
+      /lacks the columns ZOBJECT\.ZVALUEINTEGER: /.test(error.message),
   );
   assert.deepEqual(
     intents.toArray().map(({ id, category, startedAt }) => ({

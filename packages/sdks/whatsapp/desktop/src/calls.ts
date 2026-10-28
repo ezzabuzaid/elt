@@ -1,6 +1,7 @@
-import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
-import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
+import { WhatsAppSchemaError } from './errors.ts';
 import { flag, instant, number, requiredText, text } from './values.ts';
 
 // One WhatsApp call (ZWACDCALLEVENT) with the call-log entry that groups it
@@ -70,8 +71,7 @@ export class CallsSnapshot implements Disposable {
   readonly #participantLog: string;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, WhatsAppUnavailableError);
-    this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
+    this.#database = appDatabase.snapshot(path, requiredColumns);
     try {
       this.#callLog = this.#relationship('ZWACDCALLEVENT', 'CALLEVENTS');
       this.#participantLog = this.#relationship(

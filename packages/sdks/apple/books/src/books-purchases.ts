@@ -1,7 +1,7 @@
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
+import { appDatabase } from './app-database.ts';
 import { coreDataTime, integer, nullableFlag, text } from './books-values.ts';
-import { BooksSchemaError, BooksUnavailableError } from './errors.ts';
 
 // The Jalisco columns this reader reads; opening the store checks them.
 const purchasesColumns = {
@@ -59,8 +59,7 @@ export class BooksPurchases implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, BooksUnavailableError);
-    this.#database.requireColumns(purchasesColumns, BooksSchemaError);
+    this.#database = appDatabase.snapshot(path, purchasesColumns);
   }
 
   // Read as the caller iterates, so no read holds the whole table.

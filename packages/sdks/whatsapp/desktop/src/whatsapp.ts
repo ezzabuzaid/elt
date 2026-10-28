@@ -1,8 +1,9 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { DataVersion, lastWrite } from '@zukhruf/sqlite-data-version';
+import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 
+import { appDatabase } from './app-database.ts';
 import { BusinessesSnapshot } from './businesses.ts';
 import { CallsSnapshot } from './calls.ts';
 import { ChatStorageSnapshot } from './chat-storage.ts';
@@ -98,7 +99,7 @@ export class WhatsApp {
   // no chats or messages, and its notification extension writes only
   // LocalKeyValue.sqlite, so each store keeps its own time.
   lastWrite(store: WhatsAppStore): Date {
-    return lastWrite(this.#file(store), WhatsAppUnavailableError);
+    return appDatabase.lastWrite(this.#file(store));
   }
 
   #file(store: WhatsAppStore): string {
@@ -110,24 +111,75 @@ export class WhatsApp {
 // every commit WhatsApp makes. A store that cannot be opened reads as missing,
 // so its appearance is a change; reading it reports why.
 export class WhatsAppVersion implements Disposable {
+  #state: StoreState;
+
+  constructor(path: string) {
+    this.#state = new MissingStore(path);
+  }
+
+  get current(): string {
+    const reading = this.#state.read();
+    this.#state = reading.state;
+    return reading.value;
+  }
+
+  [Symbol.dispose](): void {
+    this.#state[Symbol.dispose]();
+  }
+}
+
+type Reading = { readonly value: string; readonly state: StoreState };
+
+interface StoreState extends Disposable {
+  read(): Reading;
+}
+
+// Each read tries to open the store; the first that succeeds reads it open.
+class MissingStore implements StoreState {
   readonly #path: string;
-  #probe?: DataVersion;
 
   constructor(path: string) {
     this.#path = path;
   }
 
-  get current(): string {
+  read(): Reading {
+    let version: AppDatabaseVersion;
     try {
-      this.#probe ??= new DataVersion(this.#path, WhatsAppUnavailableError);
+      version = appDatabase.version(this.#path);
     } catch (error) {
-      if (error instanceof WhatsAppUnavailableError) return 'missing';
+      if (error instanceof WhatsAppUnavailableError)
+        return { value: 'missing', state: this };
       throw error;
     }
-    return String(this.#probe.current);
+    return new OpenStore(this.#path, version).read();
+  }
+
+  // Nothing is open.
+  [Symbol.dispose](): void {}
+}
+
+// A store WhatsApp replaced with one this process cannot open is missing
+// again, until a readable one is back.
+class OpenStore implements StoreState {
+  readonly #path: string;
+  readonly #version: AppDatabaseVersion;
+
+  constructor(path: string, version: AppDatabaseVersion) {
+    this.#path = path;
+    this.#version = version;
+  }
+
+  read(): Reading {
+    try {
+      return { value: String(this.#version.current), state: this };
+    } catch (error) {
+      if (!(error instanceof WhatsAppUnavailableError)) throw error;
+      this.#version[Symbol.dispose]();
+      return { value: 'missing', state: new MissingStore(this.#path) };
+    }
   }
 
   [Symbol.dispose](): void {
-    this.#probe?.[Symbol.dispose]();
+    this.#version[Symbol.dispose]();
   }
 }

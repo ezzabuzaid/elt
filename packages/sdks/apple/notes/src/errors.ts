@@ -8,15 +8,3 @@ export class NotesUnavailableError extends Error {
     );
   }
 }
-
-// The store's layout changes between macOS releases; reading one we have not
-// verified would silently misplace fields.
-export class NotesSchemaError extends Error {
-  override name = 'NotesSchemaError';
-
-  constructor(path: string, missing: readonly string[]) {
-    super(
-      `The Notes store at ${path} has a layout this reader does not read (missing ${missing.join(', ')}).`,
-    );
-  }
-}

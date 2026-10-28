@@ -6,7 +6,6 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
-  type FailureType,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -76,9 +75,7 @@ export class AppleWalletSource extends Source<WalletScan> {
     return new WalletScan(await this.#store.passes());
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof WalletUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [WalletUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return localAppleStoreCoverage;

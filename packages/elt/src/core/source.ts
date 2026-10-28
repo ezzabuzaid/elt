@@ -178,11 +178,20 @@ export abstract class Source<
   // source cannot tell is not read, and fails with that error.
   abstract currentAsOf(stream: Stream): Promise<Date | null>;
 
-  // What kind of failure an error from this source is. Only the source knows
-  // which of its upstream's errors mean the user must act; any other error,
-  // a destination's included, is system.
-  failureType(_error: unknown): FailureType {
-    return 'system';
+  // The error classes that mean the user must act, such as an SDK's access
+  // error. Only the source knows which of its upstream's errors those are.
+  protected readonly configErrors: readonly (abstract new (
+    ...args: never[]
+  ) => Error)[] = [];
+
+  // What kind of failure an error from this source is: config for an instance
+  // of a class in configErrors, and system for any other error, a
+  // destination's included. A source whose decision needs more than the
+  // class, such as an HTTP status, overrides it.
+  failureType(error: unknown): FailureType {
+    return this.configErrors.some((type) => error instanceof type)
+      ? 'config'
+      : 'system';
   }
 
   // Each yield is one check of the upstream: the streams that changed since

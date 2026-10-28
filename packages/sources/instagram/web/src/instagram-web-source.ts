@@ -4,7 +4,6 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
-  type FailureType,
   type JsonValue,
   type Partition,
   Source,
@@ -137,13 +136,11 @@ export class InstagramWebSource extends Source<InstagramRun> {
     return this.profileIds.map((profileId) => ({ profileId }));
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof BrowserSessionNotFoundError ||
-      error instanceof SafeStorageUnavailableError ||
-      error instanceof InstagramLoginError
-      ? 'config'
-      : 'system';
-  }
+  protected override readonly configErrors = [
+    BrowserSessionNotFoundError,
+    SafeStorageUnavailableError,
+    InstagramLoginError,
+  ];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     const selection: Record<string, JsonValue> = {

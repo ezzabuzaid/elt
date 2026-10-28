@@ -61,7 +61,7 @@ All streams are snapshot streams. Use full refresh, or `incremental` with `appen
 
 ## Access
 
-Give **Full Disk Access** to the process that runs the pipeline. A store that is missing or that the process cannot read fails only its own streams, with `SafariUnavailableError`. A database that does not have a column that the reader uses fails with `SafariSchemaError`, which names the columns. A failure never reads as an empty store.
+Give **Full Disk Access** to the process that runs the pipeline. A store that is missing or that the process cannot read fails only its own streams, with `SafariUnavailableError`. A database that does not have a column that the reader uses fails with `MissingColumnsError`, which names the columns. A failure never reads as an empty store.
 
 ## Scope
 

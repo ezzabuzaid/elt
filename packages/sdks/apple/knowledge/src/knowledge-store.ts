@@ -1,10 +1,11 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { DataVersion } from '@zukhruf/sqlite-data-version';
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { MissingColumnsError, type Snapshot } from '@zukhruf/sqlite-snapshot';
 
-import { KnowledgeSchemaError, KnowledgeUnavailableError } from './errors.ts';
+import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
+
+import { appDatabase } from './app-database.ts';
 import type {
   KnowledgeColumns,
   KnowledgeStream,
@@ -64,7 +65,7 @@ export class KnowledgeSnapshot implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, KnowledgeUnavailableError);
+    this.#database = appDatabase.snapshot(path);
   }
 
   // A stream's events in the order knowledgeC stored them, read as the caller
@@ -82,7 +83,7 @@ export class KnowledgeSnapshot implements Disposable {
       ),
     );
     if (missing.length > 0)
-      throw new KnowledgeSchemaError(this.#database.path, missing);
+      throw new MissingColumnsError(this.#database.path, missing);
     const selected = tables.flatMap(({ name, alias }) =>
       columnsOf([eventColumns, stream.columns], name).map(
         (column) => `${alias}.${column}`,
@@ -124,7 +125,7 @@ export class KnowledgeStore {
   }
 
   // knowledgeC commits through a WAL it keeps open.
-  version(): DataVersion {
-    return new DataVersion(this.#path, KnowledgeUnavailableError);
+  version(): AppDatabaseVersion {
+    return appDatabase.version(this.#path);
   }
 }

@@ -1,7 +1,4 @@
-export {
-  NotificationCenterSchemaError,
-  NotificationCenterUnavailableError,
-} from './errors.ts';
+export { NotificationCenterUnavailableError } from './errors.ts';
 export { NotificationCenterSnapshot } from './notification-center-snapshot.ts';
 export {
   NotificationCenterStore,

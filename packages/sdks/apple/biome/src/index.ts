@@ -6,7 +6,7 @@ export {
 } from './biome-store.ts';
 export { BiomeStream } from './biome-stream.ts';
 export { type BiomeDevice, type BiomeSync } from './biome-sync.ts';
-export { BiomeSchemaError, BiomeUnavailableError } from './errors.ts';
+export { BiomeUnavailableError } from './errors.ts';
 export {
   AppDocumentInteraction,
   type AppDocumentInteractionEvent,

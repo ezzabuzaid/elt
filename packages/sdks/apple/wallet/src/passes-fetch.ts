@@ -1,8 +1,8 @@
-import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+import { type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
 import { referenceDate } from '@workspace/codec-apple-reference-date';
 
-import { WalletSchemaError, WalletUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 
 const requiredColumns = {
   cloud_store_zone: ['zone_name', 'fetch_timestamp'],
@@ -14,8 +14,7 @@ const requiredColumns = {
 // them; a database it has never fetched has no time and holds no passes
 // here. Read and closed at once, as walletRecords is.
 export function lastPassesFetch(path: string): Date | null {
-  using database = new Snapshot(path, WalletUnavailableError);
-  database.requireColumns(requiredColumns, WalletSchemaError);
+  using database = appDatabase.snapshot(path, requiredColumns);
   const fetched = database
     .all(
       "SELECT fetch_timestamp FROM cloud_store_zone WHERE zone_name = 'passes' AND fetch_timestamp IS NOT NULL",

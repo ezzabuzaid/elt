@@ -1,0 +1,16 @@
+{
+  "name": "@workspace/sdk-macos-app-database",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@zukhruf/sqlite-data-version": "^0.3.52",
+    "@zukhruf/sqlite-snapshot": "^0.3.52"
+  }
+}

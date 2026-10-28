@@ -48,7 +48,7 @@ await new Pipeline({
 | `authorizations`     | app that has access to a kind of account                                                         |
 | `credentialItems`    | expiry date of a stored credential                                                               |
 
-Access: the store needs Full Disk Access for the app that runs the pipeline, such as the terminal. Without it, every stream fails with `AccountsUnavailableError`, which names the grant. If a macOS version does not have a column that the source reads, only the streams that read that table fail, with `AccountsSchemaError`.
+Access: the store needs Full Disk Access for the app that runs the pipeline, such as the terminal. Without it, every stream fails with `AccountsUnavailableError`, which names the grant. If a macOS version does not have a column that the source reads, only the streams that read that table fail, with `MissingColumnsError`.
 
 Limitations:
 

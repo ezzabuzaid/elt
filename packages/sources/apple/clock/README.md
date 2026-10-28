@@ -48,7 +48,7 @@ await new Pipeline({
 | `stopwatches`      | mobiletimerd preferences | native identifier                 |
 | `stopwatchLaps`    | mobiletimerd preferences | stopwatch identifier and position |
 
-Access: open Clock one time to make its stores. macOS protects the database and the city preferences. A process without access, such as a process without Full Disk Access, cannot read them. A missing or unreadable store fails only its own streams, with `ClockUnavailableError`. A database without a column that the source reads fails with `ClockSchemaError`.
+Access: open Clock one time to make its stores. macOS protects the database and the city preferences. A process without access, such as a process without Full Disk Access, cannot read them. A missing or unreadable store fails only its own streams, with `ClockUnavailableError`. A database without a column that the source reads fails with `MissingColumnsError`.
 
 Limitations:
 

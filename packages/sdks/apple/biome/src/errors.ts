@@ -8,15 +8,3 @@ export class BiomeUnavailableError extends Error {
     );
   }
 }
-
-// macOS changes Biome's device list between releases; reading a layout this
-// reader has not verified would silently misplace fields.
-export class BiomeSchemaError extends Error {
-  override name = 'BiomeSchemaError';
-
-  constructor(path: string, missing: readonly string[]) {
-    super(
-      `Biome's device list at ${path} has a layout this reader does not read (missing ${missing.join(', ')}).`,
-    );
-  }
-}

@@ -1,10 +1,11 @@
 import { join } from 'node:path';
 
-import { Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
 import { decodeArchive } from '@workspace/codec-plist';
 
-import { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
+import { WhatsAppSchemaError } from './errors.ts';
 import { bytes, number, onDisk, requiredText, text } from './values.ts';
 
 // A sticker pack: one in the tray of the account's sticker picker, or one
@@ -99,8 +100,7 @@ export class StickersSnapshot implements Disposable {
 
   constructor(path: string, container: string) {
     this.#container = container;
-    this.#database = new Snapshot(path, WhatsAppUnavailableError);
-    this.#database.requireColumns(requiredColumns, WhatsAppSchemaError);
+    this.#database = appDatabase.snapshot(path, requiredColumns);
     try {
       this.#tray = this.#entity('WACDStickerPack');
       this.#store = this.#entity('WACDStoreStickerPack');

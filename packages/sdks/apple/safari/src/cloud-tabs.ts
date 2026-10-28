@@ -1,8 +1,8 @@
 import { inflateSync } from 'node:zlib';
 
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
-import { SafariSchemaError, SafariUnavailableError } from './errors.ts';
+import { appDatabase } from './app-database.ts';
 import { appleTime, flag, integer, stored, text } from './safari-values.ts';
 
 // The CloudTabs.db columns this reader reads, checked against Safari 27 on
@@ -85,8 +85,7 @@ export class CloudTabs implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, SafariUnavailableError);
-    this.#database.requireColumns(cloudTabsColumns, SafariSchemaError);
+    this.#database = appDatabase.snapshot(path, cloudTabsColumns);
   }
 
   // Each read yields its rows as the caller iterates them.

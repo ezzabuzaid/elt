@@ -1,8 +1,9 @@
 import { join } from 'node:path';
 import type { SQLOutputValue } from 'node:sqlite';
 
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
+import { appDatabase } from './app-database.ts';
 import {
   type ContactEntity,
   type ContactsView,
@@ -42,7 +43,7 @@ import {
   attributeValue,
   storedData,
 } from './contacts-values.ts';
-import { ContactsSchemaError, ContactsUnavailableError } from './errors.ts';
+import { ContactsSchemaError } from './errors.ts';
 
 export const storeFile = 'AddressBook-v22.abcddb';
 
@@ -184,14 +185,14 @@ export class AddressBookStore implements Disposable {
     this.source = source;
     this.directory = directory;
     this.path = join(directory, storeFile);
-    this.#database = new Snapshot(this.path, ContactsUnavailableError);
+    this.#database = appDatabase.snapshot(this.path);
   }
 
   // Refuses a store without a column or entity a reader needs, and closes
   // it: a renamed entity would match no rows, and an account read as empty
   // loses its contacts from every target.
   requireLayout(): void {
-    this.#database.requireColumns(requiredColumns, ContactsSchemaError);
+    this.#database.requireColumns(requiredColumns);
     const entities = new Set(
       this.#database
         .all('SELECT Z_NAME FROM Z_PRIMARYKEY')

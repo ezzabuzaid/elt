@@ -5,7 +5,6 @@ import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
-  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -76,9 +75,7 @@ export class AppleAccountsSource extends Source<AccountsScan> {
     return new AccountsScan(this.#store.open());
   }
 
-  override failureType(error: unknown): FailureType {
-    return error instanceof AccountsUnavailableError ? 'config' : 'system';
-  }
+  protected override readonly configErrors = [AccountsUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return localAppleStoreCoverage;

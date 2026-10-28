@@ -22,7 +22,6 @@ import {
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import {
-  NotificationCenterSchemaError,
   NotificationCenterUnavailableError,
   notificationCenterStorePath,
 } from '@workspace/sdk-apple-notification-center';
@@ -784,7 +783,8 @@ test('a store missing a column this reader reads fails every stream by name and 
     assert.ok(error instanceof PipelineError);
     assert.equal(error.errors.length, 4);
     for (const cause of error.errors) {
-      assert.ok(cause instanceof NotificationCenterSchemaError);
+      assert.ok(cause instanceof Error);
+      assert.equal(cause.name, 'MissingColumnsError');
       assert.match(cause.message, /record\.style/);
     }
     return true;

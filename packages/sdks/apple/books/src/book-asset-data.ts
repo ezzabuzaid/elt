@@ -1,5 +1,6 @@
-import { Snapshot } from '@zukhruf/sqlite-snapshot';
+import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
+import { appDatabase } from './app-database.ts';
 import {
   coreDataTime,
   flag,
@@ -9,7 +10,6 @@ import {
   stored,
   text,
 } from './books-values.ts';
-import { BooksSchemaError, BooksUnavailableError } from './errors.ts';
 
 // The BCAssetData columns this reader reads; opening the store checks them.
 const assetDataColumns = {
@@ -95,8 +95,7 @@ export class BookAssetData implements Disposable {
   readonly #database: Snapshot;
 
   constructor(path: string) {
-    this.#database = new Snapshot(path, BooksUnavailableError);
-    this.#database.requireColumns(assetDataColumns, BooksSchemaError);
+    this.#database = appDatabase.snapshot(path, assetDataColumns);
   }
 
   // Every read returns rows as the caller iterates, so none holds a table.
