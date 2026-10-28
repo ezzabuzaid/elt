@@ -4,6 +4,7 @@ import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
   Catalog,
@@ -13,6 +14,7 @@ import {
   DocumentParser,
   DocumentText,
   Pipeline,
+  PipelineError,
   Source,
   type SourceWatchOptions,
   Stream,
@@ -25,10 +27,15 @@ import {
 } from './index.ts';
 
 // Rows that name stored files by ref, loaded into raw_files and read through
-// files; rows can change between runs.
+// files; rows can change between runs. Its notes come from a second store,
+// which fails every read while notesGone is set, as an app's missing store
+// does. A watch sees every stream change at its start, and again as each
+// promise of changes resolves.
 class Files extends Source {
   readonly identity = 'files';
   rows: readonly { readonly id: string; readonly ref: string }[] = [];
+  notesGone = false;
+  changes: readonly Promise<void>[] = [];
   readonly files = new Stream({
     name: 'files',
     jsonSchema: {
@@ -43,7 +50,18 @@ class Files extends Source {
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh'],
   });
-  protected readonly catalog = new Catalog([this.files]);
+  readonly notes = new Stream({
+    name: 'notes',
+    jsonSchema: {
+      type: 'object',
+      description: 'A note.',
+      properties: { id: { type: 'string', description: 'Note id.' } },
+      required: ['id'],
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh'],
+  });
+  protected readonly catalog = new Catalog([this.files, this.notes]);
 
   override coverage() {
     return { description: 'test', selection: {} };
@@ -59,9 +77,17 @@ class Files extends Source {
 
   protected override async *observe({ streams }: SourceWatchOptions) {
     yield streams;
+    for (const change of this.changes) {
+      await change;
+      yield streams;
+    }
   }
 
   protected override async *extract(configuration: CopyConfiguration) {
+    if (configuration.stream.name === 'notes') {
+      if (this.notesGone) throw new Error('the notes store is gone');
+      return;
+    }
     for (const row of this.rows)
       yield { stream: configuration.stream.name, data: row };
   }
@@ -108,7 +134,10 @@ async function filesImport(directory: string) {
         name: 'files',
         source,
         destination,
-        steps: [new Copy(source.files, target)],
+        steps: [
+          new Copy(source.files, target),
+          new Copy(source.notes, destination.table('raw_notes')),
+        ],
       }),
     ],
     derived: [
@@ -326,4 +355,89 @@ test('a file that is slow to read holds only its own place: the text of the file
     files.read("SELECT ref, status FROM file_text WHERE ref = 'slow.txt'"),
     [{ ref: 'slow.txt', status: 'computed' }],
   );
+});
+
+test('a run whose other copy failed still stores the text of the files its loaded rows name, and then rejects with that copy’s failure', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-computed-'),
+  );
+  const files = await filesImport(scratch.path);
+  await files.file('a.txt', 'invoice 123');
+  files.source.rows = [{ id: '1', ref: 'a.txt' }];
+  files.source.notesGone = true;
+
+  const error = await files.pipeline.run().then(
+    () => assert.fail('the run reported no failure'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.errors.map(({ message }: Error) => message),
+    ['the notes store is gone'],
+  );
+  assert.deepEqual(files.read(text), [
+    { ref: 'a.txt', status: 'computed', content: 'invoice 123', error: null },
+  ]);
+});
+
+test('under a watch, a file that is slow to read holds no pass back: the next pass loads while it is read, the file is read once, and the files that pass loaded get their text after it', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-computed-'),
+  );
+  const files = await filesImport(scratch.path);
+  await files.file('slow.txt', 'contract');
+  await files.file('b.txt', 'receipt');
+  files.source.rows = [{ id: '1', ref: 'slow.txt' }];
+  const changed = Promise.withResolvers<void>();
+  files.source.changes = [changed.promise];
+  const released = Promise.withResolvers<void>();
+  files.parser().holding.set('slow.txt', released.promise);
+  const controller = new AbortController();
+  const watching = files.pipeline.watch({ signal: controller.signal });
+  // A pass that waits on the held read never comes; the bound ends the wait.
+  const pass = () =>
+    Promise.race([
+      watching.next(),
+      sleep(5000, undefined, { ref: false }).then(() =>
+        assert.fail('the pass waited on the held read'),
+      ),
+    ]);
+
+  try {
+    const first = await pass();
+    for (let tries = 0; !files.parser().parsed.includes('slow.txt'); tries++) {
+      if (tries > 500) assert.fail('slow.txt was never read');
+      await sleep(10);
+    }
+    files.source.rows = [
+      { id: '1', ref: 'slow.txt' },
+      { id: '2', ref: 'b.txt' },
+    ];
+    changed.resolve();
+    const second = await pass();
+    const whileHeld = files.read(text);
+    released.resolve();
+    for (
+      let tries = 0;
+      files.read("SELECT ref FROM file_text WHERE ref = 'b.txt'").length === 0;
+      tries++
+    ) {
+      if (tries > 500) assert.fail('b.txt never got its text');
+      await sleep(10);
+    }
+
+    assert.equal(first.done, false);
+    assert.equal(second.done, false);
+    assert.deepEqual(whileHeld, []);
+    assert.deepEqual(files.parser().parsed.toSorted(), ['b.txt', 'slow.txt']);
+    assert.deepEqual(files.read(text), [
+      { ref: 'b.txt', status: 'computed', content: 'receipt', error: null },
+      { ref: 'slow.txt', status: 'computed', content: 'contract', error: null },
+    ]);
+  } finally {
+    released.resolve();
+    controller.abort();
+    await watching.return(undefined);
+  }
 });

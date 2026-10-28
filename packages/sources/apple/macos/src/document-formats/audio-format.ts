@@ -46,7 +46,8 @@ export class AudioFormat extends DocumentFormat {
       model: this.#model,
       audio: await readFile(path, { signal }),
       abortSignal: signal,
-      // AttachmentText already schedules failed files for the next pass.
+      // A computed dataset already reads a failed file again at its next
+      // refresh.
       maxRetries: 0,
     });
     return result.text.trim() || null;
