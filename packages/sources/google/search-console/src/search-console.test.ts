@@ -2746,47 +2746,47 @@ test('a pass that cannot read a sitemap deletes no URL it may list, and the next
   });
 });
 
-test(
-  'rolling refresh inspects new URLs first, then the stalest, and skips fresh ones',
-  { timeout: 10_000 },
-  async () => {
-    const pages = ['https://example.com/a', 'https://example.com/b'];
-    using searchConsole = google({ reply: property({ pages }) });
-    await using database = await databases.database();
-    const warehouse = {
-      history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
+test('rolling refresh inspects new URLs first, then the stalest, and skips fresh ones', async (t) => {
+  const pages = ['https://example.com/a', 'https://example.com/b'];
+  using searchConsole = google({ reply: property({ pages }) });
+  await using database = await databases.database();
+  const warehouse = {
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  const refreshMs = 2000;
+  // The host builds a source for every run.
+  const run = async () => {
+    const before = inspected(searchConsole).length;
+    await inspectionRun(
+      new SearchConsoleSource({
+        requester: searchConsole.requester,
+        inspectionConcurrency: 1,
+        inspectionRefreshHours: refreshMs / 3_600_000,
+        searchTypes: ['WEB'],
+        siteUrls: [SITE],
       }),
-      checkpoints: new PostgresCheckpointStore({
-        url: database.connectionString,
-        schema: RAW,
-      }),
-    };
-    const refreshMs = 2000;
-    // The host builds a source for every run.
-    const run = async () => {
-      const before = inspected(searchConsole).length;
-      await inspectionRun(
-        new SearchConsoleSource({
-          requester: searchConsole.requester,
-          inspectionConcurrency: 1,
-          inspectionRefreshHours: refreshMs / 3_600_000,
-          searchTypes: ['WEB'],
-          siteUrls: [SITE],
-        }),
-        warehouse,
-      );
-      return inspected(searchConsole).slice(before);
-    };
+      warehouse,
+    );
+    return inspected(searchConsole).slice(before);
+  };
 
+  // The clock moves only when the test moves it, so a slow run does not
+  // make a URL due early.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  try {
     assert.deepEqual(await run(), pages);
-    const firstInspected = Date.now();
-    await sleep(refreshMs / 2);
+    t.mock.timers.tick(refreshMs / 2);
     pages.push('https://example.com/c');
     assert.deepEqual(await run(), ['https://example.com/c']);
-    await sleep(firstInspected + refreshMs - Date.now());
+    t.mock.timers.tick(refreshMs / 2);
     pages.push('https://example.com/d');
     // a and b are due again, c is still fresh: the new d goes first, c waits.
     assert.deepEqual(await run(), [
@@ -2794,8 +2794,10 @@ test(
       'https://example.com/a',
       'https://example.com/b',
     ]);
-  },
-);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
 
 test('the daily quota stops inspection cleanly, and no inspection stream makes a call before the quota resets', async () => {
   let allowed = 2;
