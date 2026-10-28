@@ -205,9 +205,6 @@
     },
     {
       "path": "./packages/embedding"
-    },
-    {
-      "path": "./packages/sdks/macos/app-database"
     }
   ]
 }
