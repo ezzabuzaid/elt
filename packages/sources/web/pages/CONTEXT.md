@@ -13,8 +13,16 @@ One pass of the crawler from one input. The crawl finds URLs, downloads them and
 _Avoid_: Scan, run (a pipeline run does one crawl for each input), sync
 
 **Frontier**:
-The URLs that the crawl must still download, and the URLs that it already knows. The crawler keeps it.
+The URLs that the crawl must still download, and the URLs that it already knows. The crawler keeps it. The URLs of a blocked origin stay in it until the block ends.
 _Avoid_: Visited set, queue (the rate limit of the HTTP module has its own queue)
+
+**Origin**:
+The start of a URL up to its path: the scheme, the host name and the port, for example `https://shop.example`. The crawler reads `robots.txt`, waits out `Crawl-delay` and blocks requests for each origin.
+_Avoid_: Host (the host is the program that gives the source its inputs), domain, site
+
+**Block**:
+A period in which the crawl sends no request to one origin. It is a circuit breaker for each origin (Nygard, _Release It!_). It starts when the origin answers 429, answers 403 three times in a row, or cannot give its `robots.txt` (a 429, a 5xx or a network error). It ends at the `Retry-After` time of that answer, or one hour later when the answer gives none. In the crawl where it starts, a block lasts until that crawl ends, even when its end time comes first. The crawl reports each block once, as a failure that names the origin. The crawl snapshot keeps the block, and `Crawl.nextDue()` gives the earliest end of a block.
+_Avoid_: Ban, throttle, rate limit (the rate limit of the HTTP module is a different thing)
 
 **Page**:
 A URL that the crawl hands back because it matches the `include` patterns of the web stream. The extractor reads it.
@@ -49,7 +57,7 @@ A value that changes when the records of a page can change. The extractor gives 
 _Avoid_: Hash, ETag (an ETag is an HTTP validator), version
 
 **Failure**:
-A page that the crawl could not download, or that the extractor could not read. The crawler keeps it in the crawl memento, and the revisit policy makes it due again.
+A page that the crawl could not download, or that the extractor could not read. The crawler keeps it in the crawl memento, and the revisit policy makes it due again. A block is not a failure of the pages of its origin: the revisit policy does not schedule them, and the crawl requests them when the block ends.
 _Avoid_: Error page, dead link
 
 **State**:
