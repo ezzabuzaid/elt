@@ -536,7 +536,7 @@ The columns declare what to extract. `Copy` collects those declarations; `Source
 
 ### Attachment text
 
-A copy can store files with no parse: an `attachmentRef` column and no `content` column. The import then never waits on parsing, and a file the parser cannot read fails no copy. Text read from the stored copies afterwards is derived data, not a source: its input is what the pipeline wrote. Declare it as a [computed dataset](#derived-datasets) with the `DocumentText` rule; the pipeline reads the files after each pass. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) keeps an `attachment_text` view this way, which SQL joins on `attachmentRef = ref`:
+A copy can store files with no parse: an `attachmentRef` column and no `content` column. The import then never waits on parsing, and a file the parser cannot read fails no copy. Text read from the stored copies afterwards is derived data, not a source: its input is what the pipeline wrote. Declare it as a [computed dataset](../packages/destinations/sqlite/README.md#declare-a-computed-dataset) with the `DocumentText` rule; the pipeline reads the files after each pass. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) keeps an `attachment_text` view this way, which SQL joins on `attachmentRef = ref`:
 
 ```sql
 SELECT a.id, t.content
@@ -747,62 +747,7 @@ A source also says how current each stream's upstream is, `currentAsOf(stream): 
 
 ## Derived datasets
 
-A derived dataset is data that a pipeline keeps in step with what its copies load, and can always make again from it (Kleppmann, _Designing Data-Intensive Applications_, part III; Estuary calls it a derivation). Declare it beside the connections: `new Pipeline({ history, connections, derived: [...] })`. The pipeline refreshes each derived dataset in the order of the list: after the passes of a run, also when some copies failed, and after each pass of a watch, in the background. A watch runs one refresh at a time. A pass that commits during a refresh asks for one more, so no pass waits for it. A run that stops on an abort, or on an error that no history recorded, does not refresh. A dataset's own failure, such as SQL that SQLite refuses, rejects the run, or stops the watch, as itself. Only the SQLite destination has derived datasets; the Postgres destination does not have them yet.
-
-There are two kinds, as a dbt model is materialized as a view or as a table:
-
-```ts
-import { DocumentText } from '@workspace/elt';
-import { ComputedDataset, View } from '@workspace/elt-sqlite';
-import { Embedding } from '@workspace/embedding';
-
-const derived = [
-  // Computed on read: SQLite runs the query on each read.
-  new View({
-    into: destination,
-    name: 'record_count',
-    description: 'How many records loaded.',
-    columns: { n: 'Number of records.' },
-    sql: 'SELECT count(*) AS n FROM records',
-  }),
-  // Computed on write: a rule makes one stored row for each input.
-  new ComputedDataset({
-    into: destination,
-    name: 'attachment_text',
-    description: 'The text of each stored file.',
-    from: [attachments],
-    compute: new DocumentText({
-      parser: () => parser,
-      files: files.directory,
-      column: 'attachmentRef',
-    }),
-  }),
-  new ComputedDataset({
-    into: destination,
-    name: 'listing_vectors',
-    description: 'The vector of each listing.',
-    from: [listings],
-    compute: new Embedding({
-      model,
-      key: 'id',
-      fields: ['title', 'description'],
-    }),
-  }),
-];
-```
-
-A `View` names no inputs: its SQL reads them. It appears once its query compiles, so a reader never finds a view that fails. While a table or reader view that a copy of the pipeline makes in that file is missing, the view waits for it. Any other error of its query, such as a misspelled table, fails the refresh. Its columns must match its description exactly, as every described view's must, and the catalog lists them. A view declared after a computed dataset can read that dataset's view.
-
-A `ComputedDataset` reads every row that the copies of its `from` targets loaded, and gives each row to its rule. The rule gives the row's key and input, or no input. The dataset keeps one row for each key in the table `raw_<name>`, which readers query through the view `<name>`: the key, `input_hash` (SHA-256 of the input), `rule` (the identity of what made the row, such as the parser of the format or the model), `status`, `error`, and the rule's own columns. `status` is `computed` when the rule made the row, `empty` when it found nothing to keep, and `failed` when it failed on that input; `error` then says why. A refresh makes again each row whose input or rule identity changed and each failed row, and deletes each row whose key no input has any more. A rule that does not handle an input (identity `null`) keeps a row that it made before, and stores a new one as `empty` with the rule `unsupported`. The rule computes in calls of `batch` inputs, `concurrency` calls at once, and each call commits when it settles, so readers see rows as they land and a slow input holds only its own place. A rule's failure on one input never fails the load. The table is made again when its declaration changes, since a refresh makes it again from the inputs.
-
-`Rule<Input, Output>` is the port: `key` (the key column and its description), `output` (the rule's columns, `text` or `blob`), `batch`, `concurrency`, `read(row)`, `identity(input)` and `compute(inputs, signal)`, which gives a value, `empty`, an `error`, or `gone` (the input disappeared, so no row is written) for each input. Two rules exist:
-
-| Rule                                      | Package                | Input                                                | Output                                                                                                                                              |
-| ----------------------------------------- | ---------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DocumentText({ parser, files, column })` | `@workspace/elt`       | a stored file's ref in `column`, relative to `files` | `content`, the text a `DocumentParser` reads; the parser's `identityFor(file)` is the row's identity                                                |
-| `Embedding({ model, key, fields })`       | `@workspace/embedding` | the text of `fields`, joined by line breaks          | `vector`, a unit vector of float32 values in the platform's byte order from an AI SDK embedding model; the model's provider and id are the identity |
-
-An `Embedding` vector is the form that `VectorSearch` of `@zukhruf/embeddings` reads. To search, declare a view that gives `id`, `vector` and `published_at`, and give its name to `VectorSearch`. On 2026-10-27, 42 OpenSooq listings crawled by `source-opensooq-web` got their vectors from EmbeddingGemma 2 in one run, and `nearest` of a bicycle listing gave other bicycle listings first; a second run made no vector again.
+Derived datasets are documented in their packages. [elt](../packages/elt/README.md) tells when the pipeline refreshes them and how to write a rule. [elt-sqlite](../packages/destinations/sqlite/README.md) tells about `View` and `ComputedDataset`.
 
 ## Postgres destination
 

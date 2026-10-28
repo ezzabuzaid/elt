@@ -79,7 +79,7 @@ await new Pipeline({
 }).run();
 ```
 
-The `attachments` copy stores each file in `files` and keeps its reference in `attachmentRef`. The `attachment_text` dataset reads the text of the stored files after each pass. See [attachment text](../../../../docs/reference.md#attachment-text) and [derived datasets](../../../../docs/reference.md#derived-datasets).
+The `attachments` copy stores each file in `files` and keeps its reference in `attachmentRef`. The `attachment_text` dataset reads the text of the stored files after each pass. See [attachment text](../../../../docs/reference.md#attachment-text) and [computed datasets](../../../destinations/sqlite/README.md#declare-a-computed-dataset).
 
 ## Streams
 

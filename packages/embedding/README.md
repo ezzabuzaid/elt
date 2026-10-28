@@ -31,5 +31,8 @@ new ComputedDataset({
 - The output column `vector` holds a unit vector of float32 values in the byte order of the platform. This is the form that `VectorSearch` of `@zukhruf/embeddings` reads, so the cosine similarity of two vectors is their dot product.
 - The identity of each row is the provider and the id of the model. When you change the model, the next refresh makes every vector again.
 - The rule sends 64 rows to `embedMany` at a time. When the model refuses a call, each row of that call is stored as `failed` with the error, and the next refresh asks again. The load does not fail.
+- To search, declare a view that gives `id`, `vector` and `published_at`, and give its name to `VectorSearch`.
 
-The package does not start a model or a server. Give it a model that is ready. See [derived datasets](../../docs/reference.md#derived-datasets) for how a pipeline refreshes the rows.
+On 2026-10-27, 42 OpenSooq listings that `source-opensooq-web` crawled got their vectors from EmbeddingGemma 2 in one run. `nearest` of a bicycle listing gave other bicycle listings first. A second run made no vector again.
+
+The package does not start a model or a server. Give it a model that is ready. See [when the pipeline refreshes](../elt/README.md#when-the-pipeline-refreshes) for how a pipeline refreshes the rows.

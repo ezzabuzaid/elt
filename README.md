@@ -461,6 +461,10 @@ To add a source, follow the [source-authoring guide](.agents/skills/add-elt-sour
 
 ## Documentation
 
-- [API and behavior reference](docs/reference.md): schemas, keys, cursors, checkpoints, attachments, storage guarantees, and complete source details.
+Each package owns its docs: a README, a glossary in `CONTEXT.md`, its decisions in `docs/adr`, and recipes in `docs/recipes`. The [context map](CONTEXT-MAP.md) lists each glossary and its decisions.
+
+- [elt](packages/elt/README.md): derived datasets, when the pipeline refreshes them, and how to write a rule.
+- [elt-sqlite](packages/destinations/sqlite/README.md): the `View` and `ComputedDataset` of the SQLite destination, with a recipe that searches the text of stored files.
+- [API and behavior reference](docs/reference.md): schemas, keys, cursors, checkpoints, attachments, storage guarantees, and complete source details. Its sections move into their packages.
 - [EventKit Reminders notes](docs/eventkit-reminders.md): native API findings and implementation decisions.
 - [Source-authoring guide](.agents/skills/add-elt-source/SKILL.md): repository conventions for implementing sources.

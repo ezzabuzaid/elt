@@ -107,8 +107,8 @@ Write the tests with the `write-test` skill (in the `coding` plugin). It owns th
 ## Writing docs
 
 - Apps are executables, not libraries: use direct imports in their entry points, tests, and examples; do not add app export barrels. `apps/` holds no libraries. A source package exports each public module as an explicit subpath (`@workspace/source-apple-mail/apple-mail-source`), never a barrel. Keep other reusable package exports in `packages/` and `elt` exports generic.
-- `README.md`: a minimal example and limitations.
-- `docs/reference.md`: details, the live checks from probing, and the deletion, snapshot and scan-cost limitations.
+- Each package owns its docs, as the zukhruf packages do: `README.md` (a minimal example, the details, the live checks from probing, and the deletion, snapshot and scan-cost limitations), `CONTEXT.md` (its glossary), `docs/adr/` (its decisions) and `docs/recipes/` (one use case each, with a full program that runs). `packages/elt/README.md` and `packages/destinations/sqlite/README.md` show the shape. Add a row to `CONTEXT-MAP.md` for a new glossary.
+- `docs/reference.md` is being retired: add nothing to it. Each of its sections moves into the package it describes.
 - Commit only synthetic fixtures.
 
 ## Gotchas
