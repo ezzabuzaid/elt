@@ -7,9 +7,5 @@
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"],
-  "references": [
-    {
-      "path": "../pool/tsconfig.lib.json"
-    }
-  ]
+  "references": []
 }

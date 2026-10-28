@@ -1,4 +1,4 @@
-import type { Pool } from '@workspace/pool';
+import type { Pool } from '@zukhruf/pool';
 
 import type { VisionWorker } from '../vision.ts';
 import { DocumentFormat } from './document-format.ts';

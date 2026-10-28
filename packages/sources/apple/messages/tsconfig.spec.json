@@ -26,9 +26,6 @@
     },
     {
       "path": "../../../destinations/sqlite/tsconfig.lib.json"
-    },
-    {
-      "path": "../../../pool/tsconfig.lib.json"
     }
   ]
 }

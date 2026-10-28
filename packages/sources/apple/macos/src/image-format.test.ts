@@ -8,7 +8,7 @@ import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { Fixed, LeaderFirst, Pool } from '@workspace/pool';
+import { Fixed, LeaderFirst, Pool } from '@zukhruf/pool';
 
 import { ImageFormat } from './document-formats/image-format.ts';
 import { MacOSDocumentParser } from './macos-document-parser.ts';
@@ -88,7 +88,7 @@ test('the warmed parser preserves OCR, concurrent responses and image errors, an
   await image(blank, '');
   await writeFile(corrupt, 'not an image');
   await using vision = ocr();
-  await vision.ready;
+  await vision.ready();
   const pids = await workerPids();
   assert.equal(pids.length, workers);
   const parser = new MacOSDocumentParser([new ImageFormat(vision)]);
@@ -162,7 +162,7 @@ test('the first worker warms up alone and the others start together once it is r
   } finally {
     process.kill(leader!, 'SIGCONT');
   }
-  await vision.ready;
+  await vision.ready();
   const pids = await workerPids();
   assert.equal(pids.length, workers);
   assert.ok(pids.includes(leader!));
@@ -193,7 +193,7 @@ test('cancelling a read while the first worker warms up keeps that warm-up for l
   } finally {
     process.kill(leader!, 'SIGCONT');
   }
-  await vision.ready;
+  await vision.ready();
   assert.ok((await workerPids()).includes(leader!));
   assert.equal(await format.text(path), 'Meet tomorrow');
 });
@@ -209,7 +209,7 @@ test('the parser waits for slow OCR warm-up beyond the image deadline and reuses
   t.mock.timers.enable({ apis: ['setTimeout'] });
   try {
     await using vision = ocr();
-    const ready = vision.ready;
+    const ready = vision.ready();
     let warmed = false;
     ready.then(
       () => {
@@ -244,7 +244,7 @@ test('an image still times out after warm-up and the next read replaces its work
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
   await using vision = ocr();
-  await vision.ready;
+  await vision.ready();
   const pids = await workerPids();
   const format = new ImageFormat(vision);
   t.mock.timers.enable({ apis: ['setTimeout'] });
@@ -275,7 +275,7 @@ test('disposing OCR during warm-up rejects readiness and stops every worker', as
   await using vision = ocr();
   while ((await workerPids()).length === 0) await setTimeout(10);
   const ready = assert.rejects(
-    vision.ready,
+    vision.ready(),
     /Vision worker exited \(SIGTERM\)/,
   );
   await vision[Symbol.asyncDispose]();
@@ -288,7 +288,7 @@ test('the ready parser preserves automatically detected multilingual text in all
     join(tmpdir(), 'vision-languages-'),
   );
   await using vision = ocr();
-  await vision.ready;
+  await vision.ready();
   const pids = await workerPids();
   assert.equal(pids.length, workers);
   const parser = new MacOSDocumentParser([new ImageFormat(vision)]);
@@ -329,7 +329,7 @@ test('the parser keeps processing queued images while its other OCR workers are 
   const paths = texts.map((_, index) => join(directory.path, `${index}.png`));
   for (const [index, path] of paths.entries()) await image(path, texts[index]!);
   await using vision = ocr();
-  await vision.ready;
+  await vision.ready();
   const parser = new MacOSDocumentParser([new ImageFormat(vision)]);
   const pids = await workerPids();
   assert.equal(pids.length, workers);
@@ -375,7 +375,7 @@ test('aborting an active OCR read leaves the other workers running and skips an 
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
   await using vision = ocr();
-  await vision.ready;
+  await vision.ready();
   const pids = await workerPids();
   assert.equal(pids.length, workers);
   // Three reads hold the three workers before the aborts, so cancellation
@@ -420,7 +420,7 @@ test('disposing OCR stops all workers and rejects queued reads without starting 
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
   await using vision = ocr();
-  await vision.ready;
+  await vision.ready();
   const format = new ImageFormat(vision);
   const requests = workers + 1;
   const reads = Promise.allSettled(

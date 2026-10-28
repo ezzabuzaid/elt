@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { Fixed, OnDemand, Parallel, Pool } from '@workspace/pool';
+import { Fixed, OnDemand, Parallel, Pool } from '@zukhruf/pool';
 
 import { LocalTranscriptionModel } from './local-transcription-model.ts';
 import { TranscriptionWorker } from './transcription-worker.ts';

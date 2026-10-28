@@ -9,9 +9,8 @@ import type {
   TranscriptionModelV4CallOptions,
   TranscriptionModelV4Result,
 } from '@ai-sdk/provider';
+import type { Pool } from '@zukhruf/pool';
 import { z } from 'zod';
-
-import type { Pool } from '@workspace/pool';
 
 import type { TranscriptionWorker } from './transcription-worker.ts';
 

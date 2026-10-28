@@ -5,7 +5,8 @@ The shared macOS kit of the Apple sources. It is not the source of one app. It g
 ```ts
 import { fileURLToPath } from 'node:url';
 
-import { HillClimbing, LeaderFirst, Pool } from '@workspace/pool';
+import { HillClimbing, LeaderFirst, Pool } from '@zukhruf/pool';
+
 import { ImageFormat } from '@workspace/source-apple-macos/image-format';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 import { VisionWorker } from '@workspace/source-apple-macos/vision';
@@ -49,7 +50,7 @@ Give the parser to a `DocumentText` rule to read the text of the files that a pi
 
 `parse()` returns null for a file that matches no format, a locked PDF, a PDF without a text layer and an image without text. It throws when it cannot read a file. The identity of the parser includes its formats, and `identityFor(path)` gives the format that reads a file.
 
-The host owns the workers. It builds a `Pool` from `@workspace/pool` for each kind of worker, and disposes the pool to stop the workers. Use `LeaderFirst` for Vision: the first worker compiles the Vision models and caches them, and the other workers then read that cache.
+The host owns the workers. It builds a `Pool` from `@zukhruf/pool` for each kind of worker, and disposes the pool to stop the workers. Use `LeaderFirst` for Vision: the first worker compiles the Vision models and caches them, and the other workers then read that cache.
 
 ## Limitations
 

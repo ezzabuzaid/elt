@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "4.0.31",
-    "@workspace/pool": "0.0.1",
+    "@zukhruf/coprocess": "^0.3.49",
+    "@zukhruf/pool": "^0.3.49",
     "zod": "^4.3.6"
   }
 }

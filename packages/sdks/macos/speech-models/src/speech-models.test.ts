@@ -14,7 +14,8 @@ import { type TestContext, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { Fixed, Parallel, Pool } from '@workspace/pool';
+import { Fixed, Parallel, Pool } from '@zukhruf/pool';
+
 import { LocalTranscriptionModel } from '@workspace/transcription-local';
 import { TranscriptionWorker } from '@workspace/transcription-local/transcription-worker';
 

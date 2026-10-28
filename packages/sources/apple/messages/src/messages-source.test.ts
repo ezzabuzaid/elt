@@ -10,6 +10,8 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { Fixed, LeaderFirst, Pool } from '@zukhruf/pool';
+
 import {
   Connection,
   Copy,
@@ -29,7 +31,6 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
-import { Fixed, LeaderFirst, Pool } from '@workspace/pool';
 import { ImageFormat } from '@workspace/source-apple-macos/image-format';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 import { VisionWorker } from '@workspace/source-apple-macos/vision';

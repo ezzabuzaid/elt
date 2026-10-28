@@ -14,9 +14,6 @@
     },
     {
       "path": "../../../transcription-local/tsconfig.lib.json"
-    },
-    {
-      "path": "../../../pool/tsconfig.lib.json"
     }
   ]
 }

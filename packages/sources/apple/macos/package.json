@@ -48,7 +48,8 @@
   },
   "dependencies": {
     "@workspace/elt": "0.0.1",
-    "@workspace/pool": "0.0.1",
+    "@zukhruf/coprocess": "^0.3.49",
+    "@zukhruf/pool": "^0.3.49",
     "ai": "7.0.148",
     "file-type": "22.2.0",
     "zod": "^4.3.6"

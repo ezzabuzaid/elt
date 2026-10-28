@@ -10,9 +10,6 @@
   "references": [
     {
       "path": "../../../elt/tsconfig.lib.json"
-    },
-    {
-      "path": "../../../pool/tsconfig.lib.json"
     }
   ]
 }

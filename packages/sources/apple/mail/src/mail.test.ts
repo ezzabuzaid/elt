@@ -20,6 +20,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 
+import { Fixed, LeaderFirst, Pool } from '@zukhruf/pool';
+
 import {
   Connection,
   Copy,
@@ -38,7 +40,6 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
-import { Fixed, LeaderFirst, Pool } from '@workspace/pool';
 import {
   AccountsStore,
   AccountsUnavailableError,

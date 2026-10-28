@@ -183,9 +183,6 @@
       "path": "./packages/sdks/apple/launch-services"
     },
     {
-      "path": "./packages/pool"
-    },
-    {
       "path": "./packages/transcription-local"
     },
     {
@@ -208,6 +205,9 @@
     },
     {
       "path": "./packages/embedding"
+    },
+    {
+      "path": "./packages/sdks/macos/app-database"
     }
   ]
 }
