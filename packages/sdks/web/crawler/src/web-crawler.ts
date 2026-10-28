@@ -104,6 +104,8 @@ const mementoSchema = z.object({
     .nullable(),
   // Every URL a crawl visited, across crawls, with when it is due again.
   urls: z.record(z.string(), knownUrlSchema),
+  // Each origin that refused requests, across crawls, with the milliseconds a crawl waits between two requests to it.
+  slowdowns: z.record(z.string(), z.number()),
 });
 export type CrawlMemento = z.infer<typeof mementoSchema>;
 
@@ -150,9 +152,9 @@ export class WebCrawler {
     memento: unknown,
     options: CrawlOptions,
   ): Crawl {
-    const { crawl, urls } =
+    const { crawl, urls, slowdowns } =
       memento === null
-        ? { crawl: null, urls: {} }
+        ? { crawl: null, urls: {}, slowdowns: {} }
         : mementoSchema.parse(memento);
     const known = new Map(
       Object.entries(urls).map(([url, { entry, ...visit }]) => [
@@ -181,6 +183,7 @@ export class WebCrawler {
         handed,
         blocked,
         known,
+        slowdowns,
         revisits: [...known.values()].flatMap(({ entry }) =>
           startUrls.includes(entry.url) ? [] : [{ ...entry, start: false }],
         ),
@@ -263,8 +266,10 @@ class CrawlRun implements Crawl {
   readonly #forbidden = new Map<string, number>();
   // Each origin's robots.txt rules (RFC 9309), read once per crawl.
   readonly #robots = new Map<string, Robots>();
-  // When the last request to each origin started, for its Crawl-delay.
+  // When the last request to each origin started, for its Crawl-delay and slowdown.
   readonly #started = new Map<string, number>();
+  // How long to wait between two requests to each origin that refused some.
+  readonly #slowdowns: Map<string, number>;
   // The client's user agent, which robots.txt groups name.
   readonly #agent: string;
   // The page handed back last, added to #handed with its visit, as the entry stays pending.
@@ -292,6 +297,7 @@ class CrawlRun implements Crawl {
       handed,
       blocked,
       known,
+      slowdowns,
       revisits,
     }: {
       readonly at: number;
@@ -301,6 +307,7 @@ class CrawlRun implements Crawl {
       readonly handed: readonly string[];
       readonly blocked: Record<string, number>;
       readonly known: Map<string, KnownUrl>;
+      readonly slowdowns: Record<string, number>;
       readonly revisits: Entry[];
     },
   ) {
@@ -316,6 +323,7 @@ class CrawlRun implements Crawl {
     this.#revisits = revisits;
     this.#handed = new Set(handed);
     this.#blocked = new Map(Object.entries(blocked));
+    this.#slowdowns = new Map(Object.entries(slowdowns));
     // Pending entries were admitted when found; one may be a URL this crawl already downloaded.
     for (const entry of entries) this.#add(entry);
     for (const url of crawled) this.#known.add(url);
@@ -340,6 +348,7 @@ class CrawlRun implements Crawl {
             blocked: Object.fromEntries(this.#blocked),
           },
       urls: Object.fromEntries(this.#urls),
+      slowdowns: Object.fromEntries(this.#slowdowns),
     });
   }
 
@@ -415,6 +424,11 @@ class CrawlRun implements Crawl {
       const { statusCode } = response;
       const origin = new URL(response.url).origin;
       const tolerated = this.#tolerates(entry, statusCode);
+      // Got's retries hide the refused attempts before this answer.
+      this.#answered(
+        origin,
+        response.retryCount + (refused(statusCode) ? 1 : 0),
+      );
       // A 403 can close one page, such as a members-only one, so only a run
       // of them, as Nutch's fetcher.max.exceptions.per.queue counts, is a block.
       const forbidden =
@@ -677,6 +691,10 @@ class CrawlRun implements Crawl {
         maxRedirects: 5,
         context: { page: false },
       });
+      this.#answered(
+        origin,
+        response.retryCount + (refused(response.statusCode) ? 1 : 0),
+      );
       // A 5xx answer disallows everything until the server is back; a 4xx one
       // allows everything, except a 429, which asks to slow down, so it holds
       // the origin as Google's crawler treats it and as a page's 429 does.
@@ -697,15 +715,18 @@ class CrawlRun implements Crawl {
     return robots;
   }
 
-  // Waits out the origin's Crawl-delay since its last request started. Bing
-  // and Yandex honor the directive; RFC 9309 does not define it.
+  // Waits out the longer of the origin's Crawl-delay and its slowdown since
+  // its last request started. Bing and Yandex honor the directive; RFC 9309
+  // does not define it.
   async #pace(origin: string) {
     const { signal } = this.#options;
-    const delay = Math.min(
+    const crawlDelay = Math.min(
       this.#robots.get(origin)?.getCrawlDelay(this.#agent) ?? 0,
       maxCrawlDelay,
     );
-    const until = (this.#started.get(origin) ?? 0) + delay * 1000;
+    const until =
+      (this.#started.get(origin) ?? 0) +
+      Math.max(crawlDelay * 1000, this.#slowdowns.get(origin) ?? 0);
     // A timer can fire up to a millisecond early by the high-resolution clock.
     for (
       let wait = until - performance.now();
@@ -717,6 +738,19 @@ class CrawlRun implements Crawl {
         throw error;
       });
     this.#started.set(origin, performance.now());
+  }
+
+  // Each refusal doubles the origin's slowdown, from one second up to one
+  // minute, as Google's crawler lowers its rate for a host that answers 429
+  // or 5xx. Each other answer shortens it by a tenth, so the crawl returns to
+  // its full rate while the origin answers.
+  #answered(origin: string, refusals: number) {
+    let delay = this.#slowdowns.get(origin) ?? 0;
+    if (refusals === 0) delay *= 0.9;
+    for (let refusal = 0; refusal < refusals; refusal++)
+      delay = Math.min(longestSlowdown, Math.max(firstSlowdown, delay * 2));
+    if (delay < shortestSlowdown) this.#slowdowns.delete(origin);
+    else this.#slowdowns.set(origin, delay);
   }
 
   #includes(url: string) {
@@ -848,6 +882,16 @@ const forbiddenRun = 3;
 
 // The longest Crawl-delay the crawl honors, in seconds.
 const maxCrawlDelay = 60;
+
+// A refused origin's first slowdown, its longest, and the shortest one it keeps, in milliseconds.
+const firstSlowdown = 1000;
+const longestSlowdown = 60_000;
+const shortestSlowdown = 100;
+
+// An answer that asks the crawl to slow down: 429 Too Many Requests or a server error.
+function refused(status: number) {
+  return status === 429 || status >= 500;
+}
 
 // robots-parser is CommonJS, but its types declare an ES default export
 // ("masquerading as ESM"), so the types of a default import do not match

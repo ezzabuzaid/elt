@@ -24,6 +24,10 @@ _Avoid_: Host (the host is the program that gives the source its inputs), domain
 A period in which the crawl sends no request to one origin. It is a circuit breaker for each origin (Nygard, _Release It!_). It starts when the origin answers 429, answers 403 three times in a row, or cannot give its `robots.txt` (a 429, a 5xx or a network error). It ends at the `Retry-After` time of that answer, or one hour later when the answer gives none. In the crawl where it starts, a block lasts until that crawl ends, even when its end time comes first. The crawl reports each block once, as a failure that names the origin. The crawl snapshot keeps the block, and `Crawl.nextDue()` gives the earliest end of a block.
 _Avoid_: Ban, throttle, rate limit (the rate limit of the HTTP module is a different thing)
 
+**Slowdown**:
+The time that the crawl waits between two requests to an origin that refused requests. Each refusal, a 429 or a 5xx answer, doubles it, from one second up to one minute. Each other answer shortens it by a tenth. The crawl memento keeps it, so a later crawl starts slow too.
+_Avoid_: Throttle, backoff (Got's backoff is the wait before a retry), rate limit (the rate limit of the HTTP module is a different thing)
+
 **Page**:
 A URL that the crawl hands back because it matches the `include` patterns of the web stream. The extractor reads it.
 _Avoid_: Article (an article is the record of `ArticleExtractor`), document (the crawler uses document for a URL that only a reader reads, such as a sitemap)

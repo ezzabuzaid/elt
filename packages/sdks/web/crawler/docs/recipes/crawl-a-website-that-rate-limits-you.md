@@ -10,7 +10,7 @@
 2. **The crawler blocks the origin.** When the answer is still 429, the crawler opens a circuit breaker for the origin, for example `https://shop.example`. The block ends at the `Retry-After` time, or one hour later when the answer gives none.
 3. **The crawl holds the URLs of the origin.** The URL and each later URL of the origin stay in the frontier, and the crawl sends no request for them. The crawl continues on all other origins.
 4. **The crawl ends unfinished.** When only held URLs remain, the crawl ends. `crawl.snapshot().crawl` is not `null`, and it keeps the held URLs and the block.
-5. **The next crawl continues.** `crawl.nextDue()` gives the time when the first block ends. A crawl that starts after that time requests the held URLs.
+5. **The next crawl continues, slowly.** `crawl.nextDue()` gives the time when the first block ends. A crawl that starts after that time requests the held URLs. Each refusal doubled the slowdown of the origin, from one second, so the crawl waits between its requests to the origin. Each answer that is not a refusal shortens the wait by a tenth.
 
 ## The program
 
@@ -90,7 +90,7 @@ second crawl { pages: [ '/posts/2', '/posts/3' ], complete: true, refusals: 3 }
 
 ## Why it works
 
-Got sent the request for post 2 three times: the first try and two more. Each answer was 429, so the crawler blocked the origin until the `Retry-After` time of the last answer. Post 3 has the same origin, so the crawl held it without a request. The crawl ended unfinished, and its crawl snapshot kept posts 2 and 3. The second crawl started after the block ended, so it requested them.
+Got sent the request for post 2 three times: the first try and two more. Each answer was 429, so the crawler blocked the origin until the `Retry-After` time of the last answer. Post 3 has the same origin, so the crawl held it without a request. The crawl ended unfinished, and its crawl snapshot kept posts 2 and 3. The second crawl started after the block ended, so it requested them. Got's two retries and the last answer were three refusals, so the second crawl started with a slowdown of four seconds. It waited before each request to the origin, a tenth less after each answer.
 
 The block is data in the crawl memento, not a timer. A process that starts again before the block ends reads the block and still sends no request to the origin. A timer would be lost when the process stops.
 
@@ -102,5 +102,6 @@ The block is data in the crawl memento, not a timer. A process that starts again
 - **A reader can accept a status for a URL.** A 429 that the reader accepts does not block the origin.
 - **Got waits inside the request.** While Got waits for a `Retry-After` of up to the request timeout, the crawl does nothing else. A `Retry-After` that is longer than the request timeout skips Got's retries and goes straight to the block.
 - **Set a request timeout.** Without one, Got waits for any `Retry-After`, also one of an hour, before the crawler can block the origin.
-- **After the block, the crawl continues at the full rate.** The crawler does not slow down after a 429. Backlog item 3170 records this.
+- **A 5xx answer slows the origin too.** It does not block the origin, but it doubles the slowdown, as a 429 does.
+- **The slowdown carries over.** The crawl memento keeps it, so tomorrow's crawl of a website that refused today starts slowly.
 - **The crawler starts no crawl.** Your host starts the next crawl at `crawl.nextDue()`. `Pipeline.watch()` of elt does this. A host that only has a Sync button starts the next crawl when the user presses it.
