@@ -155,7 +155,7 @@ On day 2, the crawl knew both posts from the crawl memento in the state. Post 1 
 
 ## Things to know
 
-- **The source never deletes a row.** A page that a listing no longer names can still exist, so its rows stay. See [ADR 0005](../adr/0005-an-absent-page-is-not-a-deletion.md). A row that stays shows the last time that a crawl read the page.
+- **The source never deletes a row.** A page that a listing no longer names can still exist, so its rows stay. See [ADR 0005](../adr/0005-an-absent-page-is-not-a-deletion.md). Each row has `loaded_at`, the time when elt last wrote it. A page that did not change is not written again, so `loaded_at` does not show when a crawl last saw the page.
 - **An interrupted pipeline run continues.** The state keeps the crawl snapshot. The next pipeline run continues the same crawl, and it hands back the page that was in progress again. See [Resume an interrupted crawl](../../../../../sdks/web/crawler/docs/recipes/resume-an-interrupted-crawl.md).
 - **A failed page keeps its rows.** The revisit policy makes it due again two hours later.
 - **The state is in the checkpoint store.** If you delete the checkpoint store, the next pipeline run requests every page again, and each revisit interval starts again from one day.
