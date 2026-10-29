@@ -586,6 +586,8 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     readonly other = new Stream({ ...this.records, name: 'other' });
 
     protected readonly catalog = new Catalog([this.records, this.other]);
+    // A watcher that fails for a config reason ends its connection.
+    protected override readonly configErrors = [DeniedError];
 
     protected override async *observe({ streams, signal }: SourceWatchOptions) {
       await using events = on(changes, 'change', { signal });
@@ -732,14 +734,14 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   version = 4;
   const broken = pipeline.watch({ signal: new AbortController().signal });
   await broken.next();
-  const nativeError = new Error('Native watcher failed');
-  changes.emit('error', nativeError);
+  const gone = new DeniedError('The store is no longer readable');
+  changes.emit('error', gone);
   await assert.rejects(
     broken.next(),
     (error) =>
       error instanceof AggregateError &&
       error.errors.length === 1 &&
-      error.errors[0].cause === nativeError,
+      error.errors[0].cause === gone,
   );
   assert.equal(changes.listenerCount('change'), 0);
 
@@ -7316,26 +7318,24 @@ test('a run makes each stream it loaded current as of when its pass began, and t
   assert.equal(connector(), startedAt());
 });
 
-test('a watcher failure the sync history recorded ends the watch with a WatchError naming the connection', async () => {
+test('a watcher that fails for a config reason ends the watch with a WatchError naming the connection', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stops-'));
   const { source, pipeline, read } = await checkedPipeline(scratch.path);
   const watching = pipeline.watch({ signal: new AbortController().signal });
-  // What fs.watch raises when the process runs out of file handles.
-  const lost = new Error('Native watcher failed', {
-    cause: Object.assign(new Error('EMFILE: too many open files, watch'), {
-      code: 'EMFILE',
-    }),
-  });
+  const revoked = new DeniedError('The store is no longer readable');
   try {
     await watching.next();
 
-    source.checks.emit('error', lost);
+    source.checks.emit('error', revoked);
 
     await assert.rejects(watching.next(), (error: unknown) => {
       assert.ok(error instanceof WatchError, String(error));
       assert.equal(error.errors.length, 1);
-      assert.equal(error.errors[0].cause, lost);
-      assert.equal(error.message, 'Connection checked: Native watcher failed');
+      assert.equal(error.errors[0].cause, revoked);
+      assert.equal(
+        error.message,
+        'Connection checked: The store is no longer readable',
+      );
       return true;
     });
     assert.deepEqual(
@@ -7345,19 +7345,11 @@ test('a watcher failure the sync history recorded ends the watch with a WatchErr
       [
         {
           status: 'failed',
-          error: 'Native watcher failed',
-          failure_type: 'system',
+          error: 'The store is no longer readable',
+          failure_type: 'config',
         },
       ],
     );
-    const [failure] = read(
-      "SELECT json_extract(f.value, '$.stacktrace') AS stacktrace FROM extraction_coverage c, json_each(c.failures) f WHERE c.attempt_id = (SELECT max(attempt_id) FROM sync_attempts)",
-    );
-    assert.match(
-      String(failure?.stacktrace),
-      /\[cause\]: Error: EMFILE: too many open files, watch/,
-    );
-    assert.match(String(failure?.stacktrace), /code: 'EMFILE'/);
     assert.equal(source.checks.listenerCount('check'), 0);
   } finally {
     await watching.return(undefined);
@@ -7513,6 +7505,67 @@ const outcomes = (pass: IteratorResult<Pass<SQLiteTable>, undefined>) =>
     copy.from.name,
     failures[0]?.failureType ?? null,
   ]);
+
+test(
+  'a watcher that fails for a system reason is recorded as a failed attempt and watches again about ten seconds later, from a check of every stream',
+  { timeout: 30_000 },
+  async () => {
+    await using scratch = await mkdtempDisposable(
+      join(tmpdir(), 'elt-rewatch-'),
+    );
+    const { source, pipeline, read } = await checkedPipeline(scratch.path);
+    const controller = new AbortController();
+    const watching = pipeline.watch({ signal: controller.signal });
+    // Ends a watch that never watches again, so the test fails, not hangs.
+    const deadline = setTimeout(() => controller.abort(), 20_000);
+    // What fs.watch raises when the process runs out of file handles.
+    const lost = new Error('Native watcher failed', {
+      cause: Object.assign(new Error('EMFILE: too many open files, watch'), {
+        code: 'EMFILE',
+      }),
+    });
+    try {
+      await watching.next();
+
+      source.checks.emit('error', lost);
+      const failedAt = Date.now();
+      const rewatched = await watching.next();
+      const waited = Date.now() - failedAt;
+      source.checks.emit('check', [source.a]);
+      const changed = await watching.next();
+
+      assert.deepEqual(outcomes(rewatched), [
+        ['a', null],
+        ['b', null],
+      ]);
+      assert.ok(
+        waited >= 9_000 && waited < 20_000,
+        `watched again after ${waited} ms`,
+      );
+      assert.deepEqual(outcomes(changed), [['a', null]]);
+      // The new subscription is the only one: the failed one let go.
+      assert.equal(source.checks.listenerCount('check'), 1);
+      assert.deepEqual(
+        read(
+          "SELECT error, failure_type FROM sync_attempts WHERE status = 'failed'",
+        ),
+        [{ error: 'Native watcher failed', failure_type: 'system' }],
+      );
+      const [failure] = read(
+        "SELECT json_extract(f.value, '$.stacktrace') AS stacktrace FROM extraction_coverage c, json_each(c.failures) f WHERE c.attempt_id = (SELECT attempt_id FROM sync_attempts WHERE status = 'failed')",
+      );
+      assert.match(
+        String(failure?.stacktrace),
+        /\[cause\]: Error: EMFILE: too many open files, watch/,
+      );
+      assert.match(String(failure?.stacktrace), /code: 'EMFILE'/);
+    } finally {
+      clearTimeout(deadline);
+      controller.abort();
+      await watching.return(undefined);
+    }
+  },
+);
 
 test(
   'under a watch, a stream whose load failed for a system reason loads again about ten seconds later with no change, and a sibling’s change does not pull it in sooner',

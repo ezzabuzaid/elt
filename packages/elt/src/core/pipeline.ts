@@ -177,11 +177,13 @@ export class Pipeline<Target extends DestinationTarget> {
   }
 
   // Each connection watches its own source and runs a pass for what changed.
-  // A connection whose watcher fails stops alone, and its failure is recorded;
-  // the rest keep watching. Once every connection stopped, or signal aborts,
-  // the recorded failures are thrown together as a WatchError. An error the
-  // sync history could not record, or a derived dataset's own failure, stops
-  // every connection and rejects as itself.
+  // A watcher that fails for a system reason is recorded and watches again
+  // after a back-off; a connection whose watcher fails for a config reason
+  // stops alone, and its failure is recorded; the rest keep watching. Once
+  // every connection stopped, or signal aborts, the recorded failures are
+  // thrown together as a WatchError. An error the sync history could not
+  // record, or a derived dataset's own failure, stops every connection and
+  // rejects as itself.
   async *watch({
     signal,
   }: {
@@ -259,49 +261,80 @@ export class Pipeline<Target extends DestinationTarget> {
     // and a check the history could not record, which stops the whole watch.
     let failure: { readonly error: unknown } | undefined;
     let unrecorded: { readonly error: unknown } | undefined;
+    // A watcher that breaks its contract stops: watching it again would only
+    // break it again.
+    const broken = (message: string) => {
+      failure = { error: new TypeError(message) };
+    };
     const receive = (async () => {
-      let initial = true;
       try {
-        for await (const changed of connection.source.watch({
-          streams: [...streams.values()],
-          signal: watching,
-        })) {
-          for (const stream of changed) {
-            if (!streams.has(stream.name))
-              throw new TypeError(
-                `Watcher emitted an unselected stream: ${stream.name}`,
+        // A schedule outlives a failed sync, so a system failure never stops
+        // the watch; the back-off grows until a check arrives and resets it.
+        for (let failures = 0; ;) {
+          let initial = true;
+          try {
+            for await (const changed of connection.source.watch({
+              streams: [...streams.values()],
+              signal: watching,
+            })) {
+              for (const stream of changed) {
+                if (!streams.has(stream.name)) {
+                  broken(
+                    `Watcher emitted an unselected stream: ${stream.name}`,
+                  );
+                  return;
+                }
+                pending.add(stream.name);
+              }
+              if (initial && pending.size !== streams.size) {
+                broken(
+                  'Watcher must initially invalidate every selected stream',
+                );
+                return;
+              }
+              initial = false;
+              failures = 0;
+              if (pending.size > 0) wake.resolve();
+              const current = [...streams.values()].filter(
+                ({ name }) =>
+                  loaded.has(name) && !pending.has(name) && !loading.has(name),
               );
-            pending.add(stream.name);
-          }
-          if (initial && pending.size !== streams.size)
-            throw new TypeError(
-              'Watcher must initially invalidate every selected stream',
-            );
-          initial = false;
-          if (pending.size > 0) wake.resolve();
-          const current = [...streams.values()].filter(
-            ({ name }) =>
-              loaded.has(name) && !pending.has(name) && !loading.has(name),
-          );
-          if (current.length > 0)
-            try {
-              await this.history.checked(connection, new Date(), (at) =>
-                checked(connection.source, current, at),
-              );
-            } catch (error) {
-              unrecorded = { error };
+              if (current.length > 0)
+                try {
+                  await this.history.checked(connection, new Date(), (at) =>
+                    checked(connection.source, current, at),
+                  );
+                } catch (error) {
+                  unrecorded = { error };
+                  return;
+                }
+            }
+            if (initial && !watching.aborted)
+              broken('Watcher ended before its initial invalidation');
+            return;
+          } catch (error) {
+            if (watching.aborted) {
+              if (!(error instanceof Error && error.name === 'AbortError'))
+                failure = { error };
               return;
             }
+            if (connection.source.failureType(error) === 'config') {
+              failure = { error };
+              return;
+            }
+            failures += 1;
+            try {
+              await this.#recordFailure(connection, error);
+            } catch (suppressed) {
+              unrecorded = { error: suppressed };
+              return;
+            }
+            await sleep(retryDelayMs(failures), undefined, {
+              signal: watching,
+            }).catch(() => undefined);
+            if (watching.aborted) return;
+          }
         }
-        if (initial && !watching.aborted)
-          throw new TypeError('Watcher ended before its initial invalidation');
-      } catch (error) {
-        if (!(
-          watching.aborted &&
-          error instanceof Error &&
-          error.name === 'AbortError'
-        ))
-          failure = { error };
       } finally {
         finished = true;
         wake.resolve();
@@ -453,8 +486,9 @@ export class Pipeline<Target extends DestinationTarget> {
     return Object.freeze({ connection, outcomes: Object.freeze(outcomes) });
   }
 
-  // Records why a connection stopped. When the history cannot, the
-  // SuppressedError holds both errors, as a failed dispose does.
+  // Records a watcher's failure as a failed attempt: why its connection
+  // stopped, or a failure it watches again after. When the history cannot,
+  // the SuppressedError holds both errors, as a failed dispose does.
   async #recordFailure(
     connection: Connection<Target>,
     failure: unknown,

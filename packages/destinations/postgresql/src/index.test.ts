@@ -33,7 +33,6 @@ import {
   type SourceWatchOptions,
   Stream,
   type StreamSchema,
-  WatchError,
   diffSnapshot,
 } from '@workspace/elt';
 
@@ -3669,20 +3668,25 @@ test('a watch whose poll fails records the failure with the causes its error cha
       }),
     ],
   });
-  const watching = pipeline.watch({ signal: new AbortController().signal });
+  const controller = new AbortController();
+  const watching = pipeline.watch({ signal: controller.signal });
   try {
     await watching.next();
 
-    await assert.rejects(watching.next(), WatchError);
+    // A refused poll is a system failure: recorded, then watched again.
+    const rewatched = await watching.next();
 
+    assert.equal(rewatched.done, false);
     const [copy] = await sql`SELECT failures FROM marts.extraction_coverage
-      WHERE attempt_id = (SELECT max(attempt_id) FROM marts.sync_attempts)`;
+      WHERE attempt_id = (SELECT min(attempt_id) FROM marts.sync_attempts
+        WHERE status = 'failed')`;
     assert.equal(copy?.failures[0].error, 'fetch failed');
     assert.match(
       copy?.failures[0].stacktrace,
       /\[cause\]: Error: connect ECONNREFUSED 127\.0\.0\.1:\d+/,
     );
   } finally {
+    controller.abort();
     await watching.return(undefined);
   }
 });

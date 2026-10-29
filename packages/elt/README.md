@@ -701,13 +701,20 @@ Retries:
 - Retries stop when the watch stops. While a stream waits, its `current_as_of` does not move.
 - See [ADR 0011](./docs/adr/0011-a-watch-loads-a-stream-again-after-a-system-failure.md).
 
+When a watcher fails:
+
+- A watcher that fails for a `system` reason, such as a connection that its upstream dropped, watches again. The pipeline waits 10, 30, 90, 270 and 810 seconds after each failure in a row, then 30 minutes after each next failure, with the back-off of Airbyte. It does not stop for a `system` failure, as the schedule of Airbyte continues after a failed sync and Debezium restarts its task.
+- The sync history records each failure as a failed attempt. A check that the new watcher yields starts the count again. Its first check covers each selected stream, so each stream loads again.
+- A connection whose watcher fails for a `config` reason stops alone, because only the user can fix it. The sync history records it as a failed attempt. The other connections continue.
+- A watcher that breaks its contract stops its connection: it yields a stream that the connection did not select, or its first check does not cover each selected stream, or it ends before that check.
+- See [ADR 0016](./docs/adr/0016-a-watch-watches-again-after-its-watcher-fails-for-a-system-reason.md).
+
 When a watch stops:
 
-- A connection whose watcher fails stops alone. The sync history records it as a failed attempt. The other connections continue.
 - When each connection stopped, or the signal aborts, the watch throws the errors of the stopped connections together as a `WatchError`. A `WatchError` is an `AggregateError`. Its message joins entries `Connection <name>: <message>`, and each error has the error of the watcher as its `cause`.
 - A `WatchError` holds only failures that the sync history recorded. An error that the sync history throws itself, such as a write that fails or an error of the host code in a history wrapper, is recorded nowhere. It stops each connection at once, and the watch rejects with that error itself.
 - When the history cannot record why a watcher stopped, the watch rejects with a `SuppressedError`. Its `error` is the error of the history, and its `suppressed` is the error of the watcher.
-- A watcher that failed does not start again. The pipeline does not reconcile on a schedule, and it does not disable a connection.
+- The pipeline does not reconcile on a schedule, and it does not disable a connection.
 
 Stop:
 
@@ -1042,6 +1049,7 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0013](./docs/adr/0013-the-pipeline-installs-its-sync-history-before-each-run-and-watch.md): the pipeline installs its sync history before each run and watch.
 - [ADR 0014](./docs/adr/0014-a-source-says-how-current-each-stream-s-upstream-is.md): a source says how current the upstream of each stream is.
 - [ADR 0015](./docs/adr/0015-a-stored-file-s-ref-is-relative-to-its-folder.md): a stored file's ref is relative to its folder.
+- [ADR 0016](./docs/adr/0016-a-watch-watches-again-after-its-watcher-fails-for-a-system-reason.md): a watch watches again after its watcher fails for a system reason.
 
 ## Development
 
