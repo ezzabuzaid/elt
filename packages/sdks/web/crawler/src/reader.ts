@@ -8,8 +8,10 @@ export type PageLocation = {
   readonly url: string;
   /** Final URL of the response that first named this URL. */
   readonly listingUrl: string;
-  /** Raw sitemap lastmod, never a publication date. */
+  /** Raw modification hint of the listing, such as a sitemap lastmod or an Atom updated; never a publication date. */
   readonly lastModified: string | null;
+  /** When the listing says the page was published, such as an RSS pubDate or an Atom published, in ISO 8601 UTC. */
+  readonly published: string | null;
 };
 
 /** A URL in the crawl, as every reader sees it. */
@@ -35,6 +37,7 @@ export type Priority = (typeof priorities)[number];
 export type Finding<Note> = {
   readonly url: string;
   readonly lastModified: string | null;
+  readonly published: string | null;
   /** False for a document only a reader reads, such as a sitemap. */
   readonly page: boolean;
   /**

@@ -63,6 +63,7 @@ const entrySchema = z.object({
   url: z.string(),
   listingUrl: z.string(),
   lastModified: z.string().nullable(),
+  published: z.string().nullable(),
   hops: z.number().int().nonnegative(),
   start: z.boolean(),
   page: z.boolean(),
@@ -206,6 +207,7 @@ export class WebCrawler {
         url,
         listingUrl: url,
         lastModified: null,
+        published: null,
         hops: 0,
         start: true,
         page: false,
@@ -520,6 +522,7 @@ class CrawlRun implements Crawl {
           url: entry.url,
           listingUrl: entry.listingUrl,
           lastModified: entry.lastModified,
+          published: entry.published,
           response,
           change,
         };
@@ -539,6 +542,7 @@ class CrawlRun implements Crawl {
             url,
             listingUrl: entry.listingUrl,
             lastModified: entry.lastModified,
+            published: entry.published,
           },
         };
     this.#complete = true;
@@ -789,6 +793,7 @@ class CrawlRun implements Crawl {
       url: entry.url,
       listingUrl: entry.listingUrl,
       lastModified: entry.lastModified,
+      published: entry.published,
       error: new CrawlError(url, cause),
       page,
     };
@@ -806,6 +811,7 @@ class CrawlRun implements Crawl {
       url: webUrl(finding.url, listingUrl),
       listingUrl,
       lastModified: finding.lastModified,
+      published: finding.published,
       hops: parent.hops + (finding.linked ? 1 : 0),
       start: false,
       page: finding.page,
@@ -980,6 +986,7 @@ function merge(pending: Entry, next: Entry) {
   ) {
     pending.listingUrl = next.listingUrl;
     pending.lastModified = next.lastModified;
+    pending.published = next.published;
     pending.linked = next.linked;
   }
   // A URL that is also a page counts the hops of its page findings; a document's do not lower them.

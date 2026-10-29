@@ -88,6 +88,7 @@ export class LinkReader extends Reader<never, State> {
     return [...pages].map((url) => ({
       url,
       lastModified: null,
+      published: null,
       page: true,
       list: false,
       linked: true,

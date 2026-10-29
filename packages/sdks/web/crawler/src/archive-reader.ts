@@ -60,6 +60,7 @@ export class ArchiveReader extends Reader<null, null> {
       (url) => ({
         url,
         lastModified: null,
+        published: null,
         page: false,
         list: true,
         // An archive that a list links is no hop; one that an ordinary page links is.

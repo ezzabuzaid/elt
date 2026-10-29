@@ -146,6 +146,7 @@ test('the discovered stream holds the provenance columns and the extractor prope
     'pageUrl',
     'listingUrl',
     'lastModified',
+    'published',
     'id',
     'heading',
   ]);
@@ -158,6 +159,7 @@ test('the discovered stream holds the provenance columns and the extractor prope
     'pageUrl',
     'listingUrl',
     'lastModified',
+    'published',
     'id',
     'heading',
   ]);

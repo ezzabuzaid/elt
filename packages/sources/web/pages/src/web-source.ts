@@ -37,7 +37,13 @@ const provenance = {
   lastModified: {
     type: ['string', 'null'],
     description:
-      'Raw sitemap modification hint, not a change cursor or publication date.',
+      'Raw modification hint of the listing, such as a sitemap lastmod or an Atom updated; not a change cursor or publication date.',
+  },
+  published: {
+    type: ['string', 'null'],
+    format: 'date-time',
+    description:
+      "When the listing says the page was published, such as an RSS pubDate or an Atom published; null when it gives no date that parses. Not the page's own date metadata.",
   },
 } as const;
 
@@ -266,6 +272,7 @@ export class WebSource extends Source {
                           output.fingerprint,
                           entry.listingUrl,
                           entry.lastModified,
+                          entry.published,
                         ]),
                       ),
                 async *records() {
@@ -278,6 +285,7 @@ export class WebSource extends Source {
                       pageUrl: entry.url,
                       listingUrl: entry.listingUrl,
                       lastModified: entry.lastModified,
+                      published: entry.published,
                     })),
                     'Web',
                   );

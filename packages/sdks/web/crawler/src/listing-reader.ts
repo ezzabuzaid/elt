@@ -45,6 +45,7 @@ function document(
   return {
     url,
     lastModified: null,
+    published: null,
     page: false,
     list: false,
     linked,
@@ -124,6 +125,7 @@ export class ListingReader extends Reader<Note, State> {
         ...listing.pages.map((page) => ({
           url: webUrl(page.url, response.url),
           lastModified: page.lastModified,
+          published: instant(page.published),
           page: true,
           list: false,
           linked: false,
@@ -185,6 +187,12 @@ export class ListingReader extends Reader<Note, State> {
       ),
     ];
   }
+}
+
+// A date as Date reads it, RFC 822 from RSS or RFC 3339 from Atom and JSON Feed, in ISO 8601 UTC; null when it is not a date.
+function instant(date: string | null) {
+  const time = date === null ? Number.NaN : Date.parse(date);
+  return Number.isNaN(time) ? null : new Date(time).toISOString();
 }
 
 function readDeclarations(html: string, url: string, headers: Headers) {

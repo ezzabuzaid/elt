@@ -73,6 +73,7 @@ export class PaginationReader extends Reader<null, null> {
       ...[...pages].map((url) => ({
         url,
         lastModified: null,
+        published: null,
         page: true,
         list: false,
         linked: false,
@@ -84,6 +85,7 @@ export class PaginationReader extends Reader<null, null> {
       ...[...pagination].map(([url, tolerate]) => ({
         url,
         lastModified: null,
+        published: null,
         page: false,
         list: true,
         linked: false,

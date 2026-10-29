@@ -53,7 +53,7 @@ The identity of an article that `ArticleExtractor` gives: the canonical URL that
 _Avoid_: Page URL (the page URL is the URL as the crawl found it), canonical URL alone (a page can declare none)
 
 **Provenance**:
-The four columns that the source adds to each record: `inputUrl`, `pageUrl`, `listingUrl` and `lastModified`.
+The five columns that the source adds to each record: `inputUrl`, `pageUrl`, `listingUrl`, `lastModified` and `published`.
 _Avoid_: Metadata (the article extractor has its own metadata)
 
 **Fingerprint**:

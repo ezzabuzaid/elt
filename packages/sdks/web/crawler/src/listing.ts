@@ -27,7 +27,15 @@ export function readListing(text: string): Listing {
     const feed = parseJsonFeed(text);
     return {
       pages: (feed.items ?? []).flatMap((item) =>
-        item.url === undefined ? [] : [{ url: item.url, lastModified: null }],
+        item.url === undefined
+          ? []
+          : [
+              {
+                url: item.url,
+                lastModified: item.date_modified ?? null,
+                published: item.date_published ?? null,
+              },
+            ],
       ),
       sitemaps: feed.next_url === undefined ? [] : [feed.next_url],
       span: span(
@@ -44,7 +52,9 @@ export function readListing(text: string): Listing {
     const feed = parseRdfFeed(text);
     return {
       pages: (feed.items ?? []).flatMap((item) =>
-        item.link === undefined ? [] : [{ url: item.link, lastModified: null }],
+        item.link === undefined
+          ? []
+          : [{ url: item.link, lastModified: null, published: null }],
       ),
       sitemaps: [],
       span: null,

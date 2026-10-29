@@ -10,8 +10,10 @@ export class SitemapFormatError extends Error {
 export type SitemapListing = {
   readonly pages: readonly {
     readonly url: string;
-    /** The sitemap's lastmod text, not a publication time. Feeds and text lists have none. */
+    /** The raw text of a sitemap's lastmod or an Atom entry's updated: when the page last changed, not when it was published. */
     readonly lastModified: string | null;
+    /** The raw text of an RSS item's pubDate or an Atom entry's published. Sitemaps and text lists have none. */
+    readonly published: string | null;
   }[];
   readonly sitemaps: readonly string[];
 };
@@ -63,7 +65,10 @@ const rss = z.object({
           .array(
             z.union([
               empty,
-              z.object({ link: z.array(z.string()).optional() }),
+              z.object({
+                link: z.array(z.string()).optional(),
+                pubDate: z.string().optional(),
+              }),
             ]),
           )
           .optional(),
@@ -85,6 +90,8 @@ const feed = z.object({
               }),
             )
             .optional(),
+          published: z.string().optional(),
+          updated: z.string().optional(),
         }),
       ]),
     )
@@ -122,7 +129,7 @@ export function parseSitemap(text: string): SitemapListing {
           `line ${JSON.stringify(line)} is not a URL`,
         );
     return {
-      pages: lines.map((url) => ({ url, lastModified: null })),
+      pages: lines.map((url) => ({ url, lastModified: null, published: null })),
       sitemaps: [],
     };
   }
@@ -135,13 +142,15 @@ export function parseSitemap(text: string): SitemapListing {
     throw new SitemapFormatError(error.message);
   }
   const loc = ({ loc }: z.infer<typeof entry>) => loc.trim();
+  const hint = (value: string | undefined) => value?.trim() || null;
   if (typeof document === 'object' && document !== null) {
     if ('urlset' in document) {
       const set = parseRoot('urlset', urlset, document.urlset);
       return {
         pages: (set?.url ?? []).map((page) => ({
           url: loc(page),
-          lastModified: page.lastmod?.trim() || null,
+          lastModified: hint(page.lastmod),
+          published: null,
         })),
         sitemaps: [],
       };
@@ -160,29 +169,36 @@ export function parseSitemap(text: string): SitemapListing {
     if ('rss' in document) {
       const channel = parseRoot('rss', rss, document.rss)?.channel;
       return {
-        pages: (channel === undefined || channel === ''
-          ? []
-          : (channel.item ?? []).flatMap((item) =>
-              item === '' ? [] : (item.link ?? []),
-            )
-        ).map((url) => ({ url, lastModified: null })),
+        pages:
+          channel === undefined || channel === ''
+            ? []
+            : (channel.item ?? []).flatMap((item) =>
+                item === ''
+                  ? []
+                  : (item.link ?? []).map((url) => ({
+                      url,
+                      lastModified: null,
+                      published: hint(item.pubDate),
+                    })),
+              ),
         sitemaps: [],
       };
     }
     if ('feed' in document) {
       const atom = parseRoot('feed', feed, document.feed);
       return {
-        pages: (atom?.entry ?? [])
-          .flatMap((item) =>
-            item === ''
-              ? []
-              : (item.link ?? [])
-                  .filter(
-                    (link) => (link['@rel'] ?? 'alternate') === 'alternate',
-                  )
-                  .flatMap((link) => link['@href'] ?? []),
-          )
-          .map((url) => ({ url, lastModified: null })),
+        pages: (atom?.entry ?? []).flatMap((item) =>
+          item === ''
+            ? []
+            : (item.link ?? [])
+                .filter((link) => (link['@rel'] ?? 'alternate') === 'alternate')
+                .flatMap((link) => link['@href'] ?? [])
+                .map((url) => ({
+                  url,
+                  lastModified: hint(item.updated),
+                  published: hint(item.published),
+                })),
+        ),
         sitemaps: [],
       };
     }

@@ -73,6 +73,7 @@ const request: CrawlRequest = {
   url: 'https://site.test/a',
   listingUrl: 'https://site.test/',
   lastModified: null,
+  published: null,
   hops: 1,
   start: false,
   page: true,
