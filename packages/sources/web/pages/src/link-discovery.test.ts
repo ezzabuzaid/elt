@@ -69,7 +69,7 @@ test('ordinary links reach unlisted articles while feed pages and unchanged reru
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles([`${upstream.origin}/articles/*`]),
+    stream: articles(`${upstream.origin}/articles/*`),
     inputs: [upstream.origin],
   });
   const destination = new SQLiteDestination({ path: database.path });
@@ -152,7 +152,7 @@ test('new URLs survive interruption, and only the page in flight downloads again
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles([`${upstream.origin}/articles/*`]),
+    stream: articles(`${upstream.origin}/articles/*`),
     inputs: [upstream.origin],
   });
   const destination = new SQLiteDestination({ path: database.path }),
@@ -264,7 +264,7 @@ test('Markdown pages supply links, and feeds declared on crawled pages are read 
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles([`${upstream.origin}/articles/*`]),
+    stream: articles(`${upstream.origin}/articles/*`),
     inputs: [upstream.origin],
   });
   const destination = new SQLiteDestination({ path: database.path }),
@@ -332,7 +332,7 @@ test('an interruption during a long stretch of archive pages keeps the progress 
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles([`${upstream.origin}/articles/*`]),
+    stream: articles(`${upstream.origin}/articles/*`),
     inputs: [upstream.origin],
   });
   const destination = new SQLiteDestination({ path: database.path }),
@@ -396,7 +396,7 @@ test('an interruption during a long stretch of archive pages keeps the progress 
   );
 });
 
-function articles(include?: readonly string[]) {
+function articles(include?: string) {
   return new WebStream({
     name: 'articles',
     primaryKey: ['articleUrl'],
@@ -408,7 +408,7 @@ function articles(include?: readonly string[]) {
     ],
     // These tests are about one crawl's pages, so every crawl requests every page.
     revisit: new AlwaysRevisit(),
-    include: include?.map((pattern) => new URLPattern(pattern)),
+    include: include === undefined ? undefined : [new URLPattern(include)],
     extractor: new ArticleExtractor(),
   });
 }

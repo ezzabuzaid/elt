@@ -188,8 +188,6 @@ test('a URL downloaded again for a role it adds is not admitted again, so it spe
     new ArchiveReader(),
   ]).crawl(['https://site.test/'], null, {
     signal: AbortSignal.timeout(5000),
-    // No page is handed back, so a linked page downloads only when LinkReader admits it.
-    include: [],
   });
   let last: CrawlMemento | undefined;
   for await (const entry of crawl)

@@ -1479,7 +1479,7 @@ test('explicit URL patterns restrict article downloads and preserve matching que
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles([`${upstream.origin}/articles/*`]),
+    stream: articles(`${upstream.origin}/articles/*`),
     inputs: [`${upstream.origin}/feed.json`],
   };
   const ingestion = await pipeline(
@@ -1543,7 +1543,7 @@ test('a category page that matches the URL patterns is stored as a list, beside 
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles([`${upstream.origin}/news/*`]),
+      stream: articles(`${upstream.origin}/news/*`),
       inputs: [`${upstream.origin}/news`],
     }),
     database.path,
@@ -1810,7 +1810,7 @@ test('a host that answers 429 stops the crawl there, keeps the loaded rows, and 
   assert.deepEqual(rows(), ['/a', '/b', '/c', '/d']);
 });
 
-function articles(include?: readonly string[]) {
+function articles(include?: string) {
   return new WebStream({
     name: 'articles',
     primaryKey: ['articleUrl'],
@@ -1822,7 +1822,7 @@ function articles(include?: readonly string[]) {
     ],
     // These tests are about one crawl's pages, so every crawl requests every page.
     revisit: new AlwaysRevisit(),
-    include: include?.map((pattern) => new URLPattern(pattern)),
+    include: include === undefined ? undefined : [new URLPattern(include)],
     extractor: new ArticleExtractor(),
   });
 }

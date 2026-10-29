@@ -11,14 +11,14 @@ export class WebStream {
   /** When an incremental crawl requests a known URL again; omitted, the crawler's AdaptiveRevisit. */
   readonly revisit: RevisitPolicy<unknown> | undefined;
   /** Pages to extract; omitted, every page the crawl finds. */
-  readonly include: readonly URLPattern[] | undefined;
+  readonly include: readonly [URLPattern, ...URLPattern[]] | undefined;
   readonly extractor: RecordExtractor;
   constructor(options: {
     name: string;
     primaryKey: readonly string[];
     readers: readonly Reader<unknown, unknown>[];
     revisit?: RevisitPolicy<unknown>;
-    include?: readonly URLPattern[];
+    include?: readonly [URLPattern, ...URLPattern[]];
     extractor: RecordExtractor;
   }) {
     this.name = options.name;

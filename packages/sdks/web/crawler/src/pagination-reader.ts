@@ -21,30 +21,26 @@ import { webUrl } from './web-url.ts';
 export class PaginationReader extends Reader<null, null> {
   readonly notes = z.null();
   readonly states = z.null();
-  readonly #origins: readonly string[];
+  readonly #strategy: 'same-origin' | 'all';
   readonly #pagination: readonly URLPattern[] | undefined;
 
   /**
-   * @param options.origins Origins besides its own whose pages a list hands
-   *   back, such as a blog whose cards link a sister site.
+   * @param options.strategy The origins whose pages a list hands back: its
+   *   own, or all, such as a blog whose cards link a sister site; the crawl's
+   *   URL patterns still select among them, as Crawlee's enqueue strategy.
    * @param options.pagination The URL forms of a list's other pages, for a
    *   site that declares no rel="next"; omitted, a link to the same list with
    *   another page number is its pagination.
    */
   constructor({
-    origins = [],
+    strategy = 'same-origin',
     pagination,
   }: {
-    readonly origins?: readonly string[];
-    readonly pagination?: readonly URLPattern[];
+    readonly strategy?: 'same-origin' | 'all';
+    readonly pagination?: readonly [URLPattern, ...URLPattern[]];
   } = {}) {
     super();
-    for (const origin of origins)
-      if (new URL(origin).origin !== origin)
-        throw new TypeError(
-          `Expected an origin, such as https://example.com: ${origin}`,
-        );
-    this.#origins = [...origins];
+    this.#strategy = strategy;
     this.#pagination = pagination && [...pagination];
   }
 
@@ -138,7 +134,7 @@ export class PaginationReader extends Reader<null, null> {
         const target = URL.parse(link.href);
         if (
           !target ||
-          (target.origin !== origin && !this.#origins.includes(target.origin))
+          (this.#strategy === 'same-origin' && target.origin !== origin)
         )
           continue;
         const page = webUrl(target.href, url);

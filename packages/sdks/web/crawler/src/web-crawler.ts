@@ -113,7 +113,7 @@ export type CrawlMemento = z.infer<typeof mementoSchema>;
 export type CrawlOptions = {
   readonly signal: AbortSignal;
   /** Pages to hand back; other pages are downloaded only when a reader wants them. */
-  readonly include?: readonly URLPattern[];
+  readonly include?: readonly [URLPattern, ...URLPattern[]];
 };
 
 export interface Crawl extends AsyncIterable<

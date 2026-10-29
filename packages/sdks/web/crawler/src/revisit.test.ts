@@ -11,6 +11,7 @@ import {
   ChangeRateRevisit,
   CompositeRevisit,
   type Crawl,
+  type CrawlOptions,
   type CrawlRequest,
   FixedRevisit,
   HintRevisit,
@@ -379,8 +380,11 @@ test('a linked page that is not due spends no LinkReader budget, so the budget r
   const crawler = new WebCrawler(got, [
     new LinkReader({ maxDepth: 1, maxPages: 1 }),
   ]);
-  // No page is handed back, so a linked page downloads only when LinkReader admits it.
-  const linksOnly = () => ({ ...options(), include: [] });
+  // No page is handed back, as no page links /nothing, so a linked page downloads only when LinkReader admits it.
+  const linksOnly = (): CrawlOptions => ({
+    ...options(),
+    include: [new URLPattern({ pathname: '/nothing' })],
+  });
 
   const first = await crawled(
     crawler.crawl(['https://site.test/'], null, linksOnly()),

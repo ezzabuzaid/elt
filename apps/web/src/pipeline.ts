@@ -37,6 +37,8 @@ const checkpoints = new SQLiteCheckpointStore({
 // WebSource's inputs cannot change after construction.
 export default async function pipeline() {
   const { inputs, include } = await settings.read();
+  // No saved pattern means every page.
+  const [first, ...rest] = include.map((pattern) => new URLPattern(pattern));
   const source = new WebSource({
     stream: new WebStream({
       name: 'articles',
@@ -47,10 +49,7 @@ export default async function pipeline() {
         new PaginationReader(),
         new LinkReader({ maxDepth: 3, maxPages: 100 }),
       ],
-      include:
-        include.length === 0
-          ? undefined
-          : include.map((pattern) => new URLPattern(pattern)),
+      include: first === undefined ? undefined : [first, ...rest],
       extractor: new ArticleExtractor(),
     }),
     inputs,

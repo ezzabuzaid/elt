@@ -11,6 +11,7 @@ import {
   type Crawl,
   CrawlError,
   type CrawlFailure,
+  type CrawlOptions,
   type CrawledPage,
   LinkReader,
   ListingReader,
@@ -599,7 +600,7 @@ test('every downloaded URL that is not handed back as a page or failure is hande
 test('a snapshot taken at a progress entry resumes without downloading the documents read before it', async () => {
   const requests: string[] = [];
   using server = progressSite(requests);
-  const options = {
+  const options: CrawlOptions = {
     signal: AbortSignal.timeout(5000),
     include: [new URLPattern({ pathname: '/keep/*' })],
   };

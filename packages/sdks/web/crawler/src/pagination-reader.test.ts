@@ -25,7 +25,7 @@ async function crawl(
   crawler: WebCrawler,
   start: string,
   signal: AbortSignal,
-  include?: URLPattern[],
+  include?: readonly [URLPattern, ...URLPattern[]],
 ) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
   for await (const entry of crawler.crawl([start], null, { signal, include }))
@@ -524,7 +524,37 @@ test('a declared pagination form is followed in place of the page-number rule', 
   assert.ok(!requests.includes('/item/from-rule'), requests.join(' '));
 });
 
-test('a list hands back its links to the origins it is given, and requests no other origin', async () => {
+test('a list hands back only the pages on its own origin by default, also when the URL patterns match another origin', async () => {
+  const other: string[] = [];
+  await using elsewhere = await new HttpServer().start((request, response) => {
+    other.push(request.url ?? '');
+    response.end();
+  });
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/blog/')
+      response.end(
+        `<main><a href="/blog/own">Own</a><a href="${elsewhere.origin}/post/1">Elsewhere</a></main>`,
+      );
+    else response.end('<p>A post.</p>');
+  });
+
+  // As OpenSooq's pattern, which names a path on any host.
+  const pages = await crawl(
+    pagination(),
+    `${upstream.origin}/blog/`,
+    AbortSignal.timeout(5000),
+    [new URLPattern({ pathname: '/:section/:slug' })],
+  );
+
+  assert.deepEqual(
+    pages.map(location).map((page) => page.url),
+    [`${upstream.origin}/blog/own`],
+  );
+  assert.deepEqual(other, []);
+});
+
+test('a list with the strategy all hands back the pages on other origins that the URL patterns select, and requests no other page', async () => {
   const sister: string[] = [];
   const other: string[] = [];
   // As deepmind.google/blog, whose cards link posts on blog.google.
@@ -548,10 +578,14 @@ test('a list hands back its links to the origins it is given, and requests no ot
 
   const pages = await crawl(
     new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new PaginationReader({ origins: [blog.origin] }),
+      new PaginationReader({ strategy: 'all' }),
     ]),
     `${upstream.origin}/blog/`,
     AbortSignal.timeout(5000),
+    [
+      new URLPattern(`${upstream.origin}/blog/*`),
+      new URLPattern(`${blog.origin}/post/*`),
+    ],
   );
 
   assert.deepEqual(
@@ -565,14 +599,67 @@ test('a list hands back its links to the origins it is given, and requests no ot
       })),
   );
   assert.ok(sister.includes('/post/1'), sister.join(' '));
-  assert.deepEqual(other, []);
+  // The crawl reads an origin's robots.txt before it decides about a URL there.
+  assert.deepEqual(
+    other.filter((path) => path !== '/robots.txt'),
+    [],
+  );
 });
 
-test('an origin with a path is refused, as it would widen to the whole origin', () => {
-  assert.throws(
-    () =>
-      new PaginationReader({ origins: ['https://blog.google/technology/'] }),
-    TypeError,
+test('a reader takes the strategy same-origin or all and no origins, and no list of URL patterns is empty', () => {
+  // The type checker proves this test: each line it expects an error on must not compile.
+  new PaginationReader({ strategy: 'same-origin' });
+  new PaginationReader({ strategy: 'all' });
+  // @ts-expect-error -- the strategies are 'same-origin' and 'all'
+  new PaginationReader({ strategy: 'any' });
+  // @ts-expect-error -- a list hands back other origins through the strategy 'all' and the crawl's URL patterns
+  new PaginationReader({ origins: ['https://blog.google'] });
+  // @ts-expect-error -- an empty list of pagination forms would turn the page-number rule off and declare none
+  new PaginationReader({ pagination: [] });
+  pagination().crawl([], null, {
+    signal: AbortSignal.timeout(1000),
+    // @ts-expect-error -- an empty list of URL patterns would hand back no page
+    include: [],
+  });
+});
+
+test('a list with the strategy all follows no pagination to another origin', async () => {
+  await using elsewhere = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/tag/x/page/2/')
+      response.end('<main><a href="/item/2">Two</a></main>');
+    else if (request.url === '/tag/x/page/3/')
+      response.end('<main><a href="/item/3">Three</a></main>');
+    else response.end('<p>An item.</p>');
+  });
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/tag/x/') {
+      response.setHeader(
+        'link',
+        `<${elsewhere.origin}/tag/x/page/2/>; rel="next"`,
+      );
+      response.end(
+        `<link rel="next" href="${elsewhere.origin}/tag/x/page/3/"><main><a href="/item/1">One</a></main>`,
+      );
+    } else response.end('<p>An item.</p>');
+  });
+
+  const pages = await crawl(
+    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
+      new PaginationReader({ strategy: 'all' }),
+    ]),
+    `${upstream.origin}/tag/x/`,
+    AbortSignal.timeout(5000),
+    [
+      new URLPattern(`${upstream.origin}/item/*`),
+      new URLPattern(`${elsewhere.origin}/item/*`),
+    ],
+  );
+
+  assert.deepEqual(
+    pages.map(location).map((page) => page.url),
+    [`${upstream.origin}/item/1`],
   );
 });
 

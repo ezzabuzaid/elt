@@ -104,7 +104,7 @@ A policy's history is plain data that its `histories` schema parses, so the meme
 
 Many sites declare no `rel="next"`. Fortune, Ars Technica and Google DeepMind link page 2 of a tag page as `/tag/anthropic/page/2/`. Thus a link from a list to the same list with another page number is pagination too. The page number has one of the forms that content management systems use: `/page/N/` (WordPress, Ghost, Hugo), `?page=N` (Django, Drupal) and `?paged=N` (WordPress). A trailing slash does not change the list. A year, a filter or another list's page, such as `/tag/anthropic/2024`, `/tag/anthropic/?sort=new` or `/tag/openai/page/2/`, is not pagination. When a site uses another form, give it: `new PaginationReader({ pagination: [new URLPattern({ pathname: '/tag/:tag/page:n/' })] })` follows jekyll-paginate's `/page2/`, and then the page-number rule is off. A declared `rel="next"` page that fails is an error. A page that only a link or a form names, such as Fortune's linked `/page/0/` that returns 404, is skipped when it returns 404 or 410.
 
-A list hands back the pages it links on its own origin. Give `origins` for a list whose links go to another origin: `new PaginationReader({ origins: ['https://blog.google'] })` hands back the posts on blog.google that the cards of deepmind.google/blog link. Each entry is an origin, without a path. Pagination stays on the list's own origin. The caller's `include` still selects the pages that the crawl hands back.
+A list hands back the pages it links on its own origin: the strategy `'same-origin'`, the default. Give the strategy `'all'` for a list whose links go to other origins, as Crawlee's enqueue strategy `all`: `new PaginationReader({ strategy: 'all' })` hands back the posts on blog.google that the cards of deepmind.google/blog link. The caller's `include` still selects the pages that the crawl hands back, and the crawl does not download a link that it does not select; it reads the `robots.txt` of the link's origin first. Pagination stays on the list's own origin. To leave out one website, such as the list's own, give a pattern with a negative lookahead in a regular expression group: see [Follow a list to other websites](./docs/recipes/follow-a-list-to-other-websites.md).
 
 `LinkReader({ maxDepth, maxPages })` takes non-negative safe integers. Pages at zero hops always contribute links: starting pages, and the pages and lists that a listing or a list at zero hops names. Any other page contributes links only when `LinkReader` admits it: within `maxDepth` hops, on a starting origin, and within `maxPages` admitted pages. Admission happens before the download, so `maxPages` also counts admitted pages that fail or are not HTML. A linked page that returns 404 or 410 is skipped.
 
@@ -120,8 +120,9 @@ One use case each, with a full program that you can run.
 2. [Check some pages every hour and the rest by change](./docs/recipes/check-some-pages-every-hour.md)
 3. [Write your own revisit policy](./docs/recipes/write-your-own-revisit-policy.md)
 4. [Crawl a website that rate-limits you](./docs/recipes/crawl-a-website-that-rate-limits-you.md)
-5. [Sync again the next day](../../../sources/web/pages/docs/recipes/sync-again-the-next-day.md), with `@workspace/source-web-pages`
-6. [Refresh from a Sync button or a watch](../../../sources/web/pages/docs/recipes/refresh-from-a-sync-button-or-a-watch.md), with `@workspace/source-web-pages`
+5. [Follow a list to other websites](./docs/recipes/follow-a-list-to-other-websites.md)
+6. [Sync again the next day](../../../sources/web/pages/docs/recipes/sync-again-the-next-day.md), with `@workspace/source-web-pages`
+7. [Refresh from a Sync button or a watch](../../../sources/web/pages/docs/recipes/refresh-from-a-sync-button-or-a-watch.md), with `@workspace/source-web-pages`
 
 ## Package ownership
 
