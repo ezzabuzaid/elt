@@ -55,6 +55,7 @@ export default async function pipeline() {
     }),
     inputs,
     cachePath: join(directory, 'web-http.sqlite'),
+    userAgent: 'elt-web-playground/0.1 (+https://github.com/ezzabuzaid/elt)',
   });
   return new Pipeline({
     history,

@@ -101,6 +101,7 @@ test('every record an extractor returns for a page is stored with the page prove
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: sections(null),
       inputs: [input],
     }),
@@ -133,6 +134,7 @@ test('the discovered stream holds the provenance columns and the extractor prope
   const stream = sections(null);
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream,
     inputs: ['https://example.com/'],
   });
@@ -183,6 +185,7 @@ for (const accept of ['application/vnd.sections+json', null])
     const ingestion = await pipeline(
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
         stream: sections(accept),
         inputs: [`${upstream.origin}/sitemap.xml`],
       }),

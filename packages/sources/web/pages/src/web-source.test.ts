@@ -58,6 +58,7 @@ test('native articles persist clean text and refresh independently changing HTML
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
     }),
@@ -105,6 +106,7 @@ test('archive articles persist Markdown and an unchanged rerun writes no records
   await using checkpoints = await new Sqlite().database();
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: articles(),
     inputs: [upstream.origin],
   });
@@ -148,6 +150,7 @@ test('the pipeline prefers native Markdown, keeps HTML fallback and writes nothi
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
     }),
@@ -213,6 +216,7 @@ test('an article that a feed and a sitemap list with and without a trailing slas
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles(),
       inputs: [upstream.origin],
     }),
@@ -307,6 +311,7 @@ test('temporary listing and article failures recover within one pipeline run', a
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
     }),
@@ -359,6 +364,7 @@ test('failed articles do not block later articles or later refreshes', async () 
   await using checkpoints = await new Sqlite().database();
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: articles(),
     inputs: [`${upstream.origin}/feed.xml`],
   };
@@ -466,6 +472,7 @@ test(
     await using checkpoints = await new Sqlite().database();
     const options = {
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles(),
       inputs: [`${upstream.origin}/feed.json`],
     };
@@ -595,6 +602,7 @@ test(
     const ingestion = await pipeline(
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
         stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
       }),
@@ -658,6 +666,7 @@ test(
     const ingestion = await pipeline(
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
         stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
       }),
@@ -725,6 +734,7 @@ test(
     const ingestion = await pipeline(
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
         stream: articles(),
         inputs: [`${upstream.origin}/feed.xml`],
       }),
@@ -781,6 +791,7 @@ test('a completed scan retains successful articles and retries failures on the n
   await using checkpoints = await new Sqlite().database();
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: articles(),
     inputs: [`${upstream.origin}/feed.json`],
   };
@@ -864,6 +875,7 @@ test(
     await using checkpoints = await new Sqlite().database();
     const options = {
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
     };
@@ -940,6 +952,7 @@ test('chosen websites and feeds persist article metadata, make unchanged reruns 
     await using checkpoints = await new Sqlite().database();
     const options = {
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles(),
       inputs: [`${upstream.origin}${input}`],
     };
@@ -1072,6 +1085,7 @@ test('feed rollover retains articles and independent inputs keep their own progr
   const first = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles(),
       inputs: [`${upstream.origin}/two.json`, `${upstream.origin}/one.json`],
     }),
@@ -1090,6 +1104,7 @@ test('feed rollover retains articles and independent inputs keep their own progr
   const extended = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles(),
       inputs: [
         `${upstream.origin}/one.json`,
@@ -1145,6 +1160,7 @@ test('a failed full refresh tries later articles and preserves the last complete
   await using database = await new Sqlite().database();
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: articles(),
     inputs: [`${upstream.origin}/sitemap.xml`],
   });
@@ -1225,6 +1241,7 @@ test(
     const ingestion = await pipeline(
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
         stream: new WebStream({
           name: 'articles',
           primaryKey: ['articleUrl'],
@@ -1277,6 +1294,7 @@ test(
     const ingestion = await pipeline(
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
         stream: new WebStream({
           name: 'articles',
           primaryKey: ['articleUrl'],
@@ -1351,6 +1369,7 @@ test('explicit URL patterns restrict article downloads and preserve matching que
   await using checkpoints = await new Sqlite().database();
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [`${upstream.origin}/feed.json`],
   };
@@ -1414,6 +1433,7 @@ test('a category page that matches the URL patterns is stored as a list, beside 
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles([`${upstream.origin}/news/*`]),
       inputs: [`${upstream.origin}/news`],
     }),
@@ -1460,6 +1480,7 @@ test('a Latin-1 article page is stored with its text and leaves nothing to retry
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles(),
       inputs: [`${upstream.origin}/feed.xml`],
     }),
@@ -1506,6 +1527,7 @@ test('by default an incremental crawl requests a known page again only when it i
   await using checkpoints = await new Sqlite().database();
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: new WebStream({
       name: 'articles',
       primaryKey: ['articleUrl'],
@@ -1573,6 +1595,7 @@ test('a page that was not due keeps its fingerprint, so once due and unchanged i
   await using checkpoints = await new Sqlite().database();
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: new WebStream({
       name: 'articles',
       primaryKey: ['articleUrl'],
@@ -1633,6 +1656,7 @@ test('a host that answers 429 stops the crawl there, keeps the loaded rows, and 
   await using checkpoints = await new Sqlite().database();
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: articles(),
     inputs: [`${upstream.origin}/feed.xml`],
   };

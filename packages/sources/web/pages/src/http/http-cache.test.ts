@@ -27,7 +27,7 @@ const stream = new WebStream({
   revisit: new AlwaysRevisit(),
   extractor: new ArticleExtractor(),
 });
-const source = new WebSource({ stream, inputs: [input], cachePath });
+const source = new WebSource({ stream, inputs: [input], cachePath, userAgent: 'elt-test/1.0' });
 const destination = new SQLiteDestination({ path });
 const history = new SQLiteSyncHistory();
 const result = await new Pipeline({ history, connections: [new Connection({
@@ -60,7 +60,7 @@ import { webHttp } from ${JSON.stringify(new URL('./web-http.ts', import.meta.ur
 const [origin, cachePath] = process.argv.slice(1);
 const rejected = [];
 {
-  await using client = await webHttp(cachePath, undefined);
+  await using client = await webHttp(cachePath, 'elt-test/1.0', undefined);
   assert.equal(client.signal.aborted, false);
   await client.http(origin + '/first', { signal: client.signal });
   await client.http(origin + '/second', { signal: client.signal });

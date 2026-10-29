@@ -10,6 +10,7 @@ const source = new WebSource({
   stream: listings,
   inputs: ['https://jo.opensooq.com/en/cars/motorcycles'],
   cachePath: './web-http.sqlite',
+  userAgent: 'ExampleReader/1.0 (+https://example.com/contact)',
 });
 ```
 

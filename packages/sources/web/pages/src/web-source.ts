@@ -67,6 +67,10 @@ export class WebSource extends Source {
   readonly #inputs: readonly string[];
   // Where the HTTP cache lives is the host's decision, like a destination's path.
   readonly #cachePath: string;
+  // The crawler's name, which every request carries and robots.txt groups
+  // name, is the host's too: "WhatIsGoingOn/0.1 (+https://…)" matches the
+  // group "User-agent: WhatIsGoingOn" (RFC 9309 §2.2.1).
+  readonly #userAgent: string;
   // Each input's earliest due URL, as its last crawl left it; null when its crawl failed or nothing is ever due.
   readonly #due = new Map<string, number | null>();
   #extracted = Promise.withResolvers<void>();
@@ -74,10 +78,12 @@ export class WebSource extends Source {
     stream: WebStream;
     inputs: readonly string[];
     cachePath: string;
+    userAgent: string;
   }) {
     super();
     this.#stream = options.stream;
     this.#cachePath = z.string().min(1).parse(options.cachePath);
+    this.#userAgent = z.string().min(1).parse(options.userAgent);
     this.#inputs = z
       .array(z.url({ protocol: /^https?$/ }))
       .min(1)
@@ -182,7 +188,11 @@ export class WebSource extends Source {
       const previous =
         state === null ? { diff: null, crawl: null } : saved.parse(state);
       let diff: unknown = previous.diff;
-      await using client = await webHttp(this.#cachePath, signal);
+      await using client = await webHttp(
+        this.#cachePath,
+        this.#userAgent,
+        signal,
+      );
       const { http, signal: requestSignal } = client;
       const run = this.#stream.extractor.open(http);
       const crawler = new WebCrawler(

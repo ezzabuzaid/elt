@@ -248,6 +248,7 @@ test('every listing of a paginated category is stored with its JSON-LD fields', 
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
     }),
@@ -298,6 +299,7 @@ test('listings that a listing page links as related ads are neither downloaded n
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
     }),
@@ -328,6 +330,7 @@ test('every listing of a category without pagination is stored, and nothing else
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
     }),
@@ -389,6 +392,7 @@ test('a category crawl reads only the category and its next pages, not the filte
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles/2000`],
     }),
@@ -429,6 +433,7 @@ test('listings of every real schema.org shape are stored with their mapped field
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
     }),
@@ -529,6 +534,7 @@ test('a listing page without an object for its listing fails, and the next run t
   const source = () =>
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
     });
@@ -586,6 +592,7 @@ test('a listing whose offer has no price fails, and the next run tries it again'
   const source = () =>
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
     });
@@ -635,6 +642,7 @@ test('an unchanged rerun writes nothing', async (t) => {
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
     }),
@@ -682,6 +690,7 @@ test('a listing page whose markup changes outside its JSON-LD is not extracted a
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: new WebStream({
         name: listings.name,
         primaryKey: listings.primaryKey,
@@ -716,6 +725,7 @@ test('a listing whose JSON-LD changes is written again with the new values', asy
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: listings,
       inputs: [`${upstream.origin}/en/cars/motorcycles`],
     }),
@@ -757,6 +767,7 @@ test('the listing stored is the JSON-LD object whose url has the listing id of t
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: listings,
       inputs: [`${upstream.origin}/en/category`],
     }),

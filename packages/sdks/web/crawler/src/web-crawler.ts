@@ -264,8 +264,8 @@ class CrawlRun implements Crawl {
   readonly #held = new Map<string, Entry>();
   // 403 answers in a row, by origin.
   readonly #forbidden = new Map<string, number>();
-  // Each origin's robots.txt rules (RFC 9309), read once per crawl.
-  readonly #robots = new Map<string, Robots>();
+  // Each origin's robots.txt (RFC 9309), read once per crawl.
+  readonly #robots = new Map<string, OriginRules>();
   // When the last request to each origin started, for its Crawl-delay and slowdown.
   readonly #started = new Map<string, number>();
   // How long to wait between two requests to each origin that refused some.
@@ -622,8 +622,15 @@ class CrawlRun implements Crawl {
                 ),
               };
             }
-            // A disallowed URL is no failure: the crawl leaves it out, and the revisit policy does not schedule it.
-            if (robots.isAllowed(entry.url, this.#agent) === false) continue;
+            // A disallowed URL is no failure: the crawl leaves it out, and the
+            // revisit policy does not schedule it. The crawl indexes pages and
+            // shows their links and titles, which is the "search" use, so an
+            // origin that refuses search is left out whole.
+            if (
+              !robots.search ||
+              robots.rules.isAllowed(entry.url, this.#agent) === false
+            )
+              continue;
           }
           // A reader's budget counts admissions, and a second download of a URL is none.
           const wanted = this.#again.delete(entry.url)
@@ -676,7 +683,9 @@ class CrawlRun implements Crawl {
   // cache applies. Got follows the redirects; RFC 9309 §2.3.1.2 asks for five.
   async #rules(
     origin: string,
-  ): Promise<Robots | { readonly until: number; readonly cause: unknown }> {
+  ): Promise<
+    OriginRules | { readonly until: number; readonly cause: unknown }
+  > {
     const known = this.#robots.get(origin);
     if (known) return known;
     const { signal } = this.#options;
@@ -710,7 +719,10 @@ class CrawlRun implements Crawl {
       if (!(cause instanceof MaxRedirectsError))
         return { until: blockedUntil(null), cause };
     }
-    const robots = robotsParser(url, body);
+    const robots = {
+      rules: robotsParser(url, body),
+      search: contentSignals(body, this.#agent).get('search') !== 'no',
+    };
     this.#robots.set(origin, robots);
     return robots;
   }
@@ -721,7 +733,7 @@ class CrawlRun implements Crawl {
   async #pace(origin: string) {
     const { signal } = this.#options;
     const crawlDelay = Math.min(
-      this.#robots.get(origin)?.getCrawlDelay(this.#agent) ?? 0,
+      this.#robots.get(origin)?.rules.getCrawlDelay(this.#agent) ?? 0,
       maxCrawlDelay,
     );
     const until =
@@ -899,7 +911,57 @@ function refused(status: number) {
 const robotsParser: typeof robotsTxt.default = createRequire(import.meta.url)(
   'robots-parser',
 );
-type Robots = ReturnType<typeof robotsParser>;
+
+// An origin's robots.txt: its rules, and whether its Content-Signal lets the crawl use the site for search.
+interface OriginRules {
+  readonly rules: ReturnType<typeof robotsParser>;
+  readonly search: boolean;
+}
+
+// Cloudflare's Content Signals (blog.cloudflare.com/content-signals-policy):
+// "Content-Signal: search=yes, ai-train=no" in a robots.txt group. robots-parser
+// ignores the line, so the crawler reads it with the same grouping: the group
+// that names the agent's product token, else the "*" group (RFC 9309 §2.2.1).
+// A signal that a group leaves out expresses no preference.
+function contentSignals(body: string, agent: string) {
+  const groups = new Map<string, Map<string, string>>();
+  let current: Map<string, string>[] = [];
+  let naming = false;
+  for (const line of body.split(/\r\n|\r|\n/)) {
+    const colon = line.indexOf(':');
+    if (colon === -1) continue;
+    const key = line.slice(0, colon).trim().toLowerCase();
+    const value = line
+      .slice(colon + 1)
+      .replace(/#.*$/, '')
+      .trim();
+    if (key === 'user-agent') {
+      if (!naming) current = [];
+      naming = true;
+      if (value === '') continue;
+      const token = productToken(value);
+      const group = groups.get(token) ?? new Map<string, string>();
+      groups.set(token, group);
+      current.push(group);
+      continue;
+    }
+    naming = false;
+    if (key !== 'content-signal') continue;
+    for (const pair of value.split(',')) {
+      const [name = '', setting = ''] = pair
+        .split('=')
+        .map((part) => part.trim().toLowerCase());
+      if (name !== '' && (setting === 'yes' || setting === 'no'))
+        for (const group of current) group.set(name, setting);
+    }
+  }
+  return groups.get(productToken(agent)) ?? groups.get('*') ?? new Map();
+}
+
+// A user agent's product token as robots-parser matches it: "WhatIsGoingOn/0.1 (+https://…)" is "whatisgoingon".
+function productToken(agent: string) {
+  return agent.toLowerCase().split('/', 1)[0]?.trim() ?? '';
+}
 
 // When a block ends, by its Retry-After in seconds or as an HTTP-date (RFC 9110 §10.2.3); an hour without one.
 function blockedUntil(retryAfter: string | null) {

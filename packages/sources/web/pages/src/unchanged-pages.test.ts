@@ -65,6 +65,7 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
   });
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: articles(),
     inputs: [upstream.origin],
   });
@@ -162,6 +163,7 @@ test('restarted source keeps unchanged rows and detects listing metadata and art
   async function run() {
     const source = new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles(),
       inputs: [`${upstream.origin}/sitemap.xml`],
     });
@@ -258,6 +260,7 @@ test('an unchanged native-Markdown page requested again on a due visit loads not
   async function run() {
     const source = new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
       stream: articles(new CountedArticles()),
       inputs: [`${upstream.origin}/sitemap.xml`],
     });

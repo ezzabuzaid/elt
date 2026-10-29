@@ -68,6 +68,7 @@ test('ordinary links reach unlisted articles while feed pages and unchanged reru
   await using checkpoints = await new Sqlite().database();
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [upstream.origin],
   });
@@ -150,6 +151,7 @@ test('new URLs survive interruption, and only the page in flight downloads again
   await using checkpoints = await new Sqlite().database();
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [upstream.origin],
   });
@@ -261,6 +263,7 @@ test('Markdown pages supply links, and feeds declared on crawled pages are read 
   await using checkpoints = await new Sqlite().database();
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [upstream.origin],
   });
@@ -328,6 +331,7 @@ test('an interruption during a long stretch of archive pages keeps the progress 
   await using checkpoints = await new Sqlite().database();
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
     stream: articles([`${upstream.origin}/articles/*`]),
     inputs: [upstream.origin],
   });

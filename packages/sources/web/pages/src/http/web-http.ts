@@ -8,6 +8,7 @@ import PQueue from 'p-queue';
 
 export async function webHttp(
   cachePath: string,
+  userAgent: string,
   signal: AbortSignal | undefined,
 ) {
   await using resources = new AsyncDisposableStack();
@@ -39,7 +40,7 @@ export async function webHttp(
   });
   const http = got.extend({
     cache,
-    headers: { 'cache-control': 'no-cache' },
+    headers: { 'cache-control': 'no-cache', 'user-agent': userAgent },
     timeout: { request: 30_000 },
     hooks: {
       beforeRequest: [

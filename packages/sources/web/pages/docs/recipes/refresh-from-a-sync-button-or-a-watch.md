@@ -79,6 +79,7 @@ const source = new WebSource({
   }),
   inputs: [`${origin}/feed.json`],
   cachePath: join(directory, 'web-http.sqlite'),
+  userAgent: 'ExampleReader/1.0 (+https://example.com/contact)',
 });
 const pipeline = new Pipeline({
   history: new SQLiteSyncHistory(),
