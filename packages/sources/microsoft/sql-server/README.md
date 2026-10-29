@@ -36,7 +36,7 @@ await new Pipeline({
 }).run();
 ```
 
-The connection string is an ADO.NET connection string. It must name a `Database`. `SqlServerSource.discover` reads the tables one time, so discover again on each run. `sqlServerCopies` makes one copy for each table. Each table reads with the first strategy that it can use:
+The connection string is an ADO.NET connection string. It must name a `Database`. `SqlServerSource.discover` reads the tables one time, so discover again on each run. `sqlServerCopies` makes one copy for each table, with the ID `<source identity>/<schema>.<table>` (`sql-server:shop/dbo.orders`), so two databases that have a table with the same name can be in one pipeline. Each table reads with the first strategy that it can use:
 
 | Strategy        | When                                                                   | Copy                          |
 | --------------- | ---------------------------------------------------------------------- | ----------------------------- |

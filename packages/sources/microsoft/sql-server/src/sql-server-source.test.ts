@@ -298,7 +298,8 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
     FROM pg_attribute WHERE attrelid = ${`raw."${items}"`}::regclass AND attname = 'loaded_at_1'`;
   assert.match(String(comment?.text), /Source field: "loaded_at"\.$/);
   assert.equal(
-    first.results.find(({ copy }) => copy.id === 'dbo.Line Items')?.count,
+    first.results.find(({ copy }) => copy.from.name === 'dbo.Line Items')
+      ?.count,
     2,
   );
 
@@ -314,7 +315,7 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
   ]);
   const changes = (run: typeof first) =>
     run.results
-      .filter(({ copy }) => copy.id === 'dbo.Line Items')
+      .filter(({ copy }) => copy.from.name === 'dbo.Line Items')
       .map(({ count, deleted }) => [count, deleted]);
   assert.deepEqual(changes(second), [[1, 1]]);
   assert.deepEqual(changes(await sync()), [[0, 0]]);
@@ -627,7 +628,7 @@ test(
       String(error.results[0]?.failures[0]?.error),
       /field name has a lone surrogate/,
     );
-    assert.equal(error.results[0]?.copy.id, 'dbo.items');
+    assert.equal(error.results[0]?.copy.from.name, 'dbo.items');
     const count = async () =>
       (
         await warehouseSql`SELECT count(*)::int AS rows, count(DISTINCT id)::int AS ids FROM raw.dbo_items`
@@ -697,7 +698,7 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
   const { results } = await sync();
   // The full read loads its row again; the rowversion read only the update.
   assert.deepEqual(
-    results.map(({ copy, count }) => [copy.id, count]),
+    results.map(({ copy, count }) => [copy.from.name, count]),
     [
       ['dbo.plain', 1],
       ['dbo.stamped', 1],
@@ -734,7 +735,7 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
   );
   assert.deepEqual(
     error.results.map(({ copy, failures }) => [
-      copy.id,
+      copy.from.name,
       failures.map(({ error }) =>
         error instanceof SqlServerPermissionError ? error.grant : String(error),
       ),
@@ -894,6 +895,74 @@ test('discovery keeps only the schemas asked for, and refuses a schema asked for
   await assert.rejects(
     SqlServerSource.discover(database, { schemas: ['sales', 'Audit'] }),
     /The schemas to keep name Audit, which holds no table this login can read in /,
+  );
+});
+
+test('two databases that each hold a table of one name load side by side in one pipeline', async () => {
+  await using billing = await sqlServer.database();
+  await using impact = await sqlServer.database();
+  await using warehouse = await postgresServer.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouseSql = clients.adopt(
+    postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+    (client) => client.end(),
+  );
+  for (const [server, name] of [
+    [billing, "N'invoice'"],
+    [impact, "N'brief'"],
+  ] as const) {
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin
+      .request()
+      .batch(
+        `CREATE TABLE dbo.files (id int PRIMARY KEY, name nvarchar(10) NOT NULL); INSERT dbo.files VALUES (1, ${name});`,
+      );
+  }
+  // One schema per connection, as the Postgres destination is used.
+  const connection = async (schema: string, server: Database) => {
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(server.connectionString),
+    );
+    const destination = new PostgresDestination({
+      url: warehouse.connectionString,
+      schema,
+    });
+    return new Connection({
+      name: schema,
+      source,
+      destination,
+      checkpoints: new PostgresCheckpointStore({
+        url: warehouse.connectionString,
+        schema,
+      }),
+      steps: sqlServerCopies(source, (stream) =>
+        destination.table(stream.replace('.', '_')),
+      ),
+    });
+  };
+
+  await new Pipeline({
+    history: new PostgresSyncHistory({ url: warehouse.connectionString }),
+    connections: [
+      await connection('billing', billing),
+      await connection('impact', impact),
+    ],
+  }).run();
+
+  assert.deepEqual(
+    {
+      billing: (await warehouseSql`SELECT name FROM billing.dbo_files`).map(
+        ({ name }) => name,
+      ),
+      impact: (await warehouseSql`SELECT name FROM impact.dbo_files`).map(
+        ({ name }) => name,
+      ),
+    },
+    { billing: ['invoice'], impact: ['brief'] },
   );
 });
 

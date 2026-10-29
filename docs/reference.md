@@ -2816,7 +2816,7 @@ On 2026-10-15 (one account: Fitbit Air since 2026-07-01, older Fitbit history fr
 
 ## SQL Server
 
-`SqlServerSource` reads one SQL Server database: every user table its login can read becomes a stream named `<schema>.<table>`. The streams are the database's own tables, so the source is discovered, and a host discovers it again on every run; a table whose columns changed reaches the pipeline as a changed stream, which [starts its copy over](#checkpoint-stores). `sqlServerCopies` makes each stream a copy: an incremental `append_dedup` copy for a stream that reads changes, a full-refresh `overwrite` for one that reads every row.
+`SqlServerSource` reads one SQL Server database: every user table its login can read becomes a stream named `<schema>.<table>`. The streams are the database's own tables, so the source is discovered, and a host discovers it again on every run; a table whose columns changed reaches the pipeline as a changed stream, which [starts its copy over](#checkpoint-stores). `sqlServerCopies` makes each stream a copy: an incremental `append_dedup` copy for a stream that reads changes, a full-refresh `overwrite` for one that reads every row. Each copy's ID is `<source identity>/<schema>.<table>` (`sql-server:shop/dbo.orders`). Copy IDs must be distinct across a pipeline, so this ID lets two databases that have a table with the same name be in one pipeline.
 
 ```ts
 import { SqlServerDatabase } from '@workspace/sdk-microsoft-sql-server';

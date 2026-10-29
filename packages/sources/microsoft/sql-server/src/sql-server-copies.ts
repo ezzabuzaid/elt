@@ -6,7 +6,8 @@ import type { SqlServerSource } from './sql-server-source.ts';
  * Every table as a copy into `target(stream)`: an incremental copy that
  * applies changes by key for a stream that reads changes, and a full
  * refresh that replaces the target for one that reads every row. Each copy
- * is named after its stream, so its checkpoint follows the table.
+ * is named after its source and stream, so its checkpoint follows the table
+ * and two databases that hold a table of one name share a pipeline.
  */
 export function sqlServerCopies<T extends Target>(
   source: SqlServerSource,
@@ -22,6 +23,9 @@ export function sqlServerCopies<T extends Target>(
           syncMode: 'full_refresh',
           destinationSyncMode: 'overwrite',
         } as const);
-    return new Copy(stream, target(stream.name), { id: stream.name, ...mode });
+    return new Copy(stream, target(stream.name), {
+      id: `${source.identity}/${stream.name}`,
+      ...mode,
+    });
   });
 }
