@@ -189,6 +189,51 @@ test('a JSON Feed item gives date_published as the publication time and date_mod
   );
 });
 
+test('a page that shows its date only as text under its title gets it as the inferred publication time, beside a null publishedTime and feed date', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (request.url === '/feed.xml')
+      response
+        .writeHead(200, { 'content-type': 'application/rss+xml' })
+        .end(
+          `<rss><channel><item><link>/blog/sleep</link></item></channel></rss>`,
+        );
+    else if (request.url === '/blog/sleep')
+      response.writeHead(200, { 'content-type': 'text/html' }).end(
+        `<main><h1>The sleep framework</h1>
+            <div><p>October 27, 2026</p></div>
+            <p>Continual learning lets a model keep what it learned before.</p></main>`,
+      );
+    else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+
+  await run(
+    [`${upstream.origin}/feed.xml`],
+    cache.path,
+    database.path,
+    checkpoints.path,
+  );
+
+  assert.deepEqual(
+    database.connection
+      .prepare(
+        'SELECT pageUrl, publishedTime, published, inferredPublished FROM articles',
+      )
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      {
+        pageUrl: `${upstream.origin}/blog/sleep`,
+        publishedTime: null,
+        published: null,
+        inferredPublished: '2026-10-27T00:00:00.000Z',
+      },
+    ],
+  );
+});
+
 async function run(
   inputs: readonly string[],
   cache: string,

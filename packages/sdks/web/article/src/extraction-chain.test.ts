@@ -38,6 +38,7 @@ test('a non-HTML extraction receives response bytes and returns its article unch
     lang: null,
     dir: null,
     publishedTime: null,
+    inferredPublished: null,
     content: '<h1>Café report</h1><p>A <strong>short</strong> post.</p>',
     markdown: '# Café report\n\nA **short** post.',
     textContent: 'Café report\n\nA short post.',

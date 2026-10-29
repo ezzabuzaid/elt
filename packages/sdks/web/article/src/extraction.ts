@@ -14,6 +14,8 @@ export type Article = {
   readonly lang: string | null | undefined;
   readonly dir: string | null | undefined;
   readonly publishedTime: string | null | undefined;
+  /** The publication time that the page declares or, failing that, shows as text near its title, in ISO 8601 UTC; null when none parses. */
+  readonly inferredPublished: string | null;
   readonly content: string;
   readonly markdown: string;
   readonly textContent: string;

@@ -15,6 +15,7 @@ export type ArticleSelection = Omit<
 > & {
   readonly content: string;
   readonly canonicalUrl: string | null;
+  readonly inferredPublished: string | null;
   /** What the page declares itself, or null when it declares neither. */
   readonly declared: 'article' | 'list' | null;
 };
@@ -217,10 +218,17 @@ export class HTMLExtraction extends Extraction {
       )
     )
       declared = 'article';
+    // Defuddle reads the declared date first and otherwise takes a date from the text near the h1.
+    const published = extracted.published
+      ? Date.parse(extracted.published)
+      : Number.NaN;
     return {
       ...article,
       content: extracted.content,
       canonicalUrl: canonicalUrl && canonicalUrl.href,
+      inferredPublished: Number.isNaN(published)
+        ? null
+        : new Date(published).toISOString(),
       declared,
     };
   }

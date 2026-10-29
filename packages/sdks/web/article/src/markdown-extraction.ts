@@ -84,6 +84,7 @@ export class MarkdownExtraction extends Extraction {
         lang: null,
         dir: null,
         publishedTime: field('date'),
+        inferredPublished: null,
         content,
         markdown,
         textContent,

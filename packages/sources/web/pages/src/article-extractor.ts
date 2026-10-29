@@ -34,6 +34,12 @@ export class ArticleExtractor extends RecordExtractor {
       description:
         'Publication metadata as supplied, without date inference or conversion.',
     },
+    inferredPublished: {
+      type: ['string', 'null'],
+      format: 'date-time',
+      description:
+        'The publication time that the page declares or, when it declares none, a date in the text near its title at 00:00 UTC, which is a guess; null when the page shows no date that parses.',
+    },
     content: { ...text, description: 'Sanitized article HTML.' },
     markdown: {
       ...text,

@@ -105,12 +105,13 @@ The exported `Article` type is the contract for every extraction. `HTMLExtractio
 | `markdown`                           | Markdown converted from that same sanitized HTML, including links and pipe tables                                                                           |
 | `textContent`, `length`              | Text with paragraph breaks and formatted data tables; its JavaScript string length                                                                          |
 | `title`, `byline`, `publishedTime`   | Readability's title, author text and raw publication metadata                                                                                               |
+| `inferredPublished`                  | Defuddle's date, ISO 8601 UTC or null; it can be a guess ([ADR 0011](./docs/adr/0011-the-inferred-publication-time-is-defuddles-date-in-its-own-field.md))  |
 | `excerpt`, `siteName`, `lang`, `dir` | Readability's description, publisher, language and text direction                                                                                           |
 | `list`                               | The page lists other pages of its origin, such as a category or an archive ([ADR 0010](./docs/adr/0010-a-page-that-lists-pages-is-labeled-not-rejected.md)) |
 
 For native Markdown, `markdown` is the body of the publisher. It can hold navigation, footer text or raw HTML even when `content` and `textContent` are clean, so sanitize it before you render it. Relative URLs resolve against the representation that gives the content.
 
-The SDK does not infer a publication date from prose, URL paths, HTTP timestamps or sitemap hints. An article is the result of heuristics: it does not prove that every part of the page was captured.
+`publishedTime` is only the date that the page declares. A date that the page shows only as text near its title goes into `inferredPublished`, which is a guess. The SDK does not infer a date from URL paths, HTTP timestamps or sitemap hints. An article is the result of heuristics: it does not prove that every part of the page was captured.
 
 ## When something fails
 
@@ -131,7 +132,7 @@ The SDK does not infer a publication date from prose, URL paths, HTTP timestamps
 | -------------------------------- | ---------------------------------------------------------------------------------- |
 | Got 14.6.6                       | HTTP, redirects, decompression, selective retries, deadlines and cancellation      |
 | jsdom 30.1.3                     | Charset decoding, HTML base/link resolution, canonical declaration and DOM queries |
-| Defuddle 0.19.5, `defuddle/node` | Content selection, including introductions, linked captions and appendices         |
+| Defuddle 0.19.5, `defuddle/node` | Content selection with introductions, captions and appendices; the inferred date   |
 | Mozilla Readability 0.6.0        | Metadata with the existing publication-date and missing-value contract             |
 | html-minifier-next 9.0.1         | Stable whitespace/comment normalization while preserving preformatted content      |
 | DOMPurify 3.4.17                 | Final HTML sanitization using its native policy                                    |
@@ -154,3 +155,4 @@ The SDK does not infer a publication date from prose, URL paths, HTTP timestamps
 - [ADR 0008: The fingerprint is known before extraction](./docs/adr/0008-the-fingerprint-is-known-before-extraction.md)
 - [ADR 0009: A JSON-LD context array is given to Readability as its schema.org IRI](./docs/adr/0009-a-json-ld-context-array-is-given-to-readability-as-its-schema-org-iri.md)
 - [ADR 0010: A page that lists pages is labeled, not rejected](./docs/adr/0010-a-page-that-lists-pages-is-labeled-not-rejected.md)
+- [ADR 0011: The inferred publication time is Defuddle's date, in its own field](./docs/adr/0011-the-inferred-publication-time-is-defuddles-date-in-its-own-field.md)

@@ -52,6 +52,10 @@ _Avoid_: Clean fields
 `title`, `byline`, `publishedTime`, `excerpt`, `siteName`, `lang`, `dir` and `canonicalUrl`. A missing value is null; the SDK does not infer one.
 _Avoid_: Provenance (the web source adds provenance columns)
 
+**Inferred publication time**:
+The publication date that Defuddle finds in an HTML page, in ISO 8601 UTC (`inferredPublished`): the declared date or, when the page declares none, a date in the text near the title. It is not metadata, because it can be a guess.
+_Avoid_: Published time (`publishedTime` is only the declared date), feed date (the web source's `published` comes from the listing)
+
 **Fingerprint**:
 A hash of the response bytes, the final URL and the Content-Type, known before extraction. It is null when another response can change the article.
 _Avoid_: ETag (an ETag is an HTTP validator), version
