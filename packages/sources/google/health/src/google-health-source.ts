@@ -1,4 +1,4 @@
-import { setTimeout as sleep } from 'node:timers/promises';
+import { pollChanges } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -129,14 +129,11 @@ export class GoogleHealthSource extends Source<GoogleHealthScan> {
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    let seen = await this.#fingerprint(signal);
-    yield streams;
-    for (;;) {
-      await sleep(this.pollIntervalMs, undefined, { signal });
-      const now = await this.#fingerprint(signal);
-      yield now === seen ? [] : streams;
-      seen = now;
-    }
+    for await (const changed of pollChanges(
+      new Map([['fingerprint', () => this.#fingerprint(signal)]]),
+      { interval: this.pollIntervalMs, signal },
+    ))
+      yield changed.size > 0 ? streams : [];
   }
 
   protected override extract(

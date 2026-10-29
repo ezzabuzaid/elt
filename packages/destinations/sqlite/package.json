@@ -16,7 +16,7 @@
     "@zukhruf/sqlite-transaction": "^0.3.49"
   },
   "devDependencies": {
-    "@zukhruf/snapshot-differential": "^0.3.49",
+    "@zukhruf/snapshot-differential": "^0.3.53",
     "@zukhruf/testing": "^0.3.49"
   }
 }

@@ -1,4 +1,4 @@
-import { setInterval } from 'node:timers/promises';
+import { pollChanges } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -13,7 +13,6 @@ import {
   WhatsApp,
   type WhatsAppStore,
   WhatsAppUnavailableError,
-  type WhatsAppVersion,
   whatsappContainer,
   whatsappRunning,
 } from '@workspace/sdk-whatsapp-desktop';
@@ -190,31 +189,19 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using versions = new DisposableStack();
-    const probes = new Map<WhatsAppStore, WhatsAppVersion>(
+    const reads = new Map(
       [...new Set(streams.map((stream) => readerOf(stream).store))].map(
-        (store) => [store, versions.use(this.#whatsapp.version(store))],
+        (store) => {
+          const probe = versions.use(this.#whatsapp.version(store));
+          return [store, async () => probe.current];
+        },
       ),
     );
-    const seen = new Map(
-      [...probes].map(([store, probe]) => [store, probe.current]),
-    );
-    yield streams;
-    try {
-      for await (const _ of setInterval(pollIntervalMs, undefined, {
-        signal,
-      })) {
-        const changed = new Set<WhatsAppStore>();
-        for (const [store, probe] of probes) {
-          const current = probe.current;
-          if (current === seen.get(store)) continue;
-          seen.set(store, current);
-          changed.add(store);
-        }
-        yield streams.filter((stream) => changed.has(readerOf(stream).store));
-      }
-    } catch (error) {
-      if (!(error instanceof Error && error.name === 'AbortError')) throw error;
-    }
+    for await (const changed of pollChanges(reads, {
+      interval: pollIntervalMs,
+      signal,
+    }))
+      yield streams.filter((stream) => changed.has(readerOf(stream).store));
   }
 
   protected override async *extract(

@@ -1,5 +1,4 @@
-import { setInterval } from 'node:timers/promises';
-
+import { pollChanges } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import {
@@ -17,7 +16,6 @@ import {
   ClockStore,
   type ClockStoreKind,
   ClockUnavailableError,
-  type ClockVersion,
   clockLocation,
 } from '@workspace/sdk-apple-clock/clock-store';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -116,34 +114,14 @@ export class AppleClockSource extends Source<ClockSnapshot> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using resources = new DisposableStack();
-    const probes = new Map<ClockStoreKind, ClockVersion>();
-    const seen = new Map<ClockStoreKind, string>();
+    const reads = new Map<ClockStoreKind, () => Promise<string>>();
     for (const stream of streams) {
       const store = readerOf(stream).store;
-      if (probes.has(store)) continue;
+      if (reads.has(store)) continue;
       const probe = resources.use(this.#store.version(store));
-      probes.set(store, probe);
-      seen.set(store, await probe.current());
+      reads.set(store, () => probe.current());
     }
-    yield streams;
-    try {
-      for await (const _ of setInterval(1000, undefined, { signal })) {
-        const changed = new Set<ClockStoreKind>();
-        for (const [store, probe] of probes) {
-          const version = await probe.current();
-          if (version === seen.get(store)) continue;
-          seen.set(store, version);
-          changed.add(store);
-        }
-        yield streams.filter((stream) => changed.has(readerOf(stream).store));
-      }
-    } catch (error) {
-      if (!(
-        signal.aborted &&
-        error instanceof Error &&
-        error.name === 'AbortError'
-      ))
-        throw error;
-    }
+    for await (const changed of pollChanges(reads, { interval: 1000, signal }))
+      yield streams.filter((stream) => changed.has(readerOf(stream).store));
   }
 }

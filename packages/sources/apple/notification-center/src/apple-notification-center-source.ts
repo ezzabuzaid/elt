@@ -1,5 +1,4 @@
-import { setInterval } from 'node:timers/promises';
-
+import { pollChanges } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import {
@@ -89,20 +88,11 @@ export class AppleNotificationCenterSource extends Source<NotificationCenterScan
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using version = this.#store.version();
-    let seen = version.current;
-    yield streams;
-    try {
-      for await (const _ of setInterval(pollIntervalMs, undefined, {
-        signal,
-      })) {
-        const current = version.current;
-        const changed = current === seen ? [] : streams;
-        seen = current;
-        yield changed;
-      }
-    } catch (error) {
-      if (!(error instanceof Error && error.name === 'AbortError')) throw error;
-    }
+    for await (const changed of pollChanges(
+      new Map([['version', async () => version.current]]),
+      { interval: pollIntervalMs, signal },
+    ))
+      yield changed.size > 0 ? streams : [];
   }
 
   protected override async *extract(

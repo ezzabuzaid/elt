@@ -53,7 +53,8 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
     readonly rereads?: (record: Data) => boolean;
   },
 ): AsyncGenerator<SnapshotMessage<Data>> {
-  const differential = differentialOf<Data>(stream, options);
+  const deduplication = deduplicationOf(stream);
+  const differential = differentialOf<Data>(deduplication, options);
   if (syncMode !== 'incremental') {
     for await (const data of records) yield { stream: stream.name, data };
     return;
@@ -63,7 +64,7 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
     state,
     options,
   ))
-    yield messageOf(stream, change);
+    yield messageOf(deduplication, change);
 }
 
 // diffSnapshot for a scan whose records come from inputs the source can
@@ -80,7 +81,8 @@ export async function* diffGroupedSnapshot<
   state: unknown,
   options: SnapshotDiffOptions,
 ): AsyncGenerator<SnapshotMessage<Data>> {
-  const differential = differentialOf<Data>(stream, options);
+  const deduplication = deduplicationOf(stream);
+  const differential = differentialOf<Data>(deduplication, options);
   if (syncMode !== 'incremental') {
     for await (const group of groups) {
       // A full refresh replaces its target, so it must read every group.
@@ -98,7 +100,7 @@ export async function* diffGroupedSnapshot<
     state,
     options,
   ))
-    yield messageOf(stream, change);
+    yield messageOf(deduplication, change);
 }
 
 // Each item of a scan until signal aborts. A scan that finds nothing changed
@@ -134,19 +136,26 @@ class Forgetting extends DeletionPolicy {
   }
 }
 
-function differentialOf<Data extends Record<string, unknown>>(
-  stream: Stream,
-  { policy }: SnapshotDiffOptions,
-): SnapshotDifferential<Data> {
+function deduplicationOf(stream: Stream): Deduplication {
   if (!stream.sourceDefinedCursor)
     throw new TypeError(
       `Stream ${stream.name} must declare sourceDefinedCursor to diff snapshots`,
     );
-  const deduplication = new Deduplication(stream, stream.primaryKey);
+  return new Deduplication(stream, stream.primaryKey);
+}
+
+function differentialOf<Data extends Record<string, unknown>>(
+  deduplication: Deduplication,
+  { policy }: SnapshotDiffOptions,
+): SnapshotDifferential<Data> {
+  const { stream } = deduplication;
   return new SnapshotDifferential<Data>({
     name: stream.name,
     primaryKey: stream.primaryKey,
-    key: (record) => deduplication.key(record),
+    key: (record) =>
+      deduplication.primaryKey.map((field) =>
+        deduplication.value(record, field),
+      ),
     expiresBy: stream.expiresBy,
     policy: policyOf(stream, policy),
   });
@@ -173,12 +182,24 @@ function policyOf(
 }
 
 function messageOf<Data>(
-  stream: Stream,
+  deduplication: Deduplication,
   change: SnapshotChange<Data, unknown>,
 ): SnapshotMessage<Data> {
-  if (change.type === 'upsert')
+  const { stream } = deduplication;
+  if (change.type === 'insert' || change.type === 'update')
     return { stream: stream.name, data: change.record };
   if (change.type === 'delete')
-    return { type: 'DELETE', stream: stream.name, key: change.key };
+    return {
+      type: 'DELETE',
+      stream: stream.name,
+      // The differential can keep bytes in a key; a stream's key fields are
+      // scalars, so the deleted key passes the same check its record did.
+      key: Object.fromEntries(
+        deduplication.primaryKey.map((field) => [
+          field,
+          deduplication.value(change.key, field),
+        ]),
+      ),
+    };
   return { type: 'STATE', stream: stream.name, state: change.state };
 }

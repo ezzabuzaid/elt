@@ -1,5 +1,4 @@
-import { setInterval } from 'node:timers/promises';
-
+import { pollChanges } from '@zukhruf/async';
 import {
   ClosedWorld,
   type DeletionPolicy,
@@ -19,7 +18,6 @@ import {
   type SafariLocation,
   type SafariStore,
   SafariUnavailableError,
-  type SafariVersion,
   safariContainer,
   safariDirectory,
   safariRunning,
@@ -177,30 +175,19 @@ export class AppleSafariSource extends Source<SafariScan> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using versions = new DisposableStack();
-    const probes = new Map<SafariStore, SafariVersion>(
+    const reads = new Map(
       [...new Set(streams.map((stream) => readerOf(stream).store))].map(
-        (store) => [store, versions.use(this.#safari.version(store))],
+        (store) => {
+          const probe = versions.use(this.#safari.version(store));
+          return [store, () => probe.current()];
+        },
       ),
     );
-    const seen = new Map<SafariStore, string>();
-    for (const [store, probe] of probes) seen.set(store, await probe.current());
-    yield streams;
-    try {
-      for await (const _ of setInterval(pollIntervalMs, undefined, {
-        signal,
-      })) {
-        const changed = new Set<SafariStore>();
-        for (const [store, probe] of probes) {
-          const current = await probe.current();
-          if (current === seen.get(store)) continue;
-          seen.set(store, current);
-          changed.add(store);
-        }
-        yield streams.filter((stream) => changed.has(readerOf(stream).store));
-      }
-    } catch (error) {
-      if (!(error instanceof Error && error.name === 'AbortError')) throw error;
-    }
+    for await (const changed of pollChanges(reads, {
+      interval: pollIntervalMs,
+      signal,
+    }))
+      yield streams.filter((stream) => changed.has(readerOf(stream).store));
   }
 
   protected override async *extract(

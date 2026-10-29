@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@workspace/elt": "0.0.1",
-    "@workspace/sdk-microsoft-sql-server": "0.0.1"
+    "@workspace/sdk-microsoft-sql-server": "0.0.1",
+    "@zukhruf/async": "^0.3.53"
   },
   "devDependencies": {
     "@types/mssql": "^12.3.0",

@@ -1,5 +1,4 @@
-import { setInterval } from 'node:timers/promises';
-
+import { pollChanges } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import type {
@@ -99,26 +98,24 @@ export class AppleNotesSource extends Source<NotesScan> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using version = this.#store.version();
-    let seen = version.current;
-    await launchNotesHidden();
-    let nextLaunch = Date.now() + launchIntervalMs;
-    yield streams;
-    try {
-      for await (const _ of setInterval(pollIntervalMs, undefined, {
-        signal,
-      })) {
-        if (Date.now() >= nextLaunch) {
-          await launchNotesHidden();
-          nextLaunch = Date.now() + launchIntervalMs;
-        }
-        const current = version.current;
-        const changed = current === seen ? [] : streams;
-        seen = current;
-        yield changed;
-      }
-    } catch (error) {
-      if (!(error instanceof Error && error.name === 'AbortError')) throw error;
-    }
+    let nextLaunch = Date.now();
+    const reads = new Map([
+      [
+        'version',
+        async () => {
+          if (Date.now() >= nextLaunch) {
+            await launchNotesHidden();
+            nextLaunch = Date.now() + launchIntervalMs;
+          }
+          return version.current;
+        },
+      ],
+    ]);
+    for await (const changed of pollChanges(reads, {
+      interval: pollIntervalMs,
+      signal,
+    }))
+      yield changed.size > 0 ? streams : [];
   }
 
   protected override async *extract(

@@ -1,4 +1,4 @@
-import { setInterval } from 'node:timers/promises';
+import { pollChanges } from '@zukhruf/async';
 
 import type {
   CopyConfiguration,
@@ -176,25 +176,11 @@ export class AppleActivitySource extends Source<ActivityScan> {
       }
       probes.set(stream, probe);
     }
-    const seen = new Map<Stream, string>();
-    for (const [stream, probe] of probes) seen.set(stream, await probe());
-    yield streams;
-    try {
-      for await (const _ of setInterval(this.pollIntervalMs, undefined, {
-        signal,
-      })) {
-        const changed: Stream[] = [];
-        for (const [stream, probe] of probes) {
-          const current = await probe();
-          if (current === seen.get(stream)) continue;
-          seen.set(stream, current);
-          changed.push(stream);
-        }
-        yield changed;
-      }
-    } catch (error) {
-      if (!(error instanceof Error && error.name === 'AbortError')) throw error;
-    }
+    for await (const changed of pollChanges(probes, {
+      interval: this.pollIntervalMs,
+      signal,
+    }))
+      yield [...changed];
   }
 
   protected override extract(

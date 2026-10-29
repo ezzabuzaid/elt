@@ -1,5 +1,4 @@
-import { setInterval } from 'node:timers/promises';
-
+import { pollChanges } from '@zukhruf/async';
 import { Coverage } from '@zukhruf/snapshot-differential';
 
 import {
@@ -141,21 +140,11 @@ export class TeamsSource extends Source<TeamsScan> {
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    if (signal.aborted) return;
-    let seen = this.#store.version();
-    yield streams;
-    try {
-      for await (const _ of setInterval(pollIntervalMs, undefined, {
-        signal,
-      })) {
-        const current = this.#store.version();
-        const changed = current === seen ? [] : streams;
-        seen = current;
-        yield changed;
-      }
-    } catch (error) {
-      if (!(error instanceof Error && error.name === 'AbortError')) throw error;
-    }
+    for await (const changed of pollChanges(
+      new Map([['version', async () => this.#store.version()]]),
+      { interval: pollIntervalMs, signal },
+    ))
+      yield changed.size > 0 ? streams : [];
   }
 
   protected override async *extract(

@@ -12,7 +12,8 @@
   "dependencies": {
     "@workspace/elt": "0.0.1",
     "@workspace/google-auth": "0.0.1",
-    "@workspace/sdk-google-health": "0.0.1"
+    "@workspace/sdk-google-health": "0.0.1",
+    "@zukhruf/async": "^0.3.53"
   },
   "devDependencies": {
     "@workspace/elt-postgresql": "0.0.1",

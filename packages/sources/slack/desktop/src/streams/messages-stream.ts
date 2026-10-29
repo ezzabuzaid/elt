@@ -1,4 +1,6 @@
-import type { KeyValue, RecordDraft } from '@workspace/elt';
+import type { KeyValue } from '@zukhruf/snapshot-differential';
+
+import type { RecordDraft } from '@workspace/elt';
 import type { SlackMessage } from '@workspace/sdk-slack-desktop';
 
 import type { SlackDesktopScan } from '../slack-desktop-scan.ts';

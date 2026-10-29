@@ -1,5 +1,6 @@
+import type { KeyValue } from '@zukhruf/snapshot-differential';
+
 import {
-  type KeyValue,
   type Properties,
   type RecordDraft,
   type SchemaRecord,

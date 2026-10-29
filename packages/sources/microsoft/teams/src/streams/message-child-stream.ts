@@ -1,4 +1,6 @@
-import type { KeyValue, Properties, RecordDraft } from '@workspace/elt';
+import type { KeyValue } from '@zukhruf/snapshot-differential';
+
+import type { Properties, RecordDraft } from '@workspace/elt';
 import type { TeamsMessage } from '@workspace/sdk-microsoft-teams';
 
 import type { TeamsScan } from '../teams-scan.ts';

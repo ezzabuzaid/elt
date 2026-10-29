@@ -1,4 +1,4 @@
-import { setInterval } from 'node:timers/promises';
+import { pollChanges } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -117,39 +117,33 @@ export class SqlServerSource extends Source<SqlServerSession> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     await using session = await this.#database.open();
-    let seen = await session.version();
-    let refreshed = Date.now();
-    yield streams;
-    const of = <T extends SqlServerStream>(
-      kind: abstract new (...args: never[]) => T,
-    ) => streams.filter((stream) => this.#reader(stream) instanceof kind);
-    try {
-      for await (const _ of setInterval(pollIntervalMs, undefined, {
-        signal,
-      })) {
-        const current = await session.version();
-        const changed = [
-          ...(current.changeTracking === seen.changeTracking
-            ? []
-            : of(ChangeTrackingStream)),
-          ...(current.rowversion === seen.rowversion
-            ? []
-            : of(RowversionStream)),
-          ...(Date.now() - refreshed < fullRefreshIntervalMs
-            ? []
-            : of(FullRefreshStream)),
-        ];
-        seen = current;
-        if (
-          changed.some(
-            (stream) => this.#reader(stream) instanceof FullRefreshStream,
-          )
-        )
-          refreshed = Date.now();
-        if (changed.length > 0) yield changed;
+    // pollChanges reads in the order of the map, so the rowversion read
+    // takes the counters the Change Tracking read just queried.
+    let version: Awaited<ReturnType<SqlServerSession['version']>>;
+    const reads = new Map<
+      abstract new (...args: never[]) => SqlServerStream,
+      () => Promise<unknown>
+    >([
+      [
+        ChangeTrackingStream,
+        async () => (version = await session.version()).changeTracking,
+      ],
+      [RowversionStream, async () => version.rowversion],
+    ]);
+    let refreshed = -Infinity;
+    for await (const changed of pollChanges(reads, {
+      interval: pollIntervalMs,
+      signal,
+    })) {
+      const kinds = [...changed];
+      if (Date.now() - refreshed >= fullRefreshIntervalMs) {
+        kinds.push(FullRefreshStream);
+        refreshed = Date.now();
       }
-    } catch (error) {
-      if (!(error instanceof Error && error.name === 'AbortError')) throw error;
+      const woken = streams.filter((stream) =>
+        kinds.some((kind) => this.#reader(stream) instanceof kind),
+      );
+      if (woken.length > 0) yield woken;
     }
   }
 

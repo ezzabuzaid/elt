@@ -1,4 +1,4 @@
-import { setInterval } from 'node:timers/promises';
+import { pollChanges } from '@zukhruf/async';
 
 import type {
   CopyConfiguration,
@@ -250,36 +250,22 @@ export class AppleMailSource extends Source<MailScan> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using version = await this.#store.version();
-    let seen = version.current;
     const accountsSelected = selected.filter(({ name }) =>
       accountStreams.has(name),
     );
     using accounts =
       accountsSelected.length === 0 ? null : this.#accountsVersion();
-    let accountsSeen = accounts?.current;
-    yield selected;
-    try {
-      for await (const _ of setInterval(pollIntervalMs, undefined, {
-        signal,
-      })) {
-        const current = version.current;
-        const accountsCurrent = accounts?.current;
-        if (current !== seen) {
-          seen = current;
-          accountsSeen = accountsCurrent;
-          yield selected;
-        } else if (accountsCurrent !== accountsSeen) {
-          accountsSeen = accountsCurrent;
-          yield accountsSelected;
-        } else yield [];
-      }
-    } catch (error) {
-      if (!(
-        signal.aborted &&
-        error instanceof Error &&
-        error.name === 'AbortError'
-      ))
-        throw error;
+    const reads = new Map<'mail' | 'accounts', () => Promise<unknown>>([
+      ['mail', async () => version.current],
+    ]);
+    if (accounts !== null) reads.set('accounts', async () => accounts.current);
+    for await (const changed of pollChanges(reads, {
+      interval: pollIntervalMs,
+      signal,
+    })) {
+      if (changed.has('mail')) yield selected;
+      else if (changed.has('accounts')) yield accountsSelected;
+      else yield [];
     }
   }
 

@@ -1,8 +1,8 @@
 import { mkdtempDisposable, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setInterval } from 'node:timers/promises';
 
+import { pollChanges } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import type {
@@ -18,7 +18,6 @@ import {
   type BooksLocation,
   type BooksStore,
   BooksUnavailableError,
-  type BooksVersion,
   booksContainer,
   booksGroupContainer,
 } from '@workspace/sdk-apple-books';
@@ -135,30 +134,19 @@ export class AppleBooksSource extends Source<BooksScan> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using versions = new DisposableStack();
-    const probes = new Map<BooksStore, BooksVersion>(
+    const reads = new Map(
       [...new Set(streams.map((stream) => readerOf(stream).store))].map(
-        (store) => [store, versions.use(this.#books.version(store))],
+        (store) => {
+          const probe = versions.use(this.#books.version(store));
+          return [store, () => probe.current()];
+        },
       ),
     );
-    const seen = new Map<BooksStore, string>();
-    for (const [store, probe] of probes) seen.set(store, await probe.current());
-    yield streams;
-    try {
-      for await (const _ of setInterval(pollIntervalMs, undefined, {
-        signal,
-      })) {
-        const changed = new Set<BooksStore>();
-        for (const [store, probe] of probes) {
-          const current = await probe.current();
-          if (current === seen.get(store)) continue;
-          seen.set(store, current);
-          changed.add(store);
-        }
-        yield streams.filter((stream) => changed.has(readerOf(stream).store));
-      }
-    } catch (error) {
-      if (!(error instanceof Error && error.name === 'AbortError')) throw error;
-    }
+    for await (const changed of pollChanges(reads, {
+      interval: pollIntervalMs,
+      signal,
+    }))
+      yield streams.filter((stream) => changed.has(readerOf(stream).store));
   }
 
   protected override async *extract(
