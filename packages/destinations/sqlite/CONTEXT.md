@@ -47,3 +47,19 @@ _Avoid_: Checksum, fingerprint, sha256 (the ref of a stored file is also named b
 **Declaration**:
 The `CREATE TABLE` statement of the raw table of a computed dataset. When the stored table is different, a refresh makes the table again.
 _Avoid_: Schema version, migration
+
+**Stage**:
+The `TEMP` table where one stream keeps its operations until its next commit. Only its connection sees it.
+_Avoid_: Buffer, batch, staging table (a stage is not in the SQLite file)
+
+**Hidden table**:
+The table `_elt_next_<hash>` that a reload commits into. It takes the place of the raw table when the stream ends with no failure.
+_Avoid_: Shadow table, temp table
+
+**Checkpoint file**:
+The SQLite file of a `SQLiteCheckpointStore`. It is not a SQLite file of a destination.
+_Avoid_: State database
+
+**Sole writer**:
+A `SQLiteSyncHistory` whose host knows that no other process runs a pass of its connections. Its install fails the passes that it finds unfinished.
+_Avoid_: Leader (the leader of a flight is one host that can be a sole writer), owner

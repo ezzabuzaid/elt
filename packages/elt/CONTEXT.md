@@ -48,6 +48,78 @@ _Avoid_: Save, write, flush
 The program that makes a pipeline and starts its runs or its watch, for example the CLI of Context Compiler.
 _Avoid_: App (in Context Compiler, an app is a macOS application), runner
 
+**Stream**:
+One kind of record that a source gives, with its schema, key and declarations, for example the notes of Apple Notes.
+_Avoid_: Table (a table is a target), collection, entity
+
+**Target**:
+The stored object of a destination that one copy loads, for example one table.
+_Avoid_: Sink, table (a target of a different destination can be a file)
+
+**Writer**:
+The copy that owns a target: its `id`, or the source identity and the stream name for a copy with no `id`. A target has one writer.
+_Avoid_: Owner claim, producer
+
+**Checkpoint**:
+The state of a source that a copy saved after the rows before it committed. The next pass resumes from it.
+_Avoid_: Cursor (a cursor is one field of a record), bookmark, offset
+
+**Checkpoint store**:
+The store that keeps the checkpoint of each incremental copy and its binding, for example `SQLiteCheckpointStore`. It belongs to the orchestration, not to the destination.
+_Avoid_: State file, state backend
+
+**Binding**:
+What a checkpoint belongs to: the source identity, the location of the target, the configuration of the copy, and the shape of the stream. A changed binding fails the copy.
+_Avoid_: Fingerprint (a fingerprint names a record or a group), signature
+
+**Shape**:
+The fields of a stream with their types, and its declarations. The descriptions are not part of it.
+_Avoid_: Schema version
+
+**Evolve**:
+The destination changes a stored target in place to the new fields of its stream, and keeps its rows.
+_Avoid_: Migrate, rebuild
+
+**Reload**:
+A stream starts again in a hidden target. The hidden target takes the place of the target when the stream ends with no failure.
+_Avoid_: Refresh (a refresh is for a derived dataset), backfill
+
+**Snapshot stream**:
+A stream with no change feed whose source compares each complete scan with the snapshot in its checkpoint.
+_Avoid_: Full scan stream, polling stream
+
+**Deletion policy**:
+The rule that gives each vanished key of a snapshot stream a verdict: deleted, unknown or expired.
+_Avoid_: Retention policy (a retention is one kind)
+
+**Partition**:
+One part of a stream that a source reads apart, with its own checkpoint, for example one Search Console property.
+_Avoid_: Shard, slice
+
+**Read context**:
+What a source opens for one read of all the streams of a pass, so that they tell of the same moment, for example a read transaction.
+_Avoid_: Session, snapshot (a snapshot is the state of a snapshot stream)
+
+**Check**:
+One look of a watch at its upstream. A check that finds no change makes the unchanged streams current as of that check.
+_Avoid_: Poll, heartbeat
+
+**Current as of**:
+When a stream last agreed with its upstream: the start of its last successful pass or a later check, and never later than when its source says the upstream was last current.
+_Avoid_: Freshness, last sync, updated at
+
+**Sync history**:
+The record of each pass of a pipeline, its declared coverage and its outcomes, for example `SQLiteSyncHistory`.
+_Avoid_: Log, job history
+
+**Coverage**:
+What a source says a pass over one stream asks the upstream for, from its configuration. It is the configured scope, not what the pass found.
+_Avoid_: Range, completeness
+
+**Failure type**:
+Whose a failure is to fix: `config` when only the user can fix it, and `system` for each other failure.
+_Avoid_: Error class, severity
+
 **Stored file**:
 A copy of a source's file that a copy kept in a file storage, for example `LocalFiles`. A row names it by its ref.
 _Avoid_: Attachment (an app's word; a stored file can be any file), blob

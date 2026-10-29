@@ -36,9 +36,9 @@ The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and 
 Every destination supports overwrite, append, and deduplication:
 
 - **SQLite** (`elt-sqlite`): strict tables with inferred or explicitly selected columns, including text and attachment bytes.
-- **Postgres** (`elt-postgresql`): typed tables in one schema per connector, loaded without blocking readers, and [documented SQL views](docs/reference.md#documented-postgres-views) defined by the consuming application.
+- **Postgres** (`elt-postgresql`): typed tables in one schema per connector, loaded without blocking readers, and [documented SQL views](packages/destinations/postgresql/README.md#documented-views) defined by the consuming application.
 
-See the reference for [Mail streams](packages/sources/apple/mail/README.md), [Contacts streams](docs/reference.md#apple-contacts), [Calendar streams](docs/reference.md#apple-calendar), [Reminders streams](docs/reference.md#apple-reminders), [Safari streams](docs/reference.md#apple-safari), [Books streams](docs/reference.md#apple-books), [Activity streams](docs/reference.md#apple-activity), [Accounts streams](docs/reference.md#apple-accounts), [Call History streams](docs/reference.md#apple-call-history), [Clock streams](packages/sources/apple/clock/README.md), [Notification Center streams](docs/reference.md#apple-notification-center), [Wallet streams](docs/reference.md#apple-wallet), [Slack streams](docs/reference.md#slack), [Teams streams](docs/reference.md#microsoft-teams), [WhatsApp streams](docs/reference.md#whatsapp), [Instagram streams](docs/reference.md#instagram), [Search Console streams](packages/sources/google/search-console/README.md), [SQL Server streams](docs/reference.md#sql-server), and [destination behavior](docs/reference.md#identity-cursors-and-schemas).
+See the reference for [Mail streams](packages/sources/apple/mail/README.md), [Contacts streams](packages/sources/apple/contacts/README.md), [Calendar streams](packages/sources/apple/calendar/README.md), [Reminders streams](packages/sources/apple/reminders/README.md), [Safari streams](packages/sources/apple/safari/README.md), [Books streams](packages/sources/apple/books/README.md), [Activity streams](packages/sources/apple/activity/README.md), [Accounts streams](packages/sources/apple/accounts/README.md), [Call History streams](packages/sources/apple/call-history/README.md), [Clock streams](packages/sources/apple/clock/README.md), [Notification Center streams](packages/sources/apple/notification-center/README.md), [Wallet streams](packages/sources/apple/wallet/README.md), [Slack streams](packages/sources/slack/desktop/README.md), [Teams streams](packages/sources/microsoft/teams/README.md), [WhatsApp streams](packages/sources/whatsapp/desktop/README.md), [Instagram streams](packages/sources/instagram/web/README.md), [Search Console streams](packages/sources/google/search-console/README.md), [SQL Server streams](packages/sources/microsoft/sql-server/README.md), and [destination behavior](packages/elt/README.md#keys-cursors-and-schemas).
 
 ## Quick start
 
@@ -141,7 +141,7 @@ await new Pipeline({
 }).run();
 ```
 
-A full-refresh overwrite also removes deleted reminders; an incremental copy (`append_dedup` keyed by `id`, no `cursorField`) writes only changed reminders and deletes removed ones. Due and start dates are exported as raw date components, so date-only and floating reminders are never shifted into UTC. Apple exposes only the next incomplete occurrence of a recurring reminder. See [Reminders streams](docs/reference.md#apple-reminders) for all eight streams and their limits.
+A full-refresh overwrite also removes deleted reminders; an incremental copy (`append_dedup` keyed by `id`, no `cursorField`) writes only changed reminders and deletes removed ones. Due and start dates are exported as raw date components, so date-only and floating reminders are never shifted into UTC. Apple exposes only the next incomplete occurrence of a recurring reminder. See [Reminders streams](packages/sources/apple/reminders/README.md) for all eight streams and their limits.
 
 ## Incremental sync
 
@@ -178,7 +178,7 @@ await pipeline.run();
 
 The Apple apps have no change feed, so an incremental copy compares each full scan with the snapshot saved by the previous run. The first run loads every note. Later runs write only new and changed notes and delete notes that disappeared, including edits that did not advance `modifiedAt`. These copies select no `cursorField` and need `append_dedup`, which deduplicates on the stream's own `id` key.
 
-Keep the copy ID and both SQLite files between runs. The checkpoint store must use a separate file from the destination. A Postgres destination keeps its checkpoints beside the data instead, with `PostgresCheckpointStore` from `elt-postgresql`; see [checkpoint stores](docs/reference.md#checkpoint-stores). Changing the source, target or copy configuration requires a new copy ID or an explicit checkpoint reset. A changed stream schema starts the copy over on its own, and a destination table deleted by hand reloads from scratch.
+Keep the copy ID and both SQLite files between runs. The checkpoint store must use a separate file from the destination. A Postgres destination keeps its checkpoints beside the data instead, with `PostgresCheckpointStore` from `elt-postgresql`; see [checkpoint stores](packages/elt/README.md#checkpoint-stores). Changing the source, target or copy configuration requires a new copy ID or an explicit checkpoint reset. A changed stream schema starts the copy over on its own, and a destination table deleted by hand reloads from scratch.
 
 **Notes reads its whole store on each run.** That takes milliseconds for thousands of notes; the comparison reduces writes. Notes in **Recently Deleted** are notes in that folder, so they stay until permanently deleted.
 
@@ -242,9 +242,9 @@ new Copy(calendar.events, destination.table('events'), {
 });
 ```
 
-Each run writes only new and changed rows and deletes rows that disappeared, including occurrences that moved out of the window and removed attendees or alarms. A copy that reads attachment files needs `attachments`; `googleCalendarAttachments(requester)` from `@workspace/source-apple-calendar/google-calendar-attachments` downloads those stored in Google Drive and Gmail through a `google-auth` requester. The window can move between runs without resetting the checkpoint. Calendar still reads the whole window every run. See [snapshot streams](docs/reference.md#snapshot-streams).
+Each run writes only new and changed rows and deletes rows that disappeared, including occurrences that moved out of the window and removed attendees or alarms. A copy that reads attachment files needs `attachments`; `googleCalendarAttachments(requester)` from `@workspace/source-apple-calendar/google-calendar-attachments` downloads those stored in Google Drive and Gmail through a `google-auth` requester. The window can move between runs without resetting the checkpoint. Calendar still reads the whole window every run. See [snapshot streams](packages/elt/README.md#snapshot-streams).
 
-See [checkpoint and replay semantics](docs/reference.md#incremental-extraction-and-checkpoints).
+See [checkpoint and replay semantics](packages/elt/README.md#incremental-copies-and-checkpoints).
 
 ## Watch for changes
 
@@ -265,7 +265,7 @@ Triggers are source-specific. Calendar and Reminders use EventKit notifications,
 
 Calling `controller.abort()` stops observation and stops each in-flight pass, which is recorded `cancelled` and keeps what it committed. Breaking the loop also closes the watchers and stops their in-flight passes. A connection whose watcher fails stops alone while the others keep watching; once every connection has stopped or the signal aborts, the loop throws their errors together as a `WatchError`. An error that the sync history could not record stops every connection at once, and the loop throws that error itself. A stream whose load failed for a `system` reason loads again with no change after 10 seconds, then after 30, 90 and 270 seconds, until it fails five times in a row. Watchers preserve the configured extraction mode and do not add periodic reconciliation or a durable change feed.
 
-Live verification confirmed that Calendar/Reminders writes through EventKit in a separate process reach SQLite through `Pipeline.watch()`: creation, updates, and removal were checked. A Notes edit made on an iPhone reached SQLite through a Notes watch once the watch had Notes running, and the watch relaunched Notes after it was closed. Native observer delivery and temporary-filesystem notifications are also tested. See [watching behavior and verification limits](docs/reference.md#watching-for-changes).
+Live verification confirmed that Calendar/Reminders writes through EventKit in a separate process reach SQLite through `Pipeline.watch()`: creation, updates, and removal were checked. A Notes edit made on an iPhone reached SQLite through a Notes watch once the watch had Notes running, and the watch relaunched Notes after it was closed. Native observer delivery and temporary-filesystem notifications are also tested. See [watching behavior and verification limits](packages/elt/README.md#watch-for-changes).
 
 ## Attachment text and local files
 
@@ -327,7 +327,7 @@ Extraction and loading are separate choices:
 
 Other combinations are rejected. An explicit options object requires both mode fields. Deduplication uses the key the stream declares; only for a stream that declares none does the copy select `primaryKey`. `cursor_newer` deduplication also requires `cursorField`, except on snapshot streams, which have no cursor field and deduplicate with `replace`. Incremental copies also require a stable `id` and checkpoint store.
 
-A target has one writer, across every connection of a pipeline: a copy into a target another copy owns fails before it extracts anything, and dropping the target releases it. See [target ownership](docs/reference.md#target-ownership).
+A target has one writer, across every connection of a pipeline: a copy into a target another copy owns fails before it extracts anything, and dropping the target releases it. See [target ownership](packages/elt/README.md#target-ownership).
 
 ### Restated data
 
@@ -347,7 +347,7 @@ A cursor that is itself part of the primary key is equal on every conflict, so `
 - Every copy runs even when one fails, and a failing connection or partition does not stop the others: each checkpoint commits, and the rest resume from theirs next run. `PipelineError` then lists every copy's committed counts and failures, per pass, and every connection whose pass could not run; it never implies rollback of what committed.
 - There is no pipeline-wide rollback, automatic schema migration, or resumable full refresh. Streams agree with each other where the source pins one view of its upstream (Messages, Notes, Contacts, Calendar, Reminders); Search Console's streams are read independently.
 
-See [execution and error handling](docs/reference.md#execution-and-failures).
+See [execution and error handling](packages/elt/README.md#run-and-failures).
 
 ## Permissions
 
@@ -366,7 +366,7 @@ Permissions apply to the process running the export, and a sandbox can still res
 | Read or watch Reminders      | Full Reminders access through EventKit                                                                                                                 |
 | Read or watch Calendar       | Full Calendar access through EventKit                                                                                                                  |
 
-Manage permissions in **System Settings → Privacy & Security**. Calendar and Reminders request access on the first native operation if it is undecided. A packaged process must provide the relevant usage descriptions and sandbox entitlements; see the [Reminders reference](docs/reference.md#apple-reminders).
+Manage permissions in **System Settings → Privacy & Security**. Calendar and Reminders request access on the first native operation if it is undecided. A packaged process must provide the relevant usage descriptions and sandbox entitlements; see the [Reminders reference](packages/sources/apple/reminders/README.md).
 
 ## Development
 
@@ -453,7 +453,7 @@ npx nx run-many -t test
 
 Put `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` in the workspace `.env` (gitignored), then run the Search Console example with `npx nx run google:start`. It loads `sc-domain:ezz.sh` into the warehouse (`npx nx run infra:up`) in one pass, checkpoints included, and writes no local files. Readers see each stream as a [reader view](packages/sources/google/search-console/README.md#reader-views) `marts.search_console_<snake_stream>`; an explicitly invoked consumer reads them directly through PostgreSQL as `agent_reader` (MCP is optional). Sync status and declared coverage are discoverable through `marts.catalog`; reading never starts a refresh. The first run opens a browser for Google consent; see [Search Console authorization](packages/sources/google/search-console/README.md#access) for the one-time OAuth client setup. `npx nx run google:test` runs the built app twice: once without the OAuth client, and once against the real API and the local warehouse. The second run needs the grant that an earlier `google:start` stored. It is a local test; CI does not run it.
 
-SQL Server is available as an SDK and source package for library use; see [SQL Server](docs/reference.md#sql-server). A read-only login needs `db_datareader`, plus `VIEW CHANGE TRACKING` on tables whose changes it should read.
+SQL Server is available as an SDK and source package for library use; see [SQL Server](packages/sources/microsoft/sql-server/README.md). A read-only login needs `db_datareader`, plus `VIEW CHANGE TRACKING` on tables whose changes it should read.
 
 Run apps only through their Nx targets: `start` builds the app and its packages first and loads `.env`. Node's default TypeScript stripping does not support the parameter properties used here, so the targets run the built JavaScript.
 
