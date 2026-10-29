@@ -89,6 +89,17 @@ export class SQLiteColumns {
     });
   }
 
+  // A signed 64-bit integer, which a stream spells as decimal text (format
+  // int64), so a value past Number.MAX_SAFE_INTEGER keeps every digit.
+  int64(field: string): SQLiteColumn {
+    return new SQLiteColumn(field, 'int64', {
+      nullable: true,
+      optional: false,
+      primaryKey: false,
+      format: declaredFormat({ type: 'string', format: 'int64' }) ?? undefined,
+    });
+  }
+
   real(field: string): SQLiteColumn {
     return new SQLiteColumn(field, 'real', {
       nullable: true,
@@ -110,6 +121,22 @@ export class SQLiteColumns {
       nullable: true,
       optional: false,
       primaryKey: false,
+    });
+  }
+
+  // A wall-clock date and time with no zone and precision digits of a second
+  // (format date-time-local), as SQL Server's datetime2 holds it.
+  localTimestamp(field: string, precision: number): SQLiteColumn {
+    return new SQLiteColumn(field, 'local_timestamp', {
+      nullable: true,
+      optional: false,
+      primaryKey: false,
+      format:
+        declaredFormat({
+          type: 'string',
+          format: 'date-time-local',
+          precision,
+        }) ?? undefined,
     });
   }
 

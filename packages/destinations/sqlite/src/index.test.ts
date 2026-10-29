@@ -2737,6 +2737,107 @@ test('an explicit column naming a field the stream does not declare fails before
   );
 });
 
+test('explicit int64 and local timestamp columns keep what the stream spells, with the checks its formats keep', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-explicit-formats-'),
+  );
+  const stream = new Stream({
+    name: 'bookings',
+    jsonSchema: {
+      type: 'object',
+      description: 'Bookings.',
+      properties: {
+        id: { type: 'string', format: 'int64', description: 'Booking id.' },
+        start: {
+          type: ['string', 'null'],
+          format: 'date-time-local',
+          precision: 7,
+          description: 'When the booking starts.',
+        },
+        salary: { type: 'number', description: 'Not for the table.' },
+      },
+      required: ['id', 'start', 'salary'],
+    },
+    supportedSyncModes: ['full_refresh'],
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+
+  await new Pipeline({
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new ScriptedSource([stream], {
+          bookings: [
+            {
+              stream: 'bookings',
+              data: {
+                id: '9007199254740993',
+                start: '2026-10-01T08:30:00.1234567',
+                salary: 9000,
+              },
+            },
+            {
+              stream: 'bookings',
+              data: { id: '-9223372036854775808', start: null, salary: 1 },
+            },
+          ],
+        }),
+        destination,
+        steps: [
+          new Copy(
+            stream,
+            destination
+              .table('raw_bookings', (columns) => [
+                columns.int64('id'),
+                columns.localTimestamp('start', 7),
+              ])
+              .withReaderView('bookings'),
+          ),
+        ],
+      }),
+    ],
+  }).run();
+
+  using database = new DatabaseSync(destination.path, { readBigInts: true });
+  assert.deepEqual(
+    database
+      .prepare('SELECT id, start FROM bookings ORDER BY id')
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      { id: -9223372036854775808n, start: null },
+      { id: 9007199254740993n, start: '2026-10-01T08:30:00.1234567' },
+    ],
+  );
+  assert.deepEqual(
+    Object.fromEntries(
+      database
+        .prepare(
+          "SELECT name, data_type FROM catalog WHERE name LIKE 'bookings.%' ORDER BY name",
+        )
+        .all()
+        .map(({ name, data_type }) => [name, data_type]),
+    ),
+    {
+      'bookings.id': 'int64',
+      'bookings.loaded_at': 'timestamp',
+      'bookings.start': 'local_timestamp(7)',
+    },
+  );
+  assert.throws(
+    () =>
+      database
+        .prepare(
+          "INSERT INTO raw_bookings (id, start, loaded_at) VALUES (1, '2026-10-01T08:30:00.123', '2026-10-01T00:00:00.000Z')",
+        )
+        .run(),
+    /CHECK constraint failed/,
+  );
+});
+
 test('a table refuses two columns of one field, and a reader view SQLite would take for the table', () => {
   const destination = new SQLiteDestination({
     path: '/nonexistent/out.sqlite',
