@@ -16,6 +16,7 @@ import {
   OffsetTimestamp,
   type SqlServerChange,
   SqlServerDatabase,
+  SqlServerLoginError,
   SqlServerPermissionError,
   type SqlServerSession,
   type SqlServerTable,
@@ -100,7 +101,7 @@ async function changes(
   return { position: set.position, read };
 }
 
-test('a connection string must name its database, and one that cannot connect names the server and database but never the password', async () => {
+test('a connection string must name its database; a server that cannot be reached is unavailable, and a login it refuses is refused, each naming the server and database but never the password', async () => {
   assert.throws(
     () =>
       new SqlServerDatabase(
@@ -108,21 +109,35 @@ test('a connection string must name its database, and one that cannot connect na
       ),
     /must name its Server and its Database/,
   );
+  await using scratch = await sqlServer.database();
   const unreachable = new SqlServerDatabase(
     'Server=localhost,1;Database=shop;User Id=sa;Password=never-printed;Connect Timeout=3',
   );
-  assert.equal(unreachable.location, 'localhost:1/shop');
+  const refusing = new SqlServerDatabase(
+    `Server=${scratch.host},${scratch.port};Database=${scratch.database};User Id=nobody_${randomUUID().slice(0, 8)};Password=never-printed;Encrypt=true;TrustServerCertificate=true`,
+  );
 
-  const error = await unreachable.open().then(
+  const down = await unreachable.open().then(
     () => assert.fail('nothing listens on port 1'),
     (error: unknown) => error,
   );
+  const refused = await refusing.open().then(
+    () => assert.fail('no such login'),
+    (error: unknown) => error,
+  );
 
-  assert.ok(error instanceof SqlServerUnavailableError, String(error));
-  assert.equal(error.message, 'SQL Server localhost:1/shop cannot be opened.');
-  // The driver's error, kept as the cause, prints with it.
-  assert.ok(error.cause);
-  assert.doesNotMatch(inspect(error, { depth: Infinity }), /never-printed/);
+  assert.ok(down instanceof SqlServerUnavailableError, String(down));
+  assert.equal(down.message, 'SQL Server localhost:1/shop cannot be reached.');
+  assert.ok(refused instanceof SqlServerLoginError, String(refused));
+  assert.equal(
+    refused.message,
+    `SQL Server ${refusing.location} refused the login.`,
+  );
+  for (const error of [down, refused]) {
+    // The driver's error, kept as the cause, prints with it.
+    assert.ok(error.cause);
+    assert.doesNotMatch(inspect(error, { depth: Infinity }), /never-printed/);
+  }
 });
 
 test('discovery shows only what the login may read, and a read refused later names the grant it needs', async () => {

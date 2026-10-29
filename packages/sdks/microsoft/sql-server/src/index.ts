@@ -1,6 +1,7 @@
 export { type ChangePosition, type SqlServerChange } from './change-set.ts';
 export {
   ChangeHistoryExpiredError,
+  SqlServerLoginError,
   SqlServerPermissionError,
   SqlServerUnavailableError,
   SqlServerVersionError,

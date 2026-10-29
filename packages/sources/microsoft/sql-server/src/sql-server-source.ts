@@ -16,8 +16,8 @@ import type {
   SqlServerTable,
 } from '@workspace/sdk-microsoft-sql-server';
 import {
+  SqlServerLoginError,
   SqlServerPermissionError,
-  SqlServerUnavailableError,
 } from '@workspace/sdk-microsoft-sql-server';
 
 import { ChangeTrackingStream } from './change-tracking-stream.ts';
@@ -95,9 +95,11 @@ export class SqlServerSource extends Source<SqlServerSession> {
     return this.#database.open();
   }
 
+  // A server that cannot be reached now is a system failure: a later
+  // attempt, or a watch that watches again, can succeed.
   protected override readonly configErrors = [
+    SqlServerLoginError,
     SqlServerPermissionError,
-    SqlServerUnavailableError,
   ];
 
   coverage(stream: Stream): ExtractionCoverage {

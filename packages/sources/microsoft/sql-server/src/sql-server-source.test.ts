@@ -19,6 +19,7 @@ import {
 } from '@workspace/elt-postgresql';
 import {
   SqlServerDatabase,
+  SqlServerLoginError,
   SqlServerPermissionError,
 } from '@workspace/sdk-microsoft-sql-server';
 
@@ -642,6 +643,60 @@ test(
     assert.deepEqual({ ...(await count()) }, { rows: 10005, ids: 10005 });
   },
 );
+
+test('a login the server refuses after discovery fails the copy as config, for the user to fix', async () => {
+  await using server = await sqlServer.database();
+  await using warehouse = await postgresServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  await admin
+    .request()
+    .batch(
+      'CREATE TABLE dbo.items (id int PRIMARY KEY); INSERT dbo.items VALUES (1);',
+    );
+  await using reader = await readOnlyLogin(server, admin, '');
+  const source = await SqlServerSource.discover(
+    new SqlServerDatabase(reader.connectionString),
+  );
+  await admin.request().batch(`ALTER LOGIN ${reader.user} DISABLE;`);
+  const destination = new PostgresDestination({
+    url: warehouse.connectionString,
+    schema: 'raw',
+  });
+
+  const error = await failing(() =>
+    new Pipeline({
+      history: new PostgresSyncHistory({ url: warehouse.connectionString }),
+      connections: [
+        new Connection({
+          name: 'sql-server',
+          source,
+          destination,
+          checkpoints: new PostgresCheckpointStore({
+            url: warehouse.connectionString,
+            schema: 'raw',
+          }),
+          steps: sqlServerCopies(source, (stream) =>
+            destination.table(stream.replace('.', '_')),
+          ),
+        }),
+      ],
+    }).run(),
+  );
+
+  assert.deepEqual(
+    error.results.map(({ copy, failures }) => [
+      copy.from.name,
+      failures.map(({ error }) => error instanceof SqlServerLoginError),
+    ]),
+    [['dbo.items', [true]]],
+  );
+  assert.deepEqual(failureTypes(error), ['config']);
+});
 
 test('a tracked table the login cannot track falls back to its rowversion or to full reads, says which grant would help, and a read refused later fails only its own table', async () => {
   await using server = await sqlServer.database();

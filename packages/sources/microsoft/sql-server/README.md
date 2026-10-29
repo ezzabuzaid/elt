@@ -60,7 +60,9 @@ A table whose columns changed gets to the pipeline as a stream whose fields chan
 A read-only login is sufficient: `db_datareader`, and `VIEW CHANGE TRACKING` on each tracked table whose changes and deletions it must read. You do not have to enable a feature on the server. The source uses Change Tracking and snapshot isolation where an administrator turned them on. It reads every other table fully or by its rowversion.
 
 - A connection string that names no `Database` is refused. Thus a read never goes to the default database of the login.
-- A server that does not open fails with `SqlServerUnavailableError`. It names the server and the database, but not the credentials.
+- A server that cannot be reached fails with `SqlServerUnavailableError`. It is down, it restarts or fails over, its address is wrong, or the network dropped the connection. This is a `system` failure, so a later attempt or a watch that watches again can succeed.
+- A login that the server refuses fails with `SqlServerLoginError`: the credentials are wrong, the login is disabled, or it cannot open the database. This is a `config` failure, which the user must fix. The login errors that SQL Server gives while it fails over or is busy (4060, 10928, 10929, 40197, 40501, 40613) are not refusals: tedious tries them again, and then they are `SqlServerUnavailableError`.
+- Both errors name the server and the database, but not the credentials.
 - A column that the login cannot read (a column-level `DENY`) is left out, and the table's description names it. A primary key with such a column identifies nothing, so its table reads fully.
 - A table with no readable column is not a stream.
 - When a grant is revoked after discovery, only the stream of that table fails, with `SqlServerPermissionError`, which names the grant (`SELECT ON [dbo].[orders]`, `VIEW CHANGE TRACKING ON [dbo].[orders]`).

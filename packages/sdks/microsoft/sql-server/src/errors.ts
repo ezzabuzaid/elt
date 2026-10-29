@@ -1,11 +1,22 @@
-// The server, or the database the connection string names, refused the
-// connection: it is down, the address or credentials are wrong, or the login
-// cannot open that database.
+// The server could not be reached: it is down, restarting or failing over,
+// its address is wrong, or the network dropped the connection. A later
+// attempt can succeed.
 export class SqlServerUnavailableError extends Error {
   override name = 'SqlServerUnavailableError';
 
   constructor(location: string, cause: unknown) {
-    super(`SQL Server ${location} cannot be opened.`, { cause });
+    super(`SQL Server ${location} cannot be reached.`, { cause });
+  }
+}
+
+// The server answered and refused the login: the credentials are wrong, the
+// login is disabled, or it cannot open the database. Only the user can fix
+// it.
+export class SqlServerLoginError extends Error {
+  override name = 'SqlServerLoginError';
+
+  constructor(location: string, cause: unknown) {
+    super(`SQL Server ${location} refused the login.`, { cause });
   }
 }
 

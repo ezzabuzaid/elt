@@ -1,7 +1,11 @@
 import sql from 'mssql';
 
 import { cellNumber } from './cells.ts';
-import { SqlServerUnavailableError, SqlServerVersionError } from './errors.ts';
+import {
+  SqlServerLoginError,
+  SqlServerUnavailableError,
+  SqlServerVersionError,
+} from './errors.ts';
 import { query } from './sql-server-request.ts';
 import { SqlServerSession } from './sql-server-session.ts';
 
@@ -37,7 +41,9 @@ export class SqlServerDatabase {
     try {
       await pool.connect();
     } catch (cause) {
-      throw new SqlServerUnavailableError(this.location, cause);
+      throw refused(cause)
+        ? new SqlServerLoginError(this.location, cause)
+        : new SqlServerUnavailableError(this.location, cause);
     }
     try {
       const [[edition, major, snapshot] = []] = await query(
@@ -55,4 +61,19 @@ export class SqlServerDatabase {
       throw error;
     }
   }
+}
+
+// Whether the server answered and refused the login. tedious marks the login
+// errors SQL Server raises while it fails over or is busy (4060, 10928,
+// 10929, 40197, 40501, 40613) as transient, and tries them again before it
+// gives up; those mean the server cannot be reached now.
+function refused(error: unknown): boolean {
+  if (!(error instanceof sql.ConnectionError) || error.code !== 'ELOGIN')
+    return false;
+  const { originalError } = error;
+  return !(
+    originalError !== undefined &&
+    'isTransient' in originalError &&
+    originalError.isTransient === true
+  );
 }
