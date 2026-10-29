@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { ClientRequestInterceptor } from '@mswjs/interceptors/ClientRequest';
 import got from 'got';
 import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
@@ -230,6 +231,76 @@ test('a 503 that Got retried away still slows the origin', async () => {
   // Got's own wait before its retry covers the first second; /b shortened the slowdown to 900 ms.
   const [, , last = 0] = gaps(started.map(({ at }) => at));
   assert.ok(last >= 880 && last < 1000, `/c waited ${last} ms`);
+});
+
+test('a page whose connection dropped and then answered 503 before Got retried it counts one refusal', async () => {
+  const requests: string[] = [];
+  const attempts: ('drop' | 503)[] = ['drop', 503];
+  // msw gives a network error no code, so Got would not retry it; the
+  // interceptor under msw drops the connection as a short network outage does.
+  const interceptor = new ClientRequestInterceptor();
+  interceptor.on('request', ({ request, controller }) => {
+    const { pathname } = new URL(request.url);
+    requests.push(pathname);
+    const attempt = pathname === '/a' ? attempts.shift() : undefined;
+    if (pathname === '/robots.txt')
+      controller.respondWith(new Response(null, { status: 404 }));
+    else if (pathname === '/sitemap.xml')
+      controller.respondWith(sitemap('https://site.test', ['/a']));
+    else if (attempt === 'drop')
+      controller.errorWith(
+        Object.assign(new Error('read ECONNRESET'), {
+          code: 'ECONNRESET',
+          syscall: 'read',
+        }),
+      );
+    else if (attempt === 503)
+      controller.respondWith(new Response(null, { status: 503 }));
+    else controller.respondWith(HttpResponse.html('<p>A</p>'));
+  });
+  interceptor.apply();
+  try {
+    const memento = await crawled(
+      crawler(2).crawl(['https://site.test/sitemap.xml'], null, options()),
+    );
+
+    assert.deepEqual(requests, [
+      '/robots.txt',
+      '/sitemap.xml',
+      '/a',
+      '/a',
+      '/a',
+    ]);
+    // The 503 is the site's refusal; the drop before it is the network's.
+    assert.deepEqual(memento.slowdowns, { 'https://site.test': 1000 });
+  } finally {
+    interceptor.dispose();
+  }
+});
+
+test('a 408 that Got retried away does not slow the origin', async () => {
+  const requests: string[] = [];
+  let timeouts = 1;
+  using server = mockWeb(
+    http.get('https://site.test/*', ({ request }) => {
+      const { pathname } = new URL(request.url);
+      requests.push(pathname);
+      if (pathname === '/robots.txt')
+        return new HttpResponse(null, { status: 404 });
+      if (pathname === '/sitemap.xml')
+        return sitemap('https://site.test', ['/a']);
+      if (timeouts-- > 0) return new HttpResponse(null, { status: 408 });
+      return HttpResponse.html('<p>A</p>');
+    }),
+  );
+
+  const memento = await crawled(
+    crawler(1).crawl(['https://site.test/sitemap.xml'], null, options()),
+  );
+
+  assert.deepEqual(requests, ['/robots.txt', '/sitemap.xml', '/a', '/a']);
+  // A refusal is a 429 or a 5xx; a request timeout is not one.
+  assert.deepEqual(memento.slowdowns, {});
 });
 
 test('each further refusal doubles the wait', async () => {
@@ -483,4 +554,44 @@ test('a robots.txt 503 that Got retried away still slows its origin', async () =
   // Got's own wait before its retry covers the first second; the sitemap shortened the slowdown to 900 ms.
   const [, , last = 0] = gaps(started.map(({ at }) => at));
   assert.ok(last >= 880 && last < 1000, `/a waited ${last} ms`);
+});
+
+test('a robots.txt whose connection dropped before Got retried it does not slow its origin', async () => {
+  const requests: string[] = [];
+  let drops = 1;
+  // msw gives a network error no code, so Got would not retry it; the
+  // interceptor under msw drops the connection as a short network outage does.
+  const interceptor = new ClientRequestInterceptor();
+  interceptor.on('request', ({ request, controller }) => {
+    const { pathname } = new URL(request.url);
+    requests.push(pathname);
+    if (pathname === '/robots.txt' && drops-- > 0)
+      controller.errorWith(
+        Object.assign(new Error('read ECONNRESET'), {
+          code: 'ECONNRESET',
+          syscall: 'read',
+        }),
+      );
+    else if (pathname === '/robots.txt')
+      controller.respondWith(new Response(null, { status: 404 }));
+    else if (pathname === '/sitemap.xml')
+      controller.respondWith(sitemap('https://site.test', ['/a']));
+    else controller.respondWith(HttpResponse.html('<p>A</p>'));
+  });
+  interceptor.apply();
+  try {
+    const memento = await crawled(
+      crawler(1).crawl(['https://site.test/sitemap.xml'], null, options()),
+    );
+
+    assert.deepEqual(requests, [
+      '/robots.txt',
+      '/robots.txt',
+      '/sitemap.xml',
+      '/a',
+    ]);
+    assert.deepEqual(memento.slowdowns, {});
+  } finally {
+    interceptor.dispose();
+  }
 });

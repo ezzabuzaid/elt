@@ -399,6 +399,9 @@ class CrawlRun implements Crawl {
       const before = this.#urls.get(entry.url);
       const page = included && !entry.document;
       await this.#pace(new URL(entry.url).origin);
+      // Got's retries hide the refused attempts before the answer. A retry
+      // after a network error or a 408 is no refusal of the site.
+      let refusals = 0;
       let response: Response;
       try {
         response = await this.#http(entry.url, {
@@ -407,6 +410,14 @@ class CrawlRun implements Crawl {
           throwHttpErrors: false,
           // Lets the caller's Got hooks tell pages it reads from documents readers read.
           context: { page },
+          hooks: {
+            beforeRetry: [
+              ({ response: retried }) => {
+                if (retried !== undefined && refused(retried.statusCode))
+                  refusals++;
+              },
+            ],
+          },
         });
       } catch (cause) {
         signal.throwIfAborted();
@@ -426,11 +437,7 @@ class CrawlRun implements Crawl {
       const { statusCode } = response;
       const origin = new URL(response.url).origin;
       const tolerated = this.#tolerates(entry, statusCode);
-      // Got's retries hide the refused attempts before this answer.
-      this.#answered(
-        origin,
-        response.retryCount + (refused(statusCode) ? 1 : 0),
-      );
+      this.#answered(origin, refusals + (refused(statusCode) ? 1 : 0));
       // A 403 can close one page, such as a members-only one, so only a run
       // of them, as Nutch's fetcher.max.exceptions.per.queue counts, is a block.
       const forbidden =
@@ -696,6 +703,8 @@ class CrawlRun implements Crawl {
     const url = `${origin}/robots.txt`;
     this.#started.set(origin, performance.now());
     let body = '';
+    // As for a page, only the retries that the site refused count.
+    let refusals = 0;
     try {
       const response = await this.#http(url, {
         signal,
@@ -703,11 +712,16 @@ class CrawlRun implements Crawl {
         throwHttpErrors: false,
         maxRedirects: 5,
         context: { page: false },
+        hooks: {
+          beforeRetry: [
+            ({ response: retried }) => {
+              if (retried !== undefined && refused(retried.statusCode))
+                refusals++;
+            },
+          ],
+        },
       });
-      this.#answered(
-        origin,
-        response.retryCount + (refused(response.statusCode) ? 1 : 0),
-      );
+      this.#answered(origin, refusals + (refused(response.statusCode) ? 1 : 0));
       // A 5xx answer disallows everything until the server is back; a 4xx one
       // allows everything, except a 429, which asks to slow down, so it holds
       // the origin as Google's crawler treats it and as a page's 429 does.
