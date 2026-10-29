@@ -53,8 +53,11 @@ test('a non-HTML extraction receives response bytes and returns its article unch
       signal.throwIfAborted();
       assert.equal(page.url, `${upstream.origin}/`);
       assert.equal(page.contentType, 'text/markdown; charset=utf-8');
-      assert(Buffer.isBuffer(page.body));
-      assert.equal(page.body.toString(), '# Café report\n\nA **short** post.');
+      assert(page.body instanceof Uint8Array);
+      assert.equal(
+        new TextDecoder().decode(page.body),
+        '# Café report\n\nA **short** post.',
+      );
       return article;
     }
   }

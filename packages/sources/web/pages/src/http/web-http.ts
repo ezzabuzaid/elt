@@ -42,6 +42,11 @@ export async function webHttp(
     cache,
     headers: { 'cache-control': 'no-cache', 'user-agent': userAgent },
     timeout: { request: 30_000 },
+    retry: {
+      // A socket whose local address went away, as when the Mac sleeps, fails
+      // with EADDRNOTAVAIL. Got retries its siblings, such as ENETUNREACH, but not it.
+      errorCodes: [...got.defaults.options.retry.errorCodes!, 'EADDRNOTAVAIL'],
+    },
     hooks: {
       beforeRequest: [
         () => starts.add(() => undefined, { signal: requestSignal }),

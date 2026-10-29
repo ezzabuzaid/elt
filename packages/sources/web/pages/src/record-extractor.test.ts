@@ -41,7 +41,7 @@ class SectionExtractor extends RecordExtractor {
           async records() {
             return [1, 2].map((section) => ({
               id: `${path}#${section}`,
-              heading: `${response.body} ${section}`,
+              heading: `${new TextDecoder().decode(response.rawBody)} ${section}`,
             }));
           },
         };

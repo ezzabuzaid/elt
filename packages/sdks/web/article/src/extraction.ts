@@ -1,6 +1,6 @@
 export type ArticlePage = {
   readonly url: string;
-  readonly body: string | Buffer;
+  readonly body: string | Uint8Array;
   readonly contentType: string | undefined;
 };
 

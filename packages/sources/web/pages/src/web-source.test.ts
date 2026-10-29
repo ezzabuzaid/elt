@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { subscribe, unsubscribe } from 'node:diagnostics_channel';
 import { mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 
+import { ClientRequestInterceptor } from '@mswjs/interceptors/ClientRequest';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
@@ -331,6 +333,113 @@ test('temporary listing and article failures recover within one pipeline run', a
     '/article',
     '/article',
   ]);
+});
+
+test('a site that refuses the first connection, as during a short network drop, is stored within one run', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    if (url.pathname === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel><item><link>${url.origin}/article</link></item></channel></rss>`,
+      );
+    } else if (url.pathname === '/article') {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        '<article><p>The article read after the network came back contains the complete published observations.</p></article>',
+      );
+    } else response.writeHead(404).end();
+  });
+  // The network drops: the site's port refuses connections, and it is back
+  // after the first refusal, before Got's retry delay of at least a second.
+  upstream.server.close();
+  const reopen = () => {
+    unsubscribe('http.client.request.error', reopen);
+    upstream.server.listen(Number(new URL(upstream.origin).port), '127.0.0.1');
+  };
+  subscribe('http.client.request.error', reopen);
+  try {
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const ingestion = await pipeline(
+      new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
+        stream: articles(),
+        inputs: [`${upstream.origin}/feed.xml`],
+      }),
+      database.path,
+      checkpoints.path,
+    );
+
+    assert.equal((await ingestion.run())[0]?.count, 1);
+    assert.equal(
+      database.connection.prepare('SELECT textContent FROM articles').get()
+        ?.textContent,
+      'The article read after the network came back contains the complete published observations.',
+    );
+  } finally {
+    unsubscribe('http.client.request.error', reopen);
+  }
+});
+
+test('a page whose read fails with EADDRNOTAVAIL, as when the Mac sleeps, is tried again and stored within one run', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    if (url.pathname === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel><item><link>${url.origin}/article</link></item></channel></rss>`,
+      );
+    } else if (url.pathname === '/article') {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        '<article><p>The article read after the Mac woke up contains the complete published observations.</p></article>',
+      );
+    } else response.writeHead(404).end();
+  });
+  // Only the kernel raises EADDRNOTAVAIL, when the Mac's address goes away
+  // during sleep, so an interceptor at Node's HTTP transport raises it for the
+  // first article request. Every other request reaches the site.
+  const interceptor = new ClientRequestInterceptor();
+  let dropped = false;
+  interceptor.on('request', ({ request, controller }) => {
+    if (dropped || new URL(request.url).pathname !== '/article') return;
+    dropped = true;
+    controller.errorWith(
+      Object.assign(new Error('read EADDRNOTAVAIL'), {
+        code: 'EADDRNOTAVAIL',
+        syscall: 'read',
+      }),
+    );
+  });
+  interceptor.apply();
+  try {
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const ingestion = await pipeline(
+      new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
+        stream: articles(),
+        inputs: [`${upstream.origin}/feed.xml`],
+      }),
+      database.path,
+      checkpoints.path,
+    );
+
+    assert.equal((await ingestion.run())[0]?.count, 1);
+    assert.equal(
+      database.connection.prepare('SELECT textContent FROM articles').get()
+        ?.textContent,
+      'The article read after the Mac woke up contains the complete published observations.',
+    );
+    assert(dropped);
+  } finally {
+    interceptor.dispose();
+  }
 });
 
 test('failed articles do not block later articles or later refreshes', async () => {

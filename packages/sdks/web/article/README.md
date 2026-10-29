@@ -67,7 +67,7 @@ With Markdown first, the reader asks for `text/markdown` before HTML.
 
 The reader does not guess `.md` paths, and it uses no browser and no model.
 
-`Extraction` is the contract for a format. A subclass declares `mediaTypes` and implements `extract(page, signal)`, which returns an `Article` or null. An `ArticlePage` holds the final `url`, the unparsed `body` (`string | Buffer`) and the `contentType` header. `WebArticle` gives the downloaded bytes as a Buffer. The contract imports no parser and no converter.
+`Extraction` is the contract for a format. A subclass declares `mediaTypes` and implements `extract(page, signal)`, which returns an `Article` or null. An `ArticlePage` holds the final `url`, the unparsed `body` (`string | Uint8Array`) and the `contentType` header. `WebArticle` gives the downloaded bytes as a Uint8Array. The contract imports no parser and no converter.
 
 ## HTML extraction
 
@@ -130,7 +130,7 @@ For native Markdown, `markdown` is the body of the publisher. It can hold naviga
 
 | Package                          | Responsibility                                                                     |
 | -------------------------------- | ---------------------------------------------------------------------------------- |
-| Got 14.6.6                       | HTTP, redirects, decompression, selective retries, deadlines and cancellation      |
+| Got 16.1.0                       | HTTP, redirects, decompression, selective retries, deadlines and cancellation      |
 | jsdom 30.1.3                     | Charset decoding, HTML base/link resolution, canonical declaration and DOM queries |
 | Defuddle 0.19.5, `defuddle/node` | Content selection with introductions, captions and appendices; the inferred date   |
 | Mozilla Readability 0.6.0        | Metadata with the existing publication-date and missing-value contract             |

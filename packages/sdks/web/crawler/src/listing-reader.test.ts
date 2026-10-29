@@ -1160,7 +1160,7 @@ test('declared sitemap failures and malformed listings are handed out with their
       (entry): entry is CrawledPage => !('error' in entry),
     );
     assert.equal(binary?.url, 'https://site.test/binary');
-    assert.deepEqual(binary.response.rawBody, Buffer.from(bytes));
+    assert.deepEqual(binary.response.rawBody, bytes);
     // A declared sitemap, even a failing one, means no /sitemap.xml guess.
     assert.ok(!requests.includes('/sitemap.xml'));
   }

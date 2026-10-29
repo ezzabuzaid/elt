@@ -1,6 +1,6 @@
 # The HTTP cache is Keyv on Node's SQLite driver
 
-Every run revalidates each page ([ADR 0001](./0001-a-page-is-extracted-again-only-when-its-fingerprint-changes.md)). Without a cache, every run downloads every body again. Got keeps an HTTP cache through Keyv. Got 14.6.6 and cacheable-request 13.0.19 declare Keyv 5, and the `@keyv/sqlite` adapter for Keyv 5 used the native `sqlite3` module.
+Every run revalidates each page ([ADR 0001](./0001-a-page-is-extracted-again-only-when-its-fingerprint-changes.md)). Without a cache, every run downloads every body again. Got keeps an HTTP cache through Keyv. Got 16.1.0 and cacheable-request 13.0.19 declare Keyv 5, and the `@keyv/sqlite` adapter for Keyv 5 used the native `sqlite3` module.
 
 Thus the HTTP module opens Keyv 6.1.0 with `@keyv/sqlite` 6.1.0 and its `node:sqlite` driver. The cache file is the `cachePath` that the host gives to `WebSource`, and only its owner can read it. The root `package.json` overrides Keyv to 6.1.0 under `got` and `cacheable-request`. Each request sends `Cache-Control: no-cache`, so each run revalidates. When the server sends an ETag or a Last-Modified header, an unchanged page returns 304 without a body, and Got gives back the cached response. An error of the cache stops the crawl.
 

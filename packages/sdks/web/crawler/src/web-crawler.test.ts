@@ -126,7 +126,7 @@ test('crawls links itself and preserves URL identity, provenance and Got respons
   for (const page of pages) {
     assert.equal(page.response, responses.get(page.url));
     assert.equal(page.lastModified, null);
-    assert.ok(Buffer.isBuffer(page.response.body));
+    assert.ok(page.response.body instanceof Uint8Array);
   }
 });
 
