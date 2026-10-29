@@ -487,6 +487,7 @@ Checklists, tags, tables and a locked note were also read from Apple-made macOS 
 
 ```ts
 import { LocalFiles } from '@workspace/elt';
+import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 const files = new LocalFiles({ directory: './outputs/attachments' });
@@ -508,7 +509,7 @@ const attachmentCopy = new Copy(
 );
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'apple-notes-attachments',
@@ -840,6 +841,7 @@ import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { AppleMessagesSource } from '@workspace/source-apple-messages/apple-messages-source';
 
@@ -849,7 +851,7 @@ const destination = new SQLiteDestination({
 });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'apple-messages',
@@ -997,6 +999,7 @@ import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { AppleContactsSource } from '@workspace/source-apple-contacts/apple-contacts-source';
 
@@ -1006,7 +1009,7 @@ const destination = new SQLiteDestination({
 });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'apple-contacts',
@@ -1080,14 +1083,14 @@ Live verification on **2026-09-25** (macOS 26.6.2, Node.js 26.8.1) against three
 
 ```ts
 import { Connection, Copy, Pipeline } from '@workspace/elt';
-import { SQLiteDestination } from '@workspace/elt-sqlite';
+import { SQLiteDestination, SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import { AppleRemindersSource } from '@workspace/source-apple-reminders/apple-reminders-source';
 
 const reminders = new AppleRemindersSource();
 const sqlite = new SQLiteDestination({ path: './reminders-eventkit.sqlite' });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'apple-reminders',
@@ -1131,7 +1134,7 @@ import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
-import { SQLiteDestination } from '@workspace/elt-sqlite';
+import { SQLiteDestination, SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import { CalendarStore } from '@workspace/sdk-apple-eventkit';
 import { AppleCalendarSource } from '@workspace/source-apple-calendar/apple-calendar-source';
 
@@ -1150,7 +1153,7 @@ const sqlite = new SQLiteDestination({
 });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'apple-calendar',
@@ -1290,6 +1293,7 @@ import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { AppleSafariSource } from '@workspace/source-apple-safari/apple-safari-source';
 
@@ -1297,7 +1301,7 @@ const source = new AppleSafariSource(); // ~/Library/Safari and Safari's contain
 const destination = new SQLiteDestination({ path: './outputs/safari.sqlite' });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'apple-safari',
@@ -1393,6 +1397,7 @@ import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { AppleBooksSource } from '@workspace/source-apple-books/apple-books-source';
 
@@ -1401,7 +1406,7 @@ const destination = new SQLiteDestination({ path: './outputs/books.sqlite' });
 const files = new LocalFiles({ directory: './outputs/books-files' });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'apple-books',
@@ -1505,6 +1510,7 @@ import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { AppleActivitySource } from '@workspace/source-apple-activity/apple-activity-source';
 
@@ -1514,7 +1520,7 @@ const destination = new SQLiteDestination({
 });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'apple-activity',
@@ -1625,6 +1631,7 @@ import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { AppleAccountsSource } from '@workspace/source-apple-accounts/apple-accounts-source';
 
@@ -1634,7 +1641,7 @@ const destination = new SQLiteDestination({
 });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'apple-accounts',
@@ -1711,6 +1718,7 @@ import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { AppleCallHistorySource } from '@workspace/source-apple-call-history/apple-call-history-source';
 
@@ -1724,7 +1732,7 @@ const destination = new SQLiteDestination({
 });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'apple-call-history',
@@ -1861,6 +1869,7 @@ import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { AppleNotificationCenterSource } from '@workspace/source-apple-notification-center/apple-notification-center-source';
 
@@ -1871,7 +1880,7 @@ const destination = new SQLiteDestination({
 });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'apple-notification-center',
@@ -1949,6 +1958,7 @@ import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { AppleWalletSource } from '@workspace/source-apple-wallet/apple-wallet-source';
 
@@ -1957,7 +1967,7 @@ const source = new AppleWalletSource();
 const destination = new SQLiteDestination({ path: './outputs/wallet.sqlite' });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'apple-wallet',
@@ -2037,6 +2047,7 @@ import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { SlackDesktopSource } from '@workspace/source-slack-desktop/slack-desktop-source';
 
@@ -2045,7 +2056,7 @@ const source = new SlackDesktopSource();
 const destination = new SQLiteDestination({ path: './outputs/slack.sqlite' });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'slack',
@@ -2158,6 +2169,7 @@ import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { TeamsSource } from '@workspace/source-microsoft-teams/teams-source';
 
@@ -2166,7 +2178,7 @@ const source = new TeamsSource();
 const destination = new SQLiteDestination({ path: './outputs/teams.sqlite' });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'teams',
@@ -2284,6 +2296,7 @@ import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { WhatsAppDesktopSource } from '@workspace/source-whatsapp-desktop/whatsapp-desktop-source';
 
@@ -2294,7 +2307,7 @@ const destination = new SQLiteDestination({
 });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'whatsapp',
@@ -2435,6 +2448,7 @@ import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { InstagramWebSource } from '@workspace/source-instagram-web/instagram-web-source';
 
@@ -2447,7 +2461,7 @@ const destination = new SQLiteDestination({
 });
 
 await new Pipeline({
-  history,
+  history: new SQLiteSyncHistory(),
   connections: [
     new Connection({
       name: 'instagram',
