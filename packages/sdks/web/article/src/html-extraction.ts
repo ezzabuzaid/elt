@@ -194,10 +194,36 @@ export class HTMLExtraction extends Extraction {
           element.setAttribute(attribute, value.replace(/dateline/gi, ' '));
       }
     }
+    // A declared title that is only the site's name names no article: every
+    // cerebras.ai post declares "Cerebras" as its title and og:title. Such a
+    // page takes its one h1, as Readability's own title rule does for a
+    // title too short to be one. Parsing changes the document, so the h1s
+    // are read first.
+    const headings = [...dom.window.document.querySelectorAll('h1')].map(
+      (heading) => heading.textContent.trim(),
+    );
     const article = new Readability(dom.window.document, {
       charThreshold: 1,
     }).parse();
     if (!article || !extracted.content) return null;
+    const letters = (text: string) =>
+      text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+    const siteNames = new Set(
+      [
+        article.siteName,
+        URL.parse(dom.window.document.baseURI)
+          ?.hostname.replace(/^www\./, '')
+          .split('.')[0],
+      ].flatMap((name) => (name ? [letters(name)] : [])),
+    );
+    const [heading] = headings;
+    const title =
+      headings.length === 1 &&
+      heading &&
+      typeof article.title === 'string' &&
+      siteNames.has(letters(article.title))
+        ? heading
+        : article.title;
     // Defuddle gives the top-level JSON-LD objects of the page, whatever their @context.
     const data: unknown = extracted.schemaOrgData;
     const types = (Array.isArray(data) ? data : [data]).flatMap(
@@ -224,6 +250,7 @@ export class HTMLExtraction extends Extraction {
       : Number.NaN;
     return {
       ...article,
+      title,
       content: extracted.content,
       canonicalUrl: canonicalUrl && canonicalUrl.href,
       inferredPublished: Number.isNaN(published)
