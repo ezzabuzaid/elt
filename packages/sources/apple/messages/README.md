@@ -111,13 +111,13 @@ All columns of the Messages tables load, in camelCase (`is_from_me` becomes `isF
 | `attachments`             | `guid`                                  | All 25 `attachment` columns (path, transfer name, MIME type, UTI, size, dates, flags, archived info as JSON) and `availableLocally`. This stream can give the file.                                                                                                                                                                              |
 | `messageAttachments`      | `messageGuid`, `attachmentGuid`         | The message of each attachment.                                                                                                                                                                                                                                                                                                                  |
 
-All streams are [snapshot streams](../../../elt/README.md). Use `incremental` with `append_dedup` and no `cursorField`.
+All streams are [snapshot streams](../../../elt/README.md#snapshot-streams). Use `incremental` with `append_dedup` and no `cursorField`.
 
 The source does not read the iCloud sync and task bookkeeping: `deleted_messages`, `sync_*`, `kvtable`, `persistent_tasks`, `message_processing_task`, `index_state_metrics` and `_SqliteDatabaseProperties`.
 
 ## How the source reads chat.db
 
-- **Consistency:** all streams of a run read through one [read context](../../../elt/README.md), which is a read transaction on `chat.db`. The database uses WAL mode. Thus all streams see one snapshot, also while Messages writes.
+- **Consistency:** all streams of a run read through one [read context](../../../elt/README.md#read-context), which is a read transaction on `chat.db`. The database uses WAL mode. Thus all streams see one snapshot, also while Messages writes.
 - **Identity:** rows and relationships use `guid`s. A `ROWID` is local, and it changes when Messages in iCloud builds the database again.
 - **Incremental:** edits, unsends and read receipts change old rows, and `chat.db` keeps no modification time. `date_updated` is new in macOS 27, but it is 0 or NULL on each row of the verified history. Thus each run reads all rows, loads the changed rows, and deletes the rows that disappeared ([ADR 0001](./docs/adr/0001-chat-db-is-read-as-a-snapshot.md)).
 - **Text:** recent macOS versions keep the body only in `attributedBody`, an `NSAttributedString` in typedstream form. If `message.text` is NULL, `text` takes the first string of that value. The archived value stays as it is.

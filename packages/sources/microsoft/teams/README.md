@@ -64,7 +64,7 @@ The other managers of the client hold Microsoft's own data or its bookkeeping: t
 
 ## Access
 
-The app's container needs Full Disk Access (see [Full Disk Access](../../apple/messages/README.md)).
+The app's container needs Full Disk Access (see [Full Disk Access](../../apple/messages/README.md#full-disk-access)).
 
 - Without the grant, or without the app, the read fails with `TeamsUnavailableError`, which names the grant. Every stream fails.
 - A record in a shape that the reader has not verified fails with `TeamsFormatError`, which names the database, the object store, the key and the field. Every stream fails, because one read makes all streams.
@@ -110,7 +110,7 @@ The app keeps every conversation, because it syncs the chat list from the start 
 
 The client records in `syncstates` the span of each conversation that it holds: `chatServiceStartOfSyncWindow` to `chatServiceEndOfSyncWindow`, or from the start of time. When the client prunes its cache, it moves the start of the span. A channel loads only the latest replies of a thread with its posts. The client records a separate span for each channel thread that the user opens, with the key `<channel>;messageid=<thread>`.
 
-The reads cover exactly those spans (see partly held upstreams in [elt](../../../elt/README.md) and [ADR 0001](./docs/adr/0001-a-message-is-deleted-only-inside-a-held-span.md)):
+The reads cover exactly those spans (see partly held upstreams in [elt](../../../elt/README.md#partly-held-upstreams) and [ADR 0001](./docs/adr/0001-a-message-is-deleted-only-inside-a-held-span.md)):
 
 - A chat message or a channel post that is gone from inside the span of its conversation, ends included, was deleted. The source deletes it.
 - Only the span of its thread covers a channel reply.
@@ -127,7 +127,7 @@ Other deletions:
 - Members are deleted only from a conversation whose member list the app still keeps.
 - Apps are deleted only from a user, chat or team whose apps the app still lists.
 - An account whose databases are gone keeps all its rows. An example is an account that the user signed out of.
-- The app keeps only the people that it looked up recently, the meetings of a span around today that it does not record, and its latest searches. Thus `people`, `meetings` and `searches` are forgetting streams (see forgetting upstreams in [elt](../../../elt/README.md)). A cancelled meeting shows it in `isCancelled`.
+- The app keeps only the people that it looked up recently, the meetings of a span around today that it does not record, and its latest searches. Thus `people`, `meetings` and `searches` are forgetting streams (see forgetting upstreams in [elt](../../../elt/README.md#forgetting-upstreams)). A cancelled meeting shows it in `isCancelled`.
 
 ## Import scope
 

@@ -65,7 +65,7 @@ The source reads **EventKit only**, through the `eventkit` helper of `@workspace
 | `recurrenceRules`      | `reminderId`, position, calendar identifier, frequency, interval, first weekday, end date or count.                                                                                                                      |
 | `recurrenceRuleValues` | `reminderId`, `ruleId`, component, position, value and weekday ordinal (optional). It keeps all six public recurrence selectors.                                                                                         |
 
-All eight streams are [snapshot streams](../../../elt/README.md). Use full refresh, or `incremental` with `append_dedup` and no `cursorField`. They work with inferred SQLite tables.
+All eight streams are [snapshot streams](../../../elt/README.md#snapshot-streams). Use full refresh, or `incremental` with `append_dedup` and no `cursorField`. They work with inferred SQLite tables.
 
 ## Dates and values
 
@@ -83,7 +83,7 @@ All eight streams are [snapshot streams](../../../elt/README.md). Use full refre
 - EventKit IDs can change after a full server sync. External identifiers are not unique or stable across providers and devices.
 - A child ID identifies a position in the current snapshot. The source numbers attendees and alarms in content order, so a new or changed child can renumber the other children (see the [Calendar README](../calendar/README.md)).
 - Full-refresh overwrite and snapshot incremental both delete the rows of reminders that disappeared. An incremental run also reads every reminder, because EventKit has no change feed.
-- All selected streams come from one read with no store change in it: the helper reads again when the store changes during the read (see [read context](../../../elt/README.md)). The destination commits each stream on its own, and no transaction covers the pipeline.
+- All selected streams come from one read with no store change in it: the helper reads again when the store changes during the read (see [read context](../../../elt/README.md#read-context)). The destination commits each stream on its own, and no transaction covers the pipeline.
 - A run of only `accounts` and `lists` reads no reminders.
 - The helper streams its output with no size limit and no process timeout.
 

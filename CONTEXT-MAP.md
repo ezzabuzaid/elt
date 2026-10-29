@@ -1,6 +1,6 @@
 # Context map
 
-Each context has its own glossary and its own architecture decision records. The [API and behavior reference](./docs/reference.md) holds the parts that have not moved into their packages yet.
+Each context has its own glossary and its own architecture decision records.
 
 | Context                   | Glossary                                                                                                         | Decisions                                                                                                    |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |

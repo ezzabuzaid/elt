@@ -59,7 +59,7 @@ A store that the source cannot open fails only its own streams, with `BiomeUnava
 
 ## Access
 
-Every store needs [Full Disk Access](../messages/README.md) for the app that runs the pipeline. With it, a terminal read all 818 Biome files on 2026-10-05. Reading Biome without it is not verified, because that needs the grant removed. The system Biome in `/private/var/db/biome` belongs to `_biome`, and the source does not read it.
+Every store needs [Full Disk Access](../messages/README.md#full-disk-access) for the app that runs the pipeline. With it, a terminal read all 818 Biome files on 2026-10-05. Reading Biome without it is not verified, because that needs the grant removed. The system Biome in `/private/var/db/biome` belongs to `_biome`, and the source does not read it.
 
 ## Streams
 
@@ -120,13 +120,17 @@ Biome never compacts a segment. Thus `(origin, segment, slot)` identifies a reco
 
 ## Changes, expiry and deletions
 
-A Biome stream diffs one [group](../../../elt/README.md) for each segment. The fingerprint of a group is a hash of the trailer of its segment. Thus a run reads only the segments to which Biome added records or from which it deleted records ([ADR 0002](./docs/adr/0002-a-biome-segment-is-one-group-fingerprinted-by-its-trailer.md)). The size and the modification time cannot do this: Biome writes preallocated files in place, and the modification time was up to 236 hours older than the newest record. The deletion counter of the header cannot do this either: it did not agree with the deleted slots in 9 of 417 files.
+A Biome stream diffs one [group](../../../elt/README.md#grouped-snapshots) for each segment. The fingerprint of a group is a hash of the trailer of its segment. Thus a run reads only the segments to which Biome added records or from which it deleted records ([ADR 0002](./docs/adr/0002-a-biome-segment-is-one-group-fingerprinted-by-its-trailer.md)). The size and the modification time cannot do this: Biome writes preallocated files in place, and the modification time was up to 236 hours older than the newest record. The deletion counter of the header cannot do this either: it did not agree with the deleted slots in 9 of 417 files.
 
-Every stream [expires](../../../elt/README.md) by `recordedAt` (`startedAt` for knowledgeC) at its maximum age, less one hour ([ADR 0001](./docs/adr/0001-a-record-older-than-its-maximum-age-expires-and-keeps-its-row.md)). Biome does not prune a record before that age: each of the 18,305 age-pruning tombstones of the week before 2026-10-05 was 28.000–29.03 days after a 28-day record. The sync daemon of Biome also removes synced copies, with an explicit-deletion reason, 28.6–29.0 days after the record. Those copies expire too. A record that goes away before its age is deleted: when the user cleared the Safari history, and when Screen Time ran `delete-web-history`, `webUsage` and `safariNavigations` records only minutes old went away. `devices` diffs as a plain snapshot.
+Every stream [expires](../../../elt/README.md#expiring-upstreams) by `recordedAt` (`startedAt` for knowledgeC) at its maximum age, less one hour ([ADR 0001](./docs/adr/0001-a-record-older-than-its-maximum-age-expires-and-keeps-its-row.md)). Biome does not prune a record before that age: each of the 18,305 age-pruning tombstones of the week before 2026-10-05 was 28.000–29.03 days after a 28-day record. The sync daemon of Biome also removes synced copies, with an explicit-deletion reason, 28.6–29.0 days after the record. Those copies expire too. A record that goes away before its age is deleted: when the user cleared the Safari history, and when Screen Time ran `delete-web-history`, `webUsage` and `safariNavigations` records only minutes old went away. `devices` diffs as a plain snapshot.
 
 - **Limits:** each stream also has a maximum number of events and a maximum size. `App.InFocus` keeps a maximum of 75,000 records, `Notification.Usage` 30,000, and Bluetooth, Safari navigations and the two Focus streams 10,000. A stream that gets to its maximum prunes records that are younger than its maximum age, and the source deletes their rows (backlog item 2243). The examined Mac held 31,772 `App.InFocus` records. Biome prunes once a day as a maintenance task. Thus records can stay after their maximum age until it runs.
-- **Rebuilding:** the rows of records that macOS dropped are only in the destination. If you clear a copy, rebuild the import, or turn the connector off, you lose them permanently. A change of the fields of a stream keeps them ([shape changes](../../../elt/README.md)).
+- **Rebuilding:** the rows of records that macOS dropped are only in the destination. If you clear a copy, rebuild the import, or turn the connector off, you lose them permanently. A change of the fields of a stream keeps them ([shape changes](../../../elt/README.md#shape-changes)).
 - **Cost:** the first load of this Mac (about 100,000 records) took 4.4 s. A second run with no new records took 0.7 s. The checkpoint store held 12 MB of snapshot state.
+
+## Coverage
+
+The [coverage](../../../elt/README.md#coverage) of each stream is each record that macOS still keeps, up to the maximum age of the stream (`retentionDays`), from this Mac and the devices that it syncs with. The rows of records that macOS dropped stay. `devices` has no age: its coverage is each device that Biome lists now. `currentAsOf` is `null`.
 
 ## Watching
 

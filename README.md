@@ -6,7 +6,7 @@
 
 The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and has no runtime dependencies. Each destination is its own package, together with its checkpoint store: `elt-sqlite` and `elt-postgresql`, which adds the `postgres` driver. The included Apple sources use macOS scripting and EventKit; the Google sources call REST APIs through `google-auth`. Transformations, queries, and search indexes belong in the application consuming the exported data.
 
-[Quick start](#quick-start) · [Incremental sync](#incremental-sync) · [Watch for changes](#watch-for-changes) · [Reference](docs/reference.md)
+[Quick start](#quick-start) · [Incremental sync](#incremental-sync) · [Watch for changes](#watch-for-changes)
 
 ## Sources and destinations
 
@@ -38,7 +38,7 @@ Every destination supports overwrite, append, and deduplication:
 - **SQLite** (`elt-sqlite`): strict tables with inferred or explicitly selected columns, including text and attachment bytes.
 - **Postgres** (`elt-postgresql`): typed tables in one schema per connector, loaded without blocking readers, and [documented SQL views](packages/destinations/postgresql/README.md#documented-views) defined by the consuming application.
 
-See the reference for [Mail streams](packages/sources/apple/mail/README.md), [Contacts streams](packages/sources/apple/contacts/README.md), [Calendar streams](packages/sources/apple/calendar/README.md), [Reminders streams](packages/sources/apple/reminders/README.md), [Safari streams](packages/sources/apple/safari/README.md), [Books streams](packages/sources/apple/books/README.md), [Activity streams](packages/sources/apple/activity/README.md), [Accounts streams](packages/sources/apple/accounts/README.md), [Call History streams](packages/sources/apple/call-history/README.md), [Clock streams](packages/sources/apple/clock/README.md), [Notification Center streams](packages/sources/apple/notification-center/README.md), [Wallet streams](packages/sources/apple/wallet/README.md), [Slack streams](packages/sources/slack/desktop/README.md), [Teams streams](packages/sources/microsoft/teams/README.md), [WhatsApp streams](packages/sources/whatsapp/desktop/README.md), [Instagram streams](packages/sources/instagram/web/README.md), [Search Console streams](packages/sources/google/search-console/README.md), [SQL Server streams](packages/sources/microsoft/sql-server/README.md), and [destination behavior](packages/elt/README.md#keys-cursors-and-schemas).
+See the READMEs for [Mail streams](packages/sources/apple/mail/README.md), [Contacts streams](packages/sources/apple/contacts/README.md), [Calendar streams](packages/sources/apple/calendar/README.md), [Reminders streams](packages/sources/apple/reminders/README.md), [Safari streams](packages/sources/apple/safari/README.md), [Books streams](packages/sources/apple/books/README.md), [Activity streams](packages/sources/apple/activity/README.md), [Accounts streams](packages/sources/apple/accounts/README.md), [Call History streams](packages/sources/apple/call-history/README.md), [Clock streams](packages/sources/apple/clock/README.md), [Notification Center streams](packages/sources/apple/notification-center/README.md), [Wallet streams](packages/sources/apple/wallet/README.md), [Slack streams](packages/sources/slack/desktop/README.md), [Teams streams](packages/sources/microsoft/teams/README.md), [WhatsApp streams](packages/sources/whatsapp/desktop/README.md), [Instagram streams](packages/sources/instagram/web/README.md), [Search Console streams](packages/sources/google/search-console/README.md), [SQL Server streams](packages/sources/microsoft/sql-server/README.md), and [destination behavior](packages/elt/README.md#keys-cursors-and-schemas).
 
 ## Quick start
 
@@ -309,9 +309,9 @@ Each file field chooses its own store. SQLite and Postgres receive an ordinary t
 
 Parsing is explicit. Omitting file-derived columns loads metadata only. The macOS parser reads PDFs with a text layer, TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, WordML, vCards, and text in images through Vision. Add `new AudioFormat(model)` to transcribe audio with a caller-provided AI SDK model; without it, audio loads `null`. `LocalTranscriptionModel` from `transcription-local` is such a model that runs on this Mac over a speech model already installed on it, which `sdk-macos-speech-models` finds; it decodes audio with macOS's `afconvert`, Nx builds its native worker with Rust/Cargo and CMake, and installed models are reused in place and never modified. Video and unknown formats load `null`. Files it cannot read fail the copy. Attachments whose file is not on this Mac (not yet downloaded from iCloud) or that belong to a locked note keep their metadata with `null` content and reference. Tables have no file; their cells are in the note's `markdown`.
 
-Context Compiler's hosts parse no file inside an import; they read the stored copies into an `attachment_text` table after each pass. See [attachment text](docs/reference.md#attachment-text).
+Context Compiler's hosts parse no file inside an import; they read the stored copies into an `attachment_text` table after each pass. See [attachment text](packages/elt/README.md#attachment-text).
 
-See [file declarations, parsing, and attachment limitations](docs/reference.md#attachment-files-and-document-parsing).
+See [stored files and document parsing](packages/elt/README.md#stored-files-and-document-parsing) and the [macOS parser](packages/sources/apple/macos/README.md#parsing).
 
 ## Sync modes
 
@@ -463,8 +463,9 @@ To add a source, follow the [source-authoring guide](.agents/skills/add-elt-sour
 
 Each package owns its docs: a README, a glossary in `CONTEXT.md`, its decisions in `docs/adr`, and recipes in `docs/recipes`. The [context map](CONTEXT-MAP.md) lists each glossary and its decisions.
 
-- [elt](packages/elt/README.md): derived datasets, when the pipeline refreshes them, and how to write a rule.
-- [elt-sqlite](packages/destinations/sqlite/README.md): the `View` and `ComputedDataset` of the SQLite destination, with a recipe that searches the text of stored files.
-- [API and behavior reference](docs/reference.md): schemas, keys, cursors, checkpoints, attachments, storage guarantees, and complete source details. Its sections move into their packages.
+- [elt](packages/elt/README.md): sync modes, keys and cursors, checkpoints, snapshot streams, stored files, watching, failures, the sync history and derived datasets.
+- [elt-sqlite](packages/destinations/sqlite/README.md): the SQLite destination, its checkpoints and sync history, `View` and `ComputedDataset`, with a recipe that searches the text of stored files.
+- [elt-postgresql](packages/destinations/postgresql/README.md): the Postgres destination, its reader views, documented views, checkpoints and sync history.
+- Each source package has its own README, with its streams, access, limitations and live checks.
 - [EventKit Reminders notes](docs/eventkit-reminders.md): native API findings and implementation decisions.
 - [Source-authoring guide](.agents/skills/add-elt-source/SKILL.md): repository conventions for implementing sources.

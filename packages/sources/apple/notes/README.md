@@ -79,7 +79,7 @@ await new Pipeline({
 }).run();
 ```
 
-The `attachments` copy stores each file in `files` and keeps its reference in `attachmentRef`. The `attachment_text` dataset reads the text of the stored files after each pass. See [attachment text](../../../../docs/reference.md#attachment-text) and [computed datasets](../../../destinations/sqlite/README.md#declare-a-computed-dataset).
+The `attachments` copy stores each file in `files` and keeps its reference in `attachmentRef`. The `attachment_text` dataset reads the text of the stored files after each pass. See [attachment text](../../../elt/README.md#attachment-text) and [computed datasets](../../../destinations/sqlite/README.md#declare-a-computed-dataset).
 
 ## Streams
 
@@ -106,6 +106,15 @@ The content of a note is in one place, its `markdown`. Checklists show as `- [x]
 `text` is the visible text of the note. It keeps inline tags and mentions, and it removes the placeholders of files.
 
 All streams are [snapshot streams](../../../elt/README.md#snapshot-streams). Use `incremental` with `append_dedup` and no `cursorField`. The key of the stream is the key of the copy. Each run reads the full store, writes only new and changed records, and deletes records that disappeared, also rows that Notes marks for deletion. A read costs little: the store is local SQLite, so a run over thousands of notes takes milliseconds before the decode.
+
+## Attachment files
+
+Notes gives the original file from its store, never a staged copy: `<NoteStore.sqlite directory>/Accounts/<account>/Media/<media>/[<generation>/]<filename>`, from the media row of the attachment.
+
+- An attachment has no file when its note is locked, or when it has no media row or no file name (tables, links, sketches with no media).
+- A path that is not on disk (an iCloud file that Notes did not download) sets `availableLocally` to false.
+- In each case the metadata loads, and the file fields load as null.
+- The source never uses the URL of an attachment as a download URL, and never makes up a missing file name.
 
 ## Access
 

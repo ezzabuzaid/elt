@@ -73,7 +73,7 @@ The `icsComponents`, `icsProperties` and `icsParameters` streams read the iCalen
 
 ## Streams
 
-All eleven streams support full refresh and snapshot incremental (`append_dedup` with the key `id`, no `cursorField`; see [snapshot streams](../../../elt/README.md)). They work with inferred SQLite tables. A related collection whose members have their own fields is a separate stream of rows.
+All eleven streams support full refresh and snapshot incremental (`append_dedup` with the key `id`, no `cursorField`; see [snapshot streams](../../../elt/README.md#snapshot-streams)). They work with inferred SQLite tables. A related collection whose members have their own fields is a separate stream of rows.
 
 | Stream                 | Contents                                                                                                                                                                                                                                                                                                                                                      |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -117,7 +117,7 @@ The key of a child row is its position in content order, not in the order of Eve
 
 A new or changed child can renumber its siblings.
 
-All selected streams come from one read with no store change in it: the helper reads again when the store changes during the read (see [read context](../../../elt/README.md)). Thus the relationships between streams agree. The destination commits each stream on its own. The helper streams its output with no size limit and no timeout. Duplicate tracking keeps the occurrence and child IDs during one copy.
+All selected streams come from one read with no store change in it: the helper reads again when the store changes during the read (see [read context](../../../elt/README.md#read-context)). Thus the relationships between streams agree. The destination commits each stream on its own. The helper streams its output with no size limit and no timeout. Duplicate tracking keeps the occurrence and child IDs during one copy.
 
 The source keeps the EventKit fields above. These capabilities need more than one more field:
 
@@ -165,6 +165,10 @@ new Copy(
   ]),
 );
 ```
+
+## Coverage
+
+The [coverage](../../../elt/README.md#coverage) of each stream of events is the configured window: the overlap interval `[startAt, endAt)`, also when no event is in it. A zero-duration event must start in it. The coverage of `accounts` and `calendars` is a list with no date filter: the window does not limit these lists. ICS can tell of a recurring series past the selected occurrences. `currentAsOf` is `null`.
 
 ## Limitations
 

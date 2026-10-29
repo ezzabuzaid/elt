@@ -108,11 +108,11 @@ The report types change which rows exist. Thus they are part of the source ident
 - `urlInspection` holds one row for each inspected URL. `inSitemap` and `inSearchAnalytics` tell where the source found the URL, and `inspectedAt` tells when it inspected the URL. `errorStatus` and `errorMessage` are set when Google rejected the URL.
 - `urlInspectionSitemaps` and `urlInspectionReferrers` hold the arrays in the index status result.
 
-One source reads all the properties in `siteUrls`. Each stream other than `sites` is a partitioned stream with `partitionKey: ['siteUrl']`. Each property has its own checkpoint, each row holds its property in `siteUrl`, and each key starts with `siteUrl`. Thus all properties share one table for each stream. When you add a property, the source reads all of its history, and the other properties resume. When you remove a property, the source stops reading it and keeps its rows. `sites` is not partitioned, because the grant lists the same properties for each property. See partitioned streams in [elt](../../../elt/README.md).
+One source reads all the properties in `siteUrls`. Each stream other than `sites` is a partitioned stream with `partitionKey: ['siteUrl']`. Each property has its own checkpoint, each row holds its property in `siteUrl`, and each key starts with `siteUrl`. Thus all properties share one table for each stream. When you add a property, the source reads all of its history, and the other properties resume. When you remove a property, the source stops reading it and keeps its rows. `sites` is not partitioned, because the grant lists the same properties for each property. See partitioned streams in [elt](../../../elt/README.md#partitioned-streams).
 
-Each read of a snapshot stream gives the complete list. Thus an incremental copy (`append_dedup` on the key of the stream, with no `cursorField`) writes only the changed rows and deletes the rows that left the list. See snapshot streams in [elt](../../../elt/README.md). The inspection streams are rolling. See [URL inspection and quota](#url-inspection-and-quota).
+Each read of a snapshot stream gives the complete list. Thus an incremental copy (`append_dedup` on the key of the stream, with no `cursorField`) writes only the changed rows and deletes the rows that left the list. See snapshot streams in [elt](../../../elt/README.md#snapshot-streams). The inspection streams are rolling. See [URL inspection and quota](#url-inspection-and-quota).
 
-A target has one writer. Thus put all properties in the list of one source. A second connection into the same tables is refused. See target ownership in [elt](../../../elt/README.md).
+A target has one writer. Thus put all properties in the list of one source. A second connection into the same tables is refused. See target ownership in [elt](../../../elt/README.md#target-ownership).
 
 ## Access
 

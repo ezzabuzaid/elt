@@ -74,7 +74,7 @@ Every stream other than `following` is partitioned by `profileId`.
 - `profiles.reels` is NULL when Instagram does not send the reel count.
 - A post's tagged place is in `locationId`, `locationName`, `latitude` and `longitude`. They are NULL when the post has no place. `latitude` and `longitude` are NULL when Instagram sends a place without coordinates.
 
-Context Compiler reads the text of each stored file into `attachment_text` (see attachment text in [elt](../../../elt/README.md)). Thus you can find a timetable that a profile posted as images:
+Context Compiler reads the text of each stored file into `attachment_text` (see attachment text in [elt](../../../elt/README.md#attachment-text)). Thus you can find a timetable that a profile posted as images:
 
 ```sql
 SELECT p.url, t.content
@@ -88,7 +88,7 @@ The recipe [Search the text of stored files with SQL](../../../destinations/sqli
 
 ## How a run reads Instagram
 
-- **A list is scanned in parts.** A run asks for a maximum of 10 pages of one list of one profile: 33 posts, or 12 reels, reposts or tagged posts, on each page. The streams that read the same list share the pages that a run has. A run first reads the list from the top, down to the newest item that the last run found, after any pinned items. Thus a new post loads at the next run. Then the run continues the scan. Each page is a part (see scans in parts in [elt](../../../elt/README.md)). The part that gets to the end of the list deletes what no part listed. The scan of the media stream reads all four lists, and it ends when each list has ended. See [ADR 0001](./docs/adr/0001-each-list-is-scanned-in-parts-over-runs.md).
+- **A list is scanned in parts.** A run asks for a maximum of 10 pages of one list of one profile: 33 posts, or 12 reels, reposts or tagged posts, on each page. The streams that read the same list share the pages that a run has. A run first reads the list from the top, down to the newest item that the last run found, after any pinned items. Thus a new post loads at the next run. Then the run continues the scan. Each page is a part (see scans in parts in [elt](../../../elt/README.md#scans-in-parts)). The part that gets to the end of the list deletes what no part listed. The scan of the media stream reads all four lists, and it ends when each list has ended. See [ADR 0001](./docs/adr/0001-each-list-is-scanned-in-parts-over-runs.md).
 - **Snapshots.** The source reads `following`, `profiles`, `stories` and `highlights` fully on each run. A story that Instagram stopped showing keeps its row (`expiresBy`). A story that the profile deleted before then is deleted.
 - **Highlight items.** The source reads `highlight_items` fully on each run too, but in parts. Each page that Instagram sends holds the stories of up to five highlights. Each page commits with its images. Thus a download that fails loses only that page, and the next run's diff does not load again the stories that loaded. The first load of a profile downloads every highlight image: about 800 for Hive.
 - **Comments.** The source reads comments with the pages of the grid. It reads a post's comments again when the comment count of the post changes, and one time in each scan, so likes stay current. A post with no comments costs no request. Instagram can list one comment more than one time in one answer (15 entries, 8 comments). It loads one time.

@@ -53,7 +53,7 @@ await new Pipeline({
 - A stream that reads every row gets a full-refresh `overwrite` copy.
 - The ID of each copy is `<source identity>/<schema>.<table>`, for example `sql-server:shop/dbo.orders`. The source identity is `sql-server:<database>`. Copy IDs must be different across a pipeline. Thus two databases that each have a table with the same name can be in one pipeline. See [ADR 0004](./docs/adr/0004-a-copy-id-carries-the-source-identity.md).
 
-A table whose columns changed gets to the pipeline as a stream whose fields changed. The copy keeps its rows and its checkpoint, and the destination changes its table in place (see shape changes in [elt](../../../elt/README.md)). The source fills in a field that the table gained. See the sync strategies.
+A table whose columns changed gets to the pipeline as a stream whose fields changed. The copy keeps its rows and its checkpoint, and the destination changes its table in place (see shape changes in [elt](../../../elt/README.md#shape-changes)). The source fills in a field that the table gained. See the sync strategies.
 
 ## Access
 
@@ -93,7 +93,7 @@ Discovery lists `sys.tables`: user tables. It does not list views, system tables
 | `sql_variant`                                                                              | `string`, the value as text; beside it `<column>_type`, its base type                                               |
 | `binary`, `varbinary`, `image`, CLR types                                                  | `string`, base64                                                                                                    |
 
-The formats are the string formats of [elt](../../../elt/README.md). The driver gives `decimal` and `money` as JavaScript numbers and `datetime2` as a millisecond `Date`, and it drops the offset of a `datetimeoffset`. Thus the source selects each such column as the text that SQL Server spells, and decodes it into its canonical form. See [ADR 0002](./docs/adr/0002-each-column-is-read-as-the-text-that-sql-server-spells.md).
+The formats are the string formats of [elt](../../../elt/README.md#string-formats). The driver gives `decimal` and `money` as JavaScript numbers and `datetime2` as a millisecond `Date`, and it drops the offset of a `datetimeoffset`. Thus the source selects each such column as the text that SQL Server spells, and decodes it into its canonical form. See [ADR 0002](./docs/adr/0002-each-column-is-read-as-the-text-that-sql-server-spells.md).
 
 When a column of the table already has the name `<column>_offset` or `<column>_type`, the added field gets the next free name: `_1`, then `_2`. The description of the column names the field that holds its offset. See [ADR 0003](./docs/adr/0003-an-added-field-takes-the-next-free-name.md).
 
@@ -123,7 +123,7 @@ Discovery selects how each table reads. Each table reads with the first strategy
 
 A position in a table's change history is a Change Tracking version and the table's tracking generation. The generation is the table's `begin_version`, which a `TRUNCATE` moves to the current version, and the creation time of its change table, which enabling tracking again makes new. See [ADR 0001](./docs/adr/0001-a-change-tracking-position-carries-the-tracking-generation.md).
 
-- The history no longer covers a saved position when the position is below the table's minimum valid version, ahead of the database's current version, or of a different generation. The stream then sends `RESET` and loads every row again into a hidden target, which replaces the table when the stream ends (see resets in [elt](../../../elt/README.md)).
+- The history no longer covers a saved position when the position is below the table's minimum valid version, ahead of the database's current version, or of a different generation. The stream then sends `RESET` and loads every row again into a hidden target, which replaces the table when the stream ends (see resets in [elt](../../../elt/README.md#resets)).
 - The stream does the same for a column that the table gained since the state was saved, because Change Tracking reports no change for the rows to which it was added.
 - The generation finds the case that the minimum valid version cannot find: a truncate just after a sync, with no change between them, leaves the minimum valid version equal to the saved one.
 

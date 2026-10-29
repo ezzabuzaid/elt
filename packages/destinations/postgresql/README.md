@@ -73,8 +73,22 @@ Inferred columns follow the stream schema. The [string formats](../../elt/README
 - Arrays keep the order of their elements, and load a JSON `null` as SQL `NULL`. Readers use `= ANY(...)`, `unnest()` and `cardinality()`. `marts.catalog` shows the type of the element.
 - ISO dates count years astronomically, and Postgres does not. Thus the year `0000` loads as `0001 BC`, which is the same day. Each other year is written as it is given.
 - Explicit columns are `columns.text`, `integer`, `real`, `boolean`, `date`, `timestamp` and `blob(field)`, with `.notNull()` and `.primaryKey()`.
-- A plain `blob()` stores `BYTEA`. `blob().from(file)` streams original files into chunk tables, and `text().from(file).parse(parser)` stores the parsed text. The [attachment section of the API and behavior reference](../../../docs/reference.md#attachment-files-and-document-parsing) tells about stored files until it moves to [elt](../../elt/README.md) and [elt-sqlite](../sqlite/README.md).
+- A plain `blob()` stores `BYTEA`. `blob().from(file)` keeps the original file in chunk tables, and `text().from(file).parse(parser)` stores the parsed text as `TEXT`. See [file bytes in the database](#file-bytes-in-the-database).
 - Table, view and column names follow the [naming rule](../../elt/README.md#names). Postgres compares names with their case, keeps 63 bytes of a name, and reserves `loaded_at` and the system column names `xmin`, `xmax`, `cmin`, `cmax`, `ctid` and `tableoid`.
+
+## File bytes in the database
+
+Postgres takes the same `text().from(file).parse(parser)` and `blob().from(file)` declarations as SQLite. See [stored files](../../elt/README.md#stored-files-and-document-parsing) in elt.
+
+- Parsed content is `TEXT`.
+- The column of an original file holds a UUID. Its bytes are in a table `_elt_files_<hash>` for each column, in the schema of the destination, as `(file UUID, n BIGINT, bytes BYTEA)` chunks of up to 4 MiB.
+- The hash is the first 40 hex characters of the SHA-256 of `JSON.stringify([tableName, columnName])`.
+- To read the original, join on the file UUID and order by `n`.
+- An empty file has one empty chunk. A file that is not available gives a null value.
+- The chunks of a load wait in a `TEMP` table that only the session sees, until the commit of their rows moves them. A discard empties that table.
+- After each merge, the commit removes the chunks that no row of the table, or of its hidden table while a reload is open, refers to, for example the chunks of a record that deduplication refused.
+- A clear of a copy also removes its files.
+- A plain `blob()` column with no `.from(file)` stores an inline `BYTEA` value.
 
 ## Descriptions
 

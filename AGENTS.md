@@ -101,7 +101,7 @@ Test against the real dependency: a real `Pipeline`, real SQLite or Postgres, a 
 
 ## Each package owns its docs
 
-Document a package in the package, as the zukhruf packages do: `README.md`, a glossary in `CONTEXT.md`, decisions in `docs/adr/`, and recipes in `docs/recipes/` whose programs you ran and whose real output you pasted. Write in ASD-STE100 with the terms of the glossary, and add each new glossary to `CONTEXT-MAP.md`. `docs/reference.md` is being retired: add nothing to it, and move a section into its package when you change what it describes. Derived datasets went this way: they were first documented only in the reference, and `packages/elt` and `packages/destinations/sqlite` now show the shape.
+Document a package in the package, as the zukhruf packages do: `README.md`, a glossary in `CONTEXT.md`, decisions in `docs/adr/`, and recipes in `docs/recipes/` whose programs you ran and whose real output you pasted. Write in ASD-STE100 with the terms of the glossary, and add each new glossary to `CONTEXT-MAP.md`. `packages/elt` and `packages/destinations/sqlite` show the shape.
 
 ## Read every changed file before reporting done
 

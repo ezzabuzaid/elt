@@ -78,7 +78,7 @@ The source has 42 streams. Each stream is a property of the source, and `discove
 | `messageParts`                                                                                                                                                  | The MIME tree: media type, charset, disposition, file name, content ID, local availability, size, SHA-256, and the decoded text of `text/*` parts.                                            |
 | `attachments`, `indexedAttachments`                                                                                                                             | Decoded MIME attachments, and the attachments that the index lists before their MIME arrives. `attachments` can give the file. The native rows of the attachment index load separately.       |
 
-To store the files of `attachments` or `messageFiles` and read their text, declare a stored-file column and a `ComputedDataset` with the `DocumentText` rule, as the [Notes README](../notes/README.md) shows. See [attachment text](../../../elt/README.md).
+To store the files of `attachments` or `messageFiles` and read their text, declare a stored-file column and a `ComputedDataset` with the `DocumentText` rule, as the [Notes README](../notes/README.md) shows. See [attachment text](../../../elt/README.md#attachment-text).
 
 ## Records
 
@@ -128,6 +128,8 @@ A message whose fingerprint did not change keeps its saved rows, and the run doe
 A watch keeps one recursive file watch on the Mail store, and it checks the `PRAGMA data_version` of the index each second. A commit or a file change refreshes the selected streams. A file change includes an attachment download that does not change the index. When the watch stops, it closes the file watch and the database handle.
 
 A watch sees only the local activity of Mail. To get remote changes, keep Mail open and syncing. The account and server settings come from the system Accounts store, so Mail does not have to run for them. While `accounts` or `smtpServers` is selected, the watch also checks the `data_version` of that store each second. A commit there refreshes only those two streams. A Mail change also refreshes them, because it can add a mailbox host. If the process cannot open the Accounts store, the watch does not watch it, and each run reports the failure of those two streams. If the version folder of Mail changes, start the watch again.
+
+`currentAsOf` is always the last write of the index of Mail, because the daemon of Mail writes it also while Mail.app is closed. See [how current a stream is](../../../elt/README.md#how-current-a-stream-is).
 
 ## Access and failures
 

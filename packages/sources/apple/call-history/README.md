@@ -51,7 +51,7 @@ A Context Compiler import loads every stream incrementally into its `data.sqlite
 
 ## Access
 
-The store needs [Full Disk Access](../messages/README.md) for the app that runs the pipeline, such as the terminal. On 2026-10-06, a terminal with the grant read the store. A launchd job without the grant got the SQLite error AUTH (23, `authorization denied`). The Accounts store gave CANTOPEN in the same case. The source turns both errors into `CallHistoryUnavailableError`, which names the grant, and every stream fails.
+The store needs [Full Disk Access](../messages/README.md#full-disk-access) for the app that runs the pipeline, such as the terminal. On 2026-10-06, a terminal with the grant read the store. A launchd job without the grant got the SQLite error AUTH (23, `authorization denied`). The Accounts store gave CANTOPEN in the same case. The source turns both errors into `CallHistoryUnavailableError`, which names the grant, and every stream fails.
 
 ## Streams
 
@@ -74,7 +74,7 @@ The source decodes only the codes that Apple names, and it keeps each raw value 
 
 A code that the reader does not know, for example a TTY category or a type that Apple adds later, loads with `kind` or `category` null, and the code stays. All other codes (disconnect cause, filtering, junk confidence, verification, handle type) are numbers that Apple does not document. They load as stored. UUID columns are in uppercase, as `NSUUID` writes them.
 
-`startedAt` is a [`date-time` with `precision` 6](../../../elt/README.md) ([ADR 0002](./docs/adr/0002-a-call-start-keeps-its-microseconds.md)). Core Data keeps a date as seconds since 2001-01-01 in a double, which resolves about a tenth of a microsecond today. On 2026-10-06, 2,121 of 2,123 calls held a fraction finer than a millisecond. Thus the SDK writes the time to the microsecond, and not through a JavaScript `Date`.
+`startedAt` is a [`date-time` with `precision` 6](../../../elt/README.md#string-formats) ([ADR 0002](./docs/adr/0002-a-call-start-keeps-its-microseconds.md)). Core Data keeps a date as seconds since 2001-01-01 in a double, which resolves about a tenth of a microsecond today. On 2026-10-06, 2,121 of 2,123 calls held a fraction finer than a millisecond. Thus the SDK writes the time to the microsecond, and not through a JavaScript `Date`.
 
 `emergencyMediaItems` and `saintDavidsCounts` are keyed by their Core Data row numbers. In the model, their call is optional, so a key from the call is not always there.
 
@@ -86,7 +86,7 @@ The scope of the source selects calls by `startedAt`, from `startAt` (inclusive)
 
 ## Changes and deletions
 
-Every stream is a [snapshot stream](../../../elt/README.md): a run reads the full store, a record that did not change writes nothing, and a key that is no longer in the store deletes its row. A call that leaves the store is deleted from the destination: when the user removed it from Recents, when Core Data cascaded the deletion, or when callhistoryd dropped it ([ADR 0003](./docs/adr/0003-a-call-that-leaves-the-store-is-deleted.md)).
+Every stream is a [snapshot stream](../../../elt/README.md#snapshot-streams): a run reads the full store, a record that did not change writes nothing, and a key that is no longer in the store deletes its row. A call that leaves the store is deleted from the destination: when the user removed it from Recents, when Core Data cascaded the deletion, or when callhistoryd dropped it ([ADR 0003](./docs/adr/0003-a-call-that-leaves-the-store-is-deleted.md)).
 
 On this Mac, all phone calls before 2025-07-07, 521 of them, left the store at the same time. The logs of callhistoryd showed no removal in the next 30 days, and CallHistory has no retention rule that tells the cause. elt cannot tell such a loss in the upstream from a deletion: an `expiresBy` horizon needs a retention rule. Thus, if this occurs again, the source deletes those calls from the destination too.
 

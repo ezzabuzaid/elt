@@ -84,7 +84,7 @@ The rows that the copies loaded before stay. Only a store with no reading histor
 
 ## Access
 
-On macOS 27, a terminal without Full Disk Access read both containers and iCloud Drive. macOS can ask a process that it attributes to a different app for access to the data of other apps. Full Disk Access covers both cases. See [Full Disk Access](../messages/README.md). Books has no public API or scripting dictionary for its library or annotations.
+On macOS 27, a terminal without Full Disk Access read both containers and iCloud Drive. macOS can ask a process that it attributes to a different app for access to the data of other apps. Full Disk Access covers both cases. See [Full Disk Access](../messages/README.md#full-disk-access). Books has no public API or scripting dictionary for its library or annotations.
 
 ## Streams
 
@@ -128,7 +128,7 @@ An EPUB package loads as one OCF `.epub` file: `mimetype` is the first entry and
 
 ## Changes and deletions
 
-Every stream is a [snapshot stream](../../../elt/README.md): each run diffs a full read of its store with the previous read. A record that is no longer in the store is deleted from the destination.
+Every stream is a [snapshot stream](../../../elt/README.md#snapshot-streams): each run diffs a full read of its store with the previous read. A record that is no longer in the store is deleted from the destination.
 
 A watch polls each store every second. For a database, it reads `data_version`, which changes on each commit by a different connection, also while Books and `bookdatastored` keep their WALs open. For the two preference files, it reads their `stat`. A watch wakes only the streams of the stores that changed.
 

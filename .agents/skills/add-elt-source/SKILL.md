@@ -14,7 +14,7 @@ Copy this checklist into your response and tick it off as you go:
 - [ ] SDK written or reused: the store's location, read-only open, decoding, errors and change signal
 - [ ] Source written, sync strategy picked from the list
 - [ ] Tests written with the write-test skill, every one CAUGHT
-- [ ] README and docs/reference.md
+- [ ] README (and CONTEXT.md, docs/adr when the source has its own terms or decisions)
 - [ ] Gotchas checked against the diff
 - [ ] Connector registered in context-compiler with its `register-connector` skill
 - [ ] Done when: e2e against the real upstream, backlog closed, report
@@ -52,7 +52,7 @@ Copy this checklist into your response and tick it off as you go:
 - Inspect the chosen API and probe identities, relationships, nulls, dates, and failures before designing fields.
 - Probe real behavior, not assumed fixtures: create temporary objects upstream, read them back through the source, then delete them and confirm with a fresh read.
 - Read twice with no edits in between and compare, to find per-read values.
-- Separate observations from assumptions. Note each live check (date, OS version) for `docs/reference.md`, and name what the environment prevents verifying.
+- Separate observations from assumptions. Note each live check (date, OS version) for the README of the package, and name what the environment prevents verifying.
 
 ## Writing the source
 
@@ -108,7 +108,6 @@ Write the tests with the `write-test` skill (in the `coding` plugin). It owns th
 
 - Apps are executables, not libraries: use direct imports in their entry points, tests, and examples; do not add app export barrels. `apps/` holds no libraries. A source package exports each public module as an explicit subpath (`@workspace/source-apple-mail/apple-mail-source`), never a barrel. Keep other reusable package exports in `packages/` and `elt` exports generic.
 - Each package owns its docs, as the zukhruf packages do: `README.md` (a minimal example, the details, the live checks from probing, and the deletion, snapshot and scan-cost limitations), `CONTEXT.md` (its glossary), `docs/adr/` (its decisions) and `docs/recipes/` (one use case each, with a full program that runs). `packages/elt/README.md` and `packages/destinations/sqlite/README.md` show the shape. Add a row to `CONTEXT-MAP.md` for a new glossary.
-- `docs/reference.md` is being retired: add nothing to it. Each of its sections moves into the package it describes.
 - Commit only synthetic fixtures.
 
 ## Gotchas

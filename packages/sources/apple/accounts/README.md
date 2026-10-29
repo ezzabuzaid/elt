@@ -45,7 +45,7 @@ A Context Compiler import loads every stream incrementally into its `data.sqlite
 
 ## Access
 
-The store needs [Full Disk Access](../messages/README.md) for the app that runs the pipeline, such as the terminal. On 2026-10-05, a terminal with the grant read the store. A launchd job without the grant got the SQLite error CANTOPEN (14). The same job got CANTOPEN for `~/Library/Messages/chat.db`, and `EPERM` when it listed `~/Library/Mail`. When the process cannot open the store, every stream fails with `AccountsUnavailableError`, which names the grant.
+The store needs [Full Disk Access](../messages/README.md#full-disk-access) for the app that runs the pipeline, such as the terminal. On 2026-10-05, a terminal with the grant read the store. A launchd job without the grant got the SQLite error CANTOPEN (14). The same job got CANTOPEN for `~/Library/Messages/chat.db`, and `EPERM` when it listed `~/Library/Mail`. When the process cannot open the store, every stream fails with `AccountsUnavailableError`, which names the grant.
 
 ## Streams
 
@@ -77,7 +77,7 @@ The source does not read these:
 
 ## Changes and deletions
 
-Every stream is a [snapshot stream](../../../elt/README.md): a run reads the full store, a record that did not change writes nothing, and a key that is no longer in the store deletes its row. The store is small, so a run reads it in less than one second.
+Every stream is a [snapshot stream](../../../elt/README.md#snapshot-streams): a run reads the full store, a record that did not change writes nothing, and a key that is no longer in the store deletes its row. The store is small, so a run reads it in less than one second.
 
 Each kind of record checks only the columns that it reads ([ADR 0001](./docs/adr/0001-each-read-checks-only-the-columns-of-its-tables.md)). If a macOS layout does not have one of them, only the streams that read that table fail, with `MissingColumnsError`, which names the missing columns. The other streams load. Mail reads only accounts, so it continues to load.
 

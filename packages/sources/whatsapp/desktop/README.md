@@ -65,7 +65,7 @@ Media, profile picture thumbnails and stickers are files in the container:
 
 ## Access
 
-The group container needs Full Disk Access (see [Full Disk Access](../../apple/messages/README.md)), or the consent of macOS to read the data of another app. Each store opens separately.
+The group container needs Full Disk Access (see [Full Disk Access](../../apple/messages/README.md#full-disk-access)), or the consent of macOS to read the data of another app. Each store opens separately.
 
 - A store that is missing, or that macOS refuses, fails with `WhatsAppUnavailableError`, which names the store and the grant. Only the streams that read that store fail.
 - A store that is not an SQLite database fails its streams as a system failure.
@@ -124,7 +124,7 @@ Each record keeps WhatsApp's codes (chat and message kinds, statuses, flags) as 
 
 Dates:
 
-- Core Data stores a date as seconds since 2001-01-01 in a double. It loads as a `date-time` with `precision` 6 (see the string formats in [elt](../../../elt/README.md)).
+- Core Data stores a date as seconds since 2001-01-01 in a double. It loads as a `date-time` with `precision` 6 (see the string formats in [elt](../../../elt/README.md#string-formats)).
 - Foundation's distant past, which WhatsApp writes where it has no date, loads as `0000-12-30T00:00:00.000000Z`. A mute with no end loads as `4001-01-01`.
 - Receipt times are whole seconds, and reaction times are milliseconds. Status times are whole seconds, kept to the millisecond.
 
@@ -145,7 +145,7 @@ WhatsApp writes two blobs as protobufs with no published schema. The SDK decodes
   - Field 7 holds reactions: a stanza ID (1), the sender (2, absent exactly when field 6 marks the account's own), the emoji (3, absent after the reaction is withdrawn) and the time in milliseconds (4). The counts for each emoji of a channel post are in field 7.3.
   - Recipients include the account's own other devices.
 
-Business profiles archive their websites, hours and linked accounts with NSKeyedArchiver. Hours are `WABizHoursConfig` objects. Their `day` starts at 1, Sunday. Their `mode` is 0 for open all day, 1 for set hours, or 2 for by appointment, as the app's own code maps them. The serial of a verified name certificate is larger than 2^53 and loads as an `int64` (see the string formats in [elt](../../../elt/README.md)).
+Business profiles archive their websites, hours and linked accounts with NSKeyedArchiver. Hours are `WABizHoursConfig` objects. Their `day` starts at 1, Sunday. Their `mode` is 0 for open all day, 1 for set hours, or 2 for by appointment, as the app's own code maps them. The serial of a verified name certificate is larger than 2^53 and loads as an `int64` (see the string formats in [elt](../../../elt/README.md#string-formats)).
 
 Left out:
 
@@ -162,7 +162,7 @@ Each stream compares a full read of its store with the previous read:
 - A record that did not change is not written. A changed record is written.
 - A record that WhatsApp no longer holds is deleted, with the receipts and reactions of a deleted message.
 
-Statuses expire by `timestamp` (see expiring upstreams in [elt](../../../elt/README.md) and [ADR 0001](./docs/adr/0001-a-status-that-whatsapp-removes-after-a-day-stays-loaded.md)). WhatsApp keeps a contact's status for one day after it is posted. Then its sweep removes it (`SELECT … FROM status WHERE timestamp <= ? AND is_archived = 0`, then `DELETE … WHERE row_id = ?`), and the source sees no deletion. Thus a status that disappeared more than 23 hours after it was posted stays. A status that disappeared before then was withdrawn, and the source deletes it. The account's own statuses, whose sender is `status_me`, are archived (`is_archived` 1), not removed.
+Statuses expire by `timestamp` (see expiring upstreams in [elt](../../../elt/README.md#expiring-upstreams) and [ADR 0001](./docs/adr/0001-a-status-that-whatsapp-removes-after-a-day-stays-loaded.md)). WhatsApp keeps a contact's status for one day after it is posted. Then its sweep removes it (`SELECT … FROM status WHERE timestamp <= ? AND is_archived = 0`, then `DELETE … WHERE row_id = ?`), and the source sees no deletion. Thus a status that disappeared more than 23 hours after it was posted stays. A status that disappeared before then was withdrawn, and the source deletes it. The account's own statuses, whose sender is `status_me`, are archived (`is_archived` 1), not removed.
 
 ## Import scope
 

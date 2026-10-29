@@ -70,7 +70,7 @@ To choose a folder, give it to the constructor: `new SlackDesktopSource(director
 
 ## Access
 
-The Mac App Store build's container needs Full Disk Access (see [Full Disk Access](../../apple/messages/README.md)), or the consent of macOS to read the data of another app.
+The Mac App Store build's container needs Full Disk Access (see [Full Disk Access](../../apple/messages/README.md#full-disk-access)), or the consent of macOS to read the data of another app.
 
 - Without the grant, or without the app, the read fails with `SlackDesktopUnavailableError`, which names the grant. Every stream fails.
 - Bytes in a format that the reader does not know fail with `SlackDesktopFormatError`, which names the record and the field. Examples are a V8 format above 16, a log record whose checksum fails, and a slice of a different shape.
@@ -110,7 +110,7 @@ The app's own state, `storage/root-state.json`, is a separate file. Only `downlo
 
 Every key has `workspaceId`.
 
-- **Messages.** A message's `ts` is Slack's own ID: seconds and microseconds, as Slack writes them. `sentAt` is the same instant, as a `date-time` with `precision` 6 (see the string formats in [elt](../../../elt/README.md)). `blocks`, attachment `fields` and preference values stay JSON, as Slack holds them.
+- **Messages.** A message's `ts` is Slack's own ID: seconds and microseconds, as Slack writes them. `sentAt` is the same instant, as a `date-time` with `precision` 6 (see the string formats in [elt](../../../elt/README.md#string-formats)). `blocks`, attachment `fields` and preference values stay JSON, as Slack holds them.
 - **Saved messages.** A message that the user saved for later has `savedState` (for example `in_progress`), `savedTodoState` (for example `saved`) and `isSavedArchived`. They come from the `saved` object that the app keeps on the message. The app keeps no list of saved items (`saved.list` and `saved.itemMap` stay empty). Thus the source does not know a saved message that the app does not hold.
 - **Snippets.** A snippet's `content` is its full text.
 - **Pins.** A pin's `pinnedBy` and `pinnedAt` come from the conversation's `pinned_items`. The app keeps them with each pinned message when it loads the pin list. Else they come from the pinned message's own `pinned_info`. Both are seconds. Both are NULL when the app holds neither. They are only in `pins`, not in `messages`, so the two streams cannot disagree.
@@ -122,7 +122,7 @@ Every key has `workspaceId`.
 
 The app keeps every conversation, member and app that it knows, but only the messages that it loaded. On 2026-10-08, January held 31 messages in 3 of 13 conversations, and Delivery Associates held 28 messages in 1 of 24. Older history gets to the import only when the app loads it while the import runs. A free workspace hides messages older than 90 days (`isBeyondPlanLimit`).
 
-The client records which ranges of each conversation it holds: `channelHistory[channel].slices[{ start, end, timestamps }]`. The reads cover exactly those held ranges (see partly held upstreams in [elt](../../../elt/README.md) and [ADR 0001](./docs/adr/0001-a-message-is-deleted-only-inside-a-held-range.md)):
+The client records which ranges of each conversation it holds: `channelHistory[channel].slices[{ start, end, timestamps }]`. The reads cover exactly those held ranges (see partly held upstreams in [elt](../../../elt/README.md#partly-held-upstreams) and [ADR 0001](./docs/adr/0001-a-message-is-deleted-only-inside-a-held-range.md)):
 
 - A message that is gone from inside a held range, ends included, was deleted. A message that the client marks `isNonExistent` was deleted. The source deletes both.
 - A message outside all held ranges left the cache. It stays until a read covers its range again. That read deletes it if the app no longer holds it.
@@ -131,7 +131,7 @@ The client records which ranges of each conversation it holds: `channelHistory[c
 
 Some streams delete nothing, or delete only in part:
 
-- **Thread replies.** The client loads a thread's replies when the user opens the thread. It marks them `_hidden_reply` and records no range for them. Thus `threadReplies` is a forgetting stream (see forgetting upstreams in [elt](../../../elt/README.md)): a reply stays after the app drops it, also when the reply was deleted. The client does not load the reactions and attachments of replies.
+- **Thread replies.** The client loads a thread's replies when the user opens the thread. It marks them `_hidden_reply` and records no range for them. Thus `threadReplies` is a forgetting stream (see forgetting upstreams in [elt](../../../elt/README.md#forgetting-upstreams)): a reply stays after the app drops it, also when the reply was deleted. The client does not load the reactions and attachments of replies.
 - **Pins.** The client keeps `pins.pinsByChannel[channel]`, the pinned messages, and `pins.loadingStateByChannel[channel]`. The loading state is `loaded` when the client has loaded the full pin list of that conversation. A pin that is gone from a loaded list is deleted. After the last unpin, the list stays as `[]`. The pins of a conversation whose list is `loading`, or was never loaded, stay.
 - **User group memberships.** These are the client's checks of whether the signed-in user is in a group. They are not a list of groups. Thus `userGroupMemberships` deletes nothing.
 - **Downloads.** Downloads stay after the user clears Slack's list of downloads. `downloads` deletes nothing.

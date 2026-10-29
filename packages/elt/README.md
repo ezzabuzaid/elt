@@ -2,7 +2,7 @@
 
 Copies the data of apps and services into stores that SQL can read. A source reads an upstream, for example the Mail store of a Mac. A destination keeps each stream as a table, for example in one SQLite file. The pipeline starts the copies, and it keeps derived datasets in step with what they load. A derived dataset is data that the pipeline can always make again from the loaded data, for example the text of each stored file, or a view that counts rows. Kleppmann calls it derived data, and Estuary calls it a derivation.
 
-This README tells how a pipeline copies, resumes, watches, fails and records its passes, and how it keeps derived datasets. The SQLite destination is in [elt-sqlite](../destinations/sqlite/README.md), and the Postgres destination is in [elt-postgresql](../destinations/postgresql/README.md). The other parts of elt are in the [API and behavior reference](../../docs/reference.md) until they move here.
+This README tells how a pipeline copies, resumes, watches, fails and records its passes, and how it keeps derived datasets. The SQLite destination is in [elt-sqlite](../destinations/sqlite/README.md), and the Postgres destination is in [elt-postgresql](../destinations/postgresql/README.md).
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
@@ -502,6 +502,161 @@ class ChatSource extends Source<ChatDatabase> {
 - **Failures:** a context that cannot open (a refused permission, a missing store) fails each copy of that pass. `PipelineError.cause` is the error. The passes of other connections continue.
 - **One copy for each stream:** a connection copies each stream one time (`Connection <name> copies each stream once`), as the configured catalog of Airbyte lists each stream one time. To load one stream into two targets, use two connections.
 
+## Stored files and document parsing
+
+A stream that supports file transfer, such as `attachments` of Notes, gives a file with each record. A copy declares in its columns what it takes from the file: the parsed text, a stored file, or the bytes in the database.
+
+```ts
+import { Connection, Copy, LocalFiles, Pipeline } from '@workspace/elt';
+import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
+
+const files = new LocalFiles({ directory: './outputs/attachments' });
+const attachmentCopy = new Copy(
+  notes.attachments,
+  sqlite.table('attachments', (c) => [
+    c.text('id'),
+    c.text('noteId'),
+    c
+      .text('content')
+      .from(notes.attachments.file)
+      .parse(new MacOSDocumentParser()),
+    c.text('attachmentRef').from(notes.attachments.file.store(files)),
+  ]),
+  {
+    syncMode: 'full_refresh',
+    destinationSyncMode: 'overwrite',
+  },
+);
+
+await new Pipeline({
+  history: new SQLiteSyncHistory(),
+  connections: [
+    new Connection({
+      name: 'apple-notes-attachments',
+      source: notes,
+      destination: sqlite,
+      steps: [attachmentCopy],
+    }),
+  ],
+}).run();
+```
+
+This copy stores the selected metadata of the source, the parsed `content`, and an `attachmentRef` as `TEXT`. The ID of the attachment and the ID of its note stay available for joins.
+
+### Declarations
+
+- `notes.attachments.file` is an immutable reference to the file of the source, not a path. The other streams of Notes refuse file access.
+- `.from(file)` selects the original file. `.parse(parser)` asks for its text.
+- `.store(files)` on the file reference selects a file storage, apart from the connection and the destination. Two fields can use different storages, and copies can share one storage and still own their files apart.
+- A stored file and parsed text must be separate fields. `.parse()` on a stored file field is refused.
+- `c.blob('bytes').from(file)` keeps the original bytes in the database. See [elt-sqlite](../destinations/sqlite/README.md#file-bytes-in-the-database) and [elt-postgresql](../destinations/postgresql/README.md#file-bytes-in-the-database). A plain `c.blob('bytes')` reads the existing `bytes` field of a record into an inline value.
+- Original bytes need a `BLOB` column. Parsed text and stored file references need `TEXT`. `.notNull()` and `.primaryKey()` apply to these fields.
+- Types that do not agree, the file reference of a different stream, and fields with the name of a field of the source metadata or of `loaded_at` fail before the copy extracts.
+- A bare table still infers the metadata schema of the source. To keep all metadata beside the file columns, spread `SQLiteColumns.fromSchema(notes.attachments.jsonSchema)` into the columns.
+- All declarations are immutable and do no I/O. A storage that you make and a field that you declare do no I/O either. The copy never writes the source schema again to describe the fields of the destination.
+- One copy can take several named forms of one file. The copy reads each record one time. Fields with the same parser instance share one parse, and fields of the original bytes share one read. Separate copies keep separate extraction and checkpoint progress.
+- To keep no original file, leave out the stored reference. To export no file, leave out all file columns.
+
+```ts
+// Text only, under a destination field name you choose.
+new Copy(
+  notes.attachments,
+  sqlite.table('attachment_text', (c) => [
+    c.text('id'),
+    c
+      .text('search_text')
+      .from(notes.attachments.file)
+      .parse(new MacOSDocumentParser()),
+  ]),
+);
+
+// Original bytes only; no parser runs.
+new Copy(
+  notes.attachments,
+  sqlite.table('originals', (c) => [
+    c.text('id'),
+    c.blob('bytes').from(notes.attachments.file),
+  ]),
+);
+```
+
+### How a source gives files
+
+- `Source.read()` is the shared template method. A source implements `extract(configuration, state, partition, context, signal)`, and yields metadata, an optional file path, and state.
+- `Source.read()` resolves `configuration.fileReads` into parsed text or a `FileContent` before it yields the record. A `FileContent` is valid until the consumer takes the next record.
+- A path must stay readable until the consumer moves past its record. It can be a staged copy that the source removes after, or the original file when a copy would cost too much. Notes and Messages give their original attachment files.
+- The replication refuses a record that still holds a source file path (`Destinations cannot receive source file paths`).
+- A source names a staged copy with `fileExtension` from `elt`: the extension of the file when it is 1 to 16 letters or digits, else none. The original file name stays in the source metadata.
+
+### Local files
+
+`LocalFiles({ directory })` stores the original bytes, and returns their path relative to its folder: `.elt-files/<scope hash>/<content hash><extension>`. This path is the ref of the stored file.
+
+- An import that moves with its files keeps each ref, because the identity of `LocalFiles` names no folder. See [ADR 0015](./docs/adr/0015-a-stored-file-s-ref-is-relative-to-its-folder.md).
+- SQLite and Postgres get only that text value. They do not make paths or write files.
+- `LocalFiles` resolves its folder when you make it.
+- It streams each file in chunks of at most 4 MiB into a temporary file (owner-only, `0600`), syncs it, and then publishes it atomically.
+- The scope is the target of the destination, the writer of the copy and the field. The content hash (SHA-256) makes a repeated save stable, and it never overwrites a stored file.
+- The extension comes from `fileExtension`.
+- An empty file is a real file of zero bytes. A source file that is not available gives a null ref.
+- The replication flushes each declared scope one time before its rows commit. It does not flush the folder for each file. A flush of a scope with no files does nothing. New parent folders are synced when they are made.
+
+### Files and rows
+
+- The transfer saves the files before it applies the records, and commits the rows before it removes files that are not used now.
+- It asks each destination for the refs that its committed rows keep. Thus an update that the cursor refuses cannot delete the file of the row that won.
+- Append keeps the files of each observation that it keeps. A replace, a delete, an empty overwrite and `Copy.clear()` remove a file only when no row of this scope refers to it.
+- A source failure discards the pending rows and reconciles with the rows that stay.
+- Files and rows do not share a transaction. A failed save stops its rows and its checkpoint.
+- A cleanup failure after a commit keeps the committed data, but the checkpoint does not move. A replay is safe.
+- A failed write or a stopped run can leave files that no row refers to. The next run reconciles them, from the committed refs, before it extracts.
+- A missing referenced file, a ref that is not a file, and a managed folder that is not valid fail with an error.
+- Keep the stored files until you clear the copy and load it again.
+
+### Write a file storage
+
+For a different storage, extend the exported `FileStorage`:
+
+| Member                      | Gives                                                                                                                |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `identity`                  | A stable identity. It is part of the checkpoint binding of the copy.                                                 |
+| `reference`                 | A sentence that tells readers what a ref is. Postgres writes it as the comment of the ref column.                    |
+| `save(scope, content)`      | Saves a `FileContent`, and returns a complete, immutable ref. A save again of the same content returns the same ref. |
+| `flush(scope)`              | Makes the completed saves durable before their rows commit. It is safe to repeat, also for a scope with no saves.    |
+| `retain(scope, references)` | Removes only the objects of this scope that no committed ref names.                                                  |
+
+- The transfer reads refs as text that it does not interpret. Thus an S3 storage can return its own form of ref, with no change to the destinations.
+- Only `LocalFiles` exists now. Its reconcile scans the kept refs and the folder of the scope at each commit. It keeps no separate index of objects.
+
+### Write a document parser
+
+Extend `DocumentParser` with `parse(path, signal?): Promise<string | null>`.
+
+- Return `null` when the file has no text that the parser can show. Throw only when the read failed.
+- Give it a stable identity that includes its version and the configuration that matters. Keep the parser and its configuration immutable, and do not change the file.
+- `identityFor(path)` gives the identity of the format that reads one file, or `null` when the parser does not handle it. A composite parser uses it, so that a new audio model does not invalidate the text of other formats.
+- A parser does not depend on a source or a destination.
+- The identity of the parser is part of the checkpoint binding of the copy. A new identity needs a new copy ID or a reset of the checkpoint.
+- Keys and cursors stay metadata fields. A checkpoint is acknowledged only after the rows before it commit.
+- `MacOSDocumentParser` is the parser of the Apple sources. See [source-apple-macos](../sources/apple/macos/README.md#parsing).
+
+Airbyte has the same two concepts on the source side: its [file parser Strategy](https://github.com/airbytehq/airbyte-python-cdk/blob/f77450f74def59598cda8e1e9a4e975031710c18/airbyte_cdk/sources/file_based/file_types/file_type_parser.py) reads files, and its [file transfer](https://docs.airbyte.com/platform/using-airbyte/sync-files-and-records) moves the original content with its metadata. The parser of elt gives plain text, not the Markdown of Airbyte. elt does not claim the full format and OCR support of Airbyte, or wire compatibility.
+
+### Attachment text
+
+A copy can store files with no parse: an `attachmentRef` column and no `content` column. The import then never waits for a parse, and a file that the parser cannot read fails no copy. The text of the stored files is derived data, not a source, because its input is what the pipeline wrote. Declare it as a [computed dataset](../destinations/sqlite/README.md#declare-a-computed-dataset) with the `DocumentText` rule. The pipeline reads the files after each pass. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) keeps an `attachment_text` view in this way, which SQL joins on `attachmentRef = ref`:
+
+```sql
+SELECT a.id, t.content
+FROM attachments a JOIN attachment_text t ON t.ref = a.attachmentRef
+WHERE t.content LIKE '%invoice%';
+```
+
+- A stored file is addressed by its content in its field. Thus one file that is attached in three chats is one stored file. The same bytes that two streams store are two stored files.
+- A parser whose identity changes reads again the files that it handles. A format that the parser stops to handle keeps the text that it read.
+- Query the loaded `content` with SQL, or index it with SQLite FTS5 in the application. A parse makes no search index. elt has no query API and no general transform step.
+
 ## Watch for changes
 
 Use the same pipeline for continuous copies:
@@ -737,10 +892,7 @@ WHERE c.attempt_id = (SELECT max(attempt_id) FROM sync_attempts);
 Coverage is what the source tells about its own scope: `coverage(stream): ExtractionCoverage`, with `ExtractionCoverage = { description, selection }`. It is what a pass over that stream asks the upstream for, from the configuration of the source (`startAt` and `endAt` of Calendar, `siteUrls` of Search Console). It never comes from the records that the pass finds. `selection` holds the JSON configuration values that the description refers to. Each custom source implements it.
 
 - Coverage is the **configured scope**. It is not the minimum or maximum dates that the pass saw, and it does not prove that the upstream is complete.
-- [Calendar](../sources/apple/calendar/README.md) declares its configured window for the streams of events: the overlap interval `[startAt, endAt)`, also when no event is in it. For accounts and calendars it declares a list with no date filter. ICS can tell of a recurring series past the selected occurrences.
-- [Activity](../sources/apple/activity/README.md) declares the maximum age of each stream. Past that age macOS drops records, and their rows stay. Its list of devices has no age: it is each device that Biome lists now.
-- Each other Apple source uses `localAppleStoreCoverage` of [source-apple-macos](../sources/apple/macos/README.md): the full local store that the process can read, with no date filter. It cannot promise the full cloud history or the bytes of each attachment.
-- Search Console declares its coverage in `SearchConsoleSource.coverage(stream)`.
+- Each source tells its coverage in its README, for example [Calendar](../sources/apple/calendar/README.md#coverage), [Activity](../sources/apple/activity/README.md#coverage), and `localAppleStoreCoverage` of [source-apple-macos](../sources/apple/macos/README.md#coverage), which most Apple sources share.
 
 ### How current a stream is
 
@@ -752,16 +904,11 @@ A source also tells how current the upstream of each stream is, with `currentAsO
 - A copy whose source cannot tell fails with that error and is not read. The other copies of the pass load.
 - Airbyte has no such statement. Its "Data fresh as of" is the time when its last sync ended.
 
-| Source            | Answer                                                                                                                                                                                                                                                                                                                                |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| WhatsApp          | The last write of each store while WhatsApp is closed, and `null` while it runs.                                                                                                                                                                                                                                                      |
-| Notes             | The last write of `NoteStore.sqlite` while Notes is closed, and `null` while it runs.                                                                                                                                                                                                                                                 |
-| Slack and Teams   | Always the last write of their store, because they save only now and then, and only while they run.                                                                                                                                                                                                                                   |
-| Mail              | Always the last write of its index, because the daemon of Mail writes it also while Mail.app is closed.                                                                                                                                                                                                                               |
-| Safari            | For its history and iCloud Tabs streams, the last write of that store (the `History.db` of each profile, or `CloudTabs.db`) while Safari is closed, and `null` while it runs, because only Safari syncs them. Its tab groups and bookmarks sync through helpers that run without Safari, so they and its other streams answer `null`. |
-| Wallet            | The last fetch of the iCloud `passes` zone by passd (`cloud_store_zone.fetch_timestamp`), because passd fetches it one time each day. `null` on a Mac that never fetched it.                                                                                                                                                          |
-| Search Console    | `null`: it also reads the fresh days of Google and marks each row `settled` or not, so its rows agree with Google each time that it reads.                                                                                                                                                                                            |
-| Each other source | `null`.                                                                                                                                                                                                                                                                                                                               |
+Each source tells its answer in its README. Most sources answer `null`. These answer with a time:
+
+- [Notes](../sources/apple/notes/README.md#watch), [WhatsApp](../sources/whatsapp/desktop/README.md#watching) and [Safari](../sources/apple/safari/README.md#how-current-the-streams-are): the last write of the store while the app is closed, because only the app syncs it.
+- [Slack](../sources/slack/desktop/README.md#watching), [Teams](../sources/microsoft/teams/README.md#watching) and [Mail](../sources/apple/mail/README.md#watching): always the last write of the store.
+- [Wallet](../sources/apple/wallet/README.md#changes-and-deletions): the last iCloud fetch of passd.
 
 ### The four clocks
 
@@ -894,6 +1041,7 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0012](./docs/adr/0012-every-failure-says-whose-it-is-to-fix.md): every failure says whose it is to fix.
 - [ADR 0013](./docs/adr/0013-the-pipeline-installs-its-sync-history-before-each-run-and-watch.md): the pipeline installs its sync history before each run and watch.
 - [ADR 0014](./docs/adr/0014-a-source-says-how-current-each-stream-s-upstream-is.md): a source says how current the upstream of each stream is.
+- [ADR 0015](./docs/adr/0015-a-stored-file-s-ref-is-relative-to-its-folder.md): a stored file's ref is relative to its folder.
 
 ## Development
 
@@ -921,7 +1069,13 @@ src/core/
   snapshot.ts           diffSnapshot and diffGroupedSnapshot
   partition.ts          the checkpoint of a partitioned stream
   identifiers.ts        Identifiers: the naming rule
+  file-read.ts          FileRead and FileReference: the file declarations of a copy
+  file-transfer.ts      the save, flush and retain of stored files around each commit
+  file-storage.ts       FileStorage: the port of each file storage
+  document-parser.ts    DocumentParser: the port of each parser
   formats/              the string formats
+src/storage/
+  local-files.ts        LocalFiles
 src/state/
   checkpoint-store.ts   CheckpointStore: the checkpoint protocol
   sync-history.ts       SyncHistory and its helpers

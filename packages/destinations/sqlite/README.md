@@ -2,7 +2,7 @@
 
 The SQLite destination of elt. It keeps the stream of each copy as a raw table in one SQLite file, with a reader view over it and a catalog that describes each table, view and column. A reader queries the file with SQL, for example with `sqlite3 -readonly`. The SQLite destination also has two kinds of derived dataset: a `View`, which SQLite computes on each read, and a `ComputedDataset`, which a rule computes on write. A dbt model has the same two kinds: it is materialized as a view or as a table.
 
-This README tells how the SQLite destination keeps columns, commits, checkpoints and the sync history, and how it keeps derived datasets. The pipeline itself is in [elt](../../elt/README.md). The other parts of the SQLite destination are in the [API and behavior reference](../../../docs/reference.md) until they move here.
+This README tells how the SQLite destination keeps columns, commits, checkpoints and the sync history, and how it keeps derived datasets. The pipeline itself is in [elt](../../elt/README.md).
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../elt/CONTEXT.md) for the words of all of elt.
 
@@ -47,6 +47,29 @@ Counts:
 - The `count` of a committed copy is the number of accepted input observations, also deduplication no-ops.
 - `deleted` is the number of accepted deletions, also keys that were not there.
 - Neither count is the final number of rows.
+
+## File bytes in the database
+
+`c.blob('bytes').from(notes.attachments.file)` keeps the original bytes of a file in the SQLite file, not in a [file storage](../../elt/README.md#local-files). It does not depend on `.store(files)`. The file and its row then commit together. See [stored files](../../elt/README.md#stored-files-and-document-parsing) in elt for the declarations.
+
+SQLite stores an original file in chunks, because one BLOB has a limit of 1,000,000,000 bytes (`SQLITE_MAX_LENGTH` in the build of Node), and a value of the full file would stay in memory.
+
+- The `bytes` column holds an `INTEGER` file id.
+- A table `_elt_files_<hash>` for each column holds `(file, n, bytes)` rows of up to 4 MiB. `n` counts from 0.
+- The hash is the first 40 hex characters of the SHA-256 of `JSON.stringify([table, column])`, with the two names in ASCII lower case. Thus table `a_b` with column `c` and table `a` with column `b_c` keep their chunks apart.
+- The description of the column names its chunk table.
+- An empty file has one empty chunk. A file that is not available gives a null value.
+- Triggers remove the chunks of a row in the same transaction when the row is deleted, overwritten or replaced. A record that a deduplication guard refuses stores no chunks.
+
+Read a file back in order, with the chunk table that the description names:
+
+```sql
+SELECT c.bytes FROM "_elt_files_<hash>" AS c
+WHERE c.file = (SELECT bytes FROM attachments WHERE id = ?)
+ORDER BY c.n;
+```
+
+Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as 358 chunks in 3.3 s, with a peak RSS of 137 MiB. The chunks put together again had the SHA-256 of the file.
 
 ## Locks and commits
 

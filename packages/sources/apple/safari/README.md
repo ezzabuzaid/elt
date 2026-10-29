@@ -59,7 +59,7 @@ A Context Compiler import loads every stream incrementally into its `data.sqlite
 
 A run opens only the stores that its streams read. It reads each database in one read transaction, and each property list one time. The stores are separate files, so the streams of different stores do not come from one moment. A store that the source cannot open fails only its own streams.
 
-All streams are [snapshot streams](../../../elt/README.md). Use full refresh, or `incremental` with `append_dedup` on the key of the stream and no `cursorField`.
+All streams are [snapshot streams](../../../elt/README.md#snapshot-streams). Use full refresh, or `incremental` with `append_dedup` on the key of the stream and no `cursorField`.
 
 ## Access
 
@@ -116,6 +116,10 @@ Thus `historyVisits` and `historyItems` expire by `visitedAt` and by `lastVisite
 - Tags and tombstones do not expire with the history setting (the tags of the probed Mac date from 2025-03). Their rows are deleted when they disappear.
 
 A watch reads the `data_version` of each database, also of a `History.db` of a profile that is made during the watch. It also reads the inode, size and modification time of each property list. It does this each second, and it wakes only the streams of the store that changed. A watch never starts Safari. History from other devices and iCloud Tabs arrive only while Safari runs.
+
+## How current the streams are
+
+Only Safari syncs its history and iCloud Tabs. Thus, for the history and iCloud Tabs streams, `currentAsOf` is the last write of that store (the `History.db` of each profile, or `CloudTabs.db`) while Safari is closed, and `null` while Safari runs. The tab groups and bookmarks sync through helpers that run without Safari, so they and the other streams answer `null`. See [how current a stream is](../../../elt/README.md#how-current-a-stream-is).
 
 ## Limitations
 
