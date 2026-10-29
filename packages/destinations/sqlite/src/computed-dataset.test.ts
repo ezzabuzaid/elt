@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtempDisposable,
+  readFile,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
@@ -24,6 +29,7 @@ import {
   ComputedDataset,
   SQLiteDestination,
   SQLiteSyncHistory,
+  View,
 } from './index.ts';
 
 // Rows that name stored files by ref, loaded into raw_files and read through
@@ -221,6 +227,74 @@ test('a computed dataset stores the text of each file its input rows name, once 
       'file_text.status',
     ],
   );
+});
+
+test('a computed dataset reads a view declared before it: the text of each file the view names, and none once the view stops naming it', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-computed-'),
+  );
+  const store = join(scratch.path, 'files');
+  await mkdir(store);
+  await writeFile(join(store, 'a.txt'), 'invoice 123');
+  await writeFile(join(store, 'b.txt'), 'receipt');
+  await writeFile(join(store, 'scan.pdf'), 'not text');
+  const source = new Files();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  const target = destination.table('raw_files').withReaderView('files');
+  const named = new View({
+    into: destination,
+    name: 'text_files',
+    description: 'The rows that name a text file.',
+    columns: { id: 'Row id.', ref: 'The stored file.' },
+    sql: "SELECT id, ref FROM files WHERE ref LIKE '%.txt'",
+  });
+  const parser = new TextParser('text-v1');
+  const pipeline = new Pipeline({
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'files',
+        source,
+        destination,
+        steps: [new Copy(source.files, target)],
+      }),
+    ],
+    derived: [
+      named,
+      new ComputedDataset({
+        into: destination,
+        name: 'file_text',
+        description: 'The text of each file a text row names.',
+        from: [named],
+        compute: new DocumentText({
+          parser: () => parser,
+          files: store,
+          column: 'ref',
+        }),
+      }),
+    ],
+  });
+  source.rows = [
+    { id: '1', ref: 'a.txt' },
+    { id: '2', ref: 'b.txt' },
+    { id: '3', ref: 'scan.pdf' },
+  ];
+
+  await pipeline.run();
+  const first = shell(destination.path, text).rows;
+  source.rows = [{ id: '1', ref: 'a.txt' }];
+  await pipeline.run();
+
+  assert.deepEqual(first, [
+    { ref: 'a.txt', status: 'computed', content: 'invoice 123', error: null },
+    { ref: 'b.txt', status: 'computed', content: 'receipt', error: null },
+  ]);
+  assert.deepEqual(shell(destination.path, text).rows, [
+    { ref: 'a.txt', status: 'computed', content: 'invoice 123', error: null },
+  ]);
+  assert.deepEqual(parser.parsed.toSorted(), ['a.txt', 'b.txt']);
 });
 
 test('the next run reads only the files that are new or that another parser would read otherwise, and drops the text of a file no row names', async () => {

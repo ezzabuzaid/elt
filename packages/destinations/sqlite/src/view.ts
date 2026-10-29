@@ -19,7 +19,9 @@ const busyTimeout = 30_000;
 // query is the view's own failure.
 export class View extends DerivedDataset<SQLiteTable> {
   readonly name: string;
-  readonly #into: SQLiteDestination;
+  // The SQLite file the view lives in, where a computed dataset after it
+  // reads it.
+  readonly into: SQLiteDestination;
   readonly #view: SQLiteView;
 
   constructor({
@@ -37,7 +39,7 @@ export class View extends DerivedDataset<SQLiteTable> {
   }) {
     super();
     this.name = name;
-    this.#into = into;
+    this.into = into;
     this.#view = { name, description, columns, query: sql };
     Object.freeze(this);
   }
@@ -56,7 +58,7 @@ export class View extends DerivedDataset<SQLiteTable> {
     readonly connections: readonly Connection<SQLiteTable>[];
     readonly earlier: readonly DerivedDataset<SQLiteTable>[];
   }): Promise<void> {
-    using database = new DatabaseSync(this.#into.path, {
+    using database = new DatabaseSync(this.into.path, {
       timeout: busyTimeout,
     });
     try {
@@ -86,7 +88,7 @@ export class View extends DerivedDataset<SQLiteTable> {
         .filter(
           ({ destination }) =>
             destination instanceof SQLiteDestination &&
-            destination.path === this.#into.path,
+            destination.path === this.into.path,
         )
         .flatMap(({ steps }) => steps)
         .flatMap(({ to }) => [to.name, to.readerView])

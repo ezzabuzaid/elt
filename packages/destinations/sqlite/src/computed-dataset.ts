@@ -9,6 +9,7 @@ import { type Connection, DerivedDataset, type Rule } from '@workspace/elt';
 import { SQLiteDestination } from './sqlite-destination.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { publishSQLiteViews } from './sqlite-views.ts';
+import { View } from './view.ts';
 
 // How long a refresh waits for a load or reader to finish committing.
 const busyTimeout = 30_000;
@@ -46,7 +47,7 @@ export class ComputedDataset<
   readonly name: string;
   readonly #into: SQLiteDestination;
   readonly #description: string;
-  readonly #from: readonly SQLiteTable[];
+  readonly #from: readonly (SQLiteTable | View)[];
   readonly #rule: Rule<Input, Output>;
   readonly #table: string;
   readonly #declaration: Declaration;
@@ -63,7 +64,7 @@ export class ComputedDataset<
     into: SQLiteDestination;
     name: string;
     description: string;
-    from: readonly SQLiteTable[];
+    from: readonly (SQLiteTable | View)[];
     compute: Rule<Input, Output>;
   }) {
     super();
@@ -100,7 +101,10 @@ export class ComputedDataset<
 
   override validate(connections: readonly Connection<SQLiteTable>[]): void {
     for (const target of this.#from)
-      if (this.#source(connections, target) === undefined)
+      if (
+        !(target instanceof View) &&
+        this.#source(connections, target) === undefined
+      )
         throw new TypeError(
           `Computed dataset ${this.name} reads ${target.name}, which no copy of the pipeline loads`,
         );
@@ -267,18 +271,25 @@ export class ComputedDataset<
     if (failures.length > 0) throw failures[0];
   }
 
-  // Each input by key, from the rows the copies loaded into each relation of
-  // from that exists yet; a key read twice keeps its first input.
+  // Each input by key, from the rows of each relation of from that exists
+  // yet: what the copies loaded, or what a view before this dataset gives. A
+  // key read twice keeps its first input.
   #inputs(connections: readonly Connection<SQLiteTable>[]): Map<string, Input> {
     const inputs = new Map<string, Input>();
     for (const target of this.#from) {
-      const path = this.#source(connections, target);
+      const path =
+        target instanceof View
+          ? target.into.path
+          : this.#source(connections, target);
       if (path === undefined) continue;
       using database = new DatabaseSync(path, {
         readOnly: true,
         timeout: busyTimeout,
       });
-      const relation = target.readerView ?? target.name;
+      const relation =
+        target instanceof View
+          ? target.name
+          : (target.readerView ?? target.name);
       if (
         database
           .prepare('SELECT 1 FROM sqlite_schema WHERE lower("name") = lower(?)')

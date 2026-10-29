@@ -157,6 +157,8 @@ const text = new ComputedDataset({
 
 `documents` is the target of a copy, and `from` can name more than one. The rule reads each row that those copies loaded. See [Write a rule](../../elt/README.md#write-a-rule) in elt.
 
+`from` can also name a `View` that comes before the computed dataset in `derived`. Then the rule reads each row that the view gives, as a dbt model reads the model that it refs. For example, a view keeps the latest version of each record, and the computed dataset reads only those rows. While the view waits for its tables, the computed dataset has no input from it.
+
 A computed dataset keeps one output row for each key, in the table `raw_<name>`. Readers query the view `<name>`:
 
 | Column       | Holds                                                                                                          |
