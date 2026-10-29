@@ -15,8 +15,12 @@ export abstract class DerivedDataset<Target extends DestinationTarget> {
   // Brings the data in step with what the copies committed; safe to repeat.
   // A failure here is the dataset's own, such as SQL its store refuses; a
   // rule that fails on one input records that on the input's row instead.
+  // earlier holds the derived datasets that this refresh follows, in their
+  // declared order, so a dataset that reads one of them can tell an input
+  // that is still waiting from one the pipeline never makes.
   abstract refresh(options: {
     readonly connections: readonly Connection<Target>[];
+    readonly earlier: readonly DerivedDataset<Target>[];
     readonly signal?: AbortSignal;
   }): Promise<void>;
 }

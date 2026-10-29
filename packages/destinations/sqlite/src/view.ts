@@ -13,8 +13,10 @@ const busyTimeout = 30_000;
 // that SQLite computes on each read, as a dbt model materialized as a view
 // is. Its inputs are the relations its SQL reads, so it names none of them.
 // It appears once its query compiles, so a reader never finds a view that
-// fails; until a copy of the pipeline has made each table it reads, it
-// waits. Any other error of its query is the view's own failure.
+// fails; until a copy of the pipeline has made each table it reads, and each
+// derived dataset before it that it reads has appeared, it waits, as dbt
+// skips a model whose upstream model was skipped. Any other error of its
+// query is the view's own failure.
 export class View extends DerivedDataset<SQLiteTable> {
   readonly name: string;
   readonly #into: SQLiteDestination;
@@ -49,8 +51,10 @@ export class View extends DerivedDataset<SQLiteTable> {
 
   override async refresh({
     connections,
+    earlier,
   }: {
     readonly connections: readonly Connection<SQLiteTable>[];
+    readonly earlier: readonly DerivedDataset<SQLiteTable>[];
   }): Promise<void> {
     using database = new DatabaseSync(this.#into.path, {
       timeout: busyTimeout,
@@ -62,9 +66,11 @@ export class View extends DerivedDataset<SQLiteTable> {
         error instanceof Error
           ? /^no such table: (?:main\.)?(.+)$/.exec(error.message)?.[1]
           : undefined;
+      const missingName = missing?.toLowerCase();
       if (
-        missing !== undefined &&
-        this.#made(connections).has(missing.toLowerCase())
+        missingName !== undefined &&
+        (this.#made(connections).has(missingName) ||
+          earlier.some(({ name }) => name.toLowerCase() === missingName))
       )
         return;
       throw error;

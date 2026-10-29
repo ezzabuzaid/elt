@@ -41,9 +41,10 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
     this.#running = (async () => {
       do {
         this.#again = false;
-        for (const dataset of this.#datasets)
+        for (const [index, dataset] of this.#datasets.entries())
           await dataset.refresh({
             connections: this.#connections,
+            earlier: this.#datasets.slice(0, index),
             signal: this.#signal,
           });
       } while (this.#again && !this.#signal.aborted);

@@ -130,6 +130,7 @@ Give the view to the pipeline in `derived`. `sqlite` is the `SQLiteDestination` 
 - A view names no inputs. Its SQL reads them. See [ADR 0001](./docs/adr/0001-a-view-names-no-inputs.md).
 - The view appears when its query compiles. Thus a reader never finds a view that fails.
 - While the SQL reads a raw table or a reader view that a copy of the pipeline has not made yet, the view waits. It appears at the refresh after that copy loads.
+- While the SQL reads a view that comes before it in `derived` and that still waits, the view waits too, as dbt skips a model whose upstream model was skipped. Both appear at the refresh after the copy loads.
 - Any other error of the query, for example a misspelled table, is a dataset failure. It fails the run with the error of SQLite.
 - The columns must be the same as the columns that the query gives, and the catalog lists them with their descriptions.
 - A view that comes after a computed dataset in `derived` can read the view of that dataset.

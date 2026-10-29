@@ -199,6 +199,165 @@ test('a view whose input has not loaded yet stays absent, and appears with the r
   assert.deepEqual(shell(path, 'SELECT n FROM record_count').rows, [{ n: 1 }]);
 });
 
+test('a view that reads a view still waiting for its copy waits too, and both appear with the run that loads the copy', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-view-'));
+  const path = join(scratch.path, 'data.sqlite');
+  const source = new Records(['r1', 'r2']);
+  const destination = new SQLiteDestination({ path });
+  const pipeline = new Pipeline({
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'records',
+        source,
+        destination,
+        steps: [
+          new Copy(
+            source.records,
+            destination.table('raw_records').withReaderView('records'),
+          ),
+        ],
+      }),
+    ],
+    derived: [
+      new View({
+        into: destination,
+        name: 'record_count',
+        description: 'How many records loaded.',
+        columns: { n: 'Number of records.' },
+        sql: 'SELECT count(*) AS n FROM raw_records',
+      }),
+      new View({
+        into: destination,
+        name: 'record_load',
+        description: 'Whether more than one record loaded.',
+        columns: { many: 'Whether more than one record loaded.' },
+        sql: 'SELECT n > 1 AS many FROM record_count',
+      }),
+    ],
+  });
+  source.failing = true;
+
+  const failed = await pipeline.run().then(
+    () => assert.fail('the copy reported no failure'),
+    (error: unknown) => error,
+  );
+  const before = views(path);
+  source.failing = false;
+  await pipeline.run();
+
+  assert.ok(failed instanceof PipelineError, String(failed));
+  assert.deepEqual(
+    before.filter((name) => name.startsWith('record_')),
+    [],
+  );
+  assert.deepEqual(shell(path, 'SELECT many FROM record_load').rows, [
+    { many: 1 },
+  ]);
+});
+
+test('a view that reads a view declared after it fails the run with the error of SQLite', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-view-'));
+  const path = join(scratch.path, 'data.sqlite');
+  const source = new Records(['r1', 'r2']);
+  const destination = new SQLiteDestination({ path });
+  const pipeline = new Pipeline({
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'records',
+        source,
+        destination,
+        steps: [
+          new Copy(
+            source.records,
+            destination.table('raw_records').withReaderView('records'),
+          ),
+        ],
+      }),
+    ],
+    derived: [
+      new View({
+        into: destination,
+        name: 'record_load',
+        description: 'Whether more than one record loaded.',
+        columns: { many: 'Whether more than one record loaded.' },
+        sql: 'SELECT n > 1 AS many FROM record_count',
+      }),
+      new View({
+        into: destination,
+        name: 'record_count',
+        description: 'How many records loaded.',
+        columns: { n: 'Number of records.' },
+        sql: 'SELECT count(*) AS n FROM raw_records',
+      }),
+    ],
+  });
+
+  const error = await pipeline.run().then(
+    () => assert.fail('the run reported nothing'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(!(error instanceof PipelineError), String(error));
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /no such table: (main\.)?record_count/);
+  assert.equal(views(path).includes('record_load'), false);
+});
+
+test('under a watch, a view that reads a view still waiting for its copy waits too, and the watch goes on to its end', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-view-'));
+  const path = join(scratch.path, 'data.sqlite');
+  const source = new Records(['r1']);
+  const destination = new SQLiteDestination({ path });
+  const pipeline = new Pipeline({
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'records',
+        source,
+        destination,
+        steps: [
+          new Copy(
+            source.records,
+            destination.table('raw_records').withReaderView('records'),
+          ),
+        ],
+      }),
+    ],
+    derived: [
+      new View({
+        into: destination,
+        name: 'record_count',
+        description: 'How many records loaded.',
+        columns: { n: 'Number of records.' },
+        sql: 'SELECT count(*) AS n FROM raw_records',
+      }),
+      new View({
+        into: destination,
+        name: 'record_load',
+        description: 'Whether more than one record loaded.',
+        columns: { many: 'Whether more than one record loaded.' },
+        sql: 'SELECT n > 1 AS many FROM record_count',
+      }),
+    ],
+  });
+  source.failing = true;
+  const controller = new AbortController();
+
+  const watching = pipeline.watch({ signal: controller.signal });
+  const pass = await watching.next();
+  // The source watches once, so the watch ends after that pass's refresh.
+  const end = await watching.next();
+
+  assert.equal(pass.done, false);
+  assert.equal(end.done, true);
+  assert.deepEqual(
+    views(path).filter((name) => name.startsWith('record_')),
+    [],
+  );
+});
+
 test('under a watch, a view appears after the pass that loads its input, without holding the pass back', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-view-'));
   const path = join(scratch.path, 'data.sqlite');

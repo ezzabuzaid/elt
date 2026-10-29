@@ -165,8 +165,12 @@ export class Pipeline<Target extends DestinationTarget> {
     // Derived data follows what the copies committed, also when some copies
     // failed; a dataset's own failure rejects the run as itself, since no
     // history recorded it.
-    for (const dataset of this.derived)
-      await dataset.refresh({ connections: this.connections, signal });
+    for (const [index, dataset] of this.derived.entries())
+      await dataset.refresh({
+        connections: this.connections,
+        earlier: this.derived.slice(0, index),
+        signal,
+      });
     if (results.some(({ failures }) => failures.length > 0))
       throw new PipelineError(results);
     return results.map(({ failures: _, cancelled: __, ...result }) => result);
