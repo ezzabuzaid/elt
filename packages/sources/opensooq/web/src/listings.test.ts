@@ -14,12 +14,9 @@ import {
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { day, hour } from '@workspace/sdk-web-crawler';
-import { type ExtractorRun } from '@workspace/source-web-pages/record-extractor';
 import { WebSource } from '@workspace/source-web-pages/web-source';
-import { WebStream } from '@workspace/source-web-pages/web-stream';
 
 import { listings } from './listings.ts';
-import { OpenSooqExtractor } from './opensooq-extractor.ts';
 
 // Trimmed copies of the listing objects live listing pages embedded on 2026-10-26, one per schema.org shape OpenSooq uses.
 function offer(price: string) {
@@ -704,75 +701,14 @@ test('an unchanged rerun writes nothing', async (t) => {
   );
   assert.equal((await ingestion.run())[0]?.count, 3);
 
-  // A day later the listings are due again.
+  // A day later the category is read again; its listings are read once.
   later(day);
   const rerun = await ingestion.run();
 
   assert.equal(rerun[0]?.count, 0);
 });
 
-// Counts the pages whose records are extracted, which the destination cannot show: an unchanged record writes nothing either way.
-class CountedExtractor extends OpenSooqExtractor {
-  extractions = 0;
-  override open(): ExtractorRun {
-    const run = super.open();
-    return {
-      negotiation: run.negotiation,
-      read: async (response, signal) => {
-        const output = await run.read(response, signal);
-        return {
-          fingerprint: output.fingerprint,
-          records: () => {
-            this.extractions++;
-            return output.records();
-          },
-        };
-      },
-    };
-  }
-}
-
-test('a listing page whose markup changes outside its JSON-LD is not extracted again', async (t) => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
-  const later = shiftedClock(t);
-  const page = { ad: 'Sponsored: helmets', price: '4499' };
-  await using upstream = await market(page);
-  await using database = await new Sqlite().database();
-  await using checkpoints = await new Sqlite().database();
-  const extractor = new CountedExtractor();
-  const ingestion = await pipeline(
-    new WebSource({
-      cachePath: join(cache.path, 'web-http.sqlite'),
-      userAgent: 'elt-test/1.0',
-      streams: [
-        {
-          stream: new WebStream({
-            name: listings.name,
-            primaryKey: listings.primaryKey,
-            readers: listings.readers,
-            include: listings.include,
-            extractor,
-          }),
-          inputs: [`${upstream.origin}/en/cars/motorcycles`],
-        },
-      ],
-    }),
-    database.path,
-    checkpoints.path,
-  );
-  assert.equal((await ingestion.run())[0]?.count, 3);
-  assert.equal(extractor.extractions, 3);
-  page.ad = 'Sponsored: gloves';
-
-  // A day later the listings are due again.
-  later(day);
-  const rerun = await ingestion.run();
-
-  assert.equal(rerun[0]?.count, 0);
-  assert.equal(extractor.extractions, 3);
-});
-
-test('a listing whose JSON-LD changes is written again with the new values', async (t) => {
+test('a listing whose JSON-LD changes after it is stored keeps its first values, and its page is not requested again', async (t) => {
   await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   const later = shiftedClock(t);
   const page = { ad: 'Sponsored', price: '4499' };
@@ -795,22 +731,64 @@ test('a listing whose JSON-LD changes is written again with the new values', asy
   );
   assert.equal((await ingestion.run())[0]?.count, 3);
   page.price = '4299';
+  upstream.requests.splice(0);
 
-  // A day later the listings are due again.
-  later(day);
+  // Past the longest interval of every other policy.
+  later(30 * day);
   const rerun = await ingestion.run();
 
-  assert.equal(rerun[0]?.count, 3);
+  assert.equal(rerun[0]?.count, 0);
+  assert.ok(upstream.requests.includes('/en/cars/motorcycles'));
+  assert.deepEqual(
+    upstream.requests.filter((path) => path.startsWith('/en/search/')),
+    [],
+  );
   assert.deepEqual(
     database.connection
       .prepare('SELECT id, price FROM opensooq_listings ORDER BY id')
       .all()
       .map((row) => ({ ...row })),
     [
-      { id: '287909010', price: 4299 },
-      { id: '287909011', price: 4299 },
-      { id: '287909012', price: 4299 },
+      { id: '287909010', price: 4499 },
+      { id: '287909011', price: 4499 },
+      { id: '287909012', price: 4499 },
     ],
+  );
+});
+
+test('a rerun requests only the category and the listings that are new', async (t) => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  const later = shiftedClock(t);
+  const pages: Record<string, () => object[]> = {
+    '287909010': () => [motorcycle('287909010', '4499')],
+    '287909011': () => [motorcycle('287909011', '3999')],
+  };
+  await using upstream = await category(pages);
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [
+        { stream: listings, inputs: [`${upstream.origin}/en/category`] },
+      ],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+  assert.equal((await ingestion.run())[0]?.count, 2);
+  pages['287909012'] = () => [motorcycle('287909012', '2999')];
+  upstream.requests.splice(0);
+
+  // Past the longest interval of every other policy.
+  later(30 * day);
+  const rerun = await ingestion.run();
+
+  assert.equal(rerun[0]?.count, 1);
+  assert.deepEqual(
+    upstream.requests.filter((path) => path !== '/robots.txt'),
+    ['/en/category', '/en/search/287909012'],
   );
 });
 

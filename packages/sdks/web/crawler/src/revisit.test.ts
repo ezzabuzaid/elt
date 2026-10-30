@@ -17,6 +17,7 @@ import {
   HintRevisit,
   LinkReader,
   ListingReader,
+  OnceRevisit,
   type RevisitPolicy,
   WebCrawler,
   day,
@@ -593,4 +594,29 @@ test('a feed is due again within half the time its items cover, whatever the pol
   // The items cover four hours, so the feed is due within two; its pages a day later.
   assert.equal(crawl.nextDue(), 2 * hour);
   assert.equal(undated.nextDue(), day);
+});
+
+test('OnceRevisit never makes a page that loaded due again, and asks a failed or gone page again as every interval policy does', () => {
+  const policy = new OnceRevisit();
+  const visit = (outcome: 'unknown' | 'modified' | 'failed' | 'gone') =>
+    policy.schedule({ request, outcome, headers: null, at: 0 }, null);
+
+  const loaded = visit('unknown');
+
+  assert.deepEqual(loaded, { due: null, history: null });
+  assert.deepEqual(visit('modified'), { due: null, history: null });
+  assert.equal(visit('failed').due, 2 * hour);
+  assert.equal(visit('gone').due, day);
+  assert.equal(
+    policy.due(request, { ...loaded, lastModified: null }, 365 * day),
+    false,
+  );
+  assert.equal(
+    policy.due(
+      { ...request, lastModified: '2026-10-30' },
+      { ...loaded, lastModified: '2026-10-01' },
+      0,
+    ),
+    true,
+  );
 });
