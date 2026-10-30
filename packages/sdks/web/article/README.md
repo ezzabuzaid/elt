@@ -77,7 +77,7 @@ The reader does not guess `.md` paths, and it uses no browser and no model.
 2. The navigation landmarks `nav` and `[role="navigation"]` are removed.
 3. Defuddle selects the content ([ADR 0001](./docs/adr/0001-defuddle-selects-the-content-and-readability-gives-the-metadata.md)). Its cleanup follows the markup of the page ([ADR 0002](./docs/adr/0002-defuddle-cleanup-is-off-inside-declared-article-boundaries.md)).
 4. The `dateline` hints are removed ([ADR 0007](./docs/adr/0007-the-dateline-hint-is-removed-before-readability-reads-the-page.md)), a JSON-LD `@context` array becomes its schema.org IRI ([ADR 0009](./docs/adr/0009-a-json-ld-context-array-is-given-to-readability-as-its-schema-org-iri.md)), and Readability reads the metadata.
-5. html-minifier-next collapses whitespace and removes comments. It keeps the spaces between inline words and the exact content of `pre`.
+5. html-minifier-next collapses whitespace and removes comments. It keeps the spaces between inline words and the exact content of `pre`. Markup that its parser cannot read, but that browsers recover from, such as an apostrophe inside a single-quoted attribute, it keeps as text (`continueOnParseError`), and the sanitizer then parses it as HTML.
 6. DOMPurify sanitizes the HTML with its default policy, and it removes `footer` elements. Readability reads the metadata first, so an author in a footer stays.
 7. The acceptance check rejects a page of links only ([ADR 0003](./docs/adr/0003-a-page-of-links-only-is-not-an-article.md)).
 8. html-to-text gives the text, with paragraph breaks, data tables and no wrapping. node-html-markdown gives the Markdown from the same sanitized HTML ([ADR 0004](./docs/adr/0004-markdown-is-converted-from-the-sanitized-html.md)).

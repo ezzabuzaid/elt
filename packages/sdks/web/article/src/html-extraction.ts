@@ -72,6 +72,9 @@ export class HTMLExtraction extends Extraction {
           collapseWhitespace: true,
           conservativeCollapse: true,
           removeComments: true,
+          // Markup that browsers recover from, such as an apostrophe inside a
+          // single-quoted attribute, is kept as text and parsed below.
+          continueOnParseError: true,
         }),
         { FORBID_TAGS: ['footer'], ADD_FORBID_CONTENTS: ['footer'] },
       );

@@ -13,6 +13,38 @@ import {
 
 import { HTMLExtraction, WebArticle } from './index.ts';
 
+test('a page with an apostrophe inside a single-quoted attribute keeps its article', async () => {
+  // Trimmed from circleci.com/startup-program/ on 2026-10-30: the FAQ's
+  // analytics attribute is single-quoted and holds "What's", which ends the
+  // attribute early. Browsers recover from such markup (HTML Standard §13.2).
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    if (request.url !== '/startup-program/')
+      return response.writeHead(404).end();
+    response.end(`<html><head><title>CircleCI for Startups - CircleCI</title></head><body>
+<main><h1>Up to $20,000 of free compute credits for eligible startups</h1>
+<p>With this offer, you receive significantly more compute credits than the standard Performance Plan and everything that it entails, free Starter Support (valued at $249 per month) at no cost during the program.</p>
+<p>If your usage exceeds the compute credit pool provided before the promotion period ends, we’ll work with you on a smooth transition to a paid plan. Our goal is zero pipeline disruption.</p>
+<details class="group"><summary data-analytics-action="click-outer-cta" data-analytics-properties='{ "section": ["faq"], "position": 5, "link_type": "details", "cta_text": "What's included in the onboarding support?" }'><div>What's included in the onboarding support?</div></summary>
+<div data-js-id="track-body-links"><p>Our team is available to help with brand new setup, pipeline architecture, configuration, and migration from any existing CI/CD tool (Jenkins, GitHub Actions, GitLab CI, Travis CI, etc.).</p></div></details>
+</main></body></html>`);
+  });
+
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+    `${upstream.origin}/startup-program/`,
+    AbortSignal.timeout(5000),
+  );
+
+  assert.match(
+    article?.textContent ?? '',
+    /Our goal is zero pipeline disruption/,
+  );
+  assert.match(
+    article?.textContent ?? '',
+    /migration from any existing CI\/CD tool/,
+  );
+});
+
 test('a discovered article retains its introductory summary before the main body', async () => {
   // Mirrors the separate front matter and body in the captured Fowler articles.
   // Original fixture prose keeps this independent of the live publisher.
