@@ -240,6 +240,35 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
   });
 }
 
+test('a listing whose stylesheet jsdom cannot parse is stored, and nothing is written to the console', async (t) => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  // A stray closing brace; jsdom reports it as "Could not parse CSS stylesheet".
+  await using upstream = await market({
+    ad: '<style>.a{color:red}}</style>Sponsored',
+    price: '4499',
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const errors = t.mock.method(console, 'error', () => {});
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      stream: listings,
+      inputs: [`${upstream.origin}/en/cars/motorcycles`],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+
+  assert.equal((await ingestion.run())[0]?.count, 3);
+
+  assert.deepEqual(
+    errors.mock.calls.map(({ arguments: [message] }) => message),
+    [],
+  );
+});
+
 test('every listing of a paginated category is stored with its JSON-LD fields', async () => {
   await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   await using upstream = await market({ ad: 'Sponsored', price: '4499' });

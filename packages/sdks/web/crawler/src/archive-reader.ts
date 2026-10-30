@@ -1,5 +1,5 @@
 import { discoverUrisFromHeaders } from 'feedscout/methods';
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 import { z } from 'zod';
 
 import {
@@ -75,7 +75,9 @@ export class ArchiveReader extends Reader<null, null> {
 }
 
 function readArchives(html: string, url: string, headers: Headers) {
-  const dom = new JSDOM(html, { url });
+  // jsdom's own console writes its errors, such as a stylesheet it cannot
+  // parse, to the host's console.
+  const dom = new JSDOM(html, { url, virtualConsole: new VirtualConsole() });
   try {
     const document = dom.window.document;
     const origin = new URL(url).origin;

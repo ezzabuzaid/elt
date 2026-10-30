@@ -1,6 +1,6 @@
 import { hash } from 'node:crypto';
 
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 import { z } from 'zod';
 
 import {
@@ -103,6 +103,9 @@ export class OpenSooqExtractor extends RecordExtractor {
         const dom = new JSDOM(response.rawBody, {
           url: response.url,
           contentType: response.headers['content-type'],
+          // jsdom's own console writes its errors, such as a stylesheet it
+          // cannot parse, to the host's console.
+          virtualConsole: new VirtualConsole(),
         });
         let objects: unknown[];
         try {

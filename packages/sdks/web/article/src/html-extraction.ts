@@ -3,7 +3,7 @@ import { Defuddle } from 'defuddle/node';
 import createDOMPurify from 'dompurify';
 import { minify } from 'html-minifier-next';
 import { convert } from 'html-to-text';
-import { type ConstructorOptions, JSDOM } from 'jsdom';
+import { type ConstructorOptions, JSDOM, VirtualConsole } from 'jsdom';
 import { NodeHtmlMarkdown } from 'node-html-markdown';
 
 import { type Article, type ArticlePage, Extraction } from './extraction.ts';
@@ -59,7 +59,12 @@ export class HTMLExtraction extends Extraction {
     signal: AbortSignal,
   ): Promise<Article | null> {
     signal.throwIfAborted();
-    const options: ConstructorOptions = { url: page.url };
+    // jsdom's own console writes its errors, such as a stylesheet it cannot
+    // parse, to the host's console.
+    const options: ConstructorOptions = {
+      url: page.url,
+      virtualConsole: new VirtualConsole(),
+    };
     if (page.contentType) options.contentType = page.contentType;
     const dom = new JSDOM(page.body, options);
     try {

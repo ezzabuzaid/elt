@@ -659,6 +659,37 @@ test('a list with the strategy all follows no pagination to another origin', asy
   );
 });
 
+test('a list whose stylesheet jsdom cannot parse writes nothing to the console', async (t) => {
+  // A stray closing brace; jsdom reports it as "Could not parse CSS stylesheet".
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/category')
+      response.end(
+        '<html><head><style>.a{color:red}}</style></head><body><main><a href="/item/1">One</a></main></body></html>',
+      );
+    else response.end('<p>An item.</p>');
+  });
+  const errors = t.mock.method(console, 'error', () => {});
+
+  const pages = await crawl(
+    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
+      new ArchiveReader(),
+      new PaginationReader(),
+    ]),
+    `${upstream.origin}/category`,
+    AbortSignal.timeout(5000),
+  );
+
+  assert.deepEqual(
+    pages.map(location).map((page) => page.url),
+    [`${upstream.origin}/item/1`],
+  );
+  assert.deepEqual(
+    errors.mock.calls.map(({ arguments: [message] }) => message),
+    [],
+  );
+});
+
 test('a starting page without pagination hands back the pages it lists outside navigation', async () => {
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');

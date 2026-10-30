@@ -1,4 +1,4 @@
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 
 /**
  * How sanitized article HTML lists other pages, such as a category, an
@@ -11,7 +11,9 @@ import { JSDOM } from 'jsdom';
  *   table do not count.
  */
 export function listsPages(content: string, url: string) {
-  const dom = new JSDOM(content, { url });
+  // jsdom's own console writes its errors, such as a stylesheet it cannot
+  // parse, to the host's console.
+  const dom = new JSDOM(content, { url, virtualConsole: new VirtualConsole() });
   try {
     const { body } = dom.window.document;
     const page = new URL(url);

@@ -3,7 +3,7 @@ import { MIMEType } from 'node:util';
 import createDOMPurify from 'dompurify';
 import matter from 'gray-matter';
 import { convert } from 'html-to-text';
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 import { Marked } from 'marked';
 import { isDocument, parseDocument } from 'yaml';
 
@@ -49,8 +49,11 @@ export class MarkdownExtraction extends Extraction {
       const value: unknown = isDocument(metadata) ? metadata.get(name) : null;
       return typeof value === 'string' ? value : null;
     };
+    // jsdom's own console writes its errors, such as a stylesheet it cannot
+    // parse, to the host's console.
     const dom = new JSDOM(await new Marked().parse(markdown), {
       url: page.url,
+      virtualConsole: new VirtualConsole(),
     });
     try {
       signal.throwIfAborted();

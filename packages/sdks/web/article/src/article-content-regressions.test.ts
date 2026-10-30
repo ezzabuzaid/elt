@@ -11,7 +11,31 @@ import {
   WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
-import { HTMLExtraction, WebArticle } from './index.ts';
+import { HTMLExtraction, MarkdownExtraction, WebArticle } from './index.ts';
+
+test('a page whose stylesheet jsdom cannot parse writes nothing to the console', async (t) => {
+  // A stray closing brace, as minified stylesheets on startup program pages
+  // have; jsdom reports it as "Could not parse CSS stylesheet".
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    if (request.url !== '/startups') return response.writeHead(404).end();
+    response.end(`<html><head><title>Startups</title><style>.a{color:red}}</style></head><body>
+<main><h1>Startups</h1><p>Get up to $100,000 in credits for your first year, with support from our team and partners.</p>
+<p>Apply with your company details, and we answer within two weeks with the credits and the next steps.</p></main></body></html>`);
+  });
+  const errors = t.mock.method(console, 'error', () => {});
+
+  const article = await new WebArticle(
+    [new MarkdownExtraction(), new HTMLExtraction()],
+    got,
+  ).fetch(`${upstream.origin}/startups`, AbortSignal.timeout(5000));
+
+  assert.match(article?.textContent ?? '', /\$100,000 in credits/);
+  assert.deepEqual(
+    errors.mock.calls.map(({ arguments: [message] }) => message),
+    [],
+  );
+});
 
 test('a page with an apostrophe inside a single-quoted attribute keeps its article', async () => {
   // Trimmed from circleci.com/startup-program/ on 2026-10-30: the FAQ's

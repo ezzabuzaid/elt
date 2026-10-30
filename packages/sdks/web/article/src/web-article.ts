@@ -6,7 +6,7 @@ import {
   discoverUrisFromHtml,
 } from 'feedscout/methods';
 import { type Got, HTTPError, RequestError, type Response } from 'got';
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 
 import {
   type Article,
@@ -318,7 +318,13 @@ export class WebArticle {
       );
     const alternatives = discoverUrisFromHeaders(headers, { linkSelectors });
     if (isHtml(mediaType(contentType))) {
-      const dom = new JSDOM(response.rawBody, { url, contentType });
+      // jsdom's own console writes its errors, such as a stylesheet it cannot
+      // parse, to the host's console.
+      const dom = new JSDOM(response.rawBody, {
+        url,
+        contentType,
+        virtualConsole: new VirtualConsole(),
+      });
       try {
         alternatives.push(
           ...discoverUrisFromHtml(dom.serialize(), {

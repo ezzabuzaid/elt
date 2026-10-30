@@ -40,6 +40,36 @@ test('the configured extraction order requests native Markdown before HTML and k
   assert.match(html?.textContent ?? '', /HTML fallback content/);
 });
 
+test('native Markdown with a stylesheet jsdom cannot parse writes nothing to the console', async (t) => {
+  // Markdown may carry raw HTML; a stray closing brace in its style element
+  // is "Could not parse CSS stylesheet" to jsdom.
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (request.headers.accept?.startsWith('text/markdown')) {
+      response.setHeader('content-type', 'text/markdown; charset=utf-8');
+      response.end(
+        '# Startups\n\n<style>.a{color:red}}</style>\n\nGet up to $100,000 in credits for your first year.',
+      );
+    } else {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        '<html><head><title>Startups</title></head><body><article><p>Get up to $100,000 in credits for your first year.</p></article></body></html>',
+      );
+    }
+  });
+  const errors = t.mock.method(console, 'error', () => {});
+
+  const article = await new WebArticle(
+    [new MarkdownExtraction(), new HTMLExtraction()],
+    got,
+  ).fetch(upstream.origin, AbortSignal.timeout(5000));
+
+  assert.match(article?.markdown ?? '', /\$100,000 in credits/);
+  assert.deepEqual(
+    errors.mock.calls.map(({ arguments: [message] }) => message),
+    [],
+  );
+});
+
 test('native Markdown retains its source, tables, linked prose and code while producing safe HTML', async () => {
   const markdown =
     '# Café report\n\nRead the [results](/results).\n\n| Item | Count |\n| --- | --- |\n| Tea | 2 |\n\n```js\n  a < b;\n```\n\n<script>alert(1)</script>\n';
