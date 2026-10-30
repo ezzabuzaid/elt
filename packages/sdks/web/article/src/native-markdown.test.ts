@@ -267,6 +267,39 @@ test('a Markdown request that a site redirects to an HTML app shell, saying Vary
   );
 });
 
+test('a Markdown request that a site redirects to an HTML app shell, saying Vary: *, gives the page a browser gets', async () => {
+  // No redirect in the startup-credits crawl of 2026-10-30 sent Vary: *; it says that anything in the
+  // request, the Accept header too, can have chosen the answer (RFC 9110, section 12.5.5).
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (
+      request.url === '/startups' &&
+      request.headers.accept?.startsWith('text/markdown')
+    )
+      response.writeHead(307, { location: '/startups.md', vary: '*' }).end();
+    else if (request.url === '/startups')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<html><head><title>Startup program</title></head><body><article><p>Startups get credits for their first year.</p></article></body></html>',
+        );
+    else if (request.url === '/startups.md')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<html><head><title>App</title></head><body><div id="loading">Loading…</div></body></html>',
+        );
+    else response.writeHead(404).end();
+  });
+
+  const article = await new WebArticle(
+    [new MarkdownExtraction(), new HTMLExtraction()],
+    got,
+  ).fetch(`${upstream.origin}/startups`, AbortSignal.timeout(5000));
+
+  assert.equal(article?.url, `${upstream.origin}/startups`);
+  assert.equal(article?.title, 'Startup program');
+});
+
 test('a redirect that Vary says Accept chose but that sends a browser to the same page asks the page once more as a browser, and no more', async () => {
   // www.notion.so/startups on 2026-10-30: a move to another address that varies on Accept.
   const requests: string[] = [];

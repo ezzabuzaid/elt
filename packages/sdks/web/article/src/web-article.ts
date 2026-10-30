@@ -40,13 +40,14 @@ function mediaType(contentType: string | undefined) {
 }
 
 // Only a hook sees a redirect's headers, so it marks the request that a redirect chosen by Accept
-// (RFC 9110, section 12.5.5) led away from the URL it asked for.
+// led away from the URL it asked for. Vary names Accept, or * for anything in the request
+// (RFC 9110, section 12.5.5).
 const acceptRedirect = 'acceptRedirect';
 const noteAcceptRedirect: BeforeRedirectHook = (options, response) => {
   if (
     (response.headers.vary ?? '')
       .split(',')
-      .some((field) => field.trim().toLowerCase() === 'accept')
+      .some((field) => ['accept', '*'].includes(field.trim().toLowerCase()))
   )
     options.context[acceptRedirect] = true;
 };

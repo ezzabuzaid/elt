@@ -64,7 +64,7 @@ With Markdown first, the reader asks for `text/markdown` before HTML.
 - When the server returns HTML, Feedscout finds the advertised alternatives in the HTTP Link header and in the HTML, with relative URLs and HTML base URLs. The reader follows each alternative one time. When an alternative fails, is empty or has another format, the original HTML stays.
 - When the server returns native Markdown, the HTML counterpart gives the normalized fields and the missing metadata ([ADR 0005](./docs/adr/0005-native-markdown-is-kept-verbatim-and-an-html-counterpart-gives-the-normalized-fields.md)).
 - A 406, or native Markdown that cannot be read or has no article, causes one request that accepts only HTML.
-- When a redirect whose `Vary` header names `Accept` gives no Markdown, the reader asks the original URL again with the HTML media types, as a browser asks. It reads that answer in the usual way, so the advertised alternatives stay preferred ([ADR 0012](./docs/adr/0012-an-accept-redirect-that-gives-no-markdown-is-asked-again-as-a-browser-asks.md)).
+- When a redirect whose `Vary` header names `Accept` or `*` gives no Markdown, the reader asks the original URL again with the HTML media types, as a browser asks. It reads that answer in the usual way, so the advertised alternatives stay preferred ([ADR 0012](./docs/adr/0012-an-accept-redirect-that-gives-no-markdown-is-asked-again-as-a-browser-asks.md)).
 
 The reader does not guess `.md` paths, and it uses no browser and no model.
 

@@ -37,7 +37,7 @@ A representation that a page names with `rel="alternate"` in an HTTP Link header
 _Avoid_: Guessed URL (the SDK does not guess `.md` paths)
 
 **Accept redirect**:
-A redirect whose `Vary` header names `Accept`, so the Accept header chose it.
+A redirect whose `Vary` header names `Accept`, or `*` for anything in the request, so the Accept header can have chosen it.
 _Avoid_: Negotiated redirect, Markdown redirect
 
 **Browser request**:
