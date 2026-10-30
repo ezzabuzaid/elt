@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { createRequire } from 'node:module';
 import { setTimeout } from 'node:timers/promises';
 
 import {
@@ -9,7 +8,7 @@ import {
   RequestError,
   type Response,
 } from 'got';
-import type robotsTxt from 'robots-parser';
+import * as robots from 'robots-parser';
 import { z } from 'zod';
 
 import { AdaptiveRevisit } from './adaptive-revisit.ts';
@@ -940,11 +939,11 @@ function refused(status: number) {
 }
 
 // robots-parser is CommonJS, but its types declare an ES default export
-// ("masquerading as ESM"), so the types of a default import do not match
-// what Node gives; require gives the parser as its types describe it.
-const robotsParser: typeof robotsTxt.default = createRequire(import.meta.url)(
-  'robots-parser',
-);
+// ("masquerading as ESM"), so TypeScript types the namespace's default as the
+// module. Node and bundlers give module.exports, the parser, as the default,
+// and a static import lets a host bundle it.
+// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- robots-parser 3.0.1's index.d.ts declares `export default` over `module.exports = function`
+const robotsParser = robots.default as unknown as typeof robots.default.default;
 
 // An origin's robots.txt: its rules, and whether its Content-Signal lets the crawl use the site for search.
 interface OriginRules {
