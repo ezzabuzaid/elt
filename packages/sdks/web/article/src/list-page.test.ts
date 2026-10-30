@@ -140,6 +140,25 @@ test('an article that links many pages is not labeled a list', async () => {
   }
 });
 
+test('a live blog that declares LiveBlogPosting is not labeled a list, although each update links its permalink, a share address and other articles', async () => {
+  // theguardian.com/business/live/2026/oct/30/uk-house-price-growth-crypto-industry-6bn-binance-hack-eurozone-france-gdp-latest-news-updates,
+  // trimmed: each update links its own permalink with a query, and a mailto share address.
+  const share =
+    '<p><a href="mailto:?subject=FBI working with Binance after crypto exchange hit by $6.3bn heist – business live">Share</a></p>';
+  const article = await extract(
+    new HTMLExtraction(),
+    'text/html',
+    `<html><head><title>FBI working with Binance after crypto exchange hit by $6.3bn heist – business live</title>
+      <script type="application/ld+json">[{"@type":"LiveBlogPosting","@context":"http://schema.org","headline":"FBI working with Binance after crypto exchange hit by $6.3bn heist – business live"}]</script></head>
+      <body><main><h1>FBI working with Binance after crypto exchange hit by $6.3bn heist – business live</h1>
+        <article><p><a href="?page=with%3Ablock-6ae4b1c68f08f802b2b66e2e#block-6ae4b1c68f08f802b2b66e2e">15.05 GMT</a></p><p>Binance is working with law enforcement, blockchain intelligence firms, token issuers and other exchange to trace and recover stolen funds, Richard Teng continues.</p><p>“We will do everything in our power to make sure that these bad actors are held accountable.”</p>${share}</article>
+        <article><p><a href="?page=with%3Ablock-6ae49d7d8f08f9d01ef827f6#block-6ae49d7d8f08f9d01ef827f6">13.40 GMT</a></p><p>Shares in companies exposed to the crypto world are dropping sharply at the start of trading in New York.</p><p>Coinbase, the US crypto exchange, are down 11.5% at the start of trading.</p><p><strong>Strategy</strong>, which pioneered <a href="https://www.theguardian.com/technology/2024/dec/31/microstrategy-software-firm-big-bitcoin-bet">the idea of being a Bitcoin treasury company</a> are down 10%.</p>${share}</article>
+      </main></body></html>`,
+  );
+
+  assert.equal(article?.list, false);
+});
+
 test('a native Markdown page that lists pages of its own origin is labeled a list', async () => {
   const index = await extract(
     new MarkdownExtraction(),

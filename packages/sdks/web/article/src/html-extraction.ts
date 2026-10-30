@@ -17,7 +17,7 @@ export type ArticleSelection = Omit<
   readonly canonicalUrl: string | null;
   readonly inferredPublished: string | null;
   /** What the page declares itself, or null when it declares neither. */
-  readonly declared: 'article' | 'list' | null;
+  readonly declared: 'live blog' | 'article' | 'list' | null;
 };
 
 // schema.org's Article and its subtypes.
@@ -110,9 +110,11 @@ export class HTMLExtraction extends Extraction {
         url: page.url,
         // Cards outweigh a declared article: a blog index keeps its CMS's
         // Article or og:type article (css-tricks.com, smashingmagazine.com).
+        // A live blog's cards are its own updates, and no index declares
+        // LiveBlogPosting (theguardian.com live blogs).
         list:
           declared === 'list' ||
-          shape === 'cards' ||
+          (declared !== 'live blog' && shape === 'cards') ||
           (declared === null && shape === 'links'),
       };
     } finally {
@@ -232,18 +234,21 @@ export class HTMLExtraction extends Extraction {
       siteNames.has(letters(article.title))
         ? heading
         : article.title;
-    // Defuddle gives the top-level JSON-LD objects of the page, whatever their @context.
+    // Defuddle gives the top-level JSON-LD objects of the page, whatever their @context, and a
+    // script whose top level is an array (theguardian.com) as that array.
     const data: unknown = extracted.schemaOrgData;
-    const types = (Array.isArray(data) ? data : [data]).flatMap(
-      (item: unknown) =>
+    const types = [data]
+      .flat(2)
+      .flatMap((item: unknown) =>
         typeof item === 'object' && item !== null && '@type' in item
           ? [item['@type']].flat()
           : [],
-    );
+      );
     const declares = (names: ReadonlySet<string>) =>
       types.some((type) => typeof type === 'string' && names.has(type));
     let declared: ArticleSelection['declared'] = null;
-    if (declares(articleTypes)) declared = 'article';
+    if (types.includes('LiveBlogPosting')) declared = 'live blog';
+    else if (declares(articleTypes)) declared = 'article';
     else if (declares(collectionTypes)) declared = 'list';
     // The schema.org type is the more specific: the-decoder.com's tag pages declare og:type article and a CollectionPage.
     else if (
