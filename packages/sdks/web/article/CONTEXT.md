@@ -65,7 +65,7 @@ The publication date that Defuddle finds in an HTML page, in ISO 8601 UTC (`infe
 _Avoid_: Published time (`publishedTime` is only the declared date), feed date (the web source's `published` comes from the listing)
 
 **Fingerprint**:
-A hash of the response bytes, the final URL and the Content-Type, known before extraction. It is null when another response can change the article.
+A hash of each response that the extraction can read (its final URL, its Content-Type and its bytes), known before extraction. It is never null ([ADR 0008](./docs/adr/0008-the-fingerprint-is-known-before-extraction.md)).
 _Avoid_: ETag (an ETag is an HTTP validator), version
 
 **Acceptance check**:
