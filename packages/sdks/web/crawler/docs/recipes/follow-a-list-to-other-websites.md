@@ -11,7 +11,7 @@
 3. **`include` selects the pages.** The crawl hands back a page only when a pattern in `include` matches its URL. The pattern `{ hostname: '((?!list\\.example$).*)' }` matches every host name except `list.example`, so the crawl does not download the license.
 4. **Pagination stays on the list's website.** The strategy changes only the pages that the list hands back. A `rel="next"` link or a page number on another origin is not pagination.
 
-The crawl reads the `robots.txt` of each origin that the list links before it decides about the link, also when `include` does not select it.
+A link that `include` does not select costs its website nothing: the crawl sends it no request, not even for its `robots.txt`, so a website that is down gives no failure.
 
 ## The program
 

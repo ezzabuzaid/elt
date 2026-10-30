@@ -607,11 +607,21 @@ class CrawlRun implements Crawl {
         for (const entry of lane.values()) {
           lane.delete(entry.url);
           const { origin } = new URL(entry.url);
+          const included = entry.page && this.#includes(entry.url);
+          const needed = entry.start || entry.document || included;
+          // A URL that nobody needs and that no reader would admit, such as a
+          // list's link to a website that include does not select, is dropped
+          // before its origin is asked anything: it costs that website no
+          // request and fails nothing, as Scrapy drops an off-site request
+          // before its robots.txt check.
+          if (!needed && !this.#wouldAdmit(entry)) {
+            this.#known.delete(entry.url);
+            continue;
+          }
           if (this.#blocked.has(origin)) {
             this.#held.set(entry.url, entry);
             continue;
           }
-          const included = entry.page && this.#includes(entry.url);
           const robotsUrl = `${origin}/robots.txt`;
           if (entry.url !== robotsUrl) {
             const robots = await this.#rules(origin);
@@ -649,12 +659,7 @@ class CrawlRun implements Crawl {
             : this.#readers.map((reader, index) =>
                 reader.wants(entry, this.#states[index]),
               );
-          if (
-            entry.start ||
-            entry.document ||
-            included ||
-            wanted.includes(true)
-          ) {
+          if (needed || wanted.includes(true)) {
             this.#current = entry;
             return { entry, included, wanted };
           }
@@ -688,6 +693,15 @@ class CrawlRun implements Crawl {
     if (chosen === undefined) return undefined;
     this.#credit[chosen] -= total;
     return this.#lanes[chosen];
+  }
+
+  // Whether a reader would admit the entry, asked on copies of the readers'
+  // states, which are plain data, so the question spends no budget: a reader
+  // admits for real only after the rules of the origin allow the URL.
+  #wouldAdmit(entry: Entry) {
+    return this.#readers.some((reader, index) =>
+      reader.wants(entry, structuredClone(this.#states[index])),
+    );
   }
 
   // An origin's rules, from its robots.txt through the client, so its HTTP

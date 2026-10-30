@@ -599,11 +599,7 @@ test('a list with the strategy all hands back the pages on other origins that th
       })),
   );
   assert.ok(sister.includes('/post/1'), sister.join(' '));
-  // The crawl reads an origin's robots.txt before it decides about a URL there.
-  assert.deepEqual(
-    other.filter((path) => path !== '/robots.txt'),
-    [],
-  );
+  assert.deepEqual(other, []);
 });
 
 test('a reader takes the strategy same-origin or all and no origins, and no list of URL patterns is empty', () => {
