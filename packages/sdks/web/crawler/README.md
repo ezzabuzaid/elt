@@ -87,6 +87,8 @@ A policy's history is plain data that its `histories` schema parses, so the meme
 
 ## Readers
 
+Each reader finds one kind of URL ([ADR 0001](./docs/adr/0001-one-engine-downloads-and-each-reader-finds-one-kind-of-url.md)), and the crawl expands only the starting origins ([ADR 0002](./docs/adr/0002-the-crawl-expands-only-the-starting-origins.md)). The words are in [CONTEXT.md](./CONTEXT.md).
+
 | Reader             | Reads                                            | Finds                                                                                                                                                                                                                                                              |
 | ------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ListingReader`    | Starting pages, `robots.txt`, sitemaps and feeds | Feed and sitemap declarations in HTML and HTTP `Link` headers, labeled feed anchors, `robots.txt` sitemaps, a `/sitemap.xml` guess, and the pages, child sitemaps and pagination of XML url sets and indexes, text lists, RSS 2.0, Atom, RSS 1.0/RDF and JSON Feed |

@@ -21,6 +21,8 @@ Before defending a package mechanism, list each consumer with its file and line 
 
 Before you move, extract or wrap a guard such as a lock, name the failure it prevents as a concrete case with the hosts' real configuration, and say who else prevents it. If no host can cause the case, delete the guard; do not find it a new home. The SQLite writer lock and the Markdown target lock went this way: the checkpoint store already kept two runs of one copy apart, and the only case left, two copies configured to write one table, is a misconfiguration that no host makes.
 
+Before proposing a change to a package's rule, state why the rule exists and what each part is responsible for, from the package's README, its ADRs and the commit that introduced the rule. A rule that blocks your case is not yet a gap. The web crawler went this way: `LinkReader`'s starting-origin rule, `ListingReader`'s starting-page-only sitemaps and `PaginationReader`'s nav and footer removal were first called three gaps for the startup-credits app; they are one designed rule, the crawl expands only the starting origins (sdk-web-crawler ADR 0002), and one correct job, a list's items exclude a menu.
+
 ## The app lives in context-compiler
 
 The Context Compiler plugin, its CLI and its connectors are in [ezzabuzaid/context-compiler](https://github.com/ezzabuzaid/context-compiler), which links this checkout as `../elt`. Connectors exist to find elt gaps: fix a gap here, not in the connector. A change that spans both repositories is two commits, elt first.
