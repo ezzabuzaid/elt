@@ -75,7 +75,7 @@ export class ArticleExtractor extends RecordExtractor {
       http,
     );
     return {
-      accept: article.accept,
+      negotiation: article.negotiation,
       async read(response, signal) {
         const download = await article.read(response, signal);
         return {

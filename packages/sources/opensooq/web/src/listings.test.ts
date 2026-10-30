@@ -693,7 +693,7 @@ class CountedExtractor extends OpenSooqExtractor {
   override open(): ExtractorRun {
     const run = super.open();
     return {
-      accept: run.accept,
+      negotiation: run.negotiation,
       read: async (response, signal) => {
         const output = await run.read(response, signal);
         return {

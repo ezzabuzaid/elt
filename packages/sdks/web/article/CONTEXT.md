@@ -36,6 +36,14 @@ _Avoid_: Requested Markdown
 A representation that a page names with `rel="alternate"` in an HTTP Link header or an HTML link element.
 _Avoid_: Guessed URL (the SDK does not guess `.md` paths)
 
+**Accept redirect**:
+A redirect whose `Vary` header names `Accept`, so the Accept header chose it.
+_Avoid_: Negotiated redirect, Markdown redirect
+
+**Browser request**:
+The request for the original URL with the HTML media types of the chain, after an Accept redirect gave no Markdown.
+_Avoid_: Fallback (the fallback follows a 406 or unusable negotiated Markdown, at the final URL), retry (Got retries a failed request)
+
 **HTML counterpart**:
 The HTML representation of a page whose native Markdown was read. It gives the normalized fields and the missing metadata.
 _Avoid_: Companion, fallback (a fallback is the HTML-only request after unusable negotiated Markdown)

@@ -5,7 +5,13 @@ import {
   discoverUrisFromHeaders,
   discoverUrisFromHtml,
 } from 'feedscout/methods';
-import { type Got, HTTPError, RequestError, type Response } from 'got';
+import {
+  type BeforeRedirectHook,
+  type Got,
+  HTTPError,
+  RequestError,
+  type Response,
+} from 'got';
 import { JSDOM, VirtualConsole } from 'jsdom';
 
 import {
@@ -32,6 +38,18 @@ export class ArticleError extends Error {
 function mediaType(contentType: string | undefined) {
   return contentType ? new MIMEType(contentType).essence : null;
 }
+
+// Only a hook sees a redirect's headers, so it marks the request that a redirect chosen by Accept
+// (RFC 9110, section 12.5.5) led away from the URL it asked for.
+const acceptRedirect = 'acceptRedirect';
+const noteAcceptRedirect: BeforeRedirectHook = (options, response) => {
+  if (
+    (response.headers.vary ?? '')
+      .split(',')
+      .some((field) => field.trim().toLowerCase() === 'accept')
+  )
+    options.context[acceptRedirect] = true;
+};
 
 function isHtml(
   type: string | null,
@@ -77,8 +95,11 @@ function fingerprint(parts: readonly (Response | string)[]) {
 }
 
 export class WebArticle {
-  /** The Accept header for a page downloaded elsewhere and given to read(). */
-  readonly accept: string;
+  /** How to request a page downloaded elsewhere and given to read(): its Accept header, and the redirect hook that notes a redirect Accept chose. */
+  readonly negotiation: {
+    readonly accept: string;
+    readonly beforeRedirect: BeforeRedirectHook;
+  };
   readonly #extractions: readonly Extraction[];
   readonly #http: Got;
   readonly #mediaTypes: readonly string[];
@@ -99,7 +120,10 @@ export class WebArticle {
       this.#mediaTypes[0] === 'text/markdown' && htmlTypes.length > 0
         ? htmlTypes
         : undefined;
-    this.accept = acceptHeader(this.#mediaTypes);
+    this.negotiation = {
+      accept: acceptHeader(this.#mediaTypes),
+      beforeRedirect: noteAcceptRedirect,
+    };
   }
 
   async fetch(url: string, signal: AbortSignal) {
@@ -135,6 +159,7 @@ export class WebArticle {
         signal,
         responseType: 'buffer',
         headers: { accept },
+        hooks: { beforeRedirect: [noteAcceptRedirect] },
       });
     } catch (cause) {
       signal.throwIfAborted();
@@ -166,6 +191,24 @@ export class WebArticle {
         return await this.#download(url, signal, fallback, undefined);
       if (!readable(response)) throw new HTTPError(response);
       const type = mediaType(response.headers['content-type']);
+      // A Markdown request that Accept redirected elsewhere and that got no Markdown, as linear.app
+      // sends its pages to an app shell, failed its negotiation: the URL is asked again as a browser
+      // asks, with its advertised Markdown still preferred.
+      if (
+        fallback !== undefined &&
+        type !== 'text/markdown' &&
+        response.request.options.context[acceptRedirect] === true
+      )
+        return await this.#read(
+          await this.#request(
+            response.requestUrl,
+            signal,
+            acceptHeader(fallback),
+          ),
+          signal,
+          accepted,
+          undefined,
+        );
       if (fallback !== undefined && type === 'text/markdown') {
         const companion = await this.#request(
           url,

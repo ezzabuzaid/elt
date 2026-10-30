@@ -33,7 +33,11 @@ class SectionExtractor extends RecordExtractor {
   }
   open() {
     return {
-      accept: this.#accept,
+      // Sections read the same wherever a redirect leads, so no redirect is noted.
+      negotiation:
+        this.#accept === null
+          ? null
+          : { accept: this.#accept, beforeRedirect() {} },
       async read(response: Response) {
         const path = new URL(response.url).pathname;
         return {

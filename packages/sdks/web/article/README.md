@@ -51,7 +51,7 @@ The publisher and the URL selection in the example belong to the caller.
 - `new WebArticle(extractions, got)` takes the extraction chain and a Got client. An empty chain is not valid. Use `got.extend(...)` for timeouts, retries and request hooks.
 - `fetch(url, signal)` downloads a page and returns its article, or null when the page has no article.
 - `download(url, signal)` and `read(response, signal)` return a lazy extraction: a `fingerprint` and an `extract()` function. The reader requests every response that the extraction needs before it gives the fingerprint, and the fingerprint covers all of them. `extract()` makes no request. Compare the fingerprint with your committed state before you extract ([ADR 0008](./docs/adr/0008-the-fingerprint-is-known-before-extraction.md)).
-- `accept` is the Accept header for a page that you download yourself and give to `read()`.
+- `negotiation` tells how to request a page that you download yourself and give to `read()`. Send its `accept` as the Accept header, and add its `beforeRedirect` to the `beforeRedirect` hooks of the request. Without the hook, `read()` cannot see an Accept redirect.
 
 Got owns HTTP: redirects, decompression, retries, deadlines, cancellation and the HTTP cache. When Got revalidates a cached response and gets a 304, it gives back the cached body, so the page reads as an identical 200.
 
@@ -64,6 +64,7 @@ With Markdown first, the reader asks for `text/markdown` before HTML.
 - When the server returns HTML, Feedscout finds the advertised alternatives in the HTTP Link header and in the HTML, with relative URLs and HTML base URLs. The reader follows each alternative one time. When an alternative fails, is empty or has another format, the original HTML stays.
 - When the server returns native Markdown, the HTML counterpart gives the normalized fields and the missing metadata ([ADR 0005](./docs/adr/0005-native-markdown-is-kept-verbatim-and-an-html-counterpart-gives-the-normalized-fields.md)).
 - A 406, or native Markdown that cannot be read or has no article, causes one request that accepts only HTML.
+- When a redirect whose `Vary` header names `Accept` gives no Markdown, the reader asks the original URL again with the HTML media types, as a browser asks. It reads that answer in the usual way, so the advertised alternatives stay preferred ([ADR 0012](./docs/adr/0012-an-accept-redirect-that-gives-no-markdown-is-asked-again-as-a-browser-asks.md)).
 
 The reader does not guess `.md` paths, and it uses no browser and no model.
 

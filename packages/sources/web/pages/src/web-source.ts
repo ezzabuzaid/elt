@@ -206,10 +206,12 @@ export class WebSource extends Source {
           hooks: {
             beforeRequest: [
               (options) => {
-                if (options.context.page === true && run.accept !== null)
-                  options.headers.accept = run.accept;
+                if (options.context.page === true && run.negotiation !== null)
+                  options.headers.accept = run.negotiation.accept;
               },
             ],
+            beforeRedirect:
+              run.negotiation === null ? [] : [run.negotiation.beforeRedirect],
           },
         }),
         this.#stream.readers,

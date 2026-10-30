@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { HttpServer } from '@zukhruf/testing/http';
-import got from 'got';
+import got, { HTTPError } from 'got';
 import { JSDOM } from 'jsdom';
 
 import {
@@ -225,6 +225,227 @@ test('negotiated Markdown rejection or unreadable content retries the same page 
     assert.equal(article?.title, 'Readable fallback');
     assert.match(article?.textContent ?? '', /remains readable as HTML/);
   }
+});
+
+test('a Markdown request that a site redirects to an HTML app shell, saying Vary: Accept, gives the page a browser gets under its own URL', async () => {
+  // linear.app on 2026-10-30, trimmed: a Markdown request is sent to
+  // /index.md, which answers every request with the app's loading shell.
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (
+      request.url === '/' &&
+      request.headers.accept?.startsWith('text/markdown')
+    )
+      response.writeHead(307, { location: '/index.md', vary: 'Accept' }).end();
+    else if (request.url === '/')
+      response
+        .writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          link: '</index.md>; rel="alternate"; type="text/markdown"',
+        })
+        .end(
+          '<!doctype html><html lang="en"><head><title>Linear – The system for product development</title></head><body><main><h1>The product development system for teams and agents</h1><p>Purpose-built for planning and building products. Designed for the AI era.</p></main></body></html>',
+        );
+    else if (request.url === '/index.md')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Linear</title></head><body><div id="root"></div><div id="loading"><div id="loading-content">Loading…</div></div></body></html>',
+        );
+    else response.writeHead(404).end();
+  });
+
+  const article = await new WebArticle(
+    [new MarkdownExtraction(), new HTMLExtraction()],
+    got,
+  ).fetch(`${upstream.origin}/`, AbortSignal.timeout(5000));
+
+  assert.equal(article?.url, `${upstream.origin}/`);
+  assert.equal(article?.title, 'Linear – The system for product development');
+  assert.match(
+    article?.textContent ?? '',
+    /Purpose-built for planning and building products/,
+  );
+});
+
+test('a redirect that Vary says Accept chose but that sends a browser to the same page asks the page once more as a browser, and no more', async () => {
+  // www.notion.so/startups on 2026-10-30: a move to another address that varies on Accept.
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    requests.push(
+      `${request.url} ${request.headers.accept?.startsWith('text/markdown') ? 'markdown' : 'html'}`,
+    );
+    if (request.url === '/startups')
+      response
+        .writeHead(301, {
+          location: '/new/startups',
+          vary: 'Accept, Accept-Encoding',
+        })
+        .end();
+    else
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<html><head><title>Notion for Startups</title></head><body><article><p>Startups get Notion with credits for their whole team.</p></article></body></html>',
+        );
+  });
+
+  const article = await new WebArticle(
+    [new MarkdownExtraction(), new HTMLExtraction()],
+    got,
+  ).fetch(`${upstream.origin}/startups`, AbortSignal.timeout(5000));
+
+  assert.equal(article?.url, `${upstream.origin}/new/startups`);
+  assert.equal(article?.title, 'Notion for Startups');
+  assert.deepEqual(requests, [
+    '/startups markdown',
+    '/new/startups markdown',
+    '/startups html',
+    '/new/startups html',
+  ]);
+});
+
+test('a page asked again as a browser after a failed Markdown redirect still prefers the Markdown it advertises', async () => {
+  // No site seen on 2026-10-30 does both: this one stands for a site whose
+  // Accept redirect fails while the Markdown that its page advertises works.
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (
+      request.url === '/guide' &&
+      request.headers.accept?.startsWith('text/markdown')
+    )
+      response.writeHead(307, { location: '/guide.md', vary: 'Accept' }).end();
+    else if (request.url === '/guide')
+      response
+        .writeHead(200, {
+          'content-type': 'text/html',
+          link: '</docs/guide.md>; rel="alternate"; type="text/markdown"',
+        })
+        .end(
+          '<html><head><title>HTML guide</title></head><body><article><p>The guide as HTML.</p></article></body></html>',
+        );
+    else if (request.url === '/guide.md')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<html><head><title>App</title></head><body><div id="loading">Loading…</div></body></html>',
+        );
+    else if (request.url === '/docs/guide.md')
+      response
+        .writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' })
+        .end('# Native guide\n\nThe publisher-selected representation.');
+    else response.writeHead(404).end();
+  });
+
+  const article = await new WebArticle(
+    [new MarkdownExtraction(), new HTMLExtraction()],
+    got,
+  ).fetch(`${upstream.origin}/guide`, AbortSignal.timeout(5000));
+
+  assert.equal(article?.title, 'Native guide');
+  assert.equal(
+    article?.markdown,
+    '# Native guide\n\nThe publisher-selected representation.',
+  );
+});
+
+test('a Markdown request that Accept redirects to Markdown is read as Markdown without asking the page as a browser', async () => {
+  // linear.app/docs/mcp on 2026-10-30, trimmed.
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    const markdown = request.headers.accept?.startsWith('text/markdown');
+    requests.push(`${request.url} ${markdown ? 'markdown' : 'html'}`);
+    if (request.url === '/docs/mcp' && markdown)
+      response
+        .writeHead(307, { location: '/docs/mcp.md', vary: 'Accept' })
+        .end();
+    else if (request.url === '/docs/mcp')
+      response
+        .writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          vary: 'Accept, Accept-Encoding',
+        })
+        .end(
+          '<html><head><title>MCP server – Linear Docs</title></head><body><article><p>The MCP server as HTML.</p></article></body></html>',
+        );
+    else if (request.url === '/docs/mcp.md')
+      response
+        .writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' })
+        .end(
+          '# MCP server\n\nConnect to the Linear MCP server at https://mcp.linear.app/mcp to read and change issues, projects, and documents.',
+        );
+    else response.writeHead(404).end();
+  });
+
+  const article = await new WebArticle(
+    [new MarkdownExtraction(), new HTMLExtraction()],
+    got,
+  ).fetch(`${upstream.origin}/docs/mcp`, AbortSignal.timeout(5000));
+
+  assert.equal(article?.title, 'MCP server');
+  assert.deepEqual(
+    requests.filter((request) => request.startsWith('/docs/mcp ')),
+    ['/docs/mcp markdown'],
+  );
+});
+
+test('a redirect whose Vary names only other headers is not asked again', async () => {
+  // www.zendesk.com/startups/ and www.cloudflare.com/forstartups/ on 2026-10-30 vary on
+  // accept-encoding; other sites vary on Accept-Language.
+  const requests: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    requests.push(request.url ?? '');
+    if (request.url === '/startups/')
+      response
+        .writeHead(301, {
+          location: '/business/startups/',
+          vary: 'accept-encoding, Accept-Language',
+        })
+        .end();
+    else
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<html><head><title>Zendesk for Startups</title></head><body><article><p>Eligible startups get Zendesk free for six months.</p></article></body></html>',
+        );
+  });
+
+  const article = await new WebArticle(
+    [new MarkdownExtraction(), new HTMLExtraction()],
+    got,
+  ).fetch(`${upstream.origin}/startups/`, AbortSignal.timeout(5000));
+
+  assert.equal(article?.title, 'Zendesk for Startups');
+  assert.deepEqual(requests, ['/startups/', '/business/startups/']);
+});
+
+test('a page whose browser request fails after a failed Markdown redirect fails with its own URL instead of giving the shell', async () => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (
+      request.url === '/' &&
+      request.headers.accept?.startsWith('text/markdown')
+    )
+      response.writeHead(307, { location: '/index.md', vary: 'Accept' }).end();
+    else if (request.url === '/index.md')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Linear</title></head><body><div id="root"></div><div id="loading"><div id="loading-content">Loading…</div></div></body></html>',
+        );
+    else response.writeHead(503).end();
+  });
+
+  await assert.rejects(
+    new WebArticle(
+      [new MarkdownExtraction(), new HTMLExtraction()],
+      got.extend({ retry: { limit: 0 } }),
+    ).fetch(`${upstream.origin}/`, AbortSignal.timeout(5000)),
+    (error) => {
+      assert.ok(error instanceof ArticleError);
+      assert.equal(error.url, `${upstream.origin}/`);
+      assert.ok(error.cause instanceof HTTPError);
+      assert.equal(error.cause.response.statusCode, 503);
+      return true;
+    },
+  );
 });
 
 test('Markdown files served as plain text retain short linked posts', async () => {

@@ -219,7 +219,7 @@ test('an unchanged native-Markdown page requested again on a due visit loads not
     override open(http: Got): ExtractorRun {
       const run = super.open(http);
       return {
-        accept: run.accept,
+        negotiation: run.negotiation,
         async read(response, signal) {
           const output = await run.read(response, signal);
           return {

@@ -179,6 +179,120 @@ test('the pipeline prefers native Markdown, keeps HTML fallback and writes nothi
   assert.equal((await ingestion.run())[0]?.count, 0);
 });
 
+test('a page whose Markdown request a site redirects to an HTML app shell, saying Vary: Accept, is stored as the page a browser gets, under its own URL', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  // linear.app on 2026-10-30, trimmed: a Markdown request is sent to
+  // /index.md, which answers every request with the app's loading shell.
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (request.url === '/feed.xml')
+      response
+        .writeHead(200, { 'content-type': 'application/rss+xml' })
+        .end('<rss><channel><item><link>/</link></item></channel></rss>');
+    else if (
+      request.url === '/' &&
+      request.headers.accept?.startsWith('text/markdown')
+    )
+      response.writeHead(307, { location: '/index.md', vary: 'Accept' }).end();
+    else if (request.url === '/')
+      response
+        .writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          link: '</index.md>; rel="alternate"; type="text/markdown"',
+        })
+        .end(
+          '<!doctype html><html lang="en"><head><title>Linear – The system for product development</title></head><body><main><h1>The product development system for teams and agents</h1><p>Purpose-built for planning and building products. Designed for the AI era.</p></main></body></html>',
+        );
+    else if (request.url === '/index.md')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Linear</title></head><body><div id="root"></div><div id="loading"><div id="loading-content">Loading…</div></div></body></html>',
+        );
+    else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      stream: articles(),
+      inputs: [`${upstream.origin}/feed.xml`],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+
+  await ingestion.run();
+
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT articleUrl, title FROM articles')
+      .all()
+      .map(({ articleUrl, title }) => ({ articleUrl, title })),
+    [
+      {
+        articleUrl: `${upstream.origin}/`,
+        title: 'Linear – The system for product development',
+      },
+    ],
+  );
+});
+
+test('a page asked again as a browser after a failed Markdown redirect is extracted again when that page changes and its shell does not', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  let tagline = 'Purpose-built for planning and building products.';
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (request.url === '/feed.xml')
+      response
+        .writeHead(200, { 'content-type': 'application/rss+xml' })
+        .end('<rss><channel><item><link>/</link></item></channel></rss>');
+    else if (
+      request.url === '/' &&
+      request.headers.accept?.startsWith('text/markdown')
+    )
+      response.writeHead(307, { location: '/index.md', vary: 'Accept' }).end();
+    else if (request.url === '/')
+      response
+        .writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        .end(
+          `<!doctype html><html lang="en"><head><title>Linear – The system for product development</title></head><body><main><h1>The product development system for teams and agents</h1><p>${tagline}</p></main></body></html>`,
+        );
+    else if (request.url === '/index.md')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Linear</title></head><body><div id="root"></div><div id="loading"><div id="loading-content">Loading…</div></div></body></html>',
+        );
+    else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      stream: articles(),
+      inputs: [`${upstream.origin}/feed.xml`],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+  await ingestion.run();
+
+  tagline = 'Designed for the AI era.';
+  const [second] = await ingestion.run();
+
+  assert.equal(second?.count, 1);
+  assert.match(
+    String(
+      database.connection.prepare('SELECT markdown FROM articles').get()
+        ?.markdown,
+    ),
+    /Designed for the AI era/,
+  );
+});
+
 test('an article that a feed and a sitemap list with and without a trailing slash is stored once, and an unchanged rerun writes nothing', async () => {
   await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   // Like ezz.sh live on 2026-10-26: rss.xml and sitemap-0.xml name the two forms, both answer 200 and declare one canonical URL.

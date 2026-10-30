@@ -95,7 +95,7 @@ export class OpenSooqExtractor extends RecordExtractor {
 
   open(): ExtractorRun {
     return {
-      accept: null,
+      negotiation: null,
       async read(response) {
         const id = listingPath.exec(response.url)?.pathname.groups.id;
         if (id === undefined)
