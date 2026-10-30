@@ -75,3 +75,7 @@ _Avoid_: Archive reader, link reader
 **`LinkReader`**:
 The reader of ordinary links. It follows the links of pages on the starting origins, within `maxDepth` hops and `maxPages` admitted pages.
 _Avoid_: Spider, link follower
+
+**`StartReader`**:
+The reader of starting URLs. It hands back each starting URL as a page, and it finds no other URL.
+_Avoid_: Seed reader, home page reader

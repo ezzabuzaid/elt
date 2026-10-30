@@ -70,14 +70,18 @@ const destination = new SQLiteDestination({
   path: join(directory, 'articles.sqlite'),
 });
 const source = new WebSource({
-  stream: new WebStream({
-    name: 'articles',
-    primaryKey: ['articleUrl'],
-    readers: [new ListingReader()],
-    revisit: new FixedRevisit({ every: 3_000 }),
-    extractor: new ArticleExtractor(),
-  }),
-  inputs: [`${origin}/feed.json`],
+  streams: [
+    {
+      stream: new WebStream({
+        name: 'articles',
+        primaryKey: ['articleUrl'],
+        readers: [new ListingReader()],
+        revisit: new FixedRevisit({ every: 3_000 }),
+        extractor: new ArticleExtractor(),
+      }),
+      inputs: [`${origin}/feed.json`],
+    },
+  ],
   cachePath: join(directory, 'web-http.sqlite'),
   userAgent: 'ExampleReader/1.0 (+https://example.com/contact)',
 });
@@ -136,7 +140,7 @@ watch pass 2, at 4 s: 1 records
 
 `pipeline.run()` does one pass and returns. Nothing starts the next pass until you call it again.
 
-`pipeline.watch()` asks the source when to start each pass. `WebSource` starts with one pass for all its inputs. After each crawl, it reads `crawl.nextDue()`, and it waits until the earliest due time of all its inputs. That wait is the only timer.
+`pipeline.watch()` asks the source when to start each pass. `WebSource` starts with one pass for all its inputs. After each crawl, it reads `crawl.nextDue()`, and it waits until the earliest due time of all its inputs. That wait is the only timer. When the source has more than one web stream, each stream has its own due time, and a pass reads only the streams that are due.
 
 The first watch pass started at once, just after the pass of the Sync button. Only the feed was due, because a starting URL is always due, so the pass loaded no records. The second watch pass started when the posts were due, three seconds after their last visit. Post 1 had changed, so the pass loaded its new record. Post 2 had not changed, so the extractor did not extract its records again.
 

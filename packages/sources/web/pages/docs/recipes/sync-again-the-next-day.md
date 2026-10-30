@@ -73,13 +73,17 @@ const directory = await mkdtemp(join(tmpdir(), 'web-'));
 const articles = join(directory, 'articles.sqlite');
 const destination = new SQLiteDestination({ path: articles });
 const source = new WebSource({
-  stream: new WebStream({
-    name: 'articles',
-    primaryKey: ['articleUrl'],
-    readers: [new ListingReader()],
-    extractor: new ArticleExtractor(),
-  }),
-  inputs: [`${origin}/sitemap.xml`],
+  streams: [
+    {
+      stream: new WebStream({
+        name: 'articles',
+        primaryKey: ['articleUrl'],
+        readers: [new ListingReader()],
+        extractor: new ArticleExtractor(),
+      }),
+      inputs: [`${origin}/sitemap.xml`],
+    },
+  ],
   cachePath: join(directory, 'web-http.sqlite'),
   userAgent: 'ExampleReader/1.0 (+https://example.com/contact)',
 });

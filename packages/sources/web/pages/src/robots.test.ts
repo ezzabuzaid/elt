@@ -179,14 +179,18 @@ async function crawl(
   const source = new WebSource({
     cachePath: join(cache, 'web-http.sqlite'),
     userAgent,
-    stream: new WebStream({
-      name: 'articles',
-      primaryKey: ['articleUrl'],
-      readers: [new ListingReader()],
-      revisit: new AlwaysRevisit(),
-      extractor: new ArticleExtractor(),
-    }),
-    inputs: [`${origin}/feed.xml`],
+    streams: [
+      {
+        stream: new WebStream({
+          name: 'articles',
+          primaryKey: ['articleUrl'],
+          readers: [new ListingReader()],
+          revisit: new AlwaysRevisit(),
+          extractor: new ArticleExtractor(),
+        }),
+        inputs: [`${origin}/feed.xml`],
+      },
+    ],
   });
   const destination = new SQLiteDestination({ path: database });
   const [result] = await new Pipeline({

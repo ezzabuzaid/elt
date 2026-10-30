@@ -9,6 +9,7 @@ export { IntervalRevisit } from './interval-revisit.ts';
 export { LinkReader } from './link-reader.ts';
 export { ListingReader } from './listing-reader.ts';
 export { PaginationReader } from './pagination-reader.ts';
+export { StartReader } from './start-reader.ts';
 export {
   Reader,
   type CrawlRequest,

@@ -1,6 +1,6 @@
 # Web pages
 
-`WebSource` crawls chosen websites, sitemaps and feeds and extracts records from the pages it finds into one stream. A `WebStream` configures that stream: its name and primary key, the crawler readers that navigate, the URL patterns of the pages to extract, and the `RecordExtractor` that turns each page into records. This is the shape of Airbyte's `DeclarativeStream`: a configured instance with a paginator for navigation and a record extractor for behavior. `ArticleExtractor` extracts one readable article per page.
+`WebSource` crawls chosen websites, sitemaps and feeds and extracts records from the pages it finds into its streams. A `WebStream` configures one stream: its name and primary key, the crawler readers that navigate, the URL patterns of the pages to extract, and the `RecordExtractor` that turns each page into records. This is the shape of Airbyte's `DeclarativeStream`: a configured instance with a paginator for navigation and a record extractor for behavior. The host gives each web stream its own inputs, and one source can give many web streams, as an Airbyte declarative source has many streams ([ADR 0010](./docs/adr/0010-a-web-source-gives-many-web-streams.md)). `ArticleExtractor` extracts one readable article per page.
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
@@ -22,19 +22,23 @@ import { WebSource } from '@workspace/source-web-pages/web-source';
 import { WebStream } from '@workspace/source-web-pages/web-stream';
 
 const source = new WebSource({
-  stream: new WebStream({
-    name: 'articles',
-    primaryKey: ['articleUrl'],
-    readers: [
-      new ListingReader(),
-      new ArchiveReader(),
-      new PaginationReader(),
-      new LinkReader({ maxDepth: 3, maxPages: 100 }),
-    ],
-    include: [new URLPattern('https://www.anthropic.com/news/*')],
-    extractor: new ArticleExtractor(),
-  }),
-  inputs: ['https://www.anthropic.com/'],
+  streams: [
+    {
+      stream: new WebStream({
+        name: 'articles',
+        primaryKey: ['articleUrl'],
+        readers: [
+          new ListingReader(),
+          new ArchiveReader(),
+          new PaginationReader(),
+          new LinkReader({ maxDepth: 3, maxPages: 100 }),
+        ],
+        include: [new URLPattern('https://www.anthropic.com/news/*')],
+        extractor: new ArticleExtractor(),
+      }),
+      inputs: ['https://www.anthropic.com/'],
+    },
+  ],
   cachePath: './web-http.sqlite',
   userAgent: 'ExampleReader/1.0 (+https://example.com/contact)',
 });
@@ -68,6 +72,8 @@ const pipeline = new Pipeline({
 
 await pipeline.run({ signal: AbortSignal.timeout(120_000) });
 ```
+
+Each web stream is its own stream of the catalog, with its own inputs as partitions, its own coverage and its own target. A marketplace, for example, gives a stream of its categories, read from its home page, and a stream of the listings of the categories that a user chose. Each input of a stream is crawled separately, and all the crawls share the HTTP cache and the user agent. A watch reads again only the streams that have a page due. A web stream without an input, or with an input that is not an http or https URL, makes the constructor throw `InputError`. The user chooses the inputs, so `failureType` gives `config` for it.
 
 The example's publisher and path are caller configuration. The source contains no publisher rules. Omit `include` to extract every crawled page; a given `include` has at least one pattern. This filters extraction; the crawler still reads listings and downloads the link pages it admits.
 

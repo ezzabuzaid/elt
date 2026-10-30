@@ -254,8 +254,12 @@ test('a listing whose stylesheet jsdom cannot parse is stored, and nothing is wr
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: listings,
-      inputs: [`${upstream.origin}/en/cars/motorcycles`],
+      streams: [
+        {
+          stream: listings,
+          inputs: [`${upstream.origin}/en/cars/motorcycles`],
+        },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -278,8 +282,12 @@ test('every listing of a paginated category is stored with its JSON-LD fields', 
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: listings,
-      inputs: [`${upstream.origin}/en/cars/motorcycles`],
+      streams: [
+        {
+          stream: listings,
+          inputs: [`${upstream.origin}/en/cars/motorcycles`],
+        },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -329,8 +337,12 @@ test('listings that a listing page links as related ads are neither downloaded n
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: listings,
-      inputs: [`${upstream.origin}/en/cars/motorcycles`],
+      streams: [
+        {
+          stream: listings,
+          inputs: [`${upstream.origin}/en/cars/motorcycles`],
+        },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -360,8 +372,9 @@ test('every listing of a category without pagination is stored, and nothing else
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: listings,
-      inputs: [`${upstream.origin}/en/category`],
+      streams: [
+        { stream: listings, inputs: [`${upstream.origin}/en/category`] },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -422,8 +435,12 @@ test('a category crawl reads only the category and its next pages, not the filte
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: listings,
-      inputs: [`${upstream.origin}/en/cars/motorcycles/2000`],
+      streams: [
+        {
+          stream: listings,
+          inputs: [`${upstream.origin}/en/cars/motorcycles/2000`],
+        },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -463,8 +480,9 @@ test('listings of every real schema.org shape are stored with their mapped field
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: listings,
-      inputs: [`${upstream.origin}/en/category`],
+      streams: [
+        { stream: listings, inputs: [`${upstream.origin}/en/category`] },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -564,8 +582,9 @@ test('a listing page without an object for its listing fails, and the next run t
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: listings,
-      inputs: [`${upstream.origin}/en/category`],
+      streams: [
+        { stream: listings, inputs: [`${upstream.origin}/en/category`] },
+      ],
     });
   const ingestion = await pipeline(source(), database.path, checkpoints.path);
 
@@ -622,8 +641,9 @@ test('a listing whose offer has no price fails, and the next run tries it again'
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: listings,
-      inputs: [`${upstream.origin}/en/category`],
+      streams: [
+        { stream: listings, inputs: [`${upstream.origin}/en/category`] },
+      ],
     });
   const ingestion = await pipeline(source(), database.path, checkpoints.path);
 
@@ -672,8 +692,12 @@ test('an unchanged rerun writes nothing', async (t) => {
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: listings,
-      inputs: [`${upstream.origin}/en/cars/motorcycles`],
+      streams: [
+        {
+          stream: listings,
+          inputs: [`${upstream.origin}/en/cars/motorcycles`],
+        },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -720,14 +744,18 @@ test('a listing page whose markup changes outside its JSON-LD is not extracted a
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: new WebStream({
-        name: listings.name,
-        primaryKey: listings.primaryKey,
-        readers: listings.readers,
-        include: listings.include,
-        extractor,
-      }),
-      inputs: [`${upstream.origin}/en/cars/motorcycles`],
+      streams: [
+        {
+          stream: new WebStream({
+            name: listings.name,
+            primaryKey: listings.primaryKey,
+            readers: listings.readers,
+            include: listings.include,
+            extractor,
+          }),
+          inputs: [`${upstream.origin}/en/cars/motorcycles`],
+        },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -755,8 +783,12 @@ test('a listing whose JSON-LD changes is written again with the new values', asy
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: listings,
-      inputs: [`${upstream.origin}/en/cars/motorcycles`],
+      streams: [
+        {
+          stream: listings,
+          inputs: [`${upstream.origin}/en/cars/motorcycles`],
+        },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -797,8 +829,9 @@ test('the listing stored is the JSON-LD object whose url has the listing id of t
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: listings,
-      inputs: [`${upstream.origin}/en/category`],
+      streams: [
+        { stream: listings, inputs: [`${upstream.origin}/en/category`] },
+      ],
     }),
     database.path,
     checkpoints.path,

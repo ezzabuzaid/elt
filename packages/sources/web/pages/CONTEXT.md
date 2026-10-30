@@ -1,6 +1,6 @@
 # Web pages
 
-A user wants the records that a website shows, for example the articles of a blog or the listings of a marketplace category. The website gives no API for them. A host gives the web source its inputs and a web stream. The source crawls each input, gives each page to the extractor of the web stream, and loads the records that the extractor returns.
+A user wants the records that a website shows, for example the articles of a blog or the listings of a marketplace category. The website gives no API for them. A host gives the web source one or more web streams, each with its inputs. The source crawls each input of a web stream, gives each page to the extractor of that web stream, and loads the records that the extractor returns.
 
 ## Language
 
@@ -37,7 +37,7 @@ The response that first named a page: a sitemap, a feed, an archive or a linked 
 _Avoid_: Index, parent
 
 **Web stream**:
-The configuration of the one stream of the source: its name, its primary key, the readers of the crawler, the `include` patterns and the extractor.
+The configuration of one stream of the source: its name, its primary key, the readers of the crawler, the `include` patterns and the extractor. The host gives each web stream its own inputs.
 _Avoid_: Wrapper, site adapter, scraper
 
 **Extractor**:

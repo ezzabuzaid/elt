@@ -40,19 +40,23 @@ export default async function pipeline() {
   // No saved pattern means every page.
   const [first, ...rest] = include.map((pattern) => new URLPattern(pattern));
   const source = new WebSource({
-    stream: new WebStream({
-      name: 'articles',
-      primaryKey: ['articleUrl'],
-      readers: [
-        new ListingReader(),
-        new ArchiveReader(),
-        new PaginationReader(),
-        new LinkReader({ maxDepth: 3, maxPages: 100 }),
-      ],
-      include: first === undefined ? undefined : [first, ...rest],
-      extractor: new ArticleExtractor(),
-    }),
-    inputs,
+    streams: [
+      {
+        stream: new WebStream({
+          name: 'articles',
+          primaryKey: ['articleUrl'],
+          readers: [
+            new ListingReader(),
+            new ArchiveReader(),
+            new PaginationReader(),
+            new LinkReader({ maxDepth: 3, maxPages: 100 }),
+          ],
+          include: first === undefined ? undefined : [first, ...rest],
+          extractor: new ArticleExtractor(),
+        }),
+        inputs,
+      },
+    ],
     cachePath: join(directory, 'web-http.sqlite'),
     userAgent: 'elt-web-playground/0.1 (+https://github.com/ezzabuzaid/elt)',
   });

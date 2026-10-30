@@ -61,8 +61,9 @@ test('native articles persist clean text and refresh independently changing HTML
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [`${upstream.origin}/feed.xml`],
+      streams: [
+        { stream: articles(), inputs: [`${upstream.origin}/feed.xml`] },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -109,8 +110,7 @@ test('archive articles persist Markdown and an unchanged rerun writes no records
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles(),
-    inputs: [upstream.origin],
+    streams: [{ stream: articles(), inputs: [upstream.origin] }],
   });
   const ingestion = await pipeline(source, database.path, checkpoints.path);
   assert.equal((await ingestion.run())[0]?.count, 1);
@@ -153,8 +153,9 @@ test('the pipeline prefers native Markdown, keeps HTML fallback and writes nothi
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [`${upstream.origin}/feed.xml`],
+      streams: [
+        { stream: articles(), inputs: [`${upstream.origin}/feed.xml`] },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -216,8 +217,9 @@ test('a page whose Markdown request a site redirects to an HTML app shell, sayin
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [`${upstream.origin}/feed.xml`],
+      streams: [
+        { stream: articles(), inputs: [`${upstream.origin}/feed.xml`] },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -272,8 +274,9 @@ test('a page asked again as a browser after a failed Markdown redirect is extrac
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [`${upstream.origin}/feed.xml`],
+      streams: [
+        { stream: articles(), inputs: [`${upstream.origin}/feed.xml`] },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -333,8 +336,7 @@ test('an article that a feed and a sitemap list with and without a trailing slas
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [upstream.origin],
+      streams: [{ stream: articles(), inputs: [upstream.origin] }],
     }),
     database.path,
     checkpoints.path,
@@ -382,7 +384,7 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
         steps: (await source.discover()).streams.map(
           (stream) =>
             new Copy(stream, destination.table(stream.name), {
-              id: 'web:articles',
+              id: `web:${stream.name}`,
               syncMode: 'incremental',
               destinationSyncMode: 'append_dedup',
             }),
@@ -428,8 +430,9 @@ test('temporary listing and article failures recover within one pipeline run', a
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [`${upstream.origin}/feed.xml`],
+      streams: [
+        { stream: articles(), inputs: [`${upstream.origin}/feed.xml`] },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -480,8 +483,9 @@ test('a site that refuses the first connection, as during a short network drop, 
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
         userAgent: 'elt-test/1.0',
-        stream: articles(),
-        inputs: [`${upstream.origin}/feed.xml`],
+        streams: [
+          { stream: articles(), inputs: [`${upstream.origin}/feed.xml`] },
+        ],
       }),
       database.path,
       checkpoints.path,
@@ -537,8 +541,9 @@ test('a page whose read fails with EADDRNOTAVAIL, as when the Mac sleeps, is tri
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
         userAgent: 'elt-test/1.0',
-        stream: articles(),
-        inputs: [`${upstream.origin}/feed.xml`],
+        streams: [
+          { stream: articles(), inputs: [`${upstream.origin}/feed.xml`] },
+        ],
       }),
       database.path,
       checkpoints.path,
@@ -588,8 +593,7 @@ test('failed articles do not block later articles or later refreshes', async () 
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles(),
-    inputs: [`${upstream.origin}/feed.xml`],
+    streams: [{ stream: articles(), inputs: [`${upstream.origin}/feed.xml`] }],
   };
   const first = await pipeline(
     new WebSource(options),
@@ -696,8 +700,9 @@ test(
     const options = {
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [`${upstream.origin}/feed.json`],
+      streams: [
+        { stream: articles(), inputs: [`${upstream.origin}/feed.json`] },
+      ],
     };
     const first = await pipeline(
       new WebSource(options),
@@ -708,7 +713,9 @@ test(
       assert(error instanceof PipelineError);
       assert.equal(error.results[0]?.count, 2);
       const failure = error.results[0]?.failures[0];
-      assert.deepEqual(failure?.partition, { inputUrl: options.inputs[0] });
+      assert.deepEqual(failure?.partition, {
+        inputUrl: options.streams[0]?.inputs[0],
+      });
       assert(failure?.error instanceof AggregateError);
       // The download of /a fails in the crawler; /b downloads but holds no article.
       const [download, extraction, ...rest] = failure.error.errors;
@@ -784,7 +791,7 @@ test(
       database.connection
         .prepare('SELECT listingUrl FROM articles WHERE pageUrl = ?')
         .get(`${upstream.origin}/b`)?.listingUrl,
-      options.inputs[0],
+      options.streams[0]?.inputs[0],
     );
   },
 );
@@ -826,8 +833,9 @@ test(
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
         userAgent: 'elt-test/1.0',
-        stream: articles(),
-        inputs: [`${upstream.origin}/feed.xml`],
+        streams: [
+          { stream: articles(), inputs: [`${upstream.origin}/feed.xml`] },
+        ],
       }),
       database.path,
       checkpoints.path,
@@ -890,8 +898,9 @@ test(
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
         userAgent: 'elt-test/1.0',
-        stream: articles(),
-        inputs: [`${upstream.origin}/feed.xml`],
+        streams: [
+          { stream: articles(), inputs: [`${upstream.origin}/feed.xml`] },
+        ],
       }),
       database.path,
       checkpoints.path,
@@ -958,8 +967,9 @@ test(
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
         userAgent: 'elt-test/1.0',
-        stream: articles(),
-        inputs: [`${upstream.origin}/feed.xml`],
+        streams: [
+          { stream: articles(), inputs: [`${upstream.origin}/feed.xml`] },
+        ],
       }),
       database.path,
       checkpoints.path,
@@ -1015,8 +1025,7 @@ test('a completed scan retains successful articles and retries failures on the n
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles(),
-    inputs: [`${upstream.origin}/feed.json`],
+    streams: [{ stream: articles(), inputs: [`${upstream.origin}/feed.json`] }],
   };
   const first = await pipeline(
     new WebSource(options),
@@ -1099,8 +1108,9 @@ test(
     const options = {
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [`${upstream.origin}/feed.xml`],
+      streams: [
+        { stream: articles(), inputs: [`${upstream.origin}/feed.xml`] },
+      ],
     };
     const first = await pipeline(
       new WebSource(options),
@@ -1176,8 +1186,7 @@ test('chosen websites and feeds persist article metadata, make unchanged reruns 
     const options = {
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [`${upstream.origin}${input}`],
+      streams: [{ stream: articles(), inputs: [`${upstream.origin}${input}`] }],
     };
     const first = await pipeline(
       new WebSource(options),
@@ -1309,8 +1318,15 @@ test('feed rollover retains articles and independent inputs keep their own progr
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [`${upstream.origin}/two.json`, `${upstream.origin}/one.json`],
+      streams: [
+        {
+          stream: articles(),
+          inputs: [
+            `${upstream.origin}/two.json`,
+            `${upstream.origin}/one.json`,
+          ],
+        },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -1328,11 +1344,15 @@ test('feed rollover retains articles and independent inputs keep their own progr
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [
-        `${upstream.origin}/one.json`,
-        `${upstream.origin}/two.json`,
-        `${upstream.origin}/three.json`,
+      streams: [
+        {
+          stream: articles(),
+          inputs: [
+            `${upstream.origin}/one.json`,
+            `${upstream.origin}/two.json`,
+            `${upstream.origin}/three.json`,
+          ],
+        },
       ],
     }),
     database.path,
@@ -1384,8 +1404,9 @@ test('a failed full refresh tries later articles and preserves the last complete
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles(),
-    inputs: [`${upstream.origin}/sitemap.xml`],
+    streams: [
+      { stream: articles(), inputs: [`${upstream.origin}/sitemap.xml`] },
+    ],
   });
   const destination = new SQLiteDestination({ path: database.path });
   const history = new SQLiteSyncHistory();
@@ -1465,13 +1486,17 @@ test(
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
         userAgent: 'elt-test/1.0',
-        stream: new WebStream({
-          name: 'articles',
-          primaryKey: ['articleUrl'],
-          readers: [new ListingReader()],
-          extractor: new ArticleExtractor(),
-        }),
-        inputs: [`${upstream.origin}/feed.xml`],
+        streams: [
+          {
+            stream: new WebStream({
+              name: 'articles',
+              primaryKey: ['articleUrl'],
+              readers: [new ListingReader()],
+              extractor: new ArticleExtractor(),
+            }),
+            inputs: [`${upstream.origin}/feed.xml`],
+          },
+        ],
       }),
       database.path,
       checkpoints.path,
@@ -1518,15 +1543,19 @@ test(
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
         userAgent: 'elt-test/1.0',
-        stream: new WebStream({
-          name: 'articles',
-          primaryKey: ['articleUrl'],
-          readers: [new ListingReader()],
-          // What a poll interval was: one interval for every URL.
-          revisit: new FixedRevisit({ every: 100 }),
-          extractor: new ArticleExtractor(),
-        }),
-        inputs: [`${upstream.origin}/feed.xml`],
+        streams: [
+          {
+            stream: new WebStream({
+              name: 'articles',
+              primaryKey: ['articleUrl'],
+              readers: [new ListingReader()],
+              // What a poll interval was: one interval for every URL.
+              revisit: new FixedRevisit({ every: 100 }),
+              extractor: new ArticleExtractor(),
+            }),
+            inputs: [`${upstream.origin}/feed.xml`],
+          },
+        ],
       }),
       database.path,
       checkpoints.path,
@@ -1593,8 +1622,12 @@ test('explicit URL patterns restrict article downloads and preserve matching que
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles(`${upstream.origin}/articles/*`),
-    inputs: [`${upstream.origin}/feed.json`],
+    streams: [
+      {
+        stream: articles(`${upstream.origin}/articles/*`),
+        inputs: [`${upstream.origin}/feed.json`],
+      },
+    ],
   };
   const ingestion = await pipeline(
     new WebSource(options),
@@ -1657,8 +1690,12 @@ test('a category page that matches the URL patterns is stored as a list, beside 
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(`${upstream.origin}/news/*`),
-      inputs: [`${upstream.origin}/news`],
+      streams: [
+        {
+          stream: articles(`${upstream.origin}/news/*`),
+          inputs: [`${upstream.origin}/news`],
+        },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -1704,8 +1741,9 @@ test('a Latin-1 article page is stored with its text and leaves nothing to retry
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [`${upstream.origin}/feed.xml`],
+      streams: [
+        { stream: articles(), inputs: [`${upstream.origin}/feed.xml`] },
+      ],
     }),
     database.path,
     checkpoints.path,
@@ -1751,13 +1789,17 @@ test('by default an incremental crawl requests a known page again only when it i
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: new WebStream({
-      name: 'articles',
-      primaryKey: ['articleUrl'],
-      readers: [new ListingReader()],
-      extractor: new ArticleExtractor(),
-    }),
-    inputs: [`${upstream.origin}/feed.xml`],
+    streams: [
+      {
+        stream: new WebStream({
+          name: 'articles',
+          primaryKey: ['articleUrl'],
+          readers: [new ListingReader()],
+          extractor: new ArticleExtractor(),
+        }),
+        inputs: [`${upstream.origin}/feed.xml`],
+      },
+    ],
   };
   const run = async () =>
     (
@@ -1819,13 +1861,17 @@ test('a page that was not due keeps its fingerprint, so once due and unchanged i
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: new WebStream({
-      name: 'articles',
-      primaryKey: ['articleUrl'],
-      readers: [new ListingReader()],
-      extractor: new ArticleExtractor(),
-    }),
-    inputs: [`${upstream.origin}/feed.xml`],
+    streams: [
+      {
+        stream: new WebStream({
+          name: 'articles',
+          primaryKey: ['articleUrl'],
+          readers: [new ListingReader()],
+          extractor: new ArticleExtractor(),
+        }),
+        inputs: [`${upstream.origin}/feed.xml`],
+      },
+    ],
   };
   const run = async () =>
     (
@@ -1880,8 +1926,7 @@ test('a host that answers 429 stops the crawl there, keeps the loaded rows, and 
   const options = {
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles(),
-    inputs: [`${upstream.origin}/feed.xml`],
+    streams: [{ stream: articles(), inputs: [`${upstream.origin}/feed.xml`] }],
   };
   const rows = () =>
     database.connection
@@ -1950,3 +1995,221 @@ function shiftedClock(t: TestContext) {
     shift += ms;
   };
 }
+
+// Two blogs on one server, /news and /blog, each with a feed of one post.
+// The site has no robots.txt, so requests holds the crawl's own downloads.
+function twoBlogs(requests: string[], post: () => string) {
+  return new HttpServer().start((request, response) => {
+    if (request.url === '/robots.txt') {
+      response.writeHead(404).end();
+      return;
+    }
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    requests.push(url.pathname);
+    const feed = /^\/(news|blog)\/feed\.xml$/.exec(url.pathname)?.[1];
+    if (feed !== undefined) {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel><item><link>${url.origin}/${feed}/post</link></item></channel></rss>`,
+      );
+    } else if (/^\/(news|blog)\/post$/.test(url.pathname)) {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<article><p>${post()}</p></article>`);
+    } else response.writeHead(404).end();
+  });
+}
+
+function feedStream(name: string, revisit?: FixedRevisit) {
+  return new WebStream({
+    name,
+    primaryKey: ['articleUrl'],
+    readers: [new ListingReader()],
+    ...(revisit === undefined ? {} : { revisit }),
+    extractor: new ArticleExtractor(),
+  });
+}
+
+const observation =
+  'An observation with enough readable content to keep the article.';
+
+test('each web stream of a source loads its own target from its own inputs only', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  const requests: string[] = [];
+  await using upstream = await twoBlogs(requests, () => observation);
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [
+        {
+          stream: feedStream('news'),
+          inputs: [`${upstream.origin}/news/feed.xml`],
+        },
+        {
+          stream: feedStream('blog'),
+          inputs: [`${upstream.origin}/blog/feed.xml`],
+        },
+      ],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+
+  await ingestion.run();
+
+  const rows = (table: string) =>
+    database.connection
+      .prepare(`SELECT inputUrl, pageUrl FROM ${table}`)
+      .all()
+      .map((row) => ({ ...row }));
+  assert.deepEqual(rows('news'), [
+    {
+      inputUrl: `${upstream.origin}/news/feed.xml`,
+      pageUrl: `${upstream.origin}/news/post`,
+    },
+  ]);
+  assert.deepEqual(rows('blog'), [
+    {
+      inputUrl: `${upstream.origin}/blog/feed.xml`,
+      pageUrl: `${upstream.origin}/blog/post`,
+    },
+  ]);
+});
+
+test("the sync history names each web stream's own inputs as its coverage", async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using upstream = await twoBlogs([], () => observation);
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [
+        {
+          stream: feedStream('news'),
+          inputs: [`${upstream.origin}/news/feed.xml`],
+        },
+        {
+          stream: feedStream('blog'),
+          inputs: [`${upstream.origin}/blog/feed.xml`],
+        },
+      ],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+
+  await ingestion.run();
+
+  assert.deepEqual(
+    database.connection
+      .prepare(
+        'SELECT stream, selection FROM extraction_coverage ORDER BY stream',
+      )
+      .all()
+      .map(({ stream, selection }) => ({
+        stream,
+        inputs: JSON.parse(String(selection)).inputs,
+      })),
+    [
+      { stream: 'blog', inputs: [`${upstream.origin}/blog/feed.xml`] },
+      { stream: 'news', inputs: [`${upstream.origin}/news/feed.xml`] },
+    ],
+  );
+});
+
+test(
+  'a watch over two web streams reads again the stream whose page is due, and only it',
+  { timeout: 10_000 },
+  async () => {
+    await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+    const requests: string[] = [];
+    let post = observation;
+    await using upstream = await twoBlogs(requests, () => post);
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const ingestion = await pipeline(
+      new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
+        streams: [
+          {
+            // Due again 100 ms after each visit.
+            stream: feedStream('news', new FixedRevisit({ every: 100 })),
+            inputs: [`${upstream.origin}/news/feed.xml`],
+          },
+          {
+            // AdaptiveRevisit: due a day after the first visit.
+            stream: feedStream('blog'),
+            inputs: [`${upstream.origin}/blog/feed.xml`],
+          },
+        ],
+      }),
+      database.path,
+      checkpoints.path,
+    );
+    const controller = new AbortController();
+    const watch = ingestion.watch({ signal: controller.signal });
+    try {
+      assert.equal((await watch.next()).done, false);
+      requests.splice(0);
+      post =
+        'An updated observation that now includes a newly verified finding.';
+
+      assert.equal((await watch.next()).done, false);
+
+      assert.equal(
+        database.connection.prepare('SELECT textContent FROM news').get()
+          ?.textContent,
+        post,
+      );
+      assert.equal(
+        database.connection.prepare('SELECT textContent FROM blog').get()
+          ?.textContent,
+        observation,
+      );
+      assert.deepEqual(
+        requests.filter((path) => path.startsWith('/blog/')),
+        [],
+      );
+    } finally {
+      controller.abort();
+      await watch.return(undefined);
+    }
+  },
+);
+
+test('a web stream without an input is refused as the user’s to fix', () => {
+  const options = {
+    cachePath: join(tmpdir(), 'web-cache-unused', 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
+  };
+  const source = new WebSource({
+    ...options,
+    streams: [
+      { stream: feedStream('news'), inputs: ['https://news.test/feed.xml'] },
+    ],
+  });
+
+  assert.throws(
+    () =>
+      new WebSource({
+        ...options,
+        streams: [
+          {
+            stream: feedStream('news'),
+            inputs: ['https://news.test/feed.xml'],
+          },
+          { stream: feedStream('listings'), inputs: [] },
+        ],
+      }),
+    (error) => {
+      assert.equal(source.failureType(error), 'config');
+      assert.match(String(error), /listings/);
+      return true;
+    },
+  );
+});

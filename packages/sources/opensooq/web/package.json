@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./categories": {
+      "types": "./dist/categories.d.ts",
+      "default": "./dist/categories.js"
+    },
     "./listings": {
       "types": "./dist/listings.d.ts",
       "default": "./dist/listings.js"

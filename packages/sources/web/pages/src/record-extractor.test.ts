@@ -106,8 +106,7 @@ test('every record an extractor returns for a page is stored with the page prove
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: sections(null),
-      inputs: [input],
+      streams: [{ stream: sections(null), inputs: [input] }],
     }),
     database.path,
     checkpoints.path,
@@ -139,8 +138,7 @@ test('the discovered stream holds the provenance columns and the extractor prope
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream,
-    inputs: ['https://example.com/'],
+    streams: [{ stream, inputs: ['https://example.com/'] }],
   });
 
   const discovered = (await source.discover()).get('sections');
@@ -192,8 +190,12 @@ for (const accept of ['application/vnd.sections+json', null])
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
         userAgent: 'elt-test/1.0',
-        stream: sections(accept),
-        inputs: [`${upstream.origin}/sitemap.xml`],
+        streams: [
+          {
+            stream: sections(accept),
+            inputs: [`${upstream.origin}/sitemap.xml`],
+          },
+        ],
       }),
       database.path,
       checkpoints.path,

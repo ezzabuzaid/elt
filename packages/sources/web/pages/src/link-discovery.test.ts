@@ -69,8 +69,12 @@ test('ordinary links reach unlisted articles while feed pages and unchanged reru
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles(`${upstream.origin}/articles/*`),
-    inputs: [upstream.origin],
+    streams: [
+      {
+        stream: articles(`${upstream.origin}/articles/*`),
+        inputs: [upstream.origin],
+      },
+    ],
   });
   const destination = new SQLiteDestination({ path: database.path });
   const history = new SQLiteSyncHistory();
@@ -152,8 +156,12 @@ test('new URLs survive interruption, and only the page in flight downloads again
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles(`${upstream.origin}/articles/*`),
-    inputs: [upstream.origin],
+    streams: [
+      {
+        stream: articles(`${upstream.origin}/articles/*`),
+        inputs: [upstream.origin],
+      },
+    ],
   });
   const destination = new SQLiteDestination({ path: database.path }),
     history = new SQLiteSyncHistory();
@@ -264,8 +272,12 @@ test('Markdown pages supply links, and feeds declared on crawled pages are read 
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles(`${upstream.origin}/articles/*`),
-    inputs: [upstream.origin],
+    streams: [
+      {
+        stream: articles(`${upstream.origin}/articles/*`),
+        inputs: [upstream.origin],
+      },
+    ],
   });
   const destination = new SQLiteDestination({ path: database.path }),
     history = new SQLiteSyncHistory();
@@ -332,8 +344,12 @@ test('an interruption during a long stretch of archive pages keeps the progress 
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles(`${upstream.origin}/articles/*`),
-    inputs: [upstream.origin],
+    streams: [
+      {
+        stream: articles(`${upstream.origin}/articles/*`),
+        inputs: [upstream.origin],
+      },
+    ],
   });
   const destination = new SQLiteDestination({ path: database.path }),
     history = new SQLiteSyncHistory();

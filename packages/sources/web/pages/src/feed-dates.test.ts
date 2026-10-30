@@ -243,14 +243,18 @@ async function run(
   const source = new WebSource({
     cachePath: join(cache, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: new WebStream({
-      name: 'articles',
-      primaryKey: ['articleUrl'],
-      readers: [new ListingReader()],
-      revisit: new AlwaysRevisit(),
-      extractor: new ArticleExtractor(),
-    }),
-    inputs,
+    streams: [
+      {
+        stream: new WebStream({
+          name: 'articles',
+          primaryKey: ['articleUrl'],
+          readers: [new ListingReader()],
+          revisit: new AlwaysRevisit(),
+          extractor: new ArticleExtractor(),
+        }),
+        inputs,
+      },
+    ],
   });
   const destination = new SQLiteDestination({ path: database });
   await new Pipeline({

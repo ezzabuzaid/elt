@@ -66,8 +66,7 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
   const source = new WebSource({
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
-    stream: articles(),
-    inputs: [upstream.origin],
+    streams: [{ stream: articles(), inputs: [upstream.origin] }],
   });
   const stream = (await source.discover()).get('articles');
   const incremental = new CopyConfiguration(stream, {
@@ -164,8 +163,9 @@ test('restarted source keeps unchanged rows and detects listing metadata and art
     const source = new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(),
-      inputs: [`${upstream.origin}/sitemap.xml`],
+      streams: [
+        { stream: articles(), inputs: [`${upstream.origin}/sitemap.xml`] },
+      ],
     });
     const destination = new SQLiteDestination({ path: database.path });
     const history = new SQLiteSyncHistory();
@@ -261,8 +261,12 @@ test('an unchanged native-Markdown page requested again on a due visit loads not
     const source = new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
-      stream: articles(new CountedArticles()),
-      inputs: [`${upstream.origin}/sitemap.xml`],
+      streams: [
+        {
+          stream: articles(new CountedArticles()),
+          inputs: [`${upstream.origin}/sitemap.xml`],
+        },
+      ],
     });
     const destination = new SQLiteDestination({ path: database.path });
     const history = new SQLiteSyncHistory();

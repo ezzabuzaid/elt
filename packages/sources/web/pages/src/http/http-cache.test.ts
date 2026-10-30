@@ -27,7 +27,7 @@ const stream = new WebStream({
   revisit: new AlwaysRevisit(),
   extractor: new ArticleExtractor(),
 });
-const source = new WebSource({ stream, inputs: [input], cachePath, userAgent: 'elt-test/1.0' });
+const source = new WebSource({ streams: [{ stream, inputs: [input] }], cachePath, userAgent: 'elt-test/1.0' });
 const destination = new SQLiteDestination({ path });
 const history = new SQLiteSyncHistory();
 const result = await new Pipeline({ history, connections: [new Connection({

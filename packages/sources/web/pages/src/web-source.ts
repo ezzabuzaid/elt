@@ -18,7 +18,7 @@ import {
 import { AlwaysRevisit, WebCrawler } from '@workspace/sdk-web-crawler';
 
 import { webHttp } from './http/web-http.ts';
-import type { WebStream } from './web-stream.ts';
+import { WebStream } from './web-stream.ts';
 
 const provenance = {
   inputUrl: {
@@ -66,62 +66,92 @@ function pageFailure(error: unknown): never {
   throw Error.isError(error) ? new PageFailure(error) : error;
 }
 
+const inputUrls = z.array(z.url({ protocol: /^https?$/ })).min(1);
+
+/** A web stream without a usable input: none, or a URL that is not http or https. The user chooses the inputs, so only the user can fix it. */
+export class InputError extends Error {}
+
 export class WebSource extends Source {
   readonly identity = 'web-pages';
   protected readonly catalog: Catalog;
-  readonly #stream: WebStream;
-  readonly #inputs: readonly string[];
+  // Each stream's web stream and the inputs that it crawls, by stream name.
+  readonly #streams: ReadonlyMap<
+    string,
+    { readonly stream: WebStream; readonly inputs: readonly string[] }
+  >;
   // Where the HTTP cache lives is the host's decision, like a destination's path.
   readonly #cachePath: string;
   // The crawler's name, which every request carries and robots.txt groups
   // name, is the host's too: "WhatIsGoingOn/0.1 (+https://…)" matches the
   // group "User-agent: WhatIsGoingOn" (RFC 9309 §2.2.1).
   readonly #userAgent: string;
-  // Each input's earliest due URL, as its last crawl left it; null when its crawl failed or nothing is ever due.
-  readonly #due = new Map<string, number | null>();
+  protected override readonly configErrors = [InputError];
+  // Each input's earliest due URL by stream, as its last crawl left it; null when its crawl failed or nothing is ever due.
+  readonly #due = new Map<string, Map<string, number | null>>();
   #extracted = Promise.withResolvers<void>();
   constructor(options: {
-    stream: WebStream;
-    inputs: readonly string[];
+    // Each web stream with the inputs that it crawls, as an Airbyte
+    // declarative source has many streams, each with its own requests.
+    streams: readonly {
+      readonly stream: WebStream;
+      readonly inputs: readonly string[];
+    }[];
     cachePath: string;
     userAgent: string;
   }) {
     super();
-    this.#stream = options.stream;
     this.#cachePath = z.string().min(1).parse(options.cachePath);
     this.#userAgent = z.string().min(1).parse(options.userAgent);
-    this.#inputs = z
-      .array(z.url({ protocol: /^https?$/ }))
+    const streams = z
+      .array(z.object({ stream: z.instanceof(WebStream), inputs: z.unknown() }))
       .min(1)
-      .parse(options.inputs);
-    const properties = {
-      ...provenance,
-      ...options.stream.extractor.properties,
-    };
-    this.catalog = new Catalog([
-      new Stream({
-        name: options.stream.name,
-        jsonSchema: {
-          type: 'object',
-          description:
-            'Records extracted from the pages crawled for each chosen input. Incremental scans retain records absent from later listings.',
-          properties,
-          required: Object.keys(properties),
-        },
-        primaryKey: ['inputUrl', ...options.stream.primaryKey],
-        partitionKey: ['inputUrl'],
-        supportedSyncModes: ['full_refresh', 'incremental'],
-        sourceDefinedCursor: true,
+      .parse(options.streams)
+      .map(({ stream, inputs }) => {
+        const parsed = inputUrls.safeParse(inputs);
+        if (!parsed.success)
+          throw new InputError(
+            `The web stream ${stream.name} needs at least one http or https input`,
+            { cause: parsed.error },
+          );
+        return { stream, inputs: parsed.data };
+      });
+    this.catalog = new Catalog(
+      streams.map(({ stream }) => {
+        const properties = { ...provenance, ...stream.extractor.properties };
+        return new Stream({
+          name: stream.name,
+          jsonSchema: {
+            type: 'object',
+            description:
+              'Records extracted from the pages crawled for each chosen input. Incremental scans retain records absent from later listings.',
+            properties,
+            required: Object.keys(properties),
+          },
+          primaryKey: ['inputUrl', ...stream.primaryKey],
+          partitionKey: ['inputUrl'],
+          supportedSyncModes: ['full_refresh', 'incremental'],
+          sourceDefinedCursor: true,
+        });
       }),
-    ]);
+    );
+    this.#streams = new Map(streams.map((entry) => [entry.stream.name, entry]));
   }
-  coverage() {
-    const { include } = this.#stream;
+  #entry({ name }: Stream) {
+    const entry = this.#streams.get(name);
+    if (entry === undefined)
+      throw new TypeError(`Stream ${name} is not a web stream of this source`);
+    return entry;
+  }
+  coverage(stream: Stream) {
+    const {
+      stream: { include },
+      inputs,
+    } = this.#entry(stream);
     return {
       description:
         'Records extracted from the pages crawled from chosen websites and feeds that match the configured URL patterns; listing disappearance does not imply deletion.',
       selection: {
-        inputs: this.#inputs,
+        inputs,
         ...(include === undefined
           ? {}
           : {
@@ -145,24 +175,29 @@ export class WebSource extends Source {
   protected async open() {
     return new AsyncDisposableStack();
   }
-  protected override partitions() {
-    return this.#inputs.map((inputUrl) => ({ inputUrl }));
+  protected override partitions(stream: Stream) {
+    return this.#entry(stream).inputs.map((inputUrl) => ({ inputUrl }));
   }
-  // The source checks again when its earliest known URL is due, as each
-  // input's last crawl left it. The watch runs a crawl beside this loop, so
-  // the loop waits until every input's crawl since the last check has ended.
+  // Each stream checks again when its earliest known URL is due, as its
+  // inputs' last crawls left it, and only the streams that are due are read.
+  // The watch runs a crawl beside this loop, so a stream waits until each of
+  // its inputs' crawls since its last check has ended.
   protected async *observe({
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     yield streams;
+    const dueAt = (stream: Stream) => {
+      const due = this.#due.get(stream.name);
+      return due === undefined || due.size < this.#entry(stream).inputs.length
+        ? Infinity
+        : Math.min(...[...due.values()].map((at) => at ?? Infinity));
+    };
     for (;;) {
       const extracted = this.#extracted.promise;
-      const next =
-        this.#due.size < this.#inputs.length
-          ? Infinity
-          : Math.min(...[...this.#due.values()].map((due) => due ?? Infinity));
-      if (next > Date.now()) {
+      const due = streams.filter((stream) => dueAt(stream) <= Date.now());
+      if (due.length === 0) {
+        const next = Math.min(...streams.map(dueAt));
         const waiting = new AbortController();
         try {
           await Promise.race([
@@ -177,8 +212,8 @@ export class WebSource extends Source {
         signal.throwIfAborted();
         continue;
       }
-      this.#due.clear();
-      yield streams;
+      for (const stream of due) this.#due.delete(stream.name);
+      yield due;
     }
   }
   protected async *extract(
@@ -189,6 +224,7 @@ export class WebSource extends Source {
     signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const inputUrl = z.string().parse(partition?.inputUrl);
+    const { stream } = this.#entry(configuration.stream);
     let due: number | null = null;
     try {
       const previous =
@@ -200,7 +236,7 @@ export class WebSource extends Source {
         signal,
       );
       const { http, signal: requestSignal } = client;
-      const run = this.#stream.extractor.open(http);
+      const run = stream.extractor.open(http);
       const crawler = new WebCrawler(
         http.extend({
           hooks: {
@@ -214,15 +250,15 @@ export class WebSource extends Source {
               run.negotiation === null ? [] : [run.negotiation.beforeRedirect],
           },
         }),
-        this.#stream.readers,
+        stream.readers,
         // A full refresh replaces the collection, so it must see every page that still exists.
         configuration.syncMode === 'full_refresh'
           ? new AlwaysRevisit()
-          : this.#stream.revisit,
+          : stream.revisit,
       );
       const crawl = crawler.crawl([inputUrl], previous.crawl, {
         signal: requestSignal,
-        include: this.#stream.include,
+        include: stream.include,
       });
       const errors: Error[] = [];
       // Pages that are not due: the scan keeps their records unread.
@@ -345,7 +381,10 @@ export class WebSource extends Source {
           errors.map((error) => error.message).join('; '),
         );
     } finally {
-      this.#due.set(inputUrl, due);
+      const { name } = configuration.stream;
+      const streamDue = this.#due.get(name) ?? new Map<string, number | null>();
+      streamDue.set(inputUrl, due);
+      this.#due.set(name, streamDue);
       const { resolve } = this.#extracted;
       this.#extracted = Promise.withResolvers();
       resolve();
