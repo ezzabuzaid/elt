@@ -35,6 +35,6 @@
   "devDependencies": {
     "@mswjs/interceptors": "^0.45.9",
     "@workspace/elt-sqlite": "0.0.1",
-    "@zukhruf/testing": "^0.3.49"
+    "@zukhruf/testing": "^0.6.3"
   }
 }

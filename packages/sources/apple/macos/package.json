@@ -53,5 +53,8 @@
     "ai": "7.0.148",
     "file-type": "22.2.0",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@zukhruf/testing": "^0.6.3"
   }
 }

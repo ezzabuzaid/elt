@@ -15,6 +15,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@zukhruf/testing": "^0.6.3",
     "msw": "^3.0.3"
   }
 }

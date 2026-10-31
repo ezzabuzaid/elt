@@ -11,5 +11,8 @@
   },
   "dependencies": {
     "@workspace/codec-chromium-indexeddb": "0.0.1"
+  },
+  "devDependencies": {
+    "@zukhruf/testing": "^0.6.3"
   }
 }

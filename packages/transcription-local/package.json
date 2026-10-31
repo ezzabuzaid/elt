@@ -19,5 +19,8 @@
     "@zukhruf/coprocess": "^0.3.49",
     "@zukhruf/pool": "^0.3.52",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@zukhruf/testing": "^0.6.3"
   }
 }

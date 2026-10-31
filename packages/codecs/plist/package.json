@@ -8,5 +8,8 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
+  },
+  "devDependencies": {
+    "@zukhruf/testing": "^0.6.3"
   }
 }

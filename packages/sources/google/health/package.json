@@ -13,11 +13,12 @@
     "@workspace/elt": "0.0.1",
     "@workspace/google-auth": "0.0.1",
     "@workspace/sdk-google-health": "0.0.1",
-    "@zukhruf/async": "^0.3.53"
+    "@zukhruf/async": "^0.3.53",
+    "p-memoize": "^8.0.0"
   },
   "devDependencies": {
     "@workspace/elt-postgresql": "0.0.1",
-    "@zukhruf/testing": "^0.3.49",
+    "@zukhruf/testing": "^0.6.3",
     "msw": "^3.0.3",
     "postgres": "^3.4.9"
   }

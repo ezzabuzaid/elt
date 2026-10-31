@@ -17,6 +17,7 @@
     "@zukhruf/snapshot-differential": "^0.3.53"
   },
   "devDependencies": {
-    "@workspace/elt-sqlite": "0.0.1"
+    "@workspace/elt-sqlite": "0.0.1",
+    "@zukhruf/testing": "^0.6.3"
   }
 }

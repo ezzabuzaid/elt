@@ -13,10 +13,12 @@
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-chromium-cookies": "0.0.1",
     "@workspace/sdk-instagram-web": "0.0.1",
-    "@zukhruf/snapshot-differential": "^0.3.53"
+    "@zukhruf/snapshot-differential": "^0.3.53",
+    "p-memoize": "^8.0.0"
   },
   "devDependencies": {
     "@workspace/elt-sqlite": "0.0.1",
+    "@zukhruf/testing": "^0.6.3",
     "msw": "^3.0.3"
   }
 }

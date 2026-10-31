@@ -14,11 +14,12 @@
     "@workspace/google-auth": "0.0.1",
     "@workspace/sdk-google-search-console": "0.0.1",
     "@zukhruf/mutex": "^0.3.49",
-    "@zukhruf/snapshot-differential": "^0.3.53"
+    "@zukhruf/snapshot-differential": "^0.3.53",
+    "p-memoize": "^8.0.0"
   },
   "devDependencies": {
     "@workspace/elt-postgresql": "0.0.1",
-    "@zukhruf/testing": "^0.3.49",
+    "@zukhruf/testing": "^0.6.3",
     "msw": "^3.0.3",
     "postgres": "^3.4.9"
   }

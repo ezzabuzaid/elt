@@ -28,7 +28,7 @@
     "@types/html-encoding-sniffer": "3.0.2",
     "@types/http-cache-semantics": "4.2.0",
     "@types/jsdom": "28.0.3",
-    "@zukhruf/testing": "^0.3.49",
+    "@zukhruf/testing": "^0.6.3",
     "msw": "^3.0.3"
   }
 }

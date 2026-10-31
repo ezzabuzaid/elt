@@ -15,6 +15,7 @@
   },
   "devDependencies": {
     "@ai-sdk/provider": "4.0.31",
-    "@workspace/elt-sqlite": "0.0.1"
+    "@workspace/elt-sqlite": "0.0.1",
+    "@zukhruf/testing": "^0.6.3"
   }
 }

@@ -17,6 +17,7 @@
     "libmime": "5.4.6"
   },
   "devDependencies": {
-    "@types/libmime": "5.3.0"
+    "@types/libmime": "5.3.0",
+    "@zukhruf/testing": "^0.6.3"
   }
 }
