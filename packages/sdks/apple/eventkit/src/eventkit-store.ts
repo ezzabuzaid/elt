@@ -166,9 +166,8 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
     request: Omit<HelperRequest, 'entity' | 'accountIds' | 'collectionIds'>,
     signal: AbortSignal | undefined,
   ): Promise<EventKitDocument[]> {
-    const documents: EventKitDocument[] = [];
-    try {
-      for await (const line of nativeProcess.lines(
+    const documents = await Array.fromAsync(
+      nativeProcess.lines(
         this.#helper,
         [
           'read',
@@ -180,11 +179,11 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
           } satisfies HelperRequest),
         ],
         signal,
-      ))
-        documents.push(inContentOrder(JSON.parse(line)));
-    } catch (error) {
+      ),
+      (line) => inContentOrder(JSON.parse(line)),
+    ).catch((error: unknown) => {
       throw this.failure(error);
-    }
+    });
     // The stopped helper ends its lines quietly; what it wrote is not a
     // whole read.
     signal?.throwIfAborted();
