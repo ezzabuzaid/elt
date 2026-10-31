@@ -14,7 +14,6 @@ import {
 import {
   TeamsStore,
   TeamsUnavailableError,
-  teamsDirectory,
 } from '@workspace/sdk-microsoft-teams';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
@@ -105,7 +104,13 @@ export class TeamsSource extends Source<TeamsScan> {
   readonly scope: ImportScope;
   readonly #store: TeamsStore;
 
-  constructor(directory = teamsDirectory(), scope: ImportScope = {}) {
+  constructor({
+    directory,
+    scope = {},
+  }: {
+    directory: string;
+    scope?: ImportScope;
+  }) {
     super();
     this.directory = directory;
     this.scope = scope;

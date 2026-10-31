@@ -32,7 +32,7 @@ Only these parts are copied:
 - `version()`, without `storage/root-state.json`: Teams has no file of its own beside its IndexedDB. It keys each file by its name, where Slack's keys it by its full path.
 - `#saved()` and `lastWrite()`: the files of the database with their stats, and the latest of their modification times. Without `storage/root-state.json`, as for `version()`.
 
-The choice between two installations (`slackDesktopDirectory`) is not copied: Teams has one location.
+The choice between two installations (`slackDesktopDirectory(home)`) is not copied: Teams has one location in a home folder, `teamsDirectory(home)`.
 
 **`errors.ts` → `errors.ts`.**
 The same two classes, `TeamsUnavailableError` and `TeamsFormatError`, with messages that name Microsoft Teams.

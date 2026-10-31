@@ -14,7 +14,6 @@ import {
 import {
   SlackDesktopStore,
   SlackDesktopUnavailableError,
-  slackDesktopDirectory,
 } from '@workspace/sdk-slack-desktop';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
@@ -105,7 +104,13 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
   readonly scope: ImportScope;
   readonly #store: SlackDesktopStore;
 
-  constructor(directory = slackDesktopDirectory(), scope: ImportScope = {}) {
+  constructor({
+    directory,
+    scope = {},
+  }: {
+    directory: string;
+    scope?: ImportScope;
+  }) {
     super();
     this.directory = directory;
     this.scope = scope;

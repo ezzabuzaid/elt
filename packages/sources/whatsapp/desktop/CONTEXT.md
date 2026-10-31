@@ -5,7 +5,7 @@ A user wants their WhatsApp chats, messages, calls and contacts in SQL, without 
 ## Language
 
 **Group container**:
-The folder `~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared`, which WhatsApp shares with its extensions. It holds the stores and the media files.
+The folder `Library/Group Containers/group.net.whatsapp.WhatsApp.shared` in a home folder, which WhatsApp shares with its extensions. It holds the stores and the media files. `whatsappContainer(home)` of the SDK gives its path, and the source reads the group container that you give it.
 _Avoid_: Container (the app has a separate sandbox container), app folder
 
 **Store**:

@@ -1,5 +1,4 @@
 import { readdirSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -33,14 +32,15 @@ const attempts = 3;
 // keeps from a process without Full Disk Access.
 const unreadable = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM']);
 
-export function teamsDirectory(): string {
-  return join(homedir(), profile);
+// The WebView profile of Teams in the given home folder.
+export function teamsDirectory(home: string): string {
+  return join(home, profile);
 }
 
 export class TeamsStore {
   readonly #directory: string;
 
-  constructor(directory = teamsDirectory()) {
+  constructor(directory: string) {
     this.#directory = directory;
   }
 

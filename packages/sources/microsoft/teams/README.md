@@ -5,16 +5,19 @@ An ELT source for the data that the new Microsoft Teams app (`com.microsoft.team
 The words in this README have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
 ```ts
+import { homedir } from 'node:os';
+
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { teamsDirectory } from '@workspace/sdk-microsoft-teams';
 import { TeamsSource } from '@workspace/source-microsoft-teams/teams-source';
 
 // ~/Library/Containers/com.microsoft.teams2/…/EBWebView/WV2Profile_tfw
-const source = new TeamsSource();
+const source = new TeamsSource({ directory: teamsDirectory(homedir()) });
 const destination = new SQLiteDestination({ path: './teams.sqlite' });
 
 await new Pipeline({
@@ -131,7 +134,7 @@ Other deletions:
 
 ## Import scope
 
-Accounts are accounts, and collections are conversations. A date range selects messages and their parts by `sentAt`. Pins, members and folder entries belong to their conversation, whatever the dates. People, meetings, call logs, activities, saved messages, apps and searches belong to an account, not to a conversation, and load fully.
+`new TeamsSource({ directory, scope })` narrows the import. Accounts are accounts, and collections are conversations. A date range selects messages and their parts by `sentAt`. Pins, members and folder entries belong to their conversation, whatever the dates. People, meetings, call logs, activities, saved messages, apps and searches belong to an account, not to a conversation, and load fully.
 
 ## Watching
 

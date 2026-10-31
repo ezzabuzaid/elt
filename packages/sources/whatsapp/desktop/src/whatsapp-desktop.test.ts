@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { chmod, mkdtempDisposable, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
@@ -1132,7 +1132,7 @@ async function scratch() {
 test('chats and messages load as a reader reads them: who sent each, when, what it replies to, its media and its blobs', async () => {
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
-  const source = new WhatsAppDesktopSource(whatsapp.container);
+  const source = new WhatsAppDesktopSource({ container: whatsapp.container });
 
   await (await pipeline(source, dir.path)).run();
 
@@ -1478,7 +1478,10 @@ test('receipts, reactions and channel reaction counts decode from each message�
   await using _ = dir;
 
   await (
-    await pipeline(new WhatsAppDesktopSource(whatsapp.container), dir.path)
+    await pipeline(
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
+      dir.path,
+    )
   ).run();
 
   const onReply = { chatJid: alice, messageIsFromMe: 1, messageStanzaId: 'B1' };
@@ -1545,7 +1548,7 @@ test('outgoing reactions follow this account’s add, replacement and withdrawal
   const { dir, whatsapp, out } = await scratch();
   try {
     const run = await pipeline(
-      new WhatsAppDesktopSource(whatsapp.container),
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
       dir.path,
       ({ name }) => name === 'messageReactions',
     );
@@ -1632,7 +1635,10 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
   await using _ = dir;
 
   await (
-    await pipeline(new WhatsAppDesktopSource(whatsapp.container), dir.path)
+    await pipeline(
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
+      dir.path,
+    )
   ).run();
 
   assert.deepEqual(table(out, 'messageDataItems', '"index"'), [
@@ -1756,7 +1762,10 @@ test('contacts, users with the phone number behind each LID, and calls with thei
   await using _ = dir;
 
   await (
-    await pipeline(new WhatsAppDesktopSource(whatsapp.container), dir.path)
+    await pipeline(
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
+      dir.path,
+    )
   ).run();
 
   assert.deepEqual(table(out, 'contacts', 'uniqueId'), [
@@ -1874,7 +1883,10 @@ test('business profiles load with their websites, linked accounts, hours, catego
   await using _ = dir;
 
   await (
-    await pipeline(new WhatsAppDesktopSource(whatsapp.container), dir.path)
+    await pipeline(
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
+      dir.path,
+    )
   ).run();
 
   const shop = '15550007777@s.whatsapp.net';
@@ -1978,7 +1990,10 @@ test('sticker packs, stickers, favorites and recents load, and so do the privacy
   await using _ = dir;
 
   await (
-    await pipeline(new WhatsAppDesktopSource(whatsapp.container), dir.path)
+    await pipeline(
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
+      dir.path,
+    )
   ).run();
 
   const pack = {
@@ -2126,7 +2141,7 @@ async function failedAfter(change: (whatsapp: ScratchWhatsApp) => void) {
   await using _ = dir;
   change(whatsapp);
   const run = await pipeline(
-    new WhatsAppDesktopSource(whatsapp.container),
+    new WhatsAppDesktopSource({ container: whatsapp.container }),
     dir.path,
   );
   let caught: unknown;
@@ -2170,7 +2185,7 @@ test('a store WhatsApp has not created, or macOS denies, fails only the streams 
   await chmod(whatsapp.path('chatStorage'), 0o000);
   try {
     const run = await pipeline(
-      new WhatsAppDesktopSource(whatsapp.container),
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
       dir.path,
     );
     await assert.rejects(run.run(), (error) => {
@@ -2330,7 +2345,7 @@ test('a blob this reader cannot decode fails the streams decoded from it and kee
     const { dir, whatsapp, out } = await scratch();
     await using _ = dir;
     const run = await pipeline(
-      new WhatsAppDesktopSource(whatsapp.container),
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
       dir.path,
     );
     await run.run();
@@ -2377,7 +2392,7 @@ test('compact message scans keep unchanged groups across reopened pipelines and 
   ]);
   const open = () =>
     pipeline(
-      new WhatsAppDesktopSource(whatsapp.container),
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
       dir.path,
       ({ name }) => selected.has(name),
     );
@@ -2440,7 +2455,7 @@ test('compact message scans reread a replaced Core Data store even when row IDs 
   );
   const open = () =>
     pipeline(
-      new WhatsAppDesktopSource(whatsapp.container),
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
       dir.path,
       ({ name }) => name === 'messages',
     );
@@ -2471,7 +2486,7 @@ test('compact message scans catch independent receipt and channel-count changes 
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
   const run = await pipeline(
-    new WhatsAppDesktopSource(whatsapp.container),
+    new WhatsAppDesktopSource({ container: whatsapp.container }),
     dir.path,
     ({ name }) =>
       [
@@ -2585,7 +2600,7 @@ test('compact message scans follow joined rows, local files and the first duplic
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
   const run = await pipeline(
-    new WhatsAppDesktopSource(whatsapp.container),
+    new WhatsAppDesktopSource({ container: whatsapp.container }),
     dir.path,
     ({ name }) => name === 'messages',
   );
@@ -2670,10 +2685,13 @@ test('compact message scans reapply chat and date selection and ignore version-o
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
   const run = await pipeline(
-    new WhatsAppDesktopSource(whatsapp.container, {
-      collectionIds: [alice],
-      startAt: '2026-10-01T00:00:00.000Z',
-      endAt: '2026-10-02T00:00:00.000Z',
+    new WhatsAppDesktopSource({
+      container: whatsapp.container,
+      scope: {
+        collectionIds: [alice],
+        startAt: '2026-10-01T00:00:00.000Z',
+        endAt: '2026-10-02T00:00:00.000Z',
+      },
     }),
     dir.path,
     ({ name }) => name === 'messages',
@@ -2703,7 +2721,7 @@ test('compact message scans keep the last checkpoint after a decode failure and 
   await using _ = dir;
   const open = () =>
     pipeline(
-      new WhatsAppDesktopSource(whatsapp.container),
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
       dir.path,
       ({ name }) => name === 'messageReactions',
     );
@@ -2738,7 +2756,7 @@ test('compact message scans keep the last checkpoint after a decode failure and 
 test('a second run with no change writes nothing; a changed record is written again, and one WhatsApp removed is deleted, with what hung off it', async () => {
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
-  const source = new WhatsAppDesktopSource(whatsapp.container);
+  const source = new WhatsAppDesktopSource({ container: whatsapp.container });
   const run = await pipeline(source, dir.path);
   const { streams } = await source.discover();
   const unchanged = Object.fromEntries(
@@ -2812,7 +2830,7 @@ test('an import narrowed to chats keeps those chats, their messages and what han
     await using _ = dir;
     await (
       await pipeline(
-        new WhatsAppDesktopSource(whatsapp.container, scope),
+        new WhatsAppDesktopSource({ container: whatsapp.container, scope }),
         dir.path,
       )
     ).run();
@@ -2894,7 +2912,10 @@ test('a downloaded photo, a profile picture’s thumbnail and sticker files load
   await using _ = dir;
 
   await (
-    await pipeline(new WhatsAppDesktopSource(whatsapp.container), dir.path)
+    await pipeline(
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
+      dir.path,
+    )
   ).run();
 
   const file = async (reference: unknown) =>
@@ -2962,7 +2983,7 @@ test(
     const { dir, whatsapp } = await scratch();
     await using _ = dir;
     removeStore(whatsapp, 'businesses');
-    const source = new WhatsAppDesktopSource(whatsapp.container);
+    const source = new WhatsAppDesktopSource({ container: whatsapp.container });
     const streams = [
       source.messages,
       source.contacts,
@@ -3088,8 +3109,9 @@ test('this Mac’s WhatsApp loads every stream of each store it holds', async (t
       await using dir = await mkdtempDisposable(
         join(tmpdir(), 'elt-whatsapp-live-'),
       );
-      const source = new WhatsAppDesktopSource();
-      const path = join(whatsappContainer, stores[store].file);
+      const container = whatsappContainer(homedir());
+      const source = new WhatsAppDesktopSource({ container });
+      const path = join(container, stores[store].file);
       // data_version changes when another connection commits, as seen by
       // one connection held open, so this one stays open across the read.
       let commits: DatabaseSync | undefined;
@@ -3138,7 +3160,7 @@ test('this Mac’s WhatsApp loads every stream of each store it holds', async (t
 test('statuses load with their text styling and photo; one that vanishes within its day is deleted, and one WhatsApp drops after it stays', async () => {
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
-  const source = new WhatsAppDesktopSource(whatsapp.container);
+  const source = new WhatsAppDesktopSource({ container: whatsapp.container });
   const run = await pipeline(
     source,
     dir.path,
@@ -3310,7 +3332,7 @@ test('large WhatsApp passes stream payloads and reuse compact metadata within a 
     const { Connection, Copy, Pipeline } = await import('@workspace/elt');
     const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
     const { WhatsAppDesktopSource } = await import(process.env.SOURCE);
-    const source = new WhatsAppDesktopSource(process.env.CONTAINER);
+    const source = new WhatsAppDesktopSource({ container: process.env.CONTAINER });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
@@ -3372,7 +3394,7 @@ test('large WhatsApp passes stream payloads and reuse compact metadata within a 
 test('message streams reuse one completed metadata scan and refresh file availability on the next pass', async () => {
   const { dir, whatsapp } = await scratch();
   await using _ = dir;
-  const source = new WhatsAppDesktopSource(whatsapp.container);
+  const source = new WhatsAppDesktopSource({ container: whatsapp.container });
   // Start with a derived stream: sharing must not depend on selecting messages first.
   const selected = [
     source.messageReactionCounts,
@@ -3458,7 +3480,7 @@ test('shared metadata respects combined chat and date scopes, empty scopes and d
       'messageAssociations',
     ]);
     const run = await pipeline(
-      new WhatsAppDesktopSource(whatsapp.container, scope),
+      new WhatsAppDesktopSource({ container: whatsapp.container, scope }),
       dir.path,
       ({ name }) => selected.has(name),
     );
@@ -3495,7 +3517,7 @@ test('cancelling a metadata build or replay publishes no partial checkpoint and 
   for (const cancelAt of ['messages', 'messageReceipts']) {
     const { dir, whatsapp } = await scratch();
     await using _ = dir;
-    const source = new WhatsAppDesktopSource(whatsapp.container);
+    const source = new WhatsAppDesktopSource({ container: whatsapp.container });
     const catalog = [
       source.messages,
       source.messageReceipts,
@@ -3569,7 +3591,7 @@ test('a failed metadata scan or payload leaves every affected checkpoint intact 
       'messageReactionCounts',
     ]);
     const run = await pipeline(
-      new WhatsAppDesktopSource(whatsapp.container),
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
       dir.path,
       ({ name }) => selected.has(name),
     );

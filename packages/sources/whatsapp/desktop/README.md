@@ -5,16 +5,21 @@ An ELT source for the data that WhatsApp for Mac keeps on this Mac. It reads the
 The words in this README have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
 ```ts
+import { homedir } from 'node:os';
+
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { whatsappContainer } from '@workspace/sdk-whatsapp-desktop';
 import { WhatsAppDesktopSource } from '@workspace/source-whatsapp-desktop/whatsapp-desktop-source';
 
 // ~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared
-const source = new WhatsAppDesktopSource();
+const source = new WhatsAppDesktopSource({
+  container: whatsappContainer(homedir()),
+});
 const destination = new SQLiteDestination({ path: './whatsapp.sqlite' });
 
 await new Pipeline({
@@ -166,7 +171,7 @@ Statuses expire by `timestamp` (see expiring upstreams in [elt](../../../elt/REA
 
 ## Import scope
 
-Collections are chats, by JID. Chats select their messages, group members, member changes and notification settings. A date range selects messages by `messageDate`. Receipts, reactions, reaction counts, data items and associations follow the messages that the import keeps. The other streams belong to no chat and load fully.
+`new WhatsAppDesktopSource({ container, scope })` narrows the import. Collections are chats, by JID. Chats select their messages, group members, member changes and notification settings. A date range selects messages by `messageDate`. Receipts, reactions, reaction counts, data items and associations follow the messages that the import keeps. The other streams belong to no chat and load fully.
 
 ## Watching
 

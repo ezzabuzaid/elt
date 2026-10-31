@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
 import {
   chmod,
   mkdir,
@@ -10,9 +9,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { promisify } from 'node:util';
 
-import { SlackDesktopStore, SlackDesktopUnavailableError } from './index.ts';
+import {
+  SlackDesktopStore,
+  SlackDesktopUnavailableError,
+  slackDesktopDirectory,
+} from './index.ts';
 
 const locations = {
   direct: 'Library/Application Support/Slack',
@@ -34,25 +36,19 @@ async function save(directory: string, fileId: string) {
   );
 }
 
-// os.homedir() belongs to the process. Give a fresh process a synthetic home
-// so the default constructor follows the same path as a real installation.
+// The store a host reads: the folder it names, or the installation that
+// slackDesktopDirectory finds in the home folder.
 async function read(home: string, directory?: string) {
-  const { stdout } = await promisify(execFile)(
-    process.execPath,
-    [
-      '--input-type=module',
-      '--eval',
-      `import { SlackDesktopStore } from ${JSON.stringify(new URL('./slack-desktop-store.ts', import.meta.url).href)};
-       const store = new SlackDesktopStore(${JSON.stringify(directory) ?? ''});
-       console.log(JSON.stringify({ clients: await store.clients(), downloads: await store.downloads(), version: store.version() }));`,
-    ],
-    { env: { ...process.env, HOME: home }, timeout: 10_000 },
-  );
-  return JSON.parse(stdout);
+  const store = new SlackDesktopStore(directory ?? slackDesktopDirectory(home));
+  return {
+    clients: await store.clients(),
+    downloads: await store.downloads(),
+    version: store.version(),
+  };
 }
 
 for (const [build, location] of Object.entries(locations)) {
-  test(`the default store reads Slack's ${build} installation`, async () => {
+  test(`the store in a home folder reads Slack's ${build} installation`, async () => {
     await using home = await mkdtempDisposable(
       join(tmpdir(), 'slack-location-'),
     );
@@ -62,7 +58,7 @@ for (const [build, location] of Object.entries(locations)) {
     const result = await read(home.path);
 
     assert.deepEqual(result.clients, []);
-    assert.equal(result.downloads[0].fileId, 'F1');
+    assert.equal(result.downloads[0]?.fileId, 'F1');
     assert.ok(result.version.includes(directory));
   });
 }
@@ -72,7 +68,7 @@ test('an empty App Store folder does not hide the direct-download store', async 
   await mkdir(join(home.path, locations.appStore), { recursive: true });
   await save(join(home.path, locations.direct), 'F1');
 
-  assert.equal((await read(home.path)).downloads[0].fileId, 'F1');
+  assert.equal((await read(home.path)).downloads[0]?.fileId, 'F1');
 });
 
 test('an explicit directory reads only that store', async () => {
@@ -81,7 +77,7 @@ test('an explicit directory reads only that store', async () => {
   const directory = join(home.path, 'custom');
   await save(directory, 'F2');
 
-  assert.equal((await read(home.path, directory)).downloads[0].fileId, 'F2');
+  assert.equal((await read(home.path, directory)).downloads[0]?.fileId, 'F2');
 });
 
 test('an inaccessible leftover folder does not hide a readable installation', async () => {
@@ -93,7 +89,7 @@ test('an inaccessible leftover folder does not hide a readable installation', as
   // sandboxed container while the direct-download installation is readable.
   await chmod(leftover, 0o000);
   try {
-    assert.equal((await read(home.path)).downloads[0].fileId, 'F1');
+    assert.equal((await read(home.path)).downloads[0]?.fileId, 'F1');
   } finally {
     await chmod(leftover, 0o700);
   }
@@ -102,8 +98,7 @@ test('an inaccessible leftover folder does not hide a readable installation', as
 test('a missing store asks for saved Slack data without requiring the App Store', async () => {
   await using home = await mkdtempDisposable(join(tmpdir(), 'slack-location-'));
   await assert.rejects(read(home.path), (error) => {
-    assert.ok(error instanceof Error);
-    assert.match(error.message, /SlackDesktopUnavailableError/);
+    assert.ok(error instanceof SlackDesktopUnavailableError);
     assert.match(error.message, /Open Slack, sign in/);
     assert.doesNotMatch(error.message, /Install Slack from the Mac App Store/);
     return true;

@@ -10,7 +10,7 @@ import {
   utimes,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -39,6 +39,7 @@ import {
   SlackDesktopFormatError,
   SlackDesktopStore,
   SlackDesktopUnavailableError,
+  slackDesktopDirectory,
 } from '@workspace/sdk-slack-desktop';
 
 import { SlackDesktopSource } from './slack-desktop-source.ts';
@@ -874,7 +875,10 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
   await store.download({
     T1: [{ id: 'F1', path: join(dir.path, 'notes.md') }],
   });
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
 
   const results = counts(await run.run());
 
@@ -1322,7 +1326,10 @@ test('a message deleted inside history the app holds is deleted; one the app dro
       },
     }),
   ]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   await run.run();
 
   // The app now holds C1 from .000200 to .000300 and from .000500 on: .000100
@@ -1406,7 +1413,7 @@ test('downloads stay after Slack clears its list, with the file’s bytes while 
       { id: 'F2', path: join(downloaded, 'moved.pdf') },
     ],
   });
-  const source = new SlackDesktopSource(store.directory);
+  const source = new SlackDesktopSource({ directory: store.directory });
   const destination = new SQLiteDestination({ path: out });
   const run = new Pipeline({
     history: new SQLiteSyncHistory(),
@@ -1467,7 +1474,10 @@ test('a pin removed where the app loaded the conversation’s pins is deleted; p
       pinsLoading: { C1: 'loaded', C2: 'loaded', D1: 'loading' },
     }),
   ]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   await run.run();
 
   // Both of C1's pins removed, leaving its list empty, as the app saved it on
@@ -1511,7 +1521,10 @@ test('reactions follow their message: one removed from a held message is deleted
       held: { C1: [['1790000000.000100', '1790000000.000200']] },
     }),
   ]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   await run.run();
 
   await store.save([
@@ -1575,7 +1588,10 @@ test('a user group the app no longer records a check of stays, and a changed mem
   await store.save([
     januaryClient({ userGroups: { S0G1: true, S0G2: false } }),
   ]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   await run.run();
 
   await store.save([januaryClient({ userGroups: { S0G2: true } })]);
@@ -1598,7 +1614,10 @@ test('an edited message updates its row in place', async () => {
   const { dir, store, out } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   await run.run();
 
   await store.save([
@@ -1645,7 +1664,10 @@ test('a workspace the app no longer keeps keeps its rows while another syncs, an
     }),
   });
   await store.save([januaryClient()]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   await run.run();
 
   await store.save([januaryClient(), delivery([{ ts: '1790000000.000400' }])]);
@@ -1688,7 +1710,10 @@ test('a conversation the app stops listing is deleted and a renamed member updat
   const { dir, store, out } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   await run.run();
 
   await store.save([
@@ -1720,7 +1745,10 @@ test('a second run over a store the app saved again unchanged, under a new blob,
   const { dir, store } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   await run.run();
 
   await store.save([januaryClient()]);
@@ -1755,7 +1783,10 @@ test('a store compacted into a table reads as the app left it: later saves win a
     [januaryClient(), delivery('general'), third('general')],
     [],
   );
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   const first = counts(await run.run());
 
   // The table holds every record, Delivery's and Third's with their channel
@@ -1798,7 +1829,10 @@ test('a state kept compressed in LevelDB or plain decodes as one moved to a blob
     await using _ = dir;
     await store.save([{ ...januaryClient(), form }]);
     await (
-      await pipeline(new SlackDesktopSource(store.directory), dir.path)
+      await pipeline(
+        new SlackDesktopSource({ directory: store.directory }),
+        dir.path,
+      )
     ).run();
     loaded.push(
       rows(out, 'SELECT channelId, ts, text FROM messages ORDER BY ts'),
@@ -1830,7 +1864,10 @@ test('text keeps accents, Arabic and emoji exactly, and a value the state shares
     }),
   ]);
   await (
-    await pipeline(new SlackDesktopSource(store.directory), dir.path)
+    await pipeline(
+      new SlackDesktopSource({ directory: store.directory }),
+      dir.path,
+    )
   ).run();
 
   assert.deepEqual(rows(out, 'SELECT id, topic FROM channels ORDER BY id'), [
@@ -1847,9 +1884,14 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
   const { dir, store, out } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   await run.run();
-  const { streams } = await new SlackDesktopSource(store.directory).discover();
+  const { streams } = await new SlackDesktopSource({
+    directory: store.directory,
+  }).discover();
   // chmod stands in for macOS withholding the app's container from a process
   // without Full Disk Access: both fail the read with EACCES or EPERM.
   await chmod(store.directory, 0o000);
@@ -1877,9 +1919,14 @@ test('a store in a format this reader does not know fails every stream that read
   const { dir, store, out } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   await run.run();
-  const { streams } = await new SlackDesktopSource(store.directory).discover();
+  const { streams } = await new SlackDesktopSource({
+    directory: store.directory,
+  }).discover();
   const damaged = async (writes: () => Promise<void>, problem: RegExp) => {
     await writes();
     await assert.rejects(run.run(), (error) => {
@@ -1981,7 +2028,10 @@ test('a root-state.json in a shape this reader does not know fails downloads by 
   const { dir, store, out } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   const damaged = async (writes: () => Promise<void>, problem: RegExp) => {
     await writes();
     await assert.rejects(run.run(), (error) => {
@@ -2020,7 +2070,10 @@ test('a store that fails to read for another reason fails every stream as that e
   const { dir, store, out } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   await run.run();
   // A directory where the log should be: readable, but not a file.
   const log = join(store.directory, indexedDBPath, '000003.log');
@@ -2075,11 +2128,14 @@ test('an import scope keeps the selected workspaces, channels and dates', async 
     T1: [{ id: 'F1', path: join(dir.path, 'one.pdf') }],
     T2: [{ id: 'F2', path: join(dir.path, 'two.pdf') }],
   });
-  const source = new SlackDesktopSource(store.directory, {
-    accountIds: ['T1'],
-    collectionIds: ['C1'],
-    startAt: '2026-09-21T00:00:00.000Z',
-    endAt: '2026-09-22T00:00:00.000Z',
+  const source = new SlackDesktopSource({
+    directory: store.directory,
+    scope: {
+      accountIds: ['T1'],
+      collectionIds: ['C1'],
+      startAt: '2026-09-21T00:00:00.000Z',
+      endAt: '2026-09-22T00:00:00.000Z',
+    },
   });
 
   await (await pipeline(source, dir.path)).run();
@@ -2112,7 +2168,10 @@ test('a Slack watch wakes every stream once, again when the app saves, and stops
   const { dir, store } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   const controller = new AbortController();
   const batches: Record<string, { count: number; deleted: number }>[] = [];
 
@@ -2145,7 +2204,10 @@ test('a Slack watch wakes when the app records a download', async () => {
   const { dir, store } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
-  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const run = await pipeline(
+    new SlackDesktopSource({ directory: store.directory }),
+    dir.path,
+  );
   const controller = new AbortController();
   const batches: Record<string, { count: number; deleted: number }>[] = [];
 
@@ -2172,7 +2234,8 @@ test('this Mac’s Slack app loads every workspace it keeps, and a second read w
     join(tmpdir(), 'slack-desktop-live-'),
   );
   const out = join(dir.path, 'out.sqlite');
-  const run = await pipeline(new SlackDesktopSource(), dir.path);
+  const directory = slackDesktopDirectory(homedir());
+  const run = await pipeline(new SlackDesktopSource({ directory }), dir.path);
 
   try {
     await run.run();
@@ -2208,7 +2271,7 @@ test('this Mac’s Slack app loads every workspace it keeps, and a second read w
   // A read that finds unchanged state writes nothing, so no field the app
   // keeps changes between two reads without a save. The app saves every few
   // minutes; a save between the reads may carry real changes.
-  const store = new SlackDesktopStore();
+  const store = new SlackDesktopStore(directory);
   const before = store.version();
   const second = counts(await run.run());
   if (store.version() !== before)
@@ -2229,7 +2292,7 @@ test('a Slack watch makes no pass while the app saves nothing, and keeps every s
     join(store.directory, 'storage/root-state.json'),
   ])
     await utimes(path, new Date(+saved + 100_000_000), saved);
-  const source = new SlackDesktopSource(store.directory);
+  const source = new SlackDesktopSource({ directory: store.directory });
   const watching = (await pipeline(source, dir.path)).watch({
     signal: AbortSignal.timeout(30_000),
   });

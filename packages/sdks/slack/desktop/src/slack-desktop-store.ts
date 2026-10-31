@@ -1,6 +1,5 @@
 import { readdirSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -33,13 +32,13 @@ const attempts = 3;
 // keeps from a process without Full Disk Access.
 const unreadable = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM']);
 
-// Both Slack builds use the same store format under Electron's userData.
-// An old installation can leave its folder behind: use the database whose
-// files were modified most recently, and hold that choice for this store.
-export function slackDesktopDirectory(): string {
-  const direct = join(homedir(), 'Library/Application Support/Slack');
+// Both Slack builds use the same store format under Electron's userData in
+// the given home folder. An old installation can leave its folder behind: use
+// the database whose files were modified most recently.
+export function slackDesktopDirectory(home: string): string {
+  const direct = join(home, 'Library/Application Support/Slack');
   const appStore = join(
-    homedir(),
+    home,
     'Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack',
   );
   let selected: string | undefined;
@@ -74,7 +73,7 @@ export function slackDesktopDirectory(): string {
 export class SlackDesktopStore {
   readonly #directory: string;
 
-  constructor(directory = slackDesktopDirectory()) {
+  constructor(directory: string) {
     this.#directory = directory;
   }
 

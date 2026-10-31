@@ -1,4 +1,3 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
@@ -18,11 +17,10 @@ import { StatusesSnapshot } from './statuses.ts';
 import { StickersSnapshot } from './stickers.ts';
 import { UsersSnapshot } from './users.ts';
 
-// The group container WhatsApp for Mac shares with its extensions.
-export const whatsappContainer = join(
-  homedir(),
-  'Library/Group Containers/group.net.whatsapp.WhatsApp.shared',
-);
+// The group container WhatsApp for Mac shares with its extensions, in the
+// given home folder.
+export const whatsappContainer = (home: string): string =>
+  join(home, 'Library/Group Containers/group.net.whatsapp.WhatsApp.shared');
 
 // Each store's database, relative to the container.
 const storeFiles = {
@@ -46,7 +44,7 @@ export type WhatsAppStore = keyof typeof storeFiles;
 export class WhatsApp {
   readonly container: string;
 
-  constructor(container = whatsappContainer) {
+  constructor(container: string) {
     this.container = container;
   }
 

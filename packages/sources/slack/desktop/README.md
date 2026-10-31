@@ -5,16 +5,21 @@ An ELT source for the data that the Slack desktop app keeps on this Mac. It read
 The words in this README have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
 ```ts
+import { homedir } from 'node:os';
+
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { slackDesktopDirectory } from '@workspace/sdk-slack-desktop';
 import { SlackDesktopSource } from '@workspace/source-slack-desktop/slack-desktop-source';
 
-// Finds the store of the Slack build on this Mac; new SlackDesktopSource(directory) chooses one.
-const source = new SlackDesktopSource();
+// Finds the store of the Slack build in the home folder.
+const source = new SlackDesktopSource({
+  directory: slackDesktopDirectory(homedir()),
+});
 const destination = new SQLiteDestination({ path: './slack.sqlite' });
 
 await new Pipeline({
@@ -60,13 +65,11 @@ Slack has two builds for macOS. Both builds keep the same store in Electron's us
 
 A folder has a store when its IndexedDB folder has a `CURRENT` file.
 
-Each `SlackDesktopSource` finds its folder one time, when you make it (`slackDesktopDirectory()` of the SDK):
+The source reads the folder that you give to the constructor: `new SlackDesktopSource({ directory, scope })`. `slackDesktopDirectory(home)` of the SDK finds the folder in a home folder one time, when you call it:
 
-- When both folders have a store, the source uses the store whose files changed last. This occurs, for example, when the user changed builds and the old build left its folder.
-- When no folder has a store, the source uses the folder that gave an access error. Thus the read reports the missing grant.
-- When no folder gave an error, the source uses the slack.com folder.
-
-To choose a folder, give it to the constructor: `new SlackDesktopSource(directory)`.
+- When both folders have a store, it gives the store whose files changed last. This occurs, for example, when the user changed builds and the old build left its folder.
+- When no folder has a store, it gives the folder that gave an access error. Thus the read reports the missing grant.
+- When no folder gave an error, it gives the slack.com folder.
 
 ## Access
 
@@ -141,7 +144,7 @@ The app keeps no file contents. Its HTTP cache held no `files.slack.com` respons
 
 ## Import scope
 
-Accounts are workspaces, and collections are conversations. A date range selects messages, their attachments and their reactions by `sentAt`. Pins belong to their conversation, whatever the dates. Members, bots, apps, sections, preferences, user group memberships and downloads belong to a workspace, not to a conversation, and load fully.
+`new SlackDesktopSource({ directory, scope })` narrows the import. Accounts are workspaces, and collections are conversations. A date range selects messages, their attachments and their reactions by `sentAt`. Pins belong to their conversation, whatever the dates. Members, bots, apps, sections, preferences, user group memberships and downloads belong to a workspace, not to a conversation, and load fully.
 
 ## Watching
 

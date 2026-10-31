@@ -13,7 +13,6 @@ import {
   WhatsApp,
   type WhatsAppStore,
   WhatsAppUnavailableError,
-  whatsappContainer,
   whatsappRunning,
 } from '@workspace/sdk-whatsapp-desktop';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -146,7 +145,13 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
   readonly scope: ImportScope;
   readonly #whatsapp: WhatsApp;
 
-  constructor(container = whatsappContainer, scope: ImportScope = {}) {
+  constructor({
+    container,
+    scope = {},
+  }: {
+    container: string;
+    scope?: ImportScope;
+  }) {
     super();
     this.container = container;
     this.scope = scope;

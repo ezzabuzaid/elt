@@ -7,7 +7,7 @@ import {
   rm,
   utimes,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -35,6 +35,7 @@ import {
   TeamsFormatError,
   TeamsStore,
   TeamsUnavailableError,
+  teamsDirectory,
 } from '@workspace/sdk-microsoft-teams';
 
 import { TeamsSource } from './teams-source.ts';
@@ -1107,7 +1108,7 @@ test('a Teams import is current only as of the web client’s last write, which 
       new Date(+written + 100_000_000),
       written,
     );
-  const source = new TeamsSource(app.directory);
+  const source = new TeamsSource({ directory: app.directory });
 
   await (await pipeline(source, dir.path)).run();
 
@@ -1124,7 +1125,7 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
   const { dir, app, out } = await scratch();
   await using _ = dir;
   await app.save(account());
-  const source = new TeamsSource(app.directory);
+  const source = new TeamsSource({ directory: app.directory });
   const run = await pipeline(source, dir.path);
   await run.run();
   const { streams } = await source.discover();
@@ -1155,7 +1156,7 @@ test('a store in a shape this reader does not know, or that fails to read for an
   const { dir, app, out } = await scratch();
   await using _ = dir;
   await app.save(account());
-  const source = new TeamsSource(app.directory);
+  const source = new TeamsSource({ directory: app.directory });
   const run = await pipeline(source, dir.path);
   await run.run();
   const { streams } = await source.discover();
@@ -1259,7 +1260,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       },
     })),
   );
-  const source = new TeamsSource(app.directory);
+  const source = new TeamsSource({ directory: app.directory });
   const run = await pipeline(source, dir.path);
 
   const first = counts(await run.run());
@@ -1932,7 +1933,7 @@ test('a message or reaction gone from the history the app holds is deleted, and 
     ),
   };
   await app.save(base);
-  const source = new TeamsSource(app.directory);
+  const source = new TeamsSource({ directory: app.directory });
   const run = await pipeline(source, dir.path);
   await run.run();
   const messageIds = (conversationId: string) =>
@@ -2069,7 +2070,7 @@ test('a second account loads beside the first without rewriting it, and an accou
     user: '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
   };
   await app.save(first);
-  const source = new TeamsSource(app.directory);
+  const source = new TeamsSource({ directory: app.directory });
   const run = await pipeline(source, dir.path);
   await run.run();
   const perAccount = (name: string) =>
@@ -2119,7 +2120,7 @@ test('people, meetings and searches the app drops stay, as do members and apps i
   await using _ = dir;
   const base = account();
   await app.save(base);
-  const source = new TeamsSource(app.directory);
+  const source = new TeamsSource({ directory: app.directory });
   const run = await pipeline(source, dir.path);
   await run.run();
 
@@ -2186,7 +2187,7 @@ test('an edit, a deletion, an unpin, a read, a chat left and a folder change rea
     ],
   };
   await app.save(base);
-  const source = new TeamsSource(app.directory);
+  const source = new TeamsSource({ directory: app.directory });
   const run = await pipeline(source, dir.path);
   await run.run();
 
@@ -2289,7 +2290,7 @@ test('a call, activity or saved entry gone from the part of its feed the app hol
   await using _ = dir;
   const base = account();
   await app.save(base);
-  const source = new TeamsSource(app.directory);
+  const source = new TeamsSource({ directory: app.directory });
   const run = await pipeline(source, dir.path);
   await run.run();
   const without = (state: Account, gone: readonly string[]): Account => ({
@@ -2365,7 +2366,7 @@ test('a file the app lists several times in one message loads as one file of tha
     );
   const base = account();
   await app.save({ ...base, chains: base.chains.map(repeated) });
-  const source = new TeamsSource(app.directory);
+  const source = new TeamsSource({ directory: app.directory });
   const run = await pipeline(source, dir.path);
 
   const loaded = counts(await run.run());
@@ -2385,11 +2386,14 @@ test('an import scope keeps the selected accounts, conversations and dates, and 
     user: '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
   };
   await app.save(account(), other);
-  const source = new TeamsSource(app.directory, {
-    accountIds: [user],
-    collectionIds: [chat],
-    startAt: '2026-09-02T00:00:00.000Z',
-    endAt: '2026-09-04T00:00:00.000Z',
+  const source = new TeamsSource({
+    directory: app.directory,
+    scope: {
+      accountIds: [user],
+      collectionIds: [chat],
+      startAt: '2026-09-02T00:00:00.000Z',
+      endAt: '2026-09-04T00:00:00.000Z',
+    },
   });
   const run = await pipeline(source, dir.path);
 
@@ -2443,7 +2447,7 @@ test('a Teams watch wakes every stream once, again when the app writes its store
   await using _ = dir;
   const base = account();
   await app.save(base);
-  const source = new TeamsSource(app.directory);
+  const source = new TeamsSource({ directory: app.directory });
   const run = await pipeline(source, dir.path);
   const controller = new AbortController();
   const batches: Record<string, { count: number; deleted: number }>[] = [];
@@ -2495,7 +2499,8 @@ test('this Mac’s Teams app loads every account it keeps, and a second read wit
     return t.skip('the Teams app’s store is on macOS');
   await using dir = await mkdtempDisposable(join(tmpdir(), 'teams-live-'));
   const out = join(dir.path, 'out.sqlite');
-  const source = new TeamsSource();
+  const directory = teamsDirectory(homedir());
+  const source = new TeamsSource({ directory });
   const run = await pipeline(source, dir.path);
 
   try {
@@ -2532,7 +2537,7 @@ test('this Mac’s Teams app loads every account it keeps, and a second read wit
   // A read that finds an unchanged store writes nothing, so no field the app
   // keeps changes between two reads without a write. Teams writes its store
   // as it works; a write between the reads may carry real changes.
-  const store = new TeamsStore();
+  const store = new TeamsStore(directory);
   const before = store.version();
   const second = counts(await run.run());
   if (store.version() !== before)
@@ -2574,7 +2579,7 @@ test('an account Teams keeps in two languages loads the set it synced last, and 
     '2026-09-21T10:00:00.000Z',
   );
   await app.save(stale, live);
-  const source = new TeamsSource(app.directory);
+  const source = new TeamsSource({ directory: app.directory });
   const run = await pipeline(source, dir.path);
   const only = () =>
     rows(
