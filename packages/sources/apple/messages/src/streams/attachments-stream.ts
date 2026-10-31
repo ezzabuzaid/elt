@@ -69,12 +69,12 @@ export class AttachmentsStream extends AppleMessagesStream<Attachment> {
 
   // The original file, not a staged copy: attachments reach gigabytes and
   // readers only read it.
-  override file({
-    filename,
-    availableLocally,
-  }: Record<string, unknown>): string | null {
+  override file(
+    { filename, availableLocally }: Record<string, unknown>,
+    home: string,
+  ): string | null {
     return availableLocally === true && typeof filename === 'string'
-      ? attachmentPath(filename)
+      ? attachmentPath(filename, home)
       : null;
   }
 }

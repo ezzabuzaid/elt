@@ -20,7 +20,7 @@ test('a chat.db without a column the reader needs fails with MissingColumnsError
   );
 
   assert.throws(
-    () => new MessagesStore(path).open(),
+    () => new MessagesStore({ path, home: dir.path }).open(),
     (error: unknown) => {
       assert.ok(error instanceof MissingColumnsError);
       assert.match(error.message, /message\.handle_id/);

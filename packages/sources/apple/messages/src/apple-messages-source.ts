@@ -12,7 +12,6 @@ import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   MessagesStore,
   MessagesUnavailableError,
-  chatDatabasePath,
 } from '@workspace/sdk-apple-messages';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -75,14 +74,24 @@ export class AppleMessagesSource extends Source<MessagesScan> {
   readonly messageAttachments = readers.messageAttachments.describe();
 
   readonly path: string;
+  readonly home: string;
   readonly scope: ImportScope;
   readonly #store: MessagesStore;
 
-  constructor(path = chatDatabasePath, scope: ImportScope = {}) {
+  constructor({
+    path,
+    home,
+    scope = {},
+  }: {
+    path: string;
+    home: string;
+    scope?: ImportScope;
+  }) {
     super();
     this.path = path;
+    this.home = home;
     this.scope = scope;
-    this.#store = new MessagesStore(path);
+    this.#store = new MessagesStore({ path, home });
     Object.freeze(this);
   }
 
@@ -132,7 +141,7 @@ export class AppleMessagesSource extends Source<MessagesScan> {
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)
         yield message;
-      else yield { ...message, file: reader.file(message.data) };
+      else yield { ...message, file: reader.file(message.data, this.home) };
     }
   }
 }

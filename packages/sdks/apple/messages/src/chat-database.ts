@@ -1,4 +1,3 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { SQLOutputValue } from 'node:sqlite';
 
@@ -35,7 +34,8 @@ import {
   appleEpoch,
 } from './chat-values.ts';
 
-export const chatDatabasePath = join(homedir(), 'Library/Messages/chat.db');
+export const chatDatabasePath = (home: string): string =>
+  join(home, 'Library/Messages/chat.db');
 
 export class MessagesUnavailableError extends Error {
   override name = 'MessagesUnavailableError';
@@ -161,9 +161,11 @@ const required = Object.fromEntries(
 // reading: an open read stops Messages checkpointing its WAL.
 export class ChatDatabase implements Disposable {
   readonly #database: Snapshot;
+  readonly #home: string;
 
-  constructor(path: string) {
+  constructor(path: string, { home }: { home: string }) {
     this.#database = appDatabase.snapshot(path, required);
+    this.#home = home;
   }
 
   chats(): IteratorObject<ChatRow, undefined> {
@@ -274,6 +276,7 @@ export class ChatDatabase implements Disposable {
           new Attachment(
             guid(row['@guid'], 'An attachment'),
             values(attachmentTable, row),
+            this.#home,
           ),
       );
   }
@@ -339,13 +342,15 @@ export class ChatDatabase implements Disposable {
 // commits through a WAL it keeps open.
 export class MessagesStore {
   readonly path: string;
+  readonly #home: string;
 
-  constructor(path: string = chatDatabasePath) {
+  constructor({ path, home }: { path: string; home: string }) {
     this.path = path;
+    this.#home = home;
   }
 
   open(): ChatDatabase {
-    return new ChatDatabase(this.path);
+    return new ChatDatabase(this.path, { home: this.#home });
   }
 
   version(): AppDatabaseVersion {

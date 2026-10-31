@@ -1,5 +1,4 @@
 import { access } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -39,10 +38,10 @@ export type ChatValues = Readonly<Record<string, ChatValue>>;
 // A handle as chat.db identifies it: the same id recurs once per service.
 export type HandleKey = { readonly id: string; readonly service: string };
 
-// Attachment filenames are stored absolute or home-relative, as
-// ~/Library/Messages/Attachments/…
-export const attachmentPath = (filename: string): string =>
-  filename.startsWith('~/') ? join(homedir(), filename.slice(2)) : filename;
+// Attachment filenames are stored absolute or relative to the home folder
+// whose chat.db names them, as ~/Library/Messages/Attachments/…
+export const attachmentPath = (filename: string, home: string): string =>
+  filename.startsWith('~/') ? join(home, filename.slice(2)) : filename;
 
 export class Message {
   readonly guid: string;
@@ -77,10 +76,12 @@ export class Message {
 export class Attachment {
   readonly guid: string;
   readonly values: ChatValues;
+  readonly #home: string;
 
-  constructor(guid: string, values: ChatValues) {
+  constructor(guid: string, values: ChatValues, home: string) {
     this.guid = guid;
     this.values = values;
+    this.#home = home;
   }
 
   // Whether the stored filename is reachable now; false without a filename,
@@ -88,7 +89,7 @@ export class Attachment {
   async availableLocally(): Promise<boolean> {
     const { filename } = this.values;
     if (typeof filename !== 'string') return false;
-    return access(attachmentPath(filename)).then(
+    return access(attachmentPath(filename, this.#home)).then(
       () => true,
       () => false,
     );

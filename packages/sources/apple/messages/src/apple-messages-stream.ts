@@ -13,7 +13,7 @@ export type MessagesReader = {
   readonly name: string;
   describe(): Stream;
   read(scan: MessagesScan): AsyncIterable<Record<string, unknown>>;
-  file(record: Record<string, unknown>): string | null;
+  file(record: Record<string, unknown>, home: string): string | null;
 };
 
 // A Messages stream: its description, and how its records come out of a
@@ -54,8 +54,9 @@ export abstract class AppleMessagesStream<Row> {
     }
   }
 
-  // The file a record carries, for streams that support file reads.
-  file(_record: Record<string, unknown>): string | null {
+  // The file a record carries, for streams that support file reads; home is
+  // the folder that a '~/' path in chat.db is relative to.
+  file(_record: Record<string, unknown>, _home: string): string | null {
     return null;
   }
 

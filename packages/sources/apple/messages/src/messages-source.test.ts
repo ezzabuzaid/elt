@@ -470,7 +470,7 @@ test('the document parser reads every attachment kind and throws only on unreada
     ['shortFile', await file('shortFile', Uint8Array.of(0, 0, 1))],
   ] as const)
     attach(guid, filename);
-  const source = new AppleMessagesSource(path);
+  const source = new AppleMessagesSource({ path, home: scratch.path });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -563,10 +563,14 @@ test('Messages scope filters chat and native dates before decoding attachments a
   native.exec(
     "UPDATE message SET attributedBody=X'010203' WHERE guid='m-archived'",
   );
-  const source = new AppleMessagesSource(path, {
-    collectionIds: ['iMessage;-;+15550100'],
-    startAt: '2025-01-02T03:04:05.006Z',
-    endAt: '2025-01-02T03:04:05.007Z',
+  const source = new AppleMessagesSource({
+    path,
+    home: scratch.path,
+    scope: {
+      collectionIds: ['iMessage;-;+15550100'],
+      startAt: '2025-01-02T03:04:05.006Z',
+      endAt: '2025-01-02T03:04:05.007Z',
+    },
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
@@ -624,7 +628,10 @@ test('Messages exports every stream by guid, decodes archived text and streams l
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'elt-messages-'),
   );
-  const source = new AppleMessagesSource(await chatFixture(scratch.path));
+  const source = new AppleMessagesSource({
+    path: await chatFixture(scratch.path),
+    home: scratch.path,
+  });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -846,7 +853,7 @@ test('Messages loads edits and unsends incrementally and deletes removed message
     join(tmpdir(), 'elt-messages-'),
   );
   const path = await chatFixture(scratch.path);
-  const source = new AppleMessagesSource(path);
+  const source = new AppleMessagesSource({ path, home: scratch.path });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -934,7 +941,7 @@ test('one Messages read sees one moment of chat.db while Messages keeps writing'
     join(tmpdir(), 'elt-messages-'),
   );
   const path = await chatFixture(scratch.path);
-  const source = new AppleMessagesSource(path);
+  const source = new AppleMessagesSource({ path, home: scratch.path });
   const { during, after } = await acrossStreams(
     source,
     [source.handles, source.messages],
@@ -950,7 +957,10 @@ test('one Messages read sees one moment of chat.db while Messages keeps writing'
 });
 
 test('Messages names Full Disk Access when chat.db cannot be opened', async () => {
-  const source = new AppleMessagesSource(join(tmpdir(), 'missing', 'chat.db'));
+  const source = new AppleMessagesSource({
+    path: join(tmpdir(), 'missing', 'chat.db'),
+    home: join(tmpdir(), 'missing'),
+  });
 
   const opening = Array.fromAsync(
     source.read([configured(source.messages)], new Map()),
@@ -1009,7 +1019,7 @@ test('property lists decode as Foundation wrote them', async () => {
       .prepare("UPDATE message SET payload_data = ? WHERE guid = 'm-link'")
       .run(keyed);
   }
-  const source = new AppleMessagesSource(path);
+  const source = new AppleMessagesSource({ path, home: scratch.path });
 
   const rows = await readRows(source, [source.messages, source.linkPreviews]);
 
@@ -1060,7 +1070,7 @@ test('a Messages watch loads each commit Messages makes while it keeps chat.db o
     join(tmpdir(), 'elt-messages-'),
   );
   const path = await chatFixture(scratch.path);
-  const source = new AppleMessagesSource(path);
+  const source = new AppleMessagesSource({ path, home: scratch.path });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -1121,7 +1131,7 @@ test('Messages reads as documented views joined on both handle keys and counted 
     `);
   }
   const messages = await appleImport(
-    new AppleMessagesSource(path),
+    new AppleMessagesSource({ path, home: scratch.path }),
     join(scratch.path, 'import'),
   );
   await messages.load();
@@ -1247,7 +1257,7 @@ test('a Messages pass over a large chat.db holds one message at a time, so it lo
     const { Connection, Copy, Pipeline } = await import('@workspace/elt');
     const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
     const { AppleMessagesSource } = await import(process.env.SOURCE);
-    const source = new AppleMessagesSource(process.env.CHAT, { startAt: process.env.SINCE });
+    const source = new AppleMessagesSource({ path: process.env.CHAT, home: process.env.OUT, scope: { startAt: process.env.SINCE } });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
@@ -1312,7 +1322,7 @@ test('a Messages watch keeps every stream current while chat.db holds still', as
     join(tmpdir(), 'elt-messages-current-'),
   );
   const chat = await chatFixture(dir.path);
-  const source = new AppleMessagesSource(chat);
+  const source = new AppleMessagesSource({ path: chat, home: dir.path });
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();

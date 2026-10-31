@@ -3,6 +3,8 @@
 An ELT source for Apple Messages. It reads the database of Messages, `~/Library/Messages/chat.db`, in read-only mode through `@workspace/sdk-apple-messages`. It does not use the network, and Messages does not have to be open.
 
 ```ts
+import { homedir } from 'node:os';
+
 import {
   Connection,
   Copy,
@@ -17,10 +19,15 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { chatDatabasePath } from '@workspace/sdk-apple-messages';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 import { AppleMessagesSource } from '@workspace/source-apple-messages/apple-messages-source';
 
-const source = new AppleMessagesSource();
+const home = homedir();
+const source = new AppleMessagesSource({
+  path: chatDatabasePath(home),
+  home,
+});
 const destination = new SQLiteDestination({
   path: './outputs/messages.sqlite',
 });
@@ -123,12 +130,12 @@ The source does not read the iCloud sync and task bookkeeping: `deleted_messages
 - **Text:** recent macOS versions keep the body only in `attributedBody`, an `NSAttributedString` in typedstream form. If `message.text` is NULL, `text` takes the first string of that value. The archived value stays as it is.
 - **Edits:** `date_edited` does not show edits reliably. In the verified history, Messages left it empty on edited messages. `messageEdits` reads the edit history itself.
 - **Times:** `chat.db` counts time from 2001-01-01 UTC. Message dates are in nanoseconds. Attachment dates, edit entries and older histories are in seconds. Both kinds become UTC timestamps, and `0` becomes null.
-- **Attachments:** the source reads a file from its original path. It does not copy the file to staging. A file that iCloud offloaded has `availableLocally: false` and null file fields. No public API downloads it. When Messages downloads it, the flag changes, and the next run loads its bytes.
+- **Attachments:** the source reads a file from its original path. `chat.db` keeps many paths relative to the home folder, as `~/Library/Messages/Attachments/…`. The source puts the `home` that you give in place of `~`. It does not copy the file to staging. A file that iCloud offloaded has `availableLocally: false` and null file fields. No public API downloads it. When Messages downloads it, the flag changes, and the next run loads its bytes.
 - **Watching:** Messages writes through a WAL that it keeps open, and FSEvents reports such a file only when it closes. Thus `observe()` reads `PRAGMA data_version` on its own read-only connection each second. Each commit changes it, also the commit when an attachment download ends ([ADR 0002](./docs/adr/0002-a-watch-polls-the-data-version-of-chat-db.md)).
 
 ## Scope
 
-`new AppleMessagesSource(path, scope)` narrows the import. `collectionIds` selects chats by `guid`, and `accountIds` selects chats by their `account_id`. `startAt` (inclusive) and `endAt` (exclusive) select messages by their date. If you omit a key, the source reads all.
+`new AppleMessagesSource({ path, home, scope })` narrows the import. `collectionIds` selects chats by `guid`, and `accountIds` selects chats by their `account_id`. `startAt` (inclusive) and `endAt` (exclusive) select messages by their date. If you omit a key, the source reads all.
 
 ## Limitations
 
