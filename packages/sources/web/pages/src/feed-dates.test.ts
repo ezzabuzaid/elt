@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
@@ -20,7 +19,7 @@ import { WebSource } from './web-source.ts';
 import { WebStream } from './web-stream.ts';
 
 test('an RSS item gives its page the pubDate as the publication time, and a pubDate that is not a date gives none', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using upstream = await new HttpServer().start((request, response) => {
     if (request.url === '/feed.xml')
       response.writeHead(200, { 'content-type': 'application/rss+xml' }).end(
@@ -72,7 +71,7 @@ test('an RSS item gives its page the pubDate as the publication time, and a pubD
 });
 
 test('an Atom entry gives published as the publication time and updated only as the modification hint, while a sitemap keeps its lastmod', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using upstream = await new HttpServer().start((request, response) => {
     if (request.url === '/atom.xml')
       response.writeHead(200, { 'content-type': 'application/atom+xml' }).end(
@@ -136,7 +135,7 @@ test('an Atom entry gives published as the publication time and updated only as 
 });
 
 test('a JSON Feed item gives date_published as the publication time and date_modified as the modification hint', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using upstream = await new HttpServer().start((request, response) => {
     if (request.url === '/feed.json')
       response.writeHead(200, { 'content-type': 'application/feed+json' }).end(
@@ -190,7 +189,7 @@ test('a JSON Feed item gives date_published as the publication time and date_mod
 });
 
 test('a page that shows its date only as text under its title gets it as the inferred publication time, beside a null publishedTime and feed date', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using upstream = await new HttpServer().start((request, response) => {
     if (request.url === '/feed.xml')
       response

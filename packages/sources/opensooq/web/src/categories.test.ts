@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
@@ -62,7 +61,7 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
 }
 
 test('a home page without its hidden category menu fails, and stores no categories', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using upstream = await homePage('<div id="menu"></div>');
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
@@ -91,7 +90,7 @@ test('a home page without its hidden category menu fails, and stores no categori
 });
 
 test('the categories are read from the home page alone, and no category page is requested', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using upstream = await homePage(menu);
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
@@ -116,7 +115,7 @@ test('the categories are read from the home page alone, and no category page is 
 });
 
 test('each category of the hidden menu is stored with its absolute URL, its name and the top-level category it is under', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using upstream = await homePage(menu);
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();

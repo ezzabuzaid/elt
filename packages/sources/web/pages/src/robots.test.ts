@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
@@ -23,7 +22,7 @@ const userAgent =
   'WhatIsGoingOn/0.1 (+https://github.com/ezzabuzaid/what-is-going-on)';
 
 test('every request carries the user agent that the host gives', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const agents = new Map<string, string | undefined>();
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -50,7 +49,7 @@ test('every request carries the user agent that the host gives', async () => {
 });
 
 test('omitting the user agent sends no header and follows the default robots.txt group', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const agents = new Map<string, string | undefined>();
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -80,7 +79,7 @@ test('omitting the user agent sends no header and follows the default robots.txt
 });
 
 test('a robots.txt group for the product token disallows the crawl, although the * group allows it', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -107,7 +106,7 @@ test('a robots.txt group for the product token disallows the crawl, although the
 });
 
 test('a robots.txt group for another crawler only does not stop the crawl', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -130,7 +129,7 @@ test('a robots.txt group for another crawler only does not stop the crawl', asyn
 });
 
 test('Content-Signal search=no in the * group leaves the whole origin out', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -157,7 +156,7 @@ test('Content-Signal search=no in the * group leaves the whole origin out', asyn
 });
 
 test('Content-Signal that allows search and refuses AI training does not stop the crawl', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
@@ -79,8 +79,8 @@ test('an automation whose action fails does not stop the others in the same comm
     (sql) => sql.end(),
   );
   await createThings(sql);
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'proactive-test-'),
+  await using directory = await new TemporaryFiles().directory(
+    'proactive-test-',
   );
   const shown = await notifications(directory.path);
   await sql`INSERT INTO things VALUES ('old', 'says', 'from before')`;
@@ -136,8 +136,8 @@ test('an automation whose condition fails does not stop the others, and the run 
     (sql) => sql.end(),
   );
   await createThings(sql);
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'proactive-test-'),
+  await using directory = await new TemporaryFiles().directory(
+    'proactive-test-',
   );
   const shown = await notifications(directory.path);
   const automations = new Automations({
@@ -172,8 +172,8 @@ class LogsFood extends AgentAutomation<{ dish: string }> {
 }
 
 test('an agent automation runs Codex in its own writable folder with the instruction and the match, and returns what the agent said', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'proactive-test-'),
+  await using directory = await new TemporaryFiles().directory(
+    'proactive-test-',
   );
   const seen = join(directory.path, 'seen.json');
   const executable = join(directory.path, 'codex');

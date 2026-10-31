@@ -1,14 +1,10 @@
 import assert from 'node:assert/strict';
-import {
-  mkdtempDisposable,
-  readFile,
-  readdir,
-  writeFile,
-} from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
@@ -175,8 +171,8 @@ test('planning briefs follow new meetings and related evidence, without retrigge
 });
 
 test('brief generation replaces one file atomically and preserves it on failure', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'proactive-test-'),
+  await using directory = await new TemporaryFiles().directory(
+    'proactive-test-',
   );
   const executable = join(directory.path, 'codex');
   // The real Codex service requires an authenticated, paid network request.
@@ -234,8 +230,8 @@ await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1],
 });
 
 test('a new planning match writes its brief and tells the user where it is', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'proactive-test-'),
+  await using directory = await new TemporaryFiles().directory(
+    'proactive-test-',
   );
   const executable = join(directory.path, 'codex');
   // The real Codex service requires an authenticated, paid network request.

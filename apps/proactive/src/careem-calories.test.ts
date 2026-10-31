@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
@@ -132,8 +132,8 @@ test('a receipt whose body Mail downloads after the baseline makes the agent act
     (sql) => sql.end(),
   );
   await createMailSchema(sql);
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'proactive-test-'),
+  await using directory = await new TemporaryFiles().directory(
+    'proactive-test-',
   );
   const shown = join(directory.path, 'shown.jsonl');
   const asked = join(directory.path, 'asked.jsonl');

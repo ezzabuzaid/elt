@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
@@ -26,7 +25,7 @@ import { WebSource } from './web-source.ts';
 import { WebStream } from './web-stream.ts';
 
 test('ordinary links reach unlisted articles while feed pages and unchanged reruns survive', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: string[] = [];
   let revalidated = 0;
   await using upstream = await new HttpServer().start((request, response) => {
@@ -122,7 +121,7 @@ test('ordinary links reach unlisted articles while feed pages and unchanged reru
 });
 
 test('new URLs survive interruption, and only the page in flight downloads again', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -213,7 +212,7 @@ test('new URLs survive interruption, and only the page in flight downloads again
 });
 
 test('Markdown pages supply links, and feeds declared on crawled pages are read completely', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -308,7 +307,7 @@ test('Markdown pages supply links, and feeds declared on crawled pages are read 
 });
 
 test('an interruption during a long stretch of archive pages keeps the progress saved up to a second before it', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: { url: string; at: number }[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);

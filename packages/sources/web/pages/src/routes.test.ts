@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 import type { Response } from 'got';
@@ -121,7 +120,7 @@ async function pipeline(
 }
 
 test('the routes stream stores each URL a listing named, so a walk from the home page that a list links reaches the program page that its menu and its robots.txt sitemap name', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using site = await new HttpServer().start(
     website(() => ({
       '/': '<nav><a href="/startups">Startups</a><a href="/pricing">Pricing</a></nav>',
@@ -181,7 +180,7 @@ test('the routes stream stores each URL a listing named, so a walk from the home
 });
 
 test('a list that links the program page and the home page keeps both routes to the program page, in the same run when the routes copy comes first', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using site = await new HttpServer().start(
     website(() => ({
       '/': '<nav><a href="/startups">Startups</a></nav>',
@@ -222,7 +221,7 @@ test('a list that links the program page and the home page keeps both routes to 
 });
 
 test('a list read again replaces its routes, and a listing that the run does not read keeps its rows', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   let programPages = ['/startups', '/startup-credits'];
   await using site = await new HttpServer().start(
     website(() => ({
@@ -312,7 +311,7 @@ async function read(
 }
 
 test('a run that stops after the web stream commits its crawl and before the routes stream commits gives those routes in the next run', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using site = await new HttpServer().start(
     website(() => ({
       '/': '<nav><a href="/startups">Startups</a></nav>',
@@ -349,7 +348,7 @@ test('a run that stops after the web stream commits its crawl and before the rou
 });
 
 test('the state of the web stream drops the routes that the routes stream committed, also when each run is a new process', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using site = await new HttpServer().start(
     website(() => ({
       '/startups': '<p>Credits.</p>',
@@ -388,7 +387,7 @@ test('the state of the web stream drops the routes that the routes stream commit
 });
 
 test('a web stream whose state starts over numbers its routes after those the routes stream committed, so a run that stops before they are committed loses none', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using site = await new HttpServer().start(
     website(() => ({
       '/': '<nav><a href="/startups">Startups</a></nav>',
@@ -433,7 +432,7 @@ test('a web stream whose state starts over numbers its routes after those the ro
 });
 
 test('a page that LinkReader does not admit in a later run keeps the routes of its earlier read', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   let links = '<a href="/listed">Listed</a>';
   await using site = await new HttpServer().start(
     website(() => ({
@@ -484,7 +483,7 @@ test('a page that LinkReader does not admit in a later run keeps the routes of i
 });
 
 test('a failure that the source reports says whether it is a page, so a host can leave out a broken sitemap', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using site = await new HttpServer().start((request, response) => {
     if (request.url === '/robots.txt')
       response

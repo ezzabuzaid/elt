@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtempDisposable, readdir, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { gzipSync } from 'node:zlib';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
@@ -47,7 +47,7 @@ test('HTTP resource scope exit cancels queued requests without caller cancellati
     requests.push(request.url);
     response.end('ready');
   });
-  await using directory = await mkdtempDisposable(join(tmpdir(), 'web-http-'));
+  await using directory = await new TemporaryFiles().directory('web-http-');
   await promisify(execFile)(
     process.execPath,
     [
@@ -137,8 +137,8 @@ test('production cache survives process restarts, revalidates fresh responses an
   });
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
-  await using directory = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
-  await using cwd = await mkdtempDisposable(join(tmpdir(), 'web-cwd-'));
+  await using directory = await new TemporaryFiles().directory('web-cache-');
+  await using cwd = await new TemporaryFiles().directory('web-cwd-');
   const cachePath = join(directory.path, 'http', 'web-http.sqlite');
   async function run(
     checkpointPath = checkpoints.path,
@@ -246,7 +246,7 @@ test('persistent HTTP cache respects negotiated Markdown and HTML metadata', asy
   });
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
-  await using directory = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using directory = await new TemporaryFiles().directory('web-cache-');
   for (const expected of [1, 0, 1]) {
     const result = await promisify(execFile)(
       process.execPath,
@@ -279,9 +279,7 @@ for (const revalidate of [false, true])
     let fail = !revalidate;
     await using database = await new Sqlite().database();
     await using checkpoints = await new Sqlite().database();
-    await using directory = await mkdtempDisposable(
-      join(tmpdir(), 'web-cache-'),
-    );
+    await using directory = await new TemporaryFiles().directory('web-cache-');
     await using upstream = await new HttpServer().start((request, response) => {
       response.setHeader('cache-control', 'public, max-age=3600');
       if (request.url === '/feed.xml') {

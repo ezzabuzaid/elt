@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
@@ -238,7 +237,7 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
 }
 
 test('a listing whose stylesheet jsdom cannot parse is stored, and nothing is written to the console', async (t) => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   // A stray closing brace; jsdom reports it as "Could not parse CSS stylesheet".
   await using upstream = await market({
     ad: '<style>.a{color:red}}</style>Sponsored',
@@ -271,7 +270,7 @@ test('a listing whose stylesheet jsdom cannot parse is stored, and nothing is wr
 });
 
 test('every listing of a paginated category is stored with its JSON-LD fields', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using upstream = await market({ ad: 'Sponsored', price: '4499' });
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
@@ -326,7 +325,7 @@ test('every listing of a paginated category is stored with its JSON-LD fields', 
 });
 
 test('listings that a listing page links as related ads are neither downloaded nor stored', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using upstream = await market({ ad: 'Sponsored', price: '4499' });
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
@@ -358,7 +357,7 @@ test('listings that a listing page links as related ads are neither downloaded n
 });
 
 test('every listing of a category without pagination is stored, and nothing else is downloaded', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using upstream = await category({
     '287909010': () => [motorcycle('287909010', '4499')],
     '287909011': () => [motorcycle('287909011', '3999')],
@@ -396,7 +395,7 @@ test('every listing of a category without pagination is stored, and nothing else
 });
 
 test('a category crawl reads only the category and its next pages, not the filters and the other-language category they link', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   // The live page of /en/cars/motorcycles/2000 on 2026-10-26 links its Arabic twin twice: an hreflang alternate and the language switch.
   // That category fits on one page; the rel="next" link is the one the live /en/cars/motorcycles carries (backlog #2993).
   // The year filters and the city/brand/model/year filters are linked from the listing pages (listingPage).
@@ -464,7 +463,7 @@ test('a category crawl reads only the category and its next pages, not the filte
 });
 
 test('listings of every real schema.org shape are stored with their mapped fields', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using upstream = await category({
     '287909010': () => [motorcycle('287909010', '4499')],
     '287800001': () => [product('287800001')],
@@ -564,7 +563,7 @@ test('listings of every real schema.org shape are stored with their mapped field
 });
 
 test('a listing page without an object for its listing fails, and the next run tries it again', async (t) => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const later = shiftedClock(t);
   let broken = true;
   await using upstream = await category({
@@ -620,7 +619,7 @@ test('a listing page without an object for its listing fails, and the next run t
 });
 
 test('a listing whose offer has no price fails, and the next run tries it again', async (t) => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const later = shiftedClock(t);
   let broken = true;
   await using upstream = await category({
@@ -680,7 +679,7 @@ test('a listing whose offer has no price fails, and the next run tries it again'
 });
 
 test('an unchanged rerun writes nothing', async (t) => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const later = shiftedClock(t);
   await using upstream = await market({ ad: 'Sponsored', price: '4499' });
   await using database = await new Sqlite().database();
@@ -709,7 +708,7 @@ test('an unchanged rerun writes nothing', async (t) => {
 });
 
 test('a listing whose JSON-LD changes after it is stored keeps its first values, and its page is not requested again', async (t) => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const later = shiftedClock(t);
   const page = { ad: 'Sponsored', price: '4499' };
   await using upstream = await market(page);
@@ -757,7 +756,7 @@ test('a listing whose JSON-LD changes after it is stored keeps its first values,
 });
 
 test('a rerun requests only the category and the listings that are new', async (t) => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   const later = shiftedClock(t);
   const pages: Record<string, () => object[]> = {
     '287909010': () => [motorcycle('287909010', '4499')],
@@ -793,7 +792,7 @@ test('a rerun requests only the category and the listings that are new', async (
 });
 
 test('the listing stored is the JSON-LD object whose url has the listing id of the page', async () => {
-  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  await using cache = await new TemporaryFiles().directory('web-cache-');
   await using upstream = await category({
     // Another listing's object comes first, as a related ad would.
     '287909020': () => [
