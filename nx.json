@@ -19,33 +19,15 @@
       "options": {
         "targetName": "lint"
       }
-    }
+    },
+    "@zukhruf/nx/lint"
   ],
   "targetDefaults": {
     "format": {
       "command": "prettier --write {projectRoot}"
     },
-    "lint": {
-      "dependsOn": ["format"],
-      "inputs": [
-        "default",
-        "^default",
-        "{workspaceRoot}/eslint.config.mjs",
-        {
-          "externalDependencies": [
-            "eslint",
-            "typescript-eslint",
-            "eslint-plugin-import-x",
-            "eslint-plugin-functional",
-            "@nx/eslint-plugin",
-            "@nx/devkit",
-            "jsonc-eslint-parser"
-          ]
-        }
-      ]
-    },
     "typecheck": {
-      "dependsOn": ["lint", "..."]
+      "dependsOn": ["format", "lint", "..."]
     }
   },
   "sync": {
