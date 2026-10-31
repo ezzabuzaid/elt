@@ -1,4 +1,5 @@
 import type { OAuth2Client } from 'google-auth-library';
+import pMemoize from 'p-memoize';
 
 import type { GoogleOAuthApp } from './app.ts';
 import type { GoogleOAuthCredential } from './credential.ts';
@@ -20,7 +21,6 @@ import { GoogleGrant } from './grant.ts';
  */
 export class GoogleGrantOpener {
   readonly #app: GoogleOAuthApp;
-  readonly #opening = new Map<string, Promise<GoogleGrantSession>>();
   readonly #store: GoogleGrantStore;
 
   constructor(options: {
@@ -36,16 +36,12 @@ export class GoogleGrantOpener {
    * `scopes`. Concurrent callers for one ref and the same scopes share a
    * single read and refresh. The first refresh has run before this resolves.
    */
-  open(ref: string, scopes: readonly string[]): Promise<GoogleGrantSession> {
-    const key = JSON.stringify([ref, scopes]);
-    const pending = this.#opening.get(key);
-    if (pending) return pending;
-    const opening = this.#open(ref, scopes).finally(() =>
-      this.#opening.delete(key),
-    );
-    this.#opening.set(key, opening);
-    return opening;
-  }
+  readonly open = pMemoize(
+    (ref: string, scopes: readonly string[]) => this.#open(ref, scopes),
+    // Nothing is kept: only concurrent opens share one, and the next open
+    // reads the grant again.
+    { cache: false, cacheKey: (key) => JSON.stringify(key) },
+  );
 
   revoke(credential: GoogleOAuthCredential): Promise<void> {
     return this.#app.revoke(new GoogleGrant(credential));
