@@ -15,6 +15,6 @@
     "@zukhruf/sqlite-snapshot": "^0.3.52"
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.6.3"
+    "@zukhruf/testing": "^0.6.4"
   }
 }
