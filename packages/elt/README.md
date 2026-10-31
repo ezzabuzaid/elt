@@ -11,15 +11,18 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 This example copies two streams of Apple Notes into one SQLite file. The pipeline types come from `elt`. The SQLite destination, its checkpoint store and its sync history come from `elt-sqlite`. Each Apple source has its own package, `@workspace/source-apple-<name>` in `packages/sources/apple`. The later examples use `notes`, `sqlite`, `checkpoints` and `history` from this example.
 
 ```ts
+import { homedir } from 'node:os';
+
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { noteStorePath } from '@workspace/sdk-apple-notes';
 import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
 
-const notes = new AppleNotesSource();
+const notes = new AppleNotesSource({ path: noteStorePath(homedir()) });
 const sqlite = new SQLiteDestination({ path: './notes.sqlite' });
 const checkpoints = new SQLiteCheckpointStore({ path: './checkpoints.sqlite' });
 const history = new SQLiteSyncHistory();

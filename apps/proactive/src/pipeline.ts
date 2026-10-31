@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
@@ -12,6 +13,9 @@ import {
 } from '@workspace/sdk-apple-accounts';
 import { CalendarStore } from '@workspace/sdk-apple-eventkit';
 import { mailDirectory } from '@workspace/sdk-apple-mail';
+import { chatDatabasePath } from '@workspace/sdk-apple-messages';
+import { slackDesktopDirectory } from '@workspace/sdk-slack-desktop';
+import { whatsappContainer } from '@workspace/sdk-whatsapp-desktop';
 import { AppleCalendarSource } from '@workspace/source-apple-calendar/apple-calendar-source';
 import { AppleMailSource } from '@workspace/source-apple-mail/apple-mail-source';
 import { AppleMessagesSource } from '@workspace/source-apple-messages/apple-messages-source';
@@ -29,17 +33,24 @@ const schema = 'apple_messages';
 // Messages, every stream, loaded into its raw schema; readers see each stream
 // as marts.messages_<stream>. macOS grants Full Disk Access, which chat.db
 // needs, to the terminal that runs proactive.
-const source = new AppleMessagesSource();
+const source = new AppleMessagesSource({
+  path: chatDatabasePath(homedir()),
+  home: homedir(),
+});
 const destination = new PostgresDestination({ url: warehouseUrl, schema });
 const { streams } = await source.discover();
-const slack = new SlackDesktopSource();
+const slack = new SlackDesktopSource({
+  directory: slackDesktopDirectory(homedir()),
+});
 const slackDestination = new PostgresDestination({
   url: warehouseUrl,
   schema: 'slack',
 });
 // WhatsApp's personal chats, with who the people in them are; readers see
 // each stream as marts.whatsapp_<stream>.
-const whatsapp = new WhatsAppDesktopSource();
+const whatsapp = new WhatsAppDesktopSource({
+  container: whatsappContainer(homedir()),
+});
 const whatsappDestination = new PostgresDestination({
   url: warehouseUrl,
   schema: 'whatsapp',
@@ -51,6 +62,7 @@ const calendar = new AppleCalendarSource({
     fileURLToPath(
       import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
     ),
+    { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
   ),
   startAt: new Date().toISOString(),
   endAt: calendarEnd.toISOString(),
@@ -60,8 +72,8 @@ const calendarDestination = new PostgresDestination({
   schema: 'apple_calendar',
 });
 const mail = new AppleMailSource({
-  path: mailDirectory,
-  accounts: new AccountsStore(accountsStorePath),
+  path: mailDirectory(homedir()),
+  accounts: new AccountsStore(accountsStorePath(homedir())),
 });
 const mailDestination = new PostgresDestination({
   url: warehouseUrl,

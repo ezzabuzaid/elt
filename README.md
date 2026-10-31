@@ -64,14 +64,16 @@ A pipeline declares connections of copies; the smallest one copies Notes into SQ
 
 ```ts
 import { mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import { SQLiteDestination, SQLiteSyncHistory } from '@workspace/elt-sqlite';
+import { noteStorePath } from '@workspace/sdk-apple-notes';
 import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
 
 await mkdir('./outputs', { recursive: true });
 
-const source = new AppleNotesSource();
+const source = new AppleNotesSource({ path: noteStorePath(homedir()) });
 const destination = new SQLiteDestination({
   path: './outputs/notes.sqlite',
 });
@@ -112,14 +114,23 @@ Reminders reads through EventKit, so Reminders.app need not be open. Grant the p
 
 ```ts
 import { mkdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import { SQLiteDestination, SQLiteSyncHistory } from '@workspace/elt-sqlite';
+import { RemindersStore } from '@workspace/sdk-apple-eventkit';
 import { AppleRemindersSource } from '@workspace/source-apple-reminders/apple-reminders-source';
 
 await mkdir('./outputs', { recursive: true });
 
-const source = new AppleRemindersSource();
+const source = new AppleRemindersSource({
+  store: new RemindersStore(
+    fileURLToPath(
+      import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+    ),
+    { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+  ),
+});
 const destination = new SQLiteDestination({
   path: './outputs/reminders.sqlite',
 });
@@ -185,6 +196,8 @@ Keep the copy ID and both SQLite files between runs. The checkpoint store must u
 ### Mail: local messages and attachments
 
 ```ts
+import { homedir } from 'node:os';
+
 import {
   AccountsStore,
   accountsStorePath,
@@ -193,8 +206,8 @@ import { mailDirectory } from '@workspace/sdk-apple-mail';
 import { AppleMailSource } from '@workspace/source-apple-mail/apple-mail-source';
 
 const mail = new AppleMailSource({
-  path: mailDirectory,
-  accounts: new AccountsStore(accountsStorePath),
+  path: mailDirectory(homedir()),
+  accounts: new AccountsStore(accountsStorePath(homedir())),
 });
 await new Pipeline({
   history,
@@ -230,6 +243,7 @@ const calendar = new AppleCalendarSource({
     fileURLToPath(
       import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
     ),
+    { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
   ),
   startAt: '2026-09-01T00:00:00.000Z',
   endAt: '2026-12-01T00:00:00.000Z',
