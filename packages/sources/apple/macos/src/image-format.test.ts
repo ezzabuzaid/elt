@@ -358,7 +358,7 @@ test('the ready parser preserves automatically detected multilingual text in all
   }
 });
 
-test('the parser keeps processing queued images while its other OCR workers are blocked', async () => {
+test('the parser keeps processing queued images while its other OCR workers are blocked', async (t) => {
   await using directory = await new TemporaryFiles().directory(
     'vision-concurrent-',
   );
@@ -394,13 +394,15 @@ test('the parser keeps processing queued images while its other OCR workers are 
   );
   results.catch(() => undefined);
   try {
-    const deadline = Date.now() + 5_000;
-    while (completed < queued.length - paused.length && Date.now() < deadline)
-      await setTimeout(10);
-    assert.equal(
-      completed,
-      queued.length - paused.length,
-      'the available worker must drain the queue while the others are paused',
+    await t.waitFor(
+      () => {
+        assert.equal(
+          completed,
+          queued.length - paused.length,
+          'the available worker must drain the queue while the others are paused',
+        );
+      },
+      { interval: 10, timeout: 5_000 },
     );
   } finally {
     for (const pid of paused) process.kill(pid, 'SIGCONT');
