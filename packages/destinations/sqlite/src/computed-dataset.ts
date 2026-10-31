@@ -4,7 +4,12 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { transaction } from '@zukhruf/sqlite-transaction';
 
-import { type Connection, DerivedDataset, type Rule } from '@workspace/elt';
+import {
+  type Connection,
+  DerivedDataset,
+  type RefreshTrigger,
+  type Rule,
+} from '@workspace/elt';
 
 import { SQLiteDestination } from './sqlite-destination.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
@@ -22,7 +27,7 @@ const engineColumns = {
     'SHA-256 of the input the row was made from; the row is made again when its input changes.',
   rule: 'What made the row, such as the parser of its format or the model; the row is made again when that changes. unsupported: the rule does not handle the input.',
   status:
-    'computed: the rule made the row. empty: the rule found nothing to keep, such as a photo without words. failed: the rule failed, error says why, and the next refresh tries again.',
+    'computed: the rule made the row. empty: the rule found nothing to keep, such as a photo without words. failed: the rule failed, error says why, and the refresh after the passes tries again, at most once for each pass.',
   error: 'Why the rule failed. NULL unless status is failed.',
 };
 
@@ -35,8 +40,10 @@ type Stored = {
 // Data computed on write from what the pipeline's copies load: a rule makes
 // one output row for each input, such as the text of each stored file, as
 // pgai's vectorizer keeps an embedding beside each row. The pipeline refreshes
-// it after its passes; each refresh makes the rows whose input or rule
-// changed, tries failed rows again, and deletes the rows whose input is gone.
+// it as its copies commit; each refresh makes the rows whose input or rule
+// changed and deletes the rows whose input is gone, and a refresh after the
+// passes also tries failed rows again; the passes try each input at most
+// once, so a failing rule is asked once a pass.
 // A rule's failure on one input is that row's; it never fails the load.
 // Readers query the view name, over the table raw_<name>, which a refresh
 // replaces when its declaration changes, since it is rebuilt from the inputs.
@@ -124,9 +131,11 @@ export class ComputedDataset<
   override async refresh({
     connections,
     signal,
+    trigger,
   }: {
     readonly connections: readonly Connection<SQLiteTable>[];
     readonly signal?: AbortSignal;
+    readonly trigger: RefreshTrigger;
   }): Promise<void> {
     const inputs = this.#inputs(connections);
     using database = new DatabaseSync(this.#into.path, {
@@ -222,10 +231,16 @@ export class ComputedDataset<
       if (
         before !== undefined &&
         before.inputHash === inputHash &&
-        before.rule === rule &&
-        before.status !== 'failed'
-      )
-        continue;
+        before.rule === rule
+      ) {
+        // A failed input waits for the refresh after the passes.
+        if (before.status !== 'failed' || trigger.kind === 'commit') continue;
+      }
+      // The passes try each input, as it is now, at most once: the refresh
+      // after them leaves what a commit refresh of the same passes tried.
+      const attempt = `${id}\0${inputHash}\0${rule}`;
+      if (trigger.tried.has(attempt)) continue;
+      if (trigger.kind === 'commit') trigger.tried.add(attempt);
       due.push({ id, input, inputHash, rule });
     }
     // A pool of calls, each taking the next batch once its own committed, so

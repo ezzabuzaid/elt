@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import type { DatabaseSync } from 'node:sqlite';
+import { type DatabaseSync, DatabaseSync as NodeDatabase } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { Latch } from '@zukhruf/async';
+import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
@@ -22,6 +24,7 @@ import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
+  View,
 } from '@workspace/elt-sqlite';
 import {
   AdaptiveRevisit,
@@ -89,11 +92,16 @@ function listEveryCrawl(list: string, revisit: RevisitPolicy<unknown>) {
 
 // A website that answers each path with its HTML, its own content type, or 404.
 function website(
-  paths: () => Record<string, string | { type: string; body: string }>,
+  paths: () => Record<
+    string,
+    string | { type: string; body: string } | { status: number }
+  >,
 ) {
   return (request: IncomingMessage, response: ServerResponse) => {
     const answer = paths()[request.url ?? ''];
     if (answer === undefined) response.writeHead(404).end();
+    else if (typeof answer !== 'string' && 'status' in answer)
+      response.writeHead(answer.status).end();
     else if (typeof answer === 'string')
       response.writeHead(200, { 'content-type': 'text/html' }).end(answer);
     else
@@ -189,6 +197,182 @@ test('the routes stream stores each URL a listing named, so a walk from the home
       .map((row) => row.listingUrl),
     [`${site.origin}/crawled-sitemap.xml`],
   );
+});
+
+test('while the crawl of an input goes on, the routes of each checkpoint reach their table and a view over the pages appears', async () => {
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  const rest = new Latch();
+  await using site = await new HttpServer().start(async (request, response) => {
+    // The program page answers only once the test saw what loaded before it.
+    if (request.url === '/startups') await rest.wait();
+    website(() => ({
+      '/': '<nav><a href="/startups">Startups</a></nav>',
+      '/startups': '<p>Credits.</p>',
+      '/robots.txt': { type: 'text/plain', body: '' },
+    }))(request, response);
+  });
+  await using list = await new HttpServer().start(
+    website(() => ({
+      '/programs': `<main><a href="${site.origin}/">Vercel</a></main>`,
+    })),
+  );
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const input = `${list.origin}/programs`;
+  const source = new WebSource({
+    cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
+    streams: [{ stream: programs(site.origin), inputs: [input] }],
+  });
+  const destination = new SQLiteDestination({ path: database.path });
+  const ingestion = new Pipeline({
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'web',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({ path: checkpoints.path }),
+        steps: (await source.discover()).streams.map(
+          (stream) =>
+            new Copy(stream, destination.table(stream.name), {
+              id: `web:${stream.name}`,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+        ),
+      }),
+    ],
+    derived: [
+      new View({
+        into: destination,
+        name: 'page_paths',
+        description: 'The path of each page.',
+        columns: { path: 'The path of the page.' },
+        sql: 'SELECT path FROM programs',
+      }),
+    ],
+  });
+  // What a reader finds while the run writes, waiting out a commit.
+  const found = (sql: string) => {
+    using reader = new NodeDatabase(database.path, {
+      readOnly: true,
+      timeout: 5_000,
+    });
+    try {
+      return reader
+        .prepare(sql)
+        .all()
+        .map((row) => ({ ...row }));
+    } catch (error) {
+      if (error instanceof Error && /^no such table/.test(error.message))
+        return [];
+      throw error;
+    }
+  };
+
+  const run = ingestion.run();
+  try {
+    await timebox(
+      () => {
+        assert.deepEqual(
+          found(
+            "SELECT listingUrl, how, url FROM programs_routes WHERE how = 'list-item'",
+          ),
+          [{ listingUrl: input, how: 'list-item', url: `${site.origin}/` }],
+        );
+        assert.deepEqual(found('SELECT path FROM page_paths'), [{ path: '/' }]);
+      },
+      {
+        minTimeout: 10,
+        maxRetryTime: 10_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
+  } finally {
+    rest.open();
+    await run;
+  }
+
+  assert.deepEqual(
+    found('SELECT path FROM page_paths ORDER BY path').map(({ path }) => path),
+    ['/', '/startups'],
+  );
+});
+
+test('an input whose crawl the expansion budget holds is reported incomplete, and complete since the run that finishes it', async () => {
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  // A home page that a list links, on a website whose robots.txt names more
+  // sitemaps than one run reads of a site that the crawl expands one step.
+  const children = 12;
+  await using site = await new HttpServer().start(
+    website(() => ({
+      '/': '<p>A large company.</p>',
+      '/robots.txt': {
+        type: 'text/plain',
+        body: `Sitemap: ${site.origin}/sitemap-index.xml`,
+      },
+      '/sitemap-index.xml': {
+        type: 'application/xml',
+        body: `<sitemapindex>${Array.from({ length: children }, (_, child) => `<sitemap><loc>${site.origin}/sitemaps/${child}.xml</loc></sitemap>`).join('')}</sitemapindex>`,
+      },
+      ...Object.fromEntries(
+        Array.from({ length: children }, (_, child) => [
+          `/sitemaps/${child}.xml`,
+          {
+            type: 'application/xml',
+            body: `<urlset><url><loc>${site.origin}/product-${child}</loc></url></urlset>`,
+          },
+        ]),
+      ),
+    })),
+  );
+  await using list = await new HttpServer().start(
+    website(() => ({
+      '/programs': `<main><a href="${site.origin}/">Company</a></main>`,
+    })),
+  );
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const input = `${list.origin}/programs`;
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [{ stream: programs(site.origin), inputs: [input] }],
+    }),
+    database.path,
+    checkpoints.path,
+    false,
+  );
+  const crawls = () =>
+    database.connection
+      .prepare('SELECT inputUrl, complete, since FROM programs_crawls')
+      .all()
+      .map(({ inputUrl, complete, since }) => ({ inputUrl, complete, since }));
+
+  await ingestion.run();
+  const held = crawls();
+  // Two more runs read the rest of the sitemaps, a few each.
+  await ingestion.run();
+  await ingestion.run();
+  const finished = crawls();
+  await ingestion.run();
+
+  assert.deepEqual(
+    held.map(({ inputUrl, complete }) => ({ inputUrl, complete })),
+    [{ inputUrl: input, complete: 0 }],
+  );
+  assert.deepEqual(
+    finished.map(({ inputUrl, complete }) => ({ inputUrl, complete })),
+    [{ inputUrl: input, complete: 1 }],
+  );
+  assert.ok(
+    String(finished[0]?.since) > String(held[0]?.since),
+    JSON.stringify({ held, finished }),
+  );
+  // A crawl that is complete again keeps the time since which it is complete.
+  assert.deepEqual(crawls(), finished);
 });
 
 test('a list that links the program page and the home page keeps both routes to the program page, in the same run when the routes copy comes first', async () => {
@@ -295,8 +479,9 @@ test('a list read again replaces its routes, and a listing that the run does not
 });
 
 // One read as the engine runs it, which keeps each stream's last state in
-// states; stop ends it once the web stream has ended, as a process that
-// stops there. It gives the routes that the read loaded, "listing how url".
+// states. With stop, no commit of the routes stream lands, as a process that
+// stops after the web stream's commits and before the routes stream's. It
+// gives the routes that the read loaded, "listing how url".
 async function read(
   source: WebSource,
   states: Map<string, unknown>,
@@ -313,10 +498,12 @@ async function read(
   for await (const message of source.read(catalog, states)) {
     if (message instanceof StreamStatus) {
       assert.notEqual(message.status, 'FAILED', String(message.error));
-      if (stop && message.stream === 'programs' && message.status === 'ENDED')
-        break;
     } else if ('type' in message) {
-      if (message.type === 'STATE') states.set(message.stream, message.state);
+      if (
+        message.type === 'STATE' &&
+        !(stop && message.stream === 'programs_routes')
+      )
+        states.set(message.stream, message.state);
     } else if (message.stream === 'programs_routes') {
       const { listingUrl, how, url } = route.parse(message.data);
       records.push(`${listingUrl} ${how} ${url}`);
@@ -352,7 +539,7 @@ test('a run that stops after the web stream commits its crawl and before the rou
     ],
   };
   const states = new Map<string, unknown>();
-  assert.deepEqual(await read(new WebSource(options), states, true), []);
+  await read(new WebSource(options), states, true);
 
   const records = await read(new WebSource(options), states, false);
 
@@ -585,3 +772,42 @@ function routes(connection: DatabaseSync) {
     )
     .toSorted();
 }
+
+test('an input whose crawl reaches its end with a page that failed is reported complete, as the failed page is due again later', async () => {
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  await using site = await new HttpServer().start(
+    website(() => ({
+      '/': '<p>A company.</p>',
+      '/gone': { status: 500 },
+    })),
+  );
+  // The list also links a page that fails after Got's retries.
+  await using list = await new HttpServer().start(
+    website(() => ({
+      '/programs': `<main><a href="${site.origin}/">Company</a><a href="${site.origin}/gone">Gone</a></main>`,
+    })),
+  );
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const input = `${list.origin}/programs`;
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [{ stream: programs(site.origin), inputs: [input] }],
+    }),
+    database.path,
+    checkpoints.path,
+    false,
+  );
+
+  await assert.rejects(ingestion.run());
+
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT inputUrl, complete FROM programs_crawls')
+      .all()
+      .map(({ inputUrl, complete }) => ({ inputUrl, complete })),
+    [{ inputUrl: input, complete: 1 }],
+  );
+});

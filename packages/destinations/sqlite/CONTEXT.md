@@ -37,7 +37,7 @@ The row that a computed dataset keeps for one key: the key, the input hash, the 
 _Avoid_: Result, record
 
 **Status**:
-`computed` when the rule made a value, `empty` when it found nothing to keep, and `failed` when it failed on the input.
+`computed` when the rule made a value, `empty` when it found nothing to keep, and `failed` when it failed on the input. The refresh after the next pass tries a `failed` row again.
 _Avoid_: State (a checkpoint holds state), outcome
 
 **Input hash**:

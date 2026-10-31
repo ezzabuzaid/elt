@@ -53,6 +53,8 @@ class Replicated<Target extends DestinationTarget> {
 
   readonly copy: Copy<Target>;
   readonly observe: ((progress: CopyProgress<Target>) => void) | undefined;
+  // Told each time the copy made rows visible in its target.
+  readonly published: () => void;
   readonly files: FileTransfer;
   readonly #source: Source;
 
@@ -61,9 +63,11 @@ class Replicated<Target extends DestinationTarget> {
     source: Source,
     destination: Destination<Target>,
     observe: ((progress: CopyProgress<Target>) => void) | undefined,
+    published: () => void,
   ) {
     this.copy = copy;
     this.observe = observe;
+    this.published = published;
     this.#source = source;
     this.files = new FileTransfer(
       copy.configuration.fileReads,
@@ -119,16 +123,19 @@ class Replicated<Target extends DestinationTarget> {
 // its stage committed. A copy that fails does not stop the others. Once signal
 // aborts, as Airbyte's worker stops a cancelled sync, no further message is
 // applied: each copy still open keeps what it committed and is cancelled.
+// committed is told each time a copy made rows visible in its target: at
+// each commit, and when a reload replaced the target.
 export async function replicate<Target extends DestinationTarget>(
   source: Source,
   destination: Destination<Target>,
   checkpoints: CheckpointStore | undefined,
   copies: readonly Copy<Target>[],
   observe: ((progress: CopyProgress<Target>) => void) | undefined,
+  committed: () => void,
   signal: AbortSignal | undefined,
 ): Promise<CopyOutcome<Target>[]> {
   const replications = copies.map(
-    (copy) => new Replicated(copy, source, destination, observe),
+    (copy) => new Replicated(copy, source, destination, observe, committed),
   );
   const bindings = new Map<string, CheckpointBinding>();
   for (const { copy } of replications)
@@ -276,6 +283,7 @@ async function transfer<Target extends DestinationTarget>(
             // A reload replaces the target only once every partition read.
             if (replication.failures.length === 0 && stage.reloading) {
               await stage.complete();
+              replication.published();
               if (incremental(replication)) {
                 const { run, id } = checkpoint(replication);
                 if (replication.resumes) await run.reloaded(id);
@@ -414,6 +422,9 @@ async function commit<Target extends DestinationTarget>(
   replication.pending.count = 0;
   replication.pending.deleted = 0;
   await replication.files.reconcile(started(replication).values);
+  // The commit ends once its stored files are reconciled: a refresh that
+  // starts earlier could read a file the reconcile still needs.
+  replication.published();
   replication.report();
 }
 

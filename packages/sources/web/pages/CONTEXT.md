@@ -41,8 +41,12 @@ The fact "a listing named a URL", with how the listing named it and the text tha
 _Avoid_: Link (a link is one kind of route), edge, parent
 
 **Routes stream**:
-The second stream of a web stream, named `<name>_routes`. It has one row for each route, keyed by `inputUrl`, `listingUrl` and `url`. A listing that a crawl reads again completely replaces its rows, and an incomplete read only adds rows; a listing that a run does not read keeps them ([ADR 0011](./docs/adr/0011-a-web-stream-gives-its-routes-as-a-second-stream.md)).
+The second stream of a web stream, named `<name>_routes`. It has one row for each route, keyed by `inputUrl`, `listingUrl` and `url`. A listing that a crawl reads again completely replaces its rows, and an incomplete read only adds rows; a listing that a run does not read keeps them ([ADR 0011](./docs/adr/0011-a-web-stream-gives-its-routes-as-a-second-stream.md)). It reads beside its web stream and loads the routes of each checkpoint of the web stream ([ADR 0012](./docs/adr/0012-a-routes-stream-reads-beside-its-web-stream.md)).
 _Avoid_: Links table, graph, inlinks
+
+**Crawls stream**:
+The third stream of a web stream, named `<name>_crawls`. It has one row for each input: `complete`, whether the last crawl of the input reached its end with every page read, and `since`, when the crawl that first gave that value ended ([ADR 0013](./docs/adr/0013-a-crawls-stream-tells-when-the-crawl-of-an-input-is-complete.md)).
+_Avoid_: Watermark (a watermark orders events by time), status, progress
 
 **Web stream**:
 The configuration of one stream of the source: its name, its primary key, the readers of the crawler, the `include` patterns, the `expand` patterns and the extractor. The host gives each web stream its own inputs.

@@ -172,7 +172,7 @@ A computed dataset keeps one output row for each key, in the table `raw_<name>`.
 
 At each refresh, the computed dataset compares the inputs with the output rows. See [ADR 0002](./docs/adr/0002-a-computed-dataset-keeps-one-output-row-for-each-key.md):
 
-- It computes each key that is new, whose input or rule identity changed, or whose status is `failed`.
+- It computes each key that is new, or whose input or rule identity changed. The refresh after the passes also computes each key whose status is `failed`, once for each pass ([ADR 0007](./docs/adr/0007-each-pass-tries-an-input-at-most-once.md)).
 - It deletes each output row whose key no input has any more.
 - It keeps an output row when the rule stops handling its input.
 - Each call of the rule commits as it settles, so readers see the output rows as they land. See [ADR 0003](./docs/adr/0003-each-rule-call-commits-as-it-settles.md).
@@ -180,7 +180,7 @@ At each refresh, the computed dataset compares the inputs with the output rows. 
 
 ## When something fails
 
-- **A rule failure** gives an output row with the status `failed` and the reason in `error`. The run continues, and the next refresh tries the input again.
+- **A rule failure** gives an output row with the status `failed` and the reason in `error`. The run continues, and the refresh after the next pass tries the input again.
 - **A dataset failure**, for example a query that SQLite refuses, rejects the run, or it stops the watch.
 - **A copy that failed** keeps its last committed rows. The derived datasets read those rows.
 

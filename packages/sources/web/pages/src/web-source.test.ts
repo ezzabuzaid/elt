@@ -2181,8 +2181,10 @@ test("the sync history names each web stream's own inputs as its coverage", asyn
       })),
     [
       { stream: 'blog', inputs: [`${upstream.origin}/blog/feed.xml`] },
+      { stream: 'blog_crawls', inputs: [`${upstream.origin}/blog/feed.xml`] },
       { stream: 'blog_routes', inputs: [`${upstream.origin}/blog/feed.xml`] },
       { stream: 'news', inputs: [`${upstream.origin}/news/feed.xml`] },
+      { stream: 'news_crawls', inputs: [`${upstream.origin}/news/feed.xml`] },
       { stream: 'news_routes', inputs: [`${upstream.origin}/news/feed.xml`] },
     ],
   );

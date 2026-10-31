@@ -225,7 +225,10 @@ export abstract class Source<
   // it starts that stream, so a state that grows with its upstream, such as a
   // snapshot, is held only while its own stream reads. signal is the run's:
   // each extract receives it, so one waiting on its upstream can stop once
-  // the run is cancelled.
+  // the run is cancelled. Streams that read together are one task group, as
+  // Python's asyncio.TaskGroup: the first one that throws aborts the signal
+  // the others read with, so a stream that waits on another, such as a
+  // consumer of a sibling's outbox, ends with the read.
   async *read(
     catalog: readonly CopyConfiguration[],
     states: { get(stream: string): unknown },
@@ -236,16 +239,21 @@ export abstract class Source<
       new Set(catalog.map(({ stream }) => stream.name)).size !== catalog.length
     )
       throw new TypeError('A read selects each stream once');
+    const group = new AbortController();
+    const reading =
+      signal === undefined
+        ? group.signal
+        : AbortSignal.any([signal, group.signal]);
     await using context = await this.open(
       catalog.map(({ stream }) => stream),
-      signal,
+      reading,
       states,
     );
     if (!Number.isSafeInteger(this.concurrency) || this.concurrency < 1)
       throw new TypeError('Source concurrency must be a positive integer');
     yield* interleave(
       catalog.map((configuration) =>
-        this.#stream(configuration, states, context, signal),
+        grouped(this.#stream(configuration, states, context, reading), group),
       ),
       this.concurrency,
     );
@@ -425,4 +433,18 @@ export abstract class Source<
     context: Context,
     signal: AbortSignal | undefined,
   ): AsyncIterable<SourceMessage>;
+}
+
+// A stream that throws aborts its group before the throw reaches interleave,
+// which waits for every other stream to settle.
+async function* grouped<T>(
+  messages: AsyncGenerator<T>,
+  group: AbortController,
+): AsyncGenerator<T> {
+  try {
+    yield* messages;
+  } catch (error) {
+    group.abort(error);
+    throw error;
+  }
 }

@@ -142,16 +142,34 @@ export class Pipeline<Target extends DestinationTarget> {
   // cancelled, and the run rejects with the signal's reason, as fetch does. A
   // stop that comes after the passes ended only stops the derived data
   // catching up: the run ends as its passes did, and the next refresh goes on.
+  // While the passes read, each commit asks for a refresh in the background,
+  // so derived data follows a long pass. A background refresh's failure
+  // stops no pass, and rejects the run once the passes ended, as the failure
+  // of a micro-batch fails a Spark query; otherwise the run refreshes once
+  // more after the passes, and that refresh's failure rejects it.
   async run(options?: {
     readonly signal?: AbortSignal;
   }): Promise<CopyResult<Target>[]> {
     const signal = options?.signal;
     await this.#declare();
-    const passes = await Promise.allSettled(
-      this.connections.map((connection) =>
-        this.#pass(connection, connection.steps, signal),
-      ),
+    const refreshes = new DerivedRefreshes(
+      this.derived,
+      this.connections,
+      signal,
+      () => {},
     );
+    let passes: PromiseSettledResult<Pass<Target>>[];
+    try {
+      passes = await Promise.allSettled(
+        this.connections.map((connection) =>
+          this.#pass(connection, connection.steps, signal, () =>
+            refreshes.request('commit'),
+          ),
+        ),
+      );
+    } finally {
+      await refreshes.settled();
+    }
     // A pass rejects only with an error no history recorded, such as the
     // history's own; the run rejects with it once every other pass ended.
     const unrecorded = passes.find(
@@ -165,12 +183,8 @@ export class Pipeline<Target extends DestinationTarget> {
     // Derived data follows what the copies committed, also when some copies
     // failed; a dataset's own failure rejects the run as itself, since no
     // history recorded it.
-    for (const [index, dataset] of this.derived.entries())
-      await dataset.refresh({
-        connections: this.connections,
-        earlier: this.derived.slice(0, index),
-        signal,
-      });
+    if (refreshes.failure !== undefined) throw refreshes.failure.error;
+    await refreshes.refresh();
     if (results.some(({ failures }) => failures.length > 0))
       throw new PipelineError(results);
     return results.map(({ failures: _, cancelled: __, ...result }) => result);
@@ -204,7 +218,9 @@ export class Pipeline<Target extends DestinationTarget> {
       this.connections
         .filter(({ steps }) => steps.length > 0)
         .map((connection) =>
-          this.#watch(connection, watching, controller, stopped),
+          this.#watch(connection, watching, controller, stopped, () =>
+            refreshes.request('commit'),
+          ),
         ),
       Number.POSITIVE_INFINITY,
     );
@@ -216,7 +232,7 @@ export class Pipeline<Target extends DestinationTarget> {
         !next.done;
         next = await passes.next()
       ) {
-        refreshes.request();
+        refreshes.request('pass');
         yield next.value;
       }
     } finally {
@@ -235,6 +251,7 @@ export class Pipeline<Target extends DestinationTarget> {
     // Stops every connection's watch.
     everyone: AbortController,
     stopped: unknown[],
+    committed: () => void,
   ): AsyncGenerator<Pass<Target>> {
     const controller = new AbortController();
     const watching = AbortSignal.any([signal, controller.signal]);
@@ -371,7 +388,7 @@ export class Pipeline<Target extends DestinationTarget> {
         // reports what did not load, and a retry or the source's next change
         // loads it again. A stopping watch stops the pass it is running, as
         // run({ signal }) does.
-        const pass = await this.#pass(connection, steps, signal);
+        const pass = await this.#pass(connection, steps, signal, committed);
         for (const { copy, failures } of pass.outcomes) {
           const { name } = copy.from;
           loading.delete(name);
@@ -418,10 +435,12 @@ export class Pipeline<Target extends DestinationTarget> {
 
   // One read per pass, never held between watch passes: a long read can
   // block the upstream's own maintenance, such as SQLite WAL checkpoints.
+  // committed is told each time a copy of the pass made rows visible.
   async #pass(
     connection: Connection<Target>,
     steps: readonly Copy<Target>[],
     signal: AbortSignal | undefined,
+    committed: () => void,
   ): Promise<Pass<Target>> {
     const { source } = connection;
     // Asked before the read, so a store an app stopped writing is current
@@ -446,6 +465,7 @@ export class Pipeline<Target extends DestinationTarget> {
       connection.checkpoints,
       asked.flatMap((answer) => ('upstream' in answer ? [answer.copy] : [])),
       observed && ((progress) => advise(() => observed.progress(progress))),
+      committed,
       signal,
     );
     // A copy whose source could not tell how current its upstream is was not

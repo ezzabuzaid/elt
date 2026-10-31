@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { Latch } from '@zukhruf/async';
+import { Latch, untilAborted } from '@zukhruf/async';
 import { settleWithin } from '@zukhruf/testing/async';
 
 import {
@@ -636,6 +636,48 @@ test('closing a read releases every active extract before its shared context', a
   } finally {
     await read.return(undefined);
   }
+});
+
+test('a stream that fails outside its extract ends the read, also while another stream of the read waits for it', async () => {
+  const unreadable = new Error('the saved state of left is unreadable');
+  // right waits for what left would give it, as a routes stream waits for
+  // its web stream, and stops only once its signal aborts.
+  class WaitingSource extends ContextSource {
+    protected override readonly concurrency = 2;
+
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      _state: unknown,
+      _partition: null,
+      _context: ReadContext,
+      signal?: AbortSignal,
+    ): AsyncIterable<SourceMessage> {
+      await untilAborted(new Latch().wait(), signal);
+      yield record(configuration.stream.name, 'never');
+    }
+  }
+  const source = new WaitingSource();
+  const read = source.read(
+    [source.left, source.right].map(
+      (stream) => new Copy(stream, new NamedTarget(stream.name)).configuration,
+    ),
+    {
+      get: async (stream: string) => {
+        if (stream === 'left') throw unreadable;
+        return null;
+      },
+    },
+  );
+
+  const outcome = await settleWithin(
+    Array.fromAsync(read).then(
+      () => 'ended without the failure',
+      (error: unknown) => error,
+    ),
+    'the read to end with the failure of left',
+  );
+
+  assert.equal(outcome, unreadable);
 });
 
 test("a source's open reads the read's saved states, so a context can depend on a stream's checkpoint", async () => {

@@ -17,9 +17,10 @@ import {
 } from '@workspace/elt';
 import { AlwaysRevisit, WebCrawler } from '@workspace/sdk-web-crawler';
 
+import { crawlRecords, crawlsStream } from './crawls-stream.ts';
 import { webHttp } from './http/web-http.ts';
 import { routeRecords, routesState, routesStream } from './routes-stream.ts';
-import { WebScan, outbox } from './web-scan.ts';
+import { type Outbox, WebScan, outbox } from './web-scan.ts';
 import { WebStream } from './web-stream.ts';
 
 const provenance = {
@@ -88,6 +89,11 @@ function routesName(stream: WebStream) {
   return `${stream.name}_routes`;
 }
 
+// A web stream's crawls stream, named from it as its routes stream is.
+function crawlsName(stream: WebStream) {
+  return `${stream.name}_crawls`;
+}
+
 const inputUrls = z.array(z.url({ protocol: /^https?$/ })).min(1);
 
 /** A web stream without a usable input: none, or a URL that is not http or https. The user chooses the inputs, so only the user can fix it. */
@@ -106,12 +112,21 @@ export class WebSource extends Source<WebScan> {
     string,
     { readonly stream: WebStream; readonly inputs: readonly string[] }
   >;
+  // Each crawls stream's web stream and its inputs, by the crawls stream's name.
+  readonly #crawls: ReadonlyMap<
+    string,
+    { readonly stream: WebStream; readonly inputs: readonly string[] }
+  >;
   // Where the HTTP cache lives is the host's decision, like a destination's path.
   readonly #cachePath: string;
   // An optional crawler name selected by the host. Without one, requests
   // omit User-Agent and the crawler follows the default robots.txt group.
   readonly #userAgent: string | undefined;
   protected override readonly configErrors = [InputError];
+  // A routes stream reads beside its web stream, so it loads the routes of
+  // each checkpoint while the crawl goes on; the scan lets one web stream
+  // crawl at a time.
+  protected override readonly concurrency = 2;
   // Each input's earliest due URL by stream, as its last crawl left it; null when its crawl failed or nothing is ever due.
   readonly #due = new Map<string, Map<string, number | null>>();
   // Wakes a waiting observe() whenever an extraction ends, which can make a
@@ -162,14 +177,21 @@ export class WebSource extends Source<WebScan> {
         });
       }),
       ...streams.map(({ stream }) => routesStream(routesName(stream))),
+      ...streams.map(({ stream }) => crawlsStream(crawlsName(stream))),
     ]);
     this.#streams = new Map(streams.map((entry) => [entry.stream.name, entry]));
     this.#routes = new Map(
       streams.map((entry) => [routesName(entry.stream), entry]),
     );
+    this.#crawls = new Map(
+      streams.map((entry) => [crawlsName(entry.stream), entry]),
+    );
   }
   #entry({ name }: Stream) {
-    const entry = this.#streams.get(name) ?? this.#routes.get(name);
+    const entry =
+      this.#streams.get(name) ??
+      this.#routes.get(name) ??
+      this.#crawls.get(name);
     if (entry === undefined)
       throw new TypeError(`Stream ${name} is not a stream of this source`);
     return entry;
@@ -182,7 +204,9 @@ export class WebSource extends Source<WebScan> {
     return {
       description: this.#routes.has(stream.name)
         ? 'Each URL in the scope of the crawls of chosen websites and feeds that a listing named, as the listings read; a listing that is read again completely replaces its rows.'
-        : 'Records extracted from the pages crawled from chosen websites and feeds that match the configured URL patterns; listing disappearance does not imply deletion.',
+        : this.#crawls.has(stream.name)
+          ? 'Whether the last crawl of each chosen website or feed is complete, and when its last complete crawl ended.'
+          : 'Records extracted from the pages crawled from chosen websites and feeds that match the configured URL patterns; listing disappearance does not imply deletion.',
       selection: {
         inputs,
         ...(include === undefined
@@ -213,6 +237,12 @@ export class WebSource extends Source<WebScan> {
     _signal: AbortSignal | undefined,
     states: { get(stream: string): unknown },
   ) {
+    const crawled = new Map(
+      streams.flatMap(({ name }) => {
+        const entry = this.#streams.get(name);
+        return entry === undefined ? [] : [[name, entry.inputs] as const];
+      }),
+    );
     const routed: string[] = [];
     const undelivered = new Map<string, number>();
     for (const { name } of streams) {
@@ -228,22 +258,33 @@ export class WebSource extends Source<WebScan> {
             state.undelivered,
           );
     }
-    return new WebScan(routed, undelivered);
+    return new WebScan(crawled, routed, undelivered);
   }
-  // A routes stream takes what the crawls of its web stream found in the
-  // same read, and a read reads its streams in the order given, so every web
-  // stream reads before every routes stream.
+  // A routes stream takes what the crawls of its web stream find in the same
+  // read, and a crawls stream how each crawl ended, and a read reads two
+  // streams at a time in the order given, so each web stream reads beside its
+  // routes stream, and its crawls stream follows. A routes or crawls stream
+  // whose web stream the read does not select reads last, and gives nothing.
   override read(
     catalog: readonly CopyConfiguration[],
     states: { get(stream: string): unknown },
     signal?: AbortSignal,
   ) {
+    const ordered = catalog
+      .filter(({ stream }) => this.#streams.has(stream.name))
+      .flatMap((web) => [
+        web,
+        ...catalog.filter(
+          ({ stream }) =>
+            stream.name === routesName(this.#entry(web.stream).stream),
+        ),
+        ...catalog.filter(
+          ({ stream }) =>
+            stream.name === crawlsName(this.#entry(web.stream).stream),
+        ),
+      ]);
     return super.read(
-      catalog.toSorted(
-        (left, right) =>
-          Number(this.#routes.has(left.stream.name)) -
-          Number(this.#routes.has(right.stream.name)),
-      ),
+      [...ordered, ...catalog.filter((entry) => !ordered.includes(entry))],
       states,
       signal,
     );
@@ -307,13 +348,42 @@ export class WebSource extends Source<WebScan> {
     const { stream } = this.#entry(configuration.stream);
     if (this.#routes.has(configuration.stream.name)) {
       // The routes of a crawl that did not run in this read stay as they are.
-      const groups = scan.take(stream.name, inputUrl);
-      if (groups !== undefined)
-        yield* routeRecords(configuration, state, inputUrl, groups, signal);
+      let latest = state;
+      for await (const groups of scan.take(stream.name, inputUrl, signal) ?? [])
+        for await (const message of routeRecords(
+          configuration,
+          latest,
+          inputUrl,
+          groups,
+          signal,
+        )) {
+          if ('type' in message && message.type === 'STATE')
+            latest = message.state;
+          yield message;
+        }
+      return;
+    }
+    if (this.#crawls.has(configuration.stream.name)) {
+      // A crawl that did not run in this read keeps its row as it is.
+      const crawl = await scan.ended(stream.name, inputUrl, signal);
+      if (crawl !== undefined && crawl !== null)
+        yield* crawlRecords(configuration, state, inputUrl, crawl);
       return;
     }
     let due: number | null = null;
+    // Whether the crawl reached its end with every page read.
+    let complete = false;
+    // A full refresh that failed reads no later input.
+    let stopping = false;
+    // The groups that the routes stream was given so far.
+    let given = 0;
+    let routes: Outbox = [];
+    const give = () => {
+      scan.give(stream.name, inputUrl, routes.slice(given));
+      given = routes.length;
+    };
     try {
+      using crawling = await scan.turn(signal);
       const previous =
         state === null
           ? { diff: null, crawl: null, outbox: [] }
@@ -325,14 +395,16 @@ export class WebSource extends Source<WebScan> {
       // web stream that starts over never reuses a committed number.
       const routed = scan.routed(stream.name);
       const undelivered = scan.undelivered(stream.name, inputUrl);
-      const routes = routed
+      routes = routed
         ? previous.outbox.filter(({ seq }) => seq >= undelivered)
         : previous.outbox;
       let next = routes.reduce(
         (after, { seq }) => Math.max(after, seq + 1),
         undelivered,
       );
-      if (routed) scan.offer(stream.name, inputUrl, routes);
+      // Each group the web stream committed goes to the routes stream once
+      // the commit ended, when its checkpoint's yield returns.
+      give();
       await using client = await webHttp(
         this.#cachePath,
         this.#userAgent,
@@ -382,12 +454,14 @@ export class WebSource extends Source<WebScan> {
             routes.push({ seq: next++, ...group });
         if ('progress' in entry) {
           // Listings and archives hand out no pages, so their progress is saved on an interval.
-          if (performance.now() - savedAt >= 1_000)
+          if (performance.now() - savedAt >= 1_000) {
             yield {
               type: 'STATE',
               stream: configuration.stream.name,
               state: checkpoint(),
             };
+            give();
+          }
           continue;
         }
         if ('error' in entry) {
@@ -397,6 +471,7 @@ export class WebSource extends Source<WebScan> {
             stream: configuration.stream.name,
             state: checkpoint(),
           };
+          give();
           continue;
         }
         try {
@@ -443,6 +518,7 @@ export class WebSource extends Source<WebScan> {
             if ('type' in message && message.type === 'STATE') {
               diff = message.state;
               yield { ...message, state: checkpoint() };
+              give();
             } else yield message;
           }
         } catch (error) {
@@ -455,18 +531,20 @@ export class WebSource extends Source<WebScan> {
             stream: configuration.stream.name,
             state: checkpoint(),
           };
+          give();
         }
       }
       requestSignal.throwIfAborted();
       // A crawl that a blocked host left unfinished has not reached every
       // group, so the scan goes on in the next run rather than ending here.
-      if (crawl.snapshot().crawl !== null)
+      if (crawl.snapshot().crawl !== null) {
         yield {
           type: 'STATE',
           stream: configuration.stream.name,
           state: checkpoint(),
         };
-      else
+        give();
+      } else
         for await (const message of diffGroupedSnapshot(
           configuration,
           kept,
@@ -475,7 +553,7 @@ export class WebSource extends Source<WebScan> {
             signal,
           },
         ))
-          if ('type' in message && message.type === 'STATE')
+          if ('type' in message && message.type === 'STATE') {
             yield {
               ...message,
               state: {
@@ -484,14 +562,27 @@ export class WebSource extends Source<WebScan> {
                 outbox: routes,
               },
             };
-          else yield message;
+            give();
+          } else yield message;
+      complete = crawl.snapshot().crawl === null;
       due = crawl.nextDue();
       if (errors.length > 0)
         throw new AggregateError(
           errors,
           errors.map((error) => error.message).join('; '),
         );
+    } catch (error) {
+      stopping = configuration.syncMode === 'full_refresh';
+      throw error;
     } finally {
+      // As before a failure: the routes stream also gets the groups found
+      // since the last checkpoint, and the crawl's next run finds them again.
+      give();
+      scan.end(stream.name, inputUrl, {
+        complete,
+        at: new Date().toISOString(),
+      });
+      if (stopping) scan.stop(stream.name);
       const { name } = configuration.stream;
       const streamDue = this.#due.get(name) ?? new Map<string, number | null>();
       streamDue.set(inputUrl, due);

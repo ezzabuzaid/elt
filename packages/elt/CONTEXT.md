@@ -33,7 +33,7 @@ One read of a connection over the copies that it selected, and what each copy lo
 _Avoid_: Sync, run (a run has one pass of each connection), batch
 
 **Run**:
-One call of `pipeline.run()`: one pass of each connection, then one refresh of each derived dataset.
+One call of `pipeline.run()`: one pass of each connection, with refreshes in the background at each commit, then one more refresh of each derived dataset.
 _Avoid_: Sync, execution
 
 **Watch**:
@@ -141,7 +141,7 @@ A derived dataset that a rule computes on write: one output for each key, as a d
 _Avoid_: Cache, index, materialized view
 
 **Refresh**:
-The pipeline brings one derived dataset in step with the commits. A refresh makes again only what changed.
+The pipeline brings one derived dataset in step with the commits. Each commit of a copy asks for one, so a refresh can run while a copy loads, and it reads only what committed. A refresh makes again only what changed.
 _Avoid_: Rebuild, recompute, sync, update
 
 **Dataset failure**:

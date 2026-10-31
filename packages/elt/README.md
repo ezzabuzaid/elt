@@ -500,7 +500,7 @@ class ChatSource extends Source<ChatDatabase> {
   - An upstream without one reads each selected stream first, in one window with no change, and gives the streams from that snapshot (Calendar and Reminders; see [EventKit consistency](../sdks/apple/eventkit/README.md#consistent-reads)).
   - A source whose streams do not have to agree returns an empty `AsyncDisposableStack` (Search Console).
 - **Stream status:** each stream reads as `STARTED`, then its messages, then `ENDED`. A partition or stream that failed adds `FAILED` with its error. Only `Source.read` makes a `StreamStatus`. A `StreamStatus` that `extract` yields fails its stream with a `TypeError`. So does a message that names a stream other than the stream that the source extracts. Thus a stream can never write into the target of a different stream.
-- **Interleaving:** `protected concurrency` (1 when not set) sets how many streams read at the same time. Their messages interleave. The read asks a stream for its next message only after the consumer took its last message, so the file of a record stays valid until the consumer moves on. A source that sets a higher value reads its context from several extracts together. The partitions of one stream always read one after the other.
+- **Interleaving:** `protected concurrency` (1 when not set) sets how many streams read at the same time. Their messages interleave. The read asks a stream for its next message only after the consumer took its last message, so the file of a record stays valid until the consumer moves on. A source that sets a higher value reads its context from several extracts together. The partitions of one stream always read one after the other. The streams of a read are one task group: when one throws outside its extract, the signal that the others read with aborts, so a stream that waits for another ends with the read ([ADR 0018](./docs/adr/0018-the-streams-of-a-read-are-one-task-group.md)).
 - **Lifetime:** the context opens when the read starts and closes when it ends, also when it fails. A watch reads one time in each pass and holds nothing between passes, because a long read can block the maintenance of the upstream.
 - **Failures:** a context that cannot open (a refused permission, a missing store) fails each copy of that pass. `PipelineError.cause` is the error. The passes of other connections continue.
 - **One copy for each stream:** a connection copies each stream one time (`Connection <name> copies each stream once`), as the configured catalog of Airbyte lists each stream one time. To load one stream into two targets, use two connections.
@@ -648,7 +648,7 @@ Airbyte has the same two concepts on the source side: its [file parser Strategy]
 
 ### Attachment text
 
-A copy can store files with no parse: an `attachmentRef` column and no `content` column. The import then never waits for a parse, and a file that the parser cannot read fails no copy. The text of the stored files is derived data, not a source, because its input is what the pipeline wrote. Declare it as a [computed dataset](../destinations/sqlite/README.md#declare-a-computed-dataset) with the `DocumentText` rule. The pipeline reads the files after each pass. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) keeps an `attachment_text` view in this way, which SQL joins on `attachmentRef = ref`:
+A copy can store files with no parse: an `attachmentRef` column and no `content` column. The import then never waits for a parse, and a file that the parser cannot read fails no copy. The text of the stored files is derived data, not a source, because its input is what the pipeline wrote. Declare it as a [computed dataset](../destinations/sqlite/README.md#declare-a-computed-dataset) with the `DocumentText` rule. The pipeline reads the files as the copies commit them. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) keeps an `attachment_text` view in this way, which SQL joins on `attachmentRef = ref`:
 
 ```sql
 SELECT a.id, t.content
@@ -980,8 +980,9 @@ const pipeline = new Pipeline({
 
 ## When the pipeline refreshes
 
-- **A run** refreshes each derived dataset after the passes of all connections, also when some copies failed. Then it rejects with `PipelineError`. See [ADR 0002](./docs/adr/0002-a-run-refreshes-its-derived-data-also-when-copies-failed.md).
-- **A watch** refreshes after each pass, in the background. One refresh runs at a time. A pass that commits while a refresh runs asks for one more refresh after it. Thus no pass waits for a refresh. See [ADR 0003](./docs/adr/0003-a-watch-refreshes-in-the-background-one-refresh-at-a-time.md).
+- **Each commit** of a copy asks for a refresh in the background, in a run and in a watch. Thus a long pass shows its derived data while it reads, from what its checkpoints committed. One refresh runs at a time. A commit while a refresh runs asks for one more refresh after it. No pass waits for a refresh. See [ADR 0017](./docs/adr/0017-each-commit-asks-for-a-refresh.md).
+- **A run** waits for the refresh that runs after its passes, and then refreshes each derived dataset one more time, also when some copies failed. A background refresh that failed rejects the run after its passes, in place of that last refresh; else the last refresh gives the run its dataset failure. Then the run rejects with `PipelineError`. See [ADR 0002](./docs/adr/0002-a-run-refreshes-its-derived-data-also-when-copies-failed.md).
+- **A watch** also asks for a refresh after each pass. A dataset failure stops the watch. See [ADR 0003](./docs/adr/0003-a-watch-refreshes-in-the-background-one-refresh-at-a-time.md).
 - The pipeline refreshes the derived datasets in the order of the list. A view that comes after a computed dataset can read the view of that dataset.
 - A run does not refresh after an abort, or after an error that no sync history recorded. A stop that comes after the passes only stops the refresh. The next refresh continues the work.
 
@@ -1068,7 +1069,7 @@ The files of the pipeline:
 
 ```
 src/core/
-  pipeline.ts           Pipeline: run, watch, retries, and the refresh after the passes
+  pipeline.ts           Pipeline: run, watch, retries, and the refreshes at each commit
   replication.ts        one pass: checkpoints, the load and its stages
   connection.ts         Connection
   copy.ts               Copy, its outcome and its progress
