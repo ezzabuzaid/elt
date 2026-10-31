@@ -1,4 +1,3 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { MissingColumnsError, type Snapshot } from '@zukhruf/sqlite-snapshot';
@@ -14,11 +13,9 @@ import type {
 import { appleDate, integer, text } from './knowledge-values.ts';
 
 // CoreDuet's knowledge store, the older activity store that still records
-// what Biome does not.
-export const knowledgeStorePath = join(
-  homedir(),
-  'Library/Application Support/Knowledge/knowledgeC.db',
-);
+// what Biome does not, in the home folder `home`.
+export const knowledgeStorePath = (home: string): string =>
+  join(home, 'Library/Application Support/Knowledge/knowledgeC.db');
 
 // What every event carries.
 export type KnowledgeEvent = {

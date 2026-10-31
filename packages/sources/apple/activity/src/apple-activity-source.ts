@@ -8,15 +8,10 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source } from '@workspace/elt';
-import {
-  BiomeStore,
-  BiomeUnavailableError,
-  biomeDirectory,
-} from '@workspace/sdk-apple-biome';
+import { BiomeStore, BiomeUnavailableError } from '@workspace/sdk-apple-biome';
 import {
   KnowledgeStore,
   KnowledgeUnavailableError,
-  knowledgeStorePath,
 } from '@workspace/sdk-apple-knowledge';
 
 import type { ActivityReader } from './activity-reader.ts';
@@ -109,10 +104,14 @@ export class AppleActivitySource extends Source<ActivityScan> {
   readonly pollIntervalMs: number;
 
   constructor({
-    biome = biomeDirectory,
-    knowledge = knowledgeStorePath,
+    biome,
+    knowledge,
     pollIntervalMs = 60_000,
-  }: { biome?: string; knowledge?: string; pollIntervalMs?: number } = {}) {
+  }: {
+    biome: string;
+    knowledge: string;
+    pollIntervalMs?: number;
+  }) {
     super();
     this.location = Object.freeze({ biome, knowledge });
     this.pollIntervalMs = pollIntervalMs;

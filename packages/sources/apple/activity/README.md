@@ -5,15 +5,22 @@ An ELT source for the activity that macOS records about the user: app focus, Scr
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../../elt/CONTEXT.md) for the words of all of elt.
 
 ```ts
+import { homedir } from 'node:os';
+
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { biomeDirectory } from '@workspace/sdk-apple-biome';
+import { knowledgeStorePath } from '@workspace/sdk-apple-knowledge';
 import { AppleActivitySource } from '@workspace/source-apple-activity/apple-activity-source';
 
-const source = new AppleActivitySource(); // ~/Library/Biome and knowledgeC.db
+const source = new AppleActivitySource({
+  biome: biomeDirectory(homedir()),
+  knowledge: knowledgeStorePath(homedir()),
+});
 const destination = new SQLiteDestination({
   path: './outputs/activity.sqlite',
 });
@@ -41,7 +48,7 @@ await new Pipeline({
 }).run();
 ```
 
-The constructor takes `{ biome, knowledge, pollIntervalMs }`: the Biome folder, the path of `knowledgeC.db`, and the poll interval of a watch (one minute when you do not give it).
+The constructor takes `{ biome, knowledge, pollIntervalMs }`: the Biome folder, the path of `knowledgeC.db`, and the poll interval of a watch (one minute when you do not give it). `biome` and `knowledge` have no default. `biomeDirectory(home)` of `@workspace/sdk-apple-biome` and `knowledgeStorePath(home)` of `@workspace/sdk-apple-knowledge` give them in the home folder `home`.
 
 A Context Compiler import loads every stream incrementally into its `data.sqlite`. Readers use its `<snake_stream>` views.
 

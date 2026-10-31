@@ -8,7 +8,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -34,6 +34,7 @@ import {
   BiomeStore,
   biomeDirectory,
 } from '@workspace/sdk-apple-biome';
+import { knowledgeStorePath } from '@workspace/sdk-apple-knowledge';
 
 import { AppleActivitySource } from './apple-activity-source.ts';
 
@@ -1470,7 +1471,10 @@ test('Activity reads this Mac’s activity into SQLite', async (t) => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'activity-live-'),
   );
-  const source = new AppleActivitySource();
+  const source = new AppleActivitySource({
+    biome: biomeDirectory(homedir()),
+    knowledge: knowledgeStorePath(homedir()),
+  });
   const activity = await appleImport(source, scratch.path);
 
   const startedAt = Date.now();
@@ -1508,7 +1512,7 @@ test('Activity reads this Mac’s activity into SQLite', async (t) => {
         recordedAt,
       ]),
   );
-  const streams = await new BiomeStore(biomeDirectory).streams();
+  const streams = await new BiomeStore(biomeDirectory(homedir())).streams();
   const segments = (await streams.segments(new AppInFocus()))
     .filter(({ origin }) => origin === 'local')
     .sort((a, b) => Number(a.name) - Number(b.name));

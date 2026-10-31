@@ -1,5 +1,4 @@
 import { readdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
@@ -10,9 +9,11 @@ import type { BiomeStream } from './biome-stream.ts';
 import { BiomeSync } from './biome-sync.ts';
 import { BiomeUnavailableError } from './errors.ts';
 
-// The user's Biome, where macOS keeps activity for this Mac and the devices
-// it syncs with. The system Biome under /private/var/db/biome is _biome's.
-export const biomeDirectory = join(homedir(), 'Library/Biome');
+// The user's Biome in the home folder `home`, where macOS keeps activity
+// for this Mac and the devices it syncs with. The system Biome under
+// /private/var/db/biome is _biome's.
+export const biomeDirectory = (home: string): string =>
+  join(home, 'Library/Biome');
 
 // The folder of every stream, known to be readable: without that check a
 // missing or denied folder would list every stream as empty.
