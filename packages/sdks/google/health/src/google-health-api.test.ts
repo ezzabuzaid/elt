@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { Msw } from '@zukhruf/testing/msw';
 import { HttpResponse, http } from 'msw';
-import { setupServer } from 'msw/node';
 
 import { GoogleGrant, GoogleOAuthApp } from '@workspace/google-auth';
 
@@ -39,7 +39,7 @@ function signedIn() {
  */
 function google(reply: (request: Request, url: URL) => unknown) {
   const received: { url: URL; body: unknown }[] = [];
-  const server = setupServer(
+  const server = new Msw().intercept(
     http.post('https://oauth2.googleapis.com/token', () =>
       HttpResponse.json({ access_token: 'access-token', expires_in: 3600 }),
     ),
@@ -53,11 +53,10 @@ function google(reply: (request: Request, url: URL) => unknown) {
       return answer instanceof Response ? answer : Response.json(answer);
     }),
   );
-  server.listen({ onUnhandledFrame: 'error' });
   return {
     api: new GoogleHealthApi(signedIn()),
     received,
-    [Symbol.dispose]: () => server.close(),
+    [Symbol.dispose]: () => server.cleanup(),
   };
 }
 

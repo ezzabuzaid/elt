@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { gzipSync } from 'node:zlib';
 
+import { Msw } from '@zukhruf/testing/msw';
 import { Postgres } from '@zukhruf/testing/postgres';
 import { type PathParams, http } from 'msw';
-import { setupServer } from 'msw/node';
 import postgres from 'postgres';
 
 import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
@@ -76,7 +76,7 @@ function google({
     done: (calls: readonly Call[]) => boolean;
     resolve: () => void;
   }>();
-  const server = setupServer(
+  const server = new Msw().intercept(
     http.post('https://oauth2.googleapis.com/token', () =>
       Response.json({ access_token: 'access-token', expires_in: 3600 }),
     ),
@@ -114,7 +114,6 @@ function google({
       }),
     ),
   );
-  server.listen({ onUnhandledFrame: 'error' });
   return {
     calls,
     fetched,
@@ -126,7 +125,7 @@ function google({
       waiting.add({ done, resolve });
       return promise;
     },
-    [Symbol.dispose]: () => server.close(),
+    [Symbol.dispose]: () => server.cleanup(),
   };
 }
 
@@ -2086,7 +2085,7 @@ test('a property Google refuses to the user is a config failure, and a quota ref
 test('a grant Google no longer refreshes is a config failure, asked once', async () => {
   let refreshes = 0;
   const calls: string[] = [];
-  const server = setupServer(
+  const server = new Msw().intercept(
     http.post('https://oauth2.googleapis.com/token', () => {
       refreshes += 1;
       return Response.json(
@@ -2102,7 +2101,6 @@ test('a grant Google no longer refreshes is a config failure, asked once', async
       return Response.json({});
     }),
   );
-  server.listen({ onUnhandledFrame: 'error' });
   try {
     await using database = await databases.database();
     const warehouse = {
@@ -2157,7 +2155,7 @@ test('a grant Google no longer refreshes is a config failure, asked once', async
     assert.equal(refreshes, 1);
     assert.deepEqual(calls, []);
   } finally {
-    server.close();
+    server.cleanup();
   }
 });
 

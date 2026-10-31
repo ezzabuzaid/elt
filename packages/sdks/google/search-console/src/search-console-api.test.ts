@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { Msw } from '@zukhruf/testing/msw';
 import { http } from 'msw';
-import { setupServer } from 'msw/node';
 
 import {
   GaxiosError,
@@ -36,7 +36,7 @@ function signedIn() {
  */
 function google({ reply }: { reply: () => unknown }) {
   const calls: string[] = [];
-  const server = setupServer(
+  const server = new Msw().intercept(
     http.post('https://oauth2.googleapis.com/token', () =>
       Response.json({ access_token: 'access-token', expires_in: 3600 }),
     ),
@@ -46,11 +46,10 @@ function google({ reply }: { reply: () => unknown }) {
       return answer instanceof Response ? answer : Response.json(answer);
     }),
   );
-  server.listen({ onUnhandledFrame: 'error' });
   return {
     calls,
     requester: signedIn(),
-    [Symbol.dispose]: () => server.close(),
+    [Symbol.dispose]: () => server.cleanup(),
   };
 }
 

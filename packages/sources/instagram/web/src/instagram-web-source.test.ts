@@ -7,8 +7,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/testing/fs';
+import { Msw } from '@zukhruf/testing/msw';
 import { HttpResponse, http } from 'msw';
-import { setupServer } from 'msw/node';
 
 import {
   Connection,
@@ -530,7 +530,7 @@ function instagram(world: World) {
       { status: 400 },
     );
   };
-  const server = setupServer(
+  const server = new Msw().intercept(
     http.get('https://www.instagram.com/', ({ request }) =>
       request.headers
         .get('cookie')
@@ -651,8 +651,7 @@ function instagram(world: World) {
       });
     }),
   );
-  server.listen({ onUnhandledFrame: 'error' });
-  return { calls, downloads, [Symbol.dispose]: () => server.close() };
+  return { calls, downloads, [Symbol.dispose]: () => server.cleanup() };
 }
 
 function commentNode(comment: Comment, parent?: string) {

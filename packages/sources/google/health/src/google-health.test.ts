@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { Msw } from '@zukhruf/testing/msw';
 import { Postgres } from '@zukhruf/testing/postgres';
 import { http } from 'msw';
-import { setupServer } from 'msw/node';
 import postgres from 'postgres';
 
 import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
@@ -92,7 +92,7 @@ const isoDate = ({
  */
 function google(account: Account) {
   const requests: URL[] = [];
-  const server = setupServer(
+  const server = new Msw().intercept(
     http.post('https://oauth2.googleapis.com/token', () =>
       Response.json({ access_token: 'access-token', expires_in: 3600 }),
     ),
@@ -177,8 +177,7 @@ function google(account: Account) {
       });
     }),
   );
-  server.listen({ onUnhandledFrame: 'error' });
-  return { requests, [Symbol.dispose]: () => server.close() };
+  return { requests, [Symbol.dispose]: () => server.cleanup() };
 }
 
 // Loads every stream the source offers into its own table, overwriting it.

@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/testing/fs';
+import { Msw } from '@zukhruf/testing/msw';
 import { HttpResponse, http, passthrough } from 'msw';
-import { setupServer } from 'msw/node';
 
 import {
   GMAIL_READONLY_SCOPE,
@@ -145,7 +145,7 @@ function googleAccount() {
     )
       .toString()
       .split(' ');
-  const server = setupServer(
+  const server = new Msw().intercept(
     // The redirect reaches the session's real loopback listener.
     http.get(/^http:\/\/127\.0\.0\.1:\d+\/callback/, () => passthrough()),
     http.get('https://www.googleapis.com/oauth2/v1/certs', () =>
@@ -226,7 +226,6 @@ function googleAccount() {
           ),
     ),
   );
-  server.listen({ onUnhandledFrame: 'error' });
   return {
     google,
     // Plays the browser: Google grants exactly what the consent page asks.
@@ -245,7 +244,7 @@ function googleAccount() {
       await fetch(redirect);
     },
     [Symbol.dispose]() {
-      server.close();
+      server.cleanup();
     },
   };
 }

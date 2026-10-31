@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { Msw } from '@zukhruf/testing/msw';
 import { LoginTicket, OAuth2Client } from 'google-auth-library';
 import { HttpResponse, http } from 'msw';
-import { setupServer } from 'msw/node';
 
 import { GoogleOAuthApp } from './app.ts';
 import type { GoogleOAuthCredential } from './credential.ts';
@@ -132,18 +132,17 @@ test('a grant without a refresh token is refused', async (t) => {
 
 test('revoke hands the refresh token to Google', async () => {
   const revoked: (string | null)[] = [];
-  const server = setupServer(
+  const server = new Msw().intercept(
     http.post(REVOKE_URL, ({ request }) => {
       revoked.push(new URL(request.url).searchParams.get('token'));
       return HttpResponse.json({});
     }),
   );
-  server.listen({ onUnhandledFrame: 'error' });
   try {
     await APP.revoke(new GoogleGrant(CREDENTIAL));
 
     assert.deepEqual(revoked, ['refresh-token']);
   } finally {
-    server.close();
+    server.cleanup();
   }
 });

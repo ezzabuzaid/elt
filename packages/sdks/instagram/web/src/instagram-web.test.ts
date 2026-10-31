@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { Msw } from '@zukhruf/testing/msw';
 import { HttpResponse, http } from 'msw';
-import { setupServer } from 'msw/node';
 
 import {
   InstagramLoginError,
@@ -45,7 +45,7 @@ function instagram(api: (call: Call) => Response) {
       cookie.includes('csrftoken=csrf-token')
     );
   };
-  const server = setupServer(
+  const server = new Msw().intercept(
     http.get('https://www.instagram.com/', ({ request }) =>
       signed(request)
         ? new HttpResponse(page, { headers: { 'content-type': 'text/html' } })
@@ -75,8 +75,7 @@ function instagram(api: (call: Call) => Response) {
       return api(call);
     }),
   );
-  server.listen({ onUnhandledFrame: 'error' });
-  return { calls, [Symbol.dispose]: () => server.close() };
+  return { calls, [Symbol.dispose]: () => server.cleanup() };
 }
 
 // What instagram.com answers a signed-out GraphQL query for stories: its
