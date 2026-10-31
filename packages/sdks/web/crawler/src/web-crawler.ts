@@ -17,6 +17,7 @@ import {
   type PageLocation,
   type Priority,
   type Reader,
+  isHtml,
   priorities,
 } from './reader.ts';
 import {
@@ -70,6 +71,10 @@ const entrySchema = z.object({
   document: z.boolean(),
   // Some reader found it as a list of pages.
   list: z.boolean(),
+  // How readers expand it: 'origin' for a starting URL, 'step' for a page that a list hands back on an origin that no starting URL names.
+  expand: z.enum(['origin', 'step']).nullable(),
+  // A one-step expansion found it, directly or through what it found, such as the sitemaps of its robots.txt: the crawl keeps only its findings that match the expand patterns, and expands none.
+  within: z.boolean(),
   priority: z.enum(priorities),
   // Its provenance came from a link, so a listing's provenance replaces it.
   linked: z.boolean(),
@@ -100,6 +105,8 @@ const mementoSchema = z.object({
       states: z.array(z.unknown()),
       // Origins that answered 403 or 429, with when their breaker closes.
       blocked: z.record(z.string(), z.number()),
+      // Origins of the starting URLs: a list's page on another origin is expanded one step.
+      origins: z.array(z.string()),
     })
     .nullable(),
   // Every URL a crawl visited, across crawls, with when it is due again.
@@ -113,6 +120,14 @@ export type CrawlOptions = {
   readonly signal: AbortSignal;
   /** Pages to hand back; other pages are downloaded only when a reader wants them. */
   readonly include?: readonly [URLPattern, ...URLPattern[]];
+  /**
+   * URLs to keep from a one-step expansion. A page that a list hands back on
+   * an origin that no starting URL names is expanded one step: readers find
+   * its links on every origin and the sitemaps of its origin's robots.txt, and
+   * the crawl keeps only the pages and lists that match a pattern. Omitted,
+   * the crawl expands only the starting origins.
+   */
+  readonly expand?: readonly [URLPattern, ...URLPattern[]];
 };
 
 export interface Crawl extends AsyncIterable<
@@ -174,6 +189,7 @@ export class WebCrawler {
       crawled: readonly string[],
       handed: readonly string[],
       blocked: Record<string, number>,
+      origins: readonly string[],
     ) =>
       new CrawlRun(this.#http, this.#readers, this.#revisit, options, {
         at,
@@ -182,10 +198,19 @@ export class WebCrawler {
         crawled,
         handed,
         blocked,
+        origins,
         known,
         slowdowns,
         revisits: [...known.values()].flatMap(({ entry }) =>
-          startUrls.includes(entry.url) ? [] : [{ ...entry, start: false }],
+          startUrls.includes(entry.url)
+            ? []
+            : [
+                {
+                  ...entry,
+                  start: false,
+                  expand: entry.expand === 'origin' ? null : entry.expand,
+                },
+              ],
         ),
       });
     if (crawl !== null)
@@ -198,6 +223,7 @@ export class WebCrawler {
         crawl.known,
         crawl.handed,
         crawl.blocked,
+        crawl.origins,
       );
     return run(
       Date.now(),
@@ -212,6 +238,8 @@ export class WebCrawler {
         page: false,
         document: true,
         list: false,
+        expand: 'origin' as const,
+        within: false,
         priority: 'listing' as const,
         linked: false,
         tolerate: [],
@@ -220,6 +248,7 @@ export class WebCrawler {
       [],
       [],
       {},
+      [...new Set(startUrls.map((url) => new URL(url).origin))],
     );
   }
 
@@ -261,6 +290,8 @@ class CrawlRun implements Crawl {
   // while open, the crawl requests nothing there. One opened in this crawl
   // stays open to its end, as Nutch clears a blocked host's queue for the round.
   readonly #blocked: Map<string, number>;
+  // Origins of the starting URLs.
+  readonly #origins: readonly string[];
   // Pending entries of a blocked origin, out of the lanes until a later crawl resumes them.
   readonly #held = new Map<string, Entry>();
   // 403 answers in a row, by origin.
@@ -297,6 +328,7 @@ class CrawlRun implements Crawl {
       crawled,
       handed,
       blocked,
+      origins,
       known,
       slowdowns,
       revisits,
@@ -307,6 +339,7 @@ class CrawlRun implements Crawl {
       readonly crawled: readonly string[];
       readonly handed: readonly string[];
       readonly blocked: Record<string, number>;
+      readonly origins: readonly string[];
       readonly known: Map<string, KnownUrl>;
       readonly slowdowns: Record<string, number>;
       readonly revisits: Entry[];
@@ -324,6 +357,7 @@ class CrawlRun implements Crawl {
     this.#revisits = revisits;
     this.#handed = new Set(handed);
     this.#blocked = new Map(Object.entries(blocked));
+    this.#origins = origins;
     this.#slowdowns = new Map(Object.entries(slowdowns));
     // Pending entries were admitted when found; one may be a URL this crawl already downloaded.
     for (const entry of entries) this.#add(entry);
@@ -347,6 +381,7 @@ class CrawlRun implements Crawl {
             handed: [...this.#handed],
             states: this.#states,
             blocked: Object.fromEntries(this.#blocked),
+            origins: [...this.#origins],
           },
       urls: Object.fromEntries(this.#urls),
       slowdowns: Object.fromEntries(this.#slowdowns),
@@ -498,6 +533,8 @@ class CrawlRun implements Crawl {
         if (after.due === null || limit < after.due)
           this.#visit = { before, after: { ...after, due: limit } };
       };
+      // A starting URL is read as a list too, as the readers of lists do.
+      const list = (entry.list || entry.start) && isHtml(type);
       // Readers are independent: one that cannot read the response is reported
       // for it, and the others still read it. The page itself did not fail.
       for (const [index, reader] of this.#readers.entries()) {
@@ -514,7 +551,10 @@ class CrawlRun implements Crawl {
             },
             this.#states[index],
           ))
-            this.#enqueue(this.#entry(finding, entry, response.url, index));
+            if (this.#keeps(finding, entry))
+              this.#enqueue(
+                this.#entry(finding, entry, response.url, index, list),
+              );
         } catch (cause) {
           signal.throwIfAborted();
           yield this.#failure(entry, false, response.url, cause);
@@ -803,6 +843,20 @@ class CrawlRun implements Crawl {
     );
   }
 
+  // The crawl's scope, as the URL filter of a crawler (Introduction to
+  // Information Retrieval, figure 20.1) and Heritrix's scope: what a one-step
+  // expansion finds is kept only when it matches the expand patterns, except
+  // the documents, such as robots.txt and its sitemaps, whose own findings
+  // are kept by the same rule.
+  #keeps(finding: Finding<unknown>, parent: Entry) {
+    if (parent.expand !== 'step' && !parent.within) return true;
+    return (
+      (!finding.page && !finding.list) ||
+      (this.#options.expand?.some((pattern) => pattern.test(finding.url)) ??
+        false)
+    );
+  }
+
   #tolerates(entry: Entry, status: number | undefined) {
     return (
       entry.tolerate === 'any' ||
@@ -831,11 +885,14 @@ class CrawlRun implements Crawl {
     parent: Entry,
     listingUrl: string,
     index: number,
+    list: boolean,
   ): Entry {
     const notes: unknown[] = this.#readers.map(() => null);
     notes[index] = finding.note;
+    const url = webUrl(finding.url, listingUrl);
+    const expansion = parent.expand === 'step' || parent.within;
     return {
-      url: webUrl(finding.url, listingUrl),
+      url,
       listingUrl,
       lastModified: finding.lastModified,
       published: finding.published,
@@ -844,6 +901,19 @@ class CrawlRun implements Crawl {
       page: finding.page,
       document: !finding.page,
       list: finding.list,
+      // A page that a list hands back on another website is expanded one
+      // step; a sitemap's or a feed's item is not, and what an expansion
+      // finds is not expanded again.
+      expand:
+        this.#options.expand !== undefined &&
+        list &&
+        !expansion &&
+        finding.page &&
+        !finding.linked &&
+        !this.#origins.includes(new URL(url).origin)
+          ? 'step'
+          : null,
+      within: expansion,
       priority: finding.priority,
       linked: finding.linked,
       tolerate: finding.tolerate,
@@ -869,7 +939,8 @@ class CrawlRun implements Crawl {
         // reader already reads a starting URL as it reads a list.
         const addsRole =
           (next.page && !visited.page && this.#includes(next.url)) ||
-          (next.list && !visited.list && !visited.start);
+          (next.list && !visited.list && !visited.start) ||
+          (next.expand === 'step' && visited.expand === null);
         if (!addsRole) return;
         const again = { ...visited, priority: next.priority };
         merge(again, next);
@@ -1026,6 +1097,10 @@ function merge(pending: Entry, next: Entry) {
   pending.start ||= next.start;
   pending.document ||= next.document;
   pending.list ||= next.list;
+  if (pending.expand !== 'origin' && next.expand !== null)
+    pending.expand = next.expand;
+  // A finding outside every expansion keeps all that the URL finds.
+  pending.within &&= next.within;
   // The most urgent finding decides when the URL downloads.
   if (priorities.indexOf(next.priority) < priorities.indexOf(pending.priority))
     pending.priority = next.priority;

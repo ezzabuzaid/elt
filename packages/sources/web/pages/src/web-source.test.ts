@@ -1716,6 +1716,66 @@ test('a category page that matches the URL patterns is stored as a list, beside 
   );
 });
 
+test("a web stream's expand patterns load the program page that the home page of a listed company links", async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  const article = (title: string) =>
+    `<html><head><title>${title}</title></head><body><article><h1>${title}</h1><p>A report on what changed and why it matters.</p></article></body></html>`;
+  await using company = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/')
+      response.end(
+        '<nav><a href="/startups">Startups</a><a href="/pricing">Pricing</a></nav>',
+      );
+    else if (request.url === '/startups') response.end(article('Startups'));
+    else if (request.url === '/pricing') response.end(article('Pricing'));
+    else response.writeHead(404).end();
+  });
+  await using list = await new HttpServer().start((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/programs')
+      response.end(`<main><a href="${company.origin}/">Company</a></main>`);
+    else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [
+        {
+          stream: new WebStream({
+            name: 'articles',
+            primaryKey: ['articleUrl'],
+            readers: [
+              new PaginationReader({ strategy: 'all' }),
+              new ListingReader(),
+              new LinkReader({ maxDepth: 0, maxPages: 0 }),
+            ],
+            include: [new URLPattern(`${company.origin}/*`)],
+            expand: [new URLPattern({ pathname: '*start*' })],
+            extractor: new ArticleExtractor(),
+          }),
+          inputs: [`${list.origin}/programs`],
+        },
+      ],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+
+  await ingestion.run();
+
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT pageUrl FROM articles ORDER BY pageUrl')
+      .all()
+      .map((row) => row.pageUrl),
+    // The home page, a menu only, holds no article.
+    [`${company.origin}/startups`],
+  );
+});
+
 test('a Latin-1 article page is stored with its text and leaves nothing to retry', async () => {
   await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
   await using upstream = await new HttpServer().start((request, response) => {

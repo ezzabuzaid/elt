@@ -13,14 +13,17 @@ import {
 import { httpUrl } from './web-url.ts';
 
 const stateSchema = z.object({
-  // Origins of the starting pages; links are followed only there.
+  // Origins that the crawl expands within the limits: those of the starting pages.
   origins: z.array(z.string()),
   // Pages admitted beyond the starting and listed pages.
   followed: z.number().int().nonnegative(),
 });
 type State = z.infer<typeof stateSchema>;
 
-/** Ordinary links in HTML and Markdown pages, on the starting pages' origins. */
+/**
+ * Ordinary links in HTML and Markdown pages: on the starting pages' origins,
+ * and on every origin from a page that the crawl expands one step.
+ */
 export class LinkReader extends Reader<never, State> {
   readonly notes = z.never();
   readonly states = stateSchema;
@@ -65,10 +68,14 @@ export class LinkReader extends Reader<never, State> {
     const markdown = type === 'text/markdown';
     if (!isHtml(type) && !markdown) return [];
     const origin = new URL(response.url).origin;
-    if (request.start && !state.origins.includes(origin))
+    if (request.expand === 'origin' && !state.origins.includes(origin))
       state.origins.push(origin);
+    const step = request.expand === 'step';
     // Starting and listed pages always contribute links; others only when admitted.
-    if ((request.hops > 0 && !wanted) || !state.origins.includes(origin))
+    if (
+      !step &&
+      ((request.hops > 0 && !wanted) || !state.origins.includes(origin))
+    )
       return [];
     const text = pageText(response);
     const links = markdown
@@ -83,7 +90,9 @@ export class LinkReader extends Reader<never, State> {
     const pages = new Set<string>();
     for (const link of links) {
       const target = httpUrl(link, response.url);
-      if (target && new URL(target).origin === origin) pages.add(target);
+      // The crawl keeps from a one-step expansion only the links that match its patterns.
+      if (target && (step || new URL(target).origin === origin))
+        pages.add(target);
     }
     return [...pages].map((url) => ({
       url,

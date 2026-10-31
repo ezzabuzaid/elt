@@ -24,6 +24,14 @@ export type CrawlRequest = PageLocation & {
   readonly page: boolean;
   /** Some reader found the URL as a list of pages, such as an archive. */
   readonly list: boolean;
+  /**
+   * How readers expand the URL: look for URLs that no response names, such as
+   * its links and its origin's robots.txt. 'origin' is a starting URL, whose
+   * origin readers expand within their limits. 'step' is a page that a list
+   * hands back on an origin that no starting URL names: readers find its links
+   * on every origin, and the crawl keeps only what matches its expand patterns.
+   */
+  readonly expand: 'origin' | 'step' | null;
 };
 
 /**

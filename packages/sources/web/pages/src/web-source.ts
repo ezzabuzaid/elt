@@ -259,6 +259,7 @@ export class WebSource extends Source {
       const crawl = crawler.crawl([inputUrl], previous.crawl, {
         signal: requestSignal,
         include: stream.include,
+        expand: stream.expand,
       });
       const errors: Error[] = [];
       // Pages that are not due: the scan keeps their records unread.

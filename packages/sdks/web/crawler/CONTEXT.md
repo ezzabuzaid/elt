@@ -53,15 +53,23 @@ The URL patterns that select the pages that the crawl hands back. A URL that no 
 _Avoid_: Filter, allowlist, scope
 
 **Expand**:
-To look for URLs on an origin that no response names: to follow the ordinary links of its pages, or to read its `robots.txt` for sitemaps and guess `/sitemap.xml`. The crawl expands only the starting origins ([ADR 0002](./docs/adr/0002-the-crawl-expands-only-the-starting-origins.md)).
+To look for URLs that no response names: to follow the ordinary links of a page, or to read the `robots.txt` of its origin for sitemaps and guess `/sitemap.xml`. The crawler marks how readers expand each request: a starting URL expands its origin, and a one-step page expands one step ([ADR 0003](./docs/adr/0003-a-page-that-a-list-hands-back-on-another-origin-is-expanded-one-step.md)).
 _Avoid_: Scope, follow, crawl (a crawl is one pass)
+
+**One-step page**:
+A page that a list hands back on an origin that no starting URL names, when the host gives `expand` URL patterns. Readers find its links on every origin and the sitemaps of its origin. The crawler keeps only the pages and lists that match `expand`, and it expands none of them. A sitemap entry or a feed item is not a one-step page.
+_Avoid_: Seed, promoted URL, second start
+
+**Expand patterns**:
+The URL patterns that select what a one-step page gives: its pages and lists, and the pages and lists of the sitemaps that it gives. `include` still selects the pages that the crawl hands back.
+_Avoid_: Scope, filter, allowlist
 
 **Declared URL**:
 A URL that a response names for a stated job: a feed or a sitemap that a page names in a `<link>` element or an HTTP `Link` header, or a page that a list or a sitemap lists. Each reader has its own rule for the origins of declared URLs.
 _Avoid_: Discovered URL, link
 
 **`ListingReader`**:
-The reader of `robots.txt`, sitemaps and feeds. It finds the feeds and sitemaps that a page declares, also on other origins, and reads each one completely. It reads `robots.txt` and guesses `/sitemap.xml` only for a starting URL.
+The reader of `robots.txt`, sitemaps and feeds. It finds the feeds and sitemaps that a page declares, also on other origins, and reads each one completely. It reads `robots.txt` and guesses `/sitemap.xml` only for a starting URL and a one-step page.
 _Avoid_: Sitemap reader, feed reader
 
 **`ArchiveReader`**:
@@ -73,7 +81,7 @@ The reader of lists. It reads the starting URLs and the URLs that another reader
 _Avoid_: Archive reader, link reader
 
 **`LinkReader`**:
-The reader of ordinary links. It follows the links of pages on the starting origins, within `maxDepth` hops and `maxPages` admitted pages.
+The reader of ordinary links. It follows the links of pages on the starting origins, within `maxDepth` hops and `maxPages` admitted pages. It also finds the links of a one-step page, on every origin.
 _Avoid_: Spider, link follower
 
 **`StartReader`**:

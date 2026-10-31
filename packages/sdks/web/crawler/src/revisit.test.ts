@@ -80,6 +80,7 @@ const request: CrawlRequest = {
   start: false,
   page: true,
   list: false,
+  expand: null,
 };
 
 test('a page that is not due is not requested and comes out as deferred after the pages, and it is requested again once due', async (t) => {

@@ -37,7 +37,7 @@ The response that first named a page: a sitemap, a feed, an archive or a linked 
 _Avoid_: Index, parent
 
 **Web stream**:
-The configuration of one stream of the source: its name, its primary key, the readers of the crawler, the `include` patterns and the extractor. The host gives each web stream its own inputs.
+The configuration of one stream of the source: its name, its primary key, the readers of the crawler, the `include` patterns, the `expand` patterns and the extractor. The host gives each web stream its own inputs.
 _Avoid_: Wrapper, site adapter, scraper
 
 **Extractor**:

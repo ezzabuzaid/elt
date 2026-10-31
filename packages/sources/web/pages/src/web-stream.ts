@@ -12,6 +12,8 @@ export class WebStream {
   readonly revisit: RevisitPolicy<unknown> | undefined;
   /** Pages to extract; omitted, every page the crawl finds. */
   readonly include: readonly [URLPattern, ...URLPattern[]] | undefined;
+  /** URLs to keep when the crawl expands a page that a list hands back on another website; omitted, the crawl expands only the inputs' websites. */
+  readonly expand: readonly [URLPattern, ...URLPattern[]] | undefined;
   readonly extractor: RecordExtractor;
   constructor(options: {
     name: string;
@@ -19,6 +21,7 @@ export class WebStream {
     readers: readonly Reader<unknown, unknown>[];
     revisit?: RevisitPolicy<unknown>;
     include?: readonly [URLPattern, ...URLPattern[]];
+    expand?: readonly [URLPattern, ...URLPattern[]];
     extractor: RecordExtractor;
   }) {
     this.name = options.name;
@@ -26,6 +29,7 @@ export class WebStream {
     this.readers = options.readers;
     this.revisit = options.revisit;
     this.include = options.include;
+    this.expand = options.expand;
     this.extractor = options.extractor;
   }
 }

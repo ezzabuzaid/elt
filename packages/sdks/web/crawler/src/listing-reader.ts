@@ -32,7 +32,7 @@ const noteSchema = z.object({
 });
 type Note = z.infer<typeof noteSchema>;
 
-// listed: the starting page declared a listing, or one was read; both happen before robots.txt.
+// listed: an expanded page declared a listing, or one was read; both happen before robots.txt.
 const stateSchema = z.object({ listed: z.boolean() });
 type State = z.infer<typeof stateSchema>;
 
@@ -151,9 +151,11 @@ export class ListingReader extends Reader<Note, State> {
         url,
         { kind },
         kind === 'candidate' ? 'any' : [],
-        !request.start,
+        request.expand === null,
       );
-    if (!request.start) {
+    // A page that the crawl does not expand gives only its declared listings;
+    // a starting or one-step page also gives its origin's robots.txt, below.
+    if (request.expand === null) {
       // A page reached by crawling needs an explicit declaration, or Feedscout's own hints, for a cross-origin feed.
       const origin = new URL(response.url).origin;
       const advertised = new Set(

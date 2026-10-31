@@ -1,5 +1,7 @@
 # The crawl expands only the starting origins
 
+Replaced by [ADR 0003](./0003-a-page-that-a-list-hands-back-on-another-origin-is-expanded-one-step.md).
+
 A host chooses websites and gives the crawl their starting URLs. The pages of a chosen website link other origins, and a list can link many origins. If the crawl followed every link and read every `robots.txt` that it found, one starting URL could reach the whole web.
 
 Thus the crawl expands only the starting origins:
