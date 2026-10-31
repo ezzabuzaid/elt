@@ -14,7 +14,7 @@
 
 ## The program
 
-`NeverRevisit` gives each post that loaded `due: null`. The feed is the starting URL, and a starting URL is always due. On the second crawl, the feed names a new post.
+`NeverRevisit` gives each post that loaded `due: null`. A starting URL follows its policy too, so `CompositeRevisit` gives the feed `AlwaysRevisit`, and the crawl reads it each time. On the second crawl, the feed names a new post.
 
 ```ts title="never-revisit.ts"
 import { once } from 'node:events';
@@ -24,6 +24,8 @@ import got from 'got';
 import { z } from 'zod';
 
 import {
+  AlwaysRevisit,
+  CompositeRevisit,
   IntervalRevisit,
   ListingReader,
   type Schedule,
@@ -69,7 +71,11 @@ const origin = `http://127.0.0.1:${address.port}`;
 const crawler = new WebCrawler(
   got.extend({ timeout: { request: 30_000 } }),
   [new ListingReader()],
-  new NeverRevisit(),
+  // The feed is read in each crawl, so that new posts are found; each post follows NeverRevisit.
+  new CompositeRevisit(
+    [[new URLPattern({ pathname: '/feed.json' }), new AlwaysRevisit()]],
+    new NeverRevisit(),
+  ),
 );
 let memento: unknown = null;
 for (const name of ['first crawl', 'second crawl']) {
@@ -103,7 +109,7 @@ second crawl {
 
 ## Why it works
 
-After the first crawl, each post has `due: null` in the crawl memento. On the second crawl, the feed names posts 1, 2 and 3. The crawler knows posts 1 and 2, and asks the policy whether they are due. They are not, so they stay out of the frontier. Post 3 is new, so the crawl downloads it. The feed is the starting URL, so it is requested in each crawl.
+After the first crawl, each post has `due: null` in the crawl memento. On the second crawl, the feed names posts 1, 2 and 3. The crawler knows posts 1 and 2, and asks the policy whether they are due. They are not, so they stay out of the frontier. Post 3 is new, so the crawl downloads it. The feed has `AlwaysRevisit`, so it is requested in each crawl.
 
 A post that the crawl did not request is a deferred page. `WebSource` of `@workspace/source-web-pages` keeps its rows.
 

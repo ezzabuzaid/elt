@@ -6,7 +6,7 @@
 
 ## The steps
 
-1. Make a route for each part of the website that needs its own policy: `[new URLPattern({ pathname: '/news/*' }), new FixedRevisit({ every: hour })]`.
+1. Make a route for each part of the website that needs its own policy: `[new URLPattern({ pathname: '/news/*' }), new FixedRevisit({ every: hour })]`. A starting URL follows its policy too, so give the sitemap that names the news pages the same route.
 2. Give the routes and a fallback to `new CompositeRevisit(routes, fallback)`.
 3. Give the composite policy to `new WebCrawler(http, readers, policy)`. With `@workspace/source-web-pages`, give it to `new WebStream({ revisit })`.
 4. Start the next crawl at `crawl.nextDue()`, or when your host decides.
@@ -59,6 +59,11 @@ const crawler = new WebCrawler(
   [new ListingReader()],
   new CompositeRevisit(
     [
+      // The sitemap names the new news pages, so it is read every hour too.
+      [
+        new URLPattern({ pathname: '/sitemap.xml' }),
+        new FixedRevisit({ every: hour }),
+      ],
       [
         new URLPattern({ pathname: '/news/*' }),
         new FixedRevisit({ every: hour }),
@@ -92,7 +97,7 @@ Output:
 
 ```
 {
-  '/sitemap.xml': 'due in 24 h',
+  '/sitemap.xml': 'due in 1 h',
   '/news/1': 'due in 1 h',
   '/news/2': 'due in 1 h',
   '/guides/setup': 'due in 24 h'
@@ -104,7 +109,7 @@ next crawl in 1 h
 
 After each visit, the crawler asks the revisit policy when the URL is due again, and it keeps the answer in the crawl memento. `CompositeRevisit` sends the question to the policy of the matching route. `FixedRevisit({ every: hour })` always answers "one hour after this visit". `AdaptiveRevisit` answers "one day" after a first visit, and changes the interval after each later visit: longer while the page does not change, shorter when it changes.
 
-A crawl requests only the known URLs that are due when the crawl starts. Thus a crawl one hour later requests the sitemap, because a starting URL is always due, and the two news pages. It does not request the guide.
+A crawl requests only the known URLs that are due when the crawl starts. Thus a crawl one hour later requests the sitemap and the two news pages. It does not request the guide.
 
 ## Things to know
 
@@ -112,4 +117,4 @@ A crawl requests only the known URLs that are due when the crawl starts. Thus a 
 - **Each route keeps its own history.** If a URL moves to another route, for example after you change a pattern, its new policy starts with no history.
 - **A policy does not start a crawl.** It only gives each URL the time when it is due. Your host starts the crawl: from a button, from cron or launchd, or from `Pipeline.watch()` of elt, which wakes at `crawl.nextDue()`.
 - **Two rules apply under every policy.** A sitemap that gives a page another `lastmod` makes the page due at once. A feed is due again within half of the time that its items cover, so that no item rolls off before the next crawl.
-- **Starting URLs are always due.** A route for a starting URL has no effect on when it is requested.
+- **A starting URL follows its policy.** A crawl requests a starting URL when it never visited it or when its policy makes it due, as Nutch's generate step selects seeds like any other URL. Give a sitemap or a list a route as often as you want its new pages.

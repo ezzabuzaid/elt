@@ -14,8 +14,6 @@ import {
 import { httpUrl } from './web-url.ts';
 
 const stateSchema = z.object({
-  // Origins that the crawl expands within the limits: those of the starting pages.
-  origins: z.array(z.string()),
   // Pages admitted beyond the starting and listed pages.
   followed: z.number().int().nonnegative(),
 });
@@ -45,7 +43,7 @@ export class LinkReader extends Reader<never, State> {
   }
 
   open(): State {
-    return { origins: [], followed: 0 };
+    return { followed: 0 };
   }
 
   wants(request: CrawlRequest, state: State) {
@@ -54,7 +52,7 @@ export class LinkReader extends Reader<never, State> {
       request.hops === 0 ||
       request.hops > this.#limits.maxDepth ||
       state.followed >= this.#limits.maxPages ||
-      !state.origins.includes(new URL(request.url).origin)
+      !request.startingOrigin
     )
       return false;
     state.followed++;
@@ -69,11 +67,9 @@ export class LinkReader extends Reader<never, State> {
     const markdown = type === 'text/markdown';
     if (!isHtml(type) && !markdown) return [];
     const origin = new URL(response.url).origin;
-    if (request.expand === 'origin' && !state.origins.includes(origin))
-      state.origins.push(origin);
     const step = request.expand === 'step';
     // A page on another origin gives no links.
-    if (!step && !state.origins.includes(origin)) return [];
+    if (!step && !request.startingOrigin) return [];
     // Starting and listed pages always contribute links; others only when
     // admitted, so a page that is not admitted this time is skipped.
     if (!step && request.hops > 0 && !wanted) return null;

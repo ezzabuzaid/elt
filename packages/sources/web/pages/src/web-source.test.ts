@@ -772,13 +772,14 @@ test(
       database.path,
       checkpoints.path,
     );
-    // The interrupted crawl resumes without reading the feed again: /a, handed out last, downloads once more
+    // The interrupted crawl resumes: /a, handed out last, downloads once more
     // unchanged, then the known pages that the feed no longer names, unchanged too.
-    assert.equal((await resumed.run())[0]?.count, 1);
-    assert.deepEqual(requests, ['/a', '/b', '/c', '/d']);
+    // The feed is due, so the run reads it again and finds /e.
+    assert.equal((await resumed.run())[0]?.count, 2);
+    assert.deepEqual(requests, ['/feed.json', '/a', '/b', '/c', '/d', '/e']);
     requests.length = 0;
-    // The crawl finished, so the next run reads the feed again: only /e is new.
-    assert.equal((await resumed.run())[0]?.count, 1);
+    // The crawl finished, so the next run reads the feed again and finds nothing new.
+    assert.equal((await resumed.run())[0]?.count, 0);
     assert.deepEqual(requests, ['/feed.json', '/c', '/d', '/e', '/a', '/b']);
     assert.deepEqual(
       database.connection
@@ -1141,7 +1142,7 @@ test(
         database.path,
         checkpoints.path,
       );
-      // The crawl resumes without the feed; /a, handed out last, downloads once more and writes nothing.
+      // The crawl resumes and reads the due feed again; /a, handed out last, downloads once more and writes nothing.
       assert.equal((await resumed.run())[0]?.count, 1);
       assert.equal(
         database.connection
@@ -1149,7 +1150,7 @@ test(
           .get()?.count,
         2,
       );
-      assert.deepEqual(requests, ['/a', '/b']);
+      assert.deepEqual(requests, ['/feed.xml', '/a', '/b']);
     } finally {
       controller.abort(reason);
       await stopped;
@@ -1885,7 +1886,8 @@ test('by default an incremental crawl requests a known page again only when it i
   const due = await run();
 
   assert.equal(early, 0);
-  assert.deepEqual(earlyRequests, ['/feed.xml']);
+  // The feed is not due either, so an hour later the run requests nothing.
+  assert.deepEqual(earlyRequests, []);
   assert.match(earlyText.join(), /Revision 1/);
   assert.equal(due, 1);
   assert.deepEqual(requests, ['/feed.xml', '/a']);
@@ -1954,7 +1956,7 @@ test('a page that was not due keeps its fingerprint, so once due and unchanged i
   assert.equal(due, 0);
 });
 
-test('a host that answers 429 stops the crawl there, keeps the loaded rows, and the run after the block loads only the rest', async (t) => {
+test('a host that answers 429 stops the crawl there, keeps the loaded rows, and the run after the block loads the rest', async (t) => {
   await using cache = await new TemporaryFiles().directory('web-cache-');
   const later = shiftedClock(t);
   const requests: string[] = [];
@@ -2025,7 +2027,9 @@ test('a host that answers 429 stops the crawl there, keeps the loaded rows, and 
   assert.deepEqual(blockedRequests, ['/feed.xml', '/a', '/b', '/c']);
   assert.deepEqual(blockedRows, ['/a', '/b']);
   assert.equal(resumed[0]?.count, 2);
-  assert.deepEqual(resumedRequests, ['/c', '/d']);
+  // The run after the block reads the due feed and loads the rest; /a and /b
+  // are due too, and download again unchanged.
+  assert.deepEqual(resumedRequests, ['/feed.xml', '/c', '/d', '/a', '/b']);
   assert.equal(refresh[0]?.count, 0);
   assert.deepEqual(rows(), ['/a', '/b', '/c', '/d']);
 });

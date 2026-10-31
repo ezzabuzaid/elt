@@ -61,11 +61,21 @@ async function crawled(crawl: Crawl) {
   };
 }
 
-function siteCrawler(revisit?: RevisitPolicy<unknown>) {
+// A starting page that is read in every crawl, as a host reads its lists,
+// so the pages that it links are found again; every other URL follows the
+// policy under test.
+function everyCrawl(start: string, revisit: RevisitPolicy<unknown>) {
+  return new CompositeRevisit(
+    [[new URLPattern(start), new AlwaysRevisit()]],
+    revisit,
+  );
+}
+
+function siteCrawler(revisit: RevisitPolicy<unknown>) {
   return new WebCrawler(
     got,
     [new LinkReader({ maxDepth: 1, maxPages: 100 })],
-    revisit,
+    everyCrawl('https://site.test/', revisit),
   );
 }
 
@@ -81,6 +91,7 @@ const request: CrawlRequest = {
   page: true,
   list: false,
   expand: null,
+  startingOrigin: true,
 };
 
 test('a page that is not due is not requested and comes out as deferred after the pages, and it is requested again once due', async (t) => {
@@ -94,7 +105,7 @@ test('a page that is not due is not requested and comes out as deferred after th
         : HttpResponse.html('<p>A</p>');
     }),
   );
-  const crawler = siteCrawler();
+  const crawler = siteCrawler(new AdaptiveRevisit());
 
   const first = await crawled(
     crawler.crawl(['https://site.test/'], null, options()),
@@ -127,7 +138,7 @@ test('a caller that keeps no memento gets every page on every crawl', async () =
       return HttpResponse.html('<a href="/a">A</a>');
     }),
   );
-  const crawler = siteCrawler();
+  const crawler = siteCrawler(new AdaptiveRevisit());
 
   await crawled(crawler.crawl(['https://site.test/'], null, options()));
   const again = await crawled(
@@ -201,7 +212,7 @@ test('a failed page is due again two hours later even when nothing lists it, and
         : HttpResponse.html('<p>A</p>');
     }),
   );
-  const crawler = siteCrawler();
+  const crawler = siteCrawler(new AdaptiveRevisit());
 
   const first = await crawled(
     crawler.crawl(['https://site.test/'], null, options()),
@@ -239,7 +250,7 @@ test('a gone page waits a day, is not deferred meanwhile, and is handed back onc
         : HttpResponse.html('<p>A</p>');
     }),
   );
-  const crawler = siteCrawler();
+  const crawler = siteCrawler(new AdaptiveRevisit());
 
   const first = await crawled(
     crawler.crawl(['https://site.test/'], null, options()),
@@ -273,7 +284,11 @@ test('a listing that gives a page another lastModified makes it due at once, and
         : HttpResponse.html('<p>A</p>'),
     ),
   );
-  const crawler = new WebCrawler(got, [new ListingReader()]);
+  const crawler = new WebCrawler(
+    got,
+    [new ListingReader()],
+    everyCrawl('https://site.test/sitemap.xml', new AdaptiveRevisit()),
+  );
   const hinted = async (memento: unknown) => {
     const hints: (string | null)[] = [];
     const crawl = crawler.crawl(
@@ -344,7 +359,7 @@ test('fail makes a handed-back page due as a failed one: it is not deferred, and
         : HttpResponse.html('<p>A</p>'),
     ),
   );
-  const crawler = siteCrawler();
+  const crawler = siteCrawler(new AdaptiveRevisit());
   const crawl = crawler.crawl(['https://site.test/'], null, options());
   for await (const entry of crawl)
     if ('response' in entry) crawl.fail(entry.url);
@@ -379,9 +394,11 @@ test('a linked page that is not due spends no LinkReader budget, so the budget r
         : HttpResponse.html('<p>Page</p>');
     }),
   );
-  const crawler = new WebCrawler(got, [
-    new LinkReader({ maxDepth: 1, maxPages: 1 }),
-  ]);
+  const crawler = new WebCrawler(
+    got,
+    [new LinkReader({ maxDepth: 1, maxPages: 1 })],
+    everyCrawl('https://site.test/', new AdaptiveRevisit()),
+  );
   // No page is handed back, as no page links /nothing, so a linked page downloads only when LinkReader admits it.
   const linksOnly = (): CrawlOptions => ({
     ...options(),
@@ -553,7 +570,11 @@ test('nextDue gives when the next crawl has a known URL due, starting URLs inclu
         : new HttpResponse(null, { status: 400 }),
     ),
   );
-  const crawl = siteCrawler().crawl(['https://site.test/'], null, options());
+  const crawl = new WebCrawler(
+    got,
+    [new LinkReader({ maxDepth: 1, maxPages: 100 })],
+    new AdaptiveRevisit(),
+  ).crawl(['https://site.test/'], null, options());
   const before = crawl.nextDue();
 
   await crawled(crawl);

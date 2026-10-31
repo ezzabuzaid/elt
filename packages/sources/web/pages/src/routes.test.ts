@@ -24,12 +24,15 @@ import {
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import {
+  AdaptiveRevisit,
   AlwaysRevisit,
+  CompositeRevisit,
   CrawlError,
   FixedRevisit,
   LinkReader,
   ListingReader,
   PaginationReader,
+  type RevisitPolicy,
   day,
 } from '@workspace/sdk-web-crawler';
 
@@ -59,7 +62,7 @@ class PathExtractor extends RecordExtractor {
 
 // As the startup-credits app: each list hands back the pages it links on
 // every website, and a linked page on another website is searched one step.
-function programs(include: string, revisit?: FixedRevisit) {
+function programs(include: string, revisit?: RevisitPolicy<unknown>) {
   return new WebStream({
     name: 'programs',
     primaryKey: ['path'],
@@ -73,6 +76,15 @@ function programs(include: string, revisit?: FixedRevisit) {
     ...(revisit === undefined ? {} : { revisit }),
     extractor: new PathExtractor(),
   });
+}
+
+// The list is read in every crawl, as the startup-credits app reads its lists
+// every hour; every other URL follows the given policy.
+function listEveryCrawl(list: string, revisit: RevisitPolicy<unknown>) {
+  return new CompositeRevisit(
+    [[new URLPattern(list), new AlwaysRevisit()]],
+    revisit,
+  );
 }
 
 // A website that answers each path with its HTML, its own content type, or 404.
@@ -239,15 +251,18 @@ test('a list read again replaces its routes, and a listing that the run does not
   await using database = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const input = `${list.origin}/programs`;
-  // The list is a starting URL, read in every crawl; the pages of the
-  // website are due again only the next day.
+  // The list is read in every crawl; the pages of the website are due again
+  // only the next day.
   const ingestion = await pipeline(
     new WebSource({
       cachePath: join(cache.path, 'web-http.sqlite'),
       userAgent: 'elt-test/1.0',
       streams: [
         {
-          stream: programs(site.origin, new FixedRevisit({ every: day })),
+          stream: programs(
+            site.origin,
+            listEveryCrawl(input, new FixedRevisit({ every: day })),
+          ),
           inputs: [input],
         },
       ],
@@ -364,7 +379,13 @@ test('the state of the web stream drops the routes that the routes stream commit
     cachePath: join(cache.path, 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
     streams: [
-      { stream: programs(site.origin), inputs: [`${list.origin}/programs`] },
+      {
+        stream: programs(
+          site.origin,
+          listEveryCrawl(`${list.origin}/programs`, new AdaptiveRevisit()),
+        ),
+        inputs: [`${list.origin}/programs`],
+      },
     ],
   };
   const states = new Map<string, unknown>();

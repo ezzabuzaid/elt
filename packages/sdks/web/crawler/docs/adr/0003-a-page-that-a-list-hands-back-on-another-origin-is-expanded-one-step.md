@@ -1,6 +1,6 @@
 # A page that a list hands back on another origin is expanded one step
 
-This decision replaces [ADR 0002](./0002-the-crawl-expands-only-the-starting-origins.md).
+This decision replaces [ADR 0002](./0002-the-crawl-expands-only-the-starting-origins.md). [ADR 0005](./0005-a-one-step-expansion-spends-a-budget-for-each-run.md) amends it: the documents of an expansion spend a budget for each run.
 
 A host chooses websites and gives the crawl their starting URLs. Before this decision, the crawl expanded only the starting origins: `LinkReader` followed ordinary links only on those origins, and `ListingReader` read `robots.txt` only for a starting URL. Two readers kept the rule, and each one learned it from `request.start`.
 

@@ -7,6 +7,9 @@ import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
 
 import {
+  AdaptiveRevisit,
+  AlwaysRevisit,
+  CompositeRevisit,
   type Crawl,
   type CrawlMemento,
   ListingReader,
@@ -381,7 +384,15 @@ async function crawlAgain(pages: readonly string[]) {
       return HttpResponse.html(`<p>${pathname}</p>`);
     }),
   );
-  const crawl = crawler();
+  // The sitemap is read in every crawl, as a host reads its lists.
+  const crawl = new WebCrawler(
+    got.extend({ retry: { limit: 0 } }),
+    [new ListingReader()],
+    new CompositeRevisit(
+      [[new URLPattern('https://site.test/sitemap.xml'), new AlwaysRevisit()]],
+      new AdaptiveRevisit(),
+    ),
+  );
   const first = await crawled(
     crawl.crawl(['https://site.test/sitemap.xml'], null, options()),
   );

@@ -755,7 +755,7 @@ test('a listing whose JSON-LD changes after it is stored keeps its first values,
   );
 });
 
-test('a rerun requests only the category and the listings that are new', async (t) => {
+test('a rerun an hour later requests the category again and only the listings that are new', async (t) => {
   await using cache = await new TemporaryFiles().directory('web-cache-');
   const later = shiftedClock(t);
   const pages: Record<string, () => object[]> = {
@@ -780,8 +780,8 @@ test('a rerun requests only the category and the listings that are new', async (
   pages['287909012'] = () => [motorcycle('287909012', '2999')];
   upstream.requests.splice(0);
 
-  // Past the longest interval of every other policy.
-  later(30 * day);
+  // A category page is read in every run, an hour later too.
+  later(hour);
   const rerun = await ingestion.run();
 
   assert.equal(rerun[0]?.count, 1);

@@ -437,6 +437,12 @@ test('arbitrary sites retain every candidate path, URL identity and raw hints', 
         lastModified: '2026-10-20',
         listingUrl,
       },
+      // The origins take turns.
+      {
+        url: 'https://archive.example/elsewhere',
+        lastModified: null,
+        listingUrl,
+      },
       {
         url: `${origin}/papers?id=1`,
         lastModified: '2026-10-20T16:04:01.000Z',
@@ -445,11 +451,6 @@ test('arbitrary sites retain every candidate path, URL identity and raw hints', 
       { url: `${origin}/papers?id=2`, lastModified: null, listingUrl },
       { url: `${origin}/papers/`, lastModified: null, listingUrl },
       { url: `${origin}/papers`, lastModified: null, listingUrl },
-      {
-        url: 'https://archive.example/elsewhere',
-        lastModified: null,
-        listingUrl,
-      },
     ]);
     assert.deepEqual(requests, []);
   }

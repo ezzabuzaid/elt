@@ -6,18 +6,21 @@ import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
 import {
+  AlwaysRevisit,
+  CompositeRevisit,
   type Crawl,
   FixedRevisit,
   LinkReader,
   ListingReader,
   PaginationReader,
+  type RevisitPolicy,
   WebCrawler,
   day,
 } from './index.ts';
 
 // As the startup-credits app: a list of programs links the home page of each
 // company, and the crawl searches the home page one step for a program page.
-function programs(revisit?: FixedRevisit) {
+function programs(revisit?: RevisitPolicy<unknown>) {
   return new WebCrawler(
     got.extend({ retry: { limit: 0 } }),
     [
@@ -339,7 +342,13 @@ test('a list read again in a later crawl names a page that is known and not due,
       '/programs': `<main><a href="${site.origin}/startups">Startups</a></main>`,
     })),
   );
-  const crawler = programs(new FixedRevisit({ every: day }));
+  // The list is due in every crawl; the page only the next day.
+  const crawler = programs(
+    new CompositeRevisit(
+      [[new URLPattern(`${list.origin}/programs`), new AlwaysRevisit()]],
+      new FixedRevisit({ every: day }),
+    ),
+  );
   const options = {
     signal: AbortSignal.timeout(5000),
     include: [new URLPattern(`${site.origin}/*`)] as const,

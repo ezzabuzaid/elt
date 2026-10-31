@@ -33,8 +33,10 @@ const noteSchema = z.object({
 });
 type Note = z.infer<typeof noteSchema>;
 
-// listed: an expanded page declared a listing, or one was read; both happen before robots.txt.
-const stateSchema = z.object({ listed: z.boolean() });
+// listed: each origin where an expanded page declared a listing, or a listing
+// was read; both happen before the origin's robots.txt, which then gives no
+// /sitemap.xml guess.
+const stateSchema = z.object({ listed: z.array(z.string()) });
 type State = z.infer<typeof stateSchema>;
 
 function document(
@@ -64,7 +66,7 @@ export class ListingReader extends Reader<Note, State> {
   readonly states = stateSchema;
 
   open(): State {
-    return { listed: false };
+    return { listed: [] };
   }
 
   wants() {
@@ -92,7 +94,7 @@ export class ListingReader extends Reader<Note, State> {
             false,
           ),
         );
-      if (state.listed) return [];
+      if (state.listed.includes(new URL(response.url).origin)) return [];
       return [
         document(
           new URL('/sitemap.xml', response.url).href,
@@ -128,7 +130,7 @@ export class ListingReader extends Reader<Note, State> {
         if (note?.kind === 'guess') return [];
         throw error;
       }
-      state.listed = true;
+      listed(state, response.url);
       // A feed rolls its oldest items off; visited again within half the time they cover, it loses none (#2936).
       if (listing.span !== null) revisitWithin(listing.span / 2);
       return [
@@ -146,15 +148,19 @@ export class ListingReader extends Reader<Note, State> {
           note: null,
           priority: 'page' as const,
         })),
-        ...listing.sitemaps.map((url) =>
-          document(
+        // A child of a sitemap index is backfill: it shares downloads with
+        // the pages and the other origins, as Heritrix gives the children
+        // as outlinks, so one index cannot hold up the frontier.
+        ...listing.sitemaps.map((url) => ({
+          ...document(
             webUrl(url, response.url),
             'sitemap-index',
             { kind: 'listing' },
             [],
             false,
           ),
-        ),
+          priority: 'backfill' as const,
+        })),
         ...[
           ...listing.pagination,
           ...discoverUrisFromHeaders(headers, {
@@ -207,7 +213,8 @@ export class ListingReader extends Reader<Note, State> {
         )
         .map(({ url, kind }) => feed(url, kind));
     }
-    if (declared.some(({ kind }) => kind === 'listing')) state.listed = true;
+    if (declared.some(({ kind }) => kind === 'listing'))
+      listed(state, response.url);
     return [
       ...declared.map(({ url, kind }) => feed(url, kind)),
       document(
@@ -219,6 +226,11 @@ export class ListingReader extends Reader<Note, State> {
       ),
     ];
   }
+}
+
+function listed(state: State, url: string) {
+  const { origin } = new URL(url);
+  if (!state.listed.includes(origin)) state.listed.push(origin);
 }
 
 // A date as Date reads it, RFC 822 from RSS or RFC 3339 from Atom and JSON Feed, in ISO 8601 UTC; null when it is not a date.

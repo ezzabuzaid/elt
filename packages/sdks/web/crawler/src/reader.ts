@@ -32,6 +32,8 @@ export type CrawlRequest = PageLocation & {
    * on every origin, and the crawl keeps only what matches its expand patterns.
    */
   readonly expand: 'origin' | 'step' | null;
+  /** The URL is on the origin that a starting HTML or Markdown page was answered from, in this crawl or an earlier one, such as www.example.com for a starting URL that redirects there. */
+  readonly startingOrigin: boolean;
 };
 
 /**

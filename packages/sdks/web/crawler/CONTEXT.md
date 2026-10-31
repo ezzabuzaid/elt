@@ -16,12 +16,20 @@ _Avoid_: Run, scan, job
 The URLs that the crawl must still download, and the URLs that it already knows.
 _Avoid_: Queue, visited set
 
+**Turn**:
+One download for one origin. Inside each priority, the origins take turns: the origin that had its turn goes to the back, and an origin that must still wait lets a ready origin go first ([ADR 0005](./docs/adr/0005-a-one-step-expansion-spends-a-budget-for-each-run.md)).
+_Avoid_: Slot, share, round
+
+**Expansion budget**:
+The number of documents that one run downloads for the one-step expansions on one origin that no starting URL names: 8. The other documents stay in the frontier for the next run ([ADR 0005](./docs/adr/0005-a-one-step-expansion-spends-a-budget-for-each-run.md)).
+_Avoid_: Quota, cap, limit (a budget leaves nothing out)
+
 **Reader**:
 A class that reads one response and returns the URLs that it finds there. Each reader finds one kind of URL. A reader does not download, queue or call another reader. The crawler gives each response to every reader.
 _Avoid_: Parser, extractor (an extractor reads pages for a host), plugin
 
 **Starting URL**:
-A URL that the host gives to a crawl. The host chose its website. Each crawl downloads every starting URL, and a starting URL that fails is an error.
+A URL that the host gives to a crawl. The host chose its website. A run downloads a starting URL that it never visited or that its revisit policy makes due, and a starting URL that fails is an error.
 _Avoid_: Seed, input (input is the word of the web source), entry
 
 **Origin**:
@@ -81,7 +89,7 @@ The text that a listing named the URL of a route with: the anchor text of a link
 _Avoid_: Label, title alone, anchor
 
 **`ListingReader`**:
-The reader of `robots.txt`, sitemaps and feeds. It finds the feeds and sitemaps that a page declares, also on other origins, and reads each one completely. It reads `robots.txt` and guesses `/sitemap.xml` only for a starting URL and a one-step page.
+The reader of `robots.txt`, sitemaps and feeds. It finds the feeds and sitemaps that a page declares, also on other origins, and reads each one completely. It reads `robots.txt` and guesses `/sitemap.xml` only for a starting URL and a one-step page, and it guesses only on an origin where no listing was declared or read. The child sitemaps of a sitemap index are backfill.
 _Avoid_: Sitemap reader, feed reader
 
 **`ArchiveReader`**:

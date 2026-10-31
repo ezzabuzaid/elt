@@ -144,7 +144,7 @@ test('a feed item that is also an archive is read as a list, and handed back as 
   );
 });
 
-test('a crawl resumed from a snapshot does not hand back a page again when it reads that page for another role', async () => {
+test('a run that continues a crawl hands back again a page that it reads for another role, as each run hands back each page once', async () => {
   const requests: string[] = [];
   using server = mockWeb(blog(requests));
   const crawler = blogCrawler();
@@ -164,9 +164,10 @@ test('a crawl resumed from a snapshot does not hand back a page again when it re
 
   const resumed = await pages(crawler.crawl([], snapshot, { signal }));
 
+  // The run counts only its own hand-backs, so /2026/, read again as a list, is handed back again.
   assert.deepEqual(
     resumed.map(({ url }) => url),
-    ['/post/a', '/2026/first-post'],
+    ['/post/a', '/2026/', '/2026/first-post'],
   );
 });
 
@@ -196,7 +197,6 @@ test('a URL downloaded again for a role it adds is not admitted again, so it spe
   // /x is downloaded again as an archive list, but LinkReader admitted only /x and /b.
   assert.deepEqual(requests, ['/', '/x', '/b', '/x']);
   assert.deepEqual(last?.crawl?.states[0], {
-    origins: ['https://site.test'],
     followed: 2,
   });
 });

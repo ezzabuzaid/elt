@@ -12,7 +12,9 @@ import * as robots from 'robots-parser';
 import { z } from 'zod';
 
 import { AdaptiveRevisit } from './adaptive-revisit.ts';
+import { OriginLane } from './origin-lane.ts';
 import {
+  type CrawlRequest,
   type Finding,
   type Naming,
   type PageLocation,
@@ -117,11 +119,7 @@ const mementoSchema = z.object({
   // The unfinished crawl, or null once it is complete.
   crawl: z
     .object({
-      at: z.number(),
       pending: z.array(entrySchema),
-      known: z.array(z.string()),
-      // URLs this crawl handed back as pages: each is handed back once.
-      handed: z.array(z.string()),
       states: z.array(z.unknown()),
       // Origins that answered 403 or 429, with when their breaker closes.
       blocked: z.record(z.string(), z.number()),
@@ -133,6 +131,10 @@ const mementoSchema = z.object({
   urls: z.record(z.string(), knownUrlSchema),
   // Each origin that refused requests, across crawls, with the milliseconds a crawl waits between two requests to it.
   slowdowns: z.record(z.string(), z.number()),
+  // Each starting URL that answered with an HTML or Markdown page, across
+  // crawls, with the origin that answered: LinkReader follows links there
+  // also in a crawl that does not read the starting page.
+  pages: z.record(z.string(), z.string()),
 });
 export type CrawlMemento = z.infer<typeof mementoSchema>;
 
@@ -187,9 +189,9 @@ export class WebCrawler {
     memento: unknown,
     options: CrawlOptions,
   ): Crawl {
-    const { crawl, urls, slowdowns } =
+    const { crawl, urls, slowdowns, pages } =
       memento === null
-        ? { crawl: null, urls: {}, slowdowns: {} }
+        ? { crawl: null, urls: {}, slowdowns: {}, pages: {} }
         : mementoSchema.parse(memento);
     const known = new Map(
       Object.entries(urls).map(([url, { entry, ...visit }]) => [
@@ -206,8 +208,6 @@ export class WebCrawler {
       at: number,
       states: unknown[],
       entries: Entry[],
-      crawled: readonly string[],
-      handed: readonly string[],
       blocked: Record<string, number>,
       origins: readonly string[],
     ) =>
@@ -215,12 +215,14 @@ export class WebCrawler {
         at,
         states,
         entries,
-        crawled,
-        handed,
         blocked,
         origins,
         known,
         slowdowns,
+        // Only the current starting URLs' pages count.
+        pages: new Map(
+          Object.entries(pages).filter(([url]) => startUrls.includes(url)),
+        ),
         revisits: [...known.values()].flatMap(({ entry }) =>
           startUrls.includes(entry.url)
             ? []
@@ -233,40 +235,55 @@ export class WebCrawler {
               ],
         ),
       });
+    const start = (url: string): Entry => ({
+      url,
+      listingUrl: url,
+      lastModified: null,
+      published: null,
+      hops: 0,
+      start: true,
+      page: false,
+      document: true,
+      list: false,
+      expand: 'origin',
+      within: false,
+      priority: 'listing',
+      linked: false,
+      tolerate: [],
+      notes: this.#readers.map(() => null),
+    });
+    const now = Date.now();
+    // Each run is timed at its own start, and it requests each starting URL
+    // that it never visited or that its revisit policy makes due by then, in
+    // a new crawl and in one it continues, whatever ended the last run: as
+    // Nutch's generate step selects every due URL, seeds included, in each
+    // cycle, so a list is not held up by an expansion budget, an interruption
+    // or a block, and the starts' new findings enter the frontier as usual.
+    const starting = startUrls.flatMap((url) => {
+      const visit = known.get(url);
+      return visit === undefined ||
+        this.#revisit.due(
+          { ...start(url), startingOrigin: true },
+          { ...visit, lastModified: visit.entry.lastModified },
+          now,
+        )
+        ? [start(url)]
+        : [];
+    });
     if (crawl !== null)
       return run(
-        crawl.at,
+        now,
         this.#readers.map((reader, index) =>
           reader.states.parse(crawl.states[index]),
         ),
-        crawl.pending.map((entry) => this.#restore(entry)),
-        crawl.known,
-        crawl.handed,
+        [...crawl.pending.map((entry) => this.#restore(entry)), ...starting],
         crawl.blocked,
         crawl.origins,
       );
     return run(
-      Date.now(),
+      now,
       this.#readers.map((reader) => reader.open()),
-      startUrls.map((url) => ({
-        url,
-        listingUrl: url,
-        lastModified: null,
-        published: null,
-        hops: 0,
-        start: true,
-        page: false,
-        document: true,
-        list: false,
-        expand: 'origin' as const,
-        within: false,
-        priority: 'listing' as const,
-        linked: false,
-        tolerate: [],
-        notes: this.#readers.map(() => null),
-      })),
-      [],
-      [],
+      starting,
       {},
       [...new Set(startUrls.map((url) => new URL(url).origin))],
     );
@@ -290,20 +307,24 @@ class CrawlRun implements Crawl {
   readonly #at: number;
   readonly #states: unknown[];
   readonly #urls: Map<string, KnownUrl>;
-  readonly #lanes: Record<Priority, Map<string, Entry>> = {
-    listing: new Map(),
-    page: new Map(),
-    link: new Map(),
-    backfill: new Map(),
+  readonly #lanes: Record<Priority, OriginLane<Entry>> = {
+    listing: new OriginLane(),
+    page: new OriginLane(),
+    link: new OriginLane(),
+    backfill: new OriginLane(),
   };
   readonly #credit: Record<keyof typeof weights, number> = {
     page: 0,
     link: 0,
     backfill: 0,
   };
-  // Every URL pending or downloaded in this crawl; a skipped page leaves so a later finding can still bring it in.
+  // Every URL pending or downloaded in this run, which a second finding does
+  // not bring in again; a skipped page leaves so a later finding can still
+  // bring it in. Across runs, only due decides, as Nutch's generator selects
+  // each due entry of the crawl database in every cycle.
   readonly #known = new Set<string>();
-  readonly #handed: Set<string>;
+  // URLs this run handed back as pages: each is handed back once in a run.
+  readonly #handed = new Set<string>();
   // URLs this crawl downloads again for a role they add: no reader admits them a second time.
   readonly #again = new Set<string>();
   // A circuit breaker per origin that answered 403 or 429 (Nygard, Release It!):
@@ -312,8 +333,13 @@ class CrawlRun implements Crawl {
   readonly #blocked: Map<string, number>;
   // Origins of the starting URLs.
   readonly #origins: readonly string[];
-  // Pending entries of a blocked origin, out of the lanes until a later crawl resumes them.
+  // Pending entries of a blocked origin, or of an origin that spent its
+  // expansion budget, out of the lanes until a later crawl resumes them.
   readonly #held = new Map<string, Entry>();
+  // The documents of one-step expansions that this run downloaded, by origin.
+  readonly #documents = new Map<string, number>();
+  // Origins whose expansion budget this run spent, with entries held for the next run.
+  readonly #spent = new Set<string>();
   // 403 answers in a row, by origin.
   readonly #forbidden = new Map<string, number>();
   // Each origin's robots.txt (RFC 9309), read once per crawl.
@@ -322,6 +348,8 @@ class CrawlRun implements Crawl {
   readonly #started = new Map<string, number>();
   // How long to wait between two requests to each origin that refused some.
   readonly #slowdowns: Map<string, number>;
+  // Each starting URL that answered with a page, with the origin that answered.
+  readonly #pages: Map<string, string>;
   // The client's user agent, which robots.txt groups name.
   readonly #agent: string;
   // The page handed back last, added to #handed with its visit, as the entry stays pending.
@@ -345,23 +373,21 @@ class CrawlRun implements Crawl {
       at,
       states,
       entries,
-      crawled,
-      handed,
       blocked,
       origins,
       known,
       slowdowns,
+      pages,
       revisits,
     }: {
       readonly at: number;
       readonly states: unknown[];
       readonly entries: readonly Entry[];
-      readonly crawled: readonly string[];
-      readonly handed: readonly string[];
       readonly blocked: Record<string, number>;
       readonly origins: readonly string[];
       readonly known: Map<string, KnownUrl>;
       readonly slowdowns: Record<string, number>;
+      readonly pages: Map<string, string>;
       readonly revisits: Entry[];
     },
   ) {
@@ -375,13 +401,12 @@ class CrawlRun implements Crawl {
     this.#states = states;
     this.#urls = known;
     this.#revisits = revisits;
-    this.#handed = new Set(handed);
     this.#blocked = new Map(Object.entries(blocked));
     this.#origins = origins;
     this.#slowdowns = new Map(Object.entries(slowdowns));
-    // Pending entries were admitted when found; one may be a URL this crawl already downloaded.
+    this.#pages = pages;
+    // Pending entries were admitted when found, in this run or the last.
     for (const entry of entries) this.#add(entry);
-    for (const url of crawled) this.#known.add(url);
   }
 
   snapshot(): CrawlMemento {
@@ -389,7 +414,6 @@ class CrawlRun implements Crawl {
       crawl: this.#complete
         ? null
         : {
-            at: this.#at,
             pending: [
               ...(this.#current ? [this.#current] : []),
               ...priorities.flatMap((priority) => [
@@ -397,14 +421,13 @@ class CrawlRun implements Crawl {
               ]),
               ...this.#held.values(),
             ],
-            known: [...this.#known],
-            handed: [...this.#handed],
             states: this.#states,
             blocked: Object.fromEntries(this.#blocked),
             origins: [...this.#origins],
           },
       urls: Object.fromEntries(this.#urls),
       slowdowns: Object.fromEntries(this.#slowdowns),
+      pages: Object.fromEntries(this.#pages),
     });
   }
 
@@ -421,9 +444,13 @@ class CrawlRun implements Crawl {
   }
 
   nextDue(): number | null {
-    // A crawl held back by its breakers continues when the first one closes.
+    // A crawl held back by its breakers continues when the first one closes;
+    // one held back by a spent expansion budget is due again at once.
     if (!this.#complete && this.#held.size > 0)
-      return Math.min(...this.#blocked.values());
+      return Math.min(
+        ...this.#blocked.values(),
+        ...(this.#spent.size > 0 ? [this.#at] : []),
+      );
     const known = [...this.#urls.values()];
     if (this.#visit) known.push(this.#visit.after);
     let next: number | null = null;
@@ -555,6 +582,12 @@ class CrawlRun implements Crawl {
       };
       // A starting URL is read as a list too, as the readers of lists do.
       const list = (entry.list || entry.start) && isHtml(type);
+      if (
+        entry.start &&
+        response.ok &&
+        (isHtml(type) || type === 'text/markdown')
+      )
+        this.#pages.set(entry.url, new URL(response.url).origin);
       // Each URL in scope that the response names, found or not, as Heritrix
       // records every outlink of a URI and Nutch inverts them into inlinks.
       const named = new Map<string, Naming>();
@@ -568,7 +601,8 @@ class CrawlRun implements Crawl {
               response,
               headers,
               type,
-              request: entry,
+              // A reader reads the response where it came from.
+              request: this.#request(entry, response.url),
               note: entry.notes[index],
               wanted: wanted[index] === true,
               revisitWithin,
@@ -631,7 +665,7 @@ class CrawlRun implements Crawl {
         };
       } else yield { progress: entry.url, routes };
     }
-    // Entries of a blocked origin remain: the crawl is unfinished.
+    // Entries of a blocked or spent origin remain: the crawl is unfinished.
     if (this.#held.size > 0) return;
     for (const [url, { entry, digest }] of this.#urls)
       if (
@@ -672,7 +706,12 @@ class CrawlRun implements Crawl {
     before: KnownUrl | undefined,
   ): KnownUrl {
     const { due, history } = this.#revisit.schedule(
-      { request: entry, outcome, headers, at: this.#at },
+      {
+        request: this.#request(entry, entry.url),
+        outcome,
+        headers,
+        at: this.#at,
+      },
       before?.history ?? null,
     );
     return { entry, digest, due, history };
@@ -700,8 +739,11 @@ class CrawlRun implements Crawl {
   > {
     for (;;) {
       for (let lane = this.#lane(); lane; lane = this.#lane())
-        for (const entry of lane.values()) {
-          lane.delete(entry.url);
+        for (
+          let entry = lane.take(this.#ready);
+          entry;
+          entry = lane.take(this.#ready)
+        ) {
           const { origin } = new URL(entry.url);
           const included = entry.page && this.#includes(entry.url);
           const needed = entry.start || entry.document || included;
@@ -715,6 +757,21 @@ class CrawlRun implements Crawl {
             continue;
           }
           if (this.#blocked.has(origin)) {
+            this.#held.set(entry.url, entry);
+            continue;
+          }
+          // The documents that a one-step expansion reads on an origin that
+          // no starting URL names, such as its robots.txt sitemaps, spend a
+          // budget for each run; the rest wait in the frontier for the next
+          // run, as Nutch's generate.max.count leaves a host's surplus URLs
+          // in the crawl database for the next cycle.
+          const budgeted =
+            entry.document && entry.within && !this.#origins.includes(origin);
+          if (
+            budgeted &&
+            this.#documents.getOrInsert(origin, 0) >= expansionDocuments
+          ) {
+            this.#spent.add(origin);
             this.#held.set(entry.url, entry);
             continue;
           }
@@ -753,9 +810,17 @@ class CrawlRun implements Crawl {
           const wanted = this.#again.delete(entry.url)
             ? this.#readers.map(() => false)
             : this.#readers.map((reader, index) =>
-                reader.wants(entry, this.#states[index]),
+                reader.wants(
+                  this.#request(entry, entry.url),
+                  this.#states[index],
+                ),
               );
           if (needed || wanted.includes(true)) {
+            if (budgeted)
+              this.#documents.set(
+                origin,
+                this.#documents.getOrInsert(origin, 0) + 1,
+              );
             this.#current = entry;
             return { entry, included, wanted };
           }
@@ -796,7 +861,10 @@ class CrawlRun implements Crawl {
   // admits for real only after the rules of the origin allow the URL.
   #wouldAdmit(entry: Entry) {
     return this.#readers.some((reader, index) =>
-      reader.wants(entry, structuredClone(this.#states[index])),
+      reader.wants(
+        this.#request(entry, entry.url),
+        structuredClone(this.#states[index]),
+      ),
     );
   }
 
@@ -858,15 +926,27 @@ class CrawlRun implements Crawl {
   // Waits out the longer of the origin's Crawl-delay and its slowdown since
   // its last request started. Bing and Yandex honor the directive; RFC 9309
   // does not define it.
-  async #pace(origin: string) {
-    const { signal } = this.#options;
+  // Whether the origin's Crawl-delay and slowdown have passed, so a request
+  // to it waits for nothing.
+  readonly #ready = (origin: string) =>
+    this.#askable(origin) <= performance.now();
+
+  // When the origin can be asked again: the longer of its Crawl-delay and its
+  // slowdown after its last request started.
+  #askable(origin: string) {
     const crawlDelay = Math.min(
       this.#robots.get(origin)?.rules.getCrawlDelay(this.#agent) ?? 0,
       maxCrawlDelay,
     );
-    const until =
+    return (
       (this.#started.get(origin) ?? 0) +
-      Math.max(crawlDelay * 1000, this.#slowdowns.get(origin) ?? 0);
+      Math.max(crawlDelay * 1000, this.#slowdowns.get(origin) ?? 0)
+    );
+  }
+
+  async #pace(origin: string) {
+    const { signal } = this.#options;
+    const until = this.#askable(origin);
     // A timer can fire up to a millisecond early by the high-resolution clock.
     for (
       let wait = until - performance.now();
@@ -912,6 +992,18 @@ class CrawlRun implements Crawl {
       (this.#options.expand?.some((pattern) => pattern.test(finding.url)) ??
         false)
     );
+  }
+
+  // The entry as readers and the revisit policy see it: whether it is a
+  // starting URL, or on the origin of a starting page, by the URL that its
+  // response came from once there is one.
+  #request(entry: Entry, at: string): CrawlRequest {
+    const { origin } = new URL(at);
+    return {
+      ...entry,
+      startingOrigin:
+        entry.start || this.#pages.values().some((page) => page === origin),
+    };
   }
 
   // Whether a URL that a response names is one the crawl keeps, as it decides
@@ -992,13 +1084,12 @@ class CrawlRun implements Crawl {
     };
   }
 
-  // A known URL that is not due stays out of this crawl, whatever finds it;
-  // only a starting URL always goes in. Reader admission comes after, so a
-  // URL left out spends no reader budget.
+  // A known URL that is not due stays out of this run, whatever finds it.
+  // Reader admission comes after, so a URL left out spends no reader budget.
   #enqueue(next: Entry) {
     if (this.#pending(next.url) === undefined) {
       if (this.#known.has(next.url)) {
-        // This crawl downloaded the URL: it goes again only for a role that
+        // This run downloaded the URL: it goes again only for a role that
         // download did not have, with every role, so Got's cache revalidates it.
         const visited = (
           this.#visit?.after.entry.url === next.url
@@ -1021,9 +1112,8 @@ class CrawlRun implements Crawl {
         const known = this.#urls.get(next.url);
         if (
           known !== undefined &&
-          !next.start &&
           !this.#revisit.due(
-            next,
+            this.#request(next, next.url),
             { ...known, lastModified: known.entry.lastModified },
             this.#at,
           )
@@ -1043,14 +1133,14 @@ class CrawlRun implements Crawl {
     const pending = this.#pending(next.url);
     if (!pending) {
       this.#known.add(next.url);
-      this.#lanes[next.priority].set(next.url, next);
+      this.#lanes[next.priority].set(next);
       return;
     }
     const { priority } = pending;
     merge(pending, next);
     if (pending.priority !== priority) {
       this.#lanes[priority].delete(pending.url);
-      this.#lanes[pending.priority].set(pending.url, pending);
+      this.#lanes[pending.priority].set(pending);
     }
   }
 
@@ -1063,6 +1153,13 @@ class CrawlRun implements Crawl {
     );
   }
 }
+
+// The documents that one run downloads for the one-step expansions on one
+// origin. An expansion reads one robots.txt and the sitemaps it names; a
+// small site names one to three, as vercel.com names one, so its program
+// page comes back in one run. A site with hundreds, as www.microsoft.com's
+// 505, is read over many runs. ADR 0005 gives the reasons for the number.
+const expansionDocuments = 8;
 
 // 403 answers in a row from one origin that make a block.
 const forbiddenRun = 3;

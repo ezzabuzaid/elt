@@ -120,7 +120,7 @@ test('ordinary links reach unlisted articles while feed pages and unchanged reru
   assert.equal(revalidated, 2);
 });
 
-test('new URLs survive interruption, and only the page in flight downloads again', async () => {
+test('new URLs survive interruption, and only the page in flight and the due URLs download again', async () => {
   await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
@@ -202,7 +202,9 @@ test('new URLs survive interruption, and only the page in flight downloads again
   assert.equal((await resumed.run())[0]?.count, 1);
   // The parent was in flight when the run stopped: it downloads once more, and the diff writes nothing for it.
   assert.equal(requests.filter((url) => url === '/articles/z').length, 1);
-  assert.ok(!requests.includes('/') && !requests.includes('/feed'));
+  // The starting page and the feed it declares are due, so the run reads each once more.
+  assert.equal(requests.filter((url) => url === '/').length, 1);
+  assert.equal(requests.filter((url) => url === '/feed').length, 1);
   assert.equal(requests.filter((url) => url === '/articles/a').length, 1);
   assert.equal(
     database.connection.prepare('SELECT count(*) AS count FROM articles').get()
@@ -398,7 +400,8 @@ test('an interruption during a long stretch of archive pages keeps the progress 
     const at = firstRun.get(url);
     return at === undefined ? [] : [{ url, before: stoppedAt - at }];
   });
-  assert.ok(!requests.some(({ url }) => url === '/'));
+  // The starting page is due, so the run reads it once more.
+  assert.equal(requests.filter(({ url }) => url === '/').length, 1);
   // Progress is saved at most once a second; the archive page in flight at the last save, up to one
   // request slot and one slow download earlier, is read once more.
   assert.ok(

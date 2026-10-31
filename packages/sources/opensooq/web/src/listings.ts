@@ -1,5 +1,5 @@
 import {
-  AdaptiveRevisit,
+  AlwaysRevisit,
   CompositeRevisit,
   OnceRevisit,
   PaginationReader,
@@ -17,12 +17,12 @@ export const listings = new WebStream({
   // Not ListingReader: OpenSooq's robots.txt lists the sitemaps of 20 country sites.
   // Not ArchiveReader: OpenSooq has no year archives, and a year filter such as /en/cars/motorcycles/2024 is not one.
   readers: [new PaginationReader()],
-  // A listing is read once; only the category pages, where new listings
-  // appear, are read again. OpenSooq's markup differs on each request, so a
-  // body hash would call every listing changed.
+  // A listing is read once; the category pages, where new listings appear,
+  // are read in every run. OpenSooq's markup differs on each request, so a
+  // body hash would call every page changed and cannot pace either.
   revisit: new CompositeRevisit(
     [[listingPage, new OnceRevisit()]],
-    new AdaptiveRevisit(),
+    new AlwaysRevisit(),
   ),
   include: [listingPage],
   extractor: new OpenSooqExtractor(),

@@ -489,14 +489,17 @@ test('a snapshot resumes the crawl without repeating finished work and hands out
   requests.length = 0;
   const resumed = (
     await results(
-      crawler.crawl([], snapshot, { signal: AbortSignal.timeout(5000) }),
+      crawler.crawl(['https://site.test/'], snapshot, {
+        signal: AbortSignal.timeout(5000),
+      }),
     )
   ).map(pageOf);
   assert.deepEqual(
     resumed.map((page) => pathOf(page.url)),
     ['/p2', '/p3', '/deep'],
   );
-  // /deep proves LinkReader's state (the starting origin) survived the snapshot.
+  // The starting page is not due, so it is not read again; /deep proves that
+  // the memento kept its origin as a starting page's.
   assert.deepEqual(requests, ['/p2', '/p3', '/deep']);
 });
 
@@ -611,8 +614,10 @@ test('a snapshot taken at a progress entry resumes without downloading the docum
   assert.deepEqual(requests, ['/robots.txt', '/', '/feed.xml', '/robots.txt']);
   const snapshot = JSON.parse(JSON.stringify(first.snapshot()));
   requests.length = 0;
-  const resumed = await results(crawler.crawl([], snapshot, options));
-  // The progress entry's own URL is unfinished until the next entry is requested, so it is read once more;
+  const resumed = await results(
+    crawler.crawl(['https://site.test/'], snapshot, options),
+  );
+  // The starting page is not due, so it is not read again. The progress entry's own URL is unfinished until the next entry is requested, so it is read once more;
   // the resumed crawl then reads the origin's rules again for its pages.
   assert.equal(requests[0], '/robots.txt');
   assert.ok(!requests.includes('/'), requests.join(' '));

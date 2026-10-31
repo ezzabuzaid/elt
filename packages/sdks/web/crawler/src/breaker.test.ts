@@ -105,10 +105,11 @@ test('a 429 with Retry-After stops requests to its origin, reports the block onc
 
   const first = await crawled(crawler().crawl(starts, null, options()));
 
+  // The origins take turns.
   assert.deepEqual(pagesOf(requests), [
     'site.test/a',
-    'site.test/b',
     'other.test/x',
+    'site.test/b',
   ]);
   assert.deepEqual(first.pages, ['site.test/a', 'other.test/x']);
   assert.equal(first.failures.length, 1);
@@ -204,11 +205,12 @@ test('a single 403 is a failure of its page, not a block, so the rest of its ori
 
   const first = await crawled(crawler().crawl(starts, null, options()));
 
+  // The origins take turns.
   assert.deepEqual(pagesOf(requests), [
     'site.test/a',
+    'other.test/x',
     'site.test/b',
     'site.test/c',
-    'other.test/x',
   ]);
   assert.equal(first.failures.length, 1);
   assert.doesNotMatch(
