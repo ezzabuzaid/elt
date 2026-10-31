@@ -30,7 +30,7 @@ export function declaredFormat(
   const types = typeof schema.type === 'string' ? [schema.type] : schema.type;
   if (types.filter((type) => type !== 'null').join() !== 'string')
     throw new TypeError(
-      `${format ?? `contentEncoding ${contentEncoding}`} spells a string`,
+      `${format === undefined ? `contentEncoding ${contentEncoding}` : format} spells a string`,
     );
   if (contentEncoding !== undefined) {
     if (

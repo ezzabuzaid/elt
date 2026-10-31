@@ -462,13 +462,16 @@ export abstract class SQLiteWriter extends Writer {
         (table) => this.exists(database, identifiers.key(table)),
       );
     // Every stored file a row of the tables refers to.
-    const referenced = (column: SQLiteColumn) =>
-      tables()
-        .map(
-          (table) =>
-            `SELECT ${column.quotedName} FROM ${quote(table)} WHERE ${column.quotedName} IS NOT NULL`,
-        )
-        .join(' UNION ') || 'SELECT NULL WHERE 0';
+    // With no table yet, no row refers to a file: a query of no rows.
+    const referenced = (column: SQLiteColumn) => {
+      const selects = tables().map(
+        (table) =>
+          `SELECT ${column.quotedName} FROM ${quote(table)} WHERE ${column.quotedName} IS NOT NULL`,
+      );
+      return selects.length === 0
+        ? 'SELECT NULL WHERE 0'
+        : selects.join(' UNION ');
+    };
     // Drops the chunks of files no row of the tables refers to.
     const prune = () => {
       for (const { column, store } of stores)

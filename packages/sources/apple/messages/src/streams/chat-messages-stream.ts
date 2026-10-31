@@ -11,6 +11,7 @@ import {
   countAtMessageGrain,
   encode,
   localStore,
+  meaningField,
   messageGuid,
   provenance,
 } from '../messages-fields.ts';
@@ -21,12 +22,12 @@ const properties = {
   messageGuid,
   messageDate: columnField(chatMessageTable, 'message_date'),
   indexState: columnField(chatMessageTable, 'index_state'),
-  filterAction: columnField(
+  filterAction: meaningField(
     chatMessageTable,
     'filter_action',
     `${provenance(chatMessageTable, 'filter_action')} A copy of the message's message.filter_action (messages.filterAction), which Messages keeps in step.`,
   ),
-  filterSubAction: columnField(
+  filterSubAction: meaningField(
     chatMessageTable,
     'filter_sub_action',
     `${provenance(chatMessageTable, 'filter_sub_action')} A copy of the message's message.filter_sub_action (messages.filterSubAction), which Messages keeps in step.`,

@@ -75,7 +75,9 @@ export abstract class ClayTopicMessages extends NotifyAutomation<{
       matches.push({
         key: `T20H06JTC/${channelId}/${ts}`,
         data: {
-          text: `${this.name}: ${text || '(no text)'}`,
+          // Slack keeps an empty text for a message with no words, such as
+          // one that only shares a file.
+          text: `${this.name}: ${text === '' ? '(no text)' : text}`,
           url: `slack://channel?team=T20H06JTC&id=${channelId}&message=${ts}`,
         },
       });

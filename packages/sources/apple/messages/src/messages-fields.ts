@@ -79,17 +79,22 @@ function kindOf(table: ChatTable, column: string): ChatColumnKind {
 export const provenance = (table: ChatTable, column: string) =>
   `chat.db ${table.name}.${column}: ${kinds[kindOf(table, column)].loads}.`;
 
-// One chat.db column as a field, described by its provenance, or by meaning
-// where the code proves what the column holds.
-export function columnField(
-  table: ChatTable,
-  column: string,
-  meaning?: string,
-): FieldSchema {
+// One chat.db column as a field, described by its provenance.
+export function columnField(table: ChatTable, column: string): FieldSchema {
   return {
     ...kinds[kindOf(table, column)].schema,
-    description: meaning ?? `${provenance(table, column)} ${unverified}`,
+    description: `${provenance(table, column)} ${unverified}`,
   };
+}
+
+// One chat.db column as a field, described by the meaning the code proves it
+// holds.
+export function meaningField(
+  table: ChatTable,
+  column: string,
+  meaning: string,
+): FieldSchema {
+  return { ...kinds[kindOf(table, column)].schema, description: meaning };
 }
 
 // A table's columns as fields named in camelCase, in the order they load.
@@ -108,10 +113,15 @@ export function tableFields(
       `Meanings for columns ${table.name} does not list: ${unknown.join(', ')}`,
     );
   return Object.fromEntries(
-    columns.map((column) => [
-      camel(column),
-      columnField(table, column, meanings[column]),
-    ]),
+    columns.map((column) => {
+      const meaning = meanings[column];
+      return [
+        camel(column),
+        meaning === undefined
+          ? columnField(table, column)
+          : meaningField(table, column, meaning),
+      ];
+    }),
   );
 }
 

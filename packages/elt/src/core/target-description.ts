@@ -1,5 +1,6 @@
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { FileRead } from './file-read.ts';
+import type { DeclaredFormat } from './formats/declared-format.ts';
 
 // A destination column as its description needs it.
 export type DescribedColumn = {
@@ -69,7 +70,7 @@ export function describeTarget<Column extends DescribedColumn>(
     lines.push(
       configuration.dedupPolicy === 'replace' || cursorField === undefined
         ? 'For a repeated key, the newest extracted record wins.'
-        : `For a repeated key, the greatest ${named(cursorField)} wins; equal cursors retain the first accepted record. Text cursors compare ${deduplication.format(cursorField)?.ordering ?? 'by byte order'}.`,
+        : `For a repeated key, the greatest ${named(cursorField)} wins; equal cursors retain the first accepted record. Text cursors compare ${textOrdering(deduplication.format(cursorField))}.`,
     );
   }
   const { properties } = stream.jsonSchema;
@@ -103,4 +104,10 @@ export function describeTarget<Column extends DescribedColumn>(
     columns: Object.freeze(described),
     missing: Object.freeze(missing),
   });
+}
+
+// How a text cursor compares: as its declared format orders it, or by byte
+// order, as a plain string compares, when it declares none.
+function textOrdering(format: DeclaredFormat | null): string {
+  return format === null ? 'by byte order' : format.ordering;
 }
