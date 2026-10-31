@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable, utimes } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
+
 import { NotesStore, NotesUnavailableError } from './index.ts';
 
 test('the store was last written when Notes last wrote NoteStore.sqlite', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'notes-'));
+  await using dir = await new TemporaryFiles().directory('notes-');
   const path = join(dir.path, 'NoteStore.sqlite');
   new DatabaseSync(path).close();
   // Notes writes the store; a reader only reads it later.
@@ -20,7 +21,7 @@ test('the store was last written when Notes last wrote NoteStore.sqlite', async 
 });
 
 test('a store that is not there is unavailable, not a time', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'notes-'));
+  await using dir = await new TemporaryFiles().directory('notes-');
 
   assert.throws(
     () => new NotesStore(join(dir.path, 'NoteStore.sqlite')).lastWrite(),

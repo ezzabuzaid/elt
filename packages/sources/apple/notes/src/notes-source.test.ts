@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { mkdtempDisposable, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -11,6 +11,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { gzipSync } from 'node:zlib';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -350,7 +352,7 @@ const notesPipeline = async (source: AppleNotesSource, directory: string) => {
 };
 
 test('Notes scope excludes other folders from records, attachments and checkpoints', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-scope-'));
+  await using scratch = await new TemporaryFiles().directory('notes-scope-');
   const source = new AppleNotesSource({
     path: await noteStoreFixture(scratch.path),
     scope: {
@@ -383,7 +385,7 @@ test('Notes scope excludes other folders from records, attachments and checkpoin
 });
 
 test('a Notes folder scope keeps only the accounts that own a selected folder', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-scope-'));
+  await using scratch = await new TemporaryFiles().directory('notes-scope-');
   const source = new AppleNotesSource({
     path: await noteStoreFixture(scratch.path),
     scope: { collectionIds: ['FOLDER-LOCAL'] },
@@ -401,7 +403,7 @@ test('a Notes folder scope keeps only the accounts that own a selected folder', 
 });
 
 test('Notes exports every stream from its store, skipping cloud placeholders and locked content', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  await using scratch = await new TemporaryFiles().directory('elt-notes-');
   const source = new AppleNotesSource({
     path: await noteStoreFixture(scratch.path),
   });
@@ -655,7 +657,7 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
 });
 
 test('Notes loads edits and deletions incrementally and a repeat run writes nothing', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  await using scratch = await new TemporaryFiles().directory('elt-notes-');
   const path = await noteStoreFixture(scratch.path);
   const source = new AppleNotesSource({ path });
   const { pipeline } = await notesPipeline(source, scratch.path);
@@ -697,7 +699,7 @@ test('Notes loads edits and deletions incrementally and a repeat run writes noth
 });
 
 test('one Notes read sees one moment of the store while Notes keeps writing', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  await using scratch = await new TemporaryFiles().directory('elt-notes-');
   const path = await noteStoreFixture(scratch.path);
   const source = new AppleNotesSource({ path });
 
@@ -718,7 +720,7 @@ test('one Notes read sees one moment of the store while Notes keeps writing', as
 });
 
 test('Notes names Full Disk Access when its store cannot be opened and refuses an unknown layout', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  await using scratch = await new TemporaryFiles().directory('elt-notes-');
   const unknown = join(scratch.path, 'NoteStore.sqlite');
   {
     using database = new DatabaseSync(unknown);
@@ -756,7 +758,7 @@ test('Notes names Full Disk Access when its store cannot be opened and refuses a
 });
 
 test('a Notes watch keeps Notes running and loads each commit while Notes keeps its store open', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  await using scratch = await new TemporaryFiles().directory('elt-notes-');
   const path = await noteStoreFixture(scratch.path);
   const source = new AppleNotesSource({ path });
   const destination = new SQLiteDestination({
@@ -831,9 +833,7 @@ test('Notes declares the local Apple store as the coverage of every stream', asy
 test('a Notes watch keeps every stream current while Notes runs and the note store holds still', async () => {
   // The watch launches Notes hidden, and a running Notes keeps its store
   // live, so the source says nothing earlier than each check.
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-current-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-notes-current-');
   const store = await noteStoreFixture(dir.path);
   const source = new AppleNotesSource({ path: store });
   const data = join(dir.path, 'out.sqlite');
@@ -895,7 +895,7 @@ test('a Notes watch keeps every stream current while Notes runs and the note sto
 });
 
 test('a Notes pass over a large store holds one note at a time, so it loads in a small heap', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-large-'));
+  await using scratch = await new TemporaryFiles().directory('notes-large-');
   const path = await noteStoreFixture(scratch.path);
   {
     using database = new DatabaseSync(path);

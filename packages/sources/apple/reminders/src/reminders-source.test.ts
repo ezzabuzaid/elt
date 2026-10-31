@@ -2,14 +2,16 @@ import assert from 'node:assert/strict';
 import { execFile as execFileCallback } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdtempDisposable, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -718,8 +720,8 @@ test(
       ]),
     );
 
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'elt-reminders-'),
+    await using scratch = await new TemporaryFiles().directory(
+      'elt-reminders-',
     );
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'reminders.sqlite'),
@@ -831,9 +833,7 @@ async function waitingHelper(directory: string) {
 }
 
 test('a Reminders pass the host stops while EventKit reads ends at once and is recorded cancelled', async (t) => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'reminders-stop-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('reminders-stop-');
   const helper = await waitingHelper(scratch.path);
   const source = new AppleRemindersSource({
     store: new RemindersStore(helper.path, { env: process.env }),
@@ -1062,7 +1062,7 @@ test('Reminders keeps a leap-month start and a due without a calendar, and rejec
 test('Reminders rejects unsupported selections without the EventKit helper', async () => {
   // No helper exists here: starting one would fail, so each rejection below
   // must come from validation before the helper is reached.
-  await using missing = await mkdtempDisposable(join(tmpdir(), 'no-helper-'));
+  await using missing = await new TemporaryFiles().directory('no-helper-');
   const source = new AppleRemindersSource({
     store: new RemindersStore(join(missing.path, 'eventkit-helper'), {
       env: process.env,
@@ -1110,8 +1110,8 @@ test('Reminders rejects malformed records and preserves its target on access or 
   const source = new AppleRemindersSource({
     store: new RemindersStore(stub.path, { env: process.env }),
   });
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-reminders-errors-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-reminders-errors-',
   );
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'reminders.sqlite'),
@@ -1206,7 +1206,7 @@ test(
     );
     assert.ok(milk && ann);
     const source = liveSource(list);
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-rem-'));
+    await using scratch = await new TemporaryFiles().directory('elt-rem-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'r.sqlite'),
     });
@@ -1259,7 +1259,7 @@ test(
       { title: 'due-date-only', due: { year: 2025, month: 1, day: 3 } },
       { title: 'undated', completed: true },
     );
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'rem-marts-'));
+    await using scratch = await new TemporaryFiles().directory('rem-marts-');
     const reminders = await appleImport(
       liveSource(list),
       join(scratch.path, 'import'),
@@ -1396,8 +1396,8 @@ test(
   { timeout: 300_000 },
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'elt-eventkit-live-'),
+    await using scratch = await new TemporaryFiles().directory(
+      'elt-eventkit-live-',
     );
     const source = new AppleRemindersSource({
       store: new RemindersStore(helper, { env: process.env }),
@@ -1452,8 +1452,8 @@ test(
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
     await using list = await ScratchList.create();
     if (list === null) return t.skip('no account accepts a new list');
-    await using dir = await mkdtempDisposable(
-      join(tmpdir(), 'reminders-current-'),
+    await using dir = await new TemporaryFiles().directory(
+      'reminders-current-',
     );
     const source = liveSource(list);
     const data = join(dir.path, 'out.sqlite');

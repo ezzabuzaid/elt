@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempDisposable, readdir, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpResponse, http, passthrough } from 'msw';
 import { setupServer } from 'msw/node';
 
@@ -19,7 +19,7 @@ import {
 } from './index.ts';
 
 test('a grant file is owner-only, lands whole, and reads back', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-grant-'));
+  await using scratch = await new TemporaryFiles().directory('gsc-grant-');
   const files = new GrantFiles(scratch.path);
   const ref = 'google/user/accounts/account.json';
 
@@ -251,7 +251,7 @@ function googleAccount() {
 }
 
 test('a session asks Google for a token with only its own scopes, so Health answers on a grant that also holds Drive, Gmail and Search Console', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-narrow-'));
+  await using scratch = await new TemporaryFiles().directory('gsc-narrow-');
   using account = googleAccount();
   const options = {
     ...client,
@@ -271,7 +271,7 @@ test('a session asks Google for a token with only its own scopes, so Health answ
 });
 
 test('a failed browser opener rejects consent and closes the callback listener', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-browser-'));
+  await using scratch = await new TemporaryFiles().directory('gsc-browser-');
   const failure = new Error('Browser unavailable');
   let redirectUri: string | null = null;
   await assert.rejects(
@@ -291,7 +291,7 @@ test('a failed browser opener rejects consent and closes the callback listener',
 });
 
 test('the first session runs consent and stores the grant; the next reuses it', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-session-'));
+  await using scratch = await new TemporaryFiles().directory('gsc-session-');
   using account = googleAccount();
   const options = {
     ...client,
@@ -324,7 +324,7 @@ test('the first session runs consent and stores the grant; the next reuses it', 
 
 test('a grant that lacks a newly needed scope asks for consent again', async () => {
   const analytics = 'https://www.googleapis.com/auth/analytics.readonly';
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-upgrade-'));
+  await using scratch = await new TemporaryFiles().directory('gsc-upgrade-');
   using account = googleAccount();
   const options = {
     ...client,
@@ -348,7 +348,7 @@ test('a grant that lacks a newly needed scope asks for consent again', async () 
 });
 
 test('a grant Google no longer honors is replaced through consent', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-revoked-'));
+  await using scratch = await new TemporaryFiles().directory('gsc-revoked-');
   using account = googleAccount();
   const options = {
     ...client,
@@ -366,7 +366,7 @@ test('a grant Google no longer honors is replaced through consent', async () => 
 });
 
 test('sessions with different scopes reuse one grant without consent, and each calls its API with its own token', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-shared-'));
+  await using scratch = await new TemporaryFiles().directory('gsc-shared-');
   using account = googleAccount();
   const options = {
     ...client,
@@ -391,7 +391,7 @@ test('sessions with different scopes reuse one grant without consent, and each c
 });
 
 test('a refresh token Google rotates is kept, so the next session refreshes without consent', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-rotate-'));
+  await using scratch = await new TemporaryFiles().directory('gsc-rotate-');
   using account = googleAccount();
   const options = {
     ...client,

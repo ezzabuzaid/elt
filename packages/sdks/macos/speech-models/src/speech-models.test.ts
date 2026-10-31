@@ -1,20 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import {
-  mkdir,
-  mkdtempDisposable,
-  open,
-  readFile,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { mkdir, open, readFile, symlink, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { type TestContext, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { Fixed, Parallel, Pool } from '@zukhruf/pool';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { LocalTranscriptionModel } from '@workspace/transcription-local';
 import { TranscriptionWorker } from '@workspace/transcription-local/transcription-worker';
@@ -48,8 +42,8 @@ function ggufHeader(metadata: Record<string, string>): Buffer {
 }
 
 test('discovery lists every speech model in the Hugging Face cache once, named by the catalog or the file, and skips other models and files', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'speech-models-'),
+  await using directory = await new TemporaryFiles().directory(
+    'speech-models-',
   );
   const hub = join(directory.path, 'hub');
   const home = join(directory.path, 'home');
@@ -204,9 +198,7 @@ async function transcribe(
   voice: string,
   text: string,
 ): Promise<string> {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'speech-say-'),
-  );
+  await using directory = await new TemporaryFiles().directory('speech-say-');
   const path = join(directory.path, 'note.aiff');
   await promisify(execFile)('say', ['-v', voice, '-o', path, text]);
   await using engines = new Pool({

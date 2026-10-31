@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtempDisposable, utimes, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { TeamsStore, TeamsUnavailableError } from './index.ts';
 
@@ -13,7 +14,7 @@ const indexedDB = 'IndexedDB/https_teams.microsoft.com_0.indexeddb.leveldb';
 const readLater = 100_000;
 
 test('the store was last written when a file of its database was, though the database folder kept its time', async () => {
-  await using profile = await mkdtempDisposable(join(tmpdir(), 'teams-'));
+  await using profile = await new TemporaryFiles().directory('teams-');
   const database = join(profile.path, indexedDB);
   await mkdir(database, { recursive: true });
   await writeFile(join(database, 'CURRENT'), 'MANIFEST-000001\n');
@@ -32,7 +33,7 @@ test('the store was last written when a file of its database was, though the dat
 });
 
 test('a store that is not there is unavailable, not a time', async () => {
-  await using profile = await mkdtempDisposable(join(tmpdir(), 'teams-'));
+  await using profile = await new TemporaryFiles().directory('teams-');
 
   assert.throws(
     () => new TeamsStore(join(profile.path, 'missing')).lastWrite(),

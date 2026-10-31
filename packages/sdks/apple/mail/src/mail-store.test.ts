@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtempDisposable, utimes, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { MailStore, MailUnavailableError } from './index.ts';
 
 test('the store was last written when the index of its current version folder was, not an older folder', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'mail-store-'));
+  await using dir = await new TemporaryFiles().directory('mail-store-');
   await writeFile(
     join(dir.path, 'PersistenceInfo.plist'),
     '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>LastUsedVersionDirectoryName</key><string>V10</string></dict></plist>',
@@ -32,7 +32,7 @@ test('the store was last written when the index of its current version folder wa
 });
 
 test('a store whose index is missing is unavailable, not a time', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'mail-store-'));
+  await using dir = await new TemporaryFiles().directory('mail-store-');
   await writeFile(
     join(dir.path, 'PersistenceInfo.plist'),
     '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>LastUsedVersionDirectoryName</key><string>V10</string></dict></plist>',
@@ -45,7 +45,7 @@ test('a store whose index is missing is unavailable, not a time', async () => {
 });
 
 test('an index without a column the reader needs fails with MissingColumnsError naming each missing table.column', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'mail-store-'));
+  await using dir = await new TemporaryFiles().directory('mail-store-');
   await writeFile(
     join(dir.path, 'PersistenceInfo.plist'),
     '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>LastUsedVersionDirectoryName</key><string>V10</string></dict></plist>',

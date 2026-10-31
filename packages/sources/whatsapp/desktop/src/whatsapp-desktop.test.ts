@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { chmod, mkdtempDisposable, readFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { chmod, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -1123,7 +1125,7 @@ function failures(error: unknown) {
 }
 
 async function scratch() {
-  const dir = await mkdtempDisposable(join(tmpdir(), 'elt-whatsapp-'));
+  const dir = await new TemporaryFiles().directory('elt-whatsapp-');
   const whatsapp = new ScratchWhatsApp(join(dir.path, 'container'));
   whatsappFixture(whatsapp);
   return { dir, whatsapp, out: join(dir.path, 'out.sqlite') };
@@ -1626,7 +1628,7 @@ test('outgoing reactions follow this account’s add, replacement and withdrawal
       });
     }
   } finally {
-    await dir.remove();
+    await dir.cleanup();
   }
 });
 
@@ -3106,8 +3108,8 @@ test('this Mac’s WhatsApp loads every stream of each store it holds', async (t
   };
   for (const store of allStores)
     await t.test(store, async (s) => {
-      await using dir = await mkdtempDisposable(
-        join(tmpdir(), 'elt-whatsapp-live-'),
+      await using dir = await new TemporaryFiles().directory(
+        'elt-whatsapp-live-',
       );
       const container = whatsappContainer(homedir());
       const source = new WhatsAppDesktopSource({ container });
@@ -3310,8 +3312,8 @@ test('a value WhatsApp always stores but left empty fails the streams read from 
 });
 
 test('large WhatsApp passes stream payloads and reuse compact metadata within a small heap', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'elt-whatsapp-large-'),
+  await using directory = await new TemporaryFiles().directory(
+    'elt-whatsapp-large-',
   );
   const whatsapp = new ScratchWhatsApp(join(directory.path, 'container'));
   whatsapp.exec(

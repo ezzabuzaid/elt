@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempDisposable, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   AccountsStore,
@@ -52,7 +53,7 @@ class ScratchAccountsStore implements AsyncDisposable {
 
   static async create(): Promise<ScratchAccountsStore> {
     return new ScratchAccountsStore(
-      await mkdtempDisposable(join(tmpdir(), 'accounts-store-')),
+      await new TemporaryFiles().directory('accounts-store-'),
     );
   }
 
@@ -402,7 +403,7 @@ test('an account answers its name, user, addresses and mail servers, through its
 });
 
 test('a store that cannot be opened fails with AccountsUnavailableError', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'accounts-'));
+  await using scratch = await new TemporaryFiles().directory('accounts-');
   const path = join(scratch.path, 'missing', 'Accounts4.sqlite');
 
   assert.throws(

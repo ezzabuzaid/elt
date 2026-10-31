@@ -1,17 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import {
-  mkdtempDisposable,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { isDictionary, readPlist } from '@workspace/codec-plist';
 import {
@@ -152,7 +148,7 @@ function rows(directory: string, sql: string) {
 }
 
 test('failed Clock stores preserve rows and checkpoints while independent stores keep importing', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'clock-failure-'));
+  await using dir = await new TemporaryFiles().directory('clock-failure-');
   const location = await fixture(dir.path);
   const source = new AppleClockSource(location);
   const run = await pipeline(source, dir.path);
@@ -239,7 +235,7 @@ const runningTimer = Buffer.from(
 );
 
 test('Clock streams retain complete stored facts and diff unchanged, changed and deleted objects', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'clock-snapshot-'));
+  await using dir = await new TemporaryFiles().directory('clock-snapshot-');
   const location = await fixture(dir.path);
   await writeFile(location.stopwatches, runningStopwatch);
   using upstream = new DatabaseSync(location.database);
@@ -370,7 +366,7 @@ test('Clock streams retain complete stored facts and diff unchanged, changed and
       ({ count, deleted }) => count === 0 && deleted === 0,
     ),
   );
-  await using full = await mkdtempDisposable(join(tmpdir(), 'clock-full-'));
+  await using full = await new TemporaryFiles().directory('clock-full-');
   const fullRun = await pipeline(
     new AppleClockSource(location),
     full.path,
@@ -437,7 +433,7 @@ test('Clock streams retain complete stored facts and diff unchanged, changed and
 });
 
 test('a Clock watch follows selected database and preference changes and cancels cleanly', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'clock-watch-'));
+  await using dir = await new TemporaryFiles().directory('clock-watch-');
   const location = await fixture(dir.path);
   const source = new AppleClockSource(location);
   const run = await pipeline(source, dir.path, [
@@ -493,7 +489,7 @@ test('a Clock watch follows selected database and preference changes and cancels
 });
 
 test('a Clock watch goes on when a preference file is removed, and loads it again when it returns', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'clock-watch-'));
+  await using dir = await new TemporaryFiles().directory('clock-watch-');
   const location = await fixture(dir.path);
   const source = new AppleClockSource(location);
   const run = await pipeline(source, dir.path, [
@@ -564,7 +560,7 @@ test('a Clock watch goes on when a preference file is removed, and loads it agai
 
 test('this Mac Clock stores load read-only through the real pipeline', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Clock requires macOS');
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'clock-live-'));
+  await using dir = await new TemporaryFiles().directory('clock-live-');
   const location = clockLocation(homedir());
   const run = await pipeline(new AppleClockSource(location), dir.path);
   try {
@@ -612,7 +608,7 @@ test('this Mac Clock stores load read-only through the real pipeline', async (t)
 });
 
 test('a Clock watch keeps every stream current while its stores hold still', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'clock-current-'));
+  await using dir = await new TemporaryFiles().directory('clock-current-');
   const location = await fixture(dir.path);
   const source = new AppleClockSource(location);
   const data = join(dir.path, 'out.sqlite');

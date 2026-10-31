@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -10,6 +8,7 @@ import type {
   EmbeddingModelV4CallOptions,
   EmbeddingModelV4Result,
 } from '@ai-sdk/provider';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
@@ -170,7 +169,7 @@ const unit = (values: readonly number[]) => {
 };
 
 test('each listing with text gets the unit vector of its title and description from the model, and a listing with no text gets none', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'embedding-'));
+  await using scratch = await new TemporaryFiles().directory('embedding-');
   const model = new LetterModel('letters-1');
   const listings = listingsImport(scratch.path, () => model);
   listings.source.rows = [
@@ -200,7 +199,7 @@ test('each listing with text gets the unit vector of its title and description f
 });
 
 test('the next run embeds only the listings whose text changed, and another model embeds every listing again', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'embedding-'));
+  await using scratch = await new TemporaryFiles().directory('embedding-');
   let model = new LetterModel('letters-1');
   const listings = listingsImport(scratch.path, () => model);
   listings.source.rows = [
@@ -230,7 +229,7 @@ test('the next run embeds only the listings whose text changed, and another mode
 });
 
 test('a model that refuses a call stores those listings failed with why, the run still succeeds, and the next run embeds them', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'embedding-'));
+  await using scratch = await new TemporaryFiles().directory('embedding-');
   const model = new LetterModel('letters-1');
   const listings = listingsImport(scratch.path, () => model);
   listings.source.rows = [{ id: '1', title: 'red car', description: null }];

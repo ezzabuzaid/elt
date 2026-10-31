@@ -1,15 +1,10 @@
 import assert from 'node:assert/strict';
-import {
-  chmod,
-  mkdir,
-  mkdtempDisposable,
-  rename,
-  utimes,
-} from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir, rename, utimes } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { WhatsApp, WhatsAppUnavailableError } from './index.ts';
 
@@ -22,7 +17,7 @@ async function writtenAt(path: string, time: number) {
 }
 
 test('each store was last written when WhatsApp last wrote that store, whatever it wrote to the others', async () => {
-  await using container = await mkdtempDisposable(join(tmpdir(), 'whatsapp-'));
+  await using container = await new TemporaryFiles().directory('whatsapp-');
   await writtenAt(join(container.path, 'ChatStorage.sqlite'), 1_800_000_000);
   await writtenAt(
     join(container.path, 'statusDB/Status.sqlite'),
@@ -46,7 +41,7 @@ test('each store was last written when WhatsApp last wrote that store, whatever 
 });
 
 test('a store WhatsApp has not created is unavailable, not a time', async () => {
-  await using container = await mkdtempDisposable(join(tmpdir(), 'whatsapp-'));
+  await using container = await new TemporaryFiles().directory('whatsapp-');
 
   assert.throws(
     () => new WhatsApp(container.path).lastWrite('chatStorage'),
@@ -61,9 +56,7 @@ test(
     skip: process.platform === 'win32' || process.getuid?.() === 0,
   },
   async () => {
-    await using container = await mkdtempDisposable(
-      join(tmpdir(), 'whatsapp-'),
-    );
+    await using container = await new TemporaryFiles().directory('whatsapp-');
     const path = join(container.path, 'ChatStorage.sqlite');
     await writtenAt(path, 1_800_000_000);
     using version = new WhatsApp(container.path).version('chatStorage');

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -11,6 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { Fixed, LeaderFirst, Pool } from '@zukhruf/pool';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -413,7 +414,7 @@ test('the document parser reads every attachment kind and throws only on unreada
         ),
       ),
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-parse-'));
+  await using scratch = await new TemporaryFiles().directory('elt-parse-');
   const path = await chatFixture(scratch.path);
   const files = join(scratch.path, 'Attachments');
   mkdirSync(files);
@@ -554,9 +555,7 @@ test('the document parser reads every attachment kind and throws only on unreada
 });
 
 test('Messages scope filters chat and native dates before decoding attachments and saving checkpoints', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'messages-scope-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('messages-scope-');
   const path = await chatFixture(scratch.path);
   using native = new DatabaseSync(path);
   // Invalid archived content on an excluded message must never be decoded.
@@ -625,9 +624,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
         ),
       ),
   });
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-messages-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-messages-');
   const source = new AppleMessagesSource({
     path: await chatFixture(scratch.path),
     home: scratch.path,
@@ -849,9 +846,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
 });
 
 test('Messages loads edits and unsends incrementally and deletes removed messages', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-messages-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-messages-');
   const path = await chatFixture(scratch.path);
   const source = new AppleMessagesSource({ path, home: scratch.path });
   const destination = new SQLiteDestination({
@@ -937,9 +932,7 @@ test('Messages loads edits and unsends incrementally and deletes removed message
 });
 
 test('one Messages read sees one moment of chat.db while Messages keeps writing', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-messages-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-messages-');
   const path = await chatFixture(scratch.path);
   const source = new AppleMessagesSource({ path, home: scratch.path });
   const { during, after } = await acrossStreams(
@@ -977,7 +970,7 @@ test('Messages names Full Disk Access when chat.db cannot be opened', async () =
 });
 
 test('property lists decode as Foundation wrote them', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-plist-'));
+  await using scratch = await new TemporaryFiles().directory('elt-plist-');
   const path = await chatFixture(scratch.path);
   const plain = binaryPlist(
     '<dict><key>ascii</key><string>hello</string><key>unicode</key><string>é 😀</string><key>big</key><integer>9007199254740993</integer><key>negative</key><integer>-5</integer><key>real</key><real>1.5</real><key>yes</key><true/><key>when</key><date>2025-01-02T03:04:05Z</date><key>bytes</key><data>AQID</data><key>list</key><array><integer>1</integer><string>two</string></array></dict>',
@@ -1066,9 +1059,7 @@ test('property lists decode as Foundation wrote them', async () => {
 });
 
 test('a Messages watch loads each commit Messages makes while it keeps chat.db open', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-messages-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-messages-');
   const path = await chatFixture(scratch.path);
   const source = new AppleMessagesSource({ path, home: scratch.path });
   const destination = new SQLiteDestination({
@@ -1116,9 +1107,7 @@ test('a Messages watch loads each commit Messages makes while it keeps chat.db o
 });
 
 test('Messages reads as documented views joined on both handle keys and counted at message grain', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'messages-marts-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('messages-marts-');
   const path = await chatFixture(scratch.path);
   {
     // The same address on SMS is another handle; one message is in two chats.
@@ -1245,7 +1234,7 @@ const largeChatFixture = (directory: string, count: number) => {
 };
 
 test('a Messages pass over a large chat.db holds one message at a time, so it loads in a small heap', async () => {
-  await using directory = await mkdtempDisposable(join(tmpdir(), 'messages-'));
+  await using directory = await new TemporaryFiles().directory('messages-');
   const chat = largeChatFixture(directory.path, 60_000);
   // The import as a host runs it, in a process whose heap is far smaller
   // than the store: a pass that holds every message, every row it reads or
@@ -1318,8 +1307,8 @@ test('a Messages pass over a large chat.db holds one message at a time, so it lo
 });
 
 test('a Messages watch keeps every stream current while chat.db holds still', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-messages-current-'),
+  await using dir = await new TemporaryFiles().directory(
+    'elt-messages-current-',
   );
   const chat = await chatFixture(dir.path);
   const source = new AppleMessagesSource({ path: chat, home: dir.path });

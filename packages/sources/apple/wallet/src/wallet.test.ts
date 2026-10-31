@@ -1,18 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import {
-  chmod,
-  mkdir,
-  mkdtempDisposable,
-  readFile,
-  readdir,
-} from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { chmod, mkdir, readFile, readdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -452,7 +448,7 @@ const tableSizes = (out: string) =>
   );
 
 test('a pass whose bundle cannot be read fails the run, naming the pass, and every loaded row stays', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   walletFixture(dir.path);
   const run = await pipeline(
     new AppleWalletSource({ directory: dir.path }),
@@ -511,7 +507,7 @@ function failureTypes(error: PipelineError<Target>): string[] {
 }
 
 test('a store that cannot be opened fails every stream as the user’s to fix, and keeps what loaded', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   walletFixture(dir.path);
   const run = await pipeline(
     new AppleWalletSource({ directory: dir.path }),
@@ -544,7 +540,7 @@ test('a store that cannot be opened fails every stream as the user’s to fix, a
 });
 
 test('a store missing a column this reader reads fails every stream by name and keeps what loaded', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   walletFixture(dir.path);
   const run = await pipeline(
     new AppleWalletSource({ directory: dir.path }),
@@ -584,7 +580,7 @@ async function filesUnder(directory: string): Promise<string[]> {
 }
 
 test('a pass’s authenticationToken reaches nothing an import writes', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   const store = join(dir.path, 'Library/Passes');
   walletFixture(store);
   const run = await pipeline(
@@ -610,7 +606,7 @@ test('a pass’s authenticationToken reaches nothing an import writes', async ()
 });
 
 test('a date written with an offset loads as UTC and its offset, and a number past 2^53 keeps every digit', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   walletFixture(dir.path);
   const run = await pipeline(
     new AppleWalletSource({ directory: dir.path }),
@@ -706,7 +702,7 @@ const field = (row: Record<string, unknown>) => ({
 });
 
 test('every Wallet stream loads the store decoded, and a second run writes nothing', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   walletFixture(dir.path);
   const source = new AppleWalletSource({ directory: dir.path });
   const run = await pipeline(source, dir.path);
@@ -1070,7 +1066,7 @@ function edited(pass: ScratchPass, keys: Record<string, unknown>): string {
 }
 
 test('an expired, voided or archived pass stays loaded with what flags it', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   {
     using wallet = new ScratchWallet(dir.path);
     wallet.add(storeCard);
@@ -1118,7 +1114,7 @@ test('an expired, voided or archived pass stays loaded with what flags it', asyn
 });
 
 test('a pass that repeats a field key, a barcode or a location loads every one of them', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   const gate = { key: 'gate', label: 'GATE', value: 'C1' };
   const barcode = {
     format: 'PKBarcodeFormatQR',
@@ -1173,7 +1169,7 @@ test('a pass that repeats a field key, a barcode or a location loads every one o
 });
 
 test('a pass removed from Wallet deletes its rows from every stream, and the other passes stay', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   walletFixture(dir.path);
   const run = await pipeline(
     new AppleWalletSource({ directory: dir.path }),
@@ -1219,7 +1215,7 @@ test('a pass removed from Wallet deletes its rows from every stream, and the oth
 });
 
 test('a new version of a pass changes its rows in place and deletes what it no longer holds', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   walletFixture(dir.path);
   const run = await pipeline(
     new AppleWalletSource({ directory: dir.path }),
@@ -1295,7 +1291,7 @@ test('a new version of a pass changes its rows in place and deletes what it no l
 });
 
 test('a pass made before iOS 9 loads its one barcode, which a pass with a barcode list leaves out', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   {
     using wallet = new ScratchWallet(dir.path);
     wallet.add(boardingPass);
@@ -1353,7 +1349,7 @@ test('a pass made before iOS 9 loads its one barcode, which a pass with a barcod
 });
 
 test('each image loads with its file, and an image the issuer replaces loads again', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   walletFixture(dir.path);
   const run = await pipeline(
     new AppleWalletSource({ directory: dir.path }),
@@ -1404,7 +1400,7 @@ test('each image loads with its file, and an image the issuer replaces loads aga
 });
 
 test('a Wallet watch loads each commit while passd keeps its store open, and stops when aborted', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   {
     using wallet = new ScratchWallet(dir.path);
     wallet.add(storeCard);
@@ -1470,7 +1466,7 @@ test('a Wallet watch loads each commit while passd keeps its store open, and sto
 
 test('this Mac’s Wallet loads every pass passd lists, as passd records it, and a second run writes nothing', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Wallet requires macOS');
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-live-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-live-');
   const out = join(dir.path, 'out.sqlite');
   const run = await pipeline(
     new AppleWalletSource({ directory: walletStorePath(homedir()) }),
@@ -1572,7 +1568,7 @@ test('this Mac’s Wallet loads every pass passd lists, as passd records it, and
 });
 
 test('a Wallet import is current only as of passd’s oldest iCloud fetch of the passes, whatever it fetched for its other zones', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   walletFixture(dir.path);
   {
     using passd = new ScratchWallet(dir.path, { existing: true });
@@ -1602,7 +1598,7 @@ test('a Wallet import is current only as of passd’s oldest iCloud fetch of the
 });
 
 test('a Wallet import on a Mac that has never fetched its passes from iCloud is current as of its pass', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
   walletFixture(dir.path);
   {
     using passd = new ScratchWallet(dir.path, { existing: true });
@@ -1627,9 +1623,7 @@ test('a Wallet import on a Mac that has never fetched its passes from iCloud is 
 });
 
 test('a Wallet watch keeps every stream current while passd changes nothing', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-wallet-current-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-wallet-current-');
   {
     using wallet = new ScratchWallet(dir.path);
     wallet.add(storeCard);

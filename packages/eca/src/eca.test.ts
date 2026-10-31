@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { EventEmitter, on } from 'node:events';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLTagStore } from 'node:sqlite';
 import { test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { type Condition, Eca, type Match, type Warehouse } from './index.ts';
 
@@ -112,7 +112,7 @@ const november = [
 const evaluated = () => setImmediate();
 
 test('a crossing yields its month once: a commit that changes nothing, or more spend in that month, yields nothing more', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-once-'));
+  await using scratch = await new TemporaryFiles().directory('eca-once-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
@@ -144,9 +144,7 @@ test('a crossing yields its month once: a commit that changes nothing, or more s
 });
 
 test('a rule added when October already passed 200 stays quiet about October, and a later November crossing still yields', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'eca-baseline-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('eca-baseline-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, october);
   using warehouse = new ImportWarehouse(path);
@@ -167,7 +165,7 @@ test('a rule added when October already passed 200 stays quiet about October, an
 });
 
 test('a month that drops under 200 and crosses again yields again', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-again-'));
+  await using scratch = await new TemporaryFiles().directory('eca-again-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
@@ -197,7 +195,7 @@ test('a month that drops under 200 and crosses again yields again', async () => 
 });
 
 test('two rules over the same purchases each yield their own match', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-rules-'));
+  await using scratch = await new TemporaryFiles().directory('eca-rules-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
@@ -219,7 +217,7 @@ test('two rules over the same purchases each yield their own match', async () =>
 });
 
 test('matches the host stopped before pulling past come again to its next watch, for every rule that had not moved on', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-stop-'));
+  await using scratch = await new TemporaryFiles().directory('eca-stop-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
@@ -245,7 +243,7 @@ test('matches the host stopped before pulling past come again to its next watch,
 });
 
 test('a rule the host moved past keeps its new matches when the host stops inside the next rule', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-past-'));
+  await using scratch = await new TemporaryFiles().directory('eca-past-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
@@ -271,7 +269,7 @@ test('a rule the host moved past keeps its new matches when the host stops insid
 });
 
 test('a rule added while a watch runs stays quiet about what matched before it was added, even when its baseline answers last', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-late-'));
+  await using scratch = await new TemporaryFiles().directory('eca-late-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, october);
   using warehouse = new ImportWarehouse(path);
@@ -306,7 +304,7 @@ test('a rule added while a watch runs stays quiet about what matched before it w
 });
 
 test('a condition that throws yields its failure, the other rules still yield, and the failing rule tries again at the next commit', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-fail-'));
+  await using scratch = await new TemporaryFiles().directory('eca-fail-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
@@ -349,7 +347,7 @@ test('a condition that throws yields its failure, the other rules still yield, a
 });
 
 test('a failing rule keeps the matches it already reported, so after the failure only what is new yields', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-kept-'));
+  await using scratch = await new TemporaryFiles().directory('eca-kept-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
@@ -404,7 +402,7 @@ test('a failing rule keeps the matches it already reported, so after the failure
 });
 
 test('a rule added again with the keys its host saved yields a key that started to match while the host was down', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-restart-'));
+  await using scratch = await new TemporaryFiles().directory('eca-restart-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
@@ -429,8 +427,8 @@ test('a rule added again with the keys its host saved yields a key that started 
 });
 
 test('a rule added again with the keys its host saved stays quiet about those keys, and still yields a later one', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'eca-restart-quiet-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'eca-restart-quiet-',
   );
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, october);
@@ -458,7 +456,7 @@ test('a rule added again with the keys its host saved stays quiet about those ke
 });
 
 test('the keys a host reads to save hold a new match only once the host moved past it', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-keys-'));
+  await using scratch = await new TemporaryFiles().directory('eca-keys-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
@@ -484,9 +482,7 @@ test('the keys a host reads to save hold a new match only once the host moved pa
 });
 
 test('a host that saves the keys before it moved past a new match hears of the match again after a restart', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'eca-keys-again-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('eca-keys-again-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
@@ -518,7 +514,7 @@ test('a host that saves the keys before it moved past a new match hears of the m
 });
 
 test('the keys of a rule that was never added are refused, so a host never saves an empty list in their place', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-unknown-'));
+  await using scratch = await new TemporaryFiles().directory('eca-unknown-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
@@ -532,7 +528,7 @@ test('the keys of a rule that was never added are refused, so a host never saves
 
 // A watch that never ends would hang the run, so this test has its own deadline.
 test('aborting the signal ends the watch', { timeout: 5_000 }, async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-abort-'));
+  await using scratch = await new TemporaryFiles().directory('eca-abort-');
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);

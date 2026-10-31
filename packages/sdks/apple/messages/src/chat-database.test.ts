@@ -1,16 +1,15 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { MessagesStore } from './index.ts';
 
 test('a chat.db without a column the reader needs fails with MissingColumnsError naming each missing column', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'chat-db-'));
+  await using dir = await new TemporaryFiles().directory('chat-db-');
   const path = join(dir.path, 'chat.db');
   // A store from a macOS whose message table lacks a column this reader loads
   // and whose other tables are missing entirely.

@@ -1,16 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFile, spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import {
-  mkdir,
-  mkdtemp,
-  mkdtempDisposable,
-  readFile,
-  rm,
-  utimes,
-  writeFile,
-} from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -18,6 +10,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { deflateSync } from 'node:zlib';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -1033,7 +1027,7 @@ function failedStreams(error: {
 }
 
 test('Safari reads history, iCloud Tabs, bookmarks and recently closed tabs as documented views', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   const safari = await appleImport(
     new AppleSafariSource(location),
@@ -1361,7 +1355,7 @@ test('Safari reads history, iCloud Tabs, bookmarks and recently closed tabs as d
 });
 
 test('Safari reads profiles, windows, tab groups, tabs with their back and forward lists, and downloads with their files', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   const safari = await appleImport(
     new AppleSafariSource(location),
@@ -1724,7 +1718,7 @@ async function leftBySafari(path: string, written: string) {
 
 test('while Safari is closed, its history and iCloud Tabs are current only as of its last write to them, and its other streams as of the pass', async (t) => {
   if (safariRuns()) return t.skip('Safari runs');
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   // Safari wrote the work profile's history last, then quit.
   await leftBySafari(
@@ -1772,7 +1766,7 @@ test('while Safari is closed, its history and iCloud Tabs are current only as of
 });
 
 test('Safari follows each store on its own: a rerun writes nothing, and edits and deletions land', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   const safari = await appleImport(
     new AppleSafariSource(location),
@@ -1865,7 +1859,7 @@ test('Safari follows each store on its own: a rerun writes nothing, and edits an
 });
 
 test('Safari history keeps the visits and URLs Safari expires under its history setting, and deletes what was removed within it', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   await writePlist(
     join(scratch.path, 'Preferences', 'com.apple.Safari.plist'),
@@ -1960,14 +1954,18 @@ test('Safari history keeps the visits and URLs Safari expires under its history 
 });
 
 test('Safari scope keeps the chosen profiles and visit dates, and leaves unattributed data whole', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   // Each selection is its own import, as a host replaces one whose
   // selection changed.
   const counts = async (scope: ImportScope) => {
     const safari = await appleImport(
       new AppleSafariSource({ ...location, scope }),
-      await mkdtemp(join(scratch.path, 'import-')),
+      (
+        await new TemporaryFiles().directory('import-', {
+          parent: scratch.path,
+        })
+      ).path,
     );
     await safari.load();
     return rows(
@@ -2044,7 +2042,7 @@ test('Safari scope keeps the chosen profiles and visit dates, and leaves unattri
 });
 
 test('Safari names Full Disk Access for an unreadable store, refuses an unknown layout, and keeps the rows it had', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   const source = new AppleSafariSource(location);
   const safari = await appleImport(source, join(scratch.path, 'import'));
@@ -2127,7 +2125,7 @@ test('Safari names Full Disk Access for an unreadable store, refuses an unknown 
 });
 
 test('a Safari watch wakes only the streams of the store that changed, while Safari keeps its databases open', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   const source = new AppleSafariSource(location);
   const streams = [
@@ -2183,7 +2181,7 @@ test('a Safari watch wakes only the streams of the store that changed, while Saf
 });
 
 test('Safari reads a value it keeps in two places from either, and a blank one as absent', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   const plist = (value: unknown) => binaryPlist(scratch.path, value);
   const closedHere = new Date('2026-03-04T05:06:07Z');
@@ -2333,7 +2331,7 @@ test('Safari reads a value it keeps in two places from either, and a blank one a
 });
 
 test('Safari keeps each time as stored: database times round to the millisecond, property list dates truncate, and its sentinels read as none', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   {
     using history = new DatabaseSync(join(location.directory, 'History.db'));
@@ -2424,7 +2422,7 @@ test('Safari keeps each time as stored: database times round to the millisecond,
 });
 
 test('Safari reads its folders, window groups, tag links and closed tabs as it structures them', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   {
     using tabs = new DatabaseSync(join(location.container, 'SafariTabs.db'));
@@ -2553,7 +2551,7 @@ test('Safari reads its folders, window groups, tag links and closed tabs as it s
 });
 
 test('Safari writes every stream with its fields in schema order and its rows in store order', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   const source = new AppleSafariSource(location);
   const { streams } = await source.discover();
@@ -2586,7 +2584,7 @@ test('Safari writes every stream with its fields in schema order and its rows in
 });
 
 test('a malformed or missing Safari value fails only the streams that read it', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   // The streams one load fails after a change to a fresh library.
   const failedAfter = async (
     name: string,
@@ -2676,7 +2674,7 @@ test('a malformed or missing Safari value fails only the streams that read it', 
 });
 
 test('Safari keeps a year of history when it has written no preferences', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   await rm(join(scratch.path, 'Preferences', 'com.apple.Safari.plist'));
   const daysAgo = (days: number) =>
@@ -2722,7 +2720,7 @@ test('Safari keeps a year of history when it has written no preferences', async 
 });
 
 test('a Safari watch wakes history when a profile History.db appears, and a property list’s streams when it goes and comes back', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   const source = new AppleSafariSource(location);
   const bookmarks = join(location.directory, 'Bookmarks.plist');
@@ -2755,7 +2753,7 @@ test('a Safari watch wakes history when a profile History.db appears, and a prop
 
 test('Safari reads this Mac’s stores into SQLite', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Safari requires macOS');
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-live-'));
+  await using scratch = await new TemporaryFiles().directory('safari-live-');
   const home = homedir();
   const source = new AppleSafariSource({
     directory: safariDirectory(home),
@@ -2823,7 +2821,7 @@ test('Safari reads this Mac’s stores into SQLite', async (t) => {
 
 test('while Safari is closed, a Safari watch makes no pass while its stores hold still, and keeps history and iCloud Tabs current only as of Safari’s last write to them, every other stream as of each check', async (t) => {
   if (safariRuns()) return t.skip('Safari runs');
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'safari-current-'));
+  await using dir = await new TemporaryFiles().directory('safari-current-');
   const location = await safariFixture(dir.path);
   // Safari wrote these stores, then quit.
   const written = '2026-10-20T10:42:21.000Z';
@@ -2896,9 +2894,7 @@ test('while Safari is closed, a Safari watch makes no pass while its stores hold
 });
 
 test('a Safari pass over a large History.db holds one visit at a time, so it loads in a small heap', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'safari-large-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('safari-large-');
   const location = await safariFixture(scratch.path);
   {
     using history = new DatabaseSync(join(location.directory, 'History.db'));

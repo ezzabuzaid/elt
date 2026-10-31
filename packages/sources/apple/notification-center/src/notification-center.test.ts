@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmod, mkdtempDisposable } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { chmod } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -358,9 +360,7 @@ function failureTypes(error: {
 }
 
 test('a notification Notification Center drops stays loaded, while the next run loads only what is new', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-center-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
   const run = await pipeline(
@@ -404,9 +404,7 @@ const unchanged = {
 };
 
 test('every Notification Center stream loads the store decoded, and a second run writes nothing', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-center-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
   const source = new AppleNotificationCenterSource({ path });
@@ -571,9 +569,7 @@ test('every Notification Center stream loads the store decoded, and a second run
 });
 
 test('an app that posts again under the same request loads the new notification beside the one it replaced', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-center-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
   const run = await pipeline(
@@ -621,9 +617,7 @@ test('an app that posts again under the same request loads the new notification 
 });
 
 test('a category an app registered twice loads both, told apart by position', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-center-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
   {
@@ -668,9 +662,7 @@ test('a category an app registered twice loads both, told apart by position', as
 });
 
 test('an app macOS forgets deletes its app and categories while its notifications stay', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-center-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
   const run = await pipeline(
@@ -703,9 +695,7 @@ test('an app macOS forgets deletes its app and categories while its notification
 });
 
 test('a date range loads the notifications delivered in it, to the microsecond, and every app and category', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-center-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
   const scopes: [ImportScope, string[]][] = [
@@ -724,7 +714,9 @@ test('a date range loads the notifications delivered in it, to the microsecond, 
   ];
 
   for (const [scope, expected] of scopes) {
-    await using runDir = await mkdtempDisposable(join(dir.path, 'run-'));
+    await using runDir = await new TemporaryFiles().directory('run-', {
+      parent: dir.path,
+    });
     const run = await pipeline(
       new AppleNotificationCenterSource({ path, scope }),
       runDir.path,
@@ -745,9 +737,7 @@ test('a date range loads the notifications delivered in it, to the microsecond, 
 });
 
 test('a store that stops being readable fails every stream, naming Full Disk Access, and keeps what loaded', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-center-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
   const run = await pipeline(
@@ -781,9 +771,7 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
 });
 
 test('a store missing a column this reader reads fails every stream by name and keeps what loaded', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-center-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
   const run = await pipeline(
@@ -813,9 +801,7 @@ test('a store missing a column this reader reads fails every stream by name and 
 });
 
 test('a Notification Center watch loads each commit while usernoted keeps its store open', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-center-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
   const run = await pipeline(
@@ -857,8 +843,8 @@ test('a Notification Center watch loads each commit while usernoted keeps its st
 test('this Mac’s Notification Center loads every notification and app it holds, ids as Biome writes them', async (t) => {
   if (process.platform !== 'darwin')
     return t.skip('Notification Center requires macOS');
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-center-live-'),
+  await using dir = await new TemporaryFiles().directory(
+    'elt-notes-center-live-',
   );
   const out = join(dir.path, 'out.sqlite');
 
@@ -918,8 +904,8 @@ test('this Mac’s Notification Center loads every notification and app it holds
 });
 
 test('a Notification Center watch keeps every stream current while usernoted changes nothing', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-center-current-'),
+  await using dir = await new TemporaryFiles().directory(
+    'elt-notes-center-current-',
   );
   const store = join(dir.path, 'db');
   notificationCenterFixture(store);
@@ -983,8 +969,8 @@ test('a Notification Center watch keeps every stream current while usernoted cha
 });
 
 test('a Notification Center pass over a large store holds one notification at a time, so it loads in a small heap', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-notes-center-large-'),
+  await using dir = await new TemporaryFiles().directory(
+    'elt-notes-center-large-',
   );
   const path = join(dir.path, 'db');
   {

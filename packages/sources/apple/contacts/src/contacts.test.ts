@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { mkdtempDisposable, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -592,9 +593,7 @@ function failureTypes(error: {
 }
 
 test('Contacts scope keeps only one container and its related records and images', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'contacts-scope-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('contacts-scope-');
   const source = new AppleContactsSource({
     directory: addressBookFixture(join(scratch.path, 'AddressBook')),
     preferences: preferencesFixture(scratch.path),
@@ -643,9 +642,7 @@ test('Contacts scope keeps only one container and its related records and images
 });
 
 test('a Contacts container scope keeps every stream to what belongs to that container', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'contacts-scope-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('contacts-scope-');
   const source = new AppleContactsSource({
     directory: addressBookFixture(join(scratch.path, 'AddressBook')),
     preferences: preferencesFixture(scratch.path),
@@ -704,9 +701,7 @@ test('a Contacts container scope keeps every stream to what belongs to that cont
 });
 
 test('Contacts reads subscribed records, every custom value type, archived vCard lines and values whose owner is gone', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'contacts-rare-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('contacts-rare-');
   const directory = join(scratch.path, 'AddressBook');
   createStore(directory, {
     ZABCDRECORD: [
@@ -829,9 +824,7 @@ test('Contacts reads subscribed records, every custom value type, archived vCard
 });
 
 test('Contacts exports every stream of every account store by identifier', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-contacts-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-contacts-');
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
   // Grace keeps a photo beside her thumbnail: one row with two images.
   const photo = Buffer.from('a larger photo');
@@ -1220,9 +1213,7 @@ test('Contacts exports every stream of every account store by identifier', async
 });
 
 test('Contacts loads edits incrementally, deletes removed rows and writes nothing when unchanged', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-contacts-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-contacts-');
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
   const source = new AppleContactsSource({
     directory,
@@ -1310,9 +1301,7 @@ test('Contacts loads edits incrementally, deletes removed rows and writes nothin
 });
 
 test('Contacts refuses a store it cannot read instead of reading its account as empty', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-contacts-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-contacts-');
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
   const source = new AppleContactsSource({
     directory,
@@ -1368,9 +1357,7 @@ test('Contacts refuses a store it cannot read instead of reading its account as 
 });
 
 test('Contacts names the columns it needs when a store has another layout', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-contacts-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-contacts-');
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
   {
     using store = new DatabaseSync(
@@ -1395,9 +1382,7 @@ test('Contacts names the columns it needs when a store has another layout', asyn
 });
 
 test('Contacts refuses a store whose entities it does not know instead of reading no contacts', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-contacts-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-contacts-');
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
   {
     using store = new DatabaseSync(
@@ -1424,9 +1409,7 @@ test('Contacts refuses a store whose entities it does not know instead of readin
 });
 
 test('Contacts rejects image data in an encoding it does not know', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-contacts-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-contacts-');
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
   {
     using store = new DatabaseSync(
@@ -1474,9 +1457,7 @@ test('Contacts rejects image data in an encoding it does not know', async () => 
 });
 
 test('a Contacts watch loads each commit contactsd makes and each account added', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-contacts-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-contacts-');
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
   const source = new AppleContactsSource({
     directory,
@@ -1537,9 +1518,7 @@ test('a Contacts watch loads each commit contactsd makes and each account added'
 });
 
 test('Contacts reads as documented views whose joins keep one row per contact', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'contacts-marts-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('contacts-marts-');
   const source = new AppleContactsSource({
     directory: addressBookFixture(join(scratch.path, 'AddressBook')),
     preferences: preferencesFixture(scratch.path),
@@ -1640,8 +1619,8 @@ test('Contacts reads as documented views whose joins keep one row per contact', 
 });
 
 test('a Contacts watch keeps every stream current while contactsd changes nothing', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-contacts-current-'),
+  await using dir = await new TemporaryFiles().directory(
+    'elt-contacts-current-',
   );
   const directory = addressBookFixture(join(dir.path, 'AddressBook'));
   const source = new AppleContactsSource({
@@ -1707,9 +1686,7 @@ test('a Contacts watch keeps every stream current while contactsd changes nothin
 });
 
 test('Contacts writes each phone number in E.164, reading one without a country code in its own country or else the Mac region', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'contacts-e164-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('contacts-e164-');
   const directory = join(scratch.path, 'AddressBook');
   createStore(directory, {
     ZABCDRECORD: [
@@ -1782,9 +1759,7 @@ test('Contacts writes each phone number in E.164, reading one without a country 
 });
 
 test('a Contacts pass over a large store holds one contact at a time, so it loads in a small heap', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'contacts-large-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('contacts-large-');
   const directory = join(scratch.path, 'AddressBook');
   createStore(directory, {
     ZABCDRECORD: [{ Z_PK: 1, Z_ENT: container, ZUNIQUEID: 'ROOT:ABContainer' }],

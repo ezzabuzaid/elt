@@ -3,18 +3,19 @@ import { createHash } from 'node:crypto';
 import {
   chmod,
   mkdir,
-  mkdtempDisposable,
   readFile,
   readdir,
   rm,
   utimes,
   writeFile,
 } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   type IndexedDBWrite,
@@ -758,7 +759,7 @@ const chunkTable = (table: string, column: string) =>
     .slice(0, 40)}"`;
 
 async function scratch() {
-  const dir = await mkdtempDisposable(join(tmpdir(), 'slack-desktop-'));
+  const dir = await new TemporaryFiles().directory('slack-desktop-');
   return {
     dir,
     store: new SlackStore(dir.path),
@@ -2230,9 +2231,7 @@ test('a Slack watch wakes when the app records a download', async () => {
 test('this Mac’s Slack app loads every workspace it keeps, and a second read with no save writes nothing', async (t) => {
   if (process.platform !== 'darwin')
     return t.skip('the Slack app’s store is on macOS');
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'slack-desktop-live-'),
-  );
+  await using dir = await new TemporaryFiles().directory('slack-desktop-live-');
   const out = join(dir.path, 'out.sqlite');
   const directory = slackDesktopDirectory(homedir());
   const run = await pipeline(new SlackDesktopSource({ directory }), dir.path);

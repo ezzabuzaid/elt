@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { renameSync } from 'node:fs';
-import { chmod, mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -11,6 +10,7 @@ import {
   MissingColumnsError,
   UnavailableError as SnapshotUnavailableError,
 } from '@zukhruf/sqlite-snapshot';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { AppDatabase } from './index.ts';
 
@@ -34,7 +34,7 @@ function created(path: string): void {
 }
 
 test('a snapshot of a store that is not there is the SDK unavailable error, caused by the package one', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'app-database-'));
+  await using dir = await new TemporaryFiles().directory('app-database-');
   const path = join(dir.path, 'store.sqlite');
 
   assert.throws(
@@ -49,7 +49,7 @@ test('a snapshot of a store that is not there is the SDK unavailable error, caus
 });
 
 test('a store that lacks a column the reader reads is the package missing-columns error, naming the column', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'app-database-'));
+  await using dir = await new TemporaryFiles().directory('app-database-');
   const path = join(dir.path, 'store.sqlite');
   created(path);
 
@@ -65,7 +65,7 @@ test('a store that lacks a column the reader reads is the package missing-column
 });
 
 test('the version of a store that is not there is the SDK unavailable error', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'app-database-'));
+  await using dir = await new TemporaryFiles().directory('app-database-');
   const path = join(dir.path, 'store.sqlite');
 
   assert.throws(
@@ -85,7 +85,7 @@ test(
     skip: process.platform === 'win32' || process.getuid?.() === 0,
   },
   async () => {
-    await using dir = await mkdtempDisposable(join(tmpdir(), 'app-database-'));
+    await using dir = await new TemporaryFiles().directory('app-database-');
     const path = join(dir.path, 'store.sqlite');
     created(path);
     using version = database().version(path);
@@ -108,7 +108,7 @@ test(
 );
 
 test('the last write of a store that is not there is the SDK unavailable error', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'app-database-'));
+  await using dir = await new TemporaryFiles().directory('app-database-');
   const path = join(dir.path, 'store.sqlite');
 
   assert.throws(

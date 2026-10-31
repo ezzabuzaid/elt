@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtempDisposable, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { Fixed, OnDemand, Parallel, Pool } from '@zukhruf/pool';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { LocalTranscriptionModel } from './local-transcription-model.ts';
 import { TranscriptionWorker } from './transcription-worker.ts';
@@ -17,9 +17,7 @@ const helper = fileURLToPath(
 );
 
 test('real decoding and native model failures reject, and disposing the engines rejects further work', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'local-model-'),
-  );
+  await using directory = await new TemporaryFiles().directory('local-model-');
   const path = join(directory.path, 'silence.aiff');
   await promisify(execFile)('say', ['-o', path, '[[slnc 100]]']);
   const configuration = {

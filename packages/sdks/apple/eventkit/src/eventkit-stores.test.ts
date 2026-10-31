@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdtempDisposable, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
@@ -11,6 +11,8 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   type AccountDocument,
@@ -378,8 +380,8 @@ async function waitingHelper(directory: string) {
 }
 
 test('a read its signal stops rejects with the reason at once and never resolves', async (t) => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'eventkit-waiting-'),
+  await using directory = await new TemporaryFiles().directory(
+    'eventkit-waiting-',
   );
   const helper = await waitingHelper(directory.path);
   const removal = new AbortController();
@@ -449,8 +451,8 @@ test('a read of only the accounts and lists gives up when the store changes duri
 });
 
 test('a read of only the accounts and lists its signal stops rejects with the reason at once and never resolves', async (t) => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'eventkit-waiting-'),
+  await using directory = await new TemporaryFiles().directory(
+    'eventkit-waiting-',
   );
   const helper = await waitingHelper(directory.path);
   const removal = new AbortController();

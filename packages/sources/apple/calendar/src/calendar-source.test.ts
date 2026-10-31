@@ -2,14 +2,16 @@ import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -642,9 +644,7 @@ test(
     });
     assert.ok(itemId);
     const source = liveSource(calendar);
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'elt-calendar-'),
-    );
+    await using scratch = await new TemporaryFiles().directory('elt-calendar-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'calendar.sqlite'),
     });
@@ -798,9 +798,7 @@ async function waitingHelper(directory: string) {
 }
 
 test('a Calendar pass the host stops while EventKit reads ends at once and is recorded cancelled', async (t) => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'calendar-stop-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('calendar-stop-');
   const helper = await waitingHelper(scratch.path);
   const source = new AppleCalendarSource({
     store: new CalendarStore(helper.path, { env: process.env }),
@@ -962,7 +960,7 @@ test(
   async () => {
     // No helper exists here: starting one would fail, so each rejection below
     // must come from validation before the helper is reached.
-    await using missing = await mkdtempDisposable(join(tmpdir(), 'no-helper-'));
+    await using missing = await new TemporaryFiles().directory('no-helper-');
     const store = new CalendarStore(join(missing.path, 'eventkit-helper'), {
       env: process.env,
     });
@@ -999,9 +997,7 @@ test(
       }).identity,
       source.identity,
     );
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'elt-calendar-'),
-    );
+    await using scratch = await new TemporaryFiles().directory('elt-calendar-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'calendar.sqlite'),
     });
@@ -1082,9 +1078,7 @@ test('Calendar rejects malformed records and preserves prior rows on native fail
   });
   const answer = (read: HelperRead) => stub.answer(eventsRead(january), read);
   answer({ documents: [occurrence()] });
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-calendar-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-calendar-');
   const sqlite = new SQLiteDestination({
     path: join(scratch.path, 'calendar.sqlite'),
   });
@@ -1193,7 +1187,7 @@ test(
     );
     assert.ok(standup && review);
     const source = liveSource(calendar);
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-cal-'));
+    await using scratch = await new TemporaryFiles().directory('elt-cal-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'calendar.sqlite'),
     });
@@ -1269,7 +1263,7 @@ test('Calendar snapshot incremental reconciles attendees who join and leave, whi
   stub.answer(eventsRead(january), {
     documents: [event('e1', 'Standup', ['Ann', 'Bo']), event('e2', 'Review')],
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-cal-'));
+  await using scratch = await new TemporaryFiles().directory('elt-cal-');
   const sqlite = new SQLiteDestination({
     path: join(scratch.path, 'calendar.sqlite'),
   });
@@ -1344,7 +1338,7 @@ test(
     );
     assert.ok(spanning && late);
     const source = liveSource(calendar, window);
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-cal-'));
+    await using scratch = await new TemporaryFiles().directory('elt-cal-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'calendar.sqlite'),
     });
@@ -1521,7 +1515,7 @@ test(
     });
     assert.ok(weekly);
     const source = liveSource(calendar);
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-cal-'));
+    await using scratch = await new TemporaryFiles().directory('elt-cal-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'calendar.sqlite'),
     });
@@ -1858,7 +1852,7 @@ test(
       { documents: [icsItem('series', exported(false), true)] },
       { documents: [icsItem('series', exported(true), true)] },
     );
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-ics-'));
+    await using scratch = await new TemporaryFiles().directory('elt-ics-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'ics.sqlite'),
     });
@@ -1941,7 +1935,7 @@ test(
     // A deleted middle occurrence; deleting the last one shortens COUNT instead.
     await calendar.skip(series, '2025-01-15T06:00:00.000Z');
     const source = liveSource(calendar);
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-ics-'));
+    await using scratch = await new TemporaryFiles().directory('elt-ics-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'ics.sqlite'),
     });
@@ -2012,7 +2006,7 @@ test('Calendar ICS streams keep attachments and vendor properties, which a test 
   stub.answer(eventsRead(january, true), {
     documents: [icsItem('meeting', meetingICS)],
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-ics-'));
+  await using scratch = await new TemporaryFiles().directory('elt-ics-');
   const sqlite = new SQLiteDestination({
     path: join(scratch.path, 'ics.sqlite'),
   });
@@ -2081,8 +2075,8 @@ test('Calendar ICS streams keep attachments and vendor properties, which a test 
 
 test('a Calendar pass over a large ICS export holds one record of a stream at a time, so it loads in a small heap', async () => {
   await using stub = await StubEventKitHelper.create();
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'elt-ics-memory-'),
+  await using directory = await new TemporaryFiles().directory(
+    'elt-ics-memory-',
   );
   // 2,000 items of 20 attendees with 5 parameters each: 200,000
   // icsParameters records.
@@ -2229,7 +2223,7 @@ test(
     stub.answer(eventsRead(january, true), {
       documents: [icsItem('meeting', meetingICS)],
     });
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-ics-'));
+    await using scratch = await new TemporaryFiles().directory('elt-ics-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'ics.sqlite'),
     });
@@ -2318,7 +2312,7 @@ test(
     stub.answer(eventsRead(january, true), {
       documents: [icsItem('files', attachmentsICS)],
     });
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-att-'));
+    await using scratch = await new TemporaryFiles().directory('elt-att-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'a.sqlite'),
     });
@@ -2412,7 +2406,7 @@ test(
         ),
       ],
     });
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-att-'));
+    await using scratch = await new TemporaryFiles().directory('elt-att-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'a.sqlite'),
     });
@@ -2476,7 +2470,7 @@ test(
     stub.answer(eventsRead(january, true), {
       documents: [icsItem('files', attachmentsICS)],
     });
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-att-'));
+    await using scratch = await new TemporaryFiles().directory('elt-att-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'a.sqlite'),
     });
@@ -2533,7 +2527,7 @@ test(
     stub.answer(eventsRead(january, true), {
       documents: [icsItem('files', attachmentsICS)],
     });
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-att-'));
+    await using scratch = await new TemporaryFiles().directory('elt-att-');
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'a.sqlite'),
     });
@@ -2755,7 +2749,7 @@ test(
         icsItem('google', googleAttachmentsICS(Object.keys(expected))),
       ],
     });
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'gcal-att-'));
+    await using scratch = await new TemporaryFiles().directory('gcal-att-');
 
     const saved = await googleAttachmentFiles(
       new CalendarStore(stub.path, { env: process.env }),
@@ -2782,7 +2776,7 @@ test(
         ),
       ],
     });
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'gcal-err-'));
+    await using scratch = await new TemporaryFiles().directory('gcal-err-');
     for (const [index, [error, message]] of (
       [
         [
@@ -2836,7 +2830,7 @@ test(
         ),
       ],
     });
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'gcal-rate-'));
+    await using scratch = await new TemporaryFiles().directory('gcal-rate-');
     for (const reason of ['userRateLimitExceeded', 'rateLimitExceeded']) {
       const { requester } = googleRecorder(() => {
         throw googleError(403, { error: { errors: [{ reason }] } });
@@ -2884,7 +2878,7 @@ test(
     stub.answer(eventsRead(january, true), {
       documents: [icsItem('google', googleAttachmentsICS([shortcut, shared]))],
     });
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'gcal-sc-'));
+    await using scratch = await new TemporaryFiles().directory('gcal-sc-');
 
     const saved = await googleAttachmentFiles(
       new CalendarStore(stub.path, { env: process.env }),
@@ -2926,7 +2920,7 @@ test(
       '2025-01-15T11:00:00.000Z',
       '2025-01-15T12:00:00.000Z',
     );
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'cal-marts-'));
+    await using scratch = await new TemporaryFiles().directory('cal-marts-');
     // The warehouse loads every stream, ICS included, from one read.
     const imported = await appleImport(
       liveSource(calendar),
@@ -2995,7 +2989,7 @@ test('Calendar views join each occurrence to its own attendees, which a test can
   stub.answer(eventsRead(january, true), {
     documents: [account(), calendar(), standup('01'), standup('08')],
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'cal-marts-'));
+  await using scratch = await new TemporaryFiles().directory('cal-marts-');
   const imported = await appleImport(
     new AppleCalendarSource({
       store: new CalendarStore(stub.path, { env: process.env }),
@@ -3119,8 +3113,8 @@ test(
   { timeout: 300_000 },
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'elt-eventkit-live-'),
+    await using scratch = await new TemporaryFiles().directory(
+      'elt-eventkit-live-',
     );
     const day = 24 * 60 * 60 * 1000;
     const now = Date.now();
@@ -3176,7 +3170,7 @@ test('Calendar declares its event window as the coverage of event streams, and n
   const startAt = '2020-01-01T00:00:00.000Z';
   const endAt = '2021-01-01T00:00:00.000Z';
   // No helper exists here: coverage must not need one.
-  await using missing = await mkdtempDisposable(join(tmpdir(), 'no-helper-'));
+  await using missing = await new TemporaryFiles().directory('no-helper-');
   const calendar = new AppleCalendarSource({
     store: new CalendarStore(join(missing.path, 'eventkit-helper'), {
       env: process.env,
@@ -3208,9 +3202,7 @@ test(
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
     await using calendar = await ScratchCalendar.create();
     if (calendar === null) return t.skip('no account accepts a new calendar');
-    await using dir = await mkdtempDisposable(
-      join(tmpdir(), 'calendar-current-'),
-    );
+    await using dir = await new TemporaryFiles().directory('calendar-current-');
     const source = liveSource(calendar);
     const data = join(dir.path, 'out.sqlite');
     const destination = new SQLiteDestination({ path: data });

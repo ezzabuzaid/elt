@@ -1,17 +1,12 @@
 import assert from 'node:assert/strict';
-import {
-  chmod,
-  mkdir,
-  mkdtempDisposable,
-  readdir,
-  rm,
-  utimes,
-} from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { chmod, mkdir, readdir, rm, utimes } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   type IndexedDBWrite,
@@ -1072,7 +1067,7 @@ async function unchanged(source: TeamsSource) {
 }
 
 async function scratch() {
-  const dir = await mkdtempDisposable(join(tmpdir(), 'teams-'));
+  const dir = await new TemporaryFiles().directory('teams-');
   return {
     dir,
     app: new TeamsApp(dir.path),
@@ -2497,7 +2492,7 @@ test('a Teams watch wakes every stream once, again when the app writes its store
 test('this Mac’s Teams app loads every account it keeps, and a second read with no write writes nothing', async (t) => {
   if (process.platform !== 'darwin')
     return t.skip('the Teams app’s store is on macOS');
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'teams-live-'));
+  await using dir = await new TemporaryFiles().directory('teams-live-');
   const out = join(dir.path, 'out.sqlite');
   const directory = teamsDirectory(homedir());
   const source = new TeamsSource({ directory });

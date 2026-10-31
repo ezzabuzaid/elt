@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
 import {
@@ -413,7 +414,7 @@ function failureTypes(error: {
 }
 
 test('every Accounts stream loads the store, without authentication material, and a second run writes nothing', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-accounts-'));
+  await using dir = await new TemporaryFiles().directory('elt-accounts-');
   const path = join(dir.path, 'Accounts4.sqlite');
   accountsFixture(path);
   const source = new AppleAccountsSource({ path });
@@ -587,7 +588,7 @@ test('every Accounts stream loads the store, without authentication material, an
 });
 
 test('an account changed in the store updates its rows, and a removed one deletes them', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-accounts-'));
+  await using dir = await new TemporaryFiles().directory('elt-accounts-');
   const path = join(dir.path, 'Accounts4.sqlite');
   accountsFixture(path);
   const run = await pipeline(new AppleAccountsSource({ path }), dir.path);
@@ -617,7 +618,7 @@ test('an account changed in the store updates its rows, and a removed one delete
 });
 
 test('an unreadable Accounts store fails every stream, naming Full Disk Access', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-accounts-'));
+  await using dir = await new TemporaryFiles().directory('elt-accounts-');
   const source = new AppleAccountsSource({
     path: join(dir.path, 'missing', 'Accounts4.sqlite'),
   });
@@ -635,7 +636,7 @@ test('an unreadable Accounts store fails every stream, naming Full Disk Access',
 });
 
 test('a table in a layout this reader does not know fails only the stream that reads it, by name, and the others load', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-accounts-'));
+  await using dir = await new TemporaryFiles().directory('elt-accounts-');
   const path = join(dir.path, 'Accounts4.sqlite');
   accountsFixture(path);
   {
@@ -673,7 +674,7 @@ test('a table in a layout this reader does not know fails only the stream that r
 });
 
 test('watching the Accounts store reports each commit to it', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-accounts-'));
+  await using dir = await new TemporaryFiles().directory('elt-accounts-');
   const path = join(dir.path, 'Accounts4.sqlite');
   accountsFixture(path);
   const source = new AppleAccountsSource({ path });
@@ -704,9 +705,7 @@ test('watching the Accounts store reports each commit to it', async () => {
 
 test('this Mac’s Accounts store loads every stream, one row per stored record, without authentication material', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Accounts requires macOS');
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-accounts-live-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-accounts-live-');
   const source = new AppleAccountsSource({
     path: accountsStorePath(homedir()),
   });
@@ -775,8 +774,8 @@ test('this Mac’s Accounts store loads every stream, one row per stored record,
 });
 
 test('an Accounts watch keeps every stream current while the Accounts store holds still', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-accounts-current-'),
+  await using dir = await new TemporaryFiles().directory(
+    'elt-accounts-current-',
   );
   const store = join(dir.path, 'Accounts4.sqlite');
   accountsFixture(store);
@@ -840,7 +839,7 @@ test('an Accounts watch keeps every stream current while the Accounts store hold
 });
 
 test('an Accounts pass over a large store holds one authorization at a time, so it loads in a small heap', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-accounts-'));
+  await using dir = await new TemporaryFiles().directory('elt-accounts-');
   const path = join(dir.path, 'Accounts4.sqlite');
   accountsFixture(path);
   {

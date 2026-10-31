@@ -5,14 +5,13 @@ import { existsSync, mkdirSync } from 'node:fs';
 import {
   chmod,
   mkdir,
-  mkdtempDisposable,
   readFile,
   rename,
   rm,
   utimes,
   writeFile,
 } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -21,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 
 import { Fixed, LeaderFirst, Pool } from '@zukhruf/pool';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -913,7 +913,7 @@ function failureTypes(error: {
 }
 
 test('Mail yields server labels and sender addresses in the numeric order of their keys', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   {
     using index = new DatabaseSync(store.index);
@@ -943,7 +943,7 @@ test('Mail yields server labels and sender addresses in the numeric order of the
 });
 
 test('Mail yields every record with its fields in schema order, smart mailboxes with parentId before properties, and subjects and signatures in store order', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   exec(store.index, "INSERT INTO subjects VALUES(10,'Ten'),(2,'Two')");
   const signatures = join(store.root, 'V10/MailData/Signatures');
@@ -1013,7 +1013,7 @@ test('Mail yields every record with its fields in schema order, smart mailboxes 
 });
 
 test('An account scope keeps that account’s mailboxes, the messages labelled into them and those labels, and drops server rows and SMTP servers', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   const source = new AppleMailSource({
     path: store.root,
@@ -1038,7 +1038,7 @@ test('An account scope keeps that account’s mailboxes, the messages labelled i
 });
 
 test('A stored 0 date reads as the epoch, and a dated scope keeps a message by its received date, else its sent date', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   exec(store.index, 'UPDATE messages SET date_sent=0 WHERE ROWID=2');
   const everything = new AppleMailSource({
@@ -1081,7 +1081,7 @@ test('A stored 0 date reads as the epoch, and a dated scope keeps a message by i
 });
 
 test('Mail times keep SQLite’s millisecond rounding, and the years 0000 and 9999 read back unchanged', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   exec(
     store.index,
@@ -1114,7 +1114,7 @@ test('Mail times keep SQLite’s millisecond rounding, and the years 0000 and 99
 });
 
 test('A date before year 0 fails only messages, and a dated scope leaves that message out', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   // Year -1199, and year -1, which SQLite writes with a three-digit year.
   for (const seconds of [-100000000000, -62180000000]) {
     const store = await fixture(join(dir.path, `Mail${seconds}`));
@@ -1146,7 +1146,7 @@ test('A date before year 0 fails only messages, and a dated scope leaves that me
 });
 
 test('Text in a Base64 column passes through, and a blob in a text column fails only messages', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   exec(store.index, "UPDATE messages SET document_id='plain' WHERE ROWID=1");
   const source = new AppleMailSource({
@@ -1171,7 +1171,7 @@ test('Text in a Base64 column passes through, and a blob in a text column fails 
 });
 
 test('An integer beyond 2^53 fails a scoped read as it opens, and only messages when unscoped', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   // A column the scope never filters by: the selection reads whole rows, the
   // same rows the streams read, so any value they would refuse it refuses.
@@ -1204,7 +1204,7 @@ test('An integer beyond 2^53 fails a scoped read as it opens, and only messages 
 });
 
 test('A mailbox URL that does not parse fails only accounts and smtpServers, and a collection scope still opens', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   exec(store.index, "INSERT INTO mailboxes(ROWID,url) VALUES(3,'not a url')");
   const invalid = ['TypeError', /Invalid URL/] as const;
@@ -1226,7 +1226,7 @@ test('A mailbox URL that does not parse fails only accounts and smtpServers, and
 });
 
 test('A message file rewritten mid-read fails only messageFiles, even once its record was read, and a removed rules file fails only rules', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   const file = join(store.data, 'Messages/1.partial.emlx');
   const source = new AppleMailSource({
@@ -1291,7 +1291,7 @@ test('A message file rewritten mid-read fails only messageFiles, even once its r
 });
 
 test('A detached file removed mid-read fails only messageParts and attachments, and a removed configuration file only configuration', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   const settings = join(store.root, 'V10/MailData/Settings.plist');
   await writeFile(settings, xml('<dict><key>Enabled</key><true/></dict>'));
@@ -1328,7 +1328,7 @@ test('A detached file removed mid-read fails only messageParts and attachments, 
 });
 
 test('Two files for one indexed message fail the whole read', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   const archive = join(store.root, 'V10/LOCAL/Archive.mbox/UUID/Data/Messages');
   await mkdir(archive, { recursive: true });
@@ -1345,7 +1345,7 @@ test('Two files for one indexed message fail the whole read', async () => {
 });
 
 test('A detached attachment resolves by its file name, and an ambiguous one fails only the streams that read it', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const part = 'Attachments/1/2';
 
   const renamed = await readAfter(join(dir.path, 'renamed'), ({ data }) =>
@@ -1401,7 +1401,7 @@ test('A detached attachment resolves by its file name, and an ambiguous one fail
 });
 
 test('An invalid indexed part number fails only attachments, and an invalid Apple content length only messageParts and attachments', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
 
   const partNumber = await readAfter(join(dir.path, 'part'), ({ index }) =>
     exec(index, "INSERT INTO attachments VALUES(4,2,'x','bad.txt')"),
@@ -1439,7 +1439,7 @@ test('An invalid indexed part number fails only attachments, and an invalid Appl
 });
 
 test('A charset TextDecoder does not know fails only messageParts, even on a text attachment, whose bytes attachments still copies', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
 
   const { failed } = await readAfter(join(dir.path, 'Mail'), ({ data }) =>
     writeFile(
@@ -1462,7 +1462,7 @@ test('A charset TextDecoder does not know fails only messageParts, even on a tex
 });
 
 test('A malformed rule or smart mailbox fails exactly the streams that read the malformed key', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const mailData = (root: string, name: string) =>
     join(root, 'V10/MailData', name);
   const write = (name: string, plist: string) => (store: { root: string }) =>
@@ -1528,7 +1528,7 @@ test('A malformed rule or smart mailbox fails exactly the streams that read the 
 });
 
 test('Mail’s store fails to open as unavailable only when its version file or index cannot be read, and as itself for a version file or index this reader does not read', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const persistence = (version: string) => (store: { root: string }) =>
     writeFile(
       join(store.root, 'PersistenceInfo.plist'),
@@ -1594,7 +1594,7 @@ test('Mail’s store fails to open as unavailable only when its version file or 
 });
 
 test('A scoped read still reads the streams it leaves out, so a malformed rules or smart mailbox file fails them', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const scope = { collectionIds: ['1'] };
 
   const rules = await readAfter(
@@ -1622,7 +1622,7 @@ test('A scoped read still reads the streams it leaves out, so a malformed rules 
 });
 
 test('Mail’s undated numbers keep the values Mail stored', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   exec(
     store.index,
@@ -1673,7 +1673,7 @@ test('Mail’s undated numbers keep the values Mail stored', async () => {
 });
 
 test('A configuration plist keeps archiver UIDs as {"$uid":N}, data as Base64, big integers as text and dates in ISO 8601', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   // As Mail's recentSearches.plist holds them: keyed archiver references.
   await writeFile(
@@ -1698,7 +1698,7 @@ test('A configuration plist keeps archiver UIDs as {"$uid":N}, data as Base64, b
 });
 
 test('Mail scope filters dates, message ownership and MIME before copying files and checkpoints', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'mail-scope-'));
+  await using scratch = await new TemporaryFiles().directory('mail-scope-');
   const input = await fixture(scratch.path);
   const source = new AppleMailSource({
     path: scratch.path,
@@ -1750,7 +1750,7 @@ test('Mail scope filters dates, message ownership and MIME before copying files 
 });
 
 test('Mail exports the native store, MIME, detached files and unavailable metadata; snapshots update and delete', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   const source = new AppleMailSource({
     path: store.root,
@@ -1927,7 +1927,7 @@ test('Mail exports the native store, MIME, detached files and unavailable metada
 });
 
 test('a Mail store copied to another folder keeps the identity of every unchanged message, so none is read again', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-moved-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-moved-');
   const store = await fixture(join(dir.path, 'Mail'));
   // Whole-second times, which every copy keeps exactly.
   execFileSync('/usr/bin/find', [
@@ -1979,7 +1979,7 @@ test('a Mail store copied to another folder keeps the identity of every unchange
 });
 
 test('Mail message streams re-read only messages whose files or index attachment rows changed', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-groups-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-groups-');
   const store = await fixture(join(dir.path, 'Mail'));
   const source = new AppleMailSource({
     path: store.root,
@@ -2069,7 +2069,7 @@ test('Mail message streams re-read only messages whose files or index attachment
 });
 
 test('Mail failures keep stored rows and checkpoints; absent stores and unknown schemas fail explicitly', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-errors-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-errors-');
   const store = await fixture(join(dir.path, 'Mail'));
   const source = new AppleMailSource({
     path: store.root,
@@ -2152,9 +2152,7 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
 });
 
 test('An unreadable Accounts store fails only accounts and smtpServers, naming Full Disk Access', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-mail-accounts-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-mail-accounts-');
   const store = await fixture(join(dir.path, 'Mail'));
   const source = new AppleMailSource({
     path: store.root,
@@ -2183,8 +2181,8 @@ test('An unreadable Accounts store fails only accounts and smtpServers, naming F
 });
 
 test('An unreadable Accounts store leaves Mail’s watch running', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-mail-accounts-watch-'),
+  await using dir = await new TemporaryFiles().directory(
+    'elt-mail-accounts-watch-',
   );
   const store = await fixture(join(dir.path, 'Mail'));
   const source = new AppleMailSource({
@@ -2213,7 +2211,7 @@ test('An unreadable Accounts store leaves Mail’s watch running', async () => {
 });
 
 test('Mail’s watch fails as unavailable when its version file or index cannot be read, and as itself for an index that is not a database', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-watch-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-watch-');
   const watchAfter = async (
     root: string,
     change: (store: Awaited<ReturnType<typeof fixture>>) => Promise<void>,
@@ -2255,8 +2253,8 @@ test('Mail’s watch fails as unavailable when its version file or index cannot 
 });
 
 test('Mail’s watch refreshes only accounts and smtpServers when only the Accounts store commits', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-mail-accounts-watch-'),
+  await using dir = await new TemporaryFiles().directory(
+    'elt-mail-accounts-watch-',
   );
   const store = await fixture(join(dir.path, 'Mail'));
   // Outside the Mail directory, as ~/Library/Accounts is, so only the store's
@@ -2302,7 +2300,7 @@ test('Mail’s watch refreshes only accounts and smtpServers when only the Accou
 });
 
 test('Mail watches index commits and file-only downloads, and cancels', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-watch-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-watch-');
   const store = await fixture(join(dir.path, 'Mail'));
   // Outside the Mail directory, as ~/Library/Accounts is.
   const source = new AppleMailSource({
@@ -2354,7 +2352,7 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
         ),
       ),
   });
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-pixels-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-pixels-');
   const store = await fixture(join(dir.path, 'Mail'));
   const images = [];
   for (const width of [1, 2, 3]) {
@@ -2459,7 +2457,7 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
 });
 
 test('A MIME attachment whose extension alone passes the 255-byte file name limit is stored under its hash alone, and a short extension is kept', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-ext-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-ext-');
   const store = await fixture(join(dir.path, 'Mail'));
   const long = `notes.${'x'.repeat(255)}`;
   const notes = Buffer.from('long extension');
@@ -2537,7 +2535,7 @@ test('A MIME attachment whose extension alone passes the 255-byte file name limi
 });
 
 test('An attachment Mail indexed before its message arrived, kept on disk under a 252-letter extension, is stored under its hash alone, and a short extension is kept', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-ext-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-ext-');
   const store = await fixture(join(dir.path, 'Mail'));
   // Message 2 has no message file; the index names its attachment 1, which
   // Mail downloaded under a name the file system takes (254 bytes), and its
@@ -2605,7 +2603,7 @@ test('An attachment Mail indexed before its message arrived, kept on disk under 
 });
 
 test('Mail reads as documented views whose MIME, rule and subject joins hold, with raw dates and missing files explicit', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'mail-marts-'));
+  await using dir = await new TemporaryFiles().directory('mail-marts-');
   const store = await fixture(join(dir.path, 'Mail'));
   const source = new AppleMailSource({
     path: store.root,
@@ -2725,7 +2723,7 @@ test('Mail reads as documented views whose MIME, rule and subject joins hold, wi
 
 test('this Mac’s Mail accounts and SMTP servers read from the Accounts store with every documented property', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Mail requires macOS');
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-live-'));
+  await using dir = await new TemporaryFiles().directory('elt-mail-live-');
   const source = new AppleMailSource({
     path: mailDirectory(homedir()),
     accounts: new AccountsStore(accountsStorePath(homedir())),
@@ -2819,9 +2817,7 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
 });
 
 test('a Mail watch makes no pass while Mail and the Accounts store hold still, and keeps every stream current only as of the last write of the index', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-mail-current-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-mail-current-');
   const store = await fixture(join(dir.path, 'Mail'));
   // Mail holds its index, and so its WAL, open the whole time; a first reader
   // would otherwise create those files under the Mail root, which the watch

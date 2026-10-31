@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   AppIntents,
@@ -15,7 +14,7 @@ import {
 } from './index.ts';
 
 test('a knowledgeC that is missing fails with KnowledgeUnavailableError naming its path', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'knowledge-'));
+  await using scratch = await new TemporaryFiles().directory('knowledge-');
   const path = join(scratch.path, 'knowledgeC.db');
 
   assert.throws(
@@ -27,7 +26,7 @@ test('a knowledgeC that is missing fails with KnowledgeUnavailableError naming i
 });
 
 test('a layout without a column fails only the reads that need it, and the others still read from the same snapshot', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'knowledge-'));
+  await using scratch = await new TemporaryFiles().directory('knowledge-');
   const path = join(scratch.path, 'knowledgeC.db');
   {
     // knowledgeC without ZOBJECT.ZVALUEINTEGER, which only the backlight

@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdtempDisposable } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { chmod } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -320,7 +322,7 @@ function failureTypes(error: {
 }
 
 test('every Call History stream loads the store decoded, and a second run writes nothing', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
+  await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   const source = new AppleCallHistorySource({ path });
@@ -581,7 +583,7 @@ test('every Call History stream loads the store decoded, and a second run writes
 });
 
 test('a call linked twice to the same handle loads one participant, and the next run diffs cleanly', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
+  await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   {
@@ -608,7 +610,7 @@ test('a call linked twice to the same handle loads one participant, and the next
 });
 
 test('a call deleted as Core Data deletes it removes its rows, and edited records update in place', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
+  await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
@@ -655,7 +657,7 @@ test('a call deleted as Core Data deletes it removes its rows, and edited record
 });
 
 test('a date range loads the calls that started in it and only their records', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
+  await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   const scope: ImportScope = {
@@ -690,7 +692,7 @@ test('a date range loads the calls that started in it and only their records', a
 });
 
 test('a one-millisecond range selects the call that started within it, to the microsecond', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
+  await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   // CALL-PHONE started at 10:00:00.250123.
@@ -711,7 +713,7 @@ test('a one-millisecond range selects the call that started within it, to the mi
 });
 
 test('participants load whatever entity numbers this macOS gives the join table', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
+  await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   {
@@ -743,7 +745,7 @@ test('participants load whatever entity numbers this macOS gives the join table'
 });
 
 test('a store without the participant join table fails the participants stream by name while the others load', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
+  await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   {
@@ -768,7 +770,7 @@ test('a store without the participant join table fails the participants stream b
 });
 
 test('a store that stops being readable fails every stream, naming Full Disk Access, and keeps what loaded', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
+  await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
@@ -799,7 +801,7 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
 });
 
 test('a store missing a column this reader reads fails every stream by name and keeps what loaded', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
+  await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
@@ -829,7 +831,7 @@ test('a store missing a column this reader reads fails every stream by name and 
 });
 
 test('a Call History watch loads each commit while callhistoryd keeps its store open', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
+  await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
@@ -872,7 +874,7 @@ test('a Call History watch loads each commit while callhistoryd keeps its store 
 test('this Mac’s call history loads every stream, one row per stored record', async (t) => {
   if (process.platform !== 'darwin')
     return t.skip('Call History requires macOS');
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-live-'));
+  await using dir = await new TemporaryFiles().directory('elt-calls-live-');
   const out = join(dir.path, 'out.sqlite');
 
   try {
@@ -930,9 +932,7 @@ test('this Mac’s call history loads every stream, one row per stored record', 
 });
 
 test('a Call History watch keeps every stream current while callhistoryd changes nothing', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'elt-calls-current-'),
-  );
+  await using dir = await new TemporaryFiles().directory('elt-calls-current-');
   const store = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(store);
   const source = new AppleCallHistorySource({ path: store });
@@ -995,7 +995,7 @@ test('a Call History watch keeps every stream current while callhistoryd changes
 });
 
 test('a Call History pass over a large store holds one call at a time, so it loads in a small heap', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-large-'));
+  await using dir = await new TemporaryFiles().directory('elt-calls-large-');
   const path = join(dir.path, 'CallHistory.storedata');
   {
     using store = new ScratchCallHistory(path);

@@ -1,14 +1,9 @@
 import assert from 'node:assert/strict';
-import {
-  chmod,
-  mkdir,
-  mkdtempDisposable,
-  utimes,
-  writeFile,
-} from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   SlackDesktopStore,
@@ -49,9 +44,7 @@ async function read(home: string, directory?: string) {
 
 for (const [build, location] of Object.entries(locations)) {
   test(`the store in a home folder reads Slack's ${build} installation`, async () => {
-    await using home = await mkdtempDisposable(
-      join(tmpdir(), 'slack-location-'),
-    );
+    await using home = await new TemporaryFiles().directory('slack-location-');
     const directory = join(home.path, location);
     await save(directory, 'F1');
 
@@ -64,7 +57,7 @@ for (const [build, location] of Object.entries(locations)) {
 }
 
 test('an empty App Store folder does not hide the direct-download store', async () => {
-  await using home = await mkdtempDisposable(join(tmpdir(), 'slack-location-'));
+  await using home = await new TemporaryFiles().directory('slack-location-');
   await mkdir(join(home.path, locations.appStore), { recursive: true });
   await save(join(home.path, locations.direct), 'F1');
 
@@ -72,7 +65,7 @@ test('an empty App Store folder does not hide the direct-download store', async 
 });
 
 test('an explicit directory reads only that store', async () => {
-  await using home = await mkdtempDisposable(join(tmpdir(), 'slack-location-'));
+  await using home = await new TemporaryFiles().directory('slack-location-');
   await save(join(home.path, locations.direct), 'F1');
   const directory = join(home.path, 'custom');
   await save(directory, 'F2');
@@ -81,7 +74,7 @@ test('an explicit directory reads only that store', async () => {
 });
 
 test('an inaccessible leftover folder does not hide a readable installation', async () => {
-  await using home = await mkdtempDisposable(join(tmpdir(), 'slack-location-'));
+  await using home = await new TemporaryFiles().directory('slack-location-');
   const leftover = join(home.path, locations.appStore);
   await mkdir(leftover, { recursive: true });
   await save(join(home.path, locations.direct), 'F1');
@@ -96,7 +89,7 @@ test('an inaccessible leftover folder does not hide a readable installation', as
 });
 
 test('a missing store asks for saved Slack data without requiring the App Store', async () => {
-  await using home = await mkdtempDisposable(join(tmpdir(), 'slack-location-'));
+  await using home = await new TemporaryFiles().directory('slack-location-');
   await assert.rejects(read(home.path), (error) => {
     assert.ok(error instanceof SlackDesktopUnavailableError);
     assert.match(error.message, /Open Slack, sign in/);
@@ -107,9 +100,7 @@ test('a missing store asks for saved Slack data without requiring the App Store'
 
 for (const location of Object.values(locations)) {
   test(`when both stores exist, the most recently saved database wins: ${location}`, async () => {
-    await using home = await mkdtempDisposable(
-      join(tmpdir(), 'slack-location-'),
-    );
+    await using home = await new TemporaryFiles().directory('slack-location-');
     for (const [build, path] of Object.entries(locations)) {
       const directory = join(home.path, path);
       await save(directory, build);
@@ -146,7 +137,7 @@ async function savedAt(
 }
 
 test('the store was last written when a file of its database was, though the database folder kept its time', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'slack-written-'));
+  await using dir = await new TemporaryFiles().directory('slack-written-');
   await save(dir.path, 'F1');
   await writeFile(join(dir.path, indexedDB, '000003.log'), 'saved');
   await savedAt(dir.path, {
@@ -161,7 +152,7 @@ test('the store was last written when a file of its database was, though the dat
 });
 
 test('the store was last written when the app last saved its own state, if that came later', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'slack-written-'));
+  await using dir = await new TemporaryFiles().directory('slack-written-');
   await save(dir.path, 'F1');
   await writeFile(join(dir.path, indexedDB, '000003.log'), 'first save');
   await savedAt(dir.path, {
@@ -176,7 +167,7 @@ test('the store was last written when the app last saved its own state, if that 
 });
 
 test('a store that is not there is unavailable, not a time', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'slack-written-'));
+  await using dir = await new TemporaryFiles().directory('slack-written-');
 
   assert.throws(
     () => new SlackDesktopStore(join(dir.path, 'Slack')).lastWrite(),

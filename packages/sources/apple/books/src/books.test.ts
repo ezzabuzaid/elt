@@ -4,19 +4,20 @@ import { mkdirSync } from 'node:fs';
 import {
   chmod,
   mkdir,
-  mkdtempDisposable,
   readFile,
   rm,
   utimes,
   writeFile,
 } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -796,7 +797,7 @@ function failedStreams(error: {
 }
 
 test('Books reads its library, annotations, synced reading state and reading history as documented views', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const source = new AppleBooksSource(location);
   const books = await appleImport(source, join(scratch.path, 'import'));
@@ -1017,7 +1018,7 @@ test('Books reads its library, annotations, synced reading state and reading his
 });
 
 test('Books stores each book on this Mac as one file, packing an EPUB directory into an .epub, and reports a missing one without a file', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const books = await appleImport(
     new AppleBooksSource(location),
@@ -1103,7 +1104,7 @@ test('Books stores each book on this Mac as one file, packing an EPUB directory 
 });
 
 test('Books follows each store on its own: a rerun writes nothing, and edits, deletions and changed book files land', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const books = await appleImport(
     new AppleBooksSource(location),
@@ -1207,7 +1208,7 @@ test('Books follows each store on its own: a rerun writes nothing, and edits, de
 });
 
 test('Books names Full Disk Access for an unreadable store, refuses an unknown layout or reading history format, and keeps the rows it had', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const source = new AppleBooksSource(location);
   const books = await appleImport(source, join(scratch.path, 'import'));
@@ -1323,7 +1324,7 @@ test('Books names Full Disk Access for an unreadable store, refuses an unknown l
 });
 
 test('a Books watch wakes only the streams of the store that changed, while Books keeps its databases open', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const source = new AppleBooksSource(location);
   const streams = [
@@ -1369,7 +1370,7 @@ test('a Books watch wakes only the streams of the store that changed, while Book
 });
 
 test('Books imports library assets with oversized integers in unused columns and internal relationship keys', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const source = new AppleBooksSource(location);
   const fields = Object.keys(source.libraryAssets.jsonSchema.properties ?? {})
@@ -1407,7 +1408,7 @@ test('Books imports library assets with oversized integers in unused columns and
 });
 
 test('a malformed or missing Books store, column or value fails only the streams that read it', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   // The failures one load has after running sql on one store of a fresh
   // fixture.
   const afterSql = (
@@ -1590,7 +1591,7 @@ test('a malformed or missing Books store, column or value fails only the streams
 });
 
 test('Books names the preference file it cannot read, and only readingGoal fails', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   // The app's preferences as an XML property list, which Books never writes.
   const xmlPreferences = (path: string) =>
     writeFile(
@@ -1638,7 +1639,7 @@ test('Books names the preference file it cannot read, and only readingGoal fails
 });
 
 test('a Books watch fails before its first batch when a watched database is missing, and wakes the streams of each store and preference file that changes', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   const missing = await booksFixture(join(scratch.path, 'missing'));
   await rm(missing.files.themes);
   const withoutThemes = new AppleBooksSource(missing);
@@ -1729,7 +1730,7 @@ test('a Books watch fails before its first batch when a watched database is miss
 });
 
 test('Books reads no reading history when Books holds no live document, and loads the reading streams empty', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const source = new AppleBooksSource(location);
   // Each reading stream's records, read on its own.
@@ -1806,7 +1807,7 @@ async function reloadedHistory(
 }
 
 test('Books refuses reading history it holds twice, and keeps the history it exported', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
 
   const { before, after, failed, location } = await reloadedHistory(
     scratch.path,
@@ -1831,7 +1832,7 @@ test('Books refuses reading history it holds twice, and keeps the history it exp
 });
 
 test('Books refuses a reading history document that is not bytes, and keeps the history it exported', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
 
   const { before, after, failed, location } = await reloadedHistory(
     scratch.path,
@@ -1879,7 +1880,7 @@ const PRIMARY_KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
 };
 
 test('Books writes every stream with its fields in schema order and its rows in store order', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   {
     using library = new DatabaseSync(location.files.library);
@@ -1950,7 +1951,7 @@ test('Books writes every stream with its fields in schema order and its rows in 
 });
 
 test('Books keeps each stored value as Books means it', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const lastRead = at('2026-09-14T11:38:00.000Z');
   {
@@ -2115,7 +2116,7 @@ test('Books keeps each stored value as Books means it', async () => {
 });
 
 test('Books takes the reading goal from whichever preference file holds it', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const source = new AppleBooksSource(location);
   const sharedDate = new Date('2022-03-05T08:02:05.000Z');
@@ -2208,7 +2209,7 @@ test('Books takes the reading goal from whichever preference file holds it', asy
 });
 
 test('Books classifies each book file by what is on disk', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  await using scratch = await new TemporaryFiles().directory('books-');
   // A book Books added from a file at path.
   const addBook = (
     location: BooksFixture,
@@ -2391,7 +2392,7 @@ test('Books classifies each book file by what is on disk', async () => {
 
 test('Books reads this Mac’s stores into SQLite without opening iCloud placeholders', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Books requires macOS');
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-live-'));
+  await using scratch = await new TemporaryFiles().directory('books-live-');
   const location = booksLocation(homedir());
   const source = new AppleBooksSource(location);
   const destination = new SQLiteDestination({
@@ -2467,7 +2468,7 @@ test('Books reads this Mac’s stores into SQLite without opening iCloud placeho
 });
 
 test('a Books watch keeps every stream current while its stores hold still', async () => {
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'books-current-'));
+  await using dir = await new TemporaryFiles().directory('books-current-');
   const location = await booksFixture(dir.path);
   const source = new AppleBooksSource(location);
   const data = join(dir.path, 'out.sqlite');
@@ -2529,7 +2530,7 @@ test('a Books watch keeps every stream current while its stores hold still', asy
 });
 
 test('a Books pass over a large annotation store holds one annotation at a time, so it loads in a small heap', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-large-'));
+  await using scratch = await new TemporaryFiles().directory('books-large-');
   const location = await booksFixture(scratch.path);
   {
     using store = new DatabaseSync(location.files.annotations);

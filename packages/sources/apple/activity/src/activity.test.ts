@@ -1,14 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawnSync } from 'node:child_process';
-import {
-  chmod,
-  mkdir,
-  mkdtempDisposable,
-  readFile,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -16,6 +9,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { crc32 } from 'node:zlib';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -346,7 +341,7 @@ function failedStreams(error: {
 }
 
 test('Activity reads every Biome stream, knowledgeC and the device list as documented views', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  await using scratch = await new TemporaryFiles().directory('activity-');
   const location = await activityFixture(scratch.path);
   const at = new Date('2026-10-01T09:00:00.000Z');
   const root = scratch.path;
@@ -910,7 +905,7 @@ test('Activity reads every Biome stream, knowledgeC and the device list as docum
 });
 
 test('Activity keeps the rows of records macOS expired, deletes what was removed within their age, and rereads only changed segments', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  await using scratch = await new TemporaryFiles().directory('activity-');
   const location = await activityFixture(scratch.path);
   const root = scratch.path;
   const focus = (
@@ -1047,7 +1042,7 @@ test('Activity keeps the rows of records macOS expired, deletes what was removed
 });
 
 test('Activity names Full Disk Access for unreadable Biome folders, refuses an unknown knowledgeC layout, and fails only their streams', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  await using scratch = await new TemporaryFiles().directory('activity-');
   const location = await activityFixture(scratch.path);
   await writeSegment(scratch.path, 'App.MenuItem', 'local', '810000000000000', [
     { at: daysAgo(1), payload: protobuf([[1, 'string', 'com.apple.Notes']]) },
@@ -1121,7 +1116,7 @@ test('Activity names Full Disk Access for unreadable Biome folders, refuses an u
 });
 
 test('Activity rounds payload and knowledgeC times to the millisecond, and truncates Biome’s write time', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  await using scratch = await new TemporaryFiles().directory('activity-');
   const location = await activityFixture(scratch.path);
   const at = new Date('2026-10-01T09:00:00.000Z');
   await writeSegment(scratch.path, 'App.InFocus', 'local', '810000000000000', [
@@ -1187,7 +1182,7 @@ test('Activity rounds payload and knowledgeC times to the millisecond, and trunc
 });
 
 test('Activity reads only segment files under local/ and remote/<device>/, not Biome’s tombstones or Finder’s files', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  await using scratch = await new TemporaryFiles().directory('activity-');
   const location = await activityFixture(scratch.path);
   const record = (bundleId: string): Slot => ({
     at: daysAgo(1),
@@ -1231,7 +1226,7 @@ test('Activity reads only segment files under local/ and remote/<device>/, not B
 });
 
 test('Activity keeps an interaction archive whose root is nil as JSON null, not as a missing interaction', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  await using scratch = await new TemporaryFiles().directory('activity-');
   const location = await activityFixture(scratch.path);
   const archive = await binaryPlist(
     scratch.path,
@@ -1289,7 +1284,7 @@ test('Activity keeps an interaction archive whose root is nil as JSON null, not 
 });
 
 test('Activity loads an app intent Biome stored without a verb, such as Clock’s alarm intent, with intentVerb NULL', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  await using scratch = await new TemporaryFiles().directory('activity-');
   const location = await activityFixture(scratch.path);
   const archive = await binaryPlist(
     scratch.path,
@@ -1338,7 +1333,7 @@ test('Activity loads an app intent Biome stored without a verb, such as Clock’
 });
 
 test('Activity loads a Bluetooth event whose product ID Biome stored as -1, as it does for a device with no name, with productId -1', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  await using scratch = await new TemporaryFiles().directory('activity-');
   const location = await activityFixture(scratch.path);
   // Laid out as this Mac's Biome stored one event on 2026-10-30 (address
   // replaced): an empty name, the vendor 0xFFFFFFFF, and the product -1 as a
@@ -1399,7 +1394,7 @@ test('Activity loads a Bluetooth event whose product ID Biome stored as -1, as i
 });
 
 test('an Activity watch wakes only the streams whose segments or database changed', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  await using scratch = await new TemporaryFiles().directory('activity-');
   const location = await activityFixture(scratch.path);
   const record = (bundleId: string, days: number): Slot => ({
     at: daysAgo(days),
@@ -1468,9 +1463,7 @@ test('an Activity watch wakes only the streams whose segments or database change
 
 test('Activity reads this Mac’s activity into SQLite', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Activity requires macOS');
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'activity-live-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('activity-live-');
   const source = new AppleActivitySource({
     biome: biomeDirectory(homedir()),
     knowledge: knowledgeStorePath(homedir()),
@@ -1541,9 +1534,7 @@ test('Activity reads this Mac’s activity into SQLite', async (t) => {
 });
 
 test('an Activity watch keeps every stream current while its stores hold still', async () => {
-  await using dir = await mkdtempDisposable(
-    join(tmpdir(), 'activity-current-'),
-  );
+  await using dir = await new TemporaryFiles().directory('activity-current-');
   const location = await activityFixture(dir.path);
   const source = new AppleActivitySource({ ...location, pollIntervalMs: 50 });
   const data = join(dir.path, 'out.sqlite');
@@ -1605,9 +1596,7 @@ test('an Activity watch keeps every stream current while its stores hold still',
 });
 
 test('an Activity pass over a large knowledgeC holds one event at a time, so it loads in a small heap', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'activity-large-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('activity-large-');
   const location = await activityFixture(scratch.path);
   // One discoverability signal every 10 seconds back from yesterday, all
   // within the stream's two years. Each signal carries a 1 KB value, so a

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
-import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -312,7 +313,7 @@ function failureTypes(error: {
 }
 
 test('Notes reads as documented views that follow edits and deletions', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-views-'));
+  await using scratch = await new TemporaryFiles().directory('notes-views-');
   const path = await noteStoreFixture(join(scratch.path, 'native'));
   const notes = await appleImport(
     new AppleNotesSource({ path }),
@@ -416,7 +417,7 @@ test('Notes reads as documented views that follow edits and deletions', async ()
 });
 
 test('a Notes store that cannot be read publishes nothing, and an empty one publishes empty views', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-views-'));
+  await using scratch = await new TemporaryFiles().directory('notes-views-');
   const path = await noteStoreFixture(join(scratch.path, 'native'));
   {
     using store = new DatabaseSync(path);

@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { BiomeStore, BiomeUnavailableError } from './index.ts';
 
 test('a Biome whose streams folder is missing or denied fails with BiomeUnavailableError naming Full Disk Access', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'biome-'));
+  await using scratch = await new TemporaryFiles().directory('biome-');
   const restricted = join(scratch.path, 'Biome/streams/restricted');
   await mkdir(restricted, { recursive: true });
   await chmod(restricted, 0o000);
@@ -41,7 +41,7 @@ test('a Biome whose streams folder is missing or denied fails with BiomeUnavaila
 });
 
 test('a device list without a column the reader needs fails with MissingColumnsError naming each missing column', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'biome-'));
+  await using scratch = await new TemporaryFiles().directory('biome-');
   await mkdir(join(scratch.path, 'sync'));
   {
     using sync = new DatabaseSync(join(scratch.path, 'sync/sync.db'));
