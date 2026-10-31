@@ -797,7 +797,7 @@ async function waitingHelper(directory: string) {
   return { path, began: () => existsSync(began) };
 }
 
-test('a Calendar pass the host stops while EventKit reads ends at once and is recorded cancelled', async () => {
+test('a Calendar pass the host stops while EventKit reads ends at once and is recorded cancelled', async (t) => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'calendar-stop-'),
   );
@@ -811,7 +811,12 @@ test('a Calendar pass the host stops while EventKit reads ends at once and is re
   const removed = new Error('the user removed this connector');
 
   const loading = events.load({ signal: removal.signal });
-  while (!helper.began()) await sleep(10);
+  await t.waitFor(
+    () => {
+      assert.ok(helper.began(), 'the EventKit helper never began its read');
+    },
+    { interval: 10, timeout: 60_000 },
+  );
   removal.abort(removed);
   const outcome = await Promise.race([
     loading.then(

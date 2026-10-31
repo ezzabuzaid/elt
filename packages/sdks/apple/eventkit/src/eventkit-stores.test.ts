@@ -377,7 +377,7 @@ async function waitingHelper(directory: string) {
   return { path, began: () => existsSync(began) };
 }
 
-test('a read its signal stops rejects with the reason at once and never resolves', async () => {
+test('a read its signal stops rejects with the reason at once and never resolves', async (t) => {
   await using directory = await mkdtempDisposable(
     join(tmpdir(), 'eventkit-waiting-'),
   );
@@ -389,7 +389,12 @@ test('a read its signal stops rejects with the reason at once and never resolves
     {},
     removal.signal,
   );
-  while (!helper.began()) await sleep(10);
+  await t.waitFor(
+    () => {
+      assert.ok(helper.began(), 'the EventKit helper never began its read');
+    },
+    { interval: 10, timeout: 60_000 },
+  );
   removal.abort(removed);
   const outcome = await Promise.race([
     reading.then(
@@ -443,7 +448,7 @@ test('a read of only the accounts and lists gives up when the store changes duri
   assert.equal(stub.reads(collectionsRead), 5);
 });
 
-test('a read of only the accounts and lists its signal stops rejects with the reason at once and never resolves', async () => {
+test('a read of only the accounts and lists its signal stops rejects with the reason at once and never resolves', async (t) => {
   await using directory = await mkdtempDisposable(
     join(tmpdir(), 'eventkit-waiting-'),
   );
@@ -454,7 +459,12 @@ test('a read of only the accounts and lists its signal stops rejects with the re
   const reading = new RemindersStore(helper.path, {
     env: process.env,
   }).collections({}, removal.signal);
-  while (!helper.began()) await sleep(10);
+  await t.waitFor(
+    () => {
+      assert.ok(helper.began(), 'the EventKit helper never began its read');
+    },
+    { interval: 10, timeout: 60_000 },
+  );
   removal.abort(removed);
   const outcome = await Promise.race([
     reading.then(
