@@ -4,16 +4,16 @@ import {
   declaredFormat,
 } from '@workspace/elt';
 
-import { PostgresColumn, formatKinds } from './postgres-column.ts';
+import { PostgresColumn, type PostgresColumnType } from './postgres-column.ts';
 
-function scalarKind(
+function scalarType(
   name: string,
   type: string,
   format: DeclaredFormat | null,
-): PostgresColumn['kind'] {
+): PostgresColumnType {
   switch (type) {
     case 'string':
-      return format === null ? 'text' : formatKinds[format.name];
+      return format ?? 'text';
     case 'integer':
       return 'integer';
     case 'number':
@@ -62,13 +62,12 @@ export class PostgresColumns {
       const format = declaredFormat(items ?? field);
       return new PostgresColumn(
         name,
-        scalarKind(name, items?.type ?? valueType, format),
+        scalarType(name, items?.type ?? valueType, format),
         {
           nullable: types.includes('null'),
           optional: !requiredFields.has(name),
           primaryKey: false,
           array,
-          format: format ?? undefined,
         },
       );
     });
@@ -102,8 +101,8 @@ export class PostgresColumns {
     return this.#column(field, 'blob');
   }
 
-  #column(field: string, kind: PostgresColumn['kind']): PostgresColumn {
-    return new PostgresColumn(field, kind, {
+  #column(field: string, type: PostgresColumnType): PostgresColumn {
+    return new PostgresColumn(field, type, {
       nullable: true,
       optional: false,
       primaryKey: false,

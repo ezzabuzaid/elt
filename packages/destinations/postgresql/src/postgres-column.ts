@@ -41,7 +41,7 @@ const dataTypes = {
 } as const satisfies Record<Kind, string>;
 
 // The kind that stores each string format; base64 text loads as its bytes.
-export const formatKinds = {
+const formatKinds = {
   'date-time': 'timestamp',
   date: 'date',
   'date-time-local': 'local_timestamp',
@@ -51,12 +51,23 @@ export const formatKinds = {
   base64: 'blob',
 } as const satisfies Record<DeclaredFormat['name'], Kind>;
 
-const formatted = new Set<Kind>([
-  'int64',
-  'decimal',
-  'local_timestamp',
-  'local_time',
+// The kinds a column holds without a format. The other kinds hold text that
+// only a format can check, so a column gets them from its format.
+type PlainKind =
+  'text' | 'integer' | 'real' | 'blob' | 'boolean' | 'date' | 'timestamp';
+const plainKinds: ReadonlySet<string> = new Set<PlainKind>([
+  'text',
+  'integer',
+  'real',
+  'blob',
+  'boolean',
+  'date',
+  'timestamp',
 ]);
+
+// What a column holds: a kind of its own, or a string format, which decides
+// the kind.
+export type PostgresColumnType = PlainKind | DeclaredFormat;
 
 // Postgres keeps time to the microsecond.
 const finestPrecision = 6;
@@ -76,9 +87,8 @@ export class PostgresColumn {
   readonly field: string;
   // What Postgres calls the column, which the table it belongs to decides.
   readonly name: string;
+  readonly type: PostgresColumnType;
   readonly kind: Kind;
-  // The string format a schema-inferred column keeps, which refines its kind.
-  readonly format?: DeclaredFormat;
   readonly isPrimaryKey: boolean;
   readonly nullable: boolean;
   readonly optional: boolean;
@@ -88,29 +98,22 @@ export class PostgresColumn {
 
   constructor(
     field: string,
-    kind: Kind,
+    type: PostgresColumnType,
     options: {
       nullable: boolean;
       optional: boolean;
       primaryKey: boolean;
       array?: boolean;
       fileRead?: FileRead;
-      format?: DeclaredFormat;
       name?: string;
     },
   ) {
     if (typeof field !== 'string')
       throw new TypeError('A column holds a field named by a string');
-    if (!Object.hasOwn(storageTypes, kind))
+    if (typeof type === 'string' && !plainKinds.has(type))
       throw new TypeError('Unsupported Postgres column type');
-    const { format } = options;
-    if (
-      format === undefined
-        ? formatted.has(kind)
-        : formatKinds[format.name] !== kind
-    )
-      throw new TypeError(`Column ${field} kind ${kind} must match its format`);
-    this.format = format;
+    this.type = type;
+    const kind = typeof type === 'string' ? type : formatKinds[type.name];
     this.array = options.array ?? false;
     if (this.array && (kind === 'blob' || options.primaryKey))
       throw new TypeError(
@@ -132,25 +135,23 @@ export class PostgresColumn {
   }
 
   primaryKey(): PostgresColumn {
-    return new PostgresColumn(this.field, this.kind, {
+    return new PostgresColumn(this.field, this.type, {
       nullable: false,
       optional: false,
       primaryKey: true,
       array: this.array,
       fileRead: this.fileRead,
-      format: this.format,
       name: this.name,
     });
   }
 
   notNull(): PostgresColumn {
-    return new PostgresColumn(this.field, this.kind, {
+    return new PostgresColumn(this.field, this.type, {
       nullable: false,
       optional: false,
       primaryKey: this.isPrimaryKey,
       array: this.array,
       fileRead: this.fileRead,
-      format: this.format,
       name: this.name,
     });
   }
@@ -185,13 +186,12 @@ export class PostgresColumn {
 
   // This column as the table names it.
   named(name: string): PostgresColumn {
-    return new PostgresColumn(this.field, this.kind, {
+    return new PostgresColumn(this.field, this.type, {
       nullable: this.nullable,
       optional: this.optional,
       primaryKey: this.isPrimaryKey,
       array: this.array,
       fileRead: this.fileRead,
-      format: this.format,
       name,
     });
   }
@@ -207,21 +207,26 @@ export class PostgresColumn {
   // A time finer than microseconds keeps its exact text, which sorts in time
   // order under the "C" collation, since its values share one width.
   get #exactText(): boolean {
-    const { format } = this;
+    const { type } = this;
     return (
-      (format?.name === 'date-time' ||
-        format?.name === 'date-time-local' ||
-        format?.name === 'time-local') &&
-      format.precision > finestPrecision
+      typeof type !== 'string' &&
+      (type.name === 'date-time' ||
+        type.name === 'date-time-local' ||
+        type.name === 'time-local') &&
+      type.precision > finestPrecision
     );
   }
 
   // The type of one value, with the precision and scale a decimal declares.
   get #scalarType(): string {
-    const { format } = this;
+    const { type } = this;
     if (this.#exactText) return 'TEXT';
-    if (format?.name === 'decimal' && format.precision !== undefined)
-      return `NUMERIC(${[format.precision, format.scale ?? []].join(', ')})`;
+    if (
+      typeof type !== 'string' &&
+      type.name === 'decimal' &&
+      type.precision !== undefined
+    )
+      return `NUMERIC(${[type.precision, type.scale ?? []].join(', ')})`;
     return storageTypes[this.kind];
   }
 
@@ -281,10 +286,10 @@ export class PostgresColumn {
 
   // One scalar in its batch encoding, or undefined when the kind rejects it.
   #scalar(value: unknown): string | number | boolean | undefined {
-    const { format } = this;
-    if (format !== undefined) {
-      if (typeof value !== 'string' || !format.accepts(value)) return undefined;
-      switch (format.name) {
+    const { type } = this;
+    if (typeof type !== 'string') {
+      if (typeof value !== 'string' || !type.accepts(value)) return undefined;
+      switch (type.name) {
         case 'base64':
           return `\\x${Buffer.from(value, 'base64').toString('hex')}`;
         case 'date':
@@ -295,14 +300,7 @@ export class PostgresColumn {
           return value;
       }
     }
-    switch (this.kind) {
-      // A kind that only a format stores never gets here: the constructor
-      // requires its format, and the format is checked above.
-      case 'int64':
-      case 'decimal':
-      case 'local_timestamp':
-      case 'local_time':
-        break;
+    switch (type) {
       case 'text':
         if (typeof value === 'string' && !value.includes('\0')) return value;
         break;

@@ -26,7 +26,7 @@ const storageTypes = {
 type Kind = keyof typeof storageTypes;
 
 // The kind that stores each string format; base64 text loads as its bytes.
-export const formatKinds = {
+const formatKinds = {
   'date-time': 'timestamp',
   date: 'date',
   'date-time-local': 'local_timestamp',
@@ -36,12 +36,23 @@ export const formatKinds = {
   base64: 'blob',
 } as const satisfies Record<DeclaredFormat['name'], Kind>;
 
-const formatted = new Set<Kind>([
-  'int64',
-  'decimal',
-  'local_timestamp',
-  'local_time',
+// The kinds a column holds without a format. The other kinds hold text that
+// only a format can check, so a column gets them from its format.
+type PlainKind =
+  'text' | 'integer' | 'real' | 'blob' | 'boolean' | 'date' | 'timestamp';
+const plainKinds: ReadonlySet<string> = new Set<PlainKind>([
+  'text',
+  'integer',
+  'real',
+  'blob',
+  'boolean',
+  'date',
+  'timestamp',
 ]);
+
+// What a column holds: a kind of its own, or a string format, which decides
+// the kind.
+export type SQLiteColumnType = PlainKind | DeclaredFormat;
 
 // GLOB for a fraction of a second with exactly this many digits.
 const fraction = (precision: number) =>
@@ -86,9 +97,8 @@ export class SQLiteColumn {
   readonly field: string;
   // What SQLite calls the column, which the table it belongs to decides.
   readonly name: string;
+  readonly type: SQLiteColumnType;
   readonly kind: Kind;
-  // The string format a schema-inferred column keeps, which refines its kind.
-  readonly format?: DeclaredFormat;
   readonly isPrimaryKey: boolean;
   readonly nullable: boolean;
   readonly optional: boolean;
@@ -98,29 +108,22 @@ export class SQLiteColumn {
 
   constructor(
     field: string,
-    kind: Kind,
+    type: SQLiteColumnType,
     options: {
       nullable: boolean;
       optional: boolean;
       primaryKey: boolean;
       array?: boolean;
       fileRead?: FileRead;
-      format?: DeclaredFormat;
       name?: string;
     },
   ) {
     if (typeof field !== 'string')
       throw new TypeError('A column holds a field named by a string');
-    if (!Object.hasOwn(storageTypes, kind))
+    if (typeof type === 'string' && !plainKinds.has(type))
       throw new TypeError('Unsupported SQLite column type');
-    const { format } = options;
-    if (
-      format === undefined
-        ? formatted.has(kind)
-        : formatKinds[format.name] !== kind
-    )
-      throw new TypeError(`Column ${field} kind ${kind} must match its format`);
-    this.format = format;
+    this.type = type;
+    const kind = typeof type === 'string' ? type : formatKinds[type.name];
     this.array = options.array ?? false;
     if (this.array && (kind === 'blob' || options.primaryKey))
       throw new TypeError(
@@ -142,25 +145,23 @@ export class SQLiteColumn {
   }
 
   primaryKey(): SQLiteColumn {
-    return new SQLiteColumn(this.field, this.kind, {
+    return new SQLiteColumn(this.field, this.type, {
       nullable: false,
       optional: false,
       primaryKey: true,
       array: this.array,
       fileRead: this.fileRead,
-      format: this.format,
       name: this.name,
     });
   }
 
   notNull(): SQLiteColumn {
-    return new SQLiteColumn(this.field, this.kind, {
+    return new SQLiteColumn(this.field, this.type, {
       nullable: false,
       optional: false,
       primaryKey: this.isPrimaryKey,
       array: this.array,
       fileRead: this.fileRead,
-      format: this.format,
       name: this.name,
     });
   }
@@ -195,13 +196,12 @@ export class SQLiteColumn {
 
   // This column as the table names it.
   named(name: string): SQLiteColumn {
-    return new SQLiteColumn(this.field, this.kind, {
+    return new SQLiteColumn(this.field, this.type, {
       nullable: this.nullable,
       optional: this.optional,
       primaryKey: this.isPrimaryKey,
       array: this.array,
       fileRead: this.fileRead,
-      format: this.format,
       name,
     });
   }
@@ -229,19 +229,20 @@ export class SQLiteColumn {
   // The kind with the precision and scale its format declares, as SQL writes
   // them; a timestamp of milliseconds is the plain kind.
   get #typeName(): string {
-    const { format } = this;
-    switch (format?.name) {
+    const { type } = this;
+    if (typeof type === 'string') return type;
+    switch (type.name) {
       case 'date-time':
-        return format.precision === 3
+        return type.precision === 3
           ? this.kind
-          : `${this.kind}(${format.precision})`;
+          : `${this.kind}(${type.precision})`;
       case 'date-time-local':
       case 'time-local':
-        return `${this.kind}(${format.precision})`;
+        return `${this.kind}(${type.precision})`;
       case 'decimal':
-        return format.precision === undefined
+        return type.precision === undefined
           ? this.kind
-          : `${this.kind}(${[format.precision, format.scale ?? []].join(',')})`;
+          : `${this.kind}(${[type.precision, type.scale ?? []].join(',')})`;
       default:
         return this.kind;
     }
@@ -250,7 +251,11 @@ export class SQLiteColumn {
   get definition(): string {
     const check = this.array
       ? ` CHECK (json_valid(${this.quotedName}) AND json_type(${this.quotedName}) = 'array')`
-      : canonical(this.kind, this.quotedName, this.format);
+      : canonical(
+          this.kind,
+          this.quotedName,
+          typeof this.type === 'string' ? undefined : this.type,
+        );
     // A field the stream requires stays nullable in storage: rows loaded
     // before it was added have no value for it. Records are still checked for
     // it when they are written (encode).
@@ -270,7 +275,7 @@ export class SQLiteColumn {
     }
     const value: unknown = Reflect.get(record, this.field);
     if (value === null && this.nullable) return null;
-    const { format } = this;
+    const { type } = this;
     if (this.array) {
       if (
         Array.isArray(value) &&
@@ -281,24 +286,17 @@ export class SQLiteColumn {
         `Field ${JSON.stringify(this.field)} requires an array of ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
       );
     }
-    if (format !== undefined) {
-      if (typeof value === 'string' && format.accepts(value)) {
-        if (format.name === 'int64') return BigInt(value);
-        if (format.name === 'base64') return Buffer.from(value, 'base64');
+    if (typeof type !== 'string') {
+      if (typeof value === 'string' && type.accepts(value)) {
+        if (type.name === 'int64') return BigInt(value);
+        if (type.name === 'base64') return Buffer.from(value, 'base64');
         return value;
       }
       throw new TypeError(
-        `Field ${JSON.stringify(this.field)} requires a canonical ${format.name} value${this.nullable ? ' or null' : ' (not null)'}`,
+        `Field ${JSON.stringify(this.field)} requires a canonical ${type.name} value${this.nullable ? ' or null' : ' (not null)'}`,
       );
     }
-    switch (this.kind) {
-      // A kind that only a format stores never gets here: the constructor
-      // requires its format, and the format is checked above.
-      case 'int64':
-      case 'decimal':
-      case 'local_timestamp':
-      case 'local_time':
-        break;
+    switch (type) {
       case 'text':
         if (typeof value === 'string') return value;
         break;
@@ -336,9 +334,10 @@ export class SQLiteColumn {
 
   // Whether a JSON array element keeps this kind's value exactly.
   #element(value: unknown): boolean {
-    if (this.format !== undefined)
-      return typeof value === 'string' && this.format.accepts(value);
-    switch (this.kind) {
+    const { type } = this;
+    if (typeof type !== 'string')
+      return typeof value === 'string' && type.accepts(value);
+    switch (type) {
       case 'text':
         return typeof value === 'string';
       case 'boolean':
