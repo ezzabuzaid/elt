@@ -114,7 +114,9 @@ export class WebSource extends Source<WebScan> {
   protected override readonly configErrors = [InputError];
   // Each input's earliest due URL by stream, as its last crawl left it; null when its crawl failed or nothing is ever due.
   readonly #due = new Map<string, Map<string, number | null>>();
-  #extracted = Promise.withResolvers<void>();
+  // Wakes a waiting observe() whenever an extraction ends, which can make a
+  // stream due sooner than the time it waits for.
+  readonly #extracted = new EventTarget();
   constructor(options: {
     // Each web stream with the inputs that it crawls, as an Airbyte
     // declarative source has many streams, each with its own requests.
@@ -266,20 +268,25 @@ export class WebSource extends Source<WebScan> {
         : Math.min(...[...due.values()].map((at) => at ?? Infinity));
     };
     for (;;) {
-      const extracted = this.#extracted.promise;
       const due = streams.filter((stream) => dueAt(stream) <= Date.now());
       if (due.length === 0) {
         const next = Math.min(...streams.map(dueAt));
-        const waiting = new AbortController();
+        const extracted = new AbortController();
+        this.#extracted.addEventListener('extracted', () => extracted.abort(), {
+          signal: extracted.signal,
+        });
         try {
-          await Promise.race([
-            setTimeout(Math.min(next - Date.now(), 2 ** 31 - 1), undefined, {
-              signal: AbortSignal.any([signal, waiting.signal]),
-            }),
-            extracted,
-          ]);
+          await setTimeout(
+            Math.min(next - Date.now(), 2 ** 31 - 1),
+            undefined,
+            {
+              signal: AbortSignal.any([signal, extracted.signal]),
+            },
+          );
+        } catch (error) {
+          if (signal.aborted || !extracted.signal.aborted) throw error;
         } finally {
-          waiting.abort();
+          extracted.abort();
         }
         signal.throwIfAborted();
         continue;
@@ -489,9 +496,7 @@ export class WebSource extends Source<WebScan> {
       const streamDue = this.#due.get(name) ?? new Map<string, number | null>();
       streamDue.set(inputUrl, due);
       this.#due.set(name, streamDue);
-      const { resolve } = this.#extracted;
-      this.#extracted = Promise.withResolvers();
-      resolve();
+      this.#extracted.dispatchEvent(new Event('extracted'));
     }
   }
 }
