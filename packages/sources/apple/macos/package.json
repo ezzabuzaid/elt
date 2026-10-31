@@ -55,6 +55,6 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.6.4"
+    "@zukhruf/testing": "^0.6.6"
   }
 }
