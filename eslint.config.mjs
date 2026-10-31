@@ -1,55 +1,53 @@
 import nx from '@nx/eslint-plugin';
+import zukhruf from '@zukhruf/eslint';
+import island, {
+  islandConstraint,
+  manifest,
+  moduleBoundaries,
+} from '@zukhruf/eslint/nx';
+import react from '@zukhruf/eslint/react';
+import { defineConfig } from 'eslint/config';
 
-import island, { islandConstraint } from './island.eslint.config.mjs';
-import personalConfig from './personal.eslint.config.mjs';
-
-const testHookRestrictedSyntax = [
+export default defineConfig(
+  nx.configs['flat/base'],
+  nx.configs['flat/typescript'],
+  nx.configs['flat/javascript'],
   {
-    selector:
-      'CallExpression[callee.name=/^(before|after|beforeEach|afterEach|beforeAll|afterAll)$/]',
-    message:
-      'No test lifecycle hooks. Write self-contained AAA tests: inline arrange in each test and run teardown (cleanup, mock restore, resource stop) in a per-test try/finally.',
+    // Flat config never reads .gitignore, so build output and the local
+    // measurement scripts in outputs/ are listed here.
+    ignores: ['**/dist', '**/out-tsc', 'outputs/**'],
   },
-];
-
-const enumRestrictedSyntax = [
+  // The React preset comes before the zukhruf configs, so base's changes to
+  // third-party rules win.
+  { files: ['apps/web/**'], extends: [react] },
   {
-    selector: 'TSEnumDeclaration',
-    message:
-      'No TS enums — they need a runtime transform and break Node strip-only `.ts` execution (tsc/bundlers hide it). Use a `const` object + a union type instead.',
-  },
-];
-
-// msw only answers what a handler lists; without this option an unstubbed
-// request is warned about and sent to the real network, so the test passes on
-// a live dependency it never meant to touch. Scoped by the msw/node import.
-const mswUnhandledRequestSyntax = [
-  {
-    selector:
-      'Program:has(ImportDeclaration[source.value="msw/node"]) CallExpression[callee.property.name="listen"]:matches([arguments.length=0], [arguments.0.type="ObjectExpression"]):not(:has(Property[key.name="onUnhandledFrame"] > Literal[value="error"]))',
-    message:
-      "msw: server.listen() must pass { onUnhandledFrame: 'error' } so an unstubbed request fails the test instead of reaching the network.",
-  },
-];
-
-export default [
-  ...nx.configs['flat/base'],
-  ...nx.configs['flat/typescript'],
-  ...nx.configs['flat/javascript'],
-  {
-    // Flat config never reads .gitignore, so build output is listed here.
-    ignores: ['**/dist', '**/out-tsc'],
+    plugins: { zukhruf, island, manifest },
+    extends: [
+      'zukhruf/base',
+      'zukhruf/tests',
+      'zukhruf/diagnostics',
+      'zukhruf/react',
+      'island/recommended',
+      'manifest/recommended',
+    ],
+    // Every package is agnostic of its host: it reads no process.env and
+    // writes no console.
+    settings: { island: { libraries: ['packages/**/*.ts'] } },
+    rules: {
+      'manifest/dependency-checks': [
+        'error',
+        // apps/web's Vite config builds the frontend; it never ships.
+        { ignoredFiles: ['{projectRoot}/frontend/vite.config.mts'] },
+      ],
+    },
   },
   {
     files: ['**/*.ts', '**/*.js'],
     rules: {
       '@nx/enforce-module-boundaries': [
         'error',
-        {
-          enforceBuildableLibDependency: true,
-          allow: ['^.*/eslint(\\.base)?\\.config\\.[cm]?js$'],
+        moduleBoundaries({
           depConstraints: [
-            { sourceTag: '*', onlyDependOnLibsWithTags: ['*'] },
             // The hosts here (apps/google, apps/proactive) bring no runtime of
             // their own that an island could import.
             islandConstraint([]),
@@ -64,63 +62,41 @@ export default [
               onlyDependOnLibsWithTags: ['layer:codec'],
             },
           ],
+        }),
+      ],
+    },
+  },
+  {
+    files: ['**/*.{ts,tsx,cts,mts,js,jsx,cjs,mjs}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@deepagents/agent', '@deepagents/agent/*'],
+              message:
+                '@deepagents/agent is legacy. Build with @deepagents/context + the AI SDK directly.',
+            },
+          ],
         },
       ],
     },
   },
   {
-    files: [
-      '**/*.ts',
-      '**/*.cts',
-      '**/*.mts',
-      '**/*.js',
-      '**/*.cjs',
-      '**/*.mjs',
-    ],
-    rules: {
-      'no-redeclare': 'off',
-      '@typescript-eslint/no-redeclare': 'error',
-      'no-unused-private-class-members': 'off',
-      '@typescript-eslint/no-non-null-assertion': 'off',
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-unused-vars': 'off',
-      'no-empty': 'off',
-      '@typescript-eslint/no-empty-function': 'off',
-      '@typescript-eslint/parameter-properties': 'error',
-    },
-  },
-  {
-    files: ['**/*.ts', '**/*.cts', '**/*.mts'],
-    ignores: ['**/*.test.ts', '**/*.test.cts', '**/*.test.mts'],
-    rules: {
-      'no-restricted-syntax': ['error', ...enumRestrictedSyntax],
-    },
-  },
-  {
-    files: ['**/*.test.ts', '**/*.test.cts', '**/*.test.mts'],
-    rules: {
-      'no-restricted-syntax': [
-        'error',
-        ...testHookRestrictedSyntax,
-        ...mswUnhandledRequestSyntax,
-        ...enumRestrictedSyntax,
-      ],
-    },
-  },
-  ...island({ libraries: ['packages/**/*.ts'] }),
-  {
-    files: ['**/*.ts', '**/*.cts', '**/*.mts'],
-    // A disable directive that no longer suppresses anything is an escape hatch
-    // that outlived its reason.
-    linterOptions: {
-      reportUnusedDisableDirectives: 'error',
-    },
-  },
-  {
     // Braces on every if, else and loop body. Scoped to apps/web until the
     // rest of elt is converted.
-    files: ['apps/web/**/*.ts', 'apps/web/**/*.tsx', 'apps/web/**/*.mts'],
+    files: ['apps/web/**/*.{ts,tsx,mts}'],
     rules: { curly: ['error', 'all'] },
   },
-  ...personalConfig,
-];
+  {
+    // The pre-commit hook script, which no tsconfig includes; typed lint gives
+    // it the default project instead of a parse error.
+    files: ['**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        projectService: { allowDefaultProject: ['.husky/*.ts'] },
+      },
+    },
+  },
+);

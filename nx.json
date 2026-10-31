@@ -31,8 +31,6 @@
         "default",
         "^default",
         "{workspaceRoot}/eslint.config.mjs",
-        "{workspaceRoot}/personal.eslint.config.mjs",
-        "{workspaceRoot}/island.eslint.config.mjs",
         {
           "externalDependencies": [
             "eslint",
