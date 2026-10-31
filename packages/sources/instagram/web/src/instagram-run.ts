@@ -2,6 +2,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import pMemoize from 'p-memoize';
+
 import { BrowserSession } from '@workspace/sdk-chromium-cookies';
 import {
   type Highlight,
@@ -25,11 +27,11 @@ import { TaggedLane } from './lanes/tagged-lane.ts';
 const pagesPerRun = 10;
 
 // The pages of one list a run read, shared by every stream that reads the
-// list: a page two streams ask for is fetched once.
+// list: a page two streams ask for is fetched once. A page Instagram did not
+// give is not kept: the next stream to ask for it asks Instagram again.
 export class LaneReader<Item> {
   readonly lane: Lane<Item>;
   readonly #web: InstagramWeb;
-  readonly #pages = new Map<string, Promise<Page<Item>>>();
   readonly #fetched = new Map<string, number>();
 
   constructor(lane: Lane<Item>, web: InstagramWeb) {
@@ -37,26 +39,27 @@ export class LaneReader<Item> {
     this.#web = web;
   }
 
-  // null once the run fetched pagesPerRun pages of this list of the profile.
-  page(
-    profile: Profile,
-    cursor: string | null,
-    signal: AbortSignal | undefined,
-  ): Promise<Page<Item>> | null {
-    const key = `${profile.pk}:${cursor ?? ''}`;
-    const read = this.#pages.get(key);
-    if (read !== undefined) return read;
-    const fetched = this.#fetched.get(profile.pk) ?? 0;
-    if (fetched >= pagesPerRun) return null;
-    this.#fetched.set(profile.pk, fetched + 1);
-    const page = this.lane.fetch(this.#web, profile, cursor, signal);
-    this.#pages.set(key, page);
-    return page;
-  }
+  // null once the run asked Instagram for pagesPerRun pages of this list of
+  // the profile.
+  readonly page = pMemoize(
+    async (
+      profile: Profile,
+      cursor: string | null,
+      signal: AbortSignal | undefined,
+    ): Promise<Page<Item> | null> => {
+      const fetched = this.#fetched.getOrInsert(profile.pk, 0);
+      if (fetched >= pagesPerRun) return null;
+      this.#fetched.set(profile.pk, fetched + 1);
+      return this.lane.fetch(this.#web, profile, cursor, signal);
+    },
+    { cacheKey: ([profile, cursor]) => `${profile.pk}:${cursor ?? ''}` },
+  );
 }
 
 // One run against Instagram: the browser's session, the page's tokens, the
-// pages and profiles the run read, and the files it staged.
+// pages and profiles the run read, and the files it staged. A profile or a
+// highlights tray Instagram did not give is not kept: the next stream to ask
+// for it asks Instagram again.
 export class InstagramRun implements AsyncDisposable {
   readonly web: InstagramWeb;
   readonly posts: LaneReader<TimelineMedia>;
@@ -64,8 +67,6 @@ export class InstagramRun implements AsyncDisposable {
   readonly reposts: LaneReader<ListMedia>;
   readonly tagged: LaneReader<ListMedia>;
   readonly #staging: string;
-  readonly #profiles = new Map<string, Promise<Profile>>();
-  readonly #highlights = new Map<string, Promise<Highlight[]>>();
   #downloads = 0;
 
   private constructor(web: InstagramWeb, staging: string) {
@@ -90,24 +91,17 @@ export class InstagramRun implements AsyncDisposable {
     return new InstagramRun(web, staging);
   }
 
-  profile(id: string, signal: AbortSignal | undefined): Promise<Profile> {
-    const read = this.#profiles.get(id);
-    if (read !== undefined) return read;
-    const profile = this.web.profile(id, signal);
-    this.#profiles.set(id, profile);
-    return profile;
-  }
+  readonly profile = pMemoize(
+    (id: string, signal: AbortSignal | undefined): Promise<Profile> =>
+      this.web.profile(id, signal),
+  );
 
-  highlights(
-    profileId: string,
-    signal: AbortSignal | undefined,
-  ): Promise<Highlight[]> {
-    const read = this.#highlights.get(profileId);
-    if (read !== undefined) return read;
-    const tray = this.web.highlights(profileId, signal);
-    this.#highlights.set(profileId, tray);
-    return tray;
-  }
+  readonly highlights = pMemoize(
+    (
+      profileId: string,
+      signal: AbortSignal | undefined,
+    ): Promise<Highlight[]> => this.web.highlights(profileId, signal),
+  );
 
   // Saves an image under the run's staging folder; the caller removes it
   // once the record that carries it is loaded. Null when Instagram no longer

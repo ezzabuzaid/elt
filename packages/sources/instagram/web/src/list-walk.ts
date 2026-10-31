@@ -55,9 +55,8 @@ export async function* walk<Item>(
     let cursor: string | null = null;
     let newest: string | null = null;
     for (;;) {
-      const read = reader.page(profile, cursor, signal);
-      if (read === null) return;
-      const page = await read;
+      const page = await reader.page(profile, cursor, signal);
+      if (page === null) return;
       const top = unpinned(page.items);
       newest ??= top[0] === undefined ? null : lane.id(top[0]);
       const reached =
@@ -80,9 +79,8 @@ export async function* walk<Item>(
   followed.clear();
   let { after, head } = current;
   for (;;) {
-    const read = reader.page(profile, after, signal);
-    if (read === null) return;
-    const page = await read;
+    const page = await reader.page(profile, after, signal);
+    if (page === null) return;
     if (after === null) {
       const [newest] = unpinned(page.items);
       head = newest === undefined ? head : lane.id(newest);

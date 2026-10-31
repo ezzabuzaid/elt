@@ -121,6 +121,9 @@ type World = {
   signedOut?: boolean;
   // Instagram answers 429 once this many GraphQL queries were answered.
   queriesUntilLimit?: number;
+  // How many times Instagram answers 429 to a GraphQL query, by its name,
+  // before it answers the query.
+  refused?: Record<string, number>;
   // Images Instagram's CDN answers 410 Gone for, though the answer that
   // listed them is fresh, as it did on 2026-10-15 for three of Hive's
   // highlight stories from July 2025.
@@ -563,6 +566,14 @@ function instagram(world: World) {
               },
             );
           world.queriesUntilLimit -= 1;
+        }
+        const refusals = world.refused?.[name] ?? 0;
+        if (refusals > 0) {
+          world.refused = { ...world.refused, [name]: refusals - 1 };
+          return new HttpResponse(
+            '<html><body>Please wait a few minutes before you try again.</body></html>',
+            { status: 429, headers: { 'content-type': 'text/html' } },
+          );
         }
         calls.push({ name, variables });
         return graphql(name, variables);
@@ -1408,6 +1419,54 @@ test('a story that Instagram stopped showing keeps its row, and one the profile 
       93: bytesOf('93'),
     },
   );
+});
+
+test('a profile, a page of posts and a highlights tray Instagram refused to one stream are asked for again by the next stream of the run', async () => {
+  await using mac = await signedInMac();
+  await using dir = await new TemporaryFiles().directory('instagram-load-');
+  const profile: Profile = {
+    ...hive(posts(3)),
+    highlights: [
+      {
+        id: '81',
+        title: 'Classes',
+        items: [
+          { pk: '811', takenAt: day - 9 * 86_400, expiresAt: day - 8 * 86_400 },
+        ],
+      },
+    ],
+  };
+  // Each is refused once: to profiles, posts and highlights, the first
+  // streams that ask for them.
+  using _wire = instagram({
+    profiles: [profile],
+    following: [],
+    refused: {
+      PolarisProfilePageContentQuery: 1,
+      PolarisProfilePostsTabContentQuery_connection: 1,
+      PolarisProfileStoryHighlightsTrayContentQuery: 1,
+    },
+  });
+  const run = await pipeline(
+    await InstagramWebSource.connect({
+      home: mac.path,
+      profileIds: ['44555906095'],
+    }),
+    dir.path,
+  );
+
+  const failed = await failedRun(run.run());
+
+  assert.deepEqual(Object.keys(failed).toSorted(), [
+    'highlights',
+    'posts',
+    'profiles',
+  ]);
+  assert.deepEqual(
+    ids(dir.path, 'SELECT "postId" AS id FROM media ORDER BY "postId"'),
+    profile.posts.map(({ pk }) => pk).toSorted(),
+  );
+  assert.deepEqual(ids(dir.path, 'SELECT id FROM highlight_items'), ['811']);
 });
 
 test('highlights load with every story in them and its image, and a highlight the profile removed goes with its stories', async () => {
