@@ -9,7 +9,7 @@ export class NativeProcess {
   async *lines(
     file: string,
     args: readonly string[],
-    env: Readonly<Record<string, string>>,
+    env: NodeJS.ProcessEnv,
     signal = new AbortController().signal,
   ): AsyncGenerator<string> {
     if (signal.aborted) return;

@@ -62,7 +62,7 @@ const calendar = new AppleCalendarSource({
     fileURLToPath(
       import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
     ),
-    { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    { env: process.env },
   ),
   startAt: new Date().toISOString(),
   endAt: calendarEnd.toISOString(),

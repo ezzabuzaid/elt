@@ -72,10 +72,6 @@ const helper = fileURLToPath(
   import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
 );
 
-// The helper gives all-day dates in this Mac's time zone, as Calendar
-// shows them.
-const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
@@ -402,7 +398,9 @@ class ScratchCalendar implements AsyncDisposable {
 
   // Deletes every event the calendar holds, as the helper reads them.
   async #empty(): Promise<void> {
-    const { occurrences } = await new CalendarStore(helper, { timeZone }).read(
+    const { occurrences } = await new CalendarStore(helper, {
+      env: process.env,
+    }).read(
       {
         startAt: '1990-01-01T00:00:00.000Z',
         endAt: '2040-01-01T00:00:00.000Z',
@@ -596,7 +594,7 @@ const liveSource = (
   window: { readonly startAt: string; readonly endAt: string } = january,
 ) =>
   new AppleCalendarSource({
-    store: new CalendarStore(helper, { timeZone }),
+    store: new CalendarStore(helper, { env: process.env }),
     ...window,
     scope: { collectionIds: [calendar.id] },
   });
@@ -805,7 +803,7 @@ test('a Calendar pass the host stops while EventKit reads ends at once and is re
   );
   const helper = await waitingHelper(scratch.path);
   const source = new AppleCalendarSource({
-    store: new CalendarStore(helper.path, { timeZone }),
+    store: new CalendarStore(helper.path, { env: process.env }),
     ...january,
   });
   const events = await appleImport(source, join(scratch.path, 'import'));
@@ -847,7 +845,7 @@ test('Calendar extracts the organizer and attendees EventKit returns, which a te
     ],
   });
   const source = new AppleCalendarSource({
-    store: new CalendarStore(stub.path, { timeZone }),
+    store: new CalendarStore(stub.path, { env: process.env }),
     ...january,
   });
 
@@ -897,7 +895,7 @@ test('Calendar lists its accounts and calendars without reading events, while ev
       { documents: [account(), calendar()] },
     );
   const source = new AppleCalendarSource({
-    store: new CalendarStore(stub.path, { timeZone }),
+    store: new CalendarStore(stub.path, { env: process.env }),
     ...january,
   });
 
@@ -940,7 +938,7 @@ test('a Calendar run that reads events with its listings still needs one event r
       { documents: [account(), calendar()] },
     );
   const source = new AppleCalendarSource({
-    store: new CalendarStore(stub.path, { timeZone }),
+    store: new CalendarStore(stub.path, { env: process.env }),
     ...january,
   });
 
@@ -961,7 +959,7 @@ test(
     // must come from validation before the helper is reached.
     await using missing = await mkdtempDisposable(join(tmpdir(), 'no-helper-'));
     const store = new CalendarStore(join(missing.path, 'eventkit-helper'), {
-      timeZone,
+      env: process.env,
     });
     assert.throws(
       () =>
@@ -1074,7 +1072,7 @@ test(
 test('Calendar rejects malformed records and preserves prior rows on native failures', async () => {
   await using stub = await StubEventKitHelper.create();
   const source = new AppleCalendarSource({
-    store: new CalendarStore(stub.path, { timeZone }),
+    store: new CalendarStore(stub.path, { env: process.env }),
     ...january,
   });
   const answer = (read: HelperRead) => stub.answer(eventsRead(january), read);
@@ -1249,7 +1247,7 @@ test(
 test('Calendar snapshot incremental reconciles attendees who join and leave, which a test cannot create', async () => {
   await using stub = await StubEventKitHelper.create();
   const source = new AppleCalendarSource({
-    store: new CalendarStore(stub.path, { timeZone }),
+    store: new CalendarStore(stub.path, { env: process.env }),
     ...january,
   });
   const event = (itemId: string, name: string, attendees: string[] = []) =>
@@ -1455,7 +1453,7 @@ test(
 test('Calendar numbers attendees the same when EventKit reorders them or one replies, which a test cannot create', async () => {
   await using stub = await StubEventKitHelper.create();
   const source = new AppleCalendarSource({
-    store: new CalendarStore(stub.path, { timeZone }),
+    store: new CalendarStore(stub.path, { env: process.env }),
     ...january,
   });
   const attendee = (address: string, status: number) =>
@@ -1596,7 +1594,9 @@ test(
       rule: { frequency: 1, count: 3 },
     });
     const source = new AppleCalendarSource({
-      store: new CalendarStore(helper, { timeZone: 'Asia/Amman' }),
+      store: new CalendarStore(helper, {
+        env: { ...process.env, TZ: 'Asia/Amman' },
+      }),
       ...january,
       scope: { collectionIds: [calendar.id] },
     });
@@ -1651,7 +1651,7 @@ test(
     );
 
     const source = new AppleCalendarSource({
-      store: new CalendarStore(stub.path, { timeZone }),
+      store: new CalendarStore(stub.path, { env: process.env }),
       ...january,
     });
     // The same export twice: once with CRLF line endings, once with bare LF.
@@ -1746,7 +1746,7 @@ test(
   async () => {
     await using stub = await StubEventKitHelper.create();
     const source = new AppleCalendarSource({
-      store: new CalendarStore(stub.path, { timeZone }),
+      store: new CalendarStore(stub.path, { env: process.env }),
       ...january,
     });
     // Injects malformed exports on purpose.
@@ -1820,7 +1820,7 @@ test(
   async () => {
     await using stub = await StubEventKitHelper.create();
     const source = new AppleCalendarSource({
-      store: new CalendarStore(stub.path, { timeZone }),
+      store: new CalendarStore(stub.path, { env: process.env }),
       ...january,
     });
     const exception = (day: string, alarms: readonly string[]) => [
@@ -2001,7 +2001,7 @@ test(
 test('Calendar ICS streams keep attachments and vendor properties, which a test cannot create', async () => {
   await using stub = await StubEventKitHelper.create();
   const source = new AppleCalendarSource({
-    store: new CalendarStore(stub.path, { timeZone }),
+    store: new CalendarStore(stub.path, { env: process.env }),
     ...january,
   });
   stub.answer(eventsRead(january, true), {
@@ -2117,7 +2117,7 @@ test('a Calendar pass over a large ICS export holds one record of a stream at a 
     const { AppleCalendarSource } = await import(process.env.SOURCE);
     const source = new AppleCalendarSource({
       store: new CalendarStore(process.env.HELPER, {
-        timeZone: process.env.TIME_ZONE,
+        env: process.env,
       }),
       startAt: '2025-01-01T00:00:00.000Z',
       endAt: '2025-02-01T00:00:00.000Z',
@@ -2146,7 +2146,6 @@ test('a Calendar pass over a large ICS export holds one record of a stream at a 
           join(import.meta.dirname, 'apple-calendar-source.ts'),
         ).href,
         HELPER: stub.path,
-        TIME_ZONE: timeZone,
         OUT: directory.path,
       },
       encoding: 'utf8',
@@ -2179,7 +2178,7 @@ test(
   async () => {
     await using stub = await StubEventKitHelper.create();
     const source = new AppleCalendarSource({
-      store: new CalendarStore(stub.path, { timeZone }),
+      store: new CalendarStore(stub.path, { env: process.env }),
       ...january,
     });
     // Injects an export without events on purpose.
@@ -2219,7 +2218,7 @@ test(
   async () => {
     await using stub = await StubEventKitHelper.create();
     const source = new AppleCalendarSource({
-      store: new CalendarStore(stub.path, { timeZone }),
+      store: new CalendarStore(stub.path, { env: process.env }),
       ...january,
     });
     stub.answer(eventsRead(january, true), {
@@ -2302,7 +2301,7 @@ test(
     await using stub = await StubEventKitHelper.create();
     const fetched: string[] = [];
     const source = new AppleCalendarSource({
-      store: new CalendarStore(stub.path, { timeZone }),
+      store: new CalendarStore(stub.path, { env: process.env }),
       ...january,
       attachments: async ({ uri, filename, formatType }, path) => {
         fetched.push(`${filename}:${formatType}`);
@@ -2385,7 +2384,7 @@ test(
   async () => {
     await using stub = await StubEventKitHelper.create();
     const source = new AppleCalendarSource({
-      store: new CalendarStore(stub.path, { timeZone }),
+      store: new CalendarStore(stub.path, { env: process.env }),
       ...january,
     });
     const long = `notes.${'x'.repeat(255)}`;
@@ -2466,7 +2465,7 @@ test(
   async () => {
     await using stub = await StubEventKitHelper.create();
     const source = new AppleCalendarSource({
-      store: new CalendarStore(stub.path, { timeZone }),
+      store: new CalendarStore(stub.path, { env: process.env }),
       ...january,
     });
     stub.answer(eventsRead(january, true), {
@@ -2518,7 +2517,7 @@ test(
     await using stub = await StubEventKitHelper.create();
     let fetches = 0;
     const source = new AppleCalendarSource({
-      store: new CalendarStore(stub.path, { timeZone }),
+      store: new CalendarStore(stub.path, { env: process.env }),
       ...january,
       attachments: async (_attachment, path) => {
         fetches++;
@@ -2754,7 +2753,7 @@ test(
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'gcal-att-'));
 
     const saved = await googleAttachmentFiles(
-      new CalendarStore(stub.path, { timeZone }),
+      new CalendarStore(stub.path, { env: process.env }),
       requester,
       scratch.path,
     );
@@ -2804,7 +2803,7 @@ test(
       });
       await assert.rejects(
         googleAttachmentFiles(
-          new CalendarStore(stub.path, { timeZone }),
+          new CalendarStore(stub.path, { env: process.env }),
           requester,
           join(scratch.path, String(index)),
         ),
@@ -2839,7 +2838,7 @@ test(
       });
       await assert.rejects(
         googleAttachmentFiles(
-          new CalendarStore(stub.path, { timeZone }),
+          new CalendarStore(stub.path, { env: process.env }),
           requester,
           join(scratch.path, reason),
         ),
@@ -2883,7 +2882,7 @@ test(
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'gcal-sc-'));
 
     const saved = await googleAttachmentFiles(
-      new CalendarStore(stub.path, { timeZone }),
+      new CalendarStore(stub.path, { env: process.env }),
       requester,
       scratch.path,
     );
@@ -2994,7 +2993,7 @@ test('Calendar views join each occurrence to its own attendees, which a test can
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'cal-marts-'));
   const imported = await appleImport(
     new AppleCalendarSource({
-      store: new CalendarStore(stub.path, { timeZone }),
+      store: new CalendarStore(stub.path, { env: process.env }),
       ...january,
     }),
     join(scratch.path, 'import'),
@@ -3031,7 +3030,7 @@ test(
     if (calendar === null) return t.skip('no account accepts a new calendar');
     const scoped = liveSource(calendar);
     const missing = new AppleCalendarSource({
-      store: new CalendarStore(helper, { timeZone }),
+      store: new CalendarStore(helper, { env: process.env }),
       ...january,
       scope: { collectionIds: [`missing-${randomUUID()}`] },
     });
@@ -3061,7 +3060,7 @@ test(
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
     const source = new AppleCalendarSource({
-      store: new CalendarStore(helper, { timeZone }),
+      store: new CalendarStore(helper, { env: process.env }),
       ...january,
     });
     const helperRunning = () =>
@@ -3121,7 +3120,7 @@ test(
     const day = 24 * 60 * 60 * 1000;
     const now = Date.now();
     const source = new AppleCalendarSource({
-      store: new CalendarStore(helper, { timeZone }),
+      store: new CalendarStore(helper, { env: process.env }),
       startAt: new Date(now - 7 * day).toISOString(),
       endAt: new Date(now + 7 * day).toISOString(),
     });
@@ -3175,7 +3174,7 @@ test('Calendar declares its event window as the coverage of event streams, and n
   await using missing = await mkdtempDisposable(join(tmpdir(), 'no-helper-'));
   const calendar = new AppleCalendarSource({
     store: new CalendarStore(join(missing.path, 'eventkit-helper'), {
-      timeZone,
+      env: process.env,
     }),
     startAt,
     endAt,

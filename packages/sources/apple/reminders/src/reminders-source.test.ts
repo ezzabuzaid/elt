@@ -54,10 +54,6 @@ const helper = fileURLToPath(
   import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
 );
 
-// The helper gives all-day dates in this Mac's time zone, as Calendar
-// shows them.
-const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
@@ -350,10 +346,9 @@ class ScratchList implements AsyncDisposable {
   // Deletes every reminder the list holds, completed ones included, as the
   // helper reads them.
   async #empty(): Promise<void> {
-    const { reminders } = await new RemindersStore(helper, { timeZone }).read(
-      { calendarIds: [this.id] },
-      undefined,
-    );
+    const { reminders } = await new RemindersStore(helper, {
+      env: process.env,
+    }).read({ calendarIds: [this.id] }, undefined);
     if (reminders.length > 0)
       await ScratchList.#run('empty', {
         items: reminders.map((reminder) => reminder.id),
@@ -501,7 +496,7 @@ function run([mode, payload]) {
 // A Reminders source over one scratch list, read by the compiled helper.
 const liveSource = (list: ScratchList) =>
   new AppleRemindersSource({
-    store: new RemindersStore(helper, { timeZone }),
+    store: new RemindersStore(helper, { env: process.env }),
     scope: { collectionIds: [list.id] },
   });
 
@@ -780,7 +775,7 @@ test('Reminders lists its accounts and lists without reading reminders, while ev
       { documents: [recordedReminders.account, recordedReminders.list] },
     );
   const source = new AppleRemindersSource({
-    store: new RemindersStore(stub.path, { timeZone }),
+    store: new RemindersStore(stub.path, { env: process.env }),
   });
 
   const rows = await readRows(source, [source.accounts, source.lists]);
@@ -812,7 +807,7 @@ test('a Reminders run that reads reminders with its lists still needs one remind
       { documents: [recordedReminders.account, recordedReminders.list] },
     );
   const source = new AppleRemindersSource({
-    store: new RemindersStore(stub.path, { timeZone }),
+    store: new RemindersStore(stub.path, { env: process.env }),
   });
 
   await assert.rejects(
@@ -841,7 +836,7 @@ test('a Reminders pass the host stops while EventKit reads ends at once and is r
   );
   const helper = await waitingHelper(scratch.path);
   const source = new AppleRemindersSource({
-    store: new RemindersStore(helper.path, { timeZone }),
+    store: new RemindersStore(helper.path, { env: process.env }),
   });
   const reminders = await appleImport(source, join(scratch.path, 'import'));
   const removal = new AbortController();
@@ -885,7 +880,7 @@ test('Reminders extracts the attendees EventKit returns, which a test cannot cre
     ],
   });
   const source = new AppleRemindersSource({
-    store: new RemindersStore(stub.path, { timeZone }),
+    store: new RemindersStore(stub.path, { env: process.env }),
   });
 
   const attendees = (await readRows(source, [source.attendees]))(
@@ -983,7 +978,7 @@ test('Reminders keeps a leap-month start and a due without a calendar, and rejec
     ],
   });
   const source = new AppleRemindersSource({
-    store: new RemindersStore(stub.path, { timeZone }),
+    store: new RemindersStore(stub.path, { env: process.env }),
   });
   const pick = (row: Record<string, unknown>) => ({
     kind: row.kind,
@@ -1065,7 +1060,7 @@ test('Reminders rejects unsupported selections without the EventKit helper', asy
   await using missing = await mkdtempDisposable(join(tmpdir(), 'no-helper-'));
   const source = new AppleRemindersSource({
     store: new RemindersStore(join(missing.path, 'eventkit-helper'), {
-      timeZone,
+      env: process.env,
     }),
   });
   const streams = (await source.discover()).streams;
@@ -1108,7 +1103,7 @@ test('Reminders rejects malformed records and preserves its target on access or 
   await using stub = await StubEventKitHelper.create();
   const answer = (read: HelperRead) => stub.answer(remindersRead, read);
   const source = new AppleRemindersSource({
-    store: new RemindersStore(stub.path, { timeZone }),
+    store: new RemindersStore(stub.path, { env: process.env }),
   });
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'elt-reminders-errors-'),
@@ -1314,7 +1309,7 @@ test(
     if (list === null) return t.skip('no account accepts a new list');
     const scoped = liveSource(list);
     const missing = new AppleRemindersSource({
-      store: new RemindersStore(helper, { timeZone }),
+      store: new RemindersStore(helper, { env: process.env }),
       scope: { collectionIds: [`missing-${randomUUID()}`] },
     });
 
@@ -1340,7 +1335,7 @@ test(
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
     const source = new AppleRemindersSource({
-      store: new RemindersStore(helper, { timeZone }),
+      store: new RemindersStore(helper, { env: process.env }),
     });
     const helperRunning = () =>
       execFile('pgrep', [
@@ -1400,7 +1395,7 @@ test(
       join(tmpdir(), 'elt-eventkit-live-'),
     );
     const source = new AppleRemindersSource({
-      store: new RemindersStore(helper, { timeZone }),
+      store: new RemindersStore(helper, { env: process.env }),
     });
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'reminders.sqlite'),

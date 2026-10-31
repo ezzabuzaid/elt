@@ -37,14 +37,13 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
   // The compiled helper (helper/*.swift). Its host decides where it lives:
   // beside this package's dist, or beside a bundled server.
   readonly #helper: string;
-  // The helper's whole environment: TZ, the IANA time zone (such as
-  // Asia/Amman) whose days give an all-day item its dates. The helper reads
-  // nothing else from its environment.
-  readonly #environment: Readonly<Record<string, string>>;
+  // The helper's whole environment, which its host gives. TZ names the time
+  // zone whose days give an all-day item its dates.
+  readonly #environment: NodeJS.ProcessEnv;
 
-  constructor(helper: string, { timeZone }: { timeZone: string }) {
+  constructor(helper: string, { env }: { env: NodeJS.ProcessEnv }) {
     this.#helper = helper;
-    this.#environment = { TZ: timeZone };
+    this.#environment = env;
   }
 
   // signal stops the helper, and the read rejects with its reason.

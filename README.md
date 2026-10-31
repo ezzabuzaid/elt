@@ -128,7 +128,7 @@ const source = new AppleRemindersSource({
     fileURLToPath(
       import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
     ),
-    { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    { env: process.env },
   ),
 });
 const destination = new SQLiteDestination({
@@ -243,7 +243,7 @@ const calendar = new AppleCalendarSource({
     fileURLToPath(
       import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
     ),
-    { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    { env: process.env },
   ),
   startAt: '2026-09-01T00:00:00.000Z',
   endAt: '2026-12-01T00:00:00.000Z',

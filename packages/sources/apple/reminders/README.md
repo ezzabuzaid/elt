@@ -19,7 +19,7 @@ const source = new AppleRemindersSource({
     fileURLToPath(
       import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
     ),
-    { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    { env: process.env },
   ),
 });
 const destination = new SQLiteDestination({
