@@ -4,10 +4,6 @@
   "projectType": "library",
   "tags": ["layer:island", "layer:codec"],
   "targets": {
-    "format": {},
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/codecs/apple-reference-date/src/*.test.ts\""
-    }
+    "format": {}
   }
 }

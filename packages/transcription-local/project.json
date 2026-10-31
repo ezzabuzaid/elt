@@ -19,10 +19,6 @@
     },
     "build": {
       "dependsOn": ["...", "helper"]
-    },
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/transcription-local/src/*.test.ts\""
     }
   }
 }

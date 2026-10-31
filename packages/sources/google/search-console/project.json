@@ -2,12 +2,8 @@
   "name": "source-google-search-console",
   "sourceRoot": "packages/sources/google/search-console/src",
   "projectType": "library",
-  "tags": ["layer:island"],
+  "tags": ["layer:island", "test:docker"],
   "targets": {
-    "format": {},
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test --test-global-setup=docker-global-setup.ts {args} \"packages/sources/google/search-console/src/*.test.ts\""
-    }
+    "format": {}
   }
 }

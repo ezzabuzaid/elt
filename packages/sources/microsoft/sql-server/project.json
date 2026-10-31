@@ -2,12 +2,8 @@
   "name": "source-microsoft-sql-server",
   "sourceRoot": "packages/sources/microsoft/sql-server/src",
   "projectType": "library",
-  "tags": ["layer:island"],
+  "tags": ["layer:island", "test:docker"],
   "targets": {
-    "format": {},
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test --test-global-setup=docker-global-setup.ts {args} \"packages/sources/microsoft/sql-server/src/*.test.ts\""
-    }
+    "format": {}
   }
 }

@@ -4,10 +4,6 @@
   "projectType": "library",
   "tags": ["layer:island", "layer:sdk"],
   "targets": {
-    "format": {},
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/sdks/macos/speech-models/src/*.test.ts\""
-    }
+    "format": {}
   }
 }

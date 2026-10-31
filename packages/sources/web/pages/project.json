@@ -2,12 +2,8 @@
   "name": "source-web-pages",
   "sourceRoot": "packages/sources/web/pages/src",
   "projectType": "library",
-  "tags": ["layer:island"],
+  "tags": ["layer:island", "test:docker"],
   "targets": {
-    "format": {},
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test --test-global-setup=docker-global-setup.ts {args} \"packages/sources/web/pages/src/**/*.test.ts\""
-    }
+    "format": {}
   }
 }

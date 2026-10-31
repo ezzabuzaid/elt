@@ -4,10 +4,6 @@
   "projectType": "library",
   "tags": ["layer:island", "layer:elt"],
   "targets": {
-    "format": {},
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/elt/src/index.test.ts\""
-    }
+    "format": {}
   }
 }

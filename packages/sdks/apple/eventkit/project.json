@@ -13,10 +13,6 @@
     },
     "build": {
       "dependsOn": ["...", "helper"]
-    },
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/sdks/apple/eventkit/src/*.test.ts\""
     }
   }
 }

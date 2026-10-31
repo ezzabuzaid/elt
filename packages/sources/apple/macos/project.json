@@ -5,10 +5,6 @@
   "tags": ["layer:island"],
   "targets": {
     "format": {},
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/sources/apple/macos/src/*.test.ts\""
-    },
     "helper": {
       "command": "sh packages/sources/apple/macos/src/helper/build.sh packages/sources/apple/macos/dist/vision-worker",
       "cache": true,

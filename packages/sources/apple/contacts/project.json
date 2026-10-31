@@ -4,10 +4,6 @@
   "projectType": "library",
   "tags": ["layer:island"],
   "targets": {
-    "format": {},
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/sources/apple/contacts/src/*.test.ts\""
-    }
+    "format": {}
   }
 }

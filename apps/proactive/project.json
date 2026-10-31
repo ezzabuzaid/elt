@@ -2,12 +2,9 @@
   "name": "proactive",
   "sourceRoot": "apps/proactive/src",
   "projectType": "application",
+  "tags": ["test:docker"],
   "targets": {
     "format": {},
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test --test-global-setup=docker-global-setup.ts {args} \"apps/proactive/src/*.test.ts\""
-    },
     "start": {
       "dependsOn": ["build"],
       "command": "node apps/proactive/dist/main.js"

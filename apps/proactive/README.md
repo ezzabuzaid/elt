@@ -103,9 +103,8 @@ is installed.
 
 Run `npx nx run proactive:typecheck` and `npx nx run proactive:test`. Tests require
 Docker and use `new Postgres({ environment: process.env })` from
-`@zukhruf/testing/postgres` to acquire an isolated PostgreSQL database per test. The Nx target starts Node's test runner with the Docker global setup
-from `@zukhruf/testing`. The workspace root file `docker-global-setup.ts`
-exports that setup, and the target gives the file to `--test-global-setup`. The setup starts one test
+`@zukhruf/testing/postgres` to acquire an isolated PostgreSQL database per test. The project has the `test:docker` tag, so its Nx target starts Node's test
+runner with the Docker global setup from `@zukhruf/testing`. The setup starts one test
 run and cleans up a killed run. Each test closes its clients and drops its
 database when done. The generator and
 agent tests use a local executable in place of the authenticated Codex

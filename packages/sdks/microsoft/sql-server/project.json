@@ -2,12 +2,8 @@
   "name": "sdk-microsoft-sql-server",
   "sourceRoot": "packages/sdks/microsoft/sql-server/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
+  "tags": ["layer:island", "layer:sdk", "test:docker"],
   "targets": {
-    "format": {},
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test --test-global-setup=docker-global-setup.ts {args} \"packages/sdks/microsoft/sql-server/src/*.test.ts\""
-    }
+    "format": {}
   }
 }
