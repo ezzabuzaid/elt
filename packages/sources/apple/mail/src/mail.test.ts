@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 
 import { Fixed, LeaderFirst, Pool } from '@zukhruf/pool';
+import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -2860,15 +2861,20 @@ test('a Mail watch makes no pass while Mail and the Accounts store hold still, a
     await watching.next();
     using out = new DatabaseSync(data, { readOnly: true });
     // Waits for a check the watch recorded, as its sync history keeps it.
-    for (
-      let tries = 0;
-      out.prepare('SELECT count(*) AS n FROM _elt_stream_checks').get()?.n ===
-      0;
-      tries++
-    ) {
-      if (tries > 100) assert.fail('the watch recorded no check');
-      await sleep(100);
-    }
+    await timebox(
+      () => {
+        assert.notEqual(
+          out.prepare('SELECT count(*) AS n FROM _elt_stream_checks').get()?.n,
+          0,
+          'the watch recorded no check',
+        );
+      },
+      {
+        minTimeout: 100,
+        maxRetryTime: 10_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
 
     const [pass] = out
       .prepare('SELECT started_at, completed_at FROM sync_attempts')

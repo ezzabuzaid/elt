@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
+import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -966,20 +967,23 @@ test('a Call History watch keeps every stream current while callhistoryd changes
       .prepare('SELECT started_at, completed_at FROM sync_attempts')
       .all();
     // Nothing changes, so only the watch's next check can move current_as_of.
-    for (
-      let tries = 0;
-      status
-        .all()
-        .some(
-          ({ current_as_of }) =>
-            String(current_as_of) <= String(pass?.started_at),
+    await timebox(
+      () => {
+        const rows = status.all();
+        assert.ok(
+          !rows.some(
+            ({ current_as_of }) =>
+              String(current_as_of) <= String(pass?.started_at),
+          ),
+          `not current: ${JSON.stringify(rows)}`,
         );
-      tries++
-    ) {
-      if (tries > 100)
-        assert.fail(`not current: ${JSON.stringify(status.all())}`);
-      await sleep(100);
-    }
+      },
+      {
+        minTimeout: 100,
+        maxRetryTime: 10_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
 
     assert.equal(
       out.prepare('SELECT count(*) AS n FROM sync_attempts').get()?.n,

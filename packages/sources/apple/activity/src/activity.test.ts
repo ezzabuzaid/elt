@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { crc32 } from 'node:zlib';
 
+import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -1567,20 +1568,23 @@ test('an Activity watch keeps every stream current while its stores hold still',
       .prepare('SELECT started_at, completed_at FROM sync_attempts')
       .all();
     // Nothing changes, so only the watch's next check can move current_as_of.
-    for (
-      let tries = 0;
-      status
-        .all()
-        .some(
-          ({ current_as_of }) =>
-            String(current_as_of) <= String(pass?.started_at),
+    await timebox(
+      () => {
+        const rows = status.all();
+        assert.ok(
+          !rows.some(
+            ({ current_as_of }) =>
+              String(current_as_of) <= String(pass?.started_at),
+          ),
+          `not current: ${JSON.stringify(rows)}`,
         );
-      tries++
-    ) {
-      if (tries > 100)
-        assert.fail(`not current: ${JSON.stringify(status.all())}`);
-      await sleep(100);
-    }
+      },
+      {
+        minTimeout: 100,
+        maxRetryTime: 10_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
 
     assert.equal(
       out.prepare('SELECT count(*) AS n FROM sync_attempts').get()?.n,

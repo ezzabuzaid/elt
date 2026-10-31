@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { deflateSync } from 'node:zlib';
 
+import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -2856,15 +2857,20 @@ test('while Safari is closed, a Safari watch makes no pass while its stores hold
     await watching.next();
     using out = new DatabaseSync(data, { readOnly: true });
     // Waits for a check the watch recorded, as its sync history keeps it.
-    for (
-      let tries = 0;
-      out.prepare('SELECT count(*) AS n FROM _elt_stream_checks').get()?.n ===
-      0;
-      tries++
-    ) {
-      if (tries > 100) assert.fail('the watch recorded no check');
-      await sleep(100);
-    }
+    await timebox(
+      () => {
+        assert.notEqual(
+          out.prepare('SELECT count(*) AS n FROM _elt_stream_checks').get()?.n,
+          0,
+          'the watch recorded no check',
+        );
+      },
+      {
+        minTimeout: 100,
+        maxRetryTime: 10_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
     const [pass] = out
       .prepare('SELECT started_at, completed_at FROM sync_attempts')
       .all();

@@ -15,6 +15,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -2299,15 +2300,20 @@ test('a Slack watch makes no pass while the app saves nothing, and keeps every s
     await watching.next();
     using data = new DatabaseSync(out, { readOnly: true });
     // Waits for a check the watch recorded, as its sync history keeps it.
-    for (
-      let tries = 0;
-      data.prepare('SELECT count(*) AS n FROM _elt_stream_checks').get()?.n ===
-      0;
-      tries++
-    ) {
-      if (tries > 100) assert.fail('the watch recorded no check');
-      await sleep(100);
-    }
+    await timebox(
+      () => {
+        assert.notEqual(
+          data.prepare('SELECT count(*) AS n FROM _elt_stream_checks').get()?.n,
+          0,
+          'the watch recorded no check',
+        );
+      },
+      {
+        minTimeout: 100,
+        maxRetryTime: 10_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
 
     const [pass] = data
       .prepare('SELECT started_at, completed_at FROM sync_attempts')

@@ -11,6 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -1488,20 +1489,23 @@ test(
       // EventKit notifies of a change anywhere in the store, so a pass for
       // another calendar may run meanwhile; this asserts only that the
       // streams become current with no change of their own.
-      for (
-        let tries = 0;
-        status
-          .all()
-          .some(
-            ({ current_as_of }) =>
-              String(current_as_of) <= String(pass?.started_at),
+      await timebox(
+        () => {
+          const rows = status.all();
+          assert.ok(
+            !rows.some(
+              ({ current_as_of }) =>
+                String(current_as_of) <= String(pass?.started_at),
+            ),
+            `not current: ${JSON.stringify(rows)}`,
           );
-        tries++
-      ) {
-        if (tries > 100)
-          assert.fail(`not current: ${JSON.stringify(status.all())}`);
-        await sleep(100);
-      }
+        },
+        {
+          minTimeout: 100,
+          maxRetryTime: 10_000,
+          shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+        },
+      );
 
       for (const row of status.all())
         assert.equal(row.status, 'succeeded', String(row.stream));
