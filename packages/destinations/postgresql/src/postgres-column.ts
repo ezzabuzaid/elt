@@ -296,6 +296,13 @@ export class PostgresColumn {
       }
     }
     switch (this.kind) {
+      // A kind that only a format stores never gets here: the constructor
+      // requires its format, and the format is checked above.
+      case 'int64':
+      case 'decimal':
+      case 'local_timestamp':
+      case 'local_time':
+        break;
       case 'text':
         if (typeof value === 'string' && !value.includes('\0')) return value;
         break;
