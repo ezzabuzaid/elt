@@ -19,10 +19,10 @@ import type { Stream } from './stream.ts';
 import type { Target as DestinationTarget } from './target.ts';
 import type { LoadFailure, Stage, WriteOperation } from './writer.ts';
 
-// A copy that still reports its progress as it runs.
+// A copy that has not reported how it ended.
 class Reporting {}
 
-// A copy that reported how it ended; it reports nothing more.
+// A copy that reported how it ended, once.
 class Settled {}
 
 // One copy's side of a replication: its stage, what it committed, what is
@@ -95,7 +95,7 @@ class Replicated<Target extends DestinationTarget> {
   }
 
   report(): void {
-    if (this.#progress instanceof Reporting) this.#notify('running');
+    this.#notify('running');
   }
 
   settle(): void {
