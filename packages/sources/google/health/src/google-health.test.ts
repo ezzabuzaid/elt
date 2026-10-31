@@ -941,14 +941,21 @@ test('a read Google failed for one stream is asked for again by the next stream 
       schema: RAW,
     }),
   };
-  // The first read of sleep, which sleep and its stages share, and the first
-  // read of the profile, which every daily type and rollup needs, fail.
-  const refused = new Set(['/dataTypes/sleep/dataPoints', '/users/me/profile']);
+  // The first read of sleep, which sleep and its stages share, fails. So do
+  // the first two reads of the profile: the profile stream's own, and the
+  // one every daily type and rollup shares.
+  const refusals = new Map([
+    ['/dataTypes/sleep/dataPoints', 1],
+    ['/users/me/profile', 2],
+  ]);
   using wire = google({
     answer: (url) => {
-      const path = [...refused].find((end) => url.pathname.endsWith(end));
-      if (path === undefined) return undefined;
-      refused.delete(path);
+      const refusal = [...refusals].find(
+        ([end, left]) => left > 0 && url.pathname.endsWith(end),
+      );
+      if (refusal === undefined) return undefined;
+      const [path, left] = refusal;
+      refusals.set(path, left - 1);
       return Response.json(
         {
           error: {
@@ -978,7 +985,10 @@ test('a read Google failed for one stream is asked for again by the next stream 
   const failed = error.results
     .filter(({ failures }) => failures.length > 0)
     .map(({ copy }) => copy.from.name);
-  assert.equal(failed.length, 2, failed.join());
+  // The profile stream, sleep, and the one daily type or rollup that asked
+  // for the profile first.
+  assert.equal(failed.length, 3, failed.join());
+  assert.ok(failed.includes('profile'), failed.join());
   assert.ok(failed.includes('sleep'), failed.join());
   assert.deepEqual(
     (await rows(warehouse, 'sleepStages')).map(({ type }) => type),
@@ -988,7 +998,7 @@ test('a read Google failed for one stream is asked for again by the next stream 
     wire.requests.filter(({ pathname }) =>
       pathname.endsWith('/users/me/profile'),
     ).length,
-    2,
+    3,
   );
 });
 
