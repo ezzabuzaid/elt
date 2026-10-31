@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 // Two passes of STREAMS snapshot streams of KEYS records each, shaped like
 // Calendar's icsParameters, into OUT, in a process whose heap the test caps.
@@ -130,8 +130,8 @@ function runPasses(
 }
 
 test('a snapshot pass holds its saved state once, so a large snapshot diffs in a heap little larger than the diff needs', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'elt-snapshot-memory-'),
+  await using directory = await new TemporaryFiles().directory(
+    'elt-snapshot-memory-',
   );
 
   // 200,000 keys save about 38 MB of state, and comparing a scan with it
@@ -149,8 +149,8 @@ test('a snapshot pass holds its saved state once, so a large snapshot diffs in a
 });
 
 test('a pass holds only the saved state of the stream it reads, so many large snapshots diff in a heap that one fits', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'elt-snapshot-memory-'),
+  await using directory = await new TemporaryFiles().directory(
+    'elt-snapshot-memory-',
   );
 
   // Each stream's 100,000 keys save about 19 MB of state; a pass that diffs
@@ -173,8 +173,8 @@ test('a pass holds only the saved state of the stream it reads, so many large sn
 });
 
 test('a full refresh holds no snapshot, so it loads a scan in a heap far smaller than a diff of it needs', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'elt-snapshot-memory-'),
+  await using directory = await new TemporaryFiles().directory(
+    'elt-snapshot-memory-',
   );
 
   // A full refresh yields each record as the scan does: 400,000 of them load
@@ -193,8 +193,8 @@ test('a full refresh holds no snapshot, so it loads a scan in a heap far smaller
 });
 
 test('a grouped full refresh reads its groups one record at a time, in the same small heap', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'elt-snapshot-memory-'),
+  await using directory = await new TemporaryFiles().directory(
+    'elt-snapshot-memory-',
   );
 
   const loaded = runPasses(directory.path, {

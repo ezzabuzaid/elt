@@ -2,13 +2,12 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 
 import {
@@ -49,7 +48,7 @@ function shell(database: string, sql: string) {
 }
 
 test('a pass and each of its streams read running while it runs and cancelled once it is stopped', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-passes-'));
+  await using scratch = await new TemporaryFiles().directory('elt-passes-');
   const reading = Promise.withResolvers<void>();
   // Emits one record, then waits for its run to stop.
   class Waiting extends LiveSource {
@@ -128,7 +127,7 @@ test('a pass and each of its streams read running while it runs and cancelled on
 });
 
 test('a read rolls back the hot journal a pass killed mid-commit left, so the sqlite3 shell can open the file again', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-passes-'));
+  await using scratch = await new TemporaryFiles().directory('elt-passes-');
   const database = join(scratch.path, 'data.sqlite');
   {
     using data = new DatabaseSync(database);
@@ -169,7 +168,7 @@ test('a read rolls back the hot journal a pass killed mid-commit left, so the sq
 });
 
 test("a pass that did not load says whether its failures are the user's to fix, as the source classifies them", async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-passes-'));
+  await using scratch = await new TemporaryFiles().directory('elt-passes-');
   // What an SDK throws when macOS denies its store.
   class StoreDeniedError extends Error {}
   class Guarded extends LiveSource {
@@ -275,7 +274,7 @@ test("a pass that did not load says whether its failures are the user's to fix, 
 });
 
 test('each recorded failure keeps the causes its error chains, such as why a connection failed', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-passes-'));
+  await using scratch = await new TemporaryFiles().directory('elt-passes-');
   // A real fetch to a port nobody listens on: undici's "fetch failed",
   // whose cause says the connection was refused.
   await using server = await new HttpServer().start(() => {});
@@ -284,6 +283,7 @@ test('each recorded failure keeps the causes its error chains, such as why a con
     () => assert.fail('a closed port answered'),
     (error: unknown) => error,
   );
+  assert.ok(refused instanceof Error, String(refused));
   class Fetching extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
@@ -292,8 +292,8 @@ test('each recorded failure keeps the causes its error chains, such as why a con
     readonly identity = 'fetching';
     readonly files = stream('files');
     protected readonly catalog = new Catalog([this.files]);
-    failing: unknown = null;
-    opening: unknown = null;
+    failing: Error | null = null;
+    opening: Error | null = null;
 
     protected override async open() {
       if (this.opening !== null) throw this.opening;
@@ -364,7 +364,7 @@ function stream(name: string) {
 }
 
 test('a pass a killed process left running stays running, until a history that is the sole writer of its connection starts the next run', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-passes-'));
+  await using scratch = await new TemporaryFiles().directory('elt-passes-');
   const path = join(scratch.path, 'data.sqlite');
   // A process that begins a pass of notes, then is killed while it reads.
   const pass = `

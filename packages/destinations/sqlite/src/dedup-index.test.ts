@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
@@ -73,7 +73,7 @@ class Checkpointing extends LiveSource {
 }
 
 test('a deduplicating load that finds nothing new leaves the database schema as it was', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'dedup-index-'));
+  await using scratch = await new TemporaryFiles().directory('dedup-index-');
   const source = new Checkpointing();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'data.sqlite'),

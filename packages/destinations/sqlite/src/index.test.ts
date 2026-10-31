@@ -3,15 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { EventEmitter, on, once } from 'node:events';
 import { rmSync } from 'node:fs';
-import {
-  mkdir,
-  mkdtempDisposable,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -22,6 +14,7 @@ import {
   Coverage,
   Retention,
 } from '@zukhruf/snapshot-differential';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
@@ -104,7 +97,7 @@ test('the public ELT API copies source records into SQLite', async () => {
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-test-'));
+  await using scratch = await new TemporaryFiles().directory('elt-test-');
   const source = new TestSource();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'records.sqlite'),
@@ -164,7 +157,7 @@ test('the macOS sqlite3 shell reads the catalog of a loaded file: every describe
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-test-'));
+  await using scratch = await new TemporaryFiles().directory('elt-test-');
   const source = new DescribedSource();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'records.sqlite'),
@@ -276,7 +269,7 @@ test('every name is sanitized as Airbyte does, around the names SQLite takes as 
       primaryKey: ['id'],
       supportedSyncModes: ['full_refresh'],
     });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-names-'));
+  await using scratch = await new TemporaryFiles().directory('elt-names-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -454,7 +447,7 @@ test('array fields load as JSON arrays that SQLite checks and reads element by e
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-lists-'));
+  await using scratch = await new TemporaryFiles().directory('elt-lists-');
   const source = new ListSource();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'lists.sqlite'),
@@ -524,7 +517,7 @@ test('a source accepts only the stream objects from its own catalog', async () =
     protected override async *extract() {}
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-owned-'));
+  await using scratch = await new TemporaryFiles().directory('elt-owned-');
   const source = new OwnedSource();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'owned.sqlite'),
@@ -614,7 +607,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-watch-'));
+  await using scratch = await new TemporaryFiles().directory('elt-watch-');
   const source = new WatchingSource();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'data.sqlite'),
@@ -862,7 +855,7 @@ test('a cursor inside the primary key is rejected unless the policy replaces', a
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-policy-'));
+  await using scratch = await new TemporaryFiles().directory('elt-policy-');
   const source = new MetricsSource();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'data.sqlite'),
@@ -980,7 +973,7 @@ test('replace loads a restated fact that cursor_newer discards', async () => {
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-restate-'));
+  await using scratch = await new TemporaryFiles().directory('elt-restate-');
   const source = new RestatingSource();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'data.sqlite'),
@@ -1092,7 +1085,7 @@ test('deletions remove keyed rows from a deduplicating SQLite table', async () =
     key: { id },
   });
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-delete-'));
+  await using scratch = await new TemporaryFiles().directory('elt-delete-');
   const source = new DeletingSource();
   const sqlite = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
@@ -1178,7 +1171,7 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
       yield* messages;
     }
   }
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-delete-'));
+  await using scratch = await new TemporaryFiles().directory('elt-delete-');
   const source = new DeletingSource();
   const sqlite = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
@@ -1315,7 +1308,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-snap-'));
+  await using scratch = await new TemporaryFiles().directory('elt-snap-');
   const source = new SnapshotSource();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
@@ -1459,7 +1452,7 @@ test('a snapshot stream that emits no deletions keeps the rows of keys its upstr
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-forget-'));
+  await using scratch = await new TemporaryFiles().directory('elt-forget-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
   });
@@ -1560,7 +1553,7 @@ test('a grouped snapshot stream that emits no deletions keeps the rows of a grou
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-forget-'));
+  await using scratch = await new TemporaryFiles().directory('elt-forget-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
   });
@@ -1661,7 +1654,7 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-group-'));
+  await using scratch = await new TemporaryFiles().directory('elt-group-');
   const source = new GroupedSource();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
@@ -1852,7 +1845,7 @@ test('a snapshot pass over an unchanged scan that the host stops partway ends lo
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stop-'));
+  await using scratch = await new TemporaryFiles().directory('elt-stop-');
   const source = new ScanningSource();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
@@ -1960,7 +1953,7 @@ test('a grouped pass whose groups are all unchanged, stopped by the host partway
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stop-'));
+  await using scratch = await new TemporaryFiles().directory('elt-stop-');
   const source = new FilesSource();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
@@ -2067,7 +2060,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-expire-'));
+  await using scratch = await new TemporaryFiles().directory('elt-expire-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
   });
@@ -2274,7 +2267,7 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-covers-'));
+  await using scratch = await new TemporaryFiles().directory('elt-covers-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
   });
@@ -2419,7 +2412,7 @@ test('a diff whose next read repeats only a lookback window deletes none of the 
     }
   }
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-keeps-'));
+  await using scratch = await new TemporaryFiles().directory('elt-keeps-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
   });
@@ -2575,7 +2568,7 @@ test('a target has one writer, even when another loads only its own partitions',
   };
 
   {
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-own-'));
+    await using scratch = await new TemporaryFiles().directory('elt-own-');
     const destination = new SQLiteDestination({
       path: join(scratch.path, 'out.sqlite'),
     });
@@ -2628,7 +2621,7 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
       };
     }
   }
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-own-'));
+  await using scratch = await new TemporaryFiles().directory('elt-own-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -2692,9 +2685,7 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
 });
 
 test('an explicit column naming a field the stream does not declare fails before any read', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-undeclared-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-undeclared-');
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
@@ -2740,8 +2731,8 @@ test('an explicit column naming a field the stream does not declare fails before
 });
 
 test('explicit int64 and local timestamp columns keep what the stream spells, with the checks its formats keep', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-explicit-formats-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-explicit-formats-',
   );
   const stream = new Stream({
     name: 'bookings',
@@ -2921,7 +2912,7 @@ class Sites extends LiveSource {
 }
 
 test('a partitioned stream resumes each partition from its own state', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-part-'));
+  await using scratch = await new TemporaryFiles().directory('elt-part-');
   const page = (site: string, path: string, views = 1) => ({
     site,
     path,
@@ -2993,7 +2984,7 @@ test('a partitioned stream resumes each partition from its own state', async () 
 });
 
 test('a failing partition loads nothing and keeps its checkpoint, while the other partitions commit', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-part-'));
+  await using scratch = await new TemporaryFiles().directory('elt-part-');
   const page = (site: string, path: string, views = 1) => ({
     site,
     path,
@@ -3096,7 +3087,7 @@ test('a failing partition loads nothing and keeps its checkpoint, while the othe
 });
 
 test('clear drops a target with its checkpoint, and a target dropped by hand reloads from no checkpoint', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-part-'));
+  await using scratch = await new TemporaryFiles().directory('elt-part-');
   const source = new Sites(['a'], { a: [{ site: 'a', path: '/', views: 1 }] });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
@@ -3162,7 +3153,7 @@ test('clear drops a target with its checkpoint, and a target dropped by hand rel
 });
 
 test('a full refresh whose partition fails keeps the previous table', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-part-'));
+  await using scratch = await new TemporaryFiles().directory('elt-part-');
   const source = new Sites(['a', 'b'], {
     a: [{ site: 'a', path: '/', views: 1 }],
     b: [{ site: 'b', path: '/', views: 1 }],
@@ -3219,7 +3210,7 @@ test('partition declarations are validated before extraction', async () => {
     /requires one non-null scalar schema type/,
   );
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-part-'));
+  await using scratch = await new TemporaryFiles().directory('elt-part-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -3385,7 +3376,7 @@ const fileTable = (destination: SQLiteDestination, source: FileSource) =>
   ]);
 
 test('file bytes load as bounded chunks that leave with their row', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-files-'));
+  await using scratch = await new TemporaryFiles().directory('elt-files-');
   const large = new Uint8Array(9 * 1024 * 1024 + 3).map((_, i) => i % 251);
   const small = Buffer.from('small');
   const source = new FileSource(scratch.path, {
@@ -3445,7 +3436,7 @@ test('file bytes load as bounded chunks that leave with their row', async () => 
 });
 
 test("an overwrite removes the previous load's files", async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-files-'));
+  await using scratch = await new TemporaryFiles().directory('elt-files-');
   const source = new FileSource(scratch.path, {
     a: { version: 1, bytes: Buffer.from('aye') },
   });
@@ -3475,7 +3466,7 @@ test("an overwrite removes the previous load's files", async () => {
 });
 
 test('a record the cursor guard rejects leaves no stored file behind', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-files-'));
+  await using scratch = await new TemporaryFiles().directory('elt-files-');
   const source = new FileSource(
     scratch.path,
     { a: { version: 2, bytes: Buffer.from('two') } },
@@ -3522,7 +3513,7 @@ const bound = (copies: readonly (readonly [string, object])[]) =>
   new Map(copies.map(([id, copy]) => [id, { copy, shape: {} }]));
 
 test('a checkpoint store keeps each acknowledged state, durable at once, and holds its lock for the run', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
+  await using scratch = await new TemporaryFiles().directory('elt-state-');
   const path = join(scratch.path, 'state.sqlite');
   const store = new SQLiteCheckpointStore({ path });
   const bindings = bound([['copy', { source: 'test', target: 'records' }]]);
@@ -3564,7 +3555,7 @@ test('a checkpoint store keeps each acknowledged state, durable at once, and hol
 });
 
 test('replications checkpoint in parallel, and one already running is refused', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
+  await using scratch = await new TemporaryFiles().directory('elt-state-');
   const path = join(scratch.path, 'state.sqlite');
   const store = new SQLiteCheckpointStore({ path });
   // A second store on the same file stands in for another process.
@@ -3617,7 +3608,7 @@ test('replications checkpoint in parallel, and one already running is refused', 
 });
 
 test('one checkpoint run holds every copy of a run, each with its own state', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
+  await using scratch = await new TemporaryFiles().directory('elt-state-');
   const store = new SQLiteCheckpointStore({
     path: join(scratch.path, 'state.sqlite'),
   });
@@ -3642,7 +3633,7 @@ test('one checkpoint run holds every copy of a run, each with its own state', as
 });
 
 test('a changed binding is refused for its copy until the checkpoint is reset', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
+  await using scratch = await new TemporaryFiles().directory('elt-state-');
   const store = new SQLiteCheckpointStore({
     path: join(scratch.path, 'state.sqlite'),
   });
@@ -3749,8 +3740,8 @@ const removal = (stream: string, id: string) => ({
 });
 
 test('two loads into one SQLite file commit side by side across their commits, and readers keep reading', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-side-by-side-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-side-by-side-',
   );
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
@@ -3806,8 +3797,8 @@ const readerInAnotherProcess = async (path: string) => {
 };
 
 test('a commit waits for a reader in another process instead of failing', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-busy-reader-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-busy-reader-',
   );
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
@@ -3832,8 +3823,8 @@ test('a commit waits for a reader in another process instead of failing', async 
 });
 
 test('a clear waits for a reader in another process instead of failing', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-busy-reader-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-busy-reader-',
   );
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
@@ -3857,9 +3848,7 @@ test('a clear waits for a reader in another process instead of failing', async (
 });
 
 test('file flush failure or cancellation leaves SQLite rows and checkpoints at the last commit and can be retried', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-file-flush-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-file-flush-');
   const path = join(scratch.path, 'source.txt');
   const directory = join(scratch.path, 'nested', 'files');
   const files = new LocalFiles({ directory });
@@ -4000,7 +3989,7 @@ test('file flush failure or cancellation leaves SQLite rows and checkpoints at t
 });
 
 test('stored file references follow committed SQLite rows, including rejected updates, failures, deletions and clear', async () => {
-  const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-local-sqlite-'));
+  const scratch = await new TemporaryFiles().directory('elt-local-sqlite-');
   try {
     const path = join(scratch.path, 'source.txt');
     await writeFile(path, 'original');
@@ -4123,7 +4112,7 @@ test('stored file references follow committed SQLite rows, including rejected up
 });
 
 test('a file whose own name ends in an extension too long to keep is stored under its hash alone', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-local-'));
+  await using scratch = await new TemporaryFiles().directory('elt-local-');
   // A source can hand over its upstream's own file, named as the upstream
   // named it: 246 bytes, which the hash in front would push past 255.
   const path = join(scratch.path, `notes.${'x'.repeat(240)}`);
@@ -4173,9 +4162,7 @@ test('a file whose own name ends in an extension too long to keep is stored unde
 });
 
 test('stored files recover cleanup failures before checkpointing and isolate copies sharing a directory', async () => {
-  const scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-local-recovery-'),
-  );
+  const scratch = await new TemporaryFiles().directory('elt-local-recovery-');
   try {
     const path = join(scratch.path, 'source.bin');
     const content = Buffer.alloc(4 * 1024 * 1024 + 1, 42);
@@ -4313,7 +4300,7 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
 });
 
 test('a stream that fails publishes none of its staged rows while its sibling commits, and a failing overwrite keeps the old table', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stage-'));
+  await using scratch = await new TemporaryFiles().directory('elt-stage-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -4396,7 +4383,7 @@ test('a stream that fails publishes none of its staged rows while its sibling co
 });
 
 test('a staged unit merges like its operations applied one at a time, under replace and cursor_newer', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-merge-'));
+  await using scratch = await new TemporaryFiles().directory('elt-merge-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -4462,7 +4449,7 @@ test('a staged unit merges like its operations applied one at a time, under repl
 });
 
 test('a key named last merges like its operations applied one at a time', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-last-'));
+  await using scratch = await new TemporaryFiles().directory('elt-last-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -4548,8 +4535,8 @@ test('a key named last merges like its operations applied one at a time', async 
 });
 
 test('a key and cursor that sanitizing renames merge under their renamed columns', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-renamed-key-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-renamed-key-',
   );
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
@@ -4639,8 +4626,8 @@ test('a key and cursor that sanitizing renames merge under their renamed columns
 });
 
 test('renamed file columns keep their original bytes and stored files through later commits, in a table and view whose names the rule changes', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-renamed-files-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-renamed-files-',
   );
   const path = join(scratch.path, 'source.txt');
   await writeFile(path, 'original');
@@ -4748,7 +4735,7 @@ test('renamed file columns keep their original bytes and stored files through la
 });
 
 test('a load holds no write transaction while the source reads, and a stream that fails before its first commit leaves nothing while its sibling commits', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-short-'));
+  await using scratch = await new TemporaryFiles().directory('elt-short-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -4840,7 +4827,7 @@ test('a load holds no write transaction while the source reads, and a stream tha
 });
 
 test('deduplicating a table whose history repeats a key is refused before the source is read', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-repeats-'));
+  await using scratch = await new TemporaryFiles().directory('elt-repeats-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -4898,7 +4885,7 @@ test('deduplicating a table whose history repeats a key is refused before the so
 });
 
 test('two file columns whose table and column names join alike keep their own chunks', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-chunks-'));
+  await using scratch = await new TemporaryFiles().directory('elt-chunks-');
   const path = join(scratch.path, 'source.txt');
   await writeFile(path, 'original');
   const described = (name: string) =>
@@ -5009,8 +4996,8 @@ test('two file columns whose table and column names join alike keep their own ch
 });
 
 test('a reset of a partition named by a renamed field replaces only that partition', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-renamed-part-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-renamed-part-',
   );
   const items = new Stream({
     name: 'items',
@@ -5104,9 +5091,7 @@ test('a reset of a partition named by a renamed field replaces only that partiti
 });
 
 test('a native transaction rollback retains the original merge error and committed rows', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-rollback-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-rollback-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -5147,7 +5132,7 @@ test('a native transaction rollback retains the original merge error and committ
 });
 
 test('an overwrite_dedup whose key narrows builds its index after the old rows are gone', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-rekey-'));
+  await using scratch = await new TemporaryFiles().directory('elt-rekey-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -5201,7 +5186,7 @@ test('an overwrite_dedup whose key narrows builds its index after the old rows a
 });
 
 test('interleaved streams commit on their own: a checkpoint of one never publishes the other, and each file is read before its stream moves on', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-weave-'));
+  await using scratch = await new TemporaryFiles().directory('elt-weave-');
   const staging = join(scratch.path, 'staging');
   await mkdir(staging);
   const files = (name: string) =>
@@ -5378,7 +5363,7 @@ const leftBehind: {
 ];
 for (const { outcome, next, expected } of leftBehind)
   test(`a failed stream's staged files never reach the database while its sibling commits, and ${outcome}`, async () => {
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-sweep-'));
+    await using scratch = await new TemporaryFiles().directory('elt-sweep-');
     const staging = join(scratch.path, 'staging');
     await mkdir(staging);
     // docs stores its files, notes commits them along with its own rows, and
@@ -5525,7 +5510,7 @@ for (const { outcome, next, expected } of leftBehind)
   });
 
 test('clearing a table whose file column was declared after its first load empties it, though no file was ever stored', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-clear-'));
+  await using scratch = await new TemporaryFiles().directory('elt-clear-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -5574,7 +5559,7 @@ test('clearing a table whose file column was declared after its first load empti
 });
 
 test('text with a lone surrogate fails its stream instead of loading as a replacement character, while the sibling loads', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-text-'));
+  await using scratch = await new TemporaryFiles().directory('elt-text-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -5716,7 +5701,7 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
     },
   });
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-format-'));
+  await using scratch = await new TemporaryFiles().directory('elt-format-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'ledger.sqlite'),
   });
@@ -5879,7 +5864,7 @@ test('a reset replaces only its partition at the next commit, and one a failure 
   });
   const reset = { type: 'RESET' as const, stream: 'items' };
   const state = { type: 'STATE' as const, stream: 'items', state: {} };
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reset-'));
+  await using scratch = await new TemporaryFiles().directory('elt-reset-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'items.sqlite'),
   });
@@ -5957,7 +5942,7 @@ test('a full refresh ignores resets, so an appending copy keeps its history', as
       yield* messages;
     }
   }
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reset-'));
+  await using scratch = await new TemporaryFiles().directory('elt-reset-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'items.sqlite'),
   });
@@ -6156,7 +6141,7 @@ const shape = {
 } as const;
 
 test('a stream whose upstream forgets records keeps every row when a field is added, removed or made nullable, and its source resumes from its state', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  await using scratch = await new TemporaryFiles().directory('elt-evolve-');
   const { run, loaded, received, tables, columns, saved } = await shapeChanges(
     scratch.path,
     {},
@@ -6191,7 +6176,7 @@ test('a stream whose upstream forgets records keeps every row when a field is ad
 });
 
 test('a mirror stream whose shape changes still deletes the rows its upstream deleted meanwhile', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  await using scratch = await new TemporaryFiles().directory('elt-evolve-');
   const { run, loaded } = await shapeChanges(scratch.path, {
     emitsDeletes: true,
   });
@@ -6210,7 +6195,7 @@ test('a mirror stream whose shape changes still deletes the rows its upstream de
 });
 
 test('an expiring stream whose shape changes keeps a row older than the horizon and deletes one its upstream still kept', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  await using scratch = await new TemporaryFiles().directory('elt-evolve-');
   const { run, loaded } = await shapeChanges(scratch.path, {
     emitsDeletes: true,
     expiresBy: 'seenAt',
@@ -6239,7 +6224,7 @@ test('an expiring stream whose shape changes keeps a row older than the horizon 
 });
 
 test('a required field added to a stored stream reads null on rows written before it, and a new record still has to carry it', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  await using scratch = await new TemporaryFiles().directory('elt-evolve-');
   const { run, loaded } = await shapeChanges(scratch.path, {});
   await run({ id: shape.id }, [{ id: 'a' }, { id: 'b' }]);
   const fields = { id: shape.id, added: shape.requiredAdded };
@@ -6260,7 +6245,7 @@ test('a required field added to a stored stream reads null on rows written befor
 });
 
 test('stored rows the new shape cannot hold fail the copy by column, leave the table and checkpoint as they were, and a clear reloads', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  await using scratch = await new TemporaryFiles().directory('elt-evolve-');
   const { run, pipeline, loaded, received, saved } = await shapeChanges(
     scratch.path,
     { emitsDeletes: true },
@@ -6297,7 +6282,7 @@ test('stored rows the new shape cannot hold fail the copy by column, leave the t
 });
 
 test('a stale table whose reader view was replaced by another is refused before it evolves, and is left as it was', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  await using scratch = await new TemporaryFiles().directory('elt-evolve-');
   const { run, columns } = await shapeChanges(scratch.path, {});
   await run({ id: shape.id }, [{ id: 'a' }]);
   // Someone else's view takes the reader view's name.
@@ -6346,9 +6331,7 @@ test('a changed declaration stops the copy with StreamChangeError naming it, and
   ] as const;
 
   for (const [before, after, named] of changes) {
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'elt-evolve-'),
-    );
+    await using scratch = await new TemporaryFiles().directory('elt-evolve-');
     const original = await shapeChanges(scratch.path, before);
     await original.run(fields, [
       { id: 'a', seenAt: '2026-01-01T00:00:00.000Z' },
@@ -6373,7 +6356,7 @@ test('a changed declaration stops the copy with StreamChangeError naming it, and
 });
 
 test('a changed primary key fails the copy until it is reset, which keeps and re-keys the rows', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  await using scratch = await new TemporaryFiles().directory('elt-evolve-');
   const { run, loaded, checkpoints } = await shapeChanges(scratch.path, {
     emitsDeletes: true,
   });
@@ -6402,7 +6385,7 @@ test('a changed primary key fails the copy until it is reset, which keeps and re
 });
 
 test('rows that repeat a new primary key fail its reset loudly, and a clear reloads', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  await using scratch = await new TemporaryFiles().directory('elt-evolve-');
   const { run, pipeline, loaded, checkpoints } = await shapeChanges(
     scratch.path,
     {
@@ -6433,7 +6416,7 @@ test('rows that repeat a new primary key fail its reset loudly, and a clear relo
 });
 
 test('an overwrite whose stored table no longer fits reloads it rather than evolving it, so a stored value the new shape refuses is replaced', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  await using scratch = await new TemporaryFiles().directory('elt-evolve-');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'items.sqlite'),
   });
@@ -6502,7 +6485,7 @@ test('an overwrite whose stored table no longer fits reloads it rather than evol
 });
 
 test('a reset reloads into a hidden table: readers keep the old rows until the stream ends, a failed reload resumes, and a new reset discards it', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reload-'));
+  await using scratch = await new TemporaryFiles().directory('elt-reload-');
   const items = new Stream({
     name: 'items',
     jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
@@ -6622,7 +6605,7 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
 });
 
 test('a stored table that no longer fits evolves without a reload, keeping every file its rows refer to, and a deleted row drops its file', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-files-'));
+  await using scratch = await new TemporaryFiles().directory('elt-files-');
   const source = new FileSource(scratch.path, {
     a: { version: 1, bytes: Buffer.from('aye') },
     b: { version: 1, bytes: Buffer.from('bee') },
@@ -6688,7 +6671,7 @@ test('a file column the target drops takes its stored chunks with it, whether it
     { syncMode: 'incremental', destinationSyncMode: 'append_dedup' },
     { syncMode: 'full_refresh', destinationSyncMode: 'overwrite' },
   ] as const) {
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-files-'));
+    await using scratch = await new TemporaryFiles().directory('elt-files-');
     const source = new FileSource(scratch.path, {
       a: { version: 1, bytes: Buffer.from('aye') },
     });
@@ -6755,7 +6738,7 @@ test('a file column the target drops takes its stored chunks with it, whether it
 });
 
 test('a copy that declares its columns from the stream and stores its files keeps its rows, checkpoint and files when a field is added and then removed', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  await using scratch = await new TemporaryFiles().directory('elt-evolve-');
   const files = new LocalFiles({ directory: join(scratch.path, 'files') });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'docs.sqlite'),
@@ -7012,7 +6995,7 @@ async function checkedPipeline(directory: string) {
 }
 
 test('under a watch, a stream whose change fails to load stays current only as of before that change, and so does its connector, while the others move on with the next check', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, connector, until } = await checkedPipeline(
     scratch.path,
   );
@@ -7041,7 +7024,7 @@ test('under a watch, a stream whose change fails to load stays current only as o
 });
 
 test('under a watch, a check that finds nothing changed makes each stream current as of the check, while its last successful sync stays the pass', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, until } = await checkedPipeline(
     scratch.path,
   );
@@ -7073,7 +7056,7 @@ test('under a watch, a check that finds nothing changed makes each stream curren
 });
 
 test('a run makes a stream current only as of when its source says its upstream last matched, if that came first, and the connector as of its oldest stream', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, connector, startedAt } =
     await checkedPipeline(scratch.path);
   // As WhatsApp's store stays as of when the app quit.
@@ -7087,7 +7070,7 @@ test('a run makes a stream current only as of when its source says its upstream 
 });
 
 test('a source that says its upstream matched after the pass began leaves the stream current as of the pass', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, startedAt } = await checkedPipeline(
     scratch.path,
   );
@@ -7099,7 +7082,7 @@ test('a source that says its upstream matched after the pass began leaves the st
 });
 
 test('under a watch, a check while the source says its upstream stopped keeps the stream current as of then, not as of the check', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, until } = await checkedPipeline(
     scratch.path,
   );
@@ -7124,7 +7107,7 @@ test('under a watch, a check while the source says its upstream stopped keeps th
 });
 
 test('a stream whose source cannot tell how current its upstream is fails with that error, unread, while the other streams load', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, read, streams } = await checkedPipeline(
     scratch.path,
   );
@@ -7168,7 +7151,7 @@ test('a stream whose source cannot tell how current its upstream is fails with t
 });
 
 test('under a watch, a check leaves out a stream whose source cannot tell how current its upstream is, and the watch goes on', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, until } = await checkedPipeline(
     scratch.path,
   );
@@ -7194,7 +7177,7 @@ test('under a watch, a check leaves out a stream whose source cannot tell how cu
 });
 
 test('a watch asks the source how current each stream is only for a check it records, at most once a minute', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, until } = await checkedPipeline(
     scratch.path,
   );
@@ -7218,7 +7201,7 @@ test('a watch asks the source how current each stream is only for a check it rec
 });
 
 test('one sync history records each connection’s first unchanged check at once, even right after another connection’s, and no second check within a minute', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const path = join(scratch.path, 'data.sqlite');
   const destination = new SQLiteDestination({ path });
   const history = new SQLiteSyncHistory();
@@ -7296,7 +7279,7 @@ test('one sync history records each connection’s first unchanged check at once
 });
 
 test('a run makes each stream it loaded current as of when its pass began, and the connector current only once every stream has loaded', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, connector, startedAt } =
     await checkedPipeline(scratch.path);
   source.failing.add('b');
@@ -7319,7 +7302,7 @@ test('a run makes each stream it loaded current as of when its pass began, and t
 });
 
 test('a watcher that fails for a config reason ends the watch with a WatchError naming the connection', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stops-'));
+  await using scratch = await new TemporaryFiles().directory('elt-stops-');
   const { source, pipeline, read } = await checkedPipeline(scratch.path);
   const watching = pipeline.watch({ signal: new AbortController().signal });
   const revoked = new DeniedError('The store is no longer readable');
@@ -7357,7 +7340,7 @@ test('a watcher that fails for a config reason ends the watch with a WatchError 
 });
 
 test('a watcher failure the sync history cannot record rejects with a SuppressedError holding the history’s error and the watcher’s', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stops-'));
+  await using scratch = await new TemporaryFiles().directory('elt-stops-');
   const { source, pipeline, path } = await checkedPipeline(scratch.path);
   const watching = pipeline.watch({ signal: new AbortController().signal });
   const lost = new Error('Native watcher failed');
@@ -7391,7 +7374,7 @@ test('a watcher failure the sync history cannot record rejects with a Suppressed
 });
 
 test('a watch whose sync history cannot record a pass rejects with the history’s own error at once, though another connection waits for its next change', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stops-'));
+  await using scratch = await new TemporaryFiles().directory('elt-stops-');
   const path = join(scratch.path, 'data.sqlite');
   const destination = new SQLiteDestination({ path });
   const history = new SQLiteSyncHistory();
@@ -7447,7 +7430,7 @@ test('a watch whose sync history cannot record a pass rejects with the history�
 });
 
 test('a watch whose sync history cannot record a check rejects with the history’s own error, not as a failed watcher', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stops-'));
+  await using scratch = await new TemporaryFiles().directory('elt-stops-');
   const { source, pipeline, path, read } = await checkedPipeline(scratch.path);
   const watching = pipeline.watch({ signal: new AbortController().signal });
   try {
@@ -7475,7 +7458,7 @@ test('a watch whose sync history cannot record a check rejects with the history�
 });
 
 test('a run whose sync history cannot record a pass rejects with the history’s own error, not a PipelineError', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stops-'));
+  await using scratch = await new TemporaryFiles().directory('elt-stops-');
   const { pipeline, path } = await checkedPipeline(scratch.path);
   await pipeline.run();
   // No operation makes the history fail, and each run's install restores a
@@ -7510,9 +7493,7 @@ test(
   'a watcher that fails for a system reason is recorded as a failed attempt and watches again about ten seconds later, from a check of every stream',
   { timeout: 30_000 },
   async () => {
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'elt-rewatch-'),
-    );
+    await using scratch = await new TemporaryFiles().directory('elt-rewatch-');
     const { source, pipeline, read } = await checkedPipeline(scratch.path);
     const controller = new AbortController();
     const watching = pipeline.watch({ signal: controller.signal });
@@ -7571,7 +7552,7 @@ test(
   'under a watch, a stream whose load failed for a system reason loads again about ten seconds later with no change, and a sibling’s change does not pull it in sooner',
   { timeout: 30_000 },
   async () => {
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-retry-'));
+    await using scratch = await new TemporaryFiles().directory('elt-retry-');
     const { source, pipeline, streams, startedAt } = await checkedPipeline(
       scratch.path,
     );
@@ -7612,7 +7593,7 @@ test(
   'under a watch, a stream whose load failed loads at once when its own source reports a change, and one whose load failed for a config reason waits for that change',
   { timeout: 30_000 },
   async () => {
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-retry-'));
+    await using scratch = await new TemporaryFiles().directory('elt-retry-');
     const { source, pipeline } = await checkedPipeline(scratch.path);
     const controller = new AbortController();
     const watching = pipeline.watch({ signal: controller.signal });

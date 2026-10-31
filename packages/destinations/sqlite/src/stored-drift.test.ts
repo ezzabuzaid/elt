@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
@@ -122,7 +122,7 @@ function edit(path: string, sql: string): void {
 }
 
 test('a checkpoints table another version declared otherwise is replaced, so its copies start over', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'drift-'));
+  await using scratch = await new TemporaryFiles().directory('drift-');
   const imported = importIn(scratch.path);
   await imported.pass();
   edit(
@@ -135,7 +135,7 @@ test('a checkpoints table another version declared otherwise is replaced, so its
 });
 
 test('a sync history view another version installed reads as no status, and the next pass installs it again with the history kept', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'drift-'));
+  await using scratch = await new TemporaryFiles().directory('drift-');
   const imported = importIn(scratch.path);
   await imported.pass();
   // An older sync_status, without current_as_of.
@@ -159,7 +159,7 @@ test('a sync history view another version installed reads as no status, and the 
 });
 
 test('a sync history table another version declared otherwise is replaced with its history when the next pass installs it', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'drift-'));
+  await using scratch = await new TemporaryFiles().directory('drift-');
   const imported = importIn(scratch.path);
   await imported.pass();
   // An older table of checks, without checked_at.

@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
@@ -91,8 +90,8 @@ test('a full refresh checks a snapshot stream’s declaration as an incremental 
     }
   }
 
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-full-refresh-declaration-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-full-refresh-declaration-',
   );
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
@@ -191,8 +190,8 @@ test('a full refresh of a snapshot stream loads every record of each scan as sca
     }
   }
 
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-full-refresh-snapshot-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-full-refresh-snapshot-',
   );
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
@@ -278,8 +277,8 @@ test('a full refresh of a grouped snapshot stream reads every group, also one wh
     }
   }
 
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-full-refresh-grouped-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-full-refresh-grouped-',
   );
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),

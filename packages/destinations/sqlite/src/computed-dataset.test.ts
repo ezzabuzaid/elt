@@ -1,15 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import {
-  mkdir,
-  mkdtempDisposable,
-  readFile,
-  writeFile,
-} from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
@@ -185,9 +181,7 @@ function shell(database: string, sql: string) {
 const text = 'SELECT ref, status, content, error FROM file_text ORDER BY ref';
 
 test('a computed dataset stores the text of each file its input rows name, once for each file, and readers find it in the catalog', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-computed-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
@@ -230,9 +224,7 @@ test('a computed dataset stores the text of each file its input rows name, once 
 });
 
 test('a computed dataset reads a view declared before it: the text of each file the view names, and none once the view stops naming it', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-computed-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const store = join(scratch.path, 'files');
   await mkdir(store);
   await writeFile(join(store, 'a.txt'), 'invoice 123');
@@ -298,9 +290,7 @@ test('a computed dataset reads a view declared before it: the text of each file 
 });
 
 test('the next run reads only the files that are new or that another parser would read otherwise, and drops the text of a file no row names', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-computed-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
@@ -329,9 +319,7 @@ test('the next run reads only the files that are new or that another parser woul
 });
 
 test('a file the parser fails on is stored failed with why, the run still succeeds, and the next run reads it again', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-computed-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
   await files.file('bad.txt', 'contract');
@@ -362,9 +350,7 @@ test('a file the parser fails on is stored failed with why, the run still succee
 });
 
 test('a format the parser stops handling keeps the text read before, and a file it never read is stored empty as unsupported', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-computed-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
@@ -394,9 +380,7 @@ test('a format the parser stops handling keeps the text read before, and a file 
 });
 
 test('a file that is slow to read holds only its own place: the text of the files read after it lands while it is still being read', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-computed-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   const names = Array.from({ length: 40 }, (_, index) => `f${index}.txt`);
   for (const name of ['slow.txt', ...names])
@@ -432,9 +416,7 @@ test('a file that is slow to read holds only its own place: the text of the file
 });
 
 test('a run whose other copy failed still stores the text of the files its loaded rows name, and then rejects with that copy’s failure', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-computed-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
   files.source.rows = [{ id: '1', ref: 'a.txt' }];
@@ -455,10 +437,8 @@ test('a run whose other copy failed still stores the text of the files its loade
   ]);
 });
 
-test('under a watch, a file that is slow to read holds no pass back: the next pass loads while it is read, the file is read once, and the files that pass loaded get their text after it', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-computed-'),
-  );
+test('under a watch, a file that is slow to read holds no pass back: the next pass loads while it is read, the file is read once, and the files that pass loaded get their text after it', async (t) => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   await files.file('slow.txt', 'contract');
   await files.file('b.txt', 'receipt');
@@ -480,10 +460,15 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
 
   try {
     const first = await pass();
-    for (let tries = 0; !files.parser().parsed.includes('slow.txt'); tries++) {
-      if (tries > 500) assert.fail('slow.txt was never read');
-      await sleep(10);
-    }
+    await t.waitFor(
+      () => {
+        assert.ok(
+          files.parser().parsed.includes('slow.txt'),
+          'slow.txt was never read',
+        );
+      },
+      { interval: 10, timeout: 5_000 },
+    );
     files.source.rows = [
       { id: '1', ref: 'slow.txt' },
       { id: '2', ref: 'b.txt' },

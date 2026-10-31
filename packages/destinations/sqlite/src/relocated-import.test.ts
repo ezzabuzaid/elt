@@ -1,17 +1,11 @@
 import assert from 'node:assert/strict';
-import {
-  mkdir,
-  mkdtempDisposable,
-  readFile,
-  rename,
-  writeFile,
-} from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
@@ -130,9 +124,7 @@ async function importIn(folder: string, source: Notes, storesFiles: boolean) {
 }
 
 test('a copy resumes from its checkpoint after its database and checkpoint store move to another folder', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-relocated-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-relocated-');
   const before = join(scratch.path, 'before');
   const after = join(scratch.path, 'after');
   await mkdir(before);
@@ -150,9 +142,7 @@ test('a copy resumes from its checkpoint after its database and checkpoint store
 });
 
 test("a moved import's stored files still resolve, and the next load keeps them", async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-relocated-'),
-  );
+  await using scratch = await new TemporaryFiles().directory('elt-relocated-');
   const upstream = join(scratch.path, 'upstream');
   const before = join(scratch.path, 'before');
   const after = join(scratch.path, 'after');

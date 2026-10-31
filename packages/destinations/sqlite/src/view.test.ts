@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
@@ -120,7 +120,7 @@ const schemaVersion = (path: string) => {
 };
 
 test('a view a pipeline declares appears once the tables it reads have loaded, with its columns in the catalog, and a run that changes nothing leaves it as it was', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-view-'));
+  await using scratch = await new TemporaryFiles().directory('elt-view-');
   const path = join(scratch.path, 'data.sqlite');
   const pipeline = recordsPipeline(
     path,
@@ -155,7 +155,7 @@ test('a view a pipeline declares appears once the tables it reads have loaded, w
 });
 
 test('a view that reads a table no copy of the pipeline makes fails the run with the error of SQLite, after the copies loaded', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-view-'));
+  await using scratch = await new TemporaryFiles().directory('elt-view-');
   const path = join(scratch.path, 'data.sqlite');
   const pipeline = recordsPipeline(
     path,
@@ -176,7 +176,7 @@ test('a view that reads a table no copy of the pipeline makes fails the run with
 });
 
 test('a view whose input has not loaded yet stays absent, and appears with the run that loads it', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-view-'));
+  await using scratch = await new TemporaryFiles().directory('elt-view-');
   const path = join(scratch.path, 'data.sqlite');
   const source = new Records(['r1']);
   const pipeline = recordsPipeline(
@@ -200,7 +200,7 @@ test('a view whose input has not loaded yet stays absent, and appears with the r
 });
 
 test('a view that reads a view still waiting for its copy waits too, and both appear with the run that loads the copy', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-view-'));
+  await using scratch = await new TemporaryFiles().directory('elt-view-');
   const path = join(scratch.path, 'data.sqlite');
   const source = new Records(['r1', 'r2']);
   const destination = new SQLiteDestination({ path });
@@ -257,7 +257,7 @@ test('a view that reads a view still waiting for its copy waits too, and both ap
 });
 
 test('a view that reads a view declared after it fails the run with the error of SQLite', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-view-'));
+  await using scratch = await new TemporaryFiles().directory('elt-view-');
   const path = join(scratch.path, 'data.sqlite');
   const source = new Records(['r1', 'r2']);
   const destination = new SQLiteDestination({ path });
@@ -306,7 +306,7 @@ test('a view that reads a view declared after it fails the run with the error of
 });
 
 test('under a watch, a view that reads a view still waiting for its copy waits too, and the watch goes on to its end', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-view-'));
+  await using scratch = await new TemporaryFiles().directory('elt-view-');
   const path = join(scratch.path, 'data.sqlite');
   const source = new Records(['r1']);
   const destination = new SQLiteDestination({ path });
@@ -359,7 +359,7 @@ test('under a watch, a view that reads a view still waiting for its copy waits t
 });
 
 test('under a watch, a view appears after the pass that loads its input, without holding the pass back', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-view-'));
+  await using scratch = await new TemporaryFiles().directory('elt-view-');
   const path = join(scratch.path, 'data.sqlite');
   const pipeline = recordsPipeline(
     path,

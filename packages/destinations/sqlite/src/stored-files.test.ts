@@ -1,15 +1,10 @@
 import assert from 'node:assert/strict';
-import {
-  mkdtempDisposable,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
@@ -55,8 +50,8 @@ test('stored file scopes flush when empty and remain usable across empty, null a
     }
   }
 
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-empty-files-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-empty-files-',
   );
   const source = new FilesSource();
   const files = new LocalFiles({ directory: join(scratch.path, 'files') });
