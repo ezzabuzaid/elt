@@ -84,27 +84,33 @@ export class NotesScan implements AsyncDisposable {
   // in store order. An attachment the store lists once per location keeps
   // one entry.
   get attachments(): ReadonlyMap<string | null, NoteAttachment> {
-    if (this.#attachments !== undefined) return this.#attachments;
+    this.#attachments ??= this.#attachmentsInScope();
+    return this.#attachments;
+  }
+
+  get inline(): ReadonlyMap<string | null, InlineAttachment> {
+    this.#inline ??= this.#inlineInScope();
+    return this.#inline;
+  }
+
+  #attachmentsInScope(): Map<string | null, NoteAttachment> {
     const notes = this.#notesInScope();
-    this.#attachments = new Map(
+    return new Map(
       this.#snapshot
         .attachments()
         .filter((attachment) => notes.has(attachment.noteId))
         .map((attachment) => [attachment.id, attachment]),
     );
-    return this.#attachments;
   }
 
-  get inline(): ReadonlyMap<string | null, InlineAttachment> {
-    if (this.#inline !== undefined) return this.#inline;
+  #inlineInScope(): Map<string | null, InlineAttachment> {
     const notes = this.#notesInScope();
-    this.#inline = new Map(
+    return new Map(
       this.#snapshot
         .inlineAttachments()
         .filter((inline) => notes.has(inline.noteId))
         .map((inline) => [inline.id, inline]),
     );
-    return this.#inline;
   }
 
   // Plain text keeps what reads as text: inline tags and mentions.
