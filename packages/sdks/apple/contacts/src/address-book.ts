@@ -1,5 +1,4 @@
 import { type Dirent, readdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
@@ -8,10 +7,9 @@ import { AddressBookStore, storeFile } from './address-book-store.ts';
 import { appDatabase } from './app-database.ts';
 import { ContactsUnavailableError } from './errors.ts';
 
-export const addressBookDirectory = join(
-  homedir(),
-  'Library/Application Support/AddressBook',
-);
+// The Contacts folder in the home folder `home`.
+export const addressBookDirectory = (home: string): string =>
+  join(home, 'Library/Application Support/AddressBook');
 
 // Contacts keeps one Core Data store per account under Sources/<id>, and the
 // On My Mac store at the root. A store that cannot be listed or opened throws:

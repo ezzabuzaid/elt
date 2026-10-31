@@ -1,18 +1,4 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
-
-// Books.app's own container: the library, annotations, themes and its
-// preferences.
-export const booksContainer = join(
-  homedir(),
-  'Library/Containers/com.apple.iBooksX/Data',
-);
-// The group container bookdatastored writes: per-book reading state, reading
-// history, store purchases and the shared preferences.
-export const booksGroupContainer = join(
-  homedir(),
-  'Library/Group Containers/group.com.apple.iBooks',
-);
 
 export type BooksLocation = {
   // Books.app's container: library, annotations, themes, preferences.
@@ -21,6 +7,12 @@ export type BooksLocation = {
   // history, store purchases, shared preferences.
   readonly groupContainer: string;
 };
+
+// Where Books keeps its two containers in the home folder `home`.
+export const booksLocation = (home: string): BooksLocation => ({
+  container: join(home, 'Library/Containers/com.apple.iBooksX/Data'),
+  groupContainer: join(home, 'Library/Group Containers/group.com.apple.iBooks'),
+});
 
 // Where Books keeps each kind of data: Core Data stores it commits to, and
 // preference files it rewrites whole.

@@ -194,6 +194,16 @@ const binaryPlist = (xml: string) =>
     input: `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0">${xml}</plist>`,
   });
 
+// The global preferences of a Mac whose region is the United States.
+function preferencesFixture(directory: string): string {
+  const path = join(directory, 'GlobalPreferences.plist');
+  writeFileSync(
+    path,
+    binaryPlist('<dict><key>AppleLocale</key><string>en_US</string></dict>'),
+  );
+  return path;
+}
+
 type Rows = Record<string, readonly Record<string, SQLInputValue>[]>;
 
 function createStore(
@@ -585,10 +595,11 @@ test('Contacts scope keeps only one container and its related records and images
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'contacts-scope-'),
   );
-  const source = new AppleContactsSource(
-    addressBookFixture(join(scratch.path, 'AddressBook')),
-    { collectionIds: ['LOCAL:ABContainer'] },
-  );
+  const source = new AppleContactsSource({
+    directory: addressBookFixture(join(scratch.path, 'AddressBook')),
+    preferences: preferencesFixture(scratch.path),
+    scope: { collectionIds: ['LOCAL:ABContainer'] },
+  });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -635,10 +646,11 @@ test('a Contacts container scope keeps every stream to what belongs to that cont
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'contacts-scope-'),
   );
-  const source = new AppleContactsSource(
-    addressBookFixture(join(scratch.path, 'AddressBook')),
-    { collectionIds: ['A:ABContainer'] },
-  );
+  const source = new AppleContactsSource({
+    directory: addressBookFixture(join(scratch.path, 'AddressBook')),
+    preferences: preferencesFixture(scratch.path),
+    scope: { collectionIds: ['A:ABContainer'] },
+  });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -741,7 +753,11 @@ test('Contacts reads subscribed records, every custom value type, archived vCard
   });
   mkdirSync(join(directory, 'Sources'));
   const load = async (name: string, scope: ImportScope) => {
-    const source = new AppleContactsSource(directory, scope);
+    const source = new AppleContactsSource({
+      directory,
+      preferences: preferencesFixture(scratch.path),
+      scope,
+    });
     const destination = new SQLiteDestination({
       path: join(scratch.path, `${name}.sqlite`),
     });
@@ -829,7 +845,10 @@ test('Contacts exports every stream of every account store by identifier', async
       )
       .run(inline(photo));
   }
-  const source = new AppleContactsSource(directory);
+  const source = new AppleContactsSource({
+    directory,
+    preferences: preferencesFixture(scratch.path),
+  });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -1205,7 +1224,10 @@ test('Contacts loads edits incrementally, deletes removed rows and writes nothin
     join(tmpdir(), 'elt-contacts-'),
   );
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
-  const source = new AppleContactsSource(directory);
+  const source = new AppleContactsSource({
+    directory,
+    preferences: preferencesFixture(scratch.path),
+  });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -1292,7 +1314,10 @@ test('Contacts refuses a store it cannot read instead of reading its account as 
     join(tmpdir(), 'elt-contacts-'),
   );
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
-  const source = new AppleContactsSource(directory);
+  const source = new AppleContactsSource({
+    directory,
+    preferences: preferencesFixture(scratch.path),
+  });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -1332,7 +1357,12 @@ test('Contacts refuses a store it cannot read instead of reading its account as 
     4,
   );
   await assert.rejects(
-    readFirst(new AppleContactsSource(join(scratch.path, 'missing'))),
+    readFirst(
+      new AppleContactsSource({
+        directory: join(scratch.path, 'missing'),
+        preferences: preferencesFixture(scratch.path),
+      }),
+    ),
     { name: 'ContactsUnavailableError', message: /Full Disk Access/ },
   );
 });
@@ -1350,7 +1380,12 @@ test('Contacts names the columns it needs when a store has another layout', asyn
   }
 
   await assert.rejects(
-    readFirst(new AppleContactsSource(directory)),
+    readFirst(
+      new AppleContactsSource({
+        directory,
+        preferences: preferencesFixture(scratch.path),
+      }),
+    ),
     (error: Error) => {
       assert.equal(error.name, 'MissingColumnsError');
       assert.match(error.message, /ACCOUNT-A.*ZABCDPHONENUMBER\.ZFULLNUMBER/);
@@ -1374,7 +1409,12 @@ test('Contacts refuses a store whose entities it does not know instead of readin
   }
 
   await assert.rejects(
-    readFirst(new AppleContactsSource(directory)),
+    readFirst(
+      new AppleContactsSource({
+        directory,
+        preferences: preferencesFixture(scratch.path),
+      }),
+    ),
     (error: Error) => {
       assert.equal(error.name, 'ContactsSchemaError');
       assert.match(error.message, /ACCOUNT-B.*entity ABCDContact/);
@@ -1396,7 +1436,10 @@ test('Contacts rejects image data in an encoding it does not know', async () => 
       .prepare('UPDATE ZABCDRECORD SET ZTHUMBNAILIMAGEDATA = ? WHERE Z_PK = 2')
       .run(Buffer.from([3, 0]));
   }
-  const source = new AppleContactsSource(directory);
+  const source = new AppleContactsSource({
+    directory,
+    preferences: preferencesFixture(scratch.path),
+  });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -1435,7 +1478,10 @@ test('a Contacts watch loads each commit contactsd makes and each account added'
     join(tmpdir(), 'elt-contacts-'),
   );
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
-  const source = new AppleContactsSource(directory);
+  const source = new AppleContactsSource({
+    directory,
+    preferences: preferencesFixture(scratch.path),
+  });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
@@ -1494,9 +1540,10 @@ test('Contacts reads as documented views whose joins keep one row per contact', 
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'contacts-marts-'),
   );
-  const source = new AppleContactsSource(
-    addressBookFixture(join(scratch.path, 'AddressBook')),
-  );
+  const source = new AppleContactsSource({
+    directory: addressBookFixture(join(scratch.path, 'AddressBook')),
+    preferences: preferencesFixture(scratch.path),
+  });
   const contacts = await appleImport(source, join(scratch.path, 'import'));
   await contacts.load();
 
@@ -1597,7 +1644,10 @@ test('a Contacts watch keeps every stream current while contactsd changes nothin
     join(tmpdir(), 'elt-contacts-current-'),
   );
   const directory = addressBookFixture(join(dir.path, 'AddressBook'));
-  const source = new AppleContactsSource(directory);
+  const source = new AppleContactsSource({
+    directory,
+    preferences: preferencesFixture(dir.path),
+  });
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
@@ -1701,7 +1751,7 @@ test('Contacts writes each phone number in E.164, reading one without a country 
       ),
     );
     const contacts = await appleImport(
-      new AppleContactsSource(directory, {}, preferences),
+      new AppleContactsSource({ directory, preferences }),
       join(scratch.path, locale),
     );
     await contacts.load();
@@ -1777,7 +1827,7 @@ test('a Contacts pass over a large store holds one contact at a time, so it load
     const { Connection, Copy, Pipeline } = await import('@workspace/elt');
     const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
     const { AppleContactsSource } = await import(process.env.SOURCE);
-    const source = new AppleContactsSource(process.env.STORE, {}, process.env.PREFERENCES);
+    const source = new AppleContactsSource({ directory: process.env.STORE, preferences: process.env.PREFERENCES });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();

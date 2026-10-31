@@ -18,8 +18,6 @@ import {
   type BooksLocation,
   type BooksStore,
   BooksUnavailableError,
-  booksContainer,
-  booksGroupContainer,
 } from '@workspace/sdk-apple-books';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -95,13 +93,7 @@ export class AppleBooksSource extends Source<BooksScan> {
   readonly location: BooksLocation;
   readonly #books: Books;
 
-  constructor({
-    container = booksContainer,
-    groupContainer = booksGroupContainer,
-  }: {
-    container?: string;
-    groupContainer?: string;
-  } = {}) {
+  constructor({ container, groupContainer }: BooksLocation) {
     super();
     this.location = Object.freeze({ container, groupContainer });
     this.#books = new Books(this.location);

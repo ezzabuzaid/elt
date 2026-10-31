@@ -37,6 +37,7 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { safariContainer, safariDirectory } from '@workspace/sdk-apple-safari';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { AppleSafariSource } from './apple-safari-source.ts';
@@ -2755,7 +2756,11 @@ test('a Safari watch wakes history when a profile History.db appears, and a prop
 test('Safari reads this Mac’s stores into SQLite', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Safari requires macOS');
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-live-'));
-  const source = new AppleSafariSource();
+  const home = homedir();
+  const source = new AppleSafariSource({
+    directory: safariDirectory(home),
+    container: safariContainer(home),
+  });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'safari.sqlite'),
   });
@@ -2801,10 +2806,9 @@ test('Safari reads this Mac’s stores into SQLite', async (t) => {
     Number(database.prepare(`SELECT count(*) AS n FROM "${table}"`).get()?.n);
   // History comes from this Mac's own History.db: when it holds items, so
   // does the import.
-  using history = new DatabaseSync(
-    join(homedir(), 'Library/Safari/History.db'),
-    { readOnly: true },
-  );
+  using history = new DatabaseSync(join(safariDirectory(home), 'History.db'), {
+    readOnly: true,
+  });
   const native = history
     .prepare('SELECT count(*) AS n FROM history_items')
     .get()?.n;

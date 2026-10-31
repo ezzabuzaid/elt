@@ -18,8 +18,6 @@ import {
   type SafariLocation,
   type SafariStore,
   SafariUnavailableError,
-  safariContainer,
-  safariDirectory,
   safariRunning,
 } from '@workspace/sdk-apple-safari';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -129,14 +127,14 @@ export class AppleSafariSource extends Source<SafariScan> {
   readonly #safari: Safari;
 
   constructor({
-    directory = safariDirectory,
-    container = safariContainer,
+    directory,
+    container,
     scope = {},
   }: {
-    directory?: string;
-    container?: string;
+    directory: string;
+    container: string;
     scope?: ImportScope;
-  } = {}) {
+  }) {
     super();
     this.location = Object.freeze({ directory, container });
     this.scope = scope;

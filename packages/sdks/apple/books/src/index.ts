@@ -26,8 +26,7 @@ export {
 export {
   type BooksLocation,
   type BooksStore,
-  booksContainer,
-  booksGroupContainer,
+  booksLocation,
 } from './books-location.ts';
 export { BooksPurchases, type Purchase } from './books-purchases.ts';
 export { BooksThemes, type Theme } from './books-themes.ts';

@@ -5,6 +5,8 @@ An ELT source for Apple Books: the library, collections, highlights and notes, r
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../../elt/CONTEXT.md) for the words of all of elt.
 
 ```ts
+import { homedir } from 'node:os';
+
 import { Connection, Copy, LocalFiles, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
@@ -12,9 +14,11 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { booksLocation } from '@workspace/sdk-apple-books';
 import { AppleBooksSource } from '@workspace/source-apple-books/apple-books-source';
 
-const source = new AppleBooksSource(); // Books' container and its group container
+// Books' container and its group container in this user's home folder.
+const source = new AppleBooksSource(booksLocation(homedir()));
 const destination = new SQLiteDestination({ path: './outputs/books.sqlite' });
 const files = new LocalFiles({ directory: './outputs/books-files' });
 
@@ -55,7 +59,7 @@ await new Pipeline({
 }).run();
 ```
 
-`bookFiles` supports file transfer. The example gives its copy the column `attachmentRef` from `source.bookFiles.file`, so a book whose bytes are on this Mac is stored in `./outputs/books-files`. To read other folders, give them to the constructor: `new AppleBooksSource({ container, groupContainer })`.
+`bookFiles` supports file transfer. The example gives its copy the column `attachmentRef` from `source.bookFiles.file`, so a book whose bytes are on this Mac is stored in `./outputs/books-files`. The constructor requires the two folders: `new AppleBooksSource({ container, groupContainer })`. `booksLocation(home)` from `@workspace/sdk-apple-books` gives the two folders in the home folder `home`. To read copies of the stores, give other folders.
 
 A Context Compiler import loads every stream incrementally into its `data.sqlite`. Readers use its `<snake_stream>` views. The import keeps each local book in its `files` folder, and `attachmentRef` refers to it.
 

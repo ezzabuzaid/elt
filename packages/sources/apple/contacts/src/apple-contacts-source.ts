@@ -16,8 +16,6 @@ import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   ContactsStore,
   ContactsUnavailableError,
-  addressBookDirectory,
-  globalPreferences,
   macRegion,
 } from '@workspace/sdk-apple-contacts';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -122,11 +120,15 @@ export class AppleContactsSource extends Source<ContactsScan> {
   readonly #store: ContactsStore;
 
   // preferences: the global preferences that hold the Mac's region.
-  constructor(
-    directory = addressBookDirectory,
-    scope: ImportScope = {},
-    preferences = globalPreferences,
-  ) {
+  constructor({
+    directory,
+    preferences,
+    scope = {},
+  }: {
+    directory: string;
+    preferences: string;
+    scope?: ImportScope;
+  }) {
     super();
     this.directory = directory;
     this.scope = scope;

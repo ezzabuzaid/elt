@@ -5,15 +5,18 @@ An ELT source for the Clock app: alarms, timers, recent timer durations, sounds,
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md). The decisions are in [docs/adr](./docs/adr).
 
 ```ts
+import { homedir } from 'node:os';
+
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { clockLocation } from '@workspace/sdk-apple-clock/clock-store';
 import { AppleClockSource } from '@workspace/source-apple-clock/apple-clock-source';
 
-const source = new AppleClockSource();
+const source = new AppleClockSource(clockLocation(homedir()));
 const destination = new SQLiteDestination({ path: './clock.sqlite' });
 
 await new Pipeline({
@@ -37,7 +40,7 @@ await new Pipeline({
 }).run();
 ```
 
-To read copies of the stores, give a `ClockLocation` (`{ database, cities, stopwatches }`, from `@workspace/sdk-apple-clock/clock-store`) to the constructor. `Pipeline.watch()` watches the source. Context Compiler's `connector-apple-clock` imports all ten streams, with no account, collection, date-range or attachment selection.
+The constructor requires a `ClockLocation` (`{ database, cities, stopwatches }`, from `@workspace/sdk-apple-clock/clock-store`). `clockLocation(home)` gives the three stores in the home folder `home`. To read copies of the stores, give other paths. `Pipeline.watch()` watches the source. Context Compiler's `connector-apple-clock` imports all ten streams, with no account, collection, date-range or attachment selection.
 
 ## Stores and access
 

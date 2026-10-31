@@ -1,15 +1,13 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { defaultProfile } from './safari-tabs.ts';
 
-// History, bookmarks, closed tabs and downloads.
-export const safariDirectory = join(homedir(), 'Library/Safari');
-// Open tabs, tab groups, profiles and iCloud Tabs.
-export const safariContainer = join(
-  homedir(),
-  'Library/Containers/com.apple.Safari/Data/Library/Safari',
-);
+// History, bookmarks, closed tabs and downloads, in the home folder `home`.
+export const safariDirectory = (home: string): string =>
+  join(home, 'Library/Safari');
+// Open tabs, tab groups, profiles and iCloud Tabs, in the home folder `home`.
+export const safariContainer = (home: string): string =>
+  join(home, 'Library/Containers/com.apple.Safari/Data/Library/Safari');
 
 export type SafariLocation = {
   // ~/Library/Safari: History.db and the property lists.

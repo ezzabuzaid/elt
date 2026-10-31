@@ -1,12 +1,10 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { isDictionary, readPlist } from '@workspace/codec-plist';
 
-export const globalPreferences = join(
-  homedir(),
-  'Library/Preferences/.GlobalPreferences.plist',
-);
+// The global preferences file in the home folder `home`.
+export const globalPreferences = (home: string): string =>
+  join(home, 'Library/Preferences/.GlobalPreferences.plist');
 
 // The region picked in System Settings, as an ISO 3166 code such as JO: the
 // country Contacts reads a number without a country code in. macOS keeps it

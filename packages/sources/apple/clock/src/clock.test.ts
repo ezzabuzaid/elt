@@ -7,7 +7,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -565,7 +565,8 @@ test('a Clock watch goes on when a preference file is removed, and loads it agai
 test('this Mac Clock stores load read-only through the real pipeline', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Clock requires macOS');
   await using dir = await mkdtempDisposable(join(tmpdir(), 'clock-live-'));
-  const run = await pipeline(new AppleClockSource(), dir.path);
+  const location = clockLocation(homedir());
+  const run = await pipeline(new AppleClockSource(location), dir.path);
   try {
     await run.run();
   } catch (error) {
@@ -576,7 +577,7 @@ test('this Mac Clock stores load read-only through the real pipeline', async (t)
       return t.skip('Clock stores are unavailable to this process');
     throw error;
   }
-  using db = new DatabaseSync(clockLocation.database, { readOnly: true });
+  using db = new DatabaseSync(location.database, { readOnly: true });
   for (const [table, stream] of [
     ['ZMTCDALARM', 'alarms'],
     ['ZMTCDTIMER', 'timers'],
@@ -591,14 +592,14 @@ test('this Mac Clock stores load read-only through the real pipeline', async (t)
       db.prepare(`select count(*) n from ${table}`).get()?.n,
     );
   }
-  const cities = await readPlist(clockLocation.cities);
+  const cities = await readPlist(location.cities);
   assert.ok(isDictionary(cities));
   assert.ok(Array.isArray(cities.cities));
   assert.equal(
     rows(dir.path, 'select count(*) n from worldClocks')[0]?.n,
     cities.cities.length,
   );
-  const daemon = await readPlist(clockLocation.stopwatches);
+  const daemon = await readPlist(location.stopwatches);
   assert.ok(isDictionary(daemon));
   assert.ok(isDictionary(daemon.MTStopwatches));
   assert.ok(Array.isArray(daemon.MTStopwatches.MTStopwatches));

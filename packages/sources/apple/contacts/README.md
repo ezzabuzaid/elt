@@ -3,15 +3,25 @@
 An ELT source for the Contacts app. It reads the Core Data stores of Contacts in `~/Library/Application Support/AddressBook` on this Mac, in read-only mode through `@workspace/sdk-apple-contacts`. There is one store for On My Mac, `AddressBook-v22.abcddb` at the root of the folder, and one store for each account, such as iCloud or Google, in `Sources/<id>/AddressBook-v22.abcddb`. The source does not use the network or Contacts.framework, and Contacts does not have to be open.
 
 ```ts
+import { homedir } from 'node:os';
+
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import {
+  addressBookDirectory,
+  globalPreferences,
+} from '@workspace/sdk-apple-contacts';
 import { AppleContactsSource } from '@workspace/source-apple-contacts/apple-contacts-source';
 
-const source = new AppleContactsSource();
+const home = homedir();
+const source = new AppleContactsSource({
+  directory: addressBookDirectory(home),
+  preferences: globalPreferences(home),
+});
 const destination = new SQLiteDestination({ path: './contacts.sqlite' });
 
 await new Pipeline({
@@ -37,7 +47,7 @@ await new Pipeline({
 }).run();
 ```
 
-To read only some accounts, give container IDs as `collectionIds` in the second argument: `new AppleContactsSource(undefined, { collectionIds })`.
+The constructor requires `directory`, the Contacts folder, and `preferences`, the global preferences file that holds the region of the Mac. `addressBookDirectory(home)` and `globalPreferences(home)` from `@workspace/sdk-apple-contacts` give them in the home folder `home`. To read only some accounts, give container IDs as `collectionIds` in `scope`: `new AppleContactsSource({ directory, preferences, scope: { collectionIds } })`.
 
 A Context Compiler import loads every stream incrementally into its `data.sqlite`. It stores each photo in its `files` folder and refers to it by `attachmentRef`.
 

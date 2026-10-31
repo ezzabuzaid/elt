@@ -1,5 +1,4 @@
 import { stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
@@ -17,24 +16,23 @@ export type ClockLocation = {
   readonly stopwatches: string;
 };
 export type ClockStoreKind = keyof ClockLocation;
-export const clockLocation: ClockLocation = Object.freeze({
-  database: join(
-    homedir(),
-    'Library/Group Containers/group.com.apple.mobiletimerd/local.sqlite',
-  ),
-  cities: join(
-    homedir(),
-    'Library/Containers/com.apple.clock/Data/Library/Preferences/com.apple.mobiletimer.plist',
-  ),
-  stopwatches: join(
-    homedir(),
-    'Library/Preferences/com.apple.mobiletimerd.plist',
-  ),
-});
+// Where Clock keeps its three stores in the home folder `home`.
+export const clockLocation = (home: string): ClockLocation =>
+  Object.freeze({
+    database: join(
+      home,
+      'Library/Group Containers/group.com.apple.mobiletimerd/local.sqlite',
+    ),
+    cities: join(
+      home,
+      'Library/Containers/com.apple.clock/Data/Library/Preferences/com.apple.mobiletimer.plist',
+    ),
+    stopwatches: join(home, 'Library/Preferences/com.apple.mobiletimerd.plist'),
+  });
 
 export class ClockStore {
   readonly #location: ClockLocation;
-  constructor(location: ClockLocation = clockLocation) {
+  constructor(location: ClockLocation) {
     this.#location = location;
   }
   open(stores: ReadonlySet<ClockStoreKind>): Promise<ClockSnapshot> {

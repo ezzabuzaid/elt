@@ -16,7 +16,6 @@ import {
   ClockStore,
   type ClockStoreKind,
   ClockUnavailableError,
-  clockLocation,
 } from '@workspace/sdk-apple-clock/clock-store';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -75,7 +74,7 @@ export class AppleClockSource extends Source<ClockSnapshot> {
   readonly worldClocks = worldClocksReader.describe();
   readonly stopwatches = stopwatchesReader.describe();
   readonly stopwatchLaps = stopwatchLapsReader.describe();
-  constructor(location: ClockLocation = clockLocation) {
+  constructor(location: ClockLocation) {
     super();
     this.#store = new ClockStore(location);
   }

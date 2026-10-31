@@ -10,7 +10,7 @@ import {
   utimes,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -37,8 +37,7 @@ import {
 import {
   BooksSchemaError,
   BooksUnavailableError,
-  booksContainer,
-  booksGroupContainer,
+  booksLocation,
 } from '@workspace/sdk-apple-books';
 
 import { AppleBooksSource } from './apple-books-source.ts';
@@ -2393,7 +2392,8 @@ test('Books classifies each book file by what is on disk', async () => {
 test('Books reads this Mac’s stores into SQLite without opening iCloud placeholders', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Books requires macOS');
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-live-'));
-  const source = new AppleBooksSource();
+  const location = booksLocation(homedir());
+  const source = new AppleBooksSource(location);
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'books.sqlite'),
   });
@@ -2446,7 +2446,9 @@ test('Books reads this Mac’s stores into SQLite without opening iCloud placeho
       BooksUnavailableError.name,
     )
   )
-    return t.skip(`no access to ${booksContainer} or ${booksGroupContainer}`);
+    return t.skip(
+      `no access to ${location.container} or ${location.groupContainer}`,
+    );
   assert.ok(Array.isArray(outcome), String(outcome));
 
   using database = new DatabaseSync(destination.path, { readOnly: true });
