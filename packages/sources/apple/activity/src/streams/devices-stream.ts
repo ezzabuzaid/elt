@@ -68,11 +68,9 @@ export class DevicesStream {
     properties,
     required: Object.keys(properties),
   } as const;
-  #stream?: Stream;
-
+  // A new Stream each call: the source asks once, for its catalog.
   describe(): Stream {
-    this.#stream ??= new Stream(this);
-    return this.#stream;
+    return new Stream(this);
   }
 
   async *messages(

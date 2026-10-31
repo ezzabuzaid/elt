@@ -63,11 +63,9 @@ export abstract class InstagramStream<P extends Properties> {
   readonly emitsDeletes = true;
   readonly supportsFileTransfer: true | undefined = undefined;
   readonly expiresBy: string | undefined = undefined;
-  #stream?: Stream;
-
+  // A new Stream each call: the source asks once, for its catalog.
   describe(): Stream {
-    this.#stream ??= new Stream(this);
-    return this.#stream;
+    return new Stream(this);
   }
 
   abstract read(context: ReadContext): AsyncGenerator<SourceMessage>;

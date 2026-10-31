@@ -52,14 +52,14 @@ const pollIntervalMs = 1000;
 export class AppleWalletSource extends Source<WalletScan> {
   readonly identity = 'apple-wallet';
   protected readonly catalog = catalog;
-  readonly passes = readers.passes.describe();
-  readonly passFields = readers.passFields.describe();
-  readonly passBarcodes = readers.passBarcodes.describe();
-  readonly passLocations = readers.passLocations.describe();
-  readonly passBeacons = readers.passBeacons.describe();
-  readonly passRelevantDates = readers.passRelevantDates.describe();
-  readonly passLocalizations = readers.passLocalizations.describe();
-  readonly passImages = readers.passImages.describe();
+  readonly passes = catalog.get(readers.passes.name);
+  readonly passFields = catalog.get(readers.passFields.name);
+  readonly passBarcodes = catalog.get(readers.passBarcodes.name);
+  readonly passLocations = catalog.get(readers.passLocations.name);
+  readonly passBeacons = catalog.get(readers.passBeacons.name);
+  readonly passRelevantDates = catalog.get(readers.passRelevantDates.name);
+  readonly passLocalizations = catalog.get(readers.passLocalizations.name);
+  readonly passImages = catalog.get(readers.passImages.name);
 
   readonly #store: WalletStore;
 

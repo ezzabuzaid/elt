@@ -89,30 +89,34 @@ const pollIntervalMs = 1000;
 export class AppleContactsSource extends Source<ContactsScan> {
   readonly identity = 'apple-contacts';
   protected readonly catalog = catalog;
-  readonly containers = readers.containers.describe();
-  readonly groups = readers.groups.describe();
-  readonly groupMembers = readers.groupMembers.describe();
-  readonly groupSubgroups = readers.groupSubgroups.describe();
-  readonly contacts = readers.contacts.describe();
-  readonly notes = readers.notes.describe();
-  readonly alternateBirthdays = readers.alternateBirthdays.describe();
-  readonly phoneNumbers = readers.phoneNumbers.describe();
-  readonly emailAddresses = readers.emailAddresses.describe();
-  readonly postalAddresses = readers.postalAddresses.describe();
-  readonly urlAddresses = readers.urlAddresses.describe();
-  readonly socialProfiles = readers.socialProfiles.describe();
-  readonly messagingAddresses = readers.messagingAddresses.describe();
-  readonly relatedNames = readers.relatedNames.describe();
-  readonly contactDates = readers.contactDates.describe();
-  readonly calendarUris = readers.calendarUris.describe();
-  readonly addressingGrammars = readers.addressingGrammars.describe();
-  readonly likenesses = readers.likenesses.describe();
-  readonly alertTones = readers.alertTones.describe();
-  readonly customPropertyValues = readers.customPropertyValues.describe();
-  readonly remoteLocations = readers.remoteLocations.describe();
-  readonly unknownProperties = readers.unknownProperties.describe();
-  readonly distributionListConfigs = readers.distributionListConfigs.describe();
-  readonly images = readers.images.describe();
+  readonly containers = catalog.get(readers.containers.name);
+  readonly groups = catalog.get(readers.groups.name);
+  readonly groupMembers = catalog.get(readers.groupMembers.name);
+  readonly groupSubgroups = catalog.get(readers.groupSubgroups.name);
+  readonly contacts = catalog.get(readers.contacts.name);
+  readonly notes = catalog.get(readers.notes.name);
+  readonly alternateBirthdays = catalog.get(readers.alternateBirthdays.name);
+  readonly phoneNumbers = catalog.get(readers.phoneNumbers.name);
+  readonly emailAddresses = catalog.get(readers.emailAddresses.name);
+  readonly postalAddresses = catalog.get(readers.postalAddresses.name);
+  readonly urlAddresses = catalog.get(readers.urlAddresses.name);
+  readonly socialProfiles = catalog.get(readers.socialProfiles.name);
+  readonly messagingAddresses = catalog.get(readers.messagingAddresses.name);
+  readonly relatedNames = catalog.get(readers.relatedNames.name);
+  readonly contactDates = catalog.get(readers.contactDates.name);
+  readonly calendarUris = catalog.get(readers.calendarUris.name);
+  readonly addressingGrammars = catalog.get(readers.addressingGrammars.name);
+  readonly likenesses = catalog.get(readers.likenesses.name);
+  readonly alertTones = catalog.get(readers.alertTones.name);
+  readonly customPropertyValues = catalog.get(
+    readers.customPropertyValues.name,
+  );
+  readonly remoteLocations = catalog.get(readers.remoteLocations.name);
+  readonly unknownProperties = catalog.get(readers.unknownProperties.name);
+  readonly distributionListConfigs = catalog.get(
+    readers.distributionListConfigs.name,
+  );
+  readonly images = catalog.get(readers.images.name);
 
   readonly directory: string;
   readonly scope: ImportScope;

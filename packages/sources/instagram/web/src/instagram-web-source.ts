@@ -79,17 +79,17 @@ export type InstagramWebOptions = DateRange & {
 export class InstagramWebSource extends Source<InstagramRun> {
   readonly identity = 'instagram-web';
   protected readonly catalog = catalog;
-  readonly following = readers.following.describe();
-  readonly profiles = readers.profiles.describe();
-  readonly posts = readers.posts.describe();
-  readonly media = readers.media.describe();
-  readonly comments = readers.comments.describe();
-  readonly reels = readers.reels.describe();
-  readonly reposts = readers.reposts.describe();
-  readonly taggedPosts = readers.taggedPosts.describe();
-  readonly stories = readers.stories.describe();
-  readonly highlights = readers.highlights.describe();
-  readonly highlightItems = readers.highlightItems.describe();
+  readonly following = catalog.get(readers.following.name);
+  readonly profiles = catalog.get(readers.profiles.name);
+  readonly posts = catalog.get(readers.posts.name);
+  readonly media = catalog.get(readers.media.name);
+  readonly comments = catalog.get(readers.comments.name);
+  readonly reels = catalog.get(readers.reels.name);
+  readonly reposts = catalog.get(readers.reposts.name);
+  readonly taggedPosts = catalog.get(readers.taggedPosts.name);
+  readonly stories = catalog.get(readers.stories.name);
+  readonly highlights = catalog.get(readers.highlights.name);
+  readonly highlightItems = catalog.get(readers.highlightItems.name);
 
   readonly #home: string;
   readonly profileIds: readonly string[];

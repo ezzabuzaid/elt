@@ -69,11 +69,9 @@ export abstract class SafariStream<P extends Properties, Row> {
   // Every read is the whole store, so incremental copies diff snapshots.
   readonly sourceDefinedCursor = true;
   readonly emitsDeletes = true;
-  #stream?: Stream;
-
+  // A new Stream each call: the source asks once, for its catalog.
   describe(): Stream {
-    this.#stream ??= new Stream(this);
-    return this.#stream;
+    return new Stream(this);
   }
 
   // One record at a time, so a pass never holds a whole store's rows.

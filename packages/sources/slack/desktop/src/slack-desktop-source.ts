@@ -78,27 +78,31 @@ const pollIntervalMs = 1000;
 export class SlackDesktopSource extends Source<SlackDesktopScan> {
   readonly identity = 'slack-desktop';
   protected readonly catalog = catalog;
-  readonly workspaces = readers.workspaces.describe();
-  readonly channels = readers.channels.describe();
-  readonly channelMembers = readers.channelMembers.describe();
-  readonly members = readers.members.describe();
-  readonly bots = readers.bots.describe();
-  readonly apps = readers.apps.describe();
-  readonly messages = readers.messages.describe();
-  readonly threadReplies = readers.threadReplies.describe();
-  readonly messageAttachments = readers.messageAttachments.describe();
-  readonly messageReactions = readers.messageReactions.describe();
-  readonly messageFiles = readers.messageFiles.describe();
-  readonly pins = readers.pins.describe();
-  readonly files = readers.files.describe();
-  readonly fileShares = readers.fileShares.describe();
-  readonly listRecords = readers.listRecords.describe();
-  readonly channelSections = readers.channelSections.describe();
-  readonly channelSectionChannels = readers.channelSectionChannels.describe();
-  readonly threadSubscriptions = readers.threadSubscriptions.describe();
-  readonly preferences = readers.preferences.describe();
-  readonly userGroupMemberships = readers.userGroupMemberships.describe();
-  readonly downloads = readers.downloads.describe();
+  readonly workspaces = catalog.get(readers.workspaces.name);
+  readonly channels = catalog.get(readers.channels.name);
+  readonly channelMembers = catalog.get(readers.channelMembers.name);
+  readonly members = catalog.get(readers.members.name);
+  readonly bots = catalog.get(readers.bots.name);
+  readonly apps = catalog.get(readers.apps.name);
+  readonly messages = catalog.get(readers.messages.name);
+  readonly threadReplies = catalog.get(readers.threadReplies.name);
+  readonly messageAttachments = catalog.get(readers.messageAttachments.name);
+  readonly messageReactions = catalog.get(readers.messageReactions.name);
+  readonly messageFiles = catalog.get(readers.messageFiles.name);
+  readonly pins = catalog.get(readers.pins.name);
+  readonly files = catalog.get(readers.files.name);
+  readonly fileShares = catalog.get(readers.fileShares.name);
+  readonly listRecords = catalog.get(readers.listRecords.name);
+  readonly channelSections = catalog.get(readers.channelSections.name);
+  readonly channelSectionChannels = catalog.get(
+    readers.channelSectionChannels.name,
+  );
+  readonly threadSubscriptions = catalog.get(readers.threadSubscriptions.name);
+  readonly preferences = catalog.get(readers.preferences.name);
+  readonly userGroupMemberships = catalog.get(
+    readers.userGroupMemberships.name,
+  );
+  readonly downloads = catalog.get(readers.downloads.name);
 
   readonly directory: string;
   readonly scope: ImportScope;

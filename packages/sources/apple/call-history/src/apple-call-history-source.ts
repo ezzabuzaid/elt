@@ -45,11 +45,11 @@ const pollIntervalMs = 1000;
 export class AppleCallHistorySource extends Source<CallHistoryScan> {
   readonly identity = 'apple-call-history';
   protected readonly catalog = catalog;
-  readonly calls = readers.calls.describe();
-  readonly callParticipants = readers.callParticipants.describe();
-  readonly callTimers = readers.callTimers.describe();
-  readonly emergencyMediaItems = readers.emergencyMediaItems.describe();
-  readonly saintDavidsCounts = readers.saintDavidsCounts.describe();
+  readonly calls = catalog.get(readers.calls.name);
+  readonly callParticipants = catalog.get(readers.callParticipants.name);
+  readonly callTimers = catalog.get(readers.callTimers.name);
+  readonly emergencyMediaItems = catalog.get(readers.emergencyMediaItems.name);
+  readonly saintDavidsCounts = catalog.get(readers.saintDavidsCounts.name);
 
   readonly path: string;
   readonly scope: ImportScope;

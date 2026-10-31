@@ -64,16 +64,16 @@ export class AppleClockSource extends Source<ClockSnapshot> {
   readonly identity = 'apple-clock';
   protected readonly catalog = catalog;
   readonly #store: ClockStore;
-  readonly alarms = alarmsReader.describe();
-  readonly timers = timersReader.describe();
-  readonly timerDurations = timerDurationsReader.describe();
-  readonly sounds = soundsReader.describe();
-  readonly calendarReleases = calendarReleasesReader.describe();
-  readonly makeupDays = makeupDaysReader.describe();
-  readonly reports = reportsReader.describe();
-  readonly worldClocks = worldClocksReader.describe();
-  readonly stopwatches = stopwatchesReader.describe();
-  readonly stopwatchLaps = stopwatchLapsReader.describe();
+  readonly alarms = catalog.get(alarmsReader.name);
+  readonly timers = catalog.get(timersReader.name);
+  readonly timerDurations = catalog.get(timerDurationsReader.name);
+  readonly sounds = catalog.get(soundsReader.name);
+  readonly calendarReleases = catalog.get(calendarReleasesReader.name);
+  readonly makeupDays = catalog.get(makeupDaysReader.name);
+  readonly reports = catalog.get(reportsReader.name);
+  readonly worldClocks = catalog.get(worldClocksReader.name);
+  readonly stopwatches = catalog.get(stopwatchesReader.name);
+  readonly stopwatchLaps = catalog.get(stopwatchLapsReader.name);
   constructor(location: ClockLocation) {
     super();
     this.#store = new ClockStore(location);

@@ -52,14 +52,16 @@ export class AppleRemindersSource extends Source<RemindersScan> {
   readonly #store: RemindersStore;
   readonly identity = 'apple-reminders:eventkit';
   protected readonly catalog = catalog;
-  readonly accounts = readers.accounts.describe();
-  readonly lists = readers.lists.describe();
-  readonly reminders = readers.reminders.describe();
-  readonly dateComponents = readers.dateComponents.describe();
-  readonly attendees = readers.attendees.describe();
-  readonly alarms = readers.alarms.describe();
-  readonly recurrenceRules = readers.recurrenceRules.describe();
-  readonly recurrenceRuleValues = readers.recurrenceRuleValues.describe();
+  readonly accounts = catalog.get(readers.accounts.name);
+  readonly lists = catalog.get(readers.lists.name);
+  readonly reminders = catalog.get(readers.reminders.name);
+  readonly dateComponents = catalog.get(readers.dateComponents.name);
+  readonly attendees = catalog.get(readers.attendees.name);
+  readonly alarms = catalog.get(readers.alarms.name);
+  readonly recurrenceRules = catalog.get(readers.recurrenceRules.name);
+  readonly recurrenceRuleValues = catalog.get(
+    readers.recurrenceRuleValues.name,
+  );
 
   readonly scope: ImportScope;
 

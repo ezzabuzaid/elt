@@ -51,11 +51,11 @@ const launchIntervalMs = 30_000;
 export class AppleNotesSource extends Source<NotesScan> {
   readonly identity = 'apple-notes';
   protected readonly catalog = catalog;
-  readonly accounts = readers.accounts.describe();
-  readonly folders = readers.folders.describe();
-  readonly notes = readers.notes.describe();
-  readonly inlineAttachments = readers.inlineAttachments.describe();
-  readonly attachments = readers.attachments.describe();
+  readonly accounts = catalog.get(readers.accounts.name);
+  readonly folders = catalog.get(readers.folders.name);
+  readonly notes = catalog.get(readers.notes.name);
+  readonly inlineAttachments = catalog.get(readers.inlineAttachments.name);
+  readonly attachments = catalog.get(readers.attachments.name);
 
   readonly path: string;
   readonly scope: ImportScope;

@@ -59,11 +59,9 @@ export abstract class AppleMailStream {
   // Every read is the whole store, so incremental copies diff snapshots.
   readonly sourceDefinedCursor = true;
   readonly emitsDeletes = true;
-  #stream?: Stream;
-
+  // A new Stream each call: the source asks once, for its catalog.
   describe(): Stream {
-    this.#stream ??= new Stream(this);
-    return this.#stream;
+    return new Stream(this);
   }
 
   async *extract(

@@ -49,11 +49,9 @@ export abstract class AppleRemindersStream<P extends Properties, Row> {
   // Whether the stream reads reminders; the account and list listings read
   // none.
   readonly readsReminders: boolean = true;
-  #stream?: Stream;
-
+  // A new Stream each call: the source asks once, for its catalog.
   describe(): Stream {
-    this.#stream ??= new Stream(this);
-    return this.#stream;
+    return new Stream(this);
   }
 
   read(scan: RemindersScan): SchemaRecord<P>[] {

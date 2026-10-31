@@ -50,14 +50,14 @@ const pollIntervalMs = 1000;
 export class AppleAccountsSource extends Source<AccountsScan> {
   readonly identity = 'apple-accounts';
   protected readonly catalog = catalog;
-  readonly accounts = readers.accounts.describe();
-  readonly accountProperties = readers.accountProperties.describe();
-  readonly accountDataclasses = readers.accountDataclasses.describe();
-  readonly accountTypes = readers.accountTypes.describe();
-  readonly dataclasses = readers.dataclasses.describe();
-  readonly accessOptionKeys = readers.accessOptionKeys.describe();
-  readonly authorizations = readers.authorizations.describe();
-  readonly credentialItems = readers.credentialItems.describe();
+  readonly accounts = catalog.get(readers.accounts.name);
+  readonly accountProperties = catalog.get(readers.accountProperties.name);
+  readonly accountDataclasses = catalog.get(readers.accountDataclasses.name);
+  readonly accountTypes = catalog.get(readers.accountTypes.name);
+  readonly dataclasses = catalog.get(readers.dataclasses.name);
+  readonly accessOptionKeys = catalog.get(readers.accessOptionKeys.name);
+  readonly authorizations = catalog.get(readers.authorizations.name);
+  readonly credentialItems = catalog.get(readers.credentialItems.name);
 
   readonly path: string;
   readonly #store: AccountsStore;

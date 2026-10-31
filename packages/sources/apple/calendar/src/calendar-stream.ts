@@ -101,11 +101,9 @@ export abstract class CalendarStream<P extends Properties, Row> {
   // Whether the stream reads events, which the event window limits; the
   // account and calendar listings read none.
   readonly dated: boolean = true;
-  #stream?: Stream;
-
+  // A new Stream each call: the source asks once, for its catalog.
   describe(): Stream {
-    this.#stream ??= new Stream(this);
-    return this.#stream;
+    return new Stream(this);
   }
 
   async *read(scan: CalendarScan): AsyncGenerator<SchemaRecord<P>> {

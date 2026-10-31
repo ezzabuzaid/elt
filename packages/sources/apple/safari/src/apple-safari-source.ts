@@ -97,30 +97,35 @@ const pollIntervalMs = 1000;
 export class AppleSafariSource extends Source<SafariScan> {
   readonly identity = 'apple-safari';
   protected readonly catalog = catalog;
-  readonly historyItems = readers.historyItems.describe();
-  readonly historyVisits = readers.historyVisits.describe();
-  readonly historyTombstones = readers.historyTombstones.describe();
-  readonly historyTags = readers.historyTags.describe();
-  readonly historyItemTags = readers.historyItemTags.describe();
-  readonly profiles = readers.profiles.describe();
-  readonly profileStartPageSections =
-    readers.profileStartPageSections.describe();
-  readonly windows = readers.windows.describe();
-  readonly windowProfiles = readers.windowProfiles.describe();
-  readonly windowTabGroups = readers.windowTabGroups.describe();
-  readonly tabGroups = readers.tabGroups.describe();
-  readonly tabs = readers.tabs.describe();
-  readonly tabHistoryEntries = readers.tabHistoryEntries.describe();
-  readonly cloudTabDevices = readers.cloudTabDevices.describe();
-  readonly cloudTabs = readers.cloudTabs.describe();
-  readonly cloudTabPositions = readers.cloudTabPositions.describe();
-  readonly cloudTabCloseRequests = readers.cloudTabCloseRequests.describe();
-  readonly bookmarks = readers.bookmarks.describe();
-  readonly readingListItems = readers.readingListItems.describe();
-  readonly closedWindows = readers.closedWindows.describe();
-  readonly closedWindowActiveTabs = readers.closedWindowActiveTabs.describe();
-  readonly closedTabs = readers.closedTabs.describe();
-  readonly downloads = readers.downloads.describe();
+  readonly historyItems = catalog.get(readers.historyItems.name);
+  readonly historyVisits = catalog.get(readers.historyVisits.name);
+  readonly historyTombstones = catalog.get(readers.historyTombstones.name);
+  readonly historyTags = catalog.get(readers.historyTags.name);
+  readonly historyItemTags = catalog.get(readers.historyItemTags.name);
+  readonly profiles = catalog.get(readers.profiles.name);
+  readonly profileStartPageSections = catalog.get(
+    readers.profileStartPageSections.name,
+  );
+  readonly windows = catalog.get(readers.windows.name);
+  readonly windowProfiles = catalog.get(readers.windowProfiles.name);
+  readonly windowTabGroups = catalog.get(readers.windowTabGroups.name);
+  readonly tabGroups = catalog.get(readers.tabGroups.name);
+  readonly tabs = catalog.get(readers.tabs.name);
+  readonly tabHistoryEntries = catalog.get(readers.tabHistoryEntries.name);
+  readonly cloudTabDevices = catalog.get(readers.cloudTabDevices.name);
+  readonly cloudTabs = catalog.get(readers.cloudTabs.name);
+  readonly cloudTabPositions = catalog.get(readers.cloudTabPositions.name);
+  readonly cloudTabCloseRequests = catalog.get(
+    readers.cloudTabCloseRequests.name,
+  );
+  readonly bookmarks = catalog.get(readers.bookmarks.name);
+  readonly readingListItems = catalog.get(readers.readingListItems.name);
+  readonly closedWindows = catalog.get(readers.closedWindows.name);
+  readonly closedWindowActiveTabs = catalog.get(
+    readers.closedWindowActiveTabs.name,
+  );
+  readonly closedTabs = catalog.get(readers.closedTabs.name);
+  readonly downloads = catalog.get(readers.downloads.name);
 
   readonly location: SafariLocation;
   readonly scope: ImportScope;

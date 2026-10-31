@@ -59,11 +59,9 @@ export abstract class SlackDesktopStream<P extends Properties, Row> {
   // Whether a record the app no longer holds, where the read covers it, was
   // deleted; a stream whose upstream only forgets says undefined.
   readonly emitsDeletes: true | undefined = true;
-  #stream?: Stream;
-
+  // A new Stream each call: the source asks once, for its catalog.
   describe(): Stream {
-    this.#stream ??= new Stream(this);
-    return this.#stream;
+    return new Stream(this);
   }
 
   read(scan: SlackDesktopScan): SchemaRecord<P>[] {

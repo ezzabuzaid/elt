@@ -139,48 +139,60 @@ export const restrictedMailStreams = [
 export class AppleMailSource extends Source<MailScan> {
   readonly identity = 'apple-mail';
   protected readonly catalog = catalog;
-  readonly accounts = readers.accounts.describe();
-  readonly smtpServers = readers.smtpServers.describe();
-  readonly messages = readers.messages.describe();
-  readonly mailboxes = readers.mailboxes.describe();
-  readonly addresses = readers.addresses.describe();
-  readonly recipients = readers.recipients.describe();
-  readonly indexedAttachments = readers.indexedAttachments.describe();
-  readonly messageMailboxes = readers.messageMailboxes.describe();
-  readonly serverMessages = readers.serverMessages.describe();
-  readonly serverMessageMailboxes = readers.serverMessageMailboxes.describe();
-  readonly conversations = readers.conversations.describe();
-  readonly conversationMessages = readers.conversationMessages.describe();
-  readonly messageReferences = readers.messageReferences.describe();
-  readonly messageGlobalData = readers.messageGlobalData.describe();
-  readonly subjects = readers.subjects.describe();
-  readonly summaries = readers.summaries.describe();
-  readonly generatedSummaries = readers.generatedSummaries.describe();
-  readonly messageMetadata = readers.messageMetadata.describe();
-  readonly dataDetectionResults = readers.dataDetectionResults.describe();
-  readonly richLinks = readers.richLinks.describe();
-  readonly messageRichLinks = readers.messageRichLinks.describe();
-  readonly protectedMessageData = readers.protectedMessageData.describe();
-  readonly brandIndicators = readers.brandIndicators.describe();
-  readonly brandIndicatorEvidence = readers.brandIndicatorEvidence.describe();
-  readonly addressMetadata = readers.addressMetadata.describe();
-  readonly businesses = readers.businesses.describe();
-  readonly businessAddresses = readers.businessAddresses.describe();
-  readonly businessCategories = readers.businessCategories.describe();
-  readonly senders = readers.senders.describe();
-  readonly senderAddresses = readers.senderAddresses.describe();
-  readonly events = readers.events.describe();
-  readonly mailboxProperties = readers.mailboxProperties.describe();
-  readonly rules = readers.rules.describe();
-  readonly ruleConditions = readers.ruleConditions.describe();
-  readonly smartMailboxes = readers.smartMailboxes.describe();
-  readonly smartMailboxConditions = readers.smartMailboxConditions.describe();
-  readonly signatures = readers.signatures.describe();
-  readonly configuration = readers.configuration.describe();
-  readonly messageFiles = readers.messageFiles.describe();
-  readonly messageHeaders = readers.messageHeaders.describe();
-  readonly messageParts = readers.messageParts.describe();
-  readonly attachments = readers.attachments.describe();
+  readonly accounts = catalog.get(readers.accounts.name);
+  readonly smtpServers = catalog.get(readers.smtpServers.name);
+  readonly messages = catalog.get(readers.messages.name);
+  readonly mailboxes = catalog.get(readers.mailboxes.name);
+  readonly addresses = catalog.get(readers.addresses.name);
+  readonly recipients = catalog.get(readers.recipients.name);
+  readonly indexedAttachments = catalog.get(readers.indexedAttachments.name);
+  readonly messageMailboxes = catalog.get(readers.messageMailboxes.name);
+  readonly serverMessages = catalog.get(readers.serverMessages.name);
+  readonly serverMessageMailboxes = catalog.get(
+    readers.serverMessageMailboxes.name,
+  );
+  readonly conversations = catalog.get(readers.conversations.name);
+  readonly conversationMessages = catalog.get(
+    readers.conversationMessages.name,
+  );
+  readonly messageReferences = catalog.get(readers.messageReferences.name);
+  readonly messageGlobalData = catalog.get(readers.messageGlobalData.name);
+  readonly subjects = catalog.get(readers.subjects.name);
+  readonly summaries = catalog.get(readers.summaries.name);
+  readonly generatedSummaries = catalog.get(readers.generatedSummaries.name);
+  readonly messageMetadata = catalog.get(readers.messageMetadata.name);
+  readonly dataDetectionResults = catalog.get(
+    readers.dataDetectionResults.name,
+  );
+  readonly richLinks = catalog.get(readers.richLinks.name);
+  readonly messageRichLinks = catalog.get(readers.messageRichLinks.name);
+  readonly protectedMessageData = catalog.get(
+    readers.protectedMessageData.name,
+  );
+  readonly brandIndicators = catalog.get(readers.brandIndicators.name);
+  readonly brandIndicatorEvidence = catalog.get(
+    readers.brandIndicatorEvidence.name,
+  );
+  readonly addressMetadata = catalog.get(readers.addressMetadata.name);
+  readonly businesses = catalog.get(readers.businesses.name);
+  readonly businessAddresses = catalog.get(readers.businessAddresses.name);
+  readonly businessCategories = catalog.get(readers.businessCategories.name);
+  readonly senders = catalog.get(readers.senders.name);
+  readonly senderAddresses = catalog.get(readers.senderAddresses.name);
+  readonly events = catalog.get(readers.events.name);
+  readonly mailboxProperties = catalog.get(readers.mailboxProperties.name);
+  readonly rules = catalog.get(readers.rules.name);
+  readonly ruleConditions = catalog.get(readers.ruleConditions.name);
+  readonly smartMailboxes = catalog.get(readers.smartMailboxes.name);
+  readonly smartMailboxConditions = catalog.get(
+    readers.smartMailboxConditions.name,
+  );
+  readonly signatures = catalog.get(readers.signatures.name);
+  readonly configuration = catalog.get(readers.configuration.name);
+  readonly messageFiles = catalog.get(readers.messageFiles.name);
+  readonly messageHeaders = catalog.get(readers.messageHeaders.name);
+  readonly messageParts = catalog.get(readers.messageParts.name);
+  readonly attachments = catalog.get(readers.attachments.name);
 
   readonly path: string;
   readonly scope: ImportScope;

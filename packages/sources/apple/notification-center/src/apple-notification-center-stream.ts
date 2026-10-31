@@ -51,11 +51,9 @@ export abstract class AppleNotificationCenterStream<P extends Properties, Row> {
   readonly sourceDefinedCursor = true;
   // Whether a record gone from the store was deleted, or only forgotten.
   abstract readonly emitsDeletes: true | undefined;
-  #stream?: Stream;
-
+  // A new Stream each call: the source asks once, for its catalog.
   describe(): Stream {
-    this.#stream ??= new Stream(this);
-    return this.#stream;
+    return new Stream(this);
   }
 
   // One row at a time, so a pass never holds a whole table's records.

@@ -78,25 +78,33 @@ const readerOf = (stream: Stream): ActivityReader => {
 export class AppleActivitySource extends Source<ActivityScan> {
   readonly identity = 'apple-activity';
   protected readonly catalog = catalog;
-  readonly appFocus = readers.appFocus.describe();
-  readonly screenTimeAppUsage = readers.screenTimeAppUsage.describe();
-  readonly appMenuItems = readers.appMenuItems.describe();
-  readonly appIntents = readers.appIntents.describe();
-  readonly webUsage = readers.webUsage.describe();
-  readonly safariNavigations = readers.safariNavigations.describe();
-  readonly documentInteractions = readers.documentInteractions.describe();
-  readonly mediaUsage = readers.mediaUsage.describe();
-  readonly nowPlaying = readers.nowPlaying.describe();
-  readonly focusModes = readers.focusModes.describe();
-  readonly focusSuggestions = readers.focusSuggestions.describe();
-  readonly notificationUsage = readers.notificationUsage.describe();
-  readonly notificationDeliveries = readers.notificationDeliveries.describe();
-  readonly bluetoothConnections = readers.bluetoothConnections.describe();
-  readonly screenshots = readers.screenshots.describe();
-  readonly knowledgeIntents = readers.knowledgeIntents.describe();
-  readonly displayBacklight = readers.displayBacklight.describe();
-  readonly discoverabilitySignals = readers.discoverabilitySignals.describe();
-  readonly devices = readers.devices.describe();
+  readonly appFocus = catalog.get(readers.appFocus.name);
+  readonly screenTimeAppUsage = catalog.get(readers.screenTimeAppUsage.name);
+  readonly appMenuItems = catalog.get(readers.appMenuItems.name);
+  readonly appIntents = catalog.get(readers.appIntents.name);
+  readonly webUsage = catalog.get(readers.webUsage.name);
+  readonly safariNavigations = catalog.get(readers.safariNavigations.name);
+  readonly documentInteractions = catalog.get(
+    readers.documentInteractions.name,
+  );
+  readonly mediaUsage = catalog.get(readers.mediaUsage.name);
+  readonly nowPlaying = catalog.get(readers.nowPlaying.name);
+  readonly focusModes = catalog.get(readers.focusModes.name);
+  readonly focusSuggestions = catalog.get(readers.focusSuggestions.name);
+  readonly notificationUsage = catalog.get(readers.notificationUsage.name);
+  readonly notificationDeliveries = catalog.get(
+    readers.notificationDeliveries.name,
+  );
+  readonly bluetoothConnections = catalog.get(
+    readers.bluetoothConnections.name,
+  );
+  readonly screenshots = catalog.get(readers.screenshots.name);
+  readonly knowledgeIntents = catalog.get(readers.knowledgeIntents.name);
+  readonly displayBacklight = catalog.get(readers.displayBacklight.name);
+  readonly discoverabilitySignals = catalog.get(
+    readers.discoverabilitySignals.name,
+  );
+  readonly devices = catalog.get(readers.devices.name);
 
   readonly location: ActivityLocation;
   // How often a watch checks the stores. App focus records arrive with every

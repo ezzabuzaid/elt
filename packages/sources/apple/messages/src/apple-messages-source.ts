@@ -59,19 +59,21 @@ const pollIntervalMs = 1000;
 export class AppleMessagesSource extends Source<MessagesScan> {
   readonly identity = 'apple-messages';
   protected readonly catalog = catalog;
-  readonly chats = readers.chats.describe();
-  readonly handles = readers.handles.describe();
-  readonly chatLookups = readers.chatLookups.describe();
-  readonly chatServices = readers.chatServices.describe();
-  readonly chatHandles = readers.chatHandles.describe();
-  readonly messages = readers.messages.describe();
-  readonly chatMessages = readers.chatMessages.describe();
-  readonly linkPreviews = readers.linkPreviews.describe();
-  readonly messageEdits = readers.messageEdits.describe();
-  readonly recoverableMessages = readers.recoverableMessages.describe();
-  readonly recoverableMessageParts = readers.recoverableMessageParts.describe();
-  readonly attachments = readers.attachments.describe();
-  readonly messageAttachments = readers.messageAttachments.describe();
+  readonly chats = catalog.get(readers.chats.name);
+  readonly handles = catalog.get(readers.handles.name);
+  readonly chatLookups = catalog.get(readers.chatLookups.name);
+  readonly chatServices = catalog.get(readers.chatServices.name);
+  readonly chatHandles = catalog.get(readers.chatHandles.name);
+  readonly messages = catalog.get(readers.messages.name);
+  readonly chatMessages = catalog.get(readers.chatMessages.name);
+  readonly linkPreviews = catalog.get(readers.linkPreviews.name);
+  readonly messageEdits = catalog.get(readers.messageEdits.name);
+  readonly recoverableMessages = catalog.get(readers.recoverableMessages.name);
+  readonly recoverableMessageParts = catalog.get(
+    readers.recoverableMessageParts.name,
+  );
+  readonly attachments = catalog.get(readers.attachments.name);
+  readonly messageAttachments = catalog.get(readers.messageAttachments.name);
 
   readonly path: string;
   readonly home: string;

@@ -55,11 +55,9 @@ export abstract class AppleWalletStream<P extends Properties> {
   // snapshots, and a pass the user removed is deleted.
   readonly sourceDefinedCursor = true;
   readonly emitsDeletes = true;
-  #stream?: Stream;
-
+  // A new Stream each call: the source asks once, for its catalog.
   describe(): Stream {
-    this.#stream ??= new Stream(this);
-    return this.#stream;
+    return new Stream(this);
   }
 
   read(scan: WalletScan): SchemaRecord<P>[] {

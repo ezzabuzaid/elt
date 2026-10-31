@@ -95,17 +95,19 @@ export class AppleCalendarSource extends Source<CalendarScan> {
   readonly startAt: string;
   readonly endAt: string;
   readonly scope: ImportScope;
-  readonly accounts = readers.accounts.describe();
-  readonly calendars = readers.calendars.describe();
-  readonly events = readers.events.describe();
-  readonly attendees = readers.attendees.describe();
-  readonly alarms = readers.alarms.describe();
-  readonly recurrenceRules = readers.recurrenceRules.describe();
-  readonly recurrenceRuleValues = readers.recurrenceRuleValues.describe();
-  readonly icsComponents = readers.icsComponents.describe();
-  readonly icsProperties = readers.icsProperties.describe();
-  readonly icsParameters = readers.icsParameters.describe();
-  readonly icsAttachments = readers.icsAttachments.describe();
+  readonly accounts = catalog.get(readers.accounts.name);
+  readonly calendars = catalog.get(readers.calendars.name);
+  readonly events = catalog.get(readers.events.name);
+  readonly attendees = catalog.get(readers.attendees.name);
+  readonly alarms = catalog.get(readers.alarms.name);
+  readonly recurrenceRules = catalog.get(readers.recurrenceRules.name);
+  readonly recurrenceRuleValues = catalog.get(
+    readers.recurrenceRuleValues.name,
+  );
+  readonly icsComponents = catalog.get(readers.icsComponents.name);
+  readonly icsProperties = catalog.get(readers.icsProperties.name);
+  readonly icsParameters = catalog.get(readers.icsParameters.name);
+  readonly icsAttachments = catalog.get(readers.icsAttachments.name);
 
   readonly #attachments?: CalendarAttachmentFetcher;
 

@@ -45,10 +45,10 @@ const pollIntervalMs = 1000;
 export class AppleNotificationCenterSource extends Source<NotificationCenterScan> {
   readonly identity = 'apple-notification-center';
   protected readonly catalog = catalog;
-  readonly notifications = readers.notifications.describe();
-  readonly apps = readers.apps.describe();
-  readonly categories = readers.categories.describe();
-  readonly categoryActions = readers.categoryActions.describe();
+  readonly notifications = catalog.get(readers.notifications.name);
+  readonly apps = catalog.get(readers.apps.name);
+  readonly categories = catalog.get(readers.categories.name);
+  readonly categoryActions = catalog.get(readers.categoryActions.name);
 
   readonly path: string;
   readonly scope: ImportScope;

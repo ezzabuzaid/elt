@@ -28,9 +28,9 @@ export abstract class ClockStream<P extends Properties> {
   abstract readonly description: string;
   abstract readonly properties: P;
   abstract readonly primaryKey: readonly string[];
-  #stream?: Stream;
+  // A new Stream each call: the source asks once, for its catalog.
   describe(): Stream {
-    this.#stream ??= new Stream({
+    return new Stream({
       name: this.name,
       jsonSchema: {
         type: 'object',
@@ -43,7 +43,6 @@ export abstract class ClockStream<P extends Properties> {
       sourceDefinedCursor: true,
       emitsDeletes: true,
     });
-    return this.#stream;
   }
   read(snapshot: ClockSnapshot): SchemaRecord<P>[] {
     return validateRecords(

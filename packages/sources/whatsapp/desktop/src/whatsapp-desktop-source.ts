@@ -108,38 +108,44 @@ const pollIntervalMs = 1000;
 export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
   readonly identity = 'whatsapp-desktop';
   protected readonly catalog = catalog;
-  readonly chats = readers.chats.describe();
-  readonly messages = readers.messages.describe();
-  readonly messageReceipts = readers.messageReceipts.describe();
-  readonly messageReactions = readers.messageReactions.describe();
-  readonly messageReactionCounts = readers.messageReactionCounts.describe();
-  readonly messageDataItems = readers.messageDataItems.describe();
-  readonly messageAssociations = readers.messageAssociations.describe();
-  readonly groupMembers = readers.groupMembers.describe();
-  readonly groupMembersChanges = readers.groupMembersChanges.describe();
-  readonly chatPushConfigs = readers.chatPushConfigs.describe();
-  readonly pushNames = readers.pushNames.describe();
-  readonly profilePictures = readers.profilePictures.describe();
-  readonly blockedContacts = readers.blockedContacts.describe();
-  readonly contacts = readers.contacts.describe();
-  readonly users = readers.users.describe();
-  readonly calls = readers.calls.describe();
-  readonly callParticipants = readers.callParticipants.describe();
-  readonly businessProfiles = readers.businessProfiles.describe();
-  readonly businessVerifiedNames = readers.businessVerifiedNames.describe();
-  readonly businessCategories = readers.businessCategories.describe();
-  readonly businessHours = readers.businessHours.describe();
-  readonly businessServiceAreas = readers.businessServiceAreas.describe();
-  readonly businessBotPrompts = readers.businessBotPrompts.describe();
-  readonly statuses = readers.statuses.describe();
-  readonly stickerPacks = readers.stickerPacks.describe();
-  readonly stickers = readers.stickers.describe();
-  readonly favoriteStickers = readers.favoriteStickers.describe();
-  readonly recentStickers = readers.recentStickers.describe();
-  readonly privacySettings = readers.privacySettings.describe();
-  readonly disappearingModes = readers.disappearingModes.describe();
-  readonly linkedProfiles = readers.linkedProfiles.describe();
-  readonly changedNumbers = readers.changedNumbers.describe();
+  readonly chats = catalog.get(readers.chats.name);
+  readonly messages = catalog.get(readers.messages.name);
+  readonly messageReceipts = catalog.get(readers.messageReceipts.name);
+  readonly messageReactions = catalog.get(readers.messageReactions.name);
+  readonly messageReactionCounts = catalog.get(
+    readers.messageReactionCounts.name,
+  );
+  readonly messageDataItems = catalog.get(readers.messageDataItems.name);
+  readonly messageAssociations = catalog.get(readers.messageAssociations.name);
+  readonly groupMembers = catalog.get(readers.groupMembers.name);
+  readonly groupMembersChanges = catalog.get(readers.groupMembersChanges.name);
+  readonly chatPushConfigs = catalog.get(readers.chatPushConfigs.name);
+  readonly pushNames = catalog.get(readers.pushNames.name);
+  readonly profilePictures = catalog.get(readers.profilePictures.name);
+  readonly blockedContacts = catalog.get(readers.blockedContacts.name);
+  readonly contacts = catalog.get(readers.contacts.name);
+  readonly users = catalog.get(readers.users.name);
+  readonly calls = catalog.get(readers.calls.name);
+  readonly callParticipants = catalog.get(readers.callParticipants.name);
+  readonly businessProfiles = catalog.get(readers.businessProfiles.name);
+  readonly businessVerifiedNames = catalog.get(
+    readers.businessVerifiedNames.name,
+  );
+  readonly businessCategories = catalog.get(readers.businessCategories.name);
+  readonly businessHours = catalog.get(readers.businessHours.name);
+  readonly businessServiceAreas = catalog.get(
+    readers.businessServiceAreas.name,
+  );
+  readonly businessBotPrompts = catalog.get(readers.businessBotPrompts.name);
+  readonly statuses = catalog.get(readers.statuses.name);
+  readonly stickerPacks = catalog.get(readers.stickerPacks.name);
+  readonly stickers = catalog.get(readers.stickers.name);
+  readonly favoriteStickers = catalog.get(readers.favoriteStickers.name);
+  readonly recentStickers = catalog.get(readers.recentStickers.name);
+  readonly privacySettings = catalog.get(readers.privacySettings.name);
+  readonly disappearingModes = catalog.get(readers.disappearingModes.name);
+  readonly linkedProfiles = catalog.get(readers.linkedProfiles.name);
+  readonly changedNumbers = catalog.get(readers.changedNumbers.name);
 
   readonly container: string;
   readonly scope: ImportScope;

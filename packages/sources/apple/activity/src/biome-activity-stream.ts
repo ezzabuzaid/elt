@@ -88,15 +88,13 @@ export abstract class BiomeActivityStream<P extends Properties, E> {
   readonly sourceDefinedCursor = true;
   readonly emitsDeletes = true;
   readonly expiresBy = 'recordedAt';
-  #stream?: Stream;
-
   get retentionDays(): number {
     return this.biome.maximumAgeDays;
   }
 
+  // A new Stream each call: the source asks once, for its catalog.
   describe(): Stream {
-    this.#stream ??= new Stream(this);
-    return this.#stream;
+    return new Stream(this);
   }
 
   // Incremental copies read only the segments whose fingerprint changed, and
