@@ -8,7 +8,7 @@ import PQueue from 'p-queue';
 
 export async function webHttp(
   cachePath: string,
-  userAgent: string,
+  userAgent: string | undefined,
   signal: AbortSignal | undefined,
 ) {
   await using resources = new AsyncDisposableStack();

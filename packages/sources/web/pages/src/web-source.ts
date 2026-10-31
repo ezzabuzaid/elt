@@ -108,10 +108,9 @@ export class WebSource extends Source<WebScan> {
   >;
   // Where the HTTP cache lives is the host's decision, like a destination's path.
   readonly #cachePath: string;
-  // The crawler's name, which every request carries and robots.txt groups
-  // name, is the host's too: "WhatIsGoingOn/0.1 (+https://…)" matches the
-  // group "User-agent: WhatIsGoingOn" (RFC 9309 §2.2.1).
-  readonly #userAgent: string;
+  // An optional crawler name selected by the host. Without one, requests
+  // omit User-Agent and the crawler follows the default robots.txt group.
+  readonly #userAgent: string | undefined;
   protected override readonly configErrors = [InputError];
   // Each input's earliest due URL by stream, as its last crawl left it; null when its crawl failed or nothing is ever due.
   readonly #due = new Map<string, Map<string, number | null>>();
@@ -124,11 +123,11 @@ export class WebSource extends Source<WebScan> {
       readonly inputs: readonly string[];
     }[];
     cachePath: string;
-    userAgent: string;
+    userAgent?: string;
   }) {
     super();
     this.#cachePath = z.string().min(1).parse(options.cachePath);
-    this.#userAgent = z.string().min(1).parse(options.userAgent);
+    this.#userAgent = z.string().min(1).optional().parse(options.userAgent);
     const streams = z
       .array(z.object({ stream: z.instanceof(WebStream), inputs: z.unknown() }))
       .min(1)

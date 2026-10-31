@@ -38,6 +38,7 @@ test('every request carries the user agent that the host gives', async () => {
     cache.path,
     database.path,
     checkpoints.path,
+    userAgent,
   );
 
   assert.equal(result, 1);
@@ -45,6 +46,36 @@ test('every request carries the user agent that the host gives', async () => {
     '/robots.txt': userAgent,
     '/feed.xml': userAgent,
     '/report': userAgent,
+  });
+});
+
+test('omitting the user agent sends no header and follows the default robots.txt group', async () => {
+  await using cache = await mkdtempDisposable(join(tmpdir(), 'web-cache-'));
+  const agents = new Map<string, string | undefined>();
+  await using upstream = await new HttpServer().start((request, response) => {
+    assert.ok(request.url);
+    agents.set(request.url, request.headers['user-agent']);
+    site(
+      request.url,
+      response,
+      'User-agent: WhatIsGoingOn\nAllow: /\n\nUser-agent: *\nDisallow: /report\n',
+    );
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+
+  const result = await crawl(
+    upstream.origin,
+    cache.path,
+    database.path,
+    checkpoints.path,
+    undefined,
+  );
+
+  assert.equal(result, 0);
+  assert.deepEqual(Object.fromEntries(agents), {
+    '/robots.txt': undefined,
+    '/feed.xml': undefined,
   });
 });
 
@@ -68,6 +99,7 @@ test('a robots.txt group for the product token disallows the crawl, although the
     cache.path,
     database.path,
     checkpoints.path,
+    userAgent,
   );
 
   assert.equal(result, 0);
@@ -90,6 +122,7 @@ test('a robots.txt group for another crawler only does not stop the crawl', asyn
     cache.path,
     database.path,
     checkpoints.path,
+    userAgent,
   );
 
   assert.equal(result, 1);
@@ -116,6 +149,7 @@ test('Content-Signal search=no in the * group leaves the whole origin out', asyn
     cache.path,
     database.path,
     checkpoints.path,
+    userAgent,
   );
 
   assert.equal(result, 0);
@@ -142,6 +176,7 @@ test('Content-Signal that allows search and refuses AI training does not stop th
     cache.path,
     database.path,
     checkpoints.path,
+    userAgent,
   );
 
   assert.equal(result, 1);
@@ -175,10 +210,11 @@ async function crawl(
   cache: string,
   database: string,
   checkpoints: string,
+  agent: string | undefined,
 ) {
   const source = new WebSource({
     cachePath: join(cache, 'web-http.sqlite'),
-    userAgent,
+    userAgent: agent,
     streams: [
       {
         stream: new WebStream({
