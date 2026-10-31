@@ -46,6 +46,17 @@ export function* unique<T>(
 // so it compares with them as text.
 const toMilliseconds = (instant: string) => `${instant.slice(0, 23)}Z`;
 
+// The run has not read every message group yet.
+class Unscanned {}
+
+// Every message group the run read, packed as id and fingerprint.
+class Scanned {
+  readonly blocks: readonly Buffer[];
+  constructor(blocks: readonly Buffer[]) {
+    this.blocks = blocks;
+  }
+}
+
 // ChatStorage as one run reads it: the import scope's chats select chats,
 // their members and settings, and their messages, which its dates narrow
 // further; what hangs off a message follows the messages kept. Only compact
@@ -57,7 +68,7 @@ export class ChatStorageRecords {
   #chats?: Chat[];
   #messageIds?: ReadonlySet<string>;
   #stanzaIds?: ReadonlySet<string>;
-  #messageGroups?: readonly Buffer[];
+  #messageGroups: Unscanned | Scanned = new Unscanned();
 
   constructor(snapshot: ChatStorageSnapshot, scope: ImportScope) {
     this.#snapshot = snapshot;
@@ -80,8 +91,8 @@ export class ChatStorageRecords {
   }
 
   *messageGroups(): Generator<Pick<MessageInput, 'id' | 'fingerprint'>> {
-    if (this.#messageGroups !== undefined) {
-      for (const block of this.#messageGroups)
+    if (this.#messageGroups instanceof Scanned) {
+      for (const block of this.#messageGroups.blocks)
         for (let offset = 0; offset < block.length; offset += groupBytes)
           yield {
             id: block.readDoubleLE(offset),
@@ -115,7 +126,7 @@ export class ChatStorageRecords {
     if (block !== undefined) blocks.push(block.subarray(0, offset));
     // Publish only after exhaustion: a cancelled read or decode failure must
     // not let the next stream treat a partial scan as the whole history.
-    this.#messageGroups = blocks;
+    this.#messageGroups = new Scanned(blocks);
   }
 
   #messageInputs(): Generator<MessageInput> {
