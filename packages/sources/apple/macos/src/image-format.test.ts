@@ -205,7 +205,8 @@ test('the parser waits for slow OCR warm-up beyond the image deadline and reuses
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
   // Apple's shared compiler cache cannot be reset in a test. Hold the leader
-  // before readiness and advance only the host clock through the cold start.
+  // before readiness and advance only the host clock through the cold start,
+  // stopping just short of the 10-minute warm-up deadline.
   t.mock.timers.enable({ apis: ['setTimeout'] });
   try {
     await using vision = ocr();
@@ -217,21 +218,59 @@ test('the parser waits for slow OCR warm-up beyond the image deadline and reuses
       },
       () => undefined,
     );
+    // ps forks asynchronously and can run before the pool spawns its leader.
+    await inFlight();
     const [leader] = await workerPids();
     process.kill(leader!, 'SIGSTOP');
     try {
       assert.equal(warmed, false, 'the leader must still be warming up');
-      t.mock.timers.tick(120_001);
+      t.mock.timers.tick(599_999);
     } finally {
       process.kill(leader!, 'SIGCONT');
     }
     await ready;
+    // A ready worker keeps no warm-up deadline: ten more minutes kill none.
+    t.mock.timers.tick(600_001);
     const pids = await workerPids();
     assert.equal(pids.length, workers);
     assert.ok(pids.includes(leader!));
     const parser = new MacOSDocumentParser([new ImageFormat(vision)]);
     assert.equal(await parser.parse(path), 'Meet tomorrow');
     assert.deepEqual(await workerPids(), pids);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('a warm-up that does not finish in ten minutes fails the read waiting for it, and the next read starts a new worker', async (t) => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'vision-warm-up-deadline-'),
+  );
+  const path = join(directory.path, 'note.png');
+  await image(path, 'Meet tomorrow');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    await using vision = ocr();
+    // ps forks asynchronously and can run before the pool spawns its leader.
+    await inFlight();
+    const [leader] = await workerPids();
+    process.kill(leader!, 'SIGSTOP');
+    const format = new ImageFormat(vision);
+    const failed = assert.rejects(
+      format.text(path),
+      /Vision worker exited \(SIGTERM\)/,
+    );
+    try {
+      await inFlight();
+      t.mock.timers.tick(600_001);
+    } finally {
+      process.kill(leader!, 'SIGCONT');
+    }
+    await failed;
+    assert.equal(await format.text(path), 'Meet tomorrow');
+    const pids = await workerPids();
+    assert.equal(pids.length, workers);
+    assert.ok(!pids.includes(leader!));
   } finally {
     t.mock.timers.reset();
   }

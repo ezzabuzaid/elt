@@ -23,9 +23,18 @@ export class VisionWorker extends Coprocess implements Worker {
   }
 
   // The helper says it is ready once its models are compiled. The pool asks
-  // once, before it lends the worker.
+  // once, before it lends the worker, and waits without a time limit. A cold
+  // compile took up to about 195 s, and Vision on macOS 27 can hang in its ANE
+  // compile (semaphore_wait in VNCRImageReaderDetector, #3067), so a warm-up
+  // that runs 10 minutes is killed: the read that waits for it fails, and the
+  // next read starts a new worker.
   async ready(): Promise<void> {
-    z.object({ ready: z.literal(true) }).parse(await this.receive());
+    const deadline = setTimeout(() => this.kill(), 600_000);
+    try {
+      z.object({ ready: z.literal(true) }).parse(await this.receive());
+    } finally {
+      clearTimeout(deadline);
+    }
   }
 
   // A pool lends only a ready worker, so the deadline times recognition, not
