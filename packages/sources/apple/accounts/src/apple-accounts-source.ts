@@ -12,7 +12,6 @@ import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   AccountsStore,
   AccountsUnavailableError,
-  accountsStorePath,
 } from '@workspace/sdk-apple-accounts';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -63,7 +62,7 @@ export class AppleAccountsSource extends Source<AccountsScan> {
   readonly path: string;
   readonly #store: AccountsStore;
 
-  constructor({ path = accountsStorePath }: { path?: string } = {}) {
+  constructor({ path }: { path: string }) {
     super();
     this.path = path;
     this.#store = new AccountsStore(path);

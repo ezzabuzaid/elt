@@ -12,7 +12,7 @@ import {
   utimes,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -2727,8 +2727,8 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
   if (process.platform !== 'darwin') return t.skip('Mail requires macOS');
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-live-'));
   const source = new AppleMailSource({
-    path: mailDirectory,
-    accounts: new AccountsStore(accountsStorePath),
+    path: mailDirectory(homedir()),
+    accounts: new AccountsStore(accountsStorePath(homedir())),
   });
   const destination = new SQLiteDestination({
     path: join(dir.path, 'out.sqlite'),
@@ -2763,7 +2763,10 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
 
   // Checked without printing a value: these are the user's own accounts.
   using index = new DatabaseSync(
-    join(await mailVersionDirectory(mailDirectory), 'MailData/Envelope Index'),
+    join(
+      await mailVersionDirectory(mailDirectory(homedir())),
+      'MailData/Envelope Index',
+    ),
     { readOnly: true },
   );
   const hosts = new Set(

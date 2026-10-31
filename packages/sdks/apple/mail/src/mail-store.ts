@@ -2,11 +2,7 @@ import { appDatabase } from './app-database.ts';
 import { EnvelopeIndex } from './envelope-index.ts';
 import { MailUnavailableError } from './errors.ts';
 import { MailFiles } from './mail-files.ts';
-import {
-  envelopeIndexPath,
-  mailDirectory,
-  mailVersionDirectory,
-} from './mail-location.ts';
+import { envelopeIndexPath, mailVersionDirectory } from './mail-location.ts';
 import { MailVersion } from './mail-version.ts';
 
 // One read of Mail's current version folder: its index pinned to one moment,
@@ -33,7 +29,7 @@ export class MailSnapshot implements Disposable {
 export class MailStore {
   readonly root: string;
 
-  constructor(root: string = mailDirectory) {
+  constructor(root: string) {
     this.root = root;
   }
 

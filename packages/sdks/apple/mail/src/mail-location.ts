@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -11,7 +10,9 @@ import {
 import { MailSchemaError, MailUnavailableError } from './errors.ts';
 import { plistObject } from './mail-plists.ts';
 
-export const mailDirectory = join(homedir(), 'Library/Mail');
+// Mail's store in the home folder `home`.
+export const mailDirectory = (home: string): string =>
+  join(home, 'Library/Mail');
 
 // A file that is missing, or that this process may not read, as macOS
 // refuses it without Full Disk Access.

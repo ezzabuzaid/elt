@@ -1,4 +1,3 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
@@ -6,11 +5,9 @@ import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 import { AccountsSnapshot } from './accounts-snapshot.ts';
 import { appDatabase } from './app-database.ts';
 
-// Where macOS keeps this user's Accounts store.
-export const accountsStorePath = join(
-  homedir(),
-  'Library/Accounts/Accounts4.sqlite',
-);
+// Where macOS keeps the Accounts store in the home folder `home`.
+export const accountsStorePath = (home: string): string =>
+  join(home, 'Library/Accounts/Accounts4.sqlite');
 
 // The Accounts framework's Core Data store (Accounts4.sqlite), read without
 // the framework: the store, not an app's scripting, holds every account.

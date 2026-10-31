@@ -5,6 +5,8 @@ An ELT source for Apple Mail. It reads the Mail store under `~/Library/Mail` thr
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md). The decisions are in [docs/adr](./docs/adr).
 
 ```ts
+import { homedir } from 'node:os';
+
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
@@ -19,8 +21,8 @@ import { mailDirectory } from '@workspace/sdk-apple-mail';
 import { AppleMailSource } from '@workspace/source-apple-mail/apple-mail-source';
 
 const source = new AppleMailSource({
-  path: mailDirectory,
-  accounts: new AccountsStore(accountsStorePath),
+  path: mailDirectory(homedir()),
+  accounts: new AccountsStore(accountsStorePath(homedir())),
 });
 const destination = new SQLiteDestination({ path: './outputs/mail.sqlite' });
 

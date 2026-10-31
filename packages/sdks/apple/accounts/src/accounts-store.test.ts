@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempDisposable, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -463,7 +463,7 @@ test('a table in a layout this reader does not know fails only its own reads, an
 
 test('this Mac’s Accounts store reads as one consistent snapshot: accounts, their types and data classes, and access keys', (t) => {
   if (process.platform !== 'darwin') return t.skip('Accounts requires macOS');
-  const store = new AccountsStore(accountsStorePath);
+  const store = new AccountsStore(accountsStorePath(homedir()));
 
   let read;
   try {

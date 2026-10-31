@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -707,7 +707,9 @@ test('this Mac’s Accounts store loads every stream, one row per stored record,
   await using dir = await mkdtempDisposable(
     join(tmpdir(), 'elt-accounts-live-'),
   );
-  const source = new AppleAccountsSource();
+  const source = new AppleAccountsSource({
+    path: accountsStorePath(homedir()),
+  });
   const out = join(dir.path, 'out.sqlite');
 
   try {
@@ -722,7 +724,8 @@ test('this Mac’s Accounts store loads every stream, one row per stored record,
   }
 
   // Counted, never printed: these are the user's own accounts.
-  const stored = (sql: string) => Number(rows(accountsStorePath, sql)[0]?.n);
+  const stored = (sql: string) =>
+    Number(rows(accountsStorePath(homedir()), sql)[0]?.n);
   const loaded = (table: string) =>
     Number(rows(out, `SELECT count(*) AS n FROM ${table}`)[0]?.n);
   assert.equal(
