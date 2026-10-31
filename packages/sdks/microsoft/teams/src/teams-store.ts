@@ -23,8 +23,8 @@ const indexedDB = 'IndexedDB/https_teams.microsoft.com_0.indexeddb.leveldb';
 // mostly <tenant>:<user>, for some managers <tenant>:8:orgid:<user>, and for
 // a few <user>:<tenant>. The conversation manager's names the account.
 const databaseName = /^Teams:([^:]+):react-web-client:(.+):([^:]+)$/;
-const objectId =
-  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+// The tokens of <tenant>:8:orgid:<user> that name no id.
+const orgIdTokens = new Set(['8', 'orgid']);
 // LevelDB compacts its files into new ones and deletes the old while Teams
 // runs; a read that loses that race reads again.
 const attempts = 3;
@@ -127,7 +127,7 @@ function accounts(databases: readonly IndexedDBDatabase[]): Account[] {
         database,
         manager,
         locale,
-        ids: [...ids.matchAll(objectId)].map(String),
+        ids: ids.split(':').filter((id) => !orgIdTokens.has(id)),
       },
     ];
   });
