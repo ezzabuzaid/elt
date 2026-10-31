@@ -74,9 +74,7 @@ async function readOnlyLogin(
 async function keys(
   rows: AsyncIterable<{ readonly position: readonly string[] }>,
 ) {
-  const read: string[][] = [];
-  for await (const row of rows) read.push([...row.position]);
-  return read;
+  return Array.fromAsync(rows, (row) => [...row.position]);
 }
 
 function table(
@@ -96,8 +94,7 @@ async function changes(
   since: ChangePosition,
 ) {
   await using set = await session.changes(of, since);
-  const read: SqlServerChange[] = [];
-  for await (const change of set) read.push(change);
+  const read: SqlServerChange[] = await Array.fromAsync(set);
   return { position: set.position, read };
 }
 
@@ -421,8 +418,7 @@ for (const snapshot of [false, true])
     // Written after the change set took its version but before it reads: a
     // snapshot does not see it; without one it is read now and again later.
     await admin.request().batch('INSERT dbo.lines VALUES (4, 1, 7.00, NULL);');
-    const read: SqlServerChange[] = [];
-    for await (const change of set) read.push(change);
+    const read: SqlServerChange[] = await Array.fromAsync(set);
 
     assert.ok(BigInt(set.position.version) > BigInt(synced.version));
     assert.equal(set.position.generation, synced.generation);
@@ -771,9 +767,10 @@ test('every type reads back exactly, at its limits, as the text or number that k
   ).open();
   const everything = table(await session.tables(), 'dbo.everything');
 
-  const rows: unknown[][] = [];
-  for await (const row of session.page(everything, null, 10))
-    rows.push([...row.values]);
+  const rows: unknown[][] = await Array.fromAsync(
+    session.page(everything, null, 10),
+    (row) => [...row.values],
+  );
 
   const version = everything.columns.findIndex(
     ({ name }) => name === 'version',

@@ -155,12 +155,12 @@ export class GoogleHealthSource extends Source<GoogleHealthScan> {
 
   async #fingerprint(signal: AbortSignal): Promise<string> {
     const marks = [
-      await this.#probe(signal, async () => {
-        const syncs = [];
-        for await (const device of this.#api.pairedDevices({ signal }))
-          syncs.push([device.name, device.lastSyncTime]);
-        return syncs;
-      }),
+      await this.#probe(signal, () =>
+        Array.fromAsync(this.#api.pairedDevices({ signal }), (device) => [
+          device.name,
+          device.lastSyncTime,
+        ]),
+      ),
     ];
     for (const type of PROBED)
       marks.push(

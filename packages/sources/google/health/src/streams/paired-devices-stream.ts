@@ -51,9 +51,9 @@ export class PairedDevicesStream extends AccountStream {
     scan: GoogleHealthScan,
     signal: AbortSignal | undefined,
   ) {
-    const rows = [];
-    for await (const device of scan.api.pairedDevices(signal && { signal }))
-      rows.push({
+    return Array.fromAsync(
+      scan.api.pairedDevices(signal && { signal }),
+      (device) => ({
         name: device.name,
         deviceType: device.deviceType ?? null,
         deviceVersion: device.deviceVersion ?? null,
@@ -62,7 +62,7 @@ export class PairedDevicesStream extends AccountStream {
         lastSyncTime: instant(device.lastSyncTime),
         macAddress: device.macAddress ?? null,
         features: device.features ?? [],
-      });
-    return rows;
+      }),
+    );
   }
 }

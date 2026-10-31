@@ -4098,12 +4098,11 @@ test('each watch pass is recorded under its own connection when it completes', a
     history,
     connections: [connection('notes'), connection('mail')],
   });
-  const passes: string[] = [];
 
-  for await (const { connection } of pipeline.watch({
-    signal: AbortSignal.timeout(10_000),
-  }))
-    passes.push(connection.name);
+  const passes = await Array.fromAsync(
+    pipeline.watch({ signal: AbortSignal.timeout(10_000) }),
+    ({ connection }) => connection.name,
+  );
 
   assert.deepEqual(passes.toSorted(), ['mail', 'mail', 'notes', 'notes']);
   const attempts = await sql`SELECT connector, status FROM marts.sync_attempts`;
