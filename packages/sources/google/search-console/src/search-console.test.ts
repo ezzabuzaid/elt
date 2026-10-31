@@ -964,6 +964,84 @@ test('sitemaps convert int64 text and second-precision times', async () => {
   );
 });
 
+test('a sitemaps list Google failed for one stream is asked for again by the next stream of the read', async () => {
+  // Five 500s use up the policy's five tries for the first stream's call.
+  let failures = 5;
+  using searchConsole = google({
+    reply: () => {
+      if (failures > 0) {
+        failures -= 1;
+        return serverError();
+      }
+      return { sitemap: [sitemapEntry('https://example.com/sitemap.xml')] };
+    },
+    files: { 'https://example.com/sitemap.xml': 'https://example.com/a\n' },
+  });
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, {
+      max: 1,
+      onnotice: () => {},
+      connection: { search_path: RAW },
+    }),
+    (client) => client.end(),
+  );
+  const destination = new PostgresDestination({
+    url: database.connectionString,
+    schema: RAW,
+  });
+  // One stream at a time: the contents stream starts after the sitemaps
+  // stream failed.
+  const source = new SearchConsoleSource({
+    requester: searchConsole.requester,
+    siteUrls: [SITE],
+    streamConcurrency: 1,
+  });
+
+  const error = await new Pipeline({
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(source.sitemaps, destination.table('sitemaps')),
+          new Copy(source.sitemapContents, destination.table('contents')),
+        ],
+      }),
+    ],
+  })
+    .run()
+    .then(
+      () => assert.fail('the sitemaps stream failed'),
+      (error: unknown) => error,
+    );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.results.map(({ copy, failures }) => [
+      copy.from.name,
+      failures.length,
+    ]),
+    [
+      ['sitemaps', 1],
+      ['sitemapContents', 0],
+    ],
+  );
+  assert.deepEqual(
+    (await sql`SELECT "sitemapPath", type FROM contents`).map((row) => ({
+      ...row,
+    })),
+    [{ sitemapPath: 'https://example.com/sitemap.xml', type: 'web' }],
+  );
+  assert.equal(
+    searchConsole.calls.filter(({ path }) => path.endsWith('/sitemaps')).length,
+    6,
+  );
+});
+
 test('inspection covers every sitemap and search URL once, shared by all three streams', async () => {
   using searchConsole = google({
     reply: ({ path }) => {

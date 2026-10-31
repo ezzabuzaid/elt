@@ -1,5 +1,6 @@
 import { Mutex } from '@zukhruf/mutex';
 import { MemoryStore } from '@zukhruf/mutex/memory';
+import pMemoize from 'p-memoize';
 
 import {
   type SearchConsoleApi,
@@ -34,16 +35,14 @@ export type PropertyInspections = {
 
 /**
  * One read's shared work with Google, per property: the streams of the read
- * ask it, and the first to ask makes the call the others reuse, its failure
- * included. A later read asks Google again. Every stream of one read gets the
- * run's one signal, so the call carries the signal of whichever asked first.
+ * ask it, and the first to ask makes the call the others reuse. A call that
+ * failed is not kept: the next stream to ask calls Google again. A later read
+ * asks Google again. Every stream of one read gets the run's one signal, so
+ * the call carries the signal of whichever asked first.
  */
 export class SearchConsoleScan implements AsyncDisposable {
   readonly api: SearchConsoleApi;
   readonly #searchTypes: readonly SearchAnalyticsType[];
-  readonly #sitemaps = new Map<string, Promise<Sitemaps>>();
-  readonly #sitemapReads = new Map<string, Promise<SitemapReads>>();
-  readonly #discovered = new Map<string, Promise<Universe>>();
   readonly #inspections = new Map<string, PropertyInspections>();
   // Inspection streams read at once take turns per property to plan and
   // inspect, so each sees what the one before it inspected and no URL is
@@ -59,43 +58,38 @@ export class SearchConsoleScan implements AsyncDisposable {
   }
 
   // The sitemaps the property lists.
-  sitemaps(
-    siteUrl: string,
-    signal: AbortSignal | undefined,
-  ): Promise<Sitemaps> {
-    return this.#sitemaps.getOrInsertComputed(siteUrl, async () => {
+  readonly sitemaps = pMemoize(
+    async (
+      siteUrl: string,
+      signal: AbortSignal | undefined,
+    ): Promise<Sitemaps> => {
       const { sitemap = [] } = await this.api.sitemaps(siteUrl, { signal });
       return sitemap;
-    });
-  }
+    },
+  );
 
   // Each sitemap the property lists, downloaded: its page URLs, or why it
   // could not be read.
-  sitemapReads(
-    siteUrl: string,
-    signal: AbortSignal | undefined,
-  ): Promise<SitemapReads> {
-    return this.#sitemapReads.getOrInsertComputed(siteUrl, async () =>
+  readonly sitemapReads = pMemoize(
+    async (
+      siteUrl: string,
+      signal: AbortSignal | undefined,
+    ): Promise<SitemapReads> =>
       readSitemaps(
         (await this.sitemaps(siteUrl, signal)).map(({ path }) => path),
         signal,
       ),
-    );
-  }
+  );
 
   /**
    * Every URL the property can be inspected for: each URL its sitemaps list
    * and each page its search analytics history shows, fragments stripped and
    * limited to the property.
    */
-  universe(
-    siteUrl: string,
-    signal: AbortSignal | undefined,
-  ): Promise<Universe> {
-    return this.#discovered.getOrInsertComputed(siteUrl, () =>
+  readonly universe = pMemoize(
+    (siteUrl: string, signal: AbortSignal | undefined): Promise<Universe> =>
       this.#discover(siteUrl, signal),
-    );
-  }
+  );
 
   // Runs work alone among the inspection streams of the property, with what
   // they share so far in this read.
