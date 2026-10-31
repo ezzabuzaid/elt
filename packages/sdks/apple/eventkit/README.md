@@ -2,6 +2,20 @@
 
 Reads Calendar and Reminders through EventKit, for the Calendar and Reminders sources of elt. A Swift helper, `eventkit`, does each read and each watch in its own process. `CalendarStore` and `RemindersStore` start the helper and read its output. The Calendar and Reminders sources are in `packages/sources/apple/calendar` and `packages/sources/apple/reminders`.
 
+## Stores
+
+```ts
+import { CalendarStore, RemindersStore } from '@workspace/sdk-apple-eventkit';
+
+const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const calendar = new CalendarStore(helper, { timeZone });
+const reminders = new RemindersStore(helper, { timeZone });
+```
+
+- `helper` is the path of the compiled `eventkit` helper. The host decides where it is.
+- `timeZone` is an IANA time zone, such as `Asia/Amman`. The helper gives each all-day item the dates of the days in this zone.
+- The store starts the helper with only `TZ` in its environment. The helper reads no other variable.
+
 ## Consistent reads
 
 EventKit has no read transaction. Thus the Calendar and Reminders sources read with an optimistic method. See [read context](../../../elt/README.md#read-context) in elt.

@@ -19,6 +19,7 @@ const source = new AppleCalendarSource({
     fileURLToPath(
       import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
     ),
+    { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
   ),
   startAt: '2026-09-01T00:00:00.000Z',
   endAt: '2026-10-01T00:00:00.000Z',
@@ -97,7 +98,7 @@ Native enums and bitmasks stay integers. Missing optional values stay `null`. A 
 
 EventKit expands recurrence and applies the exceptions of deleted and rescheduled occurrences. The helper queries in windows of 365 days or less, in one process, because EventKit cuts a query that is longer than four years and reports nothing. An occurrence that spans two windows loads one time. The source does not read a range without an end, because a recurring series can have no end.
 
-`startAt`, `endAt` and the other timestamps keep native instants as UTC strings. For all-day events, `startDate` and `endDate` keep the local Gregorian dates in the default time zone of EventKit. `endDate` is **inclusive**: it is the last day of the event. EventKit keeps an all-day event as ending one second before the next local midnight. A live probe on **2026-09-24** (macOS 26.6.2, Asia/Amman) saved a one-day and a two-day all-day event from 25 September. They exported `endAt` `2026-09-25T20:59:59.000Z` with `endDate` `2026-09-25`, and `2026-09-26T20:59:59.000Z` with `endDate` `2026-09-26`. Both events had a null `timeZone`. The probe deleted both events, and a new read showed that they were gone. For a half-open range, add one day to `endDate`. A null `timeZone` stays null, and the source does not replace it with UTC. Timed events have null date-only fields.
+`startAt`, `endAt` and the other timestamps keep native instants as UTC strings. For all-day events, `startDate` and `endDate` keep the local Gregorian dates in the `timeZone` that you give to `CalendarStore`. `endDate` is **inclusive**: it is the last day of the event. EventKit keeps an all-day event as ending one second before the next local midnight. A live probe on **2026-09-24** (macOS 26.6.2, Asia/Amman) saved a one-day and a two-day all-day event from 25 September. They exported `endAt` `2026-09-25T20:59:59.000Z` with `endDate` `2026-09-25`, and `2026-09-26T20:59:59.000Z` with `endDate` `2026-09-26`. Both events had a null `timeZone`. The probe deleted both events, and a new read showed that they were gone. For a half-open range, add one day to `endDate`. A null `timeZone` stays null, and the source does not replace it with UTC. Timed events have null date-only fields.
 
 The event `id` (also given as `eventId`) is the calendar identifier, the local calendar item identifier of the series, and the original occurrence date for repeating and detached events. It uses the native original date, not the rescheduled start. The key of an all-day occurrence uses a calendar date. EventKit gives a moved (detached) occurrence its own item. The external identifier of that item is the iCalendar UID of the series, with `/RID=` and its original start added. The helper keys it by the item of its series: the one item in the same calendar with recurrence rules under that UID. If there is not exactly one such item, it keeps the own item of the occurrence ([ADR 0004](./docs/adr/0004-a-moved-occurrence-is-keyed-by-its-series.md)). A live probe on **2026-10-09** (macOS 27, iCloud) moved the second of three weekly occurrences. It came back as item `04218C49…` with external identifier `C61EA281…/RID=758268000` next to the series item `51A2B869…`. `calendarItems(withExternalIdentifier:)` on the UID without the suffix gave only the series item. Native event identifiers and external identifiers stay separate fields. `externalId` drops the `/RID=` suffix, so all occurrences of a series have the same `externalId`. EventKit identifiers can change after moves or full server syncs. Thus these are local extraction identities, not permanent IDs across devices. A child ID adds the collection kind or component and the position. It identifies a snapshot row, not a native object with a stable identity.
 
@@ -151,6 +152,7 @@ const calendar = new AppleCalendarSource({
     fileURLToPath(
       import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
     ),
+    { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
   ),
   startAt,
   endAt,

@@ -3,15 +3,17 @@ import { addAbortListener } from 'node:events';
 import { createInterface } from 'node:readline';
 
 export class NativeProcess {
-  // Each stdout line of the process as it arrives. A non-zero exit rejects with
-  // the process's stderr, unless the signal stopped it.
+  // Each stdout line of the process as it arrives. env is the whole
+  // environment of the process. A non-zero exit rejects with the process's
+  // stderr, unless the signal stopped it.
   async *lines(
     file: string,
     args: readonly string[],
+    env: Readonly<Record<string, string>>,
     signal = new AbortController().signal,
   ): AsyncGenerator<string> {
     if (signal.aborted) return;
-    const child = spawn(file, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(file, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let failure: Error | undefined;
     child.on('error', (error) => {
       failure = error;

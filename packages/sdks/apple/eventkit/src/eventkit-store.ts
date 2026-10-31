@@ -37,9 +37,14 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
   // The compiled helper (helper/*.swift). Its host decides where it lives:
   // beside this package's dist, or beside a bundled server.
   readonly #helper: string;
+  // The helper's whole environment: TZ, the IANA time zone (such as
+  // Asia/Amman) whose days give an all-day item its dates. The helper reads
+  // nothing else from its environment.
+  readonly #environment: Readonly<Record<string, string>>;
 
-  constructor(helper: string) {
+  constructor(helper: string, { timeZone }: { timeZone: string }) {
     this.#helper = helper;
+    this.#environment = { TZ: timeZone };
   }
 
   // signal stops the helper, and the read rejects with its reason.
@@ -116,6 +121,7 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
       for await (const message of nativeProcess.lines(
         this.#helper,
         ['watch', this.entity],
+        this.#environment,
         signal,
       )) {
         if (message !== 'changed')
@@ -178,6 +184,7 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
             collectionIds: query.calendarIds,
           } satisfies HelperRequest),
         ],
+        this.#environment,
         signal,
       ),
       (line) => inContentOrder(JSON.parse(line)),
