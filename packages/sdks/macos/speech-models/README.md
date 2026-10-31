@@ -3,15 +3,23 @@
 Lists the speech models installed on this Mac, whichever app or tool installed them. Each model gives the configuration of a [local transcription model](../../../transcription-local/README.md).
 
 ```ts
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import { SpeechModels } from '@workspace/sdk-macos-speech-models';
 
-const models = await new SpeechModels().list(); // [{ id, title, configuration }, ...]
+const models = await new SpeechModels({
+  hub: join(homedir(), '.cache/huggingface/hub'),
+  home: homedir(),
+}).list(); // [{ id, title, configuration }, ...]
 ```
 
 ## Where it looks
 
-- The Hugging Face cache (`~/.cache/huggingface/hub`), where `hf`, Handy and other tools download.
-- Each `.gguf` or `.bin` file that Spotlight finds in the home folder. Spotlight does not index `~/.cache`.
+You give the SDK two folders. It does not find them itself.
+
+- `hub`: the Hugging Face cache, usually `~/.cache/huggingface/hub`, where `hf`, Handy and other tools download.
+- `home`: the home folder. The SDK lists each `.gguf` or `.bin` file that Spotlight finds in it. Spotlight does not index `~/.cache`.
 
 ## What counts as a speech model
 

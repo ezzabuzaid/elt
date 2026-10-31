@@ -28,7 +28,7 @@ function chromiumTime(days: number): number {
 
 // A Mac home for a test, in place of the user's: a temporary folder that
 // holds a login keychain of its own and the cookie stores of the browser
-// profiles the test writes; the test points HOME at path. The user's
+// profiles the test writes; the test gives path as the home. The user's
 // browsers and keychain hold real sessions a test must not read, so a test
 // reads these instead, through the same /usr/bin/security and SQLite reads
 // as on the user's Mac.

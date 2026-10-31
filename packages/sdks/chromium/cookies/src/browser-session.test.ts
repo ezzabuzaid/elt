@@ -14,22 +14,8 @@ import { type ScratchCookie, ScratchMac } from './test/scratch-mac.ts';
 
 type Cookie = ScratchCookie;
 
-// The SDK finds browser profiles under HOME: a test points it at its
-// scratch Mac until the test ends.
-function home(path: string): Disposable {
-  const previous = process.env.HOME;
-  process.env.HOME = path;
-  return {
-    [Symbol.dispose]() {
-      if (previous === undefined) delete process.env.HOME;
-      else process.env.HOME = previous;
-    },
-  };
-}
-
 test('a session holds the cookies a browser profile sends to a site, decrypted with its key from the login keychain', async () => {
   await using mac = await ScratchMac.create();
-  using _home = home(mac.path);
   const password = randomUUID();
   mac.safeStorage('Dia Safe Storage', 'Dia', password);
   mac.cookies('Dia/User Data/Default', password, [
@@ -46,6 +32,7 @@ test('a session holds the cookies a browser profile sends to a site, decrypted w
   const session = await BrowserSession.newest(
     'https://www.instagram.com/',
     'sessionid',
+    { home: mac.path },
   );
 
   assert.equal(session.browser, 'Dia');
@@ -58,7 +45,6 @@ test('a session holds the cookies a browser profile sends to a site, decrypted w
 
 test('a cookie whose plaintext is signed for another host is refused, not returned garbled', async () => {
   await using mac = await ScratchMac.create();
-  using _home = home(mac.path);
   const password = randomUUID();
   mac.safeStorage('Dia Safe Storage', 'Dia', password);
   mac.cookies('Dia/User Data/Default', password, [
@@ -72,7 +58,9 @@ test('a cookie whose plaintext is signed for another host is refused, not return
   ]);
 
   await assert.rejects(
-    BrowserSession.newest('https://www.instagram.com/', 'sessionid'),
+    BrowserSession.newest('https://www.instagram.com/', 'sessionid', {
+      home: mac.path,
+    }),
     (error) =>
       error instanceof CookieDecryptionError &&
       /Dia's sessionid cookie for \.instagram\.com could not be decrypted/.test(
@@ -83,7 +71,6 @@ test('a cookie whose plaintext is signed for another host is refused, not return
 
 test('the profile whose sign-in cookie expires last wins, and only the winning browser is asked for its key', async () => {
   await using mac = await ScratchMac.create();
-  using _home = home(mac.path);
   const password = randomUUID();
   mac.safeStorage('Arc Safe Storage', 'Arc', password);
   const session = (value: string, days: number): Cookie => ({
@@ -101,6 +88,7 @@ test('the profile whose sign-in cookie expires last wins, and only the winning b
   const newest = await BrowserSession.newest(
     'https://www.instagram.com/',
     'sessionid',
+    { home: mac.path },
   );
 
   assert.equal(newest.browser, 'Arc');
@@ -110,7 +98,6 @@ test('the profile whose sign-in cookie expires last wins, and only the winning b
 
 test('a cookie set for the exact host wins over the domain’s of the same name, and a cookie without expiry is sent', async () => {
   await using mac = await ScratchMac.create();
-  using _home = home(mac.path);
   const password = randomUUID();
   mac.safeStorage('Dia Safe Storage', 'Dia', password);
   mac.cookies('Dia/User Data/Default', password, [
@@ -122,6 +109,7 @@ test('a cookie set for the exact host wins over the domain’s of the same name,
   const session = await BrowserSession.newest(
     'https://www.instagram.com/',
     'sessionid',
+    { home: mac.path },
   );
 
   assert.deepEqual(Object.fromEntries(session.cookies), {
@@ -132,13 +120,14 @@ test('a cookie set for the exact host wins over the domain’s of the same name,
 
 test('a browser with only an expired session is named when no session is found', async () => {
   await using mac = await ScratchMac.create();
-  using _home = home(mac.path);
   mac.cookies('Arc/User Data/Default', randomUUID(), [
     { host: '.instagram.com', name: 'sessionid', value: 'old', days: -10 },
   ]);
 
   await assert.rejects(
-    BrowserSession.newest('https://www.instagram.com/', 'sessionid'),
+    BrowserSession.newest('https://www.instagram.com/', 'sessionid', {
+      home: mac.path,
+    }),
     (error) =>
       error instanceof BrowserSessionNotFoundError &&
       error.message ===
@@ -148,13 +137,14 @@ test('a browser with only an expired session is named when no session is found',
 
 test('a browser whose Safe Storage item the keychain does not give fails with the item to allow', async () => {
   await using mac = await ScratchMac.create();
-  using _home = home(mac.path);
   mac.cookies('Dia/User Data/Default', randomUUID(), [
     { host: '.instagram.com', name: 'sessionid', value: 's', days: 300 },
   ]);
 
   await assert.rejects(
-    BrowserSession.newest('https://www.instagram.com/', 'sessionid'),
+    BrowserSession.newest('https://www.instagram.com/', 'sessionid', {
+      home: mac.path,
+    }),
     (error) =>
       error instanceof SafeStorageUnavailableError &&
       error.browser === 'Dia' &&
@@ -164,7 +154,6 @@ test('a browser whose Safe Storage item the keychain does not give fails with th
 
 test('a read while the browser commits its cookies waits for the commit instead of failing', async () => {
   await using mac = await ScratchMac.create();
-  using _home = home(mac.path);
   const password = randomUUID();
   mac.safeStorage('Dia Safe Storage', 'Dia', password);
   mac.cookies('Dia/User Data/Default', password, [
@@ -192,6 +181,7 @@ test('a read while the browser commits its cookies waits for the commit instead 
     const session = await BrowserSession.newest(
       'https://www.instagram.com/',
       'sessionid',
+      { home: mac.path },
     );
 
     assert.equal(session.cookies.get('sessionid'), 's');

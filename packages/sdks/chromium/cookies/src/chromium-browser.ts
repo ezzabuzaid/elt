@@ -1,5 +1,4 @@
 import { existsSync, readdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 // A browser profile with a cookie store.
@@ -26,8 +25,9 @@ export class ChromiumBrowser {
   }
 
   // Read when asked, so a profile made after the module loaded is found.
-  profiles(): ChromiumProfile[] {
-    const root = join(homedir(), 'Library/Application Support', this.folder);
+  // home is the user's home folder.
+  profiles(home: string): ChromiumProfile[] {
+    const root = join(home, 'Library/Application Support', this.folder);
     if (!existsSync(root)) return [];
     return readdirSync(root, { withFileTypes: true })
       .filter(

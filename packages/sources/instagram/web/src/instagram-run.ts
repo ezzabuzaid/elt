@@ -78,11 +78,12 @@ export class InstagramRun implements AsyncDisposable {
   }
 
   // Signs in with the session of the browser profile that signed in to
-  // Instagram last.
-  static async open(signal?: AbortSignal): Promise<InstagramRun> {
+  // Instagram last, in the home folder home.
+  static async open(home: string, signal?: AbortSignal): Promise<InstagramRun> {
     const session = await BrowserSession.newest(
       'https://www.instagram.com/',
       'sessionid',
+      { home },
     );
     const web = await InstagramWeb.open(session, signal);
     const staging = await mkdtemp(join(tmpdir(), 'elt-instagram-'));

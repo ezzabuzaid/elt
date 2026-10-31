@@ -26,8 +26,13 @@ export class BrowserSession {
 
   // The session of the profile, in any Chromium browser, whose sign-in
   // cookie for url expires last, so the session the user signed in to most
-  // recently wins over an older one. Only that browser's key is read.
-  static async newest(url: string, cookie: string): Promise<BrowserSession> {
+  // recently wins over an older one. Only that browser's key is read. home
+  // is the user's home folder, which holds the profiles and the keychain.
+  static async newest(
+    url: string,
+    cookie: string,
+    { home }: { home: string },
+  ): Promise<BrowserSession> {
     const target = new URL(url);
     let newest: {
       browser: ChromiumBrowser;
@@ -35,7 +40,7 @@ export class BrowserSession {
       expires: bigint;
     } | null = null;
     for (const browser of chromiumBrowsers)
-      for (const profile of browser.profiles()) {
+      for (const profile of browser.profiles(home)) {
         using store = new CookieStore(profile.cookies);
         const expires = store.expiry(target, cookie);
         if (expires !== null && (newest === null || expires > newest.expires))
@@ -46,10 +51,10 @@ export class BrowserSession {
         target.hostname,
         cookie,
         chromiumBrowsers
-          .filter((browser) => browser.profiles().length > 0)
+          .filter((browser) => browser.profiles(home).length > 0)
           .map(({ name }) => name),
       );
-    const key = await safeStorageKey(newest.browser);
+    const key = await safeStorageKey(newest.browser, home);
     using store = new CookieStore(newest.profile.cookies);
     return new BrowserSession(
       newest.browser.name,

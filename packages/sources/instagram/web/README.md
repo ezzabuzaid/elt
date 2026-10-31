@@ -5,6 +5,8 @@ An ELT source for Instagram profiles. Instagram has no Mac app: Meta keeps its i
 The words in this README have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
 ```ts
+import { homedir } from 'node:os';
+
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
@@ -16,6 +18,7 @@ import { InstagramWebSource } from '@workspace/source-instagram-web/instagram-we
 // With no profileIds, the source reads every account that the browser's
 // Instagram account follows.
 const source = await InstagramWebSource.connect({
+  home: homedir(),
   profileIds: ['44555906095'],
 });
 const destination = new SQLiteDestination({ path: './instagram.sqlite' });
@@ -43,7 +46,7 @@ await new Pipeline({
 }).run();
 ```
 
-The options also accept a date range, `startAt` and `endAt`. The source reads each profile one time, also when `profileIds` names it more than one time.
+`home` is the user's home folder. The source finds the browser profiles and the login keychain in it. The options also accept a date range, `startAt` and `endAt`. The source reads each profile one time, also when `profileIds` names it more than one time.
 
 ## How the source signs in
 

@@ -189,7 +189,12 @@ async function installed(
     t.skip('macOS voices require macOS');
     return undefined;
   }
-  const model = (await new SpeechModels().list()).find(wanted);
+  const model = (
+    await new SpeechModels({
+      hub: join(homedir(), '.cache/huggingface/hub'),
+      home: homedir(),
+    }).list()
+  ).find(wanted);
   if (model === undefined) t.skip(missing);
   return model;
 }
@@ -328,7 +333,12 @@ test('discovery lists the whisper.cpp models Spotlight indexes outside the Huggi
   if (indexed.length === 0)
     return t.skip('Spotlight indexes no whisper.cpp model on this Mac');
 
-  const listed = (await new SpeechModels().list()).map(({ id }) => id);
+  const listed = (
+    await new SpeechModels({
+      hub: join(homedir(), '.cache/huggingface/hub'),
+      home: homedir(),
+    }).list()
+  ).map(({ id }) => id);
 
   for (const id of indexed) assert.ok(listed.includes(id), id);
 });

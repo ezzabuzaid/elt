@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process';
 import { glob } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -21,12 +20,7 @@ export interface SpeechModelFolders {
 export class SpeechModels {
   readonly #folders: SpeechModelFolders;
 
-  constructor(
-    folders: SpeechModelFolders = {
-      hub: join(homedir(), '.cache/huggingface/hub'),
-      home: homedir(),
-    },
-  ) {
+  constructor(folders: SpeechModelFolders) {
     this.#folders = folders;
   }
 

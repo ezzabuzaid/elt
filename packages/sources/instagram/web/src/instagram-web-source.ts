@@ -64,6 +64,9 @@ const readersByName = new Map<string, InstagramReader>(
 const pollIntervalMs = 60 * 60 * 1000;
 
 export type InstagramWebOptions = DateRange & {
+  // The user's home folder, which holds the browser profiles and the login
+  // keychain the source signs in with.
+  readonly home: string;
   // The Instagram user ids of the profiles to read; none reads every account
   // the browser's Instagram account follows.
   readonly profileIds?: readonly string[];
@@ -88,18 +91,20 @@ export class InstagramWebSource extends Source<InstagramRun> {
   readonly highlights = readers.highlights.describe();
   readonly highlightItems = readers.highlightItems.describe();
 
+  readonly #home: string;
   readonly profileIds: readonly string[];
   readonly range: DateRange;
 
   // A source for the profiles the options name; with none, it reads only
   // the accounts the signed-in account follows, as setup lists them.
-  constructor({ profileIds = [], startAt, endAt }: InstagramWebOptions = {}) {
+  constructor({ home, profileIds = [], startAt, endAt }: InstagramWebOptions) {
     super();
     for (const instant of [startAt, endAt])
       if (instant !== undefined && !isTimestamp(instant))
         throw new TypeError(
           `Instagram date range ${instant} is not a timestamp`,
         );
+    this.#home = home;
     // Instagram's following pages can overlap; each profile is one partition.
     this.profileIds = Object.freeze([...new Set(profileIds)]);
     this.range = Object.freeze({
@@ -112,12 +117,12 @@ export class InstagramWebSource extends Source<InstagramRun> {
   // A source for the profiles the options name, or, when they name none,
   // for every account the signed-in account follows now.
   static async connect(
-    options: InstagramWebOptions = {},
+    options: InstagramWebOptions,
     signal?: AbortSignal,
   ): Promise<InstagramWebSource> {
     if (options.profileIds !== undefined && options.profileIds.length > 0)
       return new InstagramWebSource(options);
-    await using run = await InstagramRun.open(signal);
+    await using run = await InstagramRun.open(options.home, signal);
     const followed: string[] = [];
     let next: string | null = null;
     do {
@@ -129,7 +134,7 @@ export class InstagramWebSource extends Source<InstagramRun> {
   }
 
   protected override open(): Promise<InstagramRun> {
-    return InstagramRun.open();
+    return InstagramRun.open(this.#home);
   }
 
   protected override partitions(): readonly Partition[] {
