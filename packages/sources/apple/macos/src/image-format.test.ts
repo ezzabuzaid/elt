@@ -146,6 +146,8 @@ test('the first worker warms up alone and the others start together once it is r
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
   await using vision = ocr();
+  // ps forks asynchronously and can run before the pool spawns its leader.
+  await inFlight();
   const [leader, ...others] = await workerPids();
   assert.deepEqual(others, [], 'only the first worker may start');
   // A stopped leader models slow native compilation without clearing Apple's
@@ -180,6 +182,8 @@ test('cancelling a read while the first worker warms up keeps that warm-up for l
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
   await using vision = ocr();
+  // ps forks asynchronously and can run before the pool spawns its leader.
+  await inFlight();
   const [leader] = await workerPids();
   process.kill(leader!, 'SIGSTOP');
   const format = new ImageFormat(vision);
@@ -312,7 +316,8 @@ test('an image still times out after warm-up and the next read replaces its work
 
 test('disposing OCR during warm-up rejects readiness and stops every worker', async () => {
   await using vision = ocr();
-  while ((await workerPids()).length === 0) await setTimeout(10);
+  // The pool spawns its leader in the promise chain after construction.
+  await inFlight();
   const ready = assert.rejects(
     vision.ready(),
     /Vision worker exited \(SIGTERM\)/,
