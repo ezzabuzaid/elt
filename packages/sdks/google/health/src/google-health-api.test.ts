@@ -104,12 +104,6 @@ function steps(startTime: string, count: string) {
   };
 }
 
-async function collect<T>(points: AsyncIterable<T>): Promise<T[]> {
-  const all: T[] = [];
-  for await (const point of points) all.push(point);
-  return all;
-}
-
 test('paging follows nextPageToken to its end, even past a page shorter than the page size', async () => {
   using health = google((_request, url) => {
     switch (url.searchParams.get('pageToken')) {
@@ -128,7 +122,7 @@ test('paging follows nextPageToken to its end, even past a page shorter than the
     }
   });
 
-  const points = await collect(health.api.dataPoints('steps'));
+  const points = await Array.fromAsync(health.api.dataPoints('steps'));
 
   assert.deepEqual(
     points.map((point) => point.steps?.count),
@@ -139,7 +133,10 @@ test('paging follows nextPageToken to its end, even past a page shorter than the
 test('a data type with no data reads as no points', async () => {
   using health = google(() => ({}));
 
-  assert.deepEqual(await collect(health.api.dataPoints('blood-glucose')), []);
+  assert.deepEqual(
+    await Array.fromAsync(health.api.dataPoints('blood-glucose')),
+    [],
+  );
 });
 
 test('a 503 on a later page is retried and the read continues from that page', async () => {
@@ -159,7 +156,7 @@ test('a 503 on a later page is retried and the read continues from that page', a
     return { dataPoints: [steps('2026-10-13T10:00:00Z', '7')] };
   });
 
-  const points = await collect(health.api.dataPoints('steps'));
+  const points = await Array.fromAsync(health.api.dataPoints('steps'));
 
   assert.deepEqual(
     points.map((point) => point.steps?.count),
@@ -184,7 +181,7 @@ test('a 429 waits for Retry-After and then reads on', async () => {
   );
   const started = Date.now();
 
-  const points = await collect(health.api.dataPoints('steps'));
+  const points = await Array.fromAsync(health.api.dataPoints('steps'));
 
   assert.equal(points.length, 1);
   assert.ok(Date.now() - started >= 2000, 'waited as long as Google asked');
@@ -196,7 +193,7 @@ test('a 429 that outlasts every retry fails as a rate limit naming the call, and
       refusal(429, 'RESOURCE_EXHAUSTED', 'Quota exceeded or rate limited.'),
     );
     await assert.rejects(
-      collect(limited.api.dataPoints('steps')),
+      Array.fromAsync(limited.api.dataPoints('steps')),
       (error: unknown) => {
         assert.ok(error instanceof GoogleHealthRateLimitError);
         assert.match(error.message, /steps/);
@@ -209,7 +206,7 @@ test('a 429 that outlasts every retry fails as a rate limit naming the call, and
     refusal(503, 'UNAVAILABLE', 'The service is currently unavailable.'),
   );
   await assert.rejects(
-    collect(unavailable.api.dataPoints('steps')),
+    Array.fromAsync(unavailable.api.dataPoints('steps')),
     /The service is currently unavailable/,
   );
 });
@@ -224,7 +221,7 @@ test('an account with no Google Health profile is refused with a typed error tha
   );
 
   await assert.rejects(
-    collect(health.api.dataPoints('steps')),
+    Array.fromAsync(health.api.dataPoints('steps')),
     (error: unknown) => {
       assert.ok(error instanceof GoogleHealthAccountNotLinkedError);
       assert.match(error.message, /Google Health app/);
@@ -297,7 +294,7 @@ test('a daily rollup over a long range comes back for every day, though each req
     };
   });
 
-  const rows = await collect(
+  const rows = await Array.fromAsync(
     health.api.dailyRollUp('total-calories', {
       end: '2026-10-15',
       start: '2026-09-01',
