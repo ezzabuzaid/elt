@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtempDisposable, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { MockTranscriptionModelV4 } from 'ai/test';
 
 import { AudioFormat } from './document-formats/audio-format.ts';
@@ -15,9 +15,7 @@ import { MacOSDocumentParser } from './macos-document-parser.ts';
 // text offline. AI SDK's own stand-in replaces that boundary; transcribe and
 // file dispatch run for real.
 test('an injected model transcribes audio, leaves native text parsing intact and receives cancellation', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'audio-format-'),
-  );
+  await using directory = await new TemporaryFiles().directory('audio-format-');
   const audio = join(directory.path, 'message.opus');
   const text = join(directory.path, 'note.txt');
   const unknown = join(directory.path, 'unknown');
@@ -60,9 +58,7 @@ test('an injected model transcribes audio, leaves native text parsing intact and
 });
 
 test('empty transcripts become null and provider failures propagate without automatic retries', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'audio-format-'),
-  );
+  await using directory = await new TemporaryFiles().directory('audio-format-');
   const audio = join(directory.path, 'audio.wav');
   await writeFile(audio, Buffer.from([0, 1]));
   const model = new MockTranscriptionModelV4({
@@ -87,9 +83,7 @@ test('empty transcripts become null and provider failures propagate without auto
 });
 
 test('audio macOS cannot decode or that holds no speech never reaches the model, and Core Audio and AMR files without an extension do', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'audio-format-'),
-  );
+  await using directory = await new TemporaryFiles().directory('audio-format-');
   const webm = join(directory.path, 'clip.webm');
   const midi = join(directory.path, 'tune');
   const spoken = join(directory.path, 'spoken.aiff');

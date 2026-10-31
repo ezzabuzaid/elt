@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtempDisposable, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
@@ -9,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { Fixed, LeaderFirst, Pool } from '@zukhruf/pool';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { ImageFormat } from './document-formats/image-format.ts';
 import { MacOSDocumentParser } from './macos-document-parser.ts';
@@ -76,8 +76,8 @@ async function image(path: string, text: string) {
 }
 
 test('the warmed parser preserves OCR, concurrent responses and image errors, and recovers after its worker exits', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'vision-parser-'),
+  await using directory = await new TemporaryFiles().directory(
+    'vision-parser-',
   );
   const receipt = join(directory.path, 'receipt.thumb');
   const note = join(directory.path, 'note.png');
@@ -140,8 +140,8 @@ test('the warmed parser preserves OCR, concurrent responses and image errors, an
 });
 
 test('the first worker warms up alone and the others start together once it is ready', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'vision-startup-order-'),
+  await using directory = await new TemporaryFiles().directory(
+    'vision-startup-order-',
   );
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
@@ -176,8 +176,8 @@ test('the first worker warms up alone and the others start together once it is r
 });
 
 test('cancelling a read while the first worker warms up keeps that warm-up for later reads', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'vision-startup-cancel-'),
+  await using directory = await new TemporaryFiles().directory(
+    'vision-startup-cancel-',
   );
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
@@ -203,8 +203,8 @@ test('cancelling a read while the first worker warms up keeps that warm-up for l
 });
 
 test('the parser waits for slow OCR warm-up beyond the image deadline and reuses its workers', async (t) => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'vision-cold-start-'),
+  await using directory = await new TemporaryFiles().directory(
+    'vision-cold-start-',
   );
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
@@ -247,8 +247,8 @@ test('the parser waits for slow OCR warm-up beyond the image deadline and reuses
 });
 
 test('a warm-up that does not finish in ten minutes fails the read waiting for it, and the next read starts a new worker', async (t) => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'vision-warm-up-deadline-'),
+  await using directory = await new TemporaryFiles().directory(
+    'vision-warm-up-deadline-',
   );
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
@@ -281,8 +281,8 @@ test('a warm-up that does not finish in ten minutes fails the read waiting for i
 });
 
 test('an image still times out after warm-up and the next read replaces its worker', async (t) => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'vision-timeout-'),
+  await using directory = await new TemporaryFiles().directory(
+    'vision-timeout-',
   );
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
@@ -328,8 +328,8 @@ test('disposing OCR during warm-up rejects readiness and stops every worker', as
 });
 
 test('the ready parser preserves automatically detected multilingual text in all reused workers', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'vision-languages-'),
+  await using directory = await new TemporaryFiles().directory(
+    'vision-languages-',
   );
   await using vision = ocr();
   await vision.ready();
@@ -359,8 +359,8 @@ test('the ready parser preserves automatically detected multilingual text in all
 });
 
 test('the parser keeps processing queued images while its other OCR workers are blocked', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'vision-concurrent-'),
+  await using directory = await new TemporaryFiles().directory(
+    'vision-concurrent-',
   );
   const texts = [
     'Invoice 4821 due Friday',
@@ -413,9 +413,7 @@ test('the parser keeps processing queued images while its other OCR workers are 
 });
 
 test('aborting an active OCR read leaves the other workers running and skips an aborted queued read', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'vision-abort-'),
-  );
+  await using directory = await new TemporaryFiles().directory('vision-abort-');
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
   await using vision = ocr();
@@ -458,9 +456,7 @@ test('aborting an active OCR read leaves the other workers running and skips an 
 });
 
 test('disposing OCR stops all workers and rejects queued reads without starting replacements', async () => {
-  await using directory = await mkdtempDisposable(
-    join(tmpdir(), 'vision-close-'),
-  );
+  await using directory = await new TemporaryFiles().directory('vision-close-');
   const path = join(directory.path, 'note.png');
   await image(path, 'Meet tomorrow');
   await using vision = ocr();
