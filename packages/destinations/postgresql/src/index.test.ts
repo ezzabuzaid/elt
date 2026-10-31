@@ -1,18 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
-import {
-  mkdtempDisposable,
-  readFile,
-  readdir,
-  writeFile,
-} from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
+import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
@@ -271,7 +266,7 @@ test('two loads into one schema commit side by side across their commits, and re
 });
 
 test('Postgres stores per-field attachment references and reconciles only the files its committed rows retain', async () => {
-  const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-local-pg-'));
+  const scratch = await new TemporaryFiles().directory('elt-local-pg-');
   try {
     await using database = await databases.database();
     await using clients = new AsyncDisposableStack();
@@ -421,7 +416,7 @@ test('Postgres stores per-field attachment references and reconciles only the fi
 });
 
 test('renamed file columns keep their original bytes and stored files through later commits', async () => {
-  const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-renamed-pg-'));
+  const scratch = await new TemporaryFiles().directory('elt-renamed-pg-');
   try {
     await using database = await databases.database();
     await using clients = new AsyncDisposableStack();
@@ -732,8 +727,8 @@ test('file text and bounded original bytes survive replay, replacement and delet
     postgres(database.connectionString, { max: 2, onnotice: () => {} }),
     (sql) => sql.end(),
   );
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-postgres-files-'),
+  await using scratch = await new TemporaryFiles().directory(
+    'elt-postgres-files-',
   );
   const file = join(scratch.path, 'note.txt');
   const empty = join(scratch.path, 'empty.txt');
@@ -1716,9 +1711,7 @@ test('a file column the target drops takes its stored chunks with it, whether it
     { syncMode: 'incremental', destinationSyncMode: 'append_dedup' },
     { syncMode: 'full_refresh', destinationSyncMode: 'overwrite' },
   ] as const) {
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'elt-files-pg-'),
-    );
+    await using scratch = await new TemporaryFiles().directory('elt-files-pg-');
     await using database = await databases.database();
     await using clients = new AsyncDisposableStack();
     const sql = clients.adopt(
@@ -4271,7 +4264,7 @@ async function readerNotes(url: string, files: LocalFiles) {
 }
 
 test('a reader view shows exactly the loaded columns and their descriptions, follows changes without being recreated, and never locks readers out', async () => {
-  const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reader-pg-'));
+  const scratch = await new TemporaryFiles().directory('elt-reader-pg-');
   try {
     await using database = await databases.database();
     await using clients = new AsyncDisposableStack();
@@ -4365,7 +4358,7 @@ test('a reader view shows exactly the loaded columns and their descriptions, fol
 });
 
 test('a run publishes the catalog in marts, which lists each reader view and its columns under their descriptions', async () => {
-  const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-catalog-pg-'));
+  const scratch = await new TemporaryFiles().directory('elt-catalog-pg-');
   try {
     await using database = await databases.database();
     await using clients = new AsyncDisposableStack();
@@ -4439,7 +4432,7 @@ test('a reader view needs every column described and refuses a view it did not c
     (sql) => sql.end(),
   );
   await sql`CREATE SCHEMA marts`;
-  const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reader-pg-'));
+  const scratch = await new TemporaryFiles().directory('elt-reader-pg-');
   try {
     const files = new LocalFiles({ directory: scratch.path });
     const undescribed = new Stream({
