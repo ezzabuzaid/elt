@@ -1336,6 +1336,67 @@ test('Activity loads an app intent Biome stored without a verb, such as Clock’
   );
 });
 
+test('Activity loads a Bluetooth event whose product ID Biome stored as -1, as it does for a device with no name, with productId -1', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  const location = await activityFixture(scratch.path);
+  // Laid out as this Mac's Biome stored one event on 2026-10-30 (address
+  // replaced): an empty name, the vendor 0xFFFFFFFF, and the product -1 as a
+  // signed varint (ten bytes, 2^64 - 1 unsigned), which protobuf() cannot
+  // write.
+  await writeSegment(
+    scratch.path,
+    'Device.Wireless.Bluetooth',
+    'local',
+    '810000000000000',
+    [
+      {
+        at: daysAgo(1),
+        payload: Uint8Array.from([
+          ...protobuf([
+            [1, 'string', '11:22:33:44:55:66'],
+            [2, 'string', ''],
+          ]),
+          ...[3 << 3, ...Array.from({ length: 9 }, () => 0xff), 0x01],
+          ...protobuf([
+            [4, 'varint', 0],
+            [5, 'varint', 1],
+            [6, 'varint', 0],
+            [7, 'varint', 0],
+            [8, 'varint', 0],
+            [9, 'varint', 0],
+            [10, 'varint', 1],
+            [11, 'varint', 4294967295],
+          ]),
+        ]),
+      },
+    ],
+  );
+  const activity = await appleImport(
+    new AppleActivitySource(location),
+    join(scratch.path, 'import'),
+  );
+
+  await activity.load();
+
+  assert.deepEqual(
+    activity.read(
+      'SELECT "address", "deviceName", "connected", "vendorId", "productId", "deviceType", "appleAudioDevice", "userWearing" FROM bluetooth_connections',
+    ),
+    [
+      {
+        address: '11:22:33:44:55:66',
+        deviceName: null,
+        connected: 0,
+        vendorId: 4294967295,
+        productId: -1,
+        deviceType: 1,
+        appleAudioDevice: 0,
+        userWearing: 1,
+      },
+    ],
+  );
+});
+
 test('an Activity watch wakes only the streams whose segments or database changed', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
   const location = await activityFixture(scratch.path);

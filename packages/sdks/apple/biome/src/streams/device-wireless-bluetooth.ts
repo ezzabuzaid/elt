@@ -29,7 +29,9 @@ export class DeviceWirelessBluetooth extends BiomeStream<DeviceWirelessBluetooth
       deviceName: optionalText(message.string(2)),
       connected: flag(message.uint(4)),
       vendorId: message.uint(11),
-      productId: message.uint(3),
+      // Signed: Biome stores -1 for a device it knows no product of, as the
+      // ten-byte varint of a negative int32.
+      productId: message.int(3),
       deviceType: message.uint(5),
       appleAudioDevice: flag(message.uint(9)),
       userWearing: flag(message.uint(10)),
