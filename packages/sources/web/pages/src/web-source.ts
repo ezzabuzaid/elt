@@ -18,6 +18,8 @@ import {
 import { AlwaysRevisit, WebCrawler } from '@workspace/sdk-web-crawler';
 
 import { webHttp } from './http/web-http.ts';
+import { routeRecords, routesState, routesStream } from './routes-stream.ts';
+import { WebScan, outbox } from './web-scan.ts';
 import { WebStream } from './web-stream.ts';
 
 const provenance = {
@@ -51,7 +53,21 @@ const saved = z.object({
   diff: z.unknown(),
   // The crawler's memento: its unfinished crawl and every URL it visited, failed pages too.
   crawl: z.unknown(),
+  outbox,
 });
+
+// A partitioned stream's saved state, as elt's PartitionState gives each
+// partition's state; null before the stream committed any partition.
+const partitionStates = z
+  .object({
+    partitions: z.array(
+      z.object({
+        partition: z.object({ inputUrl: z.string() }),
+        state: routesState,
+      }),
+    ),
+  })
+  .nullable();
 
 // A page that the stream's extractor could not read: recorded and failed back to the crawler, while the other pages continue.
 class PageFailure extends Error {
@@ -66,16 +82,27 @@ function pageFailure(error: unknown): never {
   throw Error.isError(error) ? new PageFailure(error) : error;
 }
 
+// A web stream's routes stream is named from it, as Airbyte names a child
+// stream from its parent, such as source-github's teams and team_members.
+function routesName(stream: WebStream) {
+  return `${stream.name}_routes`;
+}
+
 const inputUrls = z.array(z.url({ protocol: /^https?$/ })).min(1);
 
 /** A web stream without a usable input: none, or a URL that is not http or https. The user chooses the inputs, so only the user can fix it. */
 export class InputError extends Error {}
 
-export class WebSource extends Source {
+export class WebSource extends Source<WebScan> {
   readonly identity = 'web-pages';
   protected readonly catalog: Catalog;
   // Each stream's web stream and the inputs that it crawls, by stream name.
   readonly #streams: ReadonlyMap<
+    string,
+    { readonly stream: WebStream; readonly inputs: readonly string[] }
+  >;
+  // Each routes stream's web stream and its inputs, by the routes stream's name.
+  readonly #routes: ReadonlyMap<
     string,
     { readonly stream: WebStream; readonly inputs: readonly string[] }
   >;
@@ -115,8 +142,8 @@ export class WebSource extends Source {
           );
         return { stream, inputs: parsed.data };
       });
-    this.catalog = new Catalog(
-      streams.map(({ stream }) => {
+    this.catalog = new Catalog([
+      ...streams.map(({ stream }) => {
         const properties = { ...provenance, ...stream.extractor.properties };
         return new Stream({
           name: stream.name,
@@ -133,13 +160,17 @@ export class WebSource extends Source {
           sourceDefinedCursor: true,
         });
       }),
-    );
+      ...streams.map(({ stream }) => routesStream(routesName(stream))),
+    ]);
     this.#streams = new Map(streams.map((entry) => [entry.stream.name, entry]));
+    this.#routes = new Map(
+      streams.map((entry) => [routesName(entry.stream), entry]),
+    );
   }
   #entry({ name }: Stream) {
-    const entry = this.#streams.get(name);
+    const entry = this.#streams.get(name) ?? this.#routes.get(name);
     if (entry === undefined)
-      throw new TypeError(`Stream ${name} is not a web stream of this source`);
+      throw new TypeError(`Stream ${name} is not a stream of this source`);
     return entry;
   }
   coverage(stream: Stream) {
@@ -148,8 +179,9 @@ export class WebSource extends Source {
       inputs,
     } = this.#entry(stream);
     return {
-      description:
-        'Records extracted from the pages crawled from chosen websites and feeds that match the configured URL patterns; listing disappearance does not imply deletion.',
+      description: this.#routes.has(stream.name)
+        ? 'Each URL in the scope of the crawls of chosen websites and feeds that a listing named, as the listings read; a listing that is read again completely replaces its rows.'
+        : 'Records extracted from the pages crawled from chosen websites and feeds that match the configured URL patterns; listing disappearance does not imply deletion.',
       selection: {
         inputs,
         ...(include === undefined
@@ -172,8 +204,48 @@ export class WebSource extends Source {
   async currentAsOf() {
     return null;
   }
-  protected async open() {
-    return new AsyncDisposableStack();
+  // Each routes stream's state says which groups of routes it committed, so
+  // the web stream's crawl leaves them out of its outbox and numbers new
+  // ones after them.
+  protected async open(
+    streams: readonly Stream[],
+    _signal: AbortSignal | undefined,
+    states: { get(stream: string): unknown },
+  ) {
+    const routed: string[] = [];
+    const undelivered = new Map<string, number>();
+    for (const { name } of streams) {
+      const entry = this.#routes.get(name);
+      if (entry === undefined) continue;
+      routed.push(entry.stream.name);
+      // Source.read reads a state that is not there as null too.
+      const saved = partitionStates.parse((await states.get(name)) ?? null);
+      if (saved !== null)
+        for (const { partition, state } of saved.partitions)
+          undelivered.set(
+            `${entry.stream.name}\0${partition.inputUrl}`,
+            state.undelivered,
+          );
+    }
+    return new WebScan(routed, undelivered);
+  }
+  // A routes stream takes what the crawls of its web stream found in the
+  // same read, and a read reads its streams in the order given, so every web
+  // stream reads before every routes stream.
+  override read(
+    catalog: readonly CopyConfiguration[],
+    states: { get(stream: string): unknown },
+    signal?: AbortSignal,
+  ) {
+    return super.read(
+      catalog.toSorted(
+        (left, right) =>
+          Number(this.#routes.has(left.stream.name)) -
+          Number(this.#routes.has(right.stream.name)),
+      ),
+      states,
+      signal,
+    );
   }
   protected override partitions(stream: Stream) {
     return this.#entry(stream).inputs.map((inputUrl) => ({ inputUrl }));
@@ -187,8 +259,9 @@ export class WebSource extends Source {
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     yield streams;
+    // A routes stream is due with its web stream.
     const dueAt = (stream: Stream) => {
-      const due = this.#due.get(stream.name);
+      const due = this.#due.get(this.#entry(stream).stream.name);
       return due === undefined || due.size < this.#entry(stream).inputs.length
         ? Infinity
         : Math.min(...[...due.values()].map((at) => at ?? Infinity));
@@ -212,7 +285,8 @@ export class WebSource extends Source {
         signal.throwIfAborted();
         continue;
       }
-      for (const stream of due) this.#due.delete(stream.name);
+      for (const stream of due)
+        this.#due.delete(this.#entry(stream).stream.name);
       yield due;
     }
   }
@@ -220,16 +294,39 @@ export class WebSource extends Source {
     configuration: CopyConfiguration,
     state: unknown,
     partition: Partition | null,
-    _context: AsyncDisposable,
+    scan: WebScan,
     signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const inputUrl = z.string().parse(partition?.inputUrl);
     const { stream } = this.#entry(configuration.stream);
+    if (this.#routes.has(configuration.stream.name)) {
+      // The routes of a crawl that did not run in this read stay as they are.
+      const groups = scan.take(stream.name, inputUrl);
+      if (groups !== undefined)
+        yield* routeRecords(configuration, state, inputUrl, groups, signal);
+      return;
+    }
     let due: number | null = null;
     try {
       const previous =
-        state === null ? { diff: null, crawl: null } : saved.parse(state);
+        state === null
+          ? { diff: null, crawl: null, outbox: [] }
+          : saved.parse(state);
       let diff: unknown = previous.diff;
+      // A read without the routes stream keeps the outbox as it is, and adds
+      // nothing. A read with it leaves out the groups that the routes stream
+      // committed, and numbers new groups after every group it knows, so a
+      // web stream that starts over never reuses a committed number.
+      const routed = scan.routed(stream.name);
+      const undelivered = scan.undelivered(stream.name, inputUrl);
+      const routes = routed
+        ? previous.outbox.filter(({ seq }) => seq >= undelivered)
+        : previous.outbox;
+      let next = routes.reduce(
+        (after, { seq }) => Math.max(after, seq + 1),
+        undelivered,
+      );
+      if (routed) scan.offer(stream.name, inputUrl, routes);
       await using client = await webHttp(
         this.#cachePath,
         this.#userAgent,
@@ -267,13 +364,16 @@ export class WebSource extends Source {
       let savedAt = performance.now();
       const checkpoint = () => {
         savedAt = performance.now();
-        return { diff, crawl: crawl.snapshot() };
+        return { diff, crawl: crawl.snapshot(), outbox: routes };
       };
       for await (const entry of crawl) {
         if ('deferred' in entry) {
           kept.push({ key: entry.deferred.url, kept: true });
           continue;
         }
+        if ('routes' in entry && routed)
+          for (const group of entry.routes)
+            routes.push({ seq: next++, ...group });
         if ('progress' in entry) {
           // Listings and archives hand out no pages, so their progress is saved on an interval.
           if (performance.now() - savedAt >= 1_000)
@@ -372,7 +472,11 @@ export class WebSource extends Source {
           if ('type' in message && message.type === 'STATE')
             yield {
               ...message,
-              state: { diff: message.state, crawl: crawl.snapshot() },
+              state: {
+                diff: message.state,
+                crawl: crawl.snapshot(),
+                outbox: routes,
+              },
             };
           else yield message;
       due = crawl.nextDue();

@@ -61,7 +61,7 @@ test('a failing page of the pagination is handed out as a failure, and the pages
 
     assert.deepEqual(
       entries.flatMap((entry) =>
-        'error' in entry ? [{ url: entry.url, page: entry.page }] : [],
+        'error' in entry ? [{ url: entry.url, page: entry.error.page }] : [],
       ),
       [{ url: `${upstream.origin}/category?page=2`, page: false }],
       String(status),

@@ -26,6 +26,8 @@ export class StartReader extends Reader<null, null> {
     return [
       {
         url: request.url,
+        // The starting URL is the response itself, not a URL that it names.
+        naming: null,
         lastModified: null,
         published: null,
         page: true,

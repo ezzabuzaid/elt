@@ -68,6 +68,18 @@ _Avoid_: Scope, filter, allowlist
 A URL that a response names for a stated job: a feed or a sitemap that a page names in a `<link>` element or an HTTP `Link` header, or a page that a list or a sitemap lists. Each reader has its own rule for the origins of declared URLs.
 _Avoid_: Discovered URL, link
 
+**Route**:
+The fact "listing L named URL U". The listing is a response that a reader read, by its final URL. U is a URL in the crawl's scope that the read found, whether the crawl knows U or not. Each read gives all its routes ([ADR 0004](./docs/adr/0004-every-route-is-kept.md)).
+_Avoid_: Link (a link is one kind of route), edge, provenance (`listingUrl` is the first route only), parent
+
+**How**:
+The way that a listing named the URL of a route, such as `list-item`, `link`, `robots-sitemap`, `sitemap-entry`, `feed-item` or `redirect`. The reader that found the URL gives it. `routeHows` lists every value, from the most specific.
+_Avoid_: Kind, type, rel
+
+**Route text**:
+The text that a listing named the URL of a route with: the anchor text of a link or a list item, or the title of a feed item. It is null for a document, a sitemap entry and a link without text.
+_Avoid_: Label, title alone, anchor
+
 **`ListingReader`**:
 The reader of `robots.txt`, sitemaps and feeds. It finds the feeds and sitemaps that a page declares, also on other origins, and reads each one completely. It reads `robots.txt` and guesses `/sitemap.xml` only for a starting URL and a one-step page.
 _Avoid_: Sitemap reader, feed reader

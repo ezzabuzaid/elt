@@ -19,8 +19,16 @@ export const paginationLinks = [
   'next-archive',
 ].map((rel) => ({ rel }));
 
-/** A listing, and for a feed the time its items cover, which it rolls off later. */
-type Listing = SitemapListing & { readonly span: number | null };
+/**
+ * A listing: its pages, the sitemaps that a sitemap index lists, the other
+ * pages of a feed, whether it is a feed, and for a feed the time its items
+ * cover, which it rolls off later.
+ */
+type Listing = SitemapListing & {
+  readonly pagination: readonly string[];
+  readonly feed: boolean;
+  readonly span: number | null;
+};
 
 export function readListing(text: string): Listing {
   if (detectJsonFeed(text)) {
@@ -34,10 +42,13 @@ export function readListing(text: string): Listing {
                 url: item.url,
                 lastModified: item.date_modified ?? null,
                 published: item.date_published ?? null,
+                title: item.title ?? null,
               },
             ],
       ),
-      sitemaps: feed.next_url === undefined ? [] : [feed.next_url],
+      sitemaps: [],
+      pagination: feed.next_url === undefined ? [] : [feed.next_url],
+      feed: true,
       span: span(
         (feed.items ?? []).map(
           (item) => item.date_published ?? item.date_modified,
@@ -54,9 +65,18 @@ export function readListing(text: string): Listing {
       pages: (feed.items ?? []).flatMap((item) =>
         item.link === undefined
           ? []
-          : [{ url: item.link, lastModified: null, published: null }],
+          : [
+              {
+                url: item.link,
+                lastModified: null,
+                published: null,
+                title: item.title ?? null,
+              },
+            ],
       ),
       sitemaps: [],
+      pagination: [],
+      feed: true,
       span: null,
     };
   }
@@ -67,16 +87,14 @@ export function readListing(text: string): Listing {
   const links = atom?.links ?? rss?.atom?.links;
   return {
     ...listing,
-    sitemaps: [
-      ...listing.sitemaps,
-      ...(links ?? []).flatMap((link) =>
-        link.href !== undefined &&
-        link.rel !== undefined &&
-        paginationLinks.some(({ rel }) => rel === link.rel)
-          ? [link.href]
-          : [],
-      ),
-    ],
+    pagination: (links ?? []).flatMap((link) =>
+      link.href !== undefined &&
+      link.rel !== undefined &&
+      paginationLinks.some(({ rel }) => rel === link.rel)
+        ? [link.href]
+        : [],
+    ),
+    feed: atom !== undefined || rss !== undefined,
     span: span(
       atom
         ? (atom.entries ?? []).map((entry) => entry.published ?? entry.updated)

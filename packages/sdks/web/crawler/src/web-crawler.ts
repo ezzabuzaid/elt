@@ -14,11 +14,14 @@ import { z } from 'zod';
 import { AdaptiveRevisit } from './adaptive-revisit.ts';
 import {
   type Finding,
+  type Naming,
   type PageLocation,
   type Priority,
   type Reader,
+  type Route,
   isHtml,
   priorities,
+  routeHows,
 } from './reader.ts';
 import {
   type Change,
@@ -31,27 +34,44 @@ import { webUrl } from './web-url.ts';
 export class CrawlError extends Error {
   override readonly name = 'CrawlError';
   readonly url: string;
+  /** The URL is a page the crawl would have handed back, not a starting URL or a document such as a sitemap. */
+  readonly page: boolean;
 
-  constructor(url: string, cause: unknown) {
+  constructor(url: string, cause: unknown, page: boolean) {
     super(
       `Crawl could not read ${url}: ${Error.isError(cause) ? cause.message : String(cause)}`,
       { cause },
     );
     this.url = url;
+    this.page = page;
   }
 }
+
+/**
+ * What one read named: the URL that a response came from and each URL in the
+ * crawl's scope that the response names, whether the crawl already knows it
+ * or not. A request that was redirected names the URL it was redirected to.
+ */
+export type ListingRoutes = {
+  readonly listingUrl: string;
+  /** Every reader read the response, so the routes are all that it names. A reader that threw or skipped the response leaves it incomplete. */
+  readonly complete: boolean;
+  readonly routes: readonly Route[];
+};
 
 export type CrawledPage = PageLocation & {
   readonly response: Response;
   readonly change: Change;
+  /** What this read of the page named. */
+  readonly routes: readonly ListingRoutes[];
 };
-export type CrawlFailure = PageLocation & {
-  readonly error: CrawlError;
-  /** The URL is a page the crawl would have handed back, not a starting URL or a document. */
-  readonly page: boolean;
-};
+export type CrawlFailure = PageLocation & { readonly error: CrawlError };
 /** A URL the crawl downloaded for its readers without handing it back: a moment to take a snapshot. */
-export type CrawlProgress = { readonly progress: string };
+export type CrawlProgress = {
+  readonly progress: string;
+  /** What this read of the URL named; none when no reader read it. */
+  readonly routes: readonly ListingRoutes[];
+};
 /** A known page the crawl did not request, whose last download succeeded: it still exists, unchanged as far as the crawl knows. */
 export type CrawlDeferral = { readonly deferred: PageLocation };
 
@@ -459,7 +479,7 @@ class CrawlRun implements Crawl {
           cause instanceof RequestError ? cause.response : undefined;
         this.#visited(entry, 'failed', null, null, before);
         yield this.#tolerates(entry, errorResponse?.statusCode)
-          ? { progress: entry.url }
+          ? { progress: entry.url, routes: [] }
           : this.#failure(entry, page, errorResponse?.url ?? entry.url, cause);
         continue;
       }
@@ -535,11 +555,15 @@ class CrawlRun implements Crawl {
       };
       // A starting URL is read as a list too, as the readers of lists do.
       const list = (entry.list || entry.start) && isHtml(type);
+      // Each URL in scope that the response names, found or not, as Heritrix
+      // records every outlink of a URI and Nutch inverts them into inlinks.
+      const named = new Map<string, Naming>();
+      let complete = true;
       // Readers are independent: one that cannot read the response is reported
       // for it, and the others still read it. The page itself did not fail.
       for (const [index, reader] of this.#readers.entries()) {
         try {
-          for (const finding of await reader.read(
+          const findings = await reader.read(
             {
               response,
               headers,
@@ -550,17 +574,49 @@ class CrawlRun implements Crawl {
               revisitWithin,
             },
             this.#states[index],
-          ))
-            if (this.#keeps(finding, entry))
-              this.#enqueue(
-                this.#entry(finding, entry, response.url, index, list),
+          );
+          if (findings === null) {
+            complete = false;
+            continue;
+          }
+          for (const finding of findings) {
+            if (!this.#keeps(finding, entry)) continue;
+            const next = this.#entry(finding, entry, response.url, index, list);
+            if (finding.naming !== null && this.#scopes(next))
+              named.set(
+                next.url,
+                strongest(named.get(next.url), finding.naming),
               );
+            this.#enqueue(next);
+          }
         } catch (cause) {
           signal.throwIfAborted();
+          complete = false;
           yield this.#failure(entry, false, response.url, cause);
         }
       }
       signal.throwIfAborted();
+      const listingUrl = webUrl(response.url, response.url);
+      const routes: ListingRoutes[] = [
+        // The URL that was requested names the URL it was redirected to, so a
+        // walk from the requested URL reaches what the response named.
+        ...(listingUrl === entry.url
+          ? []
+          : [
+              {
+                listingUrl: entry.url,
+                complete: true,
+                routes: [
+                  { url: listingUrl, how: 'redirect' as const, text: null },
+                ],
+              },
+            ]),
+        {
+          listingUrl,
+          complete,
+          routes: [...named].map(([url, naming]) => ({ url, ...naming })),
+        },
+      ];
       // A URL downloaded again for a role it adds is a page already handed back.
       if (included && !failed && !this.#handed.has(entry.url)) {
         this.#hand = entry.url;
@@ -571,8 +627,9 @@ class CrawlRun implements Crawl {
           published: entry.published,
           response,
           change,
+          routes,
         };
-      } else yield { progress: entry.url };
+      } else yield { progress: entry.url, routes };
     }
     // Entries of a blocked origin remain: the crawl is unfinished.
     if (this.#held.size > 0) return;
@@ -857,6 +914,21 @@ class CrawlRun implements Crawl {
     );
   }
 
+  // Whether a URL that a response names is one the crawl keeps, as it decides
+  // before a download: a document, a page that include selects, a URL that a
+  // crawl already downloaded, or a page that a reader would admit now. A
+  // list's link to a website that include does not select, such as a list's
+  // license on GitHub, is out of scope.
+  #scopes(next: Entry) {
+    return (
+      next.document ||
+      (next.page && this.#includes(next.url)) ||
+      this.#urls.has(next.url) ||
+      this.#visit?.after.entry.url === next.url ||
+      this.#wouldAdmit(next)
+    );
+  }
+
   #tolerates(entry: Entry, status: number | undefined) {
     return (
       entry.tolerate === 'any' ||
@@ -875,8 +947,7 @@ class CrawlRun implements Crawl {
       listingUrl: entry.listingUrl,
       lastModified: entry.lastModified,
       published: entry.published,
-      error: new CrawlError(url, cause),
-      page,
+      error: new CrawlError(url, cause, page),
     };
   }
 
@@ -1073,6 +1144,17 @@ function blockedUntil(retryAfter: string | null) {
   if (/^\d+$/.test(value)) return Date.now() + Number(value) * 1000;
   const date = Date.parse(value);
   return Number.isNaN(date) ? Date.now() + hour : date;
+}
+
+// The naming of a URL that one response names in two ways: the more specific
+// way, with the first text that either gives.
+function strongest(before: Naming | undefined, next: Naming): Naming {
+  if (before === undefined) return next;
+  const [first, second] =
+    routeHows.indexOf(next.how) < routeHows.indexOf(before.how)
+      ? [next, before]
+      : [before, next];
+  return { how: first.how, text: first.text ?? second.text };
 }
 
 // Folds a finding into an entry for the same URL: roles only grow.

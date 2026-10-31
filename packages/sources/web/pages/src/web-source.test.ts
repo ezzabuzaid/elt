@@ -1417,7 +1417,8 @@ test('a failed full refresh tries later articles and preserves the last complete
         name: 'web',
         source,
         destination,
-        steps: (await source.discover()).streams.map(
+        // A full refresh: the routes stream reads only incrementally.
+        steps: [(await source.discover()).get('articles')].map(
           (stream) => new Copy(stream, destination.table(stream.name)),
         ),
       }),
@@ -2176,7 +2177,9 @@ test("the sync history names each web stream's own inputs as its coverage", asyn
       })),
     [
       { stream: 'blog', inputs: [`${upstream.origin}/blog/feed.xml`] },
+      { stream: 'blog_routes', inputs: [`${upstream.origin}/blog/feed.xml`] },
       { stream: 'news', inputs: [`${upstream.origin}/news/feed.xml`] },
+      { stream: 'news_routes', inputs: [`${upstream.origin}/news/feed.xml`] },
     ],
   );
 });

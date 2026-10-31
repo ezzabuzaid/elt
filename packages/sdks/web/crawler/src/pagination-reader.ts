@@ -7,6 +7,7 @@ import {
   type Finding,
   Reader,
   type Visit,
+  anchorText,
   isHtml,
   pageText,
 } from './reader.ts';
@@ -60,14 +61,15 @@ export class PaginationReader extends Reader<null, null> {
   }: Visit<null>): readonly Finding<null>[] {
     if (!request.start && !request.list) return [];
     if (response.statusCode !== 200 || !isHtml(type)) return [];
-    const { pagination, pages } = this.#readList(
+    const { pagination, texts, pages } = this.#readList(
       pageText(response),
       response.url,
       headers,
     );
     return [
-      ...[...pages].map((url) => ({
+      ...[...pages].map(([url, text]) => ({
         url,
+        naming: { how: 'list-item' as const, text },
         lastModified: null,
         published: null,
         page: true,
@@ -80,6 +82,7 @@ export class PaginationReader extends Reader<null, null> {
       })),
       ...[...pagination].map(([url, tolerate]) => ({
         url,
+        naming: { how: 'pagination' as const, text: texts.get(url) ?? null },
         lastModified: null,
         published: null,
         page: false,
@@ -108,6 +111,8 @@ export class PaginationReader extends Reader<null, null> {
           .filter((value) => new URL(value).origin === origin)
           .map((value) => [value, []]),
       );
+      // The first text that links each URL of the list's origin.
+      const texts = new Map<string, string | null>();
       const list = pageOf(url);
       for (const link of document.querySelectorAll<
         HTMLAnchorElement | HTMLLinkElement
@@ -115,6 +120,7 @@ export class PaginationReader extends Reader<null, null> {
         const target = URL.parse(link.href);
         if (!target || target.origin !== origin) continue;
         const next = webUrl(target.href, url);
+        texts.set(next, texts.get(next) ?? anchorText(link));
         if (paginationLinks.some(({ rel }) => link.relList.contains(rel)))
           pagination.set(next, []);
         else if (
@@ -129,7 +135,9 @@ export class PaginationReader extends Reader<null, null> {
         'nav, footer, [role="navigation"]',
       ))
         navigation.remove();
-      const pages = new Set<string>();
+      // Each page with the first text that names it, as a list's logo and
+      // its name can link one page.
+      const pages = new Map<string, string | null>();
       for (const link of document.querySelectorAll<HTMLAnchorElement>(
         'a[href]',
       )) {
@@ -140,9 +148,10 @@ export class PaginationReader extends Reader<null, null> {
         )
           continue;
         const page = webUrl(target.href, url);
-        if (!pagination.has(page)) pages.add(page);
+        if (!pagination.has(page))
+          pages.set(page, pages.get(page) ?? anchorText(link));
       }
-      return { pagination, pages };
+      return { pagination, texts, pages };
     } finally {
       dom.window.close();
     }

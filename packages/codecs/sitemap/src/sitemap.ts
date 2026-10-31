@@ -14,6 +14,8 @@ export type SitemapListing = {
     readonly lastModified: string | null;
     /** The raw text of an RSS item's pubDate or an Atom entry's published. Sitemaps and text lists have none. */
     readonly published: string | null;
+    /** The text of an RSS item's title or an Atom entry's title. Sitemaps and text lists have none. */
+    readonly title: string | null;
   }[];
   readonly sitemaps: readonly string[];
 };
@@ -68,6 +70,7 @@ const rss = z.object({
               z.object({
                 link: z.array(z.string()).optional(),
                 pubDate: z.string().optional(),
+                title: z.string().optional(),
               }),
             ]),
           )
@@ -92,6 +95,10 @@ const feed = z.object({
             .optional(),
           published: z.string().optional(),
           updated: z.string().optional(),
+          // A title with a type attribute, such as type="html", has its text under #text.
+          title: z
+            .union([z.string(), z.object({ '#text': z.string().optional() })])
+            .optional(),
         }),
       ]),
     )
@@ -129,7 +136,12 @@ export function parseSitemap(text: string): SitemapListing {
           `line ${JSON.stringify(line)} is not a URL`,
         );
     return {
-      pages: lines.map((url) => ({ url, lastModified: null, published: null })),
+      pages: lines.map((url) => ({
+        url,
+        lastModified: null,
+        published: null,
+        title: null,
+      })),
       sitemaps: [],
     };
   }
@@ -151,6 +163,7 @@ export function parseSitemap(text: string): SitemapListing {
           url: loc(page),
           lastModified: hint(page.lastmod),
           published: null,
+          title: null,
         })),
         sitemaps: [],
       };
@@ -179,6 +192,7 @@ export function parseSitemap(text: string): SitemapListing {
                       url,
                       lastModified: null,
                       published: hint(item.pubDate),
+                      title: hint(item.title),
                     })),
               ),
         sitemaps: [],
@@ -197,6 +211,11 @@ export function parseSitemap(text: string): SitemapListing {
                   url,
                   lastModified: hint(item.updated),
                   published: hint(item.published),
+                  title: hint(
+                    typeof item.title === 'object'
+                      ? item.title['#text']
+                      : item.title,
+                  ),
                 })),
         ),
         sitemaps: [],

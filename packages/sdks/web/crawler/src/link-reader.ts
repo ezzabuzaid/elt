@@ -1,4 +1,4 @@
-import { discoverUrisFromHtml } from 'feedscout/methods';
+import { JSDOM, VirtualConsole } from 'jsdom';
 import { lexer, walkTokens } from 'marked';
 import { z } from 'zod';
 
@@ -7,6 +7,7 @@ import {
   type Finding,
   Reader,
   type Visit,
+  anchorText,
   isHtml,
   pageText,
 } from './reader.ts';
@@ -63,7 +64,7 @@ export class LinkReader extends Reader<never, State> {
   read(
     { response, type, request, wanted }: Visit<never>,
     state: State,
-  ): readonly Finding<never>[] {
+  ): readonly Finding<never>[] | null {
     if (response.statusCode !== 200) return [];
     const markdown = type === 'text/markdown';
     if (!isHtml(type) && !markdown) return [];
@@ -71,31 +72,26 @@ export class LinkReader extends Reader<never, State> {
     if (request.expand === 'origin' && !state.origins.includes(origin))
       state.origins.push(origin);
     const step = request.expand === 'step';
-    // Starting and listed pages always contribute links; others only when admitted.
-    if (
-      !step &&
-      ((request.hops > 0 && !wanted) || !state.origins.includes(origin))
-    )
-      return [];
+    // A page on another origin gives no links.
+    if (!step && !state.origins.includes(origin)) return [];
+    // Starting and listed pages always contribute links; others only when
+    // admitted, so a page that is not admitted this time is skipped.
+    if (!step && request.hops > 0 && !wanted) return null;
     const text = pageText(response);
     const links = markdown
       ? markdownLinks(text)
-      : discoverUrisFromHtml(text, {
-          baseUrl: response.url,
-          linkSelectors: [],
-          anchorUris: [/.*/],
-          anchorIgnoredUris: [],
-          anchorLabels: [],
-        });
-    const pages = new Set<string>();
+      : htmlLinks(text, response.url);
+    // Each page with the first text that links it, as a logo and a name can link one page.
+    const pages = new Map<string, string | null>();
     for (const link of links) {
-      const target = httpUrl(link, response.url);
+      const target = httpUrl(link.href, response.url);
       // The crawl keeps from a one-step expansion only the links that match its patterns.
       if (target && (step || new URL(target).origin === origin))
-        pages.add(target);
+        pages.set(target, pages.get(target) ?? link.text);
     }
-    return [...pages].map((url) => ({
+    return [...pages].map(([url, text]) => ({
       url,
+      naming: { how: 'link' as const, text },
       lastModified: null,
       published: null,
       page: true,
@@ -108,11 +104,30 @@ export class LinkReader extends Reader<never, State> {
   }
 }
 
+type Link = { readonly href: string; readonly text: string | null };
+
 function markdownLinks(text: string) {
-  const links: string[] = [];
+  const links: Link[] = [];
   // The callback is synchronous, so walkTokens returns no pending promise.
   void walkTokens(lexer(text), (token) => {
-    if (token.type === 'link') links.push(token.href);
+    if (token.type === 'link')
+      links.push({
+        href: token.href,
+        text: token.text.replace(/\s+/g, ' ').trim() || null,
+      });
   });
   return links;
+}
+
+function htmlLinks(html: string, url: string) {
+  // jsdom's own console writes its errors, such as a stylesheet it cannot
+  // parse, to the host's console.
+  const dom = new JSDOM(html, { url, virtualConsole: new VirtualConsole() });
+  try {
+    return [
+      ...dom.window.document.querySelectorAll<HTMLAnchorElement>('a[href]'),
+    ].map((anchor): Link => ({ href: anchor.href, text: anchorText(anchor) }));
+  } finally {
+    dom.window.close();
+  }
 }

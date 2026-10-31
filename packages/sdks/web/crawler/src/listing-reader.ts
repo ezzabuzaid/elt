@@ -19,6 +19,7 @@ import { paginationLinks, readListing } from './listing.ts';
 import {
   type Finding,
   Reader,
+  type RouteHow,
   type Visit,
   isHtml,
   pageText,
@@ -38,12 +39,14 @@ type State = z.infer<typeof stateSchema>;
 
 function document(
   url: string,
+  how: RouteHow,
   note: Note,
   tolerate: readonly number[] | 'any',
   linked: boolean,
 ): Finding<Note> {
   return {
     url,
+    naming: { how, text: null },
     lastModified: null,
     published: null,
     page: false,
@@ -81,12 +84,19 @@ export class ListingReader extends Reader<Note, State> {
         : [];
       if (sitemaps.length > 0)
         return sitemaps.map((url) =>
-          document(webUrl(url, response.url), { kind: 'listing' }, [], false),
+          document(
+            webUrl(url, response.url),
+            'robots-sitemap',
+            { kind: 'listing' },
+            [],
+            false,
+          ),
         );
       if (state.listed) return [];
       return [
         document(
           new URL('/sitemap.xml', response.url).href,
+          'sitemap-guess',
           { kind: 'guess' },
           [404, 410],
           false,
@@ -124,6 +134,9 @@ export class ListingReader extends Reader<Note, State> {
       return [
         ...listing.pages.map((page) => ({
           url: webUrl(page.url, response.url),
+          naming: listing.feed
+            ? { how: 'feed-item' as const, text: page.title }
+            : { how: 'sitemap-entry' as const, text: null },
           lastModified: page.lastModified,
           published: instant(page.published),
           page: true,
@@ -133,13 +146,28 @@ export class ListingReader extends Reader<Note, State> {
           note: null,
           priority: 'page' as const,
         })),
+        ...listing.sitemaps.map((url) =>
+          document(
+            webUrl(url, response.url),
+            'sitemap-index',
+            { kind: 'listing' },
+            [],
+            false,
+          ),
+        ),
         ...[
-          ...listing.sitemaps,
+          ...listing.pagination,
           ...discoverUrisFromHeaders(headers, {
             linkSelectors: paginationLinks,
           }),
         ].map((url) =>
-          document(webUrl(url, response.url), { kind: 'listing' }, [], false),
+          document(
+            webUrl(url, response.url),
+            'pagination',
+            { kind: 'listing' },
+            [],
+            false,
+          ),
         ),
       ];
     }
@@ -149,6 +177,7 @@ export class ListingReader extends Reader<Note, State> {
     const feed = (url: string, kind: 'listing' | 'candidate') =>
       document(
         url,
+        'declaration',
         { kind },
         kind === 'candidate' ? 'any' : [],
         request.expand === null,
@@ -183,6 +212,7 @@ export class ListingReader extends Reader<Note, State> {
       ...declared.map(({ url, kind }) => feed(url, kind)),
       document(
         new URL('/robots.txt', response.url).href,
+        'robots',
         { kind: 'robots' },
         [404, 410],
         false,

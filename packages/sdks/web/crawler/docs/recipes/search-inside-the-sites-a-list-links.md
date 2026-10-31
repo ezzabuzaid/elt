@@ -11,6 +11,7 @@
 3. **`ListingReader` reads the `robots.txt` of the home page's origin.** The crawl reads each sitemap that `robots.txt` declares, and keeps only the entries that match `expand`, here `/startup-program/`. It does not keep `/blog/launch`.
 4. **The expansion is one step.** The crawl does not expand the pages that the expansion found. It does not follow their links, and it does not read the `robots.txt` sitemaps of `cloud.example`.
 5. **`include` selects the pages to hand back.** The pattern `{ hostname: '((?!list\\.example$).*)' }` matches every host name except `list.example`.
+6. **Each read gives its routes.** A route is "listing L named URL U". The page and progress entries carry `routes`: each URL in the crawl's scope that the response named, with how and with its text. The crawl gives a route also for a URL that it already knows. Follow the routes from the home page to find each program page that the home page leads to.
 
 A sitemap entry or a feed item on another website is not expanded. Only a page that a list hands back is. Without `expand`, the crawl hands back the home page and expands nothing on its website.
 
@@ -99,8 +100,18 @@ const crawl = crawler.crawl([`${listOrigin}/programs`], null, {
     new URLPattern({ pathname: '*start-up*' }),
   ],
 });
-for await (const entry of crawl)
+const routes: string[] = [];
+for await (const entry of crawl) {
   if ('response' in entry) console.log(entry.url, 'from', entry.listingUrl);
+  // Each read gives every URL that its response named, with how and its text.
+  if ('routes' in entry)
+    for (const { listingUrl, routes: named } of entry.routes)
+      for (const { url, how, text } of named)
+        routes.push(
+          `${listingUrl} ${how} ${url}${text === null ? '' : ` "${text}"`}`,
+        );
+}
+console.log(routes.join('\n'));
 
 list.close();
 company.close();
@@ -112,10 +123,20 @@ cloud.close();
 The port numbers change on each run.
 
 ```text
-http://company.example:49841/ from http://list.example:49840/programs
-http://company.example:49841/startup-program/ from http://company.example:49841/sitemap.xml
-http://company.example:49841/startups from http://company.example:49841/
-http://cloud.example:49842/start-ups from http://company.example:49841/
+http://company.example:55384/ from http://list.example:55383/programs
+http://company.example:55384/startup-program/ from http://company.example:55384/sitemap.xml
+http://company.example:55384/startups from http://company.example:55384/
+http://cloud.example:55385/start-ups from http://company.example:55384/
+http://list.example:55383/programs list-item http://company.example:55384/ "Company"
+http://list.example:55383/programs robots http://list.example:55383/robots.txt
+http://list.example:55383/robots.txt sitemap-guess http://list.example:55383/sitemap.xml
+http://company.example:55384/ robots http://company.example:55384/robots.txt
+http://company.example:55384/ link http://company.example:55384/startups "Startups"
+http://company.example:55384/ link http://cloud.example:55385/start-ups "Cloud for start-ups"
+http://company.example:55384/robots.txt robots-sitemap http://company.example:55384/sitemap.xml
+http://company.example:55384/sitemap.xml sitemap-entry http://company.example:55384/startup-program/
 ```
 
 The crawl handed back the home page with the list as its listing, the two program pages of `company.example`, and the program page on `cloud.example`. It did not hand back `/pricing` or `/blog/launch`, because no `expand` pattern matches them.
+
+`/startup-program/` has the sitemap as its `listingUrl`, but the routes connect it to the list: the list names the home page, the home page names its `robots.txt`, the `robots.txt` names the sitemap, and the sitemap names `/startup-program/`. `/pricing` and `/blog/launch` have no route, because the crawl does not keep them.

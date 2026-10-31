@@ -525,7 +525,7 @@ test('a failure is marked as a page only for a page include matches, not for a s
   const failures = entries.map((entry) => {
     assert.ok('error' in entry);
     assert.ok(entry.error instanceof CrawlError);
-    return [pathOf(entry.url), entry.page];
+    return [pathOf(entry.url), entry.error.page];
   });
   assert.deepEqual(Object.fromEntries(failures), {
     '/missing': false,
@@ -785,7 +785,13 @@ test('a reader that throws on a response does not stop the readers after it or d
   assert.deepEqual(
     entries.flatMap((entry) =>
       'error' in entry
-        ? [[pathOf(entry.error.url), entry.page, String(entry.error.cause)]]
+        ? [
+            [
+              pathOf(entry.error.url),
+              entry.error.page,
+              String(entry.error.cause),
+            ],
+          ]
         : [],
     ),
     [

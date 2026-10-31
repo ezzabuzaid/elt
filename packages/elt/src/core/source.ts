@@ -149,10 +149,13 @@ export abstract class Source<
   // One consistent view of the upstream for reading these streams: a read
   // transaction, or every stream read up front. A source whose streams need
   // not agree returns an empty AsyncDisposableStack. signal is the run's: an
-  // open that waits on its upstream stops once the run is cancelled.
+  // open that waits on its upstream stops once the run is cancelled. states
+  // is the read's, so a context whose streams depend on each other's saved
+  // state, such as a consumer's offset into a sibling's outbox, can read it.
   protected abstract open(
     streams: readonly Stream[],
     signal: AbortSignal | undefined,
+    states: { get(stream: string): unknown },
   ): Promise<Context>;
 
   // Source-specific selection rules, checked without I/O.
@@ -236,6 +239,7 @@ export abstract class Source<
     await using context = await this.open(
       catalog.map(({ stream }) => stream),
       signal,
+      states,
     );
     if (!Number.isSafeInteger(this.concurrency) || this.concurrency < 1)
       throw new TypeError('Source concurrency must be a positive integer');

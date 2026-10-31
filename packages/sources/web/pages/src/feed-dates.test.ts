@@ -268,7 +268,7 @@ async function run(
         steps: (await source.discover()).streams.map(
           (stream) =>
             new Copy(stream, destination.table(stream.name), {
-              id: 'feed-dates',
+              id: `feed-dates:${stream.name}`,
               syncMode: 'incremental',
               destinationSyncMode: 'append_dedup',
             }),

@@ -78,7 +78,7 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
         steps: (await source.discover()).streams.map(
           (stream) =>
             new Copy(stream, destination.table(stream.name), {
-              id: 'web:sections',
+              id: `web:${stream.name}`,
               syncMode: 'incremental',
               destinationSyncMode: 'append_dedup',
             }),

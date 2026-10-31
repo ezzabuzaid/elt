@@ -41,9 +41,53 @@ export type CrawlRequest = PageLocation & {
 export const priorities = ['listing', 'page', 'link', 'backfill'] as const;
 export type Priority = (typeof priorities)[number];
 
+/**
+ * How a response named a URL, from the most specific way to the least, for a
+ * URL that one response names in more than one way:
+ * - 'list-item': a page that a list hands back, such as a row of a list on GitHub.
+ * - 'pagination': another page of the same list, feed or sitemap.
+ * - 'archive': an archive that a page links, which is a list.
+ * - 'declaration': a feed or a sitemap that a page declares in a `<link>`, a `Link` header or a feed label.
+ * - 'robots': the robots.txt of the origin of a page that the crawl expands.
+ * - 'robots-sitemap': a sitemap that a robots.txt names.
+ * - 'sitemap-guess': the /sitemap.xml that the crawl tries when a robots.txt names no sitemap.
+ * - 'sitemap-index': a sitemap that a sitemap index lists.
+ * - 'sitemap-entry': a page that a sitemap or a text list of URLs lists.
+ * - 'feed-item': a page that an item of a feed links.
+ * - 'link': an ordinary link of an HTML or Markdown page.
+ * - 'redirect': the URL that a request was redirected to.
+ */
+export const routeHows = [
+  'list-item',
+  'pagination',
+  'archive',
+  'declaration',
+  'robots',
+  'robots-sitemap',
+  'sitemap-guess',
+  'sitemap-index',
+  'sitemap-entry',
+  'feed-item',
+  'link',
+  'redirect',
+] as const;
+export type RouteHow = (typeof routeHows)[number];
+
+/** How a response named a URL, and the text it named the URL with. */
+export type Naming = {
+  readonly how: RouteHow;
+  /** The anchor text of an HTML or Markdown link or list item, or the title of a feed item; null when the response gives none, as for a sitemap entry. */
+  readonly text: string | null;
+};
+
+/** One URL that a listing named: the edge "listing L named URL U" of the crawl. */
+export type Route = Naming & { readonly url: string };
+
 /** One URL a reader found in a response. */
 export type Finding<Note> = {
   readonly url: string;
+  /** How the response names the URL; null when it does not name it, as StartReader hands back the starting URL itself. */
+  readonly naming: Naming | null;
   readonly lastModified: string | null;
   readonly published: string | null;
   /** False for a document only a reader reads, such as a sitemap. */
@@ -61,6 +105,11 @@ export type Finding<Note> = {
   readonly note: Note | null;
   readonly priority: Priority;
 };
+
+/** The text of an anchor as a reader of the page sees it, with its white space collapsed; null when it has none, such as a logo. */
+export function anchorText(anchor: Element) {
+  return anchor.textContent.replace(/\s+/g, ' ').trim() || null;
+}
 
 export function isHtml(type: string | null) {
   return type === 'text/html' || type === 'application/xhtml+xml';
@@ -115,8 +164,13 @@ export abstract class Reader<Note, State> {
   abstract open(): State;
   /** Whether a page that nobody else needs is worth downloading for this reader. */
   abstract wants(request: CrawlRequest, state: State): boolean;
+  /**
+   * What the reader found in the response, or null when it skips a response
+   * that it reads at other times, such as a linked page past its limits: the
+   * response then names more than the findings of this read.
+   */
   abstract read(
     visit: Visit<Note>,
     state: State,
-  ): Promise<readonly Finding<Note>[]> | readonly Finding<Note>[];
+  ): Promise<readonly Finding<Note>[] | null> | readonly Finding<Note>[] | null;
 }

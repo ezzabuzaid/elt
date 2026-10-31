@@ -406,6 +406,8 @@ class ContextSource extends LiveSource<ReadContext> {
 
   protected override async open(
     streams: readonly Stream[],
+    _signal: AbortSignal | undefined,
+    _states: { get(stream: string): unknown },
   ): Promise<ReadContext> {
     const id = this.opened.length + 1;
     this.opened.push(id);
@@ -588,8 +590,12 @@ test('closing a read releases every active extract before its shared context', a
   class ClosingSource extends ContextSource {
     protected override readonly concurrency = 2;
 
-    protected override async open(streams: readonly Stream[]) {
-      const context = await super.open(streams);
+    protected override async open(
+      streams: readonly Stream[],
+      signal: AbortSignal | undefined,
+      states: { get(stream: string): unknown },
+    ) {
+      const context = await super.open(streams, signal, states);
       return {
         id: context.id,
         [Symbol.asyncDispose]: async () => {
@@ -626,6 +632,31 @@ test('closing a read releases every active extract before its shared context', a
   } finally {
     await read.return(undefined);
   }
+});
+
+test("a source's open reads the read's saved states, so a context can depend on a stream's checkpoint", async () => {
+  const seen: unknown[] = [];
+  class StatefulSource extends ContextSource {
+    protected override async open(
+      streams: readonly Stream[],
+      signal: AbortSignal | undefined,
+      states: { get(stream: string): unknown },
+    ) {
+      seen.push(await states.get('right'));
+      return super.open(streams, signal, states);
+    }
+  }
+  const source = new StatefulSource();
+  const read = source.read(
+    [source.left].map(
+      (stream) => new Copy(stream, new NamedTarget(stream.name)).configuration,
+    ),
+    new Map([['right', { offset: 7 }]]),
+  );
+
+  for await (const message of read) void message;
+
+  assert.deepEqual(seen, [{ offset: 7 }]);
 });
 
 test('a failed copy does not stop later copies, and the run reports it at the end', async () => {

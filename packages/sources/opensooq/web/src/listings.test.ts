@@ -227,7 +227,7 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
         steps: (await source.discover()).streams.map(
           (stream) =>
             new Copy(stream, destination.table(stream.name), {
-              id: 'opensooq:listings',
+              id: `opensooq:${stream.name}`,
               syncMode: 'incremental',
               destinationSyncMode: 'append_dedup',
             }),

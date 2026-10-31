@@ -89,7 +89,7 @@ test('ordinary links reach unlisted articles while feed pages and unchanged reru
         steps: (await source.discover()).streams.map(
           (stream) =>
             new Copy(stream, destination.table(stream.name), {
-              id: 'web:articles',
+              id: `web:${stream.name}`,
               syncMode: 'incremental',
               destinationSyncMode: 'append_dedup',
             }),
@@ -173,7 +173,7 @@ test('new URLs survive interruption, and only the page in flight downloads again
     steps: (await source.discover()).streams.map(
       (stream) =>
         new Copy(stream, destination.table(stream.name), {
-          id: 'reuse',
+          id: `reuse:${stream.name}`,
           syncMode: 'incremental',
           destinationSyncMode: 'append_dedup',
         }),
@@ -292,7 +292,7 @@ test('Markdown pages supply links, and feeds declared on crawled pages are read 
         steps: (await source.discover()).streams.map(
           (stream) =>
             new Copy(stream, destination.table(stream.name), {
-              id: 'markdown-links',
+              id: `markdown-links:${stream.name}`,
               syncMode: 'incremental',
               destinationSyncMode: 'append_dedup',
             }),
@@ -361,7 +361,7 @@ test('an interruption during a long stretch of archive pages keeps the progress 
     steps: (await source.discover()).streams.map(
       (stream) =>
         new Copy(stream, destination.table(stream.name), {
-          id: 'archive-progress',
+          id: `archive-progress:${stream.name}`,
           syncMode: 'incremental',
           destinationSyncMode: 'append_dedup',
         }),

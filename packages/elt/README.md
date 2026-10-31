@@ -482,7 +482,7 @@ A pass is one read of one connection: one `Source.read(catalog, states, signal)`
 
 ```ts
 class ChatSource extends Source<ChatDatabase> {
-  protected override open(streams, signal) {
+  protected override open(streams, signal, states) {
     return ChatDatabase.open(this.path); // AsyncDisposable, disposed when the read ends
   }
 
@@ -492,7 +492,7 @@ class ChatSource extends Source<ChatDatabase> {
 }
 ```
 
-- **Contract:** each source implements `open(streams, signal)`. It gets the streams that the read covers and the signal of the run. An `open` that waits for its upstream gives the signal on, so a cancelled run stops it, as Calendar and Reminders stop their EventKit helper.
+- **Contract:** each source implements `open(streams, signal, states)`. It gets the streams that the read covers, the signal of the run and the saved states of the read, which `read` receives. A context whose streams depend on the checkpoint of another stream reads it there, as the web pages source reads the delivery number of each routes stream. An `open` that waits for its upstream gives the signal on, so a cancelled run stops it, as Calendar and Reminders stop their EventKit helper.
   - An upstream with a read transaction holds it (Messages; Notes; Contacts, one time for each account store).
   - An upstream without one reads each selected stream first, in one window with no change, and gives the streams from that snapshot (Calendar and Reminders; see [EventKit consistency](../sdks/apple/eventkit/README.md#consistent-reads)).
   - A source whose streams do not have to agree returns an empty `AsyncDisposableStack` (Search Console).
@@ -794,7 +794,7 @@ try {
 
 - When the signal aborts, each pass applies no more messages. Each copy that still reads drops what it staged after its last commit, keeps what it committed and the checkpoints that it saved with it, and ends `cancelled`. A copy that ended before keeps its outcome.
 - The [sync history](#sync-history) records the pass as `cancelled`, with the reason of the signal as its error. Then `run()` rejects with `signal.reason`, as `fetch` does.
-- `Source.read(catalog, states, signal)` gives the signal to `open(streams, signal)` and to each `extract` as its last argument. Thus a source that waits for its upstream can stop at once. A source that ignores it stops at its next message.
+- `Source.read(catalog, states, signal)` gives the signal to `open(streams, signal, states)` and to each `extract` as its last argument. Thus a source that waits for its upstream can stop at once. A source that ignores it stops at its next message.
 - A [snapshot diff](#snapshot-streams) yields no message while it finds no change, so it stops itself at the next record or group.
 
 The destination contract:

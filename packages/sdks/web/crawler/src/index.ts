@@ -15,9 +15,13 @@ export {
   Reader,
   type CrawlRequest,
   type Finding,
+  type Naming,
   type PageLocation,
   type Priority,
+  type Route,
+  type RouteHow,
   type Visit,
+  routeHows,
 } from './reader.ts';
 export {
   RevisitPolicy,
@@ -40,4 +44,5 @@ export {
   type CrawlOptions,
   type CrawlProgress,
   type CrawledPage,
+  type ListingRoutes,
 } from './web-crawler.ts';

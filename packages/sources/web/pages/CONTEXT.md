@@ -33,8 +33,16 @@ A URL that the crawl hands back because it matches the `include` patterns of the
 _Avoid_: Article (an article is the record of `ArticleExtractor`), document (the crawler uses document for a URL that only a reader reads, such as a sitemap)
 
 **Listing**:
-The response that first named a page: a sitemap, a feed, an archive or a linked page. `listingUrl` keeps its URL.
+A response that named a page: a sitemap, a feed, an archive or a linked page. A record's `listingUrl` keeps the URL of the listing that named the page first; the routes stream keeps every listing that named it.
 _Avoid_: Index, parent
+
+**Route**:
+The fact "a listing named a URL", with how the listing named it and the text that it named the URL with. The crawler gives every route that a read found. A record's `listingUrl` is only the first route to its page.
+_Avoid_: Link (a link is one kind of route), edge, parent
+
+**Routes stream**:
+The second stream of a web stream, named `<name>_routes`. It has one row for each route, keyed by `inputUrl`, `listingUrl` and `url`. A listing that a crawl reads again completely replaces its rows, and an incomplete read only adds rows; a listing that a run does not read keeps them ([ADR 0011](./docs/adr/0011-a-web-stream-gives-its-routes-as-a-second-stream.md)).
+_Avoid_: Links table, graph, inlinks
 
 **Web stream**:
 The configuration of one stream of the source: its name, its primary key, the readers of the crawler, the `include` patterns, the `expand` patterns and the extractor. The host gives each web stream its own inputs.
@@ -65,7 +73,7 @@ A page that the crawl could not download, or that the extractor could not read. 
 _Avoid_: Error page, dead link
 
 **State**:
-What the source saves for one input: the diff and the crawl memento. The engine keeps it in the checkpoint store.
+What the source saves for one input of a web stream: the diff, the crawl memento and the outbox, the groups of routes that the routes stream did not commit. The routes stream saves its diff and the number of the first group that it did not commit. The engine keeps it in the checkpoint store.
 _Avoid_: Cursor (the stream has no cursor field)
 
 **Crawl snapshot**:
