@@ -919,6 +919,79 @@ test('a value Google could not compute, which it sends as the string NaN, loads 
   );
 });
 
+test('a read Google failed for one stream is asked for again by the next stream that needs it', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  // The first read of sleep, which sleep and its stages share, and the first
+  // read of the profile, which every daily type and rollup needs, fail.
+  const refused = new Set(['/dataTypes/sleep/dataPoints', '/users/me/profile']);
+  using wire = google({
+    answer: (url) => {
+      const path = [...refused].find((end) => url.pathname.endsWith(end));
+      if (path === undefined) return undefined;
+      refused.delete(path);
+      return Response.json(
+        {
+          error: {
+            code: 400,
+            message: 'Invalid argument.',
+            status: 'INVALID_ARGUMENT',
+          },
+        },
+        { status: 400 },
+      );
+    },
+    points: { sleep: [sleepPoint('DEEP')] },
+    profile,
+  });
+  // One stream at a time: the next stream asks after the first one failed.
+  const source = new GoogleHealthSource({
+    requester: signedIn(),
+    streamConcurrency: 1,
+  });
+
+  const error = await load(warehouse, source).then(
+    () => assert.fail('the first readers failed'),
+    (failure: unknown) => failure,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  const failed = error.results
+    .filter(({ failures }) => failures.length > 0)
+    .map(({ copy }) => copy.from.name);
+  assert.equal(failed.length, 2, failed.join());
+  assert.ok(failed.includes('sleep'), failed.join());
+  assert.deepEqual(
+    (await rows(warehouse, 'sleepStages')).map(({ type }) => type),
+    ['DEEP'],
+  );
+  assert.equal(
+    wire.requests.filter(({ pathname }) =>
+      pathname.endsWith('/users/me/profile'),
+    ).length,
+    2,
+  );
+});
+
 test('a child list comes from the same read as its parent, though Google answers every read anew', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
