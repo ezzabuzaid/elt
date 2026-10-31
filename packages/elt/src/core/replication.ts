@@ -19,6 +19,12 @@ import type { Stream } from './stream.ts';
 import type { Target as DestinationTarget } from './target.ts';
 import type { LoadFailure, Stage, WriteOperation } from './writer.ts';
 
+// A copy that still reports its progress as it runs.
+class Reporting {}
+
+// A copy that reported how it ended; it reports nothing more.
+class Settled {}
+
 // One copy's side of a replication: its stage, what it committed, what is
 // pending since the last commit, and what did not load.
 class Replicated<Target extends DestinationTarget> {
@@ -43,7 +49,7 @@ class Replicated<Target extends DestinationTarget> {
   // Whether the saved checkpoint describes the copy's stage: not once the
   // stage is a target this load creates or reloads, until the copy saves.
   resumes = true;
-  settled = false;
+  #progress: Reporting | Settled = new Reporting();
 
   readonly copy: Copy<Target>;
   readonly observe: ((progress: CopyProgress<Target>) => void) | undefined;
@@ -89,12 +95,12 @@ class Replicated<Target extends DestinationTarget> {
   }
 
   report(): void {
-    if (!this.settled) this.#notify('running');
+    if (this.#progress instanceof Reporting) this.#notify('running');
   }
 
   settle(): void {
-    if (this.settled) return;
-    this.settled = true;
+    if (this.#progress instanceof Settled) return;
+    this.#progress = new Settled();
     this.#notify(this.failures.length === 0 ? 'complete' : 'incomplete');
   }
 
