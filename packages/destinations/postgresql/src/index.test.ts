@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
+import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Postgres } from '@zukhruf/testing/postgres';
@@ -5511,15 +5512,20 @@ async function checkedPipeline(url: string, sql: postgres.Sql) {
       >`SELECT started_at FROM marts.sync_attempts ORDER BY attempt_id DESC LIMIT 1`
     )[0]?.started_at;
   // Waits until what a reader sees meets done.
-  const until = async (
+  const until = (
     done: (seen: Awaited<ReturnType<typeof streams>>) => boolean,
-  ) => {
-    for (let tries = 0; !done(await streams()); tries++) {
-      if (tries > 100)
-        assert.fail(`never happened: ${JSON.stringify(await streams())}`);
-      await sleep(50);
-    }
-  };
+  ) =>
+    timebox(
+      async () => {
+        const seen = await streams();
+        assert.ok(done(seen), `never happened: ${JSON.stringify(seen)}`);
+      },
+      {
+        minTimeout: 50,
+        maxRetryTime: 5_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
   return { source, pipeline, streams, connector, startedAt, until };
 }
 

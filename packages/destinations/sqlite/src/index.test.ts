@@ -9,11 +9,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { Latch } from '@zukhruf/async';
 import {
   ClosedWorld,
   Coverage,
   Retention,
 } from '@zukhruf/snapshot-differential';
+import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -5388,12 +5390,12 @@ for (const { outcome, next, expected } of leftBehind)
       // What a reader sees once notes committed, while docs still runs.
       atSiblingCommit: () => unknown = () => undefined;
       seen: unknown;
-      #stored = Promise.withResolvers<void>();
-      #committed = Promise.withResolvers<void>();
+      #stored = new Latch();
+      #committed = new Latch();
 
       protected override async open() {
-        this.#stored = Promise.withResolvers<void>();
-        this.#committed = Promise.withResolvers<void>();
+        this.#stored = new Latch();
+        this.#committed = new Latch();
         return new AsyncDisposableStack();
       }
 
@@ -5403,10 +5405,10 @@ for (const { outcome, next, expected } of leftBehind)
 
       protected override async *extract(configuration: CopyConfiguration) {
         if (configuration.stream.name === 'notes') {
-          await this.#stored.promise;
+          await this.#stored.wait();
           yield record('notes', `after-${this.files.join('-')}`, 1);
           yield checkpoint('notes', { files: this.files });
-          this.#committed.resolve();
+          this.#committed.open();
           return;
         }
         for (const id of this.files) {
@@ -5414,9 +5416,9 @@ for (const { outcome, next, expected } of leftBehind)
           await writeFile(path, `${id} bytes`);
           yield { stream: 'docs', data: { id, version: 1 }, file: path };
         }
-        this.#stored.resolve();
+        this.#stored.open();
         if (this.failing) {
-          await this.#committed.promise;
+          await this.#committed.wait();
           this.seen = this.atSiblingCommit();
           throw new Error('docs upstream');
         }
@@ -6984,13 +6986,17 @@ async function checkedPipeline(directory: string) {
       'SELECT started_at FROM sync_attempts ORDER BY attempt_id DESC LIMIT 1',
     )[0]?.started_at;
   // Waits until what a reader sees meets done.
-  const until = async (done: () => boolean) => {
-    for (let tries = 0; !done(); tries++) {
-      if (tries > 100)
-        assert.fail(`never happened: ${JSON.stringify(streams())}`);
-      await sleep(50);
-    }
-  };
+  const until = (done: () => boolean) =>
+    timebox(
+      () => {
+        assert.ok(done(), `never happened: ${JSON.stringify(streams())}`);
+      },
+      {
+        minTimeout: 50,
+        maxRetryTime: 5_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
   return { source, pipeline, path, read, streams, connector, startedAt, until };
 }
 
@@ -7253,15 +7259,20 @@ test('one sync history records each connection’s first unchanged check at once
     const checked = new Date().toISOString();
     first.checks.emit('check', []);
     second.checks.emit('check', []);
-    for (
-      let tries = 0;
-      !Object.values(current()).every((at) => at >= checked);
-      tries++
-    ) {
-      if (tries > 100)
-        assert.fail(`never recorded: ${JSON.stringify(current())}`);
-      await sleep(50);
-    }
+    await timebox(
+      () => {
+        const seen = current();
+        assert.ok(
+          Object.values(seen).every((at) => at >= checked),
+          `never recorded: ${JSON.stringify(seen)}`,
+        );
+      },
+      {
+        minTimeout: 50,
+        maxRetryTime: 5_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
     const recorded = current();
     // So a second record would carry a later time than the first.
     await sleep(5);

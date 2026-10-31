@@ -5,6 +5,8 @@ import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { Latch } from '@zukhruf/async';
+import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -32,12 +34,12 @@ import {
 // files; rows can change between runs. Its notes come from a second store,
 // which fails every read while notesGone is set, as an app's missing store
 // does. A watch sees every stream change at its start, and again as each
-// promise of changes resolves.
+// latch of changes opens.
 class Files extends Source {
   readonly identity = 'files';
   rows: readonly { readonly id: string; readonly ref: string }[] = [];
   notesGone = false;
-  changes: readonly Promise<void>[] = [];
+  changes: readonly Latch[] = [];
   readonly files = new Stream({
     name: 'files',
     jsonSchema: {
@@ -80,7 +82,7 @@ class Files extends Source {
   protected override async *observe({ streams }: SourceWatchOptions) {
     yield streams;
     for (const change of this.changes) {
-      await change;
+      await change.wait();
       yield streams;
     }
   }
@@ -101,13 +103,13 @@ class Files extends Source {
 class TextParser extends DocumentParser {
   readonly parsed: string[] = [];
   readonly failing = new Set<string>();
-  // Files whose read waits until their promise settles.
-  readonly holding = new Map<string, Promise<void>>();
+  // Files whose read waits until their latch opens.
+  readonly holding = new Map<string, Latch>();
   handles = true;
 
   async parse(path: string): Promise<string | null> {
     this.parsed.push(basename(path));
-    await this.holding.get(basename(path));
+    await this.holding.get(basename(path))?.wait();
     if (this.failing.has(basename(path)))
       throw new Error(`${basename(path)} is damaged`);
     const text = await readFile(path, 'utf8');
@@ -389,23 +391,30 @@ test('a file that is slow to read holds only its own place: the text of the file
     id: String(index),
     ref,
   }));
-  const released = Promise.withResolvers<void>();
-  files.parser().holding.set('slow.txt', released.promise);
+  const released = new Latch();
+  files.parser().holding.set('slow.txt', released);
 
   const running = files.pipeline.run();
-  let landed: unknown[] = [];
-  for (let tries = 0; landed.length < names.length; tries++) {
-    if (tries > 1000)
-      assert.fail(
+  await timebox(
+    () => {
+      const landed = files.read(
+        "SELECT ref FROM file_text WHERE status = 'computed'",
+      );
+      assert.ok(
+        landed.length >= names.length,
         `only ${landed.length} of ${names.length} files landed while slow.txt was read`,
       );
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    landed = files.read("SELECT ref FROM file_text WHERE status = 'computed'");
-  }
+    },
+    {
+      minTimeout: 10,
+      maxRetryTime: 10_000,
+      shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+    },
+  );
   const whileHeld = files.read(
     "SELECT ref FROM file_text WHERE ref = 'slow.txt'",
   );
-  released.resolve();
+  released.open();
   await running;
 
   assert.deepEqual(whileHeld, []);
@@ -443,10 +452,10 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
   await files.file('slow.txt', 'contract');
   await files.file('b.txt', 'receipt');
   files.source.rows = [{ id: '1', ref: 'slow.txt' }];
-  const changed = Promise.withResolvers<void>();
-  files.source.changes = [changed.promise];
-  const released = Promise.withResolvers<void>();
-  files.parser().holding.set('slow.txt', released.promise);
+  const changed = new Latch();
+  files.source.changes = [changed];
+  const released = new Latch();
+  files.parser().holding.set('slow.txt', released);
   const controller = new AbortController();
   const watching = files.pipeline.watch({ signal: controller.signal });
   // A pass that waits on the held read never comes; the bound ends the wait.
@@ -473,18 +482,24 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
       { id: '1', ref: 'slow.txt' },
       { id: '2', ref: 'b.txt' },
     ];
-    changed.resolve();
+    changed.open();
     const second = await pass();
     const whileHeld = files.read(text);
-    released.resolve();
-    for (
-      let tries = 0;
-      files.read("SELECT ref FROM file_text WHERE ref = 'b.txt'").length === 0;
-      tries++
-    ) {
-      if (tries > 500) assert.fail('b.txt never got its text');
-      await sleep(10);
-    }
+    released.open();
+    await timebox(
+      () => {
+        assert.notEqual(
+          files.read("SELECT ref FROM file_text WHERE ref = 'b.txt'").length,
+          0,
+          'b.txt never got its text',
+        );
+      },
+      {
+        minTimeout: 10,
+        maxRetryTime: 5_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
 
     assert.equal(first.done, false);
     assert.equal(second.done, false);
@@ -495,7 +510,7 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
       { ref: 'slow.txt', status: 'computed', content: 'contract', error: null },
     ]);
   } finally {
-    released.resolve();
+    released.open();
     controller.abort();
     await watching.return(undefined);
   }

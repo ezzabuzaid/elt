@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -370,10 +371,19 @@ test('under a watch, a view appears after the pass that loads its input, without
 
   const watching = pipeline.watch({ signal: controller.signal });
   const pass = await watching.next();
-  for (let tries = 0; !views(path).includes('record_count'); tries++) {
-    if (tries > 200) assert.fail('the view never appeared');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+  await timebox(
+    () => {
+      assert.ok(
+        views(path).includes('record_count'),
+        'the view never appeared',
+      );
+    },
+    {
+      minTimeout: 10,
+      maxRetryTime: 2_000,
+      shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+    },
+  );
   controller.abort();
   await watching.return(undefined);
 
