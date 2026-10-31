@@ -814,7 +814,9 @@ test('a Notes watch keeps Notes running and loads each commit while Notes keeps 
 });
 
 test('Notes declares the local Apple store as the coverage of every stream', async () => {
-  const notes = new AppleNotesSource();
+  const notes = new AppleNotesSource({
+    path: join(tmpdir(), 'elt-notes-coverage', 'NoteStore.sqlite'),
+  });
 
   const { streams } = await notes.discover();
 

@@ -13,7 +13,6 @@ import {
   NotesStore,
   NotesUnavailableError,
   launchNotesHidden,
-  noteStorePath,
   notesRunning,
 } from '@workspace/sdk-apple-notes';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -62,13 +61,7 @@ export class AppleNotesSource extends Source<NotesScan> {
   readonly scope: ImportScope;
   readonly #store: NotesStore;
 
-  constructor({
-    path = noteStorePath,
-    scope = {},
-  }: {
-    path?: string;
-    scope?: ImportScope;
-  } = {}) {
+  constructor({ path, scope = {} }: { path: string; scope?: ImportScope }) {
     super();
     this.path = path;
     this.scope = scope;

@@ -1,4 +1,3 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
@@ -6,11 +5,9 @@ import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 import { appDatabase } from './app-database.ts';
 import { NoteStoreSnapshot } from './note-store-snapshot.ts';
 
-// Where Notes keeps this user's store.
-export const noteStorePath = join(
-  homedir(),
-  'Library/Group Containers/group.com.apple.notes/NoteStore.sqlite',
-);
+// Where Notes keeps its store in the home folder `home`.
+export const noteStorePath = (home: string): string =>
+  join(home, 'Library/Group Containers/group.com.apple.notes/NoteStore.sqlite');
 
 // Notes' own Core Data store, read without Notes.app, which need not run.
 export class NotesStore {

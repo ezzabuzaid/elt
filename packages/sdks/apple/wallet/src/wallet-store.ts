@@ -1,4 +1,3 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
@@ -9,8 +8,10 @@ import type { Pass } from './pass.ts';
 import { lastPassesFetch } from './passes-fetch.ts';
 import { walletRecords } from './wallet-records.ts';
 
-// Where macOS keeps this user's Wallet passes; no privacy grant guards it.
-export const walletStorePath = join(homedir(), 'Library/Passes');
+// Where macOS keeps the Wallet passes in the home folder `home`; no
+// privacy grant guards them.
+export const walletStorePath = (home: string): string =>
+  join(home, 'Library/Passes');
 
 // Wallet's passes on this Mac as passd keeps them: passes23.sqlite records
 // when each pass was added, updated and archived, and Cards/<id>.pkpass holds

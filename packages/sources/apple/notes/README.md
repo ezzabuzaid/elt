@@ -3,6 +3,8 @@
 An ELT source for Apple Notes. It reads the Core Data store of Notes, `~/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite`, in read-only mode through `@workspace/sdk-apple-notes`. It does not use the network, and Notes does not have to be open.
 
 ```ts
+import { homedir } from 'node:os';
+
 import {
   Connection,
   Copy,
@@ -17,10 +19,11 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { noteStorePath } from '@workspace/sdk-apple-notes';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
 
-const source = new AppleNotesSource();
+const source = new AppleNotesSource({ path: noteStorePath(homedir()) });
 const destination = new SQLiteDestination({ path: './outputs/notes.sqlite' });
 const files = new LocalFiles({ directory: './outputs/files' });
 const parser = new MacOSDocumentParser();
@@ -124,7 +127,7 @@ The layout of the store changes between macOS releases. The SDK reads the layout
 
 ## Scope
 
-`new AppleNotesSource({ scope })` narrows the import. `accountIds` selects accounts, `collectionIds` selects folders, and `startAt` (inclusive) and `endAt` (exclusive) select notes by their modification time. If you omit a key, the source reads all. The coverage of each stream is `localAppleStoreCoverage` of `source-apple-macos`, with the scope as its selection.
+`new AppleNotesSource({ path, scope })` takes the path of the store and an optional scope. `path` has no default. `noteStorePath(home)` of `@workspace/sdk-apple-notes` gives the path of the store in the home folder `home`. The scope narrows the import. `accountIds` selects accounts, `collectionIds` selects folders, and `startAt` (inclusive) and `endAt` (exclusive) select notes by their modification time. If you omit a key, the source reads all. The coverage of each stream is `localAppleStoreCoverage` of `source-apple-macos`, with the scope as its selection.
 
 ## Watch
 

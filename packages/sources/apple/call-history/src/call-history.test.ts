@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmod, mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
@@ -323,7 +323,7 @@ test('every Call History stream loads the store decoded, and a second run writes
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
-  const source = new AppleCallHistorySource(path);
+  const source = new AppleCallHistorySource({ path });
   const run = await pipeline(source, dir.path);
   const out = join(dir.path, 'out.sqlite');
 
@@ -591,7 +591,7 @@ test('a call linked twice to the same handle loads one participant, and the next
       INSERT INTO Z_2REMOTEPARTICIPANTHANDLES VALUES (1, 6);
     `);
   }
-  const run = await pipeline(new AppleCallHistorySource(path), dir.path);
+  const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
   const out = join(dir.path, 'out.sqlite');
 
   await run.run();
@@ -611,7 +611,7 @@ test('a call deleted as Core Data deletes it removes its rows, and edited record
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
-  const run = await pipeline(new AppleCallHistorySource(path), dir.path);
+  const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   {
@@ -662,7 +662,7 @@ test('a date range loads the calls that started in it and only their records', a
     startAt: '2026-09-05T18:30:00.000Z',
     endAt: '2026-09-10T08:00:00.000Z',
   };
-  const source = new AppleCallHistorySource(path, scope);
+  const source = new AppleCallHistorySource({ path, scope });
   const out = join(dir.path, 'out.sqlite');
 
   await (await pipeline(source, dir.path)).run();
@@ -694,9 +694,12 @@ test('a one-millisecond range selects the call that started within it, to the mi
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   // CALL-PHONE started at 10:00:00.250123.
-  const source = new AppleCallHistorySource(path, {
-    startAt: '2026-09-01T10:00:00.250Z',
-    endAt: '2026-09-01T10:00:00.251Z',
+  const source = new AppleCallHistorySource({
+    path,
+    scope: {
+      startAt: '2026-09-01T10:00:00.250Z',
+      endAt: '2026-09-01T10:00:00.251Z',
+    },
   });
   const out = join(dir.path, 'out.sqlite');
 
@@ -723,7 +726,7 @@ test('participants load whatever entity numbers this macOS gives the join table'
   }
   const out = join(dir.path, 'out.sqlite');
 
-  await (await pipeline(new AppleCallHistorySource(path), dir.path)).run();
+  await (await pipeline(new AppleCallHistorySource({ path }), dir.path)).run();
 
   assert.deepEqual(
     rows(
@@ -750,7 +753,7 @@ test('a store without the participant join table fails the participants stream b
   const out = join(dir.path, 'out.sqlite');
 
   await assert.rejects(
-    (await pipeline(new AppleCallHistorySource(path), dir.path)).run(),
+    (await pipeline(new AppleCallHistorySource({ path }), dir.path)).run(),
     (error) => {
       assert.ok(error instanceof PipelineError);
       assert.equal(error.errors.length, 1);
@@ -768,7 +771,7 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
-  const run = await pipeline(new AppleCallHistorySource(path), dir.path);
+  const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   // chmod stands in for macOS withdrawing Full Disk Access: SQLite reports
@@ -799,7 +802,7 @@ test('a store missing a column this reader reads fails every stream by name and 
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
-  const run = await pipeline(new AppleCallHistorySource(path), dir.path);
+  const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   {
@@ -829,7 +832,7 @@ test('a Call History watch loads each commit while callhistoryd keeps its store 
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-calls-'));
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
-  const run = await pipeline(new AppleCallHistorySource(path), dir.path);
+  const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
   // callhistoryd holds its connection, and so its WAL, open the whole time.
   using callhistoryd = new DatabaseSync(path);
   const controller = new AbortController();
@@ -873,7 +876,12 @@ test('this Mac’s call history loads every stream, one row per stored record', 
   const out = join(dir.path, 'out.sqlite');
 
   try {
-    await (await pipeline(new AppleCallHistorySource(), dir.path)).run();
+    await (
+      await pipeline(
+        new AppleCallHistorySource({ path: callHistoryStorePath(homedir()) }),
+        dir.path,
+      )
+    ).run();
   } catch (error) {
     if (
       error instanceof PipelineError &&
@@ -886,7 +894,8 @@ test('this Mac’s call history loads every stream, one row per stored record', 
   }
 
   // Counted, never printed: these are the user's own calls.
-  const stored = (sql: string) => Number(rows(callHistoryStorePath, sql)[0]?.n);
+  const stored = (sql: string) =>
+    Number(rows(callHistoryStorePath(homedir()), sql)[0]?.n);
   const loaded = (sql: string) => Number(rows(out, sql)[0]?.n);
   assert.equal(
     loaded('SELECT count(*) AS n FROM calls'),
@@ -926,7 +935,7 @@ test('a Call History watch keeps every stream current while callhistoryd changes
   );
   const store = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(store);
-  const source = new AppleCallHistorySource(store);
+  const source = new AppleCallHistorySource({ path: store });
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
@@ -1019,7 +1028,7 @@ test('a Call History pass over a large store holds one call at a time, so it loa
     const { Connection, Copy, Pipeline } = await import('@workspace/elt');
     const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
     const { AppleCallHistorySource } = await import(process.env.SOURCE);
-    const source = new AppleCallHistorySource(process.env.STORE);
+    const source = new AppleCallHistorySource({ path: process.env.STORE });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();

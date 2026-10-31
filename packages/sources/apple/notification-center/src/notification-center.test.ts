@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { chmod, mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
@@ -363,7 +363,10 @@ test('a notification Notification Center drops stays loaded, while the next run 
   );
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
-  const run = await pipeline(new AppleNotificationCenterSource(path), dir.path);
+  const run = await pipeline(
+    new AppleNotificationCenterSource({ path }),
+    dir.path,
+  );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   // usernoted deletes a row when the app withdraws it, the user clears it or
@@ -406,7 +409,7 @@ test('every Notification Center stream loads the store decoded, and a second run
   );
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
-  const source = new AppleNotificationCenterSource(path);
+  const source = new AppleNotificationCenterSource({ path });
   const run = await pipeline(source, dir.path);
   const out = join(dir.path, 'out.sqlite');
 
@@ -573,7 +576,10 @@ test('an app that posts again under the same request loads the new notification 
   );
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
-  const run = await pipeline(new AppleNotificationCenterSource(path), dir.path);
+  const run = await pipeline(
+    new AppleNotificationCenterSource({ path }),
+    dir.path,
+  );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   // usernoted deletes the replaced row, and its rec_id is free for the next.
@@ -634,7 +640,10 @@ test('a category an app registered twice loads both, told apart by position', as
       ]),
     });
   }
-  const run = await pipeline(new AppleNotificationCenterSource(path), dir.path);
+  const run = await pipeline(
+    new AppleNotificationCenterSource({ path }),
+    dir.path,
+  );
   const out = join(dir.path, 'out.sqlite');
 
   await run.run();
@@ -664,7 +673,10 @@ test('an app macOS forgets deletes its app and categories while its notification
   );
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
-  const run = await pipeline(new AppleNotificationCenterSource(path), dir.path);
+  const run = await pipeline(
+    new AppleNotificationCenterSource({ path }),
+    dir.path,
+  );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   // usernoted's app_deleted trigger takes the app's records and categories.
@@ -714,7 +726,7 @@ test('a date range loads the notifications delivered in it, to the microsecond, 
   for (const [scope, expected] of scopes) {
     await using runDir = await mkdtempDisposable(join(dir.path, 'run-'));
     const run = await pipeline(
-      new AppleNotificationCenterSource(path, scope),
+      new AppleNotificationCenterSource({ path, scope }),
       runDir.path,
     );
     const out = join(runDir.path, 'out.sqlite');
@@ -738,7 +750,10 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
   );
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
-  const run = await pipeline(new AppleNotificationCenterSource(path), dir.path);
+  const run = await pipeline(
+    new AppleNotificationCenterSource({ path }),
+    dir.path,
+  );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   // chmod stands in for macOS withholding Full Disk Access: SQLite reports
@@ -771,7 +786,10 @@ test('a store missing a column this reader reads fails every stream by name and 
   );
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
-  const run = await pipeline(new AppleNotificationCenterSource(path), dir.path);
+  const run = await pipeline(
+    new AppleNotificationCenterSource({ path }),
+    dir.path,
+  );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   {
@@ -800,7 +818,10 @@ test('a Notification Center watch loads each commit while usernoted keeps its st
   );
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
-  const run = await pipeline(new AppleNotificationCenterSource(path), dir.path);
+  const run = await pipeline(
+    new AppleNotificationCenterSource({ path }),
+    dir.path,
+  );
   // usernoted holds its connection, and so its WAL, open the whole time.
   using usernoted = new ScratchNotificationCenter(path, { existing: true });
   const controller = new AbortController();
@@ -842,7 +863,14 @@ test('this Mac’s Notification Center loads every notification and app it holds
   const out = join(dir.path, 'out.sqlite');
 
   try {
-    await (await pipeline(new AppleNotificationCenterSource(), dir.path)).run();
+    await (
+      await pipeline(
+        new AppleNotificationCenterSource({
+          path: notificationCenterStorePath(homedir()),
+        }),
+        dir.path,
+      )
+    ).run();
   } catch (error) {
     if (
       error instanceof PipelineError &&
@@ -859,7 +887,7 @@ test('this Mac’s Notification Center loads every notification and app it holds
   // shape; apps, which change rarely, by count.
   const loaded = (sql: string) => Number(rows(out, sql)[0]?.n);
   const stored = (sql: string) =>
-    Number(rows(notificationCenterStorePath, sql)[0]?.n);
+    Number(rows(notificationCenterStorePath(homedir()), sql)[0]?.n);
   assert.equal(
     loaded('SELECT count(*) AS n FROM apps'),
     stored('SELECT count(*) AS n FROM app'),
@@ -895,7 +923,7 @@ test('a Notification Center watch keeps every stream current while usernoted cha
   );
   const store = join(dir.path, 'db');
   notificationCenterFixture(store);
-  const source = new AppleNotificationCenterSource(store);
+  const source = new AppleNotificationCenterSource({ path: store });
   const data = join(dir.path, 'out.sqlite');
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
@@ -982,7 +1010,7 @@ test('a Notification Center pass over a large store holds one notification at a 
     const { Connection, Copy, Pipeline } = await import('@workspace/elt');
     const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
     const { AppleNotificationCenterSource } = await import(process.env.SOURCE);
-    const source = new AppleNotificationCenterSource(process.env.STORE);
+    const source = new AppleNotificationCenterSource({ path: process.env.STORE });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/out.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();

@@ -8,7 +8,7 @@ import {
   readFile,
   readdir,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -1472,7 +1472,10 @@ test('this Mac’s Wallet loads every pass passd lists, as passd records it, and
   if (process.platform !== 'darwin') return t.skip('Wallet requires macOS');
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-live-'));
   const out = join(dir.path, 'out.sqlite');
-  const run = await pipeline(new AppleWalletSource(), dir.path);
+  const run = await pipeline(
+    new AppleWalletSource({ directory: walletStorePath(homedir()) }),
+    dir.path,
+  );
 
   try {
     await run.run();
@@ -1489,7 +1492,7 @@ test('this Mac’s Wallet loads every pass passd lists, as passd records it, and
   // its own copy of each pass's serial number, expiry and places, decoded
   // when it added the pass, so the reader's decoding of pass.json must agree.
   const stored = rows(
-    join(walletStorePath, 'passes23.sqlite'),
+    join(walletStorePath(homedir()), 'passes23.sqlite'),
     `SELECT pass.unique_id AS id, pass.serial_number AS serialNumber,
             pass.expiration_date AS expiration,
             (SELECT count(*) FROM pass_location_source AS source
@@ -1544,7 +1547,7 @@ test('this Mac’s Wallet loads every pass passd lists, as passd records it, and
         const manifest: unknown = JSON.parse(
           await readFile(
             join(
-              walletStorePath,
+              walletStorePath(homedir()),
               'Cards',
               `${String(id)}.pkpass`,
               'manifest.json',

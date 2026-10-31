@@ -14,7 +14,6 @@ import {
 import {
   NotificationCenterStore,
   NotificationCenterUnavailableError,
-  notificationCenterStorePath,
 } from '@workspace/sdk-apple-notification-center';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -55,7 +54,7 @@ export class AppleNotificationCenterSource extends Source<NotificationCenterScan
   readonly scope: ImportScope;
   readonly #store: NotificationCenterStore;
 
-  constructor(path = notificationCenterStorePath, scope: ImportScope = {}) {
+  constructor({ path, scope = {} }: { path: string; scope?: ImportScope }) {
     super();
     this.path = path;
     this.scope = scope;

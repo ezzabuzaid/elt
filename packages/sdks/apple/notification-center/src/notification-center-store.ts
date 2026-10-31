@@ -1,4 +1,3 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
@@ -6,11 +5,9 @@ import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 import { appDatabase } from './app-database.ts';
 import { NotificationCenterSnapshot } from './notification-center-snapshot.ts';
 
-// Where macOS keeps this user's Notification Center.
-export const notificationCenterStorePath = join(
-  homedir(),
-  'Library/Group Containers/group.com.apple.usernoted/db2/db',
-);
+// Where macOS keeps Notification Center in the home folder `home`.
+export const notificationCenterStorePath = (home: string): string =>
+  join(home, 'Library/Group Containers/group.com.apple.usernoted/db2/db');
 
 // The store usernoted keeps for Notification Center: the notifications it
 // holds now, the apps that post them, and the categories those apps register.

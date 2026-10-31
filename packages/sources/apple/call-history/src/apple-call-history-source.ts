@@ -12,7 +12,6 @@ import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   CallHistoryStore,
   CallHistoryUnavailableError,
-  callHistoryStorePath,
 } from '@workspace/sdk-apple-call-history';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -56,7 +55,7 @@ export class AppleCallHistorySource extends Source<CallHistoryScan> {
   readonly scope: ImportScope;
   readonly #store: CallHistoryStore;
 
-  constructor(path = callHistoryStorePath, scope: ImportScope = {}) {
+  constructor({ path, scope = {} }: { path: string; scope?: ImportScope }) {
     super();
     this.path = path;
     this.scope = scope;

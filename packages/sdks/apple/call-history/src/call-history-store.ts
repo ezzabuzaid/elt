@@ -1,4 +1,3 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
@@ -6,11 +5,9 @@ import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 import { appDatabase } from './app-database.ts';
 import { CallHistorySnapshot } from './call-history-snapshot.ts';
 
-// Where macOS keeps this user's call history.
-export const callHistoryStorePath = join(
-  homedir(),
-  'Library/Application Support/CallHistoryDB/CallHistory.storedata',
-);
+// Where macOS keeps the call history in the home folder `home`.
+export const callHistoryStorePath = (home: string): string =>
+  join(home, 'Library/Application Support/CallHistoryDB/CallHistory.storedata');
 
 // The CallHistory framework's Core Data store, which callhistoryd writes for
 // Phone and FaceTime and fills from the user's other devices through iCloud.

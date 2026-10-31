@@ -14,7 +14,6 @@ import {
 import {
   WalletStore,
   WalletUnavailableError,
-  walletStorePath,
 } from '@workspace/sdk-apple-wallet';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -64,7 +63,7 @@ export class AppleWalletSource extends Source<WalletScan> {
 
   readonly #store: WalletStore;
 
-  constructor({ directory = walletStorePath }: { directory?: string } = {}) {
+  constructor({ directory }: { directory: string }) {
     super();
     this.#store = new WalletStore(directory);
     Object.freeze(this);

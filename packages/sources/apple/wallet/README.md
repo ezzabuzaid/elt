@@ -5,15 +5,18 @@ An ELT source for the Wallet passes on this Mac. It reads `~/Library/Passes`, wh
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../../elt/CONTEXT.md) for the words of all of elt.
 
 ```ts
+import { homedir } from 'node:os';
+
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { walletStorePath } from '@workspace/sdk-apple-wallet';
 import { AppleWalletSource } from '@workspace/source-apple-wallet/apple-wallet-source';
 
-const source = new AppleWalletSource();
+const source = new AppleWalletSource({ directory: walletStorePath(homedir()) });
 const destination = new SQLiteDestination({ path: './wallet.sqlite' });
 
 await new Pipeline({
@@ -39,7 +42,7 @@ await new Pipeline({
 }).run();
 ```
 
-To read a different folder, give it to the constructor: `new AppleWalletSource({ directory })`.
+The constructor takes `{ directory }`, the folder of the passes. It has no default. `walletStorePath(home)` of `@workspace/sdk-apple-wallet` gives the folder in the home folder `home`. To read a different folder, give it.
 
 A Context Compiler import loads every stream incrementally into its `data.sqlite`. Readers use its `<snake_stream>` views (`passes`, `pass_fields`, `pass_barcodes`, …). Passes come from Pass Viewer, which adds a `.pkpass` file to Wallet on this Mac, and from the iPhone of the user through iCloud.
 
