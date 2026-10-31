@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { Msw } from '@zukhruf/testing/msw';
 import got from 'got';
-import { HttpResponse, http } from 'msw';
-import { setupServer } from 'msw/node';
+import { type HttpHandler, HttpResponse, http } from 'msw';
 
 import {
   AdaptiveRevisit,
@@ -26,17 +26,11 @@ import {
 
 // Synthetic upstream sites make page bodies and failures reproducible offline.
 // They have no robots.txt, so the requests they record are the crawl's pages.
-function mockWeb(...handlers: Parameters<typeof setupServer>) {
-  const server = setupServer(
+function mockWeb(...handlers: HttpHandler[]) {
+  return new Msw().intercept(
     http.get('*/robots.txt', () => new HttpResponse(null, { status: 404 })),
     ...handlers,
   );
-  server.listen({ onUnhandledFrame: 'error' });
-  return {
-    [Symbol.dispose]() {
-      server.close();
-    },
-  };
 }
 
 function pathOf(url: string) {

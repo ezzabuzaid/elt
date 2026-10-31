@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { Msw } from '@zukhruf/testing/msw';
 import got, { HTTPError, type Response } from 'got';
 import { HttpResponse, http } from 'msw';
-import { setupServer } from 'msw/node';
 import { z } from 'zod';
 
 import {
@@ -21,15 +21,6 @@ import {
 } from './index.ts';
 
 // Synthetic upstream sites make cycles, redirects and failures reproducible offline.
-function mockWeb(...handlers: Parameters<typeof setupServer>) {
-  const server = setupServer(...handlers);
-  server.listen({ onUnhandledFrame: 'error' });
-  return {
-    [Symbol.dispose]() {
-      server.close();
-    },
-  };
-}
 
 // A site without robots.txt, answered before the handlers that record requests,
 // for tests whose readers do not read robots.txt themselves.
@@ -59,7 +50,7 @@ async function results(crawl: Crawl) {
 test('crawls links itself and preserves URL identity, provenance and Got responses', async () => {
   const requests: string[] = [];
   const responses = new Map<string, Response>();
-  using server = mockWeb(
+  using server = new Msw().intercept(
     noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -133,7 +124,7 @@ test('crawls links itself and preserves URL identity, provenance and Got respons
 
 test('each found URL is requested once for each role it adds and keeps the URL as found, including redirect aliases', async () => {
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -191,7 +182,7 @@ test('each found URL is requested once for each role it adds and keeps the URL a
 test('failures are handed out with their URL while independent pages continue, and a new crawl retries', async () => {
   let broken = true;
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -239,7 +230,7 @@ test('failures are handed out with their URL while independent pages continue, a
 });
 
 test('a failed starting URL is handed out as a failure', async () => {
-  using server = mockWeb(
+  using server = new Msw().intercept(
     noRobots,
     http.get(
       'https://site.test/missing',
@@ -261,7 +252,7 @@ test('a failed starting URL is handed out as a failure', async () => {
 
 test('consumer backpressure and early break stop fetching, and crawls remain isolated', async () => {
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -314,7 +305,7 @@ test(
   async () => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
-    using server = mockWeb(
+    using server = new Msw().intercept(
       noRobots,
       http.get('https://site.test/slow', async () => {
         entered.resolve();
@@ -371,7 +362,7 @@ test('validates readers and starting URLs and accepts an empty crawl', async () 
 
 test('include hands back only matching pages and never requests non-matching pages beyond the link limits', async () => {
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -404,7 +395,7 @@ test('include hands back only matching pages and never requests non-matching pag
 });
 
 test('Got hooks see options.context.page only for handed-back pages that no reader reads as a document', async () => {
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       if (path === '/')
@@ -459,7 +450,7 @@ test('Got hooks see options.context.page only for handed-back pages that no read
 
 test('a snapshot resumes the crawl without repeating finished work and hands out the last entry again', async () => {
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -504,7 +495,7 @@ test('a snapshot resumes the crawl without repeating finished work and hands out
 });
 
 test('a failure is marked as a page only for a page include matches, not for a starting URL or a declared listing', async () => {
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       if (path === '/')
@@ -539,7 +530,7 @@ test('a failure is marked as a page only for a page include matches, not for a s
 });
 
 function progressSite(requests: string[]) {
-  return mockWeb(
+  return new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -641,7 +632,7 @@ test('a snapshot taken at a progress entry resumes without downloading the docum
 
 test('a page labeled Latin-1 in its Content-Type is handed back, and every reader reads it by that charset', async () => {
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -690,7 +681,7 @@ test('a page labeled Latin-1 in its Content-Type is handed back, and every reade
 
 test('a page labeled only by its <meta charset> is read by that charset', async () => {
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -717,7 +708,7 @@ test('a page labeled only by its <meta charset> is read by that charset', async 
 });
 
 test('an unlabeled page is read as UTF-8, and one that is not valid UTF-8 is still handed back with its links followed', async () => {
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       if (path === '/')
@@ -766,7 +757,7 @@ test('a reader that throws on a response does not stop the readers after it or d
       throw new Error('The reader broke');
     }
   }
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       if (path === '/') return HttpResponse.html('<a href="/page">Page</a>');
@@ -808,7 +799,7 @@ test('a reader that throws on a response does not stop the readers after it or d
 });
 
 test('a declared listing that one reader cannot read keeps what the other readers find in it', async () => {
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       if (path === '/')

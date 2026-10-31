@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { Msw } from '@zukhruf/testing/msw';
 import got from 'got';
 import { HttpResponse, http } from 'msw';
-import { setupServer } from 'msw/node';
 
 import {
   type Crawl,
@@ -14,15 +14,6 @@ import {
 } from './index.ts';
 
 // Synthetic upstream sites make robots.txt answers reproducible offline.
-function mockWeb(...handlers: Parameters<typeof setupServer>) {
-  const server = setupServer(...handlers);
-  server.listen({ onUnhandledFrame: 'error' });
-  return {
-    [Symbol.dispose]() {
-      server.close();
-    },
-  };
-}
 
 // A site whose sitemap lists /a, /private/b and /c, and whose robots.txt is the given answer.
 function site(requests: string[], robots: () => Response) {
@@ -67,7 +58,7 @@ const options = () => ({ signal: AbortSignal.timeout(5000) });
 
 test('a URL that robots.txt disallows is not requested, and the other pages are handed back', async () => {
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     site(requests, () =>
       HttpResponse.text('User-agent: *\nDisallow: /private/\n'),
     ),
@@ -88,7 +79,7 @@ test('rules for another user agent do not apply, and rules for the client user a
       'User-agent: OtherBot\nDisallow: /a\n\nUser-agent: ExampleBot\nDisallow: /c\n',
     );
   const requests: string[] = [];
-  using server = mockWeb(site(requests, robots));
+  using server = new Msw().intercept(site(requests, robots));
 
   const result = await crawled(
     crawler({ 'user-agent': 'ExampleBot/1.0' }).crawl(starts, null, options()),
@@ -100,7 +91,7 @@ test('rules for another user agent do not apply, and rules for the client user a
 
 test('a robots.txt that answers 404 allows every URL', async () => {
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     site(requests, () => new HttpResponse(null, { status: 404 })),
   );
 
@@ -113,7 +104,7 @@ test('a robots.txt that answers 404 allows every URL', async () => {
 test('a robots.txt that answers 503 holds its origin until Retry-After, and the crawl ends unfinished', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     site(
       requests,
       () =>
@@ -140,7 +131,7 @@ test('a robots.txt that answers 503 holds its origin until Retry-After, and the 
 
 test('a link that robots.txt disallows spends no LinkReader budget', async () => {
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       requests.push(pathname);
@@ -169,7 +160,7 @@ test('a link that robots.txt disallows spends no LinkReader budget', async () =>
 
 test('a start that redirects to another origin spends no LinkReader budget on a link that robots.txt there disallows', async () => {
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://a.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       requests.push(`a.test${pathname}`);
@@ -208,7 +199,7 @@ test('a start that redirects to another origin spends no LinkReader budget on a 
 });
 
 test('a link that the crawl does not select is dropped, not held, on a website whose robots.txt answers 503', async () => {
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://list.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -244,7 +235,7 @@ test('a link that the crawl does not select is dropped, not held, on a website w
 
 test('a link that the crawl does not select asks its website nothing, so a website whose robots.txt answers 503 fails nothing', async () => {
   const flaky: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://list.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -279,7 +270,7 @@ test('a link that the crawl does not select asks its website nothing, so a websi
 test('a robots.txt that answers 429 holds its origin as a 5xx does, not allowing everything as other 4xx answers do', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     site(
       requests,
       () =>
@@ -299,7 +290,7 @@ test('a robots.txt that answers 429 holds its origin as a 5xx does, not allowing
 
 test('Crawl-delay spaces the requests to its origin', async () => {
   const started: number[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')

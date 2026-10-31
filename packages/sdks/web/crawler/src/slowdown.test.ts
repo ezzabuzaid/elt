@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { ClientRequestInterceptor } from '@mswjs/interceptors/ClientRequest';
+import { Msw } from '@zukhruf/testing/msw';
 import got from 'got';
 import { HttpResponse, http } from 'msw';
-import { setupServer } from 'msw/node';
 
 import {
   AdaptiveRevisit,
@@ -17,15 +17,6 @@ import {
 } from './index.ts';
 
 // Synthetic upstream sites make refusals reproducible offline.
-function mockWeb(...handlers: Parameters<typeof setupServer>) {
-  const server = setupServer(...handlers);
-  server.listen({ onUnhandledFrame: 'error' });
-  return {
-    [Symbol.dispose]() {
-      server.close();
-    },
-  };
-}
 
 // A sitemap that names these pages of its origin.
 function sitemap(origin: string, paths: readonly string[]) {
@@ -59,7 +50,7 @@ const options = () => ({ signal: AbortSignal.timeout(15_000) });
 
 test('cancelling a crawl while it waits out a slowdown rejects at once with the signal reason', async () => {
   const requests: string[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       requests.push(pathname);
@@ -99,7 +90,7 @@ test('cancelling a crawl while it waits out a slowdown rejects at once with the 
 
 test('a refusal slows the requests to its own origin and not to another origin', async () => {
   const started = new Map<string, number[]>();
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://:host/*', ({ request }) => {
       const { origin, pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -133,7 +124,7 @@ test('after a 429 block ends, the next crawl spaces its requests to that origin'
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   let blocking = true;
   const started: { path: string; at: number }[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       started.push({ path: pathname, at: performance.now() });
@@ -174,7 +165,7 @@ test('after a 429 block ends, the next crawl spaces its requests to that origin'
 test('each 5xx answer slows the next request to its origin by one second', async () => {
   const statuses = [500, 501, 503, 504, 599];
   const started = new Map<string, number[]>();
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://:host/*', ({ request }) => {
       const { host, origin, pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -209,7 +200,7 @@ test('each 5xx answer slows the next request to its origin by one second', async
 test('a 503 that Got retried away still slows the origin', async () => {
   let refusals = 1;
   const started: { path: string; at: number }[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -284,7 +275,7 @@ test('a page whose connection dropped and then answered 503 before Got retried i
 test('a 408 that Got retried away does not slow the origin', async () => {
   const requests: string[] = [];
   let timeouts = 1;
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       requests.push(pathname);
@@ -308,7 +299,7 @@ test('a 408 that Got retried away does not slow the origin', async () => {
 
 test('each further refusal doubles the wait', async () => {
   const started: number[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -338,7 +329,7 @@ test('answers that are not refusals shorten the wait step by step, until the slo
     ...Array.from({ length: 22 }, (_, index) => `/${index + 1}`),
   ];
   const started: number[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -372,7 +363,7 @@ test('answers that are not refusals shorten the wait step by step, until the slo
 // A crawl of site.test whose page /a answers 503 and whose other pages answer, then a second crawl from its memento.
 async function crawlAgain(pages: readonly string[]) {
   const started: { path: string; at: number }[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       started.push({ path: pathname, at: performance.now() });
@@ -443,7 +434,7 @@ test('beside a Crawl-delay, the longer wait wins and the two do not add up', asy
     ['other.test', ['/a', '/b']],
   ]);
   const started = new Map<string, number[]>();
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://:host/*', ({ request }) => {
       const { host, origin, pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -479,7 +470,7 @@ test('a robots.txt that answers 503 also slows its origin after the block', asyn
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   let refusing = true;
   const started: { path: string; at: number }[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       started.push({ path: pathname, at: performance.now() });
@@ -510,7 +501,7 @@ test('a robots.txt that answers 503 also slows its origin after the block', asyn
 });
 
 test('repeated refusals never make the wait longer than one minute', async () => {
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -542,7 +533,7 @@ test('repeated refusals never make the wait longer than one minute', async () =>
 test('a robots.txt 503 that Got retried away still slows its origin', async () => {
   let refusals = 1;
   const started: { path: string; at: number }[] = [];
-  using server = mockWeb(
+  using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       started.push({ path: pathname, at: performance.now() });

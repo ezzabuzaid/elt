@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
 
 import { HttpServer } from '@zukhruf/testing/http';
+import { Msw } from '@zukhruf/testing/msw';
 import got from 'got';
 import { type HttpHandler, HttpResponse, http } from 'msw';
-import { setupServer } from 'msw/node';
 
 import {
   ArchiveReader,
@@ -21,12 +21,10 @@ import {
 // Only HTTP is controlled; the crawler and its parsers run for real.
 // A site whose handlers do not answer robots.txt has none.
 function site(...handlers: HttpHandler[]) {
-  const server = setupServer(
+  return new Msw().intercept(
     ...handlers,
     http.get('*/robots.txt', () => new HttpResponse(null, { status: 404 })),
   );
-  server.listen({ onUnhandledFrame: 'error' });
-  return { [Symbol.dispose]: () => server.close() };
 }
 
 function listings() {
