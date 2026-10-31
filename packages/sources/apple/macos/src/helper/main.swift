@@ -22,30 +22,41 @@ func recognize(_ handler: VNImageRequestHandler) throws -> String? {
 }
 
 // Exercise distinct recognition scripts before accepting files. English alone
-// leaves first-use model work for the first multilingual attachments.
-for text in ["Context Compiler", "صباح الخير", "नमस्ते दुनिया", "안녕하세요", "Доброе утро", "สวัสดีครับ", "你好世界", "こんにちは世界"] {
-    try autoreleasepool {
-        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 640, pixelsHigh: 160, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-        NSColor.white.setFill()
-        NSBezierPath(rect: NSRect(x: 0, y: 0, width: 640, height: 160)).fill()
-        (text as NSString).draw(at: NSPoint(x: 20, y: 60), withAttributes: [.font: NSFont.systemFont(ofSize: 40), .foregroundColor: NSColor.black])
-        NSGraphicsContext.restoreGraphicsState()
-        // Use the production URL decoder. tmpfile is already unlinked, so
-        // the OS also cleans it up if the host stops us during warm-up.
-        guard let file = tmpfile() else {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-        }
-        defer { fclose(file) }
-        let handle = FileHandle(fileDescriptor: fileno(file))
-        try handle.write(contentsOf: bitmap.representation(using: .png, properties: [:])!)
-        try handle.seek(toOffset: 0)
-        let url = URL(fileURLWithPath: "/dev/fd/\(handle.fileDescriptor)")
-        guard try recognize(VNImageRequestHandler(url: url)) == text else {
-            throw NSError(domain: "Vision", code: 2, userInfo: [NSLocalizedDescriptionKey: "OCR warm-up did not recognize its text"])
+// leaves first-use model work for the first multilingual attachments. A failed
+// warm-up goes to stderr and exits 1, so the host reads why the worker ended.
+do {
+    for text in ["Context Compiler", "صباح الخير", "नमस्ते दुनिया", "안녕하세요", "Доброе утро", "สวัสดีครับ", "你好世界", "こんにちは世界"] {
+        try autoreleasepool {
+            guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 640, pixelsHigh: 160, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+                throw NSError(domain: "Vision", code: 4, userInfo: [NSLocalizedDescriptionKey: "OCR warm-up could not draw its text"])
+            }
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+            NSColor.white.setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 640, height: 160)).fill()
+            (text as NSString).draw(at: NSPoint(x: 20, y: 60), withAttributes: [.font: NSFont.systemFont(ofSize: 40), .foregroundColor: NSColor.black])
+            NSGraphicsContext.restoreGraphicsState()
+            // Use the production URL decoder. tmpfile is already unlinked, so
+            // the OS also cleans it up if the host stops us during warm-up.
+            guard let file = tmpfile() else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
+            defer { fclose(file) }
+            let handle = FileHandle(fileDescriptor: fileno(file))
+            guard let png = bitmap.representation(using: .png, properties: [:]) else {
+                throw NSError(domain: "Vision", code: 4, userInfo: [NSLocalizedDescriptionKey: "OCR warm-up could not draw its text"])
+            }
+            try handle.write(contentsOf: png)
+            try handle.seek(toOffset: 0)
+            let url = URL(fileURLWithPath: "/dev/fd/\(handle.fileDescriptor)")
+            guard try recognize(VNImageRequestHandler(url: url)) == text else {
+                throw NSError(domain: "Vision", code: 2, userInfo: [NSLocalizedDescriptionKey: "OCR warm-up did not recognize its text"])
+            }
         }
     }
+} catch {
+    FileHandle.standardError.write(Data("\(error)\n".utf8))
+    exit(1)
 }
 emit(["ready": true])
 
