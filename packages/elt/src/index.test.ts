@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { Latch } from '@zukhruf/async';
+import { settleWithin } from '@zukhruf/testing/async';
+
 import {
   Catalog,
   type CheckpointSession,
@@ -10,6 +13,7 @@ import {
   Copy,
   CopyConfiguration,
   type DeclaredCopy,
+  DerivedDataset,
   Destination,
   DocumentParser,
   type FailureType,
@@ -1381,7 +1385,7 @@ test('a connector that reports its own stream status fails that stream, not its 
 // Keeps each pass as it is recorded, so tests see what readers of sync history would.
 class MemoryHistory extends SyncHistory<NamedTarget> {
   readonly log: string[] = [];
-  readonly #finished = new Map<string, PromiseWithResolvers<void>>();
+  readonly #finished = new Map<string, Latch>();
 
   // The tests that use it read passes; checks and installs are the SQLite and
   // Postgres histories' tests.
@@ -1390,7 +1394,7 @@ class MemoryHistory extends SyncHistory<NamedTarget> {
   override async install(): Promise<void> {}
 
   finished(connection: string): Promise<void> {
-    return this.#pass(connection).promise;
+    return this.#pass(connection).wait();
   }
 
   override async begin(
@@ -1403,7 +1407,7 @@ class MemoryHistory extends SyncHistory<NamedTarget> {
     return {
       finish: async (outcomes) => {
         this.log.push(`finish ${connection.name} ${passStatus(outcomes)}`);
-        this.#pass(connection.name).resolve();
+        this.#pass(connection.name).open();
       },
       fail: async (error) => {
         this.log.push(
@@ -1413,13 +1417,8 @@ class MemoryHistory extends SyncHistory<NamedTarget> {
     };
   }
 
-  #pass(connection: string): PromiseWithResolvers<void> {
-    let pass = this.#finished.get(connection);
-    if (pass === undefined) {
-      pass = Promise.withResolvers<void>();
-      this.#finished.set(connection, pass);
-    }
-    return pass;
+  #pass(connection: string): Latch {
+    return this.#finished.getOrInsertComputed(connection, () => new Latch());
   }
 }
 
@@ -1430,6 +1429,16 @@ const leftOnly = (name: string, source: ContextSource) =>
     destination: new DrainingDestination(),
     steps: [new Copy(source.left, new NamedTarget(`${name}-left`))],
   });
+
+// A source that keeps watching until the watch stops it.
+class Watching extends ContextSource {
+  protected override async *observe({ streams, signal }: SourceWatchOptions) {
+    yield streams;
+    await new Promise((resolve) =>
+      signal.addEventListener('abort', resolve, { once: true }),
+    );
+  }
+}
 
 // A watcher that fails once its first pass began, for a reason only the user
 // can fix, so its connection stops: one that fails for a system reason would
@@ -1565,12 +1574,11 @@ test("connections read side by side, so one connection's pass never waits for an
       partition: null,
       context: ReadContext,
     ) {
-      await Promise.race([
+      await settleWithin(
         history.finished('fast'),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('slow held back fast')), 2000),
-        ),
-      ]);
+        'fast to finish while slow waits: slow held back fast',
+        2000,
+      );
       yield* super.extract(configuration, state, partition, context);
     }
   }
@@ -1970,6 +1978,60 @@ test('a stopping watch waits for a source that heeds the abort to finish stoppin
     controller.abort();
 
   assert.equal(stopped, true);
+});
+
+test('under a watch, a derived dataset whose refresh fails stops the watch, which rejects with that failure', async () => {
+  const refused = new Error('the store refused the derived SQL');
+  class Refused extends DerivedDataset<NamedTarget> {
+    readonly name = 'refused';
+    override async refresh(): Promise<void> {
+      throw refused;
+    }
+  }
+  const pipeline = new Pipeline({
+    history: new MemoryHistory(),
+    connections: [leftOnly('watching', new Watching())],
+    derived: [new Refused()],
+  });
+
+  const outcome = await settleWithin(
+    Array.fromAsync(
+      pipeline.watch({ signal: new AbortController().signal }),
+    ).then(
+      () => 'ended without the failure',
+      (error: unknown) => error,
+    ),
+    'the watch to stop on the failed refresh',
+  );
+
+  assert.equal(outcome, refused);
+});
+
+test('a stopped watch ends only once the derived refresh it started has ended', async () => {
+  const started = new Latch();
+  const events: string[] = [];
+  class Held extends DerivedDataset<NamedTarget> {
+    readonly name = 'held';
+    override async refresh(): Promise<void> {
+      started.open();
+      await sleep(200);
+      events.push('refresh ended');
+    }
+  }
+  const pipeline = new Pipeline({
+    history: new MemoryHistory(),
+    connections: [leftOnly('reading', new Watching())],
+    derived: [new Held()],
+  });
+  const controller = new AbortController();
+
+  for await (const _ of pipeline.watch({ signal: controller.signal })) {
+    await started.wait();
+    controller.abort();
+  }
+  events.push('watch ended');
+
+  assert.deepEqual(events, ['refresh ended', 'watch ended']);
 });
 
 test('a stopping watch ends the pass it is running, which the extract sees and the history records cancelled', async () => {

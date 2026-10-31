@@ -1,6 +1,38 @@
+import { Latch } from '@zukhruf/async';
+
 import type { Connection } from './connection.ts';
 import type { DerivedDataset } from './derived-dataset.ts';
 import type { Target as DestinationTarget } from './target.ts';
+
+// No refresh runs.
+class Idle {}
+
+// A refresh runs; done opens once it ended.
+class Running {
+  readonly done: Latch;
+  constructor(done: Latch) {
+    this.done = done;
+  }
+}
+
+// A refresh runs and a pass committed while it ran, so one more follows.
+class Queued {
+  readonly done: Latch;
+  constructor(done: Latch) {
+    this.done = done;
+  }
+}
+
+// No refresh failed yet.
+class Healthy {}
+
+// The first refresh failure that the watch's own stop did not cause.
+class Failed {
+  readonly error: unknown;
+  constructor(error: unknown) {
+    this.error = error;
+  }
+}
 
 // A watch's refreshes of its derived datasets, in the background: one
 // refresh at a time, and a pass that commits while one runs asks for one
@@ -12,9 +44,8 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
   readonly #connections: readonly Connection<Target>[];
   readonly #signal: AbortSignal;
   readonly #stop: (error: unknown) => void;
-  #running: Promise<void> | null = null;
-  #again = false;
-  #failure: { readonly error: unknown } | undefined;
+  #state: Idle | Running | Queued = new Idle();
+  #health: Healthy | Failed = new Healthy();
 
   constructor(
     datasets: readonly DerivedDataset<Target>[],
@@ -29,37 +60,47 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
   }
 
   get failure(): { readonly error: unknown } | undefined {
-    return this.#failure;
+    return this.#health instanceof Failed ? this.#health : undefined;
   }
 
   request(): void {
     if (this.#datasets.length === 0) return;
-    if (this.#running !== null) {
-      this.#again = true;
+    if (this.#state instanceof Running) {
+      this.#state = new Queued(this.#state.done);
       return;
     }
-    this.#running = (async () => {
-      do {
-        this.#again = false;
+    if (this.#state instanceof Queued) return;
+    const done = new Latch();
+    this.#state = new Running(done);
+    void this.#run(done);
+  }
+
+  async settled(): Promise<void> {
+    if (this.#state instanceof Idle) return;
+    await this.#state.done.wait();
+  }
+
+  // Refreshes every dataset in order, once more while a pass asked for it.
+  async #run(done: Latch): Promise<void> {
+    try {
+      for (;;) {
         for (const [index, dataset] of this.#datasets.entries())
           await dataset.refresh({
             connections: this.#connections,
             earlier: this.#datasets.slice(0, index),
             signal: this.#signal,
           });
-      } while (this.#again && !this.#signal.aborted);
-    })()
-      .catch((error: unknown) => {
-        if (this.#signal.aborted) return;
-        this.#failure = { error };
+        if (!(this.#state instanceof Queued) || this.#signal.aborted) break;
+        this.#state = new Running(done);
+      }
+    } catch (error) {
+      if (!this.#signal.aborted) {
+        this.#health = new Failed(error);
         this.#stop(error);
-      })
-      .finally(() => {
-        this.#running = null;
-      });
-  }
-
-  async settled(): Promise<void> {
-    await this.#running;
+      }
+    } finally {
+      this.#state = new Idle();
+      done.open();
+    }
   }
 }
