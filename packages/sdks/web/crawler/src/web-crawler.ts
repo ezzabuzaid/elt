@@ -299,6 +299,12 @@ export class WebCrawler {
   }
 }
 
+// A run that still has entries to request, or that held some back for a later run.
+class Crawling {}
+
+// A run that requested every entry it had: its memento has no crawl to resume.
+class Finished {}
+
 class CrawlRun implements Crawl {
   readonly #http: Got;
   readonly #readers: readonly Reader<unknown, unknown>[];
@@ -360,7 +366,7 @@ class CrawlRun implements Crawl {
     readonly before: KnownUrl | undefined;
     readonly after: KnownUrl;
   } | null = null;
-  #complete = false;
+  #phase: Crawling | Finished = new Crawling();
   // Known URLs, offered once this crawl's findings run out, so a finding's fresh provenance comes first.
   readonly #revisits: Entry[];
 
@@ -411,20 +417,21 @@ class CrawlRun implements Crawl {
 
   snapshot(): CrawlMemento {
     return structuredClone({
-      crawl: this.#complete
-        ? null
-        : {
-            pending: [
-              ...(this.#current ? [this.#current] : []),
-              ...priorities.flatMap((priority) => [
-                ...this.#lanes[priority].values(),
-              ]),
-              ...this.#held.values(),
-            ],
-            states: this.#states,
-            blocked: Object.fromEntries(this.#blocked),
-            origins: [...this.#origins],
-          },
+      crawl:
+        this.#phase instanceof Finished
+          ? null
+          : {
+              pending: [
+                ...(this.#current ? [this.#current] : []),
+                ...priorities.flatMap((priority) => [
+                  ...this.#lanes[priority].values(),
+                ]),
+                ...this.#held.values(),
+              ],
+              states: this.#states,
+              blocked: Object.fromEntries(this.#blocked),
+              origins: [...this.#origins],
+            },
       urls: Object.fromEntries(this.#urls),
       slowdowns: Object.fromEntries(this.#slowdowns),
       pages: Object.fromEntries(this.#pages),
@@ -446,7 +453,7 @@ class CrawlRun implements Crawl {
   nextDue(): number | null {
     // A crawl held back by its breakers continues when the first one closes;
     // one held back by a spent expansion budget is due again at once.
-    if (!this.#complete && this.#held.size > 0)
+    if (this.#phase instanceof Crawling && this.#held.size > 0)
       return Math.min(
         ...this.#blocked.values(),
         ...(this.#spent.size > 0 ? [this.#at] : []),
@@ -682,7 +689,7 @@ class CrawlRun implements Crawl {
             published: entry.published,
           },
         };
-    this.#complete = true;
+    this.#phase = new Finished();
   }
 
   #visited(
