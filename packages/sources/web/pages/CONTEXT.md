@@ -14,19 +14,19 @@ _Avoid_: Scan, run (a pipeline run does one crawl for each input), sync
 
 **Frontier**:
 The URLs that the crawl must still download, and the URLs that it already knows. The crawler keeps it. The URLs of a blocked origin stay in it until the block ends.
-_Avoid_: Visited set, queue (the rate limit of the HTTP module has its own queue)
+_Avoid_: Visited set, queue
 
 **Origin**:
-The start of a URL up to its path: the scheme, the host name and the port, for example `https://shop.example`. The crawler reads `robots.txt`, waits out `Crawl-delay` and blocks requests for each origin.
+The start of a URL up to its path: the scheme, the host name and the port, for example `https://shop.example`. Every crawl of a read asks one record of each origin, which reads its `robots.txt`, keeps its delay and its slowdown, and blocks requests to it.
 _Avoid_: Host (the host is the program that gives the source its inputs), domain, site
 
 **Block**:
-A period in which the crawl sends no request to one origin. It is a circuit breaker for each origin (Nygard, _Release It!_). It starts when the origin answers 429, answers 403 three times in a row, or cannot give its `robots.txt` (a 429, a 5xx or a network error). It ends at the `Retry-After` time of that answer, or one hour later when the answer gives none. In the crawl where it starts, a block lasts until that crawl ends, even when its end time comes first. The crawl reports each block once, as a failure that names the origin. The crawl snapshot keeps the block, and `Crawl.nextDue()` gives the earliest end of a block.
-_Avoid_: Ban, throttle, rate limit (the rate limit of the HTTP module is a different thing)
+A period in which no crawl of the read sends a request to one origin. It is a circuit breaker in the record of the origin (Nygard, _Release It!_). It starts when the origin answers 429, answers 503 with `Retry-After`, answers 403 three times in a row, or cannot give its `robots.txt` (a 429, a 5xx or a network error). It ends at the `Retry-After` time of that answer, at most a day later, or one hour later when the answer gives none. In the read where it starts, a block lasts until that read ends, even when its end time comes first. The crawl that meets it reports it once, as a failure that names the origin. The records of the origins in the cache file keep the block, and `Crawl.nextDue()` gives the earliest end of a block.
+_Avoid_: Ban, throttle, rate limit
 
 **Slowdown**:
-The time that the crawl waits between two requests to an origin that refused requests. Each refusal, a 429 or a 5xx answer, doubles it, from one second up to one minute. Each other answer shortens it by a tenth. The crawl memento keeps it, so a later crawl starts slow too.
-_Avoid_: Throttle, backoff (Got's backoff is the wait before a retry), rate limit (the rate limit of the HTTP module is a different thing)
+The time that the crawl waits, beyond the origin's delay, between two requests to an origin that refused requests. Each refusal, a 429 or a 5xx answer, doubles it, from one second up to one minute. Each other answer shortens it by a tenth. The origins' records in the cache file keep it, so a later read starts slow too.
+_Avoid_: Throttle, backoff (Got's backoff is the wait before a retry of a network error), rate limit
 
 **Page**:
 A URL that the crawl hands back because it matches the `include` patterns of the web stream. The extractor reads it.

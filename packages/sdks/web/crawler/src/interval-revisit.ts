@@ -27,7 +27,17 @@ export abstract class IntervalRevisit<History> extends RevisitPolicy<History> {
       return { due: revisit.at + this.retryAfter, history };
     if (revisit.outcome === 'gone')
       return { due: revisit.at + this.goneAfter, history };
-    return this.visited({ ...revisit, outcome: revisit.outcome }, history);
+    // A redirect is a visit that succeeded, as Nutch's CrawlDbReducer gives
+    // STATUS_FETCH_REDIR_TEMP and _PERM to setFetchSchedule with a fetched
+    // page; its target decides whether it changed.
+    const { outcome } = revisit;
+    return this.visited(
+      {
+        ...revisit,
+        outcome: typeof outcome === 'string' ? outcome : outcome.change,
+      },
+      history,
+    );
   }
 
   /** After a download that succeeded. */

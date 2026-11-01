@@ -15,8 +15,10 @@ import {
 import {
   AlwaysRevisit,
   ArchiveReader,
+  CompositeRevisit,
   LinkReader,
   ListingReader,
+  OnceRevisit,
   PaginationReader,
 } from '@workspace/sdk-web-crawler';
 
@@ -347,7 +349,25 @@ test('an interruption during a long stretch of archive pages keeps the progress 
     userAgent: 'elt-test/1.0',
     streams: [
       {
-        stream: articles(`${upstream.origin}/articles/*`),
+        // The starting page is due in every run; an archive page that a run
+        // read is not, so a run reads again only what the last save had not
+        // finished.
+        stream: new WebStream({
+          name: 'articles',
+          primaryKey: ['articleUrl'],
+          readers: [
+            new ListingReader(),
+            new ArchiveReader(),
+            new PaginationReader(),
+            new LinkReader({ maxDepth: 3, maxPages: 100 }),
+          ],
+          revisit: new CompositeRevisit(
+            [[new URLPattern(`${upstream.origin}/`), new AlwaysRevisit()]],
+            new OnceRevisit(),
+          ),
+          include: [new URLPattern(`${upstream.origin}/articles/*`)],
+          extractor: new ArticleExtractor(),
+        }),
         inputs: [upstream.origin],
       },
     ],
@@ -374,7 +394,7 @@ test('an interruption during a long stretch of archive pages keeps the progress 
   const timer = setTimeout(() => {
     stoppedAt = performance.now();
     stop.abort(reason);
-  }, 4000);
+  }, 10_000);
   try {
     await assert.rejects(
       new Pipeline({ connections: [connection], history }).run({
@@ -386,7 +406,8 @@ test('an interruption during a long stretch of archive pages keeps the progress 
     clearTimeout(timer);
   }
   const read = requests.filter(({ url }) => url.startsWith('/archive/'));
-  // The source starts at most two requests a second, so about five archive pages are read.
+  // An origin answers one request a second, after its robots.txt and the
+  // listings of the starting page, so about five archive pages are read.
   assert.ok(read.length >= 4, `${read.length} archive pages before the stop`);
   assert.ok(!read.some(({ url }) => url === '/archive/12'));
   const firstRun = new Map(read.map(({ url, at }) => [url, at]));
@@ -403,9 +424,9 @@ test('an interruption during a long stretch of archive pages keeps the progress 
   // The starting page is due, so the run reads it once more.
   assert.equal(requests.filter(({ url }) => url === '/').length, 1);
   // Progress is saved at most once a second; the archive page in flight at the last save, up to one
-  // request slot and one slow download earlier, is read once more.
+  // delay of the origin and one slow download earlier, is read once more.
   assert.ok(
-    again.every(({ before }) => before <= 2000),
+    again.every(({ before }) => before <= 2500),
     JSON.stringify(again),
   );
   assert.deepEqual(

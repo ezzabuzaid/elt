@@ -8,14 +8,19 @@ import got from 'got';
 import { type HttpHandler, HttpResponse, http } from 'msw';
 
 import {
+  AdaptiveRevisit,
   ArchiveReader,
   CrawlError,
   type CrawlFailure,
   type CrawledPage,
   LinkReader,
   ListingReader,
+  Origins,
   WebCrawler,
 } from './index.ts';
+
+// Got retries no network error, so a test's failure is its first answer.
+const noRetries = got.extend({ retry: { limit: 0 } });
 
 // Public sites cannot reliably produce each failure or cancellation stage.
 // Only HTTP is controlled; the crawler and its parsers run for real.
@@ -28,25 +33,28 @@ function site(...handlers: HttpHandler[]) {
 }
 
 function listings() {
-  return new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-    new ListingReader(),
-    new ArchiveReader(),
-  ]);
+  return new WebCrawler(
+    noRetries,
+    new Origins(noRetries, null),
+    [new ListingReader(), new ArchiveReader()],
+    new AdaptiveRevisit(),
+  );
 }
 
 function allReaders(limits: { maxDepth: number; maxPages: number }) {
-  return new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-    new ListingReader(),
-    new ArchiveReader(),
-    new LinkReader(limits),
-  ]);
+  return new WebCrawler(
+    noRetries,
+    new Origins(noRetries, null),
+    [new ListingReader(), new ArchiveReader(), new LinkReader(limits)],
+    new AdaptiveRevisit(),
+  );
 }
 
 // Progress entries only mark URLs read for the readers; these tests assert pages and failures.
 async function crawl(crawler: WebCrawler, start: string) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
   for await (const entry of crawler.crawl([start], null, {
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(120_000),
   }))
     if (!('progress' in entry) && !('deferred' in entry)) entries.push(entry);
   return entries;
@@ -268,16 +276,18 @@ test('labeled feed anchors discover pages without accepting ordinary navigation'
     listingUrl: `${upstream.origin}/sitemap.xml`,
   };
   // A valid possible feed, even an empty one, is a listing, so robots.txt makes no /sitemap.xml guess.
+  // The feed that /exports/updates redirects to is a request of its own,
+  // after the feeds that the page names.
   assert.deepEqual((await crawl(listings(), upstream.origin)).map(location), [
-    {
-      url: `${upstream.origin}/story`,
-      lastModified: null,
-      listingUrl: `${upstream.origin}/feeds/current`,
-    },
     {
       url: `${upstream.origin}/attribute-story`,
       lastModified: null,
       listingUrl: `${upstream.origin}/exports/attribute`,
+    },
+    {
+      url: `${upstream.origin}/story`,
+      lastModified: null,
+      listingUrl: `${upstream.origin}/feeds/current`,
     },
   ]);
   assert.deepEqual(
@@ -430,15 +440,16 @@ test('arbitrary sites retain every candidate path, URL identity and raw hints', 
       ),
     );
     assert.deepEqual((await crawl(listings(), `${origin}/`)).map(location), [
-      {
-        url: `${origin}/news/category`,
-        lastModified: '2026-10-20',
-        listingUrl,
-      },
-      // The origins take turns.
+      // The origins take turns, and biology.example waits out its delay
+      // after the sitemap, so archive.example goes first.
       {
         url: 'https://archive.example/elsewhere',
         lastModified: null,
+        listingUrl,
+      },
+      {
+        url: `${origin}/news/category`,
+        lastModified: '2026-10-20',
         listingUrl,
       },
       {

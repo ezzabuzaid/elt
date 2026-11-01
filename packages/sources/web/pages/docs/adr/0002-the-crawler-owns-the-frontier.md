@@ -2,7 +2,7 @@
 
 The source must find the pages of each input in sitemaps, feeds, archives and links. To find them, a crawl needs a frontier. When two classes each keep a frontier, one job has two queues, two visited sets and two download loops.
 
-Thus the source keeps no frontier. It gives each input to `WebCrawler` from `@workspace/sdk-web-crawler`, with the readers and the `include` patterns of the web stream. The crawler downloads each URL one time and hands back the pages. The source reads the pages in the order that the crawl hands them back, one page at a time. Got owns retries, redirects, timeouts and the HTTP cache. The HTTP module of the source starts at most two requests each second.
+Thus the source keeps no frontier. It gives each input to `WebCrawler` from `@workspace/sdk-web-crawler`, with the readers and the `include` patterns of the web stream. The crawler downloads each URL one time and hands back the pages. The source reads the pages in the order that the crawl hands them back, one page at a time. Got owns timeouts, the retries of network errors and the HTTP cache. The crawler's record of each origin spaces the requests to it ([ADR 0014](./0014-the-crawls-of-a-read-share-the-record-of-each-origin.md)).
 
 ## Considered Options
 
@@ -11,7 +11,7 @@ Thus the source keeps no frontier. It gives each input to `WebCrawler` from `@wo
 
 ## Consequences
 
-- The source has no queue, no visited set and no concurrent downloads. The rate limit, not concurrency, sets the speed of a crawl.
+- The source has no queue, no visited set and no concurrent downloads. The delay of each origin, not concurrency, sets the speed of a crawl.
 - The readers of the web stream decide what the crawl finds. The source has no rules for a publisher.
 - A crawl that stops continues from its crawl snapshot ([ADR 0003](./0003-the-state-has-diff-crawl-and-retry.md)).
-- The source does not apply the Disallow rules or the crawl delay of `robots.txt`. Backlog item 2934 records this.
+- The crawler applies the Disallow rules, the `Content-Signal` and the crawl delay of `robots.txt` (crawler README, Robots).

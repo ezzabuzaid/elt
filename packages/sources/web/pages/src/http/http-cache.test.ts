@@ -40,7 +40,7 @@ const result = await new Pipeline({ history, connections: [new Connection({
 process.stdout.write(JSON.stringify(result.map(row => row.count)));
 `;
 
-test('HTTP resource scope exit cancels queued requests without caller cancellation', async () => {
+test('HTTP resource scope exit cancels a request that waits for its origin, without caller cancellation', async () => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -56,11 +56,11 @@ test('HTTP resource scope exit cancels queued requests without caller cancellati
       `
 import assert from 'node:assert/strict';
 import { setImmediate } from 'node:timers/promises';
-import { webHttp } from ${JSON.stringify(new URL('./web-http.ts', import.meta.url).href)};
+import { WebClient } from ${JSON.stringify(new URL('./web-http.ts', import.meta.url).href)};
 const [origin, cachePath] = process.argv.slice(1);
 const rejected = [];
 {
-  await using client = await webHttp(cachePath, 'elt-test/1.0', undefined);
+  await using client = await WebClient.open(cachePath, 'elt-test/1.0', undefined);
   assert.equal(client.signal.aborted, false);
   await client.http(origin + '/first', { signal: client.signal });
   await client.http(origin + '/second', { signal: client.signal });
@@ -77,7 +77,8 @@ await Promise.all(rejected);
     ],
     { cwd: directory.path, timeout: 10_000 },
   );
-  assert.deepEqual(requests, ['/first', '/second']);
+  // The client reads the origin's robots.txt first; the third request waits the origin's delay when the scope ends.
+  assert.deepEqual(requests, ['/robots.txt', '/first', '/second']);
 });
 
 test('production cache survives process restarts, revalidates fresh responses and rebuilds fresh checkpoints', async () => {
@@ -178,6 +179,8 @@ test('production cache survives process restarts, revalidates fresh responses an
   assert.deepEqual(await run(), [0]);
   for (const row of cache.prepare('SELECT value FROM keyv').all()) {
     assert(typeof row.value === 'string');
+    // The rules of robots.txt last 24 hours, so this run does not revalidate it.
+    if (row.value.includes('/robots.txt"')) continue;
     assert.match(row.value, /public, max-age=7200/);
   }
   for (const path of ['/feed.xml', '/etag', '/modified', '/empty'])
@@ -203,8 +206,13 @@ test('production cache survives process restarts, revalidates fresh responses an
   }
   storable = false;
   assert.deepEqual(await run(), [0]);
+  // The rules of robots.txt last 24 hours, so its response is not asked again and stays.
   assert.equal(
-    cache.prepare('SELECT count(*) AS count FROM keyv').get()?.count,
+    cache
+      .prepare(
+        `SELECT count(*) AS count FROM keyv WHERE value NOT LIKE '%/robots.txt"%'`,
+      )
+      .get()?.count,
     0,
   );
   assert.deepEqual(await run(), [0]);

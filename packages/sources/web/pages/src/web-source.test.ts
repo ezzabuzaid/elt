@@ -394,7 +394,9 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
   });
 }
 
-test('temporary listing and article failures recover within one pipeline run', async () => {
+test('temporary listing and article failures recover in the run after their Retry-After', async (t) => {
+  // A block ends by the clock; the test moves Date past each Retry-After.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
@@ -438,16 +440,24 @@ test('temporary listing and article failures recover within one pipeline run', a
     checkpoints.path,
   );
 
+  // Got retries no refusal: each one holds the origin until its Retry-After,
+  // and the next run after it asks again.
+  await assert.rejects(ingestion.run(), PipelineError);
+  t.mock.timers.setTime(Date.now() + 2000);
+  await assert.rejects(ingestion.run(), PipelineError);
+  t.mock.timers.setTime(Date.now() + 2000);
   assert.equal((await ingestion.run())[0]?.count, 1);
   assert.equal(
     database.connection.prepare('SELECT textContent FROM articles').get()
       ?.textContent,
     'The recovered article contains the complete published observations.',
   );
+  // Every crawl reads the feed again, as AlwaysRevisit makes it due.
   assert.deepEqual(requests, [
     '/feed.xml',
     '/feed.xml',
     '/article',
+    '/feed.xml',
     '/article',
   ]);
 });
@@ -652,7 +662,7 @@ test('failed articles do not block later articles or later refreshes', async () 
 
 test(
   'failed URLs survive feed rollover and cancellation during a later retry',
-  { timeout: 15_000 },
+  { timeout: 60_000 },
   async () => {
     await using cache = await new TemporaryFiles().directory('web-cache-');
     let phase = 0;
@@ -798,8 +808,8 @@ test(
 );
 
 test(
-  'listing, redirect and retry requests share the request-start rate limit',
-  { timeout: 10_000 },
+  'listing, redirect and page requests to one origin start at least one second apart',
+  { timeout: 30_000 },
   async () => {
     await using cache = await new TemporaryFiles().directory('web-cache-');
     const requests: { path: string; at: number }[] = [];
@@ -810,7 +820,6 @@ test(
         return;
       }
       const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
-      const retried = requests.some((item) => item.path === url.pathname);
       requests.push({ path: url.pathname, at: performance.now() });
       if (url.pathname === '/feed.xml') {
         response.setHeader('content-type', 'application/rss+xml');
@@ -819,8 +828,6 @@ test(
         );
       } else if (url.pathname === '/a') {
         response.writeHead(302, { location: '/article' }).end();
-      } else if (url.pathname === '/b' && !retried) {
-        response.writeHead(429, { 'retry-after': '1' }).end();
       } else {
         response.setHeader('content-type', 'text/html');
         response.end(
@@ -842,24 +849,21 @@ test(
       checkpoints.path,
     );
     assert.equal((await ingestion.run())[0]?.count, 3);
-    assert.equal(requests.length, 6);
-    for (let index = 2; index < requests.length; index++) {
-      const first = requests[index - 2];
-      const third = requests[index];
-      assert(first && third);
+    // The redirect of /a is a request of its own, after the pages that the feed names.
+    assert.deepEqual(
+      requests.map(({ path }) => path),
+      ['/feed.xml', '/a', '/b', '/c', '/article'],
+    );
+    for (let index = 1; index < requests.length; index++) {
+      const before = requests[index - 1];
+      const after = requests[index];
+      assert(before && after);
       // Measure arrivals at the HTTP boundary; allow small event-loop/transport jitter.
       assert(
-        third.at - first.at >= 950,
-        'at most two requests may start within one second, including redirects and retries',
+        after.at - before.at >= 950,
+        `${after.path} started ${after.at - before.at} ms after ${before.path}`,
       );
     }
-    const attempts = requests.filter((item) => item.path === '/b');
-    assert.equal(attempts.length, 2);
-    assert(attempts[0] && attempts[1]);
-    assert(
-      attempts[1].at - attempts[0].at >= 950,
-      'Retry-After must delay the next attempt',
-    );
   },
 );
 

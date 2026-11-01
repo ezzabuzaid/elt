@@ -18,6 +18,7 @@ import {
   LinkReader,
   ListingReader,
   OnceRevisit,
+  Origins,
   type RevisitPolicy,
   WebCrawler,
   day,
@@ -68,12 +69,13 @@ function everyCrawl(start: string, revisit: RevisitPolicy<unknown>) {
 function siteCrawler(revisit: RevisitPolicy<unknown>) {
   return new WebCrawler(
     got,
+    new Origins(got, null),
     [new LinkReader({ maxDepth: 1, maxPages: 100 })],
     everyCrawl('https://site.test/', revisit),
   );
 }
 
-const options = () => ({ signal: AbortSignal.timeout(5000) });
+const options = () => ({ signal: AbortSignal.timeout(120_000) });
 
 const request: CrawlRequest = {
   url: 'https://site.test/a',
@@ -280,6 +282,7 @@ test('a listing that gives a page another lastModified makes it due at once, and
   );
   const crawler = new WebCrawler(
     got,
+    new Origins(got, null),
     [new ListingReader()],
     everyCrawl('https://site.test/sitemap.xml', new AdaptiveRevisit()),
   );
@@ -327,6 +330,7 @@ test('a known page that is due and that no listing names goes after the pages th
   );
   const crawler = new WebCrawler(
     got,
+    new Origins(got, null),
     [new ListingReader()],
     new AlwaysRevisit(),
   );
@@ -390,6 +394,7 @@ test('a linked page that is not due spends no LinkReader budget, so the budget r
   );
   const crawler = new WebCrawler(
     got,
+    new Origins(got, null),
     [new LinkReader({ maxDepth: 1, maxPages: 1 })],
     everyCrawl('https://site.test/', new AdaptiveRevisit()),
   );
@@ -566,6 +571,7 @@ test('nextDue gives when the next crawl has a known URL due, starting URLs inclu
   );
   const crawl = new WebCrawler(
     got,
+    new Origins(got, null),
     [new LinkReader({ maxDepth: 1, maxPages: 100 })],
     new AdaptiveRevisit(),
   ).crawl(['https://site.test/'], null, options());
@@ -595,7 +601,12 @@ test('a feed is due again within half the time its items cover, whatever the pol
         : HttpResponse.html('<p>Page</p>'),
     ),
   );
-  const crawler = new WebCrawler(got, [new ListingReader()]);
+  const crawler = new WebCrawler(
+    got,
+    new Origins(got, null),
+    [new ListingReader()],
+    new AdaptiveRevisit(),
+  );
 
   const crawl = crawler.crawl(['https://site.test/feed.xml'], null, options());
   await crawled(crawl);

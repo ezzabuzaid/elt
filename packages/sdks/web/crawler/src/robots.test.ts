@@ -6,12 +6,17 @@ import got from 'got';
 import { HttpResponse, http } from 'msw';
 
 import {
+  AdaptiveRevisit,
   type Crawl,
   LinkReader,
   ListingReader,
+  Origins,
   PaginationReader,
   WebCrawler,
 } from './index.ts';
+
+// Got retries no network error, so a test's failure is its first answer.
+const noRetries = got.extend({ retry: { limit: 0 } });
 
 // Synthetic upstream sites make robots.txt answers reproducible offline.
 
@@ -30,9 +35,13 @@ function site(requests: string[], robots: () => Response) {
 }
 
 function crawler(headers: Record<string, string> = {}) {
-  return new WebCrawler(got.extend({ retry: { limit: 0 }, headers }), [
-    new ListingReader(),
-  ]);
+  const http = got.extend({ retry: { limit: 0 }, headers });
+  return new WebCrawler(
+    http,
+    new Origins(http, null),
+    [new ListingReader()],
+    new AdaptiveRevisit(),
+  );
 }
 
 async function crawled(crawl: Crawl) {
@@ -54,7 +63,7 @@ async function crawled(crawl: Crawl) {
 }
 
 const starts = ['https://site.test/sitemap.xml'];
-const options = () => ({ signal: AbortSignal.timeout(5000) });
+const options = () => ({ signal: AbortSignal.timeout(120_000) });
 
 test('a URL that robots.txt disallows is not requested, and the other pages are handed back', async () => {
   const requests: string[] = [];
@@ -147,9 +156,12 @@ test('a link that robots.txt disallows spends no LinkReader budget', async () =>
 
   // No page links /nothing, so a linked page downloads only when LinkReader admits it.
   await crawled(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new LinkReader({ maxDepth: 1, maxPages: 1 }),
-    ]).crawl(['https://site.test/'], null, {
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new LinkReader({ maxDepth: 1, maxPages: 1 })],
+      new AdaptiveRevisit(),
+    ).crawl(['https://site.test/'], null, {
       ...options(),
       include: [new URLPattern({ pathname: '/nothing' })],
     }),
@@ -186,9 +198,12 @@ test('a start that redirects to another origin spends no LinkReader budget on a 
 
   // No page links /nothing, so a linked page downloads only when LinkReader admits it.
   await crawled(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new LinkReader({ maxDepth: 1, maxPages: 1 }),
-    ]).crawl(['https://a.test/'], null, {
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new LinkReader({ maxDepth: 1, maxPages: 1 })],
+      new AdaptiveRevisit(),
+    ).crawl(['https://a.test/'], null, {
       ...options(),
       include: [new URLPattern({ pathname: '/nothing' })],
     }),
@@ -215,9 +230,12 @@ test('a link that the crawl does not select is dropped, not held, on a website w
   );
 
   const result = await crawled(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new PaginationReader({ strategy: 'all' }),
-    ]).crawl(['https://list.test/list'], null, {
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new PaginationReader({ strategy: 'all' })],
+      new AdaptiveRevisit(),
+    ).crawl(['https://list.test/list'], null, {
       ...options(),
       include: [new URLPattern('https://flaky.test/post/2')],
     }),
@@ -253,9 +271,12 @@ test('a link that the crawl does not select asks its website nothing, so a websi
   );
 
   const result = await crawled(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new PaginationReader({ strategy: 'all' }),
-    ]).crawl(['https://list.test/list'], null, {
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new PaginationReader({ strategy: 'all' })],
+      new AdaptiveRevisit(),
+    ).crawl(['https://list.test/list'], null, {
       ...options(),
       include: [new URLPattern('https://list.test/post/*')],
     }),

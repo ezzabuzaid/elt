@@ -6,13 +6,18 @@ import got from 'got';
 import { HttpResponse, http } from 'msw';
 
 import {
+  AdaptiveRevisit,
   type Crawl,
   type CrawlMemento,
   LinkReader,
   ListingReader,
+  Origins,
   WebCrawler,
   hour,
 } from './index.ts';
+
+// Got retries no network error, so a test's failure is its first answer.
+const noRetries = got.extend({ retry: { limit: 0 } });
 
 // Synthetic upstream sites make a block reproducible offline.
 
@@ -59,11 +64,14 @@ const starts = [
   'https://other.test/sitemap.xml',
 ];
 
-function crawler() {
-  // No retries, so Got does not wait out the Retry-After itself.
-  return new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-    new ListingReader(),
-  ]);
+// A crawler of one read: the origins' records start from the memento of the last read.
+function crawler(origins: Origins) {
+  return new WebCrawler(
+    noRetries,
+    origins,
+    [new ListingReader()],
+    new AdaptiveRevisit(),
+  );
 }
 
 // One crawl to its end: what it handed out by kind, when it is due, and its memento.
@@ -81,7 +89,7 @@ async function crawled(crawl: Crawl) {
   return { pages, deferred, failures, nextDue: crawl.nextDue(), memento };
 }
 
-const options = () => ({ signal: AbortSignal.timeout(5000) });
+const options = () => ({ signal: AbortSignal.timeout(120_000) });
 
 test('a 429 with Retry-After stops requests to its origin, reports the block once and makes the crawl due when the block ends', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
@@ -94,7 +102,9 @@ test('a 429 with Retry-After stops requests to its origin, reports the block onc
     }),
   );
 
-  const first = await crawled(crawler().crawl(starts, null, options()));
+  const first = await crawled(
+    crawler(new Origins(noRetries, null)).crawl(starts, null, options()),
+  );
 
   // The origins take turns.
   assert.deepEqual(pagesOf(requests), [
@@ -133,27 +143,35 @@ test('a crawl resumed before its block ends requests nothing there, and one resu
     }),
     sites(requests, { path: '', status: 200 }),
   );
-  const site = crawler();
-  const first = await crawled(site.crawl(starts, null, options()));
+  // Each run is a read of its own, whose origins' records start from the last read's.
+  const firstOrigins = new Origins(noRetries, null);
+  const first = await crawled(
+    crawler(firstOrigins).crawl(starts, null, options()),
+  );
   t.mock.timers.setTime(60_000);
   requests.length = 0;
 
-  const early = await crawled(site.crawl(starts, first.memento, options()));
+  const earlyOrigins = new Origins(noRetries, firstOrigins.snapshot());
+  const early = await crawled(
+    crawler(earlyOrigins).crawl(starts, first.memento, options()),
+  );
   const earlyRequests = requests.splice(0);
   t.mock.timers.setTime(120_000);
   blocking = false;
-  const late = await crawled(site.crawl(starts, early.memento, options()));
+  const late = await crawled(
+    crawler(new Origins(noRetries, earlyOrigins.snapshot())).crawl(
+      starts,
+      early.memento,
+      options(),
+    ),
+  );
 
   assert.deepEqual(earlyRequests, []);
   assert.deepEqual(early.failures, []);
   assert.equal(early.nextDue, 120_000);
   assert.notEqual(early.memento.crawl, null);
-  // A resumed crawl reads the origin's rules again.
-  assert.deepEqual(requests, [
-    'site.test/robots.txt',
-    'site.test/b',
-    'site.test/c',
-  ]);
+  // The origin's rules last 24 hours (RFC 9309 §2.4), so a later read does not read them again.
+  assert.deepEqual(requests, ['site.test/b', 'site.test/c']);
   assert.deepEqual(late.pages, ['site.test/b', 'site.test/c']);
   assert.deepEqual(late.failures, []);
   assert.equal(late.memento.crawl, null);
@@ -177,7 +195,11 @@ test('three 403s in a row without Retry-After block their origin for an hour', a
   );
 
   const first = await crawled(
-    crawler().crawl(['https://site.test/sitemap.xml'], null, options()),
+    crawler(new Origins(noRetries, null)).crawl(
+      ['https://site.test/sitemap.xml'],
+      null,
+      options(),
+    ),
   );
 
   assert.deepEqual(requests, ['/robots.txt', '/sitemap.xml', '/a', '/b', '/c']);
@@ -196,7 +218,9 @@ test('a single 403 is a failure of its page, not a block, so the rest of its ori
     sites(requests, { path: 'site.test/a', status: 403 }),
   );
 
-  const first = await crawled(crawler().crawl(starts, null, options()));
+  const first = await crawled(
+    crawler(new Origins(noRetries, null)).crawl(starts, null, options()),
+  );
 
   // The origins take turns.
   assert.deepEqual(pagesOf(requests), [
@@ -224,13 +248,15 @@ test('a 429 with an HTTP-date Retry-After blocks its origin until that date', as
     }),
   );
 
-  const first = await crawled(crawler().crawl(starts, null, options()));
+  const first = await crawled(
+    crawler(new Origins(noRetries, null)).crawl(starts, null, options()),
+  );
 
   assert.equal(first.nextDue, 300_000);
   assert.deepEqual(pagesOf(requests), ['site.test/a', 'other.test/x']);
 });
 
-test('a block reached through a redirect also stops requests to the origin that redirected', async (t) => {
+test('a block reached through a redirect stops requests to the origin that answered, and not to the origin that redirected', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
   using server = new Msw().intercept(
@@ -250,6 +276,8 @@ test('a block reached through a redirect also stops requests to the origin that 
     }),
     http.get('https://site.test/*', ({ request }) => {
       requests.push(request.url);
+      if (new URL(request.url).pathname === '/robots.txt')
+        return new HttpResponse(null, { status: 404 });
       return new HttpResponse(null, {
         status: 429,
         headers: { 'retry-after': '120' },
@@ -258,20 +286,33 @@ test('a block reached through a redirect also stops requests to the origin that 
   );
 
   const first = await crawled(
-    crawler().crawl(['http://site.test/sitemap.xml'], null, options()),
+    crawler(new Origins(noRetries, null)).crawl(
+      ['http://site.test/sitemap.xml'],
+      null,
+      options(),
+    ),
   );
 
+  // Each redirect is a request of its own origin: https://site.test is
+  // blocked, and http://site.test still answers.
   assert.deepEqual(requests, [
     'http://site.test/robots.txt',
     'http://site.test/sitemap.xml',
     'http://site.test/a',
+    'https://site.test/robots.txt',
     'https://site.test/a',
+    'http://site.test/b',
   ]);
   assert.equal(first.failures.length, 1);
   assert.match(
     first.failures[0]?.message ?? '',
     /https:\/\/site\.test answered 429/,
   );
+  // The redirect targets wait in the frontier until the block ends.
+  assert.deepEqual(first.memento.crawl?.pending.map(({ url }) => url).sort(), [
+    'https://site.test/a',
+    'https://site.test/b',
+  ]);
 });
 
 test('a tolerated 404 opens no breaker, so the rest of its origin still downloads', async (t) => {
@@ -292,9 +333,12 @@ test('a tolerated 404 opens no breaker, so the rest of its origin still download
   );
 
   const first = await crawled(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new LinkReader({ maxDepth: 1, maxPages: 100 }),
-    ]).crawl(['https://site.test/'], null, options()),
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new LinkReader({ maxDepth: 1, maxPages: 100 })],
+      new AdaptiveRevisit(),
+    ).crawl(['https://site.test/'], null, options()),
   );
 
   assert.deepEqual(requests, [

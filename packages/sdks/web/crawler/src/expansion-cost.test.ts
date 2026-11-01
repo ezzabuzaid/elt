@@ -6,23 +6,33 @@ import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
 import {
+  AdaptiveRevisit,
   type Crawl,
   FixedRevisit,
   LinkReader,
   ListingReader,
+  Origins,
   PaginationReader,
   WebCrawler,
   hour,
 } from './index.ts';
 
+// Got retries no network error, so a test's failure is its first answer.
+const noRetries = got.extend({ retry: { limit: 0 } });
+
 // As the startup-credits app: a list of programs links the home page of each
 // company, and the crawl searches the home page one step for a program page.
-function programs() {
-  return new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-    new PaginationReader({ strategy: 'all' }),
-    new ListingReader(),
-    new LinkReader({ maxDepth: 0, maxPages: 0 }),
-  ]);
+function programs(origins: Origins) {
+  return new WebCrawler(
+    noRetries,
+    origins,
+    [
+      new PaginationReader({ strategy: 'all' }),
+      new ListingReader(),
+      new LinkReader({ maxDepth: 0, maxPages: 0 }),
+    ],
+    new AdaptiveRevisit(),
+  );
 }
 
 const expand = [new URLPattern({ pathname: '*startup*' })] as const;
@@ -114,14 +124,18 @@ test("a small site's program page comes back in the first run, before the large 
   );
 
   const pages = await run(
-    programs().crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(10_000),
-      include: [
-        new URLPattern(`${microsoft.origin}/*`),
-        new URLPattern(`${vercel.origin}/*`),
-      ],
-      expand,
-    }),
+    programs(new Origins(noRetries, null)).crawl(
+      [`${list.origin}/programs`],
+      null,
+      {
+        signal: AbortSignal.timeout(120_000),
+        include: [
+          new URLPattern(`${microsoft.origin}/*`),
+          new URLPattern(`${vercel.origin}/*`),
+        ],
+        expand,
+      },
+    ),
     log,
   );
 
@@ -140,9 +154,8 @@ test("the large site's other child sitemaps are read in later runs, each once, u
       '/programs': `<main><a href="${microsoft.origin}/">Microsoft</a></main>`,
     })),
   );
-  const crawler = programs();
   const options = {
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(120_000),
     include: [new URLPattern(`${microsoft.origin}/*`)] as const,
     expand,
   };
@@ -150,8 +163,16 @@ test("the large site's other child sitemaps are read in later runs, each once, u
   const routes: string[] = [];
   let memento: unknown = null;
   let runs = 0;
+  // Each run is a read of its own: its origins' records start from the last
+  // read's, and each read spends a new expansion budget.
+  let origins = new Origins(noRetries, null);
   do {
-    const crawl = crawler.crawl([`${list.origin}/programs`], memento, options);
+    origins = new Origins(noRetries, origins.snapshot());
+    const crawl = programs(origins).crawl(
+      [`${list.origin}/programs`],
+      memento,
+      options,
+    );
     for await (const entry of crawl) {
       if ('error' in entry) throw entry.error;
       if ('response' in entry) pages.push(entry.url);
@@ -213,16 +234,19 @@ test("origins take turns: one starting site's many child sitemaps do not hold up
   // Starting origins are not budgeted, so the large site's index is read
   // whole in this run.
   await run(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new ListingReader(),
-    ]).crawl(
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new ListingReader()],
+      new AdaptiveRevisit(),
+    ).crawl(
       [
         `${microsoft.origin}/sitemap-index.xml`,
         `${vercel.origin}/sitemap-index.xml`,
       ],
       null,
       {
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(120_000),
         include: [new URLPattern(`${vercel.origin}/*`)],
       },
     ),
@@ -258,14 +282,18 @@ test('a second expanded site whose robots.txt names no sitemap gets its /sitemap
   );
 
   const pages = await run(
-    programs().crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(10_000),
-      include: [
-        new URLPattern(`${vercel.origin}/*`),
-        new URLPattern(`${pinecone.origin}/*`),
-      ],
-      expand,
-    }),
+    programs(new Origins(noRetries, null)).crawl(
+      [`${list.origin}/programs`],
+      null,
+      {
+        signal: AbortSignal.timeout(120_000),
+        include: [
+          new URLPattern(`${vercel.origin}/*`),
+          new URLPattern(`${pinecone.origin}/*`),
+        ],
+        expand,
+      },
+    ),
     [],
   );
 
@@ -290,7 +318,8 @@ test('a run that continues a crawl held back by the budget reads its list again 
   );
   // The list is due every hour, as the startup-credits app reads its lists.
   const crawler = new WebCrawler(
-    got.extend({ retry: { limit: 0 } }),
+    noRetries,
+    new Origins(noRetries, null),
     [
       new PaginationReader({ strategy: 'all' }),
       new ListingReader(),
@@ -299,7 +328,7 @@ test('a run that continues a crawl held back by the budget reads its list again 
     new FixedRevisit({ every: hour }),
   );
   const options = {
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(120_000),
     include: [
       new URLPattern(`${microsoft.origin}/*`),
       new URLPattern(`${vercel.origin}/*`),
@@ -346,7 +375,8 @@ test('a run that continues a crawl at once does not read its list again before t
     })),
   );
   const crawler = new WebCrawler(
-    got.extend({ retry: { limit: 0 } }),
+    noRetries,
+    new Origins(noRetries, null),
     [
       new PaginationReader({ strategy: 'all' }),
       new ListingReader(),
@@ -355,7 +385,7 @@ test('a run that continues a crawl at once does not read its list again before t
     new FixedRevisit({ every: hour }),
   );
   const options = {
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(120_000),
     include: [new URLPattern(`${microsoft.origin}/*`)] as const,
     expand,
   };

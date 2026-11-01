@@ -9,8 +9,19 @@ export const day = 24 * hour;
 /** What a download found, by the body digest: unknown when the crawl has no earlier body to compare. */
 export type Change = 'modified' | 'unmodified' | 'unknown';
 
+/**
+ * A visit that redirected: the URL it redirected to, whether the redirect is
+ * permanent (301 or 308), and whether the target is the one of the last
+ * visit: unknown when the last visit did not redirect.
+ */
+export type Redirect = {
+  readonly redirect: string;
+  readonly permanent: boolean;
+  readonly change: Change;
+};
+
 /** What one visit of a URL ended with. Gone is a 404 or 410 answer. */
-export type Outcome = Change | 'failed' | 'gone';
+export type Outcome = Change | 'failed' | 'gone' | Redirect;
 
 export type Revisit = {
   readonly request: CrawlRequest;

@@ -5,8 +5,10 @@ import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
 import {
+  AdaptiveRevisit,
   ArchiveReader,
   ListingReader,
+  Origins,
   PaginationReader,
   WebCrawler,
 } from '@workspace/sdk-web-crawler';
@@ -114,14 +116,16 @@ test('a discovered article retains its introductory summary before the main body
   });
 
   try {
-    const signal = AbortSignal.timeout(5000);
+    // Each origin answers one request a second, so a crawl takes seconds.
+    const signal = AbortSignal.timeout(120_000);
     const pages = (
       await Array.fromAsync(
-        new WebCrawler(got, [
-          new ListingReader(),
-          new ArchiveReader(),
-          new PaginationReader(),
-        ]).crawl([upstream.origin], null, { signal }),
+        new WebCrawler(
+          got,
+          new Origins(got, null),
+          [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+          new AdaptiveRevisit(),
+        ).crawl([upstream.origin], null, { signal }),
       )
     )
       // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
@@ -183,14 +187,16 @@ test('a feed article retains a figure caption containing a descriptive link', as
   });
 
   try {
-    const signal = AbortSignal.timeout(5000);
+    // Each origin answers one request a second, so a crawl takes seconds.
+    const signal = AbortSignal.timeout(120_000);
     const pages = (
       await Array.fromAsync(
-        new WebCrawler(got, [
-          new ListingReader(),
-          new ArchiveReader(),
-          new PaginationReader(),
-        ]).crawl([`${upstream.origin}/feed.xml`], null, { signal }),
+        new WebCrawler(
+          got,
+          new Origins(got, null),
+          [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+          new AdaptiveRevisit(),
+        ).crawl([`${upstream.origin}/feed.xml`], null, { signal }),
       )
     )
       // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
@@ -265,14 +271,16 @@ test('a feed article retains acknowledgments and an authorship disclosure after 
   });
 
   try {
-    const signal = AbortSignal.timeout(5000);
+    // Each origin answers one request a second, so a crawl takes seconds.
+    const signal = AbortSignal.timeout(120_000);
     const pages = (
       await Array.fromAsync(
-        new WebCrawler(got, [
-          new ListingReader(),
-          new ArchiveReader(),
-          new PaginationReader(),
-        ]).crawl([`${upstream.origin}/feed.xml`], null, { signal }),
+        new WebCrawler(
+          got,
+          new Origins(got, null),
+          [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+          new AdaptiveRevisit(),
+        ).crawl([`${upstream.origin}/feed.xml`], null, { signal }),
       )
     )
       // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.

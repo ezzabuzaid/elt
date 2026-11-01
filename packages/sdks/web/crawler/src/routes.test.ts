@@ -6,23 +6,29 @@ import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
 import {
+  AdaptiveRevisit,
   AlwaysRevisit,
   CompositeRevisit,
   type Crawl,
   FixedRevisit,
   LinkReader,
   ListingReader,
+  Origins,
   PaginationReader,
   type RevisitPolicy,
   WebCrawler,
   day,
 } from './index.ts';
 
+// Got retries no network error, so a test's failure is its first answer.
+const noRetries = got.extend({ retry: { limit: 0 } });
+
 // As the startup-credits app: a list of programs links the home page of each
 // company, and the crawl searches the home page one step for a program page.
-function programs(revisit?: RevisitPolicy<unknown>) {
+function programs(revisit: RevisitPolicy<unknown>) {
   return new WebCrawler(
-    got.extend({ retry: { limit: 0 } }),
+    noRetries,
+    new Origins(noRetries, null),
     [
       new PaginationReader({ strategy: 'all' }),
       new ListingReader(),
@@ -104,8 +110,8 @@ test('the routes connect a list to the program page that the home page it links 
   );
 
   const lines = await routes(
-    programs().crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(5000),
+    programs(new AdaptiveRevisit()).crawl([`${list.origin}/programs`], null, {
+      signal: AbortSignal.timeout(120_000),
       include: [new URLPattern(`${site.origin}/*`)],
       expand,
     }),
@@ -146,8 +152,8 @@ test('a program page that the list also links keeps the routes from the home pag
   );
 
   const lines = await routes(
-    programs().crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(5000),
+    programs(new AdaptiveRevisit()).crawl([`${list.origin}/programs`], null, {
+      signal: AbortSignal.timeout(120_000),
       include: [new URLPattern(`${site.origin}/*`)],
       expand,
     }),
@@ -210,16 +216,16 @@ test('every page expanded on one origin has a route to its robots.txt, which the
     })),
   );
   await routes(
-    programs().crawl([`${single.origin}/programs`], null, {
-      signal: AbortSignal.timeout(5000),
+    programs(new AdaptiveRevisit()).crawl([`${single.origin}/programs`], null, {
+      signal: AbortSignal.timeout(120_000),
       include: [new URLPattern(`${alone.origin}/*`)],
       expand,
     }),
   );
 
   const lines = await routes(
-    programs().crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(5000),
+    programs(new AdaptiveRevisit()).crawl([`${list.origin}/programs`], null, {
+      signal: AbortSignal.timeout(120_000),
       include: [
         new URLPattern(`${site.origin}/*`),
         new URLPattern(`${showcase.origin}/*`),
@@ -262,8 +268,8 @@ test('a URL that a list names and that redirects names the URL it was redirected
   );
 
   const lines = await routes(
-    programs().crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(5000),
+    programs(new AdaptiveRevisit()).crawl([`${list.origin}/programs`], null, {
+      signal: AbortSignal.timeout(120_000),
       include: [new URLPattern(`${site.origin}/*`)],
       expand,
     }),
@@ -305,16 +311,19 @@ test('a feed names each item with its title, and a sitemap names its pages and i
   );
 
   const lines = await routes(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new ListingReader(),
-    ]).crawl(
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new ListingReader()],
+      new AdaptiveRevisit(),
+    ).crawl(
       [
         `${site.origin}/feed.xml`,
         `${site.origin}/atom.xml`,
         `${site.origin}/index.xml`,
       ],
       null,
-      { signal: AbortSignal.timeout(5000) },
+      { signal: AbortSignal.timeout(120_000) },
     ),
   );
 
@@ -350,7 +359,7 @@ test('a list read again in a later crawl names a page that is known and not due,
     ),
   );
   const options = {
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(120_000),
     include: [new URLPattern(`${site.origin}/*`)] as const,
   };
   const first = crawler.crawl([`${list.origin}/programs`], null, options);
@@ -382,9 +391,9 @@ test('a crawl that stops after it hands back the routes of a list gives them aga
       '/programs': `<main><a href="${site.origin}/startups">Startups</a></main>`,
     })),
   );
-  const crawler = programs();
+  const crawler = programs(new AdaptiveRevisit());
   const options = {
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(120_000),
     include: [new URLPattern(`${site.origin}/*`)] as const,
   };
   const first = crawler.crawl([`${list.origin}/programs`], null, options);
@@ -423,11 +432,11 @@ test('a failure says whether its URL is a page or a document, such as a broken s
   );
 
   const failures: [string, boolean][] = [];
-  for await (const entry of programs().crawl(
+  for await (const entry of programs(new AdaptiveRevisit()).crawl(
     [`${list.origin}/programs`],
     null,
     {
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(120_000),
       include: [new URLPattern(`${site.origin}/*`)],
       expand,
     },
@@ -455,11 +464,12 @@ test('a page that LinkReader does not admit in a later crawl gives an incomplete
   // One admitted page for each crawl; every page is handed back, so a page
   // that LinkReader does not admit is still downloaded and read.
   const crawler = new WebCrawler(
-    got.extend({ retry: { limit: 0 } }),
+    noRetries,
+    new Origins(noRetries, null),
     [new LinkReader({ maxDepth: 2, maxPages: 1 })],
     new FixedRevisit({ every: 0 }),
   );
-  const options = { signal: AbortSignal.timeout(5000) };
+  const options = { signal: AbortSignal.timeout(120_000) };
   // Each group of the crawl as "listing complete routes".
   const groups = async (crawl: Crawl) => {
     const lines: string[] = [];
@@ -497,10 +507,13 @@ test('a page that the crawl downloaded keeps its routes after the budget of Link
   );
 
   const lines = await routes(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new LinkReader({ maxDepth: 2, maxPages: 2 }),
-    ]).crawl([`${site.origin}/`], null, {
-      signal: AbortSignal.timeout(5000),
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new LinkReader({ maxDepth: 2, maxPages: 2 })],
+      new AdaptiveRevisit(),
+    ).crawl([`${site.origin}/`], null, {
+      signal: AbortSignal.timeout(120_000),
       // No page is handed back: LinkReader admits each page that it reads.
       include: [new URLPattern({ pathname: '/none' })],
     }),

@@ -5,8 +5,28 @@ A host wants the pages of the websites, sitemaps and feeds that it chooses. The 
 ## Language
 
 **Crawler**:
-The `WebCrawler` engine. It keeps the frontier, and it is the only part that downloads. It obeys `robots.txt`, `Crawl-delay`, the slowdown and the block of each origin. It knows no format ([ADR 0001](./docs/adr/0001-one-engine-downloads-and-each-reader-finds-one-kind-of-url.md)).
+The `WebCrawler` engine. It keeps the frontier of one list of starting URLs, and it downloads. It asks the origin record of each request first. It knows no format ([ADR 0001](./docs/adr/0001-one-engine-downloads-and-each-reader-finds-one-kind-of-url.md)).
 _Avoid_: Spider, scraper, fetcher
+
+**Origin record**:
+What the crawls of one read know about one origin: its `robots.txt` rules and when they were read, its block, its slowdown, its run of 403 answers, the start of its last request and its expansion budget. `Origins` keeps one record for each origin, and every crawl of the read asks the same one ([ADR 0006](./docs/adr/0006-every-crawl-of-a-read-asks-one-record-of-each-origin.md)).
+_Avoid_: Site state, host cache, politeness
+
+**Read**:
+The work of a host that one `Origins` serves, such as one read of the web source. Its crawls run one after another or at the same time.
+_Avoid_: Session, batch
+
+**Delay**:
+The time between the starts of two requests to one origin: its `Crawl-delay`, or one second without one. The slowdown adds to it.
+_Avoid_: Rate limit, throttle
+
+**Block**:
+A time in which no crawl of the read requests an origin: a circuit breaker in its origin record. A 429, a 503 with `Retry-After`, three 403 answers in a row, or a `robots.txt` that cannot be read, opens it.
+_Avoid_: Ban, throttle
+
+**Slowdown**:
+The time that an origin's refusals add to its delay. Each refusal, a 429 or a 5xx, doubles it, from one second up to one minute; each other answer shortens it by a tenth.
+_Avoid_: Backoff alone, throttle
 
 **Crawl**:
 One pass of the crawler from its starting URLs. A crawl that stops continues from its memento.
@@ -21,8 +41,12 @@ One download for one origin. Inside each priority, the origins take turns: the o
 _Avoid_: Slot, share, round
 
 **Expansion budget**:
-The number of documents that one run downloads for the one-step expansions on one origin that no starting URL names: 8. The other documents stay in the frontier for the next run ([ADR 0005](./docs/adr/0005-a-one-step-expansion-spends-a-budget-for-each-run.md)).
+The number of documents that the crawls of one read download for the one-step expansions on one origin that no starting URL names: 8. The other documents stay in the frontier for the next run ([ADR 0005](./docs/adr/0005-a-one-step-expansion-spends-a-budget-for-each-run.md)).
 _Avoid_: Quota, cap, limit (a budget leaves nothing out)
+
+**Redirect outcome**:
+What a visit that redirected ended with: the target, whether it is permanent (301 or 308), and whether the target is the one of the last visit. The revisit policy schedules it as a visit that succeeded ([ADR 0006](./docs/adr/0006-every-crawl-of-a-read-asks-one-record-of-each-origin.md)).
+_Avoid_: Redirect status, moved page
 
 **Reader**:
 A class that reads one response and returns the URLs that it finds there. Each reader finds one kind of URL. A reader does not download, queue or call another reader. The crawler gives each response to every reader.

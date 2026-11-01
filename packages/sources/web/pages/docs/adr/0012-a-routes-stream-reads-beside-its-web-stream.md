@@ -9,7 +9,7 @@ Thus:
 - `WebSource` reads two streams at a time (`concurrency` 2), and it orders each web stream just before its routes stream.
 - After each checkpoint of a web stream, the crawl gives the groups that the checkpoint committed to the routes stream of its input. The routes stream loads them, with their diff, and commits its state with the number of the first group that it did not commit. Groups that come while the routes stream loads go together into its next scan.
 - When the crawl of an input ends, it also gives the groups that it found after its last checkpoint, as the routes stream got them before this change, and the routes stream of that input ends. A full refresh that fails reads no later input, so the routes streams of those inputs end too.
-- One web stream crawls at a time, as before: a read that selects two web streams and not their routes streams would otherwise crawl both at once.
+- A read that selects two web streams and not their routes streams crawls both at once; the record of each origin spaces their requests ([ADR 0014](./0014-the-crawls-of-a-read-share-the-record-of-each-origin.md)).
 - A read whose stream throws outside its extract ends the others (ADR 0018 of elt), so a routes stream never waits for a web stream that cannot give more.
 
 ## Considered Options

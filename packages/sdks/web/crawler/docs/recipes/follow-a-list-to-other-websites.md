@@ -24,7 +24,12 @@ import { type Server, createServer } from 'node:http';
 
 import got from 'got';
 
-import { PaginationReader, WebCrawler } from '@workspace/sdk-web-crawler';
+import {
+  AdaptiveRevisit,
+  Origins,
+  PaginationReader,
+  WebCrawler,
+} from '@workspace/sdk-web-crawler';
 
 // A list of startup programs, as a GitHub list, that links its own license and
 // one company's program page on another website.
@@ -62,9 +67,12 @@ const http = got.extend({
     lookup('127.0.0.1', options, callback),
 });
 
-const crawler = new WebCrawler(http, [
-  new PaginationReader({ strategy: 'all' }),
-]);
+const crawler = new WebCrawler(
+  http,
+  new Origins(http, null),
+  [new PaginationReader({ strategy: 'all' })],
+  new AdaptiveRevisit(),
+);
 const crawl = crawler.crawl([`${listOrigin}/programs`], null, {
   signal: AbortSignal.timeout(10_000),
   // Every website except the list's own.

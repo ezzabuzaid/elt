@@ -8,7 +8,7 @@
 
 1. Make a route for each part of the website that needs its own policy: `[new URLPattern({ pathname: '/news/*' }), new FixedRevisit({ every: hour })]`. A starting URL follows its policy too, so give the sitemap that names the news pages the same route.
 2. Give the routes and a fallback to `new CompositeRevisit(routes, fallback)`.
-3. Give the composite policy to `new WebCrawler(http, readers, policy)`. With `@workspace/source-web-pages`, give it to `new WebStream({ revisit })`.
+3. Give the composite policy to `new WebCrawler(http, origins, readers, policy)`. With `@workspace/source-web-pages`, give it to `new WebStream({ revisit })`.
 4. Start the next crawl at `crawl.nextDue()`, or when your host decides.
 
 ## The program
@@ -26,6 +26,7 @@ import {
   CompositeRevisit,
   FixedRevisit,
   ListingReader,
+  Origins,
   WebCrawler,
   hour,
 } from '@workspace/sdk-web-crawler';
@@ -54,8 +55,10 @@ const address = server.address();
 if (address === null || typeof address === 'string') throw new Error('No port');
 const origin = `http://127.0.0.1:${address.port}`;
 
+const http = got.extend({ timeout: { request: 30_000 } });
 const crawler = new WebCrawler(
-  got.extend({ timeout: { request: 30_000 } }),
+  http,
+  new Origins(http, null),
   [new ListingReader()],
   new CompositeRevisit(
     [

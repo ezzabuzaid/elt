@@ -36,7 +36,10 @@ class SectionExtractor extends RecordExtractor {
       negotiation:
         this.#accept === null
           ? null
-          : { accept: this.#accept, beforeRedirect() {} },
+          : {
+              accept: this.#accept,
+              afterResponse: (response: Response) => response,
+            },
       async read(response: Response) {
         const path = new URL(response.url).pathname;
         return {

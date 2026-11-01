@@ -9,6 +9,7 @@ export { IntervalRevisit } from './interval-revisit.ts';
 export { LinkReader } from './link-reader.ts';
 export { ListingReader } from './listing-reader.ts';
 export { OnceRevisit } from './once-revisit.ts';
+export { Origins, type OriginMemento, type OriginsMemento } from './origins.ts';
 export { PaginationReader } from './pagination-reader.ts';
 export { StartReader } from './start-reader.ts';
 export {
@@ -28,6 +29,7 @@ export {
   type Change,
   type Known,
   type Outcome,
+  type Redirect,
   type Revisit,
   type Schedule,
   day,

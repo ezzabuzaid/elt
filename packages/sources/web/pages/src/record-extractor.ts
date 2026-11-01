@@ -1,13 +1,13 @@
-import type { BeforeRedirectHook, Got, Response } from 'got';
+import type { AfterResponseHook, Got, Response } from 'got';
 
 import type { Properties } from '@workspace/elt';
 
 /** One crawl's extraction, opened with the crawl's HTTP client. */
 export type ExtractorRun = {
-  /** How the crawl requests the pages the stream hands back: their Accept header and the redirect hook that read() relies on, or null for the client's default. */
+  /** How the crawl requests the pages the stream hands back: their Accept header and the hook that marks a redirect of theirs that read() relies on, or null for the client's default. */
   readonly negotiation: {
     readonly accept: string;
-    readonly beforeRedirect: BeforeRedirectHook;
+    readonly afterResponse: AfterResponseHook;
   } | null;
   read(
     response: Response,

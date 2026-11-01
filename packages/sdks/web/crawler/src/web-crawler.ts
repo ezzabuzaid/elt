@@ -1,18 +1,10 @@
 import { createHash } from 'node:crypto';
-import { setTimeout } from 'node:timers/promises';
 
-import {
-  type Got,
-  HTTPError,
-  MaxRedirectsError,
-  RequestError,
-  type Response,
-} from 'got';
-import * as robots from 'robots-parser';
+import { type Got, HTTPError, RequestError, type Response } from 'got';
 import { z } from 'zod';
 
-import { AdaptiveRevisit } from './adaptive-revisit.ts';
 import { OriginLane } from './origin-lane.ts';
+import type { Origins } from './origins.ts';
 import {
   type CrawlRequest,
   type Finding,
@@ -29,9 +21,9 @@ import {
   type Change,
   type Outcome,
   type RevisitPolicy,
-  hour,
 } from './revisit-policy.ts';
-import { webUrl } from './web-url.ts';
+import { RobotsRules } from './robots-rules.ts';
+import { httpUrl, webUrl } from './web-url.ts';
 
 export class CrawlError extends Error {
   override readonly name = 'CrawlError';
@@ -87,7 +79,8 @@ const entrySchema = z.object({
   lastModified: z.string().nullable(),
   published: z.string().nullable(),
   hops: z.number().int().nonnegative(),
-  start: z.boolean(),
+  // The starting URL that this request is, or that a redirect of it led here; null for any other URL.
+  start: z.string().nullable(),
   page: z.boolean(),
   // Some reader reads it as a document.
   document: z.boolean(),
@@ -102,14 +95,41 @@ const entrySchema = z.object({
   linked: z.boolean(),
   tolerate: z.union([z.array(z.number().int()).readonly(), z.literal('any')]),
   notes: z.array(z.unknown()),
+  // The request that a redirect of another request makes, which continues
+  // it: its redirects so far, the readers that admitted the first request,
+  // whether include selected that request's page, and the Got context of the
+  // request that redirected, as Got carries a request's options to each hop.
+  // Null for a URL that a reader found.
+  redirect: z
+    .object({
+      hops: z.number().int().positive(),
+      wanted: z.array(z.boolean()),
+      included: z.boolean(),
+      context: z.record(z.string(), z.json()),
+    })
+    .nullable(),
 });
 type Entry = z.infer<typeof entrySchema>;
+
+const lastSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('fetched'), digest: z.string() }),
+  z.object({
+    kind: z.literal('redirect'),
+    target: z.string(),
+    // 301 or 308 (RFC 9110 §15.4.2, §15.4.9).
+    permanent: z.boolean(),
+  }),
+  z.object({ kind: z.literal('failed') }),
+]);
+type Last = z.infer<typeof lastSchema>;
 
 const knownUrlSchema = z.object({
   // The URL as the crawl last requested it.
   entry: entrySchema,
-  // SHA-256 of the body of its last visit; null when that visit failed.
-  digest: z.string().nullable(),
+  // What its last visit got, as Nutch's CrawlDatum keeps a fetched page's
+  // signature apart from its redirect statuses: a body with its SHA-256, a
+  // redirect with its target, or no answer to keep.
+  last: lastSchema,
   due: z.number().nullable(),
   history: z.unknown(),
 });
@@ -121,16 +141,12 @@ const mementoSchema = z.object({
     .object({
       pending: z.array(entrySchema),
       states: z.array(z.unknown()),
-      // Origins that answered 403 or 429, with when their breaker closes.
-      blocked: z.record(z.string(), z.number()),
       // Origins of the starting URLs: a list's page on another origin is expanded one step.
       origins: z.array(z.string()),
     })
     .nullable(),
   // Every URL a crawl visited, across crawls, with when it is due again.
   urls: z.record(z.string(), knownUrlSchema),
-  // Each origin that refused requests, across crawls, with the milliseconds a crawl waits between two requests to it.
-  slowdowns: z.record(z.string(), z.number()),
   // Each starting URL that answered with an HTML or Markdown page, across
   // crawls, with the origin that answered: LinkReader follows links there
   // also in a crawl that does not read the starting page.
@@ -165,17 +181,25 @@ export interface Crawl extends AsyncIterable<
 
 export class WebCrawler {
   readonly #http: Got;
+  readonly #origins: Origins;
   readonly #readers: readonly Reader<unknown, unknown>[];
   readonly #revisit: RevisitPolicy<unknown>;
 
+  /**
+   * One crawler for each list of starting URLs, with the revisit policy of
+   * its copy. The origins' records are shared: every crawl of one read asks
+   * the same record of each origin.
+   */
   constructor(
     http: Got,
+    origins: Origins,
     readers: readonly Reader<unknown, unknown>[],
-    revisit: RevisitPolicy<unknown> = new AdaptiveRevisit(),
+    revisit: RevisitPolicy<unknown>,
   ) {
     if (readers.length === 0)
       throw new TypeError('At least one reader is required');
     this.#http = http;
+    this.#origins = origins;
     this.#readers = readers.slice();
     this.#revisit = revisit;
   }
@@ -189,9 +213,9 @@ export class WebCrawler {
     memento: unknown,
     options: CrawlOptions,
   ): Crawl {
-    const { crawl, urls, slowdowns, pages } =
+    const { crawl, urls, pages } =
       memento === null
-        ? { crawl: null, urls: {}, slowdowns: {}, pages: {} }
+        ? { crawl: null, urls: {}, pages: {} }
         : mementoSchema.parse(memento);
     const known = new Map(
       Object.entries(urls).map(([url, { entry, ...visit }]) => [
@@ -208,40 +232,44 @@ export class WebCrawler {
       at: number,
       states: unknown[],
       entries: Entry[],
-      blocked: Record<string, number>,
-      origins: readonly string[],
+      starting: readonly string[],
     ) =>
-      new CrawlRun(this.#http, this.#readers, this.#revisit, options, {
-        at,
-        states,
-        entries,
-        blocked,
-        origins,
-        known,
-        slowdowns,
-        // Only the current starting URLs' pages count.
-        pages: new Map(
-          Object.entries(pages).filter(([url]) => startUrls.includes(url)),
-        ),
-        revisits: [...known.values()].flatMap(({ entry }) =>
-          startUrls.includes(entry.url)
-            ? []
-            : [
-                {
-                  ...entry,
-                  start: false,
-                  expand: entry.expand === 'origin' ? null : entry.expand,
-                },
-              ],
-        ),
-      });
+      new CrawlRun(
+        this.#http,
+        this.#origins,
+        this.#readers,
+        this.#revisit,
+        options,
+        {
+          at,
+          states,
+          entries,
+          starting,
+          known,
+          // Only the current starting URLs' pages count.
+          pages: new Map(
+            Object.entries(pages).filter(([url]) => startUrls.includes(url)),
+          ),
+          revisits: [...known.values()].flatMap(({ entry }) =>
+            startUrls.includes(entry.url)
+              ? []
+              : [
+                  {
+                    ...entry,
+                    start: null,
+                    expand: entry.expand === 'origin' ? null : entry.expand,
+                  },
+                ],
+          ),
+        },
+      );
     const start = (url: string): Entry => ({
       url,
       listingUrl: url,
       lastModified: null,
       published: null,
       hops: 0,
-      start: true,
+      start: url,
       page: false,
       document: true,
       list: false,
@@ -251,6 +279,7 @@ export class WebCrawler {
       linked: false,
       tolerate: [],
       notes: this.#readers.map(() => null),
+      redirect: null,
     });
     const now = Date.now();
     // Each run is timed at its own start, and it requests each starting URL
@@ -263,7 +292,7 @@ export class WebCrawler {
       const visit = known.get(url);
       return visit === undefined ||
         this.#revisit.due(
-          { ...start(url), startingOrigin: true },
+          { ...start(url), start: true, startingOrigin: true },
           { ...visit, lastModified: visit.entry.lastModified },
           now,
         )
@@ -277,14 +306,12 @@ export class WebCrawler {
           reader.states.parse(crawl.states[index]),
         ),
         [...crawl.pending.map((entry) => this.#restore(entry)), ...starting],
-        crawl.blocked,
         crawl.origins,
       );
     return run(
       now,
       this.#readers.map((reader) => reader.open()),
       starting,
-      {},
       [...new Set(startUrls.map((url) => new URL(url).origin))],
     );
   }
@@ -307,6 +334,7 @@ class Finished {}
 
 class CrawlRun implements Crawl {
   readonly #http: Got;
+  readonly #origins: Origins;
   readonly #readers: readonly Reader<unknown, unknown>[];
   readonly #revisit: RevisitPolicy<unknown>;
   readonly #options: CrawlOptions;
@@ -333,31 +361,13 @@ class CrawlRun implements Crawl {
   readonly #handed = new Set<string>();
   // URLs this crawl downloads again for a role they add: no reader admits them a second time.
   readonly #again = new Set<string>();
-  // A circuit breaker per origin that answered 403 or 429 (Nygard, Release It!):
-  // while open, the crawl requests nothing there. One opened in this crawl
-  // stays open to its end, as Nutch clears a blocked host's queue for the round.
-  readonly #blocked: Map<string, number>;
   // Origins of the starting URLs.
-  readonly #origins: readonly string[];
+  readonly #starting: readonly string[];
   // Pending entries of a blocked origin, or of an origin that spent its
   // expansion budget, out of the lanes until a later crawl resumes them.
   readonly #held = new Map<string, Entry>();
-  // The documents of one-step expansions that this run downloaded, by origin.
-  readonly #documents = new Map<string, number>();
-  // Origins whose expansion budget this run spent, with entries held for the next run.
-  readonly #spent = new Set<string>();
-  // 403 answers in a row, by origin.
-  readonly #forbidden = new Map<string, number>();
-  // Each origin's robots.txt (RFC 9309), read once per crawl.
-  readonly #robots = new Map<string, OriginRules>();
-  // When the last request to each origin started, for its Crawl-delay and slowdown.
-  readonly #started = new Map<string, number>();
-  // How long to wait between two requests to each origin that refused some.
-  readonly #slowdowns: Map<string, number>;
   // Each starting URL that answered with a page, with the origin that answered.
   readonly #pages: Map<string, string>;
-  // The client's user agent, which robots.txt groups name.
-  readonly #agent: string;
   // The page handed back last, added to #handed with its visit, as the entry stays pending.
   #hand: string | null = null;
   #current: Entry | null = null;
@@ -372,6 +382,7 @@ class CrawlRun implements Crawl {
 
   constructor(
     http: Got,
+    origins: Origins,
     readers: readonly Reader<unknown, unknown>[],
     revisit: RevisitPolicy<unknown>,
     options: CrawlOptions,
@@ -379,27 +390,22 @@ class CrawlRun implements Crawl {
       at,
       states,
       entries,
-      blocked,
-      origins,
+      starting,
       known,
-      slowdowns,
       pages,
       revisits,
     }: {
       readonly at: number;
       readonly states: unknown[];
       readonly entries: readonly Entry[];
-      readonly blocked: Record<string, number>;
-      readonly origins: readonly string[];
+      readonly starting: readonly string[];
       readonly known: Map<string, KnownUrl>;
-      readonly slowdowns: Record<string, number>;
       readonly pages: Map<string, string>;
       readonly revisits: Entry[];
     },
   ) {
     this.#http = http;
-    const agent = http.defaults.options.headers['user-agent'];
-    this.#agent = typeof agent === 'string' ? agent : '*';
+    this.#origins = origins;
     this.#readers = readers;
     this.#revisit = revisit;
     this.#options = options;
@@ -407,9 +413,7 @@ class CrawlRun implements Crawl {
     this.#states = states;
     this.#urls = known;
     this.#revisits = revisits;
-    this.#blocked = new Map(Object.entries(blocked));
-    this.#origins = origins;
-    this.#slowdowns = new Map(Object.entries(slowdowns));
+    this.#starting = starting;
     this.#pages = pages;
     // Pending entries were admitted when found, in this run or the last.
     for (const entry of entries) this.#add(entry);
@@ -429,11 +433,9 @@ class CrawlRun implements Crawl {
                 ...this.#held.values(),
               ],
               states: this.#states,
-              blocked: Object.fromEntries(this.#blocked),
-              origins: [...this.#origins],
+              origins: [...this.#starting],
             },
       urls: Object.fromEntries(this.#urls),
-      slowdowns: Object.fromEntries(this.#slowdowns),
       pages: Object.fromEntries(this.#pages),
     });
   }
@@ -445,18 +447,26 @@ class CrawlRun implements Crawl {
     const entry = visit?.after.entry ?? before?.entry;
     if (entry === undefined)
       throw new TypeError(`The crawl did not hand back ${url}`);
-    const after = this.#schedule(entry, 'failed', null, null, before);
+    const after = this.#schedule(
+      entry,
+      'failed',
+      null,
+      { kind: 'failed' },
+      before,
+    );
     if (visit) this.#visit = { before, after };
     else this.#urls.set(url, after);
   }
 
   nextDue(): number | null {
-    // A crawl held back by its breakers continues when the first one closes;
-    // one held back by a spent expansion budget is due again at once.
+    // A crawl held back by blocks continues when the first one closes; one
+    // held back by a spent expansion budget, or by a block that closed, is
+    // due again at once.
     if (this.#phase instanceof Crawling && this.#held.size > 0)
       return Math.min(
-        ...this.#blocked.values(),
-        ...(this.#spent.size > 0 ? [this.#at] : []),
+        ...[...this.#held.values()].map(
+          ({ url }) => this.#origins.until(new URL(url).origin) ?? this.#at,
+        ),
       );
     const known = [...this.#urls.values()];
     if (this.#visit) known.push(this.#visit.after);
@@ -471,10 +481,6 @@ class CrawlRun implements Crawl {
   > {
     const { signal } = this.#options;
     signal.throwIfAborted();
-    // Breakers close by the clock when the crawl runs, not when it started.
-    const now = Date.now();
-    for (const [origin, until] of this.#blocked)
-      if (until <= now) this.#blocked.delete(origin);
     for (;;) {
       this.#commit();
       const next = await this.#next();
@@ -486,32 +492,30 @@ class CrawlRun implements Crawl {
       const { entry, included, wanted } = next;
       const before = this.#urls.get(entry.url);
       const page = included && !entry.document;
-      await this.#pace(new URL(entry.url).origin);
-      // Got's retries hide the refused attempts before the answer. A retry
-      // after a network error or a 408 is no refusal of the site.
-      let refusals = 0;
+      const { origin } = new URL(entry.url);
+      await this.#origins.pace(origin, signal);
       let response: Response;
       try {
         response = await this.#http(entry.url, {
           signal,
           responseType: 'buffer',
           throwHttpErrors: false,
+          // A redirect is a request of its own, which passes the record of
+          // its own origin, as Heritrix and StormCrawler make the Location
+          // an outlink rather than follow it.
+          followRedirect: false,
+          retry: this.#origins.retry,
           // Lets the caller's Got hooks tell pages it reads from documents readers read.
-          context: { page },
-          hooks: {
-            beforeRetry: [
-              ({ response: retried }) => {
-                if (retried !== undefined && refused(retried.statusCode))
-                  refusals++;
-              },
-            ],
-          },
+          context:
+            entry.redirect === null
+              ? { page }
+              : { ...entry.redirect.context, page },
         });
       } catch (cause) {
         signal.throwIfAborted();
         const errorResponse =
           cause instanceof RequestError ? cause.response : undefined;
-        this.#visited(entry, 'failed', null, null, before);
+        this.#visited(entry, 'failed', null, { kind: 'failed' }, before);
         yield this.#tolerates(entry, errorResponse?.statusCode)
           ? { progress: entry.url, routes: [] }
           : this.#failure(entry, page, errorResponse?.url ?? entry.url, cause);
@@ -523,29 +527,22 @@ class CrawlRun implements Crawl {
         if (value !== undefined)
           headers.set(name, Array.isArray(value) ? value.join(', ') : value);
       const { statusCode } = response;
-      const origin = new URL(response.url).origin;
       const tolerated = this.#tolerates(entry, statusCode);
-      this.#answered(origin, refusals + (refused(statusCode) ? 1 : 0));
-      // A 403 can close one page, such as a members-only one, so only a run
-      // of them, as Nutch's fetcher.max.exceptions.per.queue counts, is a block.
-      const forbidden =
-        statusCode === 403 && !tolerated
-          ? (this.#forbidden.get(origin) ?? 0) + 1
-          : 0;
-      this.#forbidden.set(origin, forbidden);
-      if (!tolerated && (statusCode === 429 || forbidden >= forbiddenRun)) {
+      const until = this.#origins.answered(
+        entry.url,
+        statusCode,
+        headers.get('retry-after'),
+        tolerated,
+      );
+      if (until !== null) {
         // A block is the host's, not the page's: the URL goes back to the
         // frontier, and the revisit policy does not schedule it.
-        const until = blockedUntil(headers.get('retry-after'));
-        this.#blocked.set(origin, until);
-        // A redirect reached the blocked origin, so requests to the URL's own origin would too.
-        this.#blocked.set(new URL(entry.url).origin, until);
         this.#held.set(entry.url, entry);
         this.#current = null;
         yield this.#failure(
           entry,
           page,
-          response.url,
+          entry.url,
           new Error(
             `${origin} answered ${statusCode}, so the crawl requests nothing there until ${new Date(until).toISOString()}`,
             { cause: new HTTPError(response) },
@@ -553,23 +550,41 @@ class CrawlRun implements Crawl {
         );
         continue;
       }
-      const failed = !response.ok || statusCode === 304;
+      const location = redirectTarget(statusCode, headers, entry.url);
+      if (location !== null) {
+        yield this.#redirect(
+          entry,
+          response,
+          headers,
+          location,
+          wanted,
+          before,
+        );
+        continue;
+      }
+      const failed = statusCode < 200 || statusCode > 299;
       let change: Change = 'unknown';
       if (failed)
         this.#visited(
           entry,
           [404, 410].includes(statusCode) ? 'gone' : 'failed',
           headers,
-          null,
+          { kind: 'failed' },
           before,
         );
       else {
         const digest = createHash('sha256')
           .update(response.rawBody)
           .digest('hex');
-        if (before !== undefined && before.digest !== null)
-          change = before.digest === digest ? 'unmodified' : 'modified';
-        this.#visited(entry, change, headers, digest, before);
+        if (before !== undefined && before.last.kind === 'fetched')
+          change = before.last.digest === digest ? 'unmodified' : 'modified';
+        this.#visited(
+          entry,
+          change,
+          headers,
+          { kind: 'fetched', digest },
+          before,
+        );
       }
       if (failed && !tolerated) {
         yield this.#failure(entry, page, response.url, new HTTPError(response));
@@ -588,13 +603,13 @@ class CrawlRun implements Crawl {
           this.#visit = { before, after: { ...after, due: limit } };
       };
       // A starting URL is read as a list too, as the readers of lists do.
-      const list = (entry.list || entry.start) && isHtml(type);
+      const list = (entry.list || entry.start !== null) && isHtml(type);
       if (
-        entry.start &&
-        response.ok &&
+        entry.start !== null &&
+        !failed &&
         (isHtml(type) || type === 'text/markdown')
       )
-        this.#pages.set(entry.url, new URL(response.url).origin);
+        this.#pages.set(entry.start, origin);
       // Each URL in scope that the response names, found or not, as Heritrix
       // records every outlink of a URI and Nutch inverts them into inlinks.
       const named = new Map<string, Naming>();
@@ -608,8 +623,7 @@ class CrawlRun implements Crawl {
               response,
               headers,
               type,
-              // A reader reads the response where it came from.
-              request: this.#request(entry, response.url),
+              request: this.#request(entry),
               note: entry.notes[index],
               wanted: wanted[index] === true,
               revisitWithin,
@@ -622,7 +636,7 @@ class CrawlRun implements Crawl {
           }
           for (const finding of findings) {
             if (!this.#keeps(finding, entry)) continue;
-            const next = this.#entry(finding, entry, response.url, index, list);
+            const next = this.#entry(finding, entry, index, list);
             if (finding.naming !== null && this.#scopes(next))
               named.set(
                 next.url,
@@ -633,27 +647,13 @@ class CrawlRun implements Crawl {
         } catch (cause) {
           signal.throwIfAborted();
           complete = false;
-          yield this.#failure(entry, false, response.url, cause);
+          yield this.#failure(entry, false, entry.url, cause);
         }
       }
       signal.throwIfAborted();
-      const listingUrl = webUrl(response.url, response.url);
       const routes: ListingRoutes[] = [
-        // The URL that was requested names the URL it was redirected to, so a
-        // walk from the requested URL reaches what the response named.
-        ...(listingUrl === entry.url
-          ? []
-          : [
-              {
-                listingUrl: entry.url,
-                complete: true,
-                routes: [
-                  { url: listingUrl, how: 'redirect' as const, text: null },
-                ],
-              },
-            ]),
         {
-          listingUrl,
+          listingUrl: entry.url,
           complete,
           routes: [...named].map(([url, naming]) => ({ url, ...naming })),
         },
@@ -674,12 +674,11 @@ class CrawlRun implements Crawl {
     }
     // Entries of a blocked or spent origin remain: the crawl is unfinished.
     if (this.#held.size > 0) return;
-    for (const [url, { entry, digest }] of this.#urls)
+    for (const [url, { entry, last }] of this.#urls)
       if (
-        entry.page &&
-        digest !== null &&
+        last.kind === 'fetched' &&
         !this.#known.has(url) &&
-        this.#includes(url)
+        this.#hands(entry)
       )
         yield {
           deferred: {
@@ -692,16 +691,89 @@ class CrawlRun implements Crawl {
     this.#phase = new Finished();
   }
 
+  // A redirect is a visit of the requested URL, whose body is the URL it
+  // redirects to, and the Location is a request of its own that continues
+  // the entry: it has the entry's roles, provenance and admissions, as
+  // StormCrawler transfers a URL's metadata to its redirect target, and it
+  // passes the robots.txt, the block and the delay of its own origin.
+  #redirect(
+    entry: Entry,
+    response: Response,
+    headers: Headers,
+    location: string,
+    wanted: readonly boolean[],
+    before: KnownUrl | undefined,
+  ): CrawlFailure | CrawlProgress {
+    const hops = entry.redirect === null ? 1 : entry.redirect.hops + 1;
+    if (hops > maxRedirects) {
+      this.#visited(entry, 'failed', headers, { kind: 'failed' }, before);
+      return this.#failure(
+        entry,
+        this.#hands(entry) && !entry.document,
+        entry.url,
+        new Error(`More than ${maxRedirects} redirects`, {
+          cause: new HTTPError(response),
+        }),
+      );
+    }
+    // A redirect is its own outcome, as Nutch's STATUS_FETCH_REDIR_TEMP and
+    // _PERM and StormCrawler's REDIRECTION: its target is what it says, so a
+    // target that stays is unmodified and one that moves is modified.
+    const permanent = [301, 308].includes(response.statusCode);
+    this.#visited(
+      entry,
+      {
+        redirect: location,
+        permanent,
+        change:
+          before === undefined || before.last.kind !== 'redirect'
+            ? 'unknown'
+            : before.last.target === location
+              ? 'unmodified'
+              : 'modified',
+      },
+      headers,
+      { kind: 'redirect', target: location, permanent },
+      before,
+    );
+    this.#enqueue({
+      ...entry,
+      url: location,
+      redirect: {
+        hops,
+        wanted: [...wanted],
+        included: this.#hands(entry),
+        context: contextSchema.parse(
+          Object.fromEntries(
+            Object.entries(response.request.options.context).filter(
+              ([key]) => key !== 'page',
+            ),
+          ),
+        ),
+      },
+    });
+    return {
+      progress: entry.url,
+      routes: [
+        {
+          listingUrl: entry.url,
+          complete: true,
+          routes: [{ url: location, how: 'redirect', text: null }],
+        },
+      ],
+    };
+  }
+
   #visited(
     entry: Entry,
     outcome: Outcome,
     headers: Headers | null,
-    digest: string | null,
+    last: Last,
     before: KnownUrl | undefined,
   ) {
     this.#visit = {
       before,
-      after: this.#schedule(entry, outcome, headers, digest, before),
+      after: this.#schedule(entry, outcome, headers, last, before),
     };
   }
 
@@ -709,19 +781,19 @@ class CrawlRun implements Crawl {
     entry: Entry,
     outcome: Outcome,
     headers: Headers | null,
-    digest: string | null,
+    last: Last,
     before: KnownUrl | undefined,
   ): KnownUrl {
     const { due, history } = this.#revisit.schedule(
       {
-        request: this.#request(entry, entry.url),
+        request: this.#request(entry),
         outcome,
         headers,
         at: this.#at,
       },
       before?.history ?? null,
     );
-    return { entry, digest, due, history };
+    return { entry, last, due, history };
   }
 
   #commit() {
@@ -744,6 +816,7 @@ class CrawlRun implements Crawl {
     | { readonly failure: CrawlFailure }
     | undefined
   > {
+    const { signal } = this.#options;
     for (;;) {
       for (let lane = this.#lane(); lane; lane = this.#lane())
         for (
@@ -752,8 +825,8 @@ class CrawlRun implements Crawl {
           entry = lane.take(this.#ready)
         ) {
           const { origin } = new URL(entry.url);
-          const included = entry.page && this.#includes(entry.url);
-          const needed = entry.start || entry.document || included;
+          const included = this.#hands(entry);
+          const needed = entry.start !== null || entry.document || included;
           // A URL that nobody needs and that no reader would admit, such as a
           // list's link to a website that include does not select, is dropped
           // before its origin is asked anything: it costs that website no
@@ -763,71 +836,53 @@ class CrawlRun implements Crawl {
             this.#known.delete(entry.url);
             continue;
           }
-          if (this.#blocked.has(origin)) {
+          if (this.#origins.until(origin) !== null) {
             this.#held.set(entry.url, entry);
             continue;
           }
           // The documents that a one-step expansion reads on an origin that
-          // no starting URL names, such as its robots.txt sitemaps, spend a
-          // budget for each run; the rest wait in the frontier for the next
-          // run, as Nutch's generate.max.count leaves a host's surplus URLs
-          // in the crawl database for the next cycle.
+          // no starting URL names, such as its robots.txt sitemaps, spend the
+          // origin's budget for each read; the rest wait in the frontier for
+          // the next run, as Nutch's generate.max.count leaves a host's
+          // surplus URLs in the crawl database for the next cycle.
           const budgeted =
-            entry.document && entry.within && !this.#origins.includes(origin);
-          if (
-            budgeted &&
-            this.#documents.getOrInsert(origin, 0) >= expansionDocuments
-          ) {
-            this.#spent.add(origin);
+            entry.document && entry.within && !this.#starting.includes(origin);
+          if (budgeted && !this.#origins.expands(origin)) {
             this.#held.set(entry.url, entry);
             continue;
           }
-          const robotsUrl = `${origin}/robots.txt`;
-          if (entry.url !== robotsUrl) {
-            const robots = await this.#rules(origin);
-            if ('until' in robots) {
-              // Unreachable rules disallow everything for now (RFC 9309
-              // §2.3.1.4): the origin's breaker opens, as for a 429.
-              this.#blocked.set(origin, robots.until);
+          if (entry.url !== `${origin}/robots.txt`) {
+            const rules = await this.#origins.rules(origin, signal);
+            if (!(rules instanceof RobotsRules)) {
               this.#held.set(entry.url, entry);
               this.#current = null;
               return {
                 failure: this.#failure(
                   entry,
                   included && !entry.document,
-                  robotsUrl,
+                  `${origin}/robots.txt`,
                   new Error(
-                    `${origin} could not give its robots.txt (${Error.isError(robots.cause) ? robots.cause.message : String(robots.cause)}), so the crawl requests nothing there until ${new Date(robots.until).toISOString()}`,
-                    { cause: robots.cause },
+                    `${origin} could not give its robots.txt (${Error.isError(rules.cause) ? rules.cause.message : String(rules.cause)}), so the crawl requests nothing there until ${new Date(rules.until).toISOString()}`,
+                    { cause: rules.cause },
                   ),
                 ),
               };
             }
             // A disallowed URL is no failure: the crawl leaves it out, and the
-            // revisit policy does not schedule it. The crawl indexes pages and
-            // shows their links and titles, which is the "search" use, so an
-            // origin that refuses search is left out whole.
-            if (
-              !robots.search ||
-              robots.rules.isAllowed(entry.url, this.#agent) === false
-            )
-              continue;
+            // revisit policy does not schedule it.
+            if (!rules.allows(entry.url)) continue;
           }
-          // A reader's budget counts admissions, and a second download of a URL is none.
+          // A reader's budget counts admissions, and a second download of a
+          // URL is none; a redirect carries the admissions of its request.
           const wanted = this.#again.delete(entry.url)
             ? this.#readers.map(() => false)
-            : this.#readers.map((reader, index) =>
-                reader.wants(
-                  this.#request(entry, entry.url),
-                  this.#states[index],
-                ),
-              );
+            : entry.redirect === null
+              ? this.#readers.map((reader, index) =>
+                  reader.wants(this.#request(entry), this.#states[index]),
+                )
+              : entry.redirect.wanted;
           if (needed || wanted.includes(true)) {
-            if (budgeted)
-              this.#documents.set(
-                origin,
-                this.#documents.getOrInsert(origin, 0) + 1,
-              );
+            if (budgeted) this.#origins.spend(origin);
             this.#current = entry;
             return { entry, included, wanted };
           }
@@ -863,127 +918,35 @@ class CrawlRun implements Crawl {
     return this.#lanes[chosen];
   }
 
+  // Whether the origin's delay and slowdown have passed, so a request to it waits for nothing.
+  readonly #ready = (origin: string) => this.#origins.ready(origin);
+
   // Whether a reader would admit the entry, asked on copies of the readers'
   // states, which are plain data, so the question spends no budget: a reader
-  // admits for real only after the rules of the origin allow the URL.
+  // admits for real only after the rules of the origin allow the URL. A
+  // redirect carries the admissions of the request that it continues.
   #wouldAdmit(entry: Entry) {
+    if (entry.redirect !== null) return entry.redirect.wanted.includes(true);
     return this.#readers.some((reader, index) =>
-      reader.wants(
-        this.#request(entry, entry.url),
-        structuredClone(this.#states[index]),
-      ),
+      reader.wants(this.#request(entry), structuredClone(this.#states[index])),
     );
-  }
-
-  // An origin's rules, from its robots.txt through the client, so its HTTP
-  // cache applies. Got follows the redirects; RFC 9309 §2.3.1.2 asks for five.
-  async #rules(
-    origin: string,
-  ): Promise<
-    OriginRules | { readonly until: number; readonly cause: unknown }
-  > {
-    const known = this.#robots.get(origin);
-    if (known) return known;
-    const { signal } = this.#options;
-    const url = `${origin}/robots.txt`;
-    this.#started.set(origin, performance.now());
-    let body = '';
-    // As for a page, only the retries that the site refused count.
-    let refusals = 0;
-    try {
-      const response = await this.#http(url, {
-        signal,
-        responseType: 'text',
-        throwHttpErrors: false,
-        maxRedirects: 5,
-        context: { page: false },
-        hooks: {
-          beforeRetry: [
-            ({ response: retried }) => {
-              if (retried !== undefined && refused(retried.statusCode))
-                refusals++;
-            },
-          ],
-        },
-      });
-      this.#answered(origin, refusals + (refused(response.statusCode) ? 1 : 0));
-      // A 5xx answer disallows everything until the server is back; a 4xx one
-      // allows everything, except a 429, which asks to slow down, so it holds
-      // the origin as Google's crawler treats it and as a page's 429 does.
-      if (response.statusCode >= 500 || response.statusCode === 429)
-        return {
-          until: blockedUntil(response.headers['retry-after'] ?? null),
-          cause: new HTTPError(response),
-        };
-      if (response.ok) body = response.body;
-    } catch (cause) {
-      signal.throwIfAborted();
-      // More redirects than five make the rules unavailable, as a 4xx does.
-      if (!(cause instanceof MaxRedirectsError))
-        return { until: blockedUntil(null), cause };
-    }
-    const robots = {
-      rules: robotsParser(url, body),
-      search: contentSignals(body, this.#agent).get('search') !== 'no',
-    };
-    this.#robots.set(origin, robots);
-    return robots;
-  }
-
-  // Waits out the longer of the origin's Crawl-delay and its slowdown since
-  // its last request started. Bing and Yandex honor the directive; RFC 9309
-  // does not define it.
-  // Whether the origin's Crawl-delay and slowdown have passed, so a request
-  // to it waits for nothing.
-  readonly #ready = (origin: string) =>
-    this.#askable(origin) <= performance.now();
-
-  // When the origin can be asked again: the longer of its Crawl-delay and its
-  // slowdown after its last request started.
-  #askable(origin: string) {
-    const crawlDelay = Math.min(
-      this.#robots.get(origin)?.rules.getCrawlDelay(this.#agent) ?? 0,
-      maxCrawlDelay,
-    );
-    return (
-      (this.#started.get(origin) ?? 0) +
-      Math.max(crawlDelay * 1000, this.#slowdowns.get(origin) ?? 0)
-    );
-  }
-
-  async #pace(origin: string) {
-    const { signal } = this.#options;
-    const until = this.#askable(origin);
-    // A timer can fire up to a millisecond early by the high-resolution clock.
-    for (
-      let wait = until - performance.now();
-      wait > 0;
-      wait = until - performance.now()
-    )
-      await setTimeout(wait, undefined, { signal }).catch((error: unknown) => {
-        signal.throwIfAborted();
-        throw error;
-      });
-    this.#started.set(origin, performance.now());
-  }
-
-  // Each refusal doubles the origin's slowdown, from one second up to one
-  // minute, as Google's crawler lowers its rate for a host that answers 429
-  // or 5xx. Each other answer shortens it by a tenth, so the crawl returns to
-  // its full rate while the origin answers.
-  #answered(origin: string, refusals: number) {
-    let delay = this.#slowdowns.get(origin) ?? 0;
-    if (refusals === 0) delay *= 0.9;
-    for (let refusal = 0; refusal < refusals; refusal++)
-      delay = Math.min(longestSlowdown, Math.max(firstSlowdown, delay * 2));
-    if (delay < shortestSlowdown) this.#slowdowns.delete(origin);
-    else this.#slowdowns.set(origin, delay);
   }
 
   #includes(url: string) {
     return (
       this.#options.include === undefined ||
       this.#options.include.some((pattern) => pattern.test(url))
+    );
+  }
+
+  // Whether the crawl hands the entry back as a page: a page that include
+  // selects, or the redirect target of one, as Heritrix's
+  // TransclusionDecideRule admits a redirect hop that leaves the scope.
+  #hands(entry: Entry) {
+    return (
+      entry.page &&
+      (this.#includes(entry.url) ||
+        (entry.redirect !== null && entry.redirect.included))
     );
   }
 
@@ -1002,14 +965,15 @@ class CrawlRun implements Crawl {
   }
 
   // The entry as readers and the revisit policy see it: whether it is a
-  // starting URL, or on the origin of a starting page, by the URL that its
-  // response came from once there is one.
-  #request(entry: Entry, at: string): CrawlRequest {
-    const { origin } = new URL(at);
+  // starting URL, or on the origin of a starting page.
+  #request(entry: Entry): CrawlRequest {
+    const { origin } = new URL(entry.url);
     return {
       ...entry,
+      start: entry.start !== null,
       startingOrigin:
-        entry.start || this.#pages.values().some((page) => page === origin),
+        entry.start !== null ||
+        this.#pages.values().some((page) => page === origin),
     };
   }
 
@@ -1053,21 +1017,20 @@ class CrawlRun implements Crawl {
   #entry(
     finding: Finding<unknown>,
     parent: Entry,
-    listingUrl: string,
     index: number,
     list: boolean,
   ): Entry {
     const notes: unknown[] = this.#readers.map(() => null);
     notes[index] = finding.note;
-    const url = webUrl(finding.url, listingUrl);
+    const url = webUrl(finding.url, parent.url);
     const expansion = parent.expand === 'step' || parent.within;
     return {
       url,
-      listingUrl,
+      listingUrl: parent.url,
       lastModified: finding.lastModified,
       published: finding.published,
       hops: parent.hops + (finding.linked ? 1 : 0),
-      start: false,
+      start: null,
       page: finding.page,
       document: !finding.page,
       list: finding.list,
@@ -1080,7 +1043,7 @@ class CrawlRun implements Crawl {
         !expansion &&
         finding.page &&
         !finding.linked &&
-        !this.#origins.includes(new URL(url).origin)
+        !this.#starting.includes(new URL(url).origin)
           ? 'step'
           : null,
       within: expansion,
@@ -1088,6 +1051,7 @@ class CrawlRun implements Crawl {
       linked: finding.linked,
       tolerate: finding.tolerate,
       notes,
+      redirect: null,
     };
   }
 
@@ -1107,8 +1071,8 @@ class CrawlRun implements Crawl {
         // A page role matters only for a page the crawl hands back, and every
         // reader already reads a starting URL as it reads a list.
         const addsRole =
-          (next.page && !visited.page && this.#includes(next.url)) ||
-          (next.list && !visited.list && !visited.start) ||
+          (this.#hands(next) && !visited.page) ||
+          (next.list && !visited.list && visited.start === null) ||
           (next.expand === 'step' && visited.expand === null);
         if (!addsRole) return;
         const again = { ...visited, priority: next.priority };
@@ -1120,7 +1084,7 @@ class CrawlRun implements Crawl {
         if (
           known !== undefined &&
           !this.#revisit.due(
-            this.#request(next, next.url),
+            this.#request(next),
             { ...known, lastModified: known.entry.lastModified },
             this.#at,
           )
@@ -1161,93 +1125,19 @@ class CrawlRun implements Crawl {
   }
 }
 
-// The documents that one run downloads for the one-step expansions on one
-// origin. An expansion reads one robots.txt and the sitemaps it names; a
-// small site names one to three, as vercel.com names one, so its program
-// page comes back in one run. A site with hundreds, as www.microsoft.com's
-// 505, is read over many runs. ADR 0005 gives the reasons for the number.
-const expansionDocuments = 8;
+// The redirects that one request follows, as Got's maxRedirects; a longer chain fails, as Got's MaxRedirectsError does.
+const maxRedirects = 10;
 
-// 403 answers in a row from one origin that make a block.
-const forbiddenRun = 3;
+// The Got context of a request that a redirect carries to its next request, as plain data, so the memento keeps it.
+const contextSchema = z.record(z.string(), z.json());
 
-// The longest Crawl-delay the crawl honors, in seconds.
-const maxCrawlDelay = 60;
-
-// A refused origin's first slowdown, its longest, and the shortest one it keeps, in milliseconds.
-const firstSlowdown = 1000;
-const longestSlowdown = 60_000;
-const shortestSlowdown = 100;
-
-// An answer that asks the crawl to slow down: 429 Too Many Requests or a server error.
-function refused(status: number) {
-  return status === 429 || status >= 500;
-}
-
-// robots-parser is CommonJS, but its types declare an ES default export
-// ("masquerading as ESM"), so TypeScript types the namespace's default as the
-// module. Node and bundlers give module.exports, the parser, as the default,
-// and a static import lets a host bundle it.
-// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- robots-parser 3.0.1's index.d.ts declares `export default` over `module.exports = function`
-const robotsParser = robots.default as unknown as typeof robots.default.default;
-
-// An origin's robots.txt: its rules, and whether its Content-Signal lets the crawl use the site for search.
-interface OriginRules {
-  readonly rules: ReturnType<typeof robotsParser>;
-  readonly search: boolean;
-}
-
-// Cloudflare's Content Signals (blog.cloudflare.com/content-signals-policy):
-// "Content-Signal: search=yes, ai-train=no" in a robots.txt group. robots-parser
-// ignores the line, so the crawler reads it with the same grouping: the group
-// that names the agent's product token, else the "*" group (RFC 9309 §2.2.1).
-// A signal that a group leaves out expresses no preference.
-function contentSignals(body: string, agent: string) {
-  const groups = new Map<string, Map<string, string>>();
-  let current: Map<string, string>[] = [];
-  let naming = false;
-  for (const line of body.split(/\r\n|\r|\n/)) {
-    const colon = line.indexOf(':');
-    if (colon === -1) continue;
-    const key = line.slice(0, colon).trim().toLowerCase();
-    const value = line
-      .slice(colon + 1)
-      .replace(/#.*$/, '')
-      .trim();
-    if (key === 'user-agent') {
-      if (!naming) current = [];
-      naming = true;
-      if (value === '') continue;
-      const token = productToken(value);
-      const group = groups.get(token) ?? new Map<string, string>();
-      groups.set(token, group);
-      current.push(group);
-      continue;
-    }
-    naming = false;
-    if (key !== 'content-signal') continue;
-    for (const pair of value.split(',')) {
-      const [name = '', setting = ''] = pair
-        .split('=')
-        .map((part) => part.trim().toLowerCase());
-      if (name !== '' && (setting === 'yes' || setting === 'no'))
-        for (const group of current) group.set(name, setting);
-    }
-  }
-  return groups.get(productToken(agent)) ?? groups.get('*') ?? new Map();
-}
-
-// A user agent's product token as robots-parser matches it: "WhatIsGoingOn/0.1 (+https://…)" is "whatisgoingon".
-function productToken(agent: string) {
-  return agent.toLowerCase().split('/', 1)[0]?.trim() ?? '';
-}
-
-// When a block ends, by its Retry-After in seconds or as an HTTP-date (RFC 9110 §10.2.3); an hour without one.
-function blockedUntil(retryAfter: string | null) {
-  const value = retryAfter?.trim() ?? '';
-  if (/^\d+$/.test(value)) return Date.now() + Number(value) * 1000;
-  const date = Date.parse(value);
-  return Number.isNaN(date) ? Date.now() + hour : date;
+// The URL that a response redirects to: a redirect status that Got follows,
+// 304 aside, with an HTTP(S) Location; null for any other response.
+function redirectTarget(status: number, headers: Headers, url: string) {
+  const location = headers.get('location');
+  return location !== null && [300, 301, 302, 303, 307, 308].includes(status)
+    ? httpUrl(location, url)
+    : null;
 }
 
 // The naming of a URL that one response names in two ways: the more specific
@@ -1266,7 +1156,7 @@ function merge(pending: Entry, next: Entry) {
   // A starting URL has no provenance of its own: its first page finding gives it one.
   if (
     (pending.linked && !next.linked) ||
-    (pending.start && !pending.page && next.page)
+    (pending.start !== null && !pending.page && next.page)
   ) {
     pending.listingUrl = next.listingUrl;
     pending.lastModified = next.lastModified;
@@ -1280,7 +1170,7 @@ function merge(pending: Entry, next: Entry) {
     pending.hops = next.hops;
     pending.page = true;
   }
-  pending.start ||= next.start;
+  if (pending.start === null) pending.start = next.start;
   pending.document ||= next.document;
   pending.list ||= next.list;
   if (pending.expand !== 'origin' && next.expand !== null)
@@ -1297,4 +1187,18 @@ function merge(pending: Entry, next: Entry) {
       tolerate.includes(status),
     );
   pending.notes = pending.notes.map((note, index) => note ?? next.notes[index]);
+  // A URL that redirects lead to continues each of their requests.
+  const { redirect } = next;
+  if (redirect !== null)
+    pending.redirect =
+      pending.redirect === null
+        ? redirect
+        : {
+            hops: Math.min(pending.redirect.hops, redirect.hops),
+            wanted: pending.redirect.wanted.map(
+              (wanted, index) => wanted || redirect.wanted[index] === true,
+            ),
+            included: pending.redirect.included || redirect.included,
+            context: pending.redirect.context,
+          };
 }

@@ -5,21 +5,27 @@ import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
 import {
+  AdaptiveRevisit,
   ArchiveReader,
   type CrawlFailure,
   type CrawledPage,
   LinkReader,
   ListingReader,
+  Origins,
   PaginationReader,
   WebCrawler,
 } from './index.ts';
 
+// Got retries no network error, so a test's failure is its first answer.
+const noRetries = got.extend({ retry: { limit: 0 } });
+
 function listings() {
-  return new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-    new ListingReader(),
-    new ArchiveReader(),
-    new PaginationReader(),
-  ]);
+  return new WebCrawler(
+    noRetries,
+    new Origins(noRetries, null),
+    [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+    new AdaptiveRevisit(),
+  );
 }
 
 // Progress entries only mark URLs read for the readers; these tests assert pages and failures.
@@ -78,9 +84,9 @@ test('website archives discover older posts beyond the feed, following paginatio
     }
   });
   assert.deepEqual(
-    (await crawl(listings(), upstream.origin, AbortSignal.timeout(5000))).map(
-      location,
-    ),
+    (
+      await crawl(listings(), upstream.origin, AbortSignal.timeout(120_000))
+    ).map(location),
     [
       // The starting page is a list, and an archive it links is one of its pages too.
       {
@@ -155,9 +161,9 @@ test('dead discovered archive links do not discard history, while a dead startin
   });
   // A missing /sitemap.xml guess is an ordinary answer.
   assert.deepEqual(
-    (await crawl(listings(), upstream.origin, AbortSignal.timeout(5000))).map(
-      (entry) => ('error' in entry ? entry.error.url : location(entry)),
-    ),
+    (
+      await crawl(listings(), upstream.origin, AbortSignal.timeout(120_000))
+    ).map((entry) => ('error' in entry ? entry.error.url : location(entry))),
     [
       // The starting page lists its archives; the dead ones are skipped as pages too.
       {
@@ -177,7 +183,7 @@ test('dead discovered archive links do not discard history, while a dead startin
       await crawl(
         listings(),
         `${upstream.origin}/archive/`,
-        AbortSignal.timeout(5000),
+        AbortSignal.timeout(120_000),
       )
     ).map((entry) => ('error' in entry ? entry.error.url : entry.url)),
     [`${upstream.origin}/archive/`],
@@ -196,9 +202,9 @@ test('advertised content indexes work without archive-shaped URLs', async () => 
     else response.writeHead(404).end();
   });
   assert.deepEqual(
-    (await crawl(listings(), upstream.origin, AbortSignal.timeout(5000))).map(
-      (entry) => ('error' in entry ? entry.error.url : location(entry)),
-    ),
+    (
+      await crawl(listings(), upstream.origin, AbortSignal.timeout(120_000))
+    ).map((entry) => ('error' in entry ? entry.error.url : location(entry))),
     [
       // The starting page is a list, and the content index it links is one of its pages too.
       {
@@ -243,7 +249,7 @@ test('a starting HTML archive follows HTTP pagination links and resolves redirec
       await crawl(
         listings(),
         `${upstream.origin}/history`,
-        AbortSignal.timeout(5000),
+        AbortSignal.timeout(120_000),
       )
     ).map(location),
     [
@@ -311,7 +317,7 @@ test('a self-linked archive and calendar indexes expose the full history', async
   const pages = await crawl(
     listings(),
     upstream.origin,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
   );
   assert.deepEqual(
     pages.map((page) => location(page).url).sort(),
@@ -361,14 +367,19 @@ test('archives found on a crawled page are followed, and keep that page as prove
       else response.writeHead(request.url === '/broken-feed' ? 503 : 404).end();
     });
     const entries = await crawl(
-      new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-        new ListingReader(),
-        new ArchiveReader(),
-        new PaginationReader(),
-        new LinkReader({ maxDepth: 3, maxPages: 100 }),
-      ]),
+      new WebCrawler(
+        noRetries,
+        new Origins(noRetries, null),
+        [
+          new ListingReader(),
+          new ArchiveReader(),
+          new PaginationReader(),
+          new LinkReader({ maxDepth: 3, maxPages: 100 }),
+        ],
+        new AdaptiveRevisit(),
+      ),
       upstream.origin,
-      AbortSignal.timeout(5000),
+      AbortSignal.timeout(120_000),
     );
     const failures = entries.flatMap((entry) =>
       'error' in entry
@@ -418,7 +429,7 @@ test('an archive that returns a feed is not read as a listing', async () => {
   const entries = await crawl(
     listings(),
     upstream.origin,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
   );
   assert.ok(!requests.includes('/item'));
   assert.ok(entries.every((entry) => !entry.url.endsWith('/item')));
@@ -444,11 +455,13 @@ test('links nobody downloads do not use up turns, so listings are not starved be
       );
     else response.end('<p>A listing.</p>');
   });
-  for await (const entry of new WebCrawler(got, [
-    new ArchiveReader(),
-    new PaginationReader(),
-  ]).crawl([`${upstream.origin}/m`], null, {
-    signal: AbortSignal.timeout(5000),
+  for await (const entry of new WebCrawler(
+    got,
+    new Origins(got, null),
+    [new ArchiveReader(), new PaginationReader()],
+    new AdaptiveRevisit(),
+  ).crawl([`${upstream.origin}/m`], null, {
+    signal: AbortSignal.timeout(120_000),
     include: [new URLPattern({ pathname: '/search/*' })],
   }))
     assert.ok(!('error' in entry));
@@ -491,7 +504,7 @@ test('new feed pages are handed back before a long archive chain finishes, and t
   });
   const handed: string[] = [];
   for await (const entry of listings().crawl([upstream.origin], null, {
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(120_000),
     include: [new URLPattern({ pathname: '/new/*' })],
   }))
     if (!('progress' in entry) && !('deferred' in entry))
@@ -547,7 +560,7 @@ test('archive backfill keeps progressing while many listed pages wait', async ()
   });
   const handed: string[] = [];
   for await (const entry of listings().crawl([upstream.origin], null, {
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(120_000),
     include: [new URLPattern({ pathname: '/new/*' })],
   }))
     if (!('progress' in entry) && !('deferred' in entry))
@@ -588,7 +601,7 @@ test('a URL found as an archive and then listed as a page downloads in the page 
   });
   const handed: string[] = [];
   for await (const entry of listings().crawl([upstream.origin], null, {
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(120_000),
   }))
     if (!('progress' in entry) && !('deferred' in entry))
       handed.push(location(entry).url);
@@ -627,7 +640,7 @@ test('a calendar archive is a real year at the start of the path, so numeric ids
   });
 
   const pages = (
-    await crawl(listings(), `${upstream.origin}/`, AbortSignal.timeout(5000))
+    await crawl(listings(), `${upstream.origin}/`, AbortSignal.timeout(120_000))
   ).map((entry) => new URL(location(entry).url).pathname);
 
   // The three archives are read as lists, so their pages come back.

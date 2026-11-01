@@ -1,4 +1,8 @@
-import type { Reader, RevisitPolicy } from '@workspace/sdk-web-crawler';
+import {
+  AdaptiveRevisit,
+  type Reader,
+  type RevisitPolicy,
+} from '@workspace/sdk-web-crawler';
 
 import type { RecordExtractor } from './record-extractor.ts';
 
@@ -8,8 +12,8 @@ export class WebStream {
   /** The record key within one input. */
   readonly primaryKey: readonly string[];
   readonly readers: readonly Reader<unknown, unknown>[];
-  /** When an incremental crawl requests a known URL again; omitted, the crawler's AdaptiveRevisit. */
-  readonly revisit: RevisitPolicy<unknown> | undefined;
+  /** When an incremental crawl requests a known URL again. */
+  readonly revisit: RevisitPolicy<unknown>;
   /** Pages to extract; omitted, every page the crawl finds. */
   readonly include: readonly [URLPattern, ...URLPattern[]] | undefined;
   /** URLs to keep when the crawl expands a page that a list hands back on another website; omitted, the crawl expands only the inputs' websites. */
@@ -19,6 +23,7 @@ export class WebStream {
     name: string;
     primaryKey: readonly string[];
     readers: readonly Reader<unknown, unknown>[];
+    /** Omitted, AdaptiveRevisit, which suits a site whose change rate is unknown. */
     revisit?: RevisitPolicy<unknown>;
     include?: readonly [URLPattern, ...URLPattern[]];
     expand?: readonly [URLPattern, ...URLPattern[]];
@@ -27,7 +32,9 @@ export class WebStream {
     this.name = options.name;
     this.primaryKey = options.primaryKey;
     this.readers = options.readers;
-    this.revisit = options.revisit;
+    // A host may omit the policy, as context-compiler's startup-credits
+    // pipeline does (apps/startup-credits/src/pipeline.ts:42).
+    this.revisit = options.revisit ?? new AdaptiveRevisit();
     this.include = options.include;
     this.expand = options.expand;
     this.extractor = options.extractor;

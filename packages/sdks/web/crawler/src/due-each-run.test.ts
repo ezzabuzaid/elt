@@ -10,11 +10,15 @@ import {
   FixedRevisit,
   LinkReader,
   ListingReader,
+  Origins,
   PaginationReader,
   WebCrawler,
   day,
   hour,
 } from './index.ts';
+
+// Got retries no network error, so a test's failure is its first answer.
+const noRetries = got.extend({ retry: { limit: 0 } });
 
 // A website that logs "host path" for each request it is asked for and
 // answers each path with its HTML, its own content type, or 404.
@@ -69,7 +73,8 @@ test('a page that is due every hour is requested again in the next run while the
     })),
   );
   const crawler = new WebCrawler(
-    got.extend({ retry: { limit: 0 } }),
+    noRetries,
+    new Origins(noRetries, null),
     [
       new PaginationReader({ strategy: 'all' }),
       new ListingReader(),
@@ -78,7 +83,7 @@ test('a page that is due every hour is requested again in the next run while the
     new FixedRevisit({ every: hour }),
   );
   const options = {
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(120_000),
     include: [
       new URLPattern(`${microsoft.origin}/*`),
       new URLPattern(`${news.origin}/*`),
@@ -116,11 +121,12 @@ test('a new crawl does not request a starting URL that is not due', async () => 
     })),
   );
   const crawler = new WebCrawler(
-    got.extend({ retry: { limit: 0 } }),
+    noRetries,
+    new Origins(noRetries, null),
     [new ListingReader()],
     new FixedRevisit({ every: day }),
   );
-  const options = { signal: AbortSignal.timeout(10_000) };
+  const options = { signal: AbortSignal.timeout(120_000) };
   const first = crawler.crawl([`${site.origin}/sitemap.xml`], null, options);
   await drain(first);
   assert.equal(first.snapshot().crawl, null);

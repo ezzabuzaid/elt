@@ -5,19 +5,27 @@ import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
 import {
+  AdaptiveRevisit,
   ArchiveReader,
   type CrawlFailure,
   type CrawledPage,
   LinkReader,
   ListingReader,
+  Origins,
   PaginationReader,
   WebCrawler,
 } from './index.ts';
 
+// Got retries no network error, so a test's failure is its first answer.
+const noRetries = got.extend({ retry: { limit: 0 } });
+
 function pagination() {
-  return new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-    new PaginationReader(),
-  ]);
+  return new WebCrawler(
+    noRetries,
+    new Origins(noRetries, null),
+    [new PaginationReader()],
+    new AdaptiveRevisit(),
+  );
 }
 
 // Progress entries only mark URLs read for the readers; these tests assert pages and failures.
@@ -56,7 +64,7 @@ test('a failing page of the pagination is handed out as a failure, and the pages
     const entries = await crawl(
       pagination(),
       `${upstream.origin}/category`,
-      AbortSignal.timeout(5000),
+      AbortSignal.timeout(120_000),
     );
 
     assert.deepEqual(
@@ -96,7 +104,7 @@ test('a listed page that is gone is skipped, not a failure', async () => {
   const entries = await crawl(
     pagination(),
     `${upstream.origin}/category`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
   );
 
   assert.deepEqual(entries.map(location), [
@@ -127,12 +135,14 @@ test('a /sitemap.xml guess answered by a soft 404 page is not read as a list', a
   });
 
   const pages = await crawl(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new ListingReader(),
-      new PaginationReader(),
-    ]),
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new ListingReader(), new PaginationReader()],
+      new AdaptiveRevisit(),
+    ),
     `${upstream.origin}/`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
   );
 
   assert.deepEqual(
@@ -161,9 +171,14 @@ test('an archive that ArchiveReader finds and that fits on one page hands back t
     });
 
     const pages = await crawl(
-      new WebCrawler(got.extend({ retry: { limit: 0 } }), readers),
+      new WebCrawler(
+        noRetries,
+        new Origins(noRetries, null),
+        readers,
+        new AdaptiveRevisit(),
+      ),
       `${upstream.origin}/`,
-      AbortSignal.timeout(5000),
+      AbortSignal.timeout(120_000),
       [new URLPattern({ pathname: '/posts/*' })],
     );
 
@@ -199,13 +214,18 @@ test('an archive that a later page of a list declares is no hop, so link limits 
   });
 
   const pages = await crawl(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new PaginationReader(),
-      new ArchiveReader(),
-      new LinkReader({ maxDepth: 0, maxPages: 100 }),
-    ]),
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [
+        new PaginationReader(),
+        new ArchiveReader(),
+        new LinkReader({ maxDepth: 0, maxPages: 100 }),
+      ],
+      new AdaptiveRevisit(),
+    ),
     `${upstream.origin}/category`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
   );
 
   assert.deepEqual(
@@ -242,7 +262,7 @@ test('pagination on a listed page is not followed, and neither are its other lin
   const pages = await crawl(
     pagination(),
     `${upstream.origin}/category`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
   );
 
   assert.deepEqual(
@@ -276,7 +296,7 @@ test('a crawl stopped inside the pagination and resumed from its snapshot reads 
   });
   const crawler = pagination();
   const first = crawler.crawl([`${upstream.origin}/category`], null, {
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(120_000),
   });
   for await (const entry of first) if (!('progress' in entry)) break;
   const snapshot = JSON.parse(JSON.stringify(first.snapshot()));
@@ -284,7 +304,7 @@ test('a crawl stopped inside the pagination and resumed from its snapshot reads 
 
   const resumed: (CrawledPage | CrawlFailure)[] = [];
   for await (const entry of crawler.crawl([], snapshot, {
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(120_000),
   }))
     if (!('progress' in entry) && !('deferred' in entry)) resumed.push(entry);
 
@@ -329,7 +349,7 @@ test('the pagination of a starting page is read to its end, both ways, from link
   const pages = await crawl(
     pagination(),
     `${upstream.origin}/category/2`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
   );
 
   assert.deepEqual(
@@ -385,7 +405,7 @@ test('undeclared pagination by page number is read to its last page, and a linke
     const pages = await crawl(
       pagination(),
       `${upstream.origin}${at(1)}`,
-      AbortSignal.timeout(5000),
+      AbortSignal.timeout(120_000),
     );
 
     assert.deepEqual(
@@ -423,7 +443,7 @@ test('a year, a filter, the pages of another list and the list without its slash
   const pages = await crawl(
     pagination(),
     `${upstream.origin}/tag/x/`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
   );
 
   assert.deepEqual(
@@ -469,7 +489,7 @@ test('a list that links itself and its first page is downloaded once when the UR
   const pages = await crawl(
     pagination(),
     `${upstream.origin}/tag/x/`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
     [new URLPattern({ pathname: '/item/*' })],
   );
 
@@ -501,13 +521,18 @@ test('a declared pagination form is followed in place of the page-number rule', 
   });
 
   const pages = await crawl(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new PaginationReader({
-        pagination: [new URLPattern({ pathname: '/tag/:tag/page:n/' })],
-      }),
-    ]),
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [
+        new PaginationReader({
+          pagination: [new URLPattern({ pathname: '/tag/:tag/page:n/' })],
+        }),
+      ],
+      new AdaptiveRevisit(),
+    ),
     `${upstream.origin}/tag/x/`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
   );
 
   assert.deepEqual(
@@ -543,7 +568,7 @@ test('a list hands back only the pages on its own origin by default, also when t
   const pages = await crawl(
     pagination(),
     `${upstream.origin}/blog/`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
     [new URLPattern({ pathname: '/:section/:slug' })],
   );
 
@@ -577,11 +602,14 @@ test('a list with the strategy all hands back the pages on other origins that th
   });
 
   const pages = await crawl(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new PaginationReader({ strategy: 'all' }),
-    ]),
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new PaginationReader({ strategy: 'all' })],
+      new AdaptiveRevisit(),
+    ),
     `${upstream.origin}/blog/`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
     [
       new URLPattern(`${upstream.origin}/blog/*`),
       new URLPattern(`${blog.origin}/post/*`),
@@ -642,11 +670,14 @@ test('a list with the strategy all follows no pagination to another origin', asy
   });
 
   const pages = await crawl(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new PaginationReader({ strategy: 'all' }),
-    ]),
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new PaginationReader({ strategy: 'all' })],
+      new AdaptiveRevisit(),
+    ),
     `${upstream.origin}/tag/x/`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
     [
       new URLPattern(`${upstream.origin}/item/*`),
       new URLPattern(`${elsewhere.origin}/item/*`),
@@ -672,12 +703,14 @@ test('a list whose stylesheet jsdom cannot parse writes nothing to the console',
   const errors = t.mock.method(console, 'error', () => {});
 
   const pages = await crawl(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new ArchiveReader(),
-      new PaginationReader(),
-    ]),
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new ArchiveReader(), new PaginationReader()],
+      new AdaptiveRevisit(),
+    ),
     `${upstream.origin}/category`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
   );
 
   assert.deepEqual(
@@ -703,7 +736,7 @@ test('a starting page without pagination hands back the pages it lists outside n
   const pages = await crawl(
     pagination(),
     `${upstream.origin}/category`,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(120_000),
   );
 
   assert.deepEqual(

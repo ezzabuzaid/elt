@@ -6,13 +6,18 @@ import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
 import {
+  AdaptiveRevisit,
   ArchiveReader,
   type Crawl,
   LinkReader,
   ListingReader,
+  Origins,
   PaginationReader,
   WebCrawler,
 } from './index.ts';
+
+// Got retries no network error, so a test's failure is its first answer.
+const noRetries = got.extend({ retry: { limit: 0 } });
 
 // As the startup-credits app: a list of programs links the home page of each
 // company, and the program page is elsewhere on that website or on another one.
@@ -20,11 +25,16 @@ function programs(link: {
   readonly maxDepth: number;
   readonly maxPages: number;
 }) {
-  return new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-    new PaginationReader({ strategy: 'all' }),
-    new ListingReader(),
-    new LinkReader(link),
-  ]);
+  return new WebCrawler(
+    noRetries,
+    new Origins(noRetries, null),
+    [
+      new PaginationReader({ strategy: 'all' }),
+      new ListingReader(),
+      new LinkReader(link),
+    ],
+    new AdaptiveRevisit(),
+  );
 }
 
 const expand = [new URLPattern({ pathname: '*start*' })] as const;
@@ -85,7 +95,7 @@ test('the home page that a list links on another website gives its links on ever
       [`${list.origin}/programs`],
       null,
       {
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(120_000),
         include: [
           new URLPattern(`${site.origin}/*`),
           new URLPattern(`${elsewhere.origin}/*`),
@@ -137,7 +147,7 @@ test('the sitemaps that the robots.txt of a linked home page declares give only 
       [`${list.origin}/programs`],
       null,
       {
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(120_000),
         include: [new URLPattern(`${site.origin}/*`)],
         expand,
       },
@@ -188,7 +198,7 @@ test('a page that an expansion finds is not expanded again: its links and the si
       [`${list.origin}/programs`],
       null,
       {
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(120_000),
         include: [
           new URLPattern(`${site.origin}/*`),
           new URLPattern(`${elsewhere.origin}/*`),
@@ -234,13 +244,18 @@ test('a list that an expansion finds hands back only the pages that match, and e
   );
 
   const pages = await handed(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new PaginationReader({ strategy: 'all' }),
-      new ArchiveReader(),
-      new ListingReader(),
-      new LinkReader({ maxDepth: 0, maxPages: 0 }),
-    ]).crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(5000),
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [
+        new PaginationReader({ strategy: 'all' }),
+        new ArchiveReader(),
+        new ListingReader(),
+        new LinkReader({ maxDepth: 0, maxPages: 0 }),
+      ],
+      new AdaptiveRevisit(),
+    ).crawl([`${list.origin}/programs`], null, {
+      signal: AbortSignal.timeout(120_000),
       include: [
         new URLPattern(`${site.origin}/*`),
         new URLPattern(`${elsewhere.origin}/*`),
@@ -297,7 +312,7 @@ test('a page that a sitemap or a feed lists on another website is not expanded',
         [`${listing.origin}${start}`],
         null,
         {
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(120_000),
           include: [new URLPattern(`${site.origin}/*`)],
           expand,
         },
@@ -337,7 +352,7 @@ test('a page that a sitemap and a list both name is expanded, whether the sitema
         [`${list.origin}/sitemap.xml`, `${list.origin}/programs`],
         null,
         {
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(120_000),
           include: [new URLPattern(`${site.origin}/*`)],
           expand,
         },
@@ -378,7 +393,7 @@ test('without expand patterns, the home page that a list links on another websit
       [`${list.origin}/programs`],
       null,
       {
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(120_000),
         include: [new URLPattern(`${site.origin}/*`)],
       },
     ),
@@ -418,7 +433,8 @@ test('a crawl stopped at any entry and resumed from its snapshot expands the sam
       '/own': `<a href="${site.origin}/startups-from-own">Startups</a>`,
     })),
   );
-  const crawler = programs({ maxDepth: 0, maxPages: 0 });
+  // Each crawl is a read of its own, with its own origins' records.
+  const crawler = () => programs({ maxDepth: 0, maxPages: 0 });
   const options = {
     include: [
       new URLPattern(`${site.origin}/*`),
@@ -433,9 +449,9 @@ test('a crawl stopped at any entry and resumed from its snapshot expands the sam
     `${list.origin}/own`,
   ].toSorted();
   const whole = await handed(
-    crawler.crawl([`${list.origin}/programs`], null, {
+    crawler().crawl([`${list.origin}/programs`], null, {
       ...options,
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(120_000),
     }),
   );
   assert.deepEqual(whole, expected);
@@ -443,9 +459,9 @@ test('a crawl stopped at any entry and resumed from its snapshot expands the sam
   // One stop after each entry, until a crawl ends before its stop, so a
   // snapshot holds each URL pending once.
   for (let stop = 1, stopped = true; stopped; stop++) {
-    const first = crawler.crawl([`${list.origin}/programs`], null, {
+    const first = crawler().crawl([`${list.origin}/programs`], null, {
       ...options,
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(120_000),
     });
     const pages = new Set<string>();
     let seen = 0;
@@ -459,9 +475,9 @@ test('a crawl stopped at any entry and resumed from its snapshot expands the sam
     }
     const snapshot: unknown = JSON.parse(JSON.stringify(first.snapshot()));
     for (const url of await handed(
-      crawler.crawl([], snapshot, {
+      crawler().crawl([], snapshot, {
         ...options,
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(120_000),
       }),
     ))
       pages.add(url);

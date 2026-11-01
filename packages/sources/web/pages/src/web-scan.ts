@@ -91,30 +91,18 @@ class Delivery {
   }
 }
 
-// No web stream of the read crawls.
-class Free {}
-
-// A web stream of the read crawls; released opens once it stopped.
-class Held {
-  readonly released: Latch;
-  constructor(released: Latch) {
-    this.released = released;
-  }
-}
-
 /**
- * What the streams of one read share: the web streams that it crawls, and
- * which of them have their routes stream in the read too, the first group
- * that each of those routes streams did not commit, the delivery of each
- * input's crawl, and the turn of the one web stream that crawls at a time.
+ * What the streams of one read share about routes: the web streams that it
+ * crawls, and which of them have their routes stream in the read too, the
+ * first group that each of those routes streams did not commit, and the
+ * delivery of each input's crawl.
  */
-export class WebScan implements AsyncDisposable {
+export class WebScan {
   readonly #routed: ReadonlySet<string>;
   readonly #undelivered: ReadonlyMap<string, number>;
   readonly #deliveries: ReadonlyMap<string, Delivery>;
   // Every input of each web stream that the read crawls, by stream, in the order it reads them.
   readonly #inputs: ReadonlyMap<string, readonly string[]>;
-  #crawl: Free | Held = new Free();
 
   constructor(
     crawled: ReadonlyMap<string, readonly string[]>,
@@ -172,20 +160,4 @@ export class WebScan implements AsyncDisposable {
   ) {
     return this.#deliveries.get(`${stream}\0${inputUrl}`)?.ended(signal);
   }
-
-  /** Waits until no other web stream of the read crawls; disposing the turn lets the next one crawl. */
-  async turn(signal: AbortSignal | undefined): Promise<Disposable> {
-    while (this.#crawl instanceof Held)
-      await untilAborted(this.#crawl.released.wait(), signal);
-    const released = new Latch();
-    this.#crawl = new Held(released);
-    return {
-      [Symbol.dispose]: () => {
-        this.#crawl = new Free();
-        released.open();
-      },
-    };
-  }
-
-  async [Symbol.asyncDispose]() {}
 }

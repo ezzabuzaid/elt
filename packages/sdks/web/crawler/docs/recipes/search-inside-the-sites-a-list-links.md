@@ -28,8 +28,10 @@ import { type Server, createServer } from 'node:http';
 import got from 'got';
 
 import {
+  AdaptiveRevisit,
   LinkReader,
   ListingReader,
+  Origins,
   PaginationReader,
   WebCrawler,
 } from '@workspace/sdk-web-crawler';
@@ -86,11 +88,16 @@ const http = got.extend({
     lookup('127.0.0.1', options, callback),
 });
 
-const crawler = new WebCrawler(http, [
-  new PaginationReader({ strategy: 'all' }),
-  new ListingReader(),
-  new LinkReader({ maxDepth: 0, maxPages: 0 }),
-]);
+const crawler = new WebCrawler(
+  http,
+  new Origins(http, null),
+  [
+    new PaginationReader({ strategy: 'all' }),
+    new ListingReader(),
+    new LinkReader({ maxDepth: 0, maxPages: 0 }),
+  ],
+  new AdaptiveRevisit(),
+);
 const crawl = crawler.crawl([`${listOrigin}/programs`], null, {
   signal: AbortSignal.timeout(10_000),
   // Every website except the list's own.
@@ -124,20 +131,20 @@ cloud.close();
 The port numbers change on each run.
 
 ```text
-http://company.example:50893/ from http://list.example:50892/programs
-http://company.example:50893/startup-program/ from http://company.example:50893/sitemap.xml
-http://company.example:50893/startups from http://company.example:50893/
-http://cloud.example:50894/start-ups from http://company.example:50893/
-http://list.example:50892/programs list-item http://company.example:50893/ "Company"
-http://list.example:50892/programs robots http://list.example:50892/robots.txt
-http://list.example:50892/robots.txt sitemap-guess http://list.example:50892/sitemap.xml
-http://company.example:50893/ robots http://company.example:50893/robots.txt
-http://company.example:50893/ link http://company.example:50893/startups "Startups"
-http://company.example:50893/ link http://cloud.example:50894/start-ups "Cloud for start-ups"
-http://company.example:50893/robots.txt robots-sitemap http://company.example:50893/sitemap.xml
-http://company.example:50893/sitemap.xml sitemap-entry http://company.example:50893/startup-program/
+http://company.example:63328/ from http://list.example:63327/programs
+http://company.example:63328/startup-program/ from http://company.example:63328/sitemap.xml
+http://cloud.example:63329/start-ups from http://company.example:63328/
+http://company.example:63328/startups from http://company.example:63328/
+http://list.example:63327/programs list-item http://company.example:63328/ "Company"
+http://list.example:63327/programs robots http://list.example:63327/robots.txt
+http://list.example:63327/robots.txt sitemap-guess http://list.example:63327/sitemap.xml
+http://company.example:63328/ robots http://company.example:63328/robots.txt
+http://company.example:63328/ link http://company.example:63328/startups "Startups"
+http://company.example:63328/ link http://cloud.example:63329/start-ups "Cloud for start-ups"
+http://company.example:63328/robots.txt robots-sitemap http://company.example:63328/sitemap.xml
+http://company.example:63328/sitemap.xml sitemap-entry http://company.example:63328/startup-program/
 ```
 
-The crawl handed back the home page with the list as its listing, the two program pages of `company.example`, and the program page on `cloud.example`. It did not hand back `/pricing` or `/blog/launch`, because no `expand` pattern matches them.
+The crawl handed back the home page with the list as its listing, the two program pages of `company.example`, and the program page on `cloud.example`. Each origin waits one second between two requests, so `cloud.example`, which was ready, went before the second link of `company.example`. It did not hand back `/pricing` or `/blog/launch`, because no `expand` pattern matches them.
 
 `/startup-program/` has the sitemap as its `listingUrl`, but the routes connect it to the list: the list names the home page, the home page names its `robots.txt`, the `robots.txt` names the sitemap, and the sitemap names `/startup-program/`. `/pricing` and `/blog/launch` have no route, because the crawl does not keep them.

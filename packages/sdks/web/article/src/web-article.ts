@@ -6,9 +6,11 @@ import {
   discoverUrisFromHtml,
 } from 'feedscout/methods';
 import {
+  type AfterResponseHook,
   type BeforeRedirectHook,
   type Got,
   HTTPError,
+  type PlainResponse,
   RequestError,
   type Response,
 } from 'got';
@@ -40,16 +42,29 @@ function mediaType(contentType: string | undefined) {
 }
 
 // Only a hook sees a redirect's headers, so it marks the request that a redirect chosen by Accept
-// led away from the URL it asked for. Vary names Accept, or * for anything in the request
-// (RFC 9110, section 12.5.5).
+// led away from the URL it asked for, with that URL. Vary names Accept, or * for anything in the
+// request (RFC 9110, section 12.5.5).
 const acceptRedirect = 'acceptRedirect';
-const noteAcceptRedirect: BeforeRedirectHook = (options, response) => {
+function noteAcceptRedirect(
+  context: Record<string, unknown>,
+  response: PlainResponse,
+) {
   if (
     (response.headers.vary ?? '')
       .split(',')
       .some((field) => ['accept', '*'].includes(field.trim().toLowerCase()))
   )
-    options.context[acceptRedirect] = true;
+    context[acceptRedirect] = response.requestUrl.href;
+}
+// A redirect that Got follows, as for a page this class downloads itself.
+const beforeRedirect: BeforeRedirectHook = (options, response) =>
+  noteAcceptRedirect(options.context, response);
+// A redirect that a crawler does not follow but requests as a URL of its own,
+// carrying the request's context to it.
+const afterResponse: AfterResponseHook = (response) => {
+  if (response.statusCode >= 300 && response.statusCode < 400)
+    noteAcceptRedirect(response.request.options.context, response);
+  return response;
 };
 
 function isHtml(
@@ -96,10 +111,10 @@ function fingerprint(parts: readonly (Response | string)[]) {
 }
 
 export class WebArticle {
-  /** How to request a page downloaded elsewhere and given to read(): its Accept header, and the redirect hook that notes a redirect Accept chose. */
+  /** How to request a page downloaded elsewhere and given to read(): its Accept header, and the hook that notes a redirect Accept chose on a client that follows no redirect. */
   readonly negotiation: {
     readonly accept: string;
-    readonly beforeRedirect: BeforeRedirectHook;
+    readonly afterResponse: AfterResponseHook;
   };
   readonly #extractions: readonly Extraction[];
   readonly #http: Got;
@@ -123,7 +138,7 @@ export class WebArticle {
         : undefined;
     this.negotiation = {
       accept: acceptHeader(this.#mediaTypes),
-      beforeRedirect: noteAcceptRedirect,
+      afterResponse,
     };
   }
 
@@ -160,7 +175,7 @@ export class WebArticle {
         signal,
         responseType: 'buffer',
         headers: { accept },
-        hooks: { beforeRedirect: [noteAcceptRedirect] },
+        hooks: { beforeRedirect: [beforeRedirect] },
       });
     } catch (cause) {
       signal.throwIfAborted();
@@ -193,19 +208,16 @@ export class WebArticle {
       if (!readable(response)) throw new HTTPError(response);
       const type = mediaType(response.headers['content-type']);
       // A Markdown request that Accept redirected elsewhere and that got no Markdown, as linear.app
-      // sends its pages to an app shell, failed its negotiation: the URL is asked again as a browser
-      // asks, with its advertised Markdown still preferred.
+      // sends its pages to an app shell, failed its negotiation: the URL it asked for is asked again
+      // as a browser asks, with its advertised Markdown still preferred.
+      const redirected = response.request.options.context[acceptRedirect];
       if (
         fallback !== undefined &&
         type !== 'text/markdown' &&
-        response.request.options.context[acceptRedirect] === true
+        typeof redirected === 'string'
       )
         return await this.#read(
-          await this.#request(
-            response.requestUrl,
-            signal,
-            acceptHeader(fallback),
-          ),
+          await this.#request(redirected, signal, acceptHeader(fallback)),
           signal,
           accepted,
           undefined,

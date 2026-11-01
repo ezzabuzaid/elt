@@ -6,6 +6,7 @@ import got from 'got';
 import { type HttpHandler, HttpResponse, http } from 'msw';
 
 import {
+  AdaptiveRevisit,
   ArchiveReader,
   type Crawl,
   type CrawlFailure,
@@ -13,9 +14,13 @@ import {
   type CrawledPage,
   LinkReader,
   ListingReader,
+  Origins,
   PaginationReader,
   WebCrawler,
 } from './index.ts';
+
+// Got retries no network error, so a test's failure is its first answer.
+const noRetries = got.extend({ retry: { limit: 0 } });
 
 // Synthetic upstream sites make the order of findings reproducible offline.
 // They have no robots.txt, so the requests they record are the crawl's pages and listings.
@@ -73,11 +78,12 @@ function blog(requests: string[]) {
 }
 
 function blogCrawler() {
-  return new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-    new ListingReader(),
-    new ArchiveReader(),
-    new PaginationReader(),
-  ]);
+  return new WebCrawler(
+    noRetries,
+    new Origins(noRetries, null),
+    [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+    new AdaptiveRevisit(),
+  );
 }
 
 test('a starting page that its sitemap lists as a page is handed back once, with the sitemap provenance', async () => {
@@ -100,10 +106,13 @@ test('a starting page that its sitemap lists as a page is handed back once, with
   );
 
   const handed = await pages(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new ListingReader(),
-    ]).crawl(['https://site.test/'], null, {
-      signal: AbortSignal.timeout(5000),
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new ListingReader()],
+      new AdaptiveRevisit(),
+    ).crawl(['https://site.test/'], null, {
+      signal: AbortSignal.timeout(120_000),
     }),
   );
 
@@ -123,7 +132,7 @@ test('a feed item that is also an archive is read as a list, and handed back as 
 
   const handed = await pages(
     blogCrawler().crawl(['https://site.test/'], null, {
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(120_000),
     }),
   );
 
@@ -142,7 +151,7 @@ test('a run that continues a crawl hands back again a page that it reads for ano
   const requests: string[] = [];
   using server = mockWeb(blog(requests));
   const crawler = blogCrawler();
-  const signal = AbortSignal.timeout(5000);
+  const signal = AbortSignal.timeout(120_000);
   const first = crawler.crawl(['https://site.test/'], null, { signal });
   const before: string[] = [];
   let snapshot;
@@ -178,11 +187,13 @@ test('a URL downloaded again for a role it adds is not admitted again, so it spe
       return HttpResponse.html('<p>X</p>');
     }),
   );
-  const crawl = new WebCrawler(got, [
-    new LinkReader({ maxDepth: 1, maxPages: 100 }),
-    new ArchiveReader(),
-  ]).crawl(['https://site.test/'], null, {
-    signal: AbortSignal.timeout(5000),
+  const crawl = new WebCrawler(
+    got,
+    new Origins(got, null),
+    [new LinkReader({ maxDepth: 1, maxPages: 100 }), new ArchiveReader()],
+    new AdaptiveRevisit(),
+  ).crawl(['https://site.test/'], null, {
+    signal: AbortSignal.timeout(120_000),
   });
   let last: CrawlMemento | undefined;
   for await (const entry of crawl)

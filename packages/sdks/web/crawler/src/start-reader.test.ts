@@ -6,12 +6,17 @@ import got from 'got';
 import { type HttpHandler, HttpResponse, http } from 'msw';
 
 import {
+  AdaptiveRevisit,
   type Crawl,
   type CrawlFailure,
   type CrawledPage,
+  Origins,
   StartReader,
   WebCrawler,
 } from './index.ts';
+
+// Got retries no network error, so a test's failure is its first answer.
+const noRetries = got.extend({ retry: { limit: 0 } });
 
 // Synthetic upstream sites make the requests reproducible offline. They have
 // no robots.txt, so the requests they record are the crawl's own downloads.
@@ -57,10 +62,13 @@ test('a crawl that only reads its starting pages requests none of the pages they
   using server = mockWeb(marketplace(requests));
 
   const handed = await pages(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new StartReader(),
-    ]).crawl(['https://site.test/en'], null, {
-      signal: AbortSignal.timeout(5000),
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new StartReader()],
+      new AdaptiveRevisit(),
+    ).crawl(['https://site.test/en'], null, {
+      signal: AbortSignal.timeout(120_000),
     }),
   );
 
@@ -79,10 +87,13 @@ test('each starting page is handed back as a page of its own provenance', async 
   using server = mockWeb(marketplace(requests));
 
   const handed = await pages(
-    new WebCrawler(got.extend({ retry: { limit: 0 } }), [
-      new StartReader(),
-    ]).crawl(['https://site.test/en', 'https://site.test/ar'], null, {
-      signal: AbortSignal.timeout(5000),
+    new WebCrawler(
+      noRetries,
+      new Origins(noRetries, null),
+      [new StartReader()],
+      new AdaptiveRevisit(),
+    ).crawl(['https://site.test/en', 'https://site.test/ar'], null, {
+      signal: AbortSignal.timeout(120_000),
     }),
   );
 

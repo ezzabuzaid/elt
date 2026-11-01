@@ -6,8 +6,10 @@ import { HttpServer } from '@zukhruf/testing/http';
 import got, { HTTPError, TimeoutError } from 'got';
 
 import {
+  AdaptiveRevisit,
   ArchiveReader,
   ListingReader,
+  Origins,
   PaginationReader,
   WebCrawler,
 } from '@workspace/sdk-web-crawler';
@@ -60,14 +62,16 @@ test('chosen websites and feeds compose with extraction without merging URL vari
         response.writeHead(404).end();
     }
   });
-  const crawler = new WebCrawler(got, [
-    new ListingReader(),
-    new ArchiveReader(),
-    new PaginationReader(),
-  ]);
+  const crawler = new WebCrawler(
+    got,
+    new Origins(got, null),
+    [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+    new AdaptiveRevisit(),
+  );
   const reader = new WebArticle([new HTMLExtraction()], got);
   for (const input of ['/', '/feed.xml']) {
-    const signal = AbortSignal.timeout(5000);
+    // Each origin answers one request a second, so a crawl takes seconds.
+    const signal = AbortSignal.timeout(120_000);
     const pages = (
       await Array.fromAsync(
         crawler.crawl([`${upstream.origin}${input}`], null, { signal }),

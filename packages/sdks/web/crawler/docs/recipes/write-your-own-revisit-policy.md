@@ -8,8 +8,8 @@
 
 1. **Give a `histories` schema.** The history of a URL is plain data in the crawl memento. The crawler parses it with this zod schema before it gives it to your policy. A policy with no history uses `z.null()`.
 2. **Return `{ due, history }` for each visit.** `due` is a time in milliseconds, or `null` for "never". `history` is what your policy must know at the next visit.
-3. **Extend `IntervalRevisit` to keep its failure rule.** A failed URL is due two hours later, and a gone URL (404 or 410) one day later. You implement only `visited`, which runs after a download that succeeded. Its `outcome` is `modified`, `unmodified` or `unknown`.
-4. **Extend `RevisitPolicy` to decide failed and gone URLs too.** You then implement `schedule`, which gets every `outcome`.
+3. **Extend `IntervalRevisit` to keep its failure rule.** A failed URL is due two hours later, and a gone URL (404 or 410) one day later. You implement only `visited`, which runs after a download that succeeded, a redirect included. Its `outcome` is `modified`, `unmodified` or `unknown`; for a redirect it is the change of the target.
+4. **Extend `RevisitPolicy` to decide failed, gone and redirected URLs too.** You then implement `schedule`, which gets every `outcome`: a `Change`, `'failed'`, `'gone'`, or a redirect `{ redirect, permanent, change }`.
 5. **Override `due` to read a hint before the download.** The default makes a URL due when its time came, or when a listing gives it another `lastModified` than at the last visit.
 
 ## The program
@@ -28,6 +28,7 @@ import {
   CompositeRevisit,
   IntervalRevisit,
   ListingReader,
+  Origins,
   type Schedule,
   WebCrawler,
 } from '@workspace/sdk-web-crawler';
@@ -68,19 +69,25 @@ const address = server.address();
 if (address === null || typeof address === 'string') throw new Error('No port');
 const origin = `http://127.0.0.1:${address.port}`;
 
-const crawler = new WebCrawler(
-  got.extend({ timeout: { request: 30_000 } }),
-  [new ListingReader()],
-  // The feed is read in each crawl, so that new posts are found; each post follows NeverRevisit.
-  new CompositeRevisit(
-    [[new URLPattern({ pathname: '/feed.json' }), new AlwaysRevisit()]],
-    new NeverRevisit(),
-  ),
-);
+const http = got.extend({ timeout: { request: 30_000 } });
+// Each crawl is a read of its own; its origins' records start from the last read's.
+let origins = new Origins(http, null);
+const crawler = (records: Origins) =>
+  new WebCrawler(
+    http,
+    records,
+    [new ListingReader()],
+    // The feed is read in each crawl, so that new posts are found; each post follows NeverRevisit.
+    new CompositeRevisit(
+      [[new URLPattern({ pathname: '/feed.json' }), new AlwaysRevisit()]],
+      new NeverRevisit(),
+    ),
+  );
 let memento: unknown = null;
 for (const name of ['first crawl', 'second crawl']) {
   requested = [];
-  const crawl = crawler.crawl([`${origin}/feed.json`], memento, {
+  origins = new Origins(http, origins.snapshot());
+  const crawl = crawler(origins).crawl([`${origin}/feed.json`], memento, {
     signal: AbortSignal.timeout(60_000),
   });
   for await (const entry of crawl) if ('error' in entry) throw entry.error;
@@ -102,14 +109,14 @@ first crawl {
   due: [ '/posts/1: never', '/posts/2: never' ]
 }
 second crawl {
-  requested: [ '/robots.txt', '/feed.json', '/posts/3' ],
+  requested: [ '/feed.json', '/posts/3' ],
   due: [ '/posts/1: never', '/posts/2: never', '/posts/3: never' ]
 }
 ```
 
 ## Why it works
 
-After the first crawl, each post has `due: null` in the crawl memento. On the second crawl, the feed names posts 1, 2 and 3. The crawler knows posts 1 and 2, and asks the policy whether they are due. They are not, so they stay out of the frontier. Post 3 is new, so the crawl downloads it. The feed has `AlwaysRevisit`, so it is requested in each crawl.
+After the first crawl, each post has `due: null` in the crawl memento. On the second crawl, the feed names posts 1, 2 and 3. The crawler knows posts 1 and 2, and asks the policy whether they are due. They are not, so they stay out of the frontier. Post 3 is new, so the crawl downloads it. The feed has `AlwaysRevisit`, so it is requested in each crawl. The second crawl does not request `robots.txt`: its origins' records come from the first crawl's, and the rules last 24 hours (RFC 9309 §2.4).
 
 A post that the crawl did not request is a deferred page. `WebSource` of `@workspace/source-web-pages` keeps its rows.
 

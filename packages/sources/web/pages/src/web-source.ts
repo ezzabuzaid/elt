@@ -15,11 +15,12 @@ import {
   diffGroupedSnapshot,
   validateRecords,
 } from '@workspace/elt';
-import { AlwaysRevisit, WebCrawler } from '@workspace/sdk-web-crawler';
+import { AlwaysRevisit } from '@workspace/sdk-web-crawler';
 
 import { crawlRecords, crawlsStream } from './crawls-stream.ts';
-import { webHttp } from './http/web-http.ts';
+import { WebClient } from './http/web-http.ts';
 import { routeRecords, routesState, routesStream } from './routes-stream.ts';
+import { WebRead } from './web-read.ts';
 import { type Outbox, WebScan, outbox } from './web-scan.ts';
 import { WebStream } from './web-stream.ts';
 
@@ -99,7 +100,7 @@ const inputUrls = z.array(z.url({ protocol: /^https?$/ })).min(1);
 /** A web stream without a usable input: none, or a URL that is not http or https. The user chooses the inputs, so only the user can fix it. */
 export class InputError extends Error {}
 
-export class WebSource extends Source<WebScan> {
+export class WebSource extends Source<WebRead> {
   readonly identity = 'web-pages';
   protected readonly catalog: Catalog;
   // Each stream's web stream and the inputs that it crawls, by stream name.
@@ -124,8 +125,8 @@ export class WebSource extends Source<WebScan> {
   readonly #userAgent: string | undefined;
   protected override readonly configErrors = [InputError];
   // A routes stream reads beside its web stream, so it loads the routes of
-  // each checkpoint while the crawl goes on; the scan lets one web stream
-  // crawl at a time.
+  // each checkpoint while the crawl goes on. Two web streams can crawl at
+  // once: the origins' records space the requests to each origin.
   protected override readonly concurrency = 2;
   // Each input's earliest due URL by stream, as its last crawl left it; null when its crawl failed or nothing is ever due.
   readonly #due = new Map<string, Map<string, number | null>>();
@@ -231,10 +232,11 @@ export class WebSource extends Source<WebScan> {
   }
   // Each routes stream's state says which groups of routes it committed, so
   // the web stream's crawl leaves them out of its outbox and numbers new
-  // ones after them.
+  // ones after them. Every crawl of the read shares one client, and with it
+  // the record of each origin.
   protected async open(
     streams: readonly Stream[],
-    _signal: AbortSignal | undefined,
+    signal: AbortSignal | undefined,
     states: { get(stream: string): unknown },
   ) {
     const crawled = new Map(
@@ -258,7 +260,10 @@ export class WebSource extends Source<WebScan> {
             state.undelivered,
           );
     }
-    return new WebScan(crawled, routed, undelivered);
+    return new WebRead(
+      new WebScan(crawled, routed, undelivered),
+      await WebClient.open(this.#cachePath, this.#userAgent, signal),
+    );
   }
   // A routes stream takes what the crawls of its web stream find in the same
   // read, and a crawls stream how each crawl ended, and a read reads two
@@ -341,7 +346,7 @@ export class WebSource extends Source<WebScan> {
     configuration: CopyConfiguration,
     state: unknown,
     partition: Partition | null,
-    scan: WebScan,
+    { scan, client }: WebRead,
     signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const inputUrl = z.string().parse(partition?.inputUrl);
@@ -382,8 +387,14 @@ export class WebSource extends Source<WebScan> {
       scan.give(stream.name, inputUrl, routes.slice(given));
       given = routes.length;
     };
+    // After each commit: the routes stream gets what the commit holds, and
+    // the origins' records are saved, so a block or a slowdown outlives a
+    // process that stops.
+    const committed = async () => {
+      give();
+      await client.save();
+    };
     try {
-      using crawling = await scan.turn(signal);
       const previous =
         state === null
           ? { diff: null, crawl: null, outbox: [] }
@@ -405,31 +416,15 @@ export class WebSource extends Source<WebScan> {
       // Each group the web stream committed goes to the routes stream once
       // the commit ended, when its checkpoint's yield returns.
       give();
-      await using client = await webHttp(
-        this.#cachePath,
-        this.#userAgent,
-        signal,
-      );
-      const { http, signal: requestSignal } = client;
-      const run = stream.extractor.open(http);
-      const crawler = new WebCrawler(
-        http.extend({
-          hooks: {
-            beforeRequest: [
-              (options) => {
-                if (options.context.page === true && run.negotiation !== null)
-                  options.headers.accept = run.negotiation.accept;
-              },
-            ],
-            beforeRedirect:
-              run.negotiation === null ? [] : [run.negotiation.beforeRedirect],
-          },
-        }),
+      const requestSignal = client.signal;
+      const run = stream.extractor.open(client.http);
+      const crawler = client.crawler(
         stream.readers,
         // A full refresh replaces the collection, so it must see every page that still exists.
         configuration.syncMode === 'full_refresh'
           ? new AlwaysRevisit()
           : stream.revisit,
+        run.negotiation,
       );
       const crawl = crawler.crawl([inputUrl], previous.crawl, {
         signal: requestSignal,
@@ -460,7 +455,7 @@ export class WebSource extends Source<WebScan> {
               stream: configuration.stream.name,
               state: checkpoint(),
             };
-            give();
+            await committed();
           }
           continue;
         }
@@ -471,7 +466,7 @@ export class WebSource extends Source<WebScan> {
             stream: configuration.stream.name,
             state: checkpoint(),
           };
-          give();
+          await committed();
           continue;
         }
         try {
@@ -518,7 +513,7 @@ export class WebSource extends Source<WebScan> {
             if ('type' in message && message.type === 'STATE') {
               diff = message.state;
               yield { ...message, state: checkpoint() };
-              give();
+              await committed();
             } else yield message;
           }
         } catch (error) {
@@ -531,7 +526,7 @@ export class WebSource extends Source<WebScan> {
             stream: configuration.stream.name,
             state: checkpoint(),
           };
-          give();
+          await committed();
         }
       }
       requestSignal.throwIfAborted();
@@ -543,7 +538,7 @@ export class WebSource extends Source<WebScan> {
           stream: configuration.stream.name,
           state: checkpoint(),
         };
-        give();
+        await committed();
       } else
         for await (const message of diffGroupedSnapshot(
           configuration,
@@ -562,7 +557,7 @@ export class WebSource extends Source<WebScan> {
                 outbox: routes,
               },
             };
-            give();
+            await committed();
           } else yield message;
       complete = crawl.snapshot().crawl === null;
       due = crawl.nextDue();
