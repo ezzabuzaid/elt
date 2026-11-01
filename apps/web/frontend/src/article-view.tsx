@@ -89,7 +89,7 @@ export function ArticleView({
               className="body prose"
               lang={data.lang ?? undefined}
               dir={data.dir ?? undefined}
-              // The source stores sanitized article HTML in content.
+              // sdk-web-article sanitizes this HTML with DOMPurify.
               dangerouslySetInnerHTML={{
                 __html: withoutRepeatedTitle(data.content, data.title),
               }}
