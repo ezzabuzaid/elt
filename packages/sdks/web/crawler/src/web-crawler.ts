@@ -183,6 +183,12 @@ export interface Crawl extends AsyncIterable<
   abandon(): void;
   /** When the next crawl has a known URL due, starting URLs included; null when none ever is. */
   nextDue(): number | null;
+  /**
+   * The pages whose last visit failed, which the crawl would hand back: its
+   * dead letters, sorted. A page leaves once a visit of it succeeds; a
+   * document that failed, such as a sitemap, is none.
+   */
+  failures(): readonly string[];
 }
 
 export class WebCrawler {
@@ -514,6 +520,19 @@ class CrawlRun implements Crawl {
     return next;
   }
 
+  failures(): readonly string[] {
+    // The last visit, until the next entry is requested, is newer than the
+    // URL's record.
+    const known = new Map(this.#urls);
+    if (this.#visit) known.set(this.#visit.after.entry.url, this.#visit.after);
+    return [...known.values()]
+      .filter(
+        ({ entry, last }) => last.kind === 'failed' && this.#handedBack(entry),
+      )
+      .map(({ entry }) => entry.url)
+      .toSorted();
+  }
+
   async *[Symbol.asyncIterator](): AsyncGenerator<
     CrawledPage | CrawlFailure | CrawlProgress | CrawlDeferral
   > {
@@ -529,7 +548,7 @@ class CrawlRun implements Crawl {
       }
       const { entry, included, wanted } = next;
       const before = this.#urls.get(entry.url);
-      const page = included && !entry.document;
+      const page = this.#handedBack(entry);
       const { origin } = new URL(entry.url);
       await this.#origins.pace(origin, signal);
       let response: Response;
@@ -747,7 +766,7 @@ class CrawlRun implements Crawl {
       this.#visited(entry, 'failed', headers, { kind: 'failed' }, before);
       return this.#failure(
         entry,
-        this.#hands(entry) && !entry.document,
+        this.#handedBack(entry),
         entry.url,
         new Error(`More than ${maxRedirects} redirects`, {
           cause: new HTTPError(response),
@@ -897,7 +916,7 @@ class CrawlRun implements Crawl {
               return {
                 failure: this.#failure(
                   entry,
-                  included && !entry.document,
+                  this.#handedBack(entry),
                   `${origin}/robots.txt`,
                   new Error(
                     `${origin} could not give its robots.txt (${Error.isError(rules.cause) ? rules.cause.message : String(rules.cause)}), so the crawl requests nothing there until ${new Date(rules.until).toISOString()}`,
@@ -975,6 +994,12 @@ class CrawlRun implements Crawl {
       this.#options.include === undefined ||
       this.#options.include.some((pattern) => pattern.test(url))
     );
+  }
+
+  // A page that the crawl hands back: include selects it, and no reader
+  // reads it as a document.
+  #handedBack(entry: Entry) {
+    return this.#hands(entry) && !entry.document;
   }
 
   // Whether the crawl hands the entry back as a page: a page that include

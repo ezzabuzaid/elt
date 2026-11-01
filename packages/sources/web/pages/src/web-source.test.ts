@@ -1775,6 +1775,91 @@ test(
   },
 );
 
+test('a page whose last visit failed is a row of the failures stream until a visit of it succeeds, also through a read that a record ends, and a sitemap that failed is none', async () => {
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  let status = 403;
+  let body = 'c';
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    const xml = { 'content-type': 'application/xml' };
+    if (url.pathname === '/sitemap.xml')
+      response
+        .writeHead(200, xml)
+        .end(
+          `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>${url.origin}/pages.xml</loc></sitemap><sitemap><loc>${url.origin}/broken.xml</loc></sitemap></sitemapindex>`,
+        );
+    else if (url.pathname === '/pages.xml')
+      response
+        .writeHead(200, xml)
+        .end(
+          `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${url.origin}/a</loc></url><url><loc>${url.origin}/b</loc></url><url><loc>${url.origin}/c</loc></url></urlset>`,
+        );
+    else if (url.pathname === '/a')
+      response.writeHead(200, { 'content-type': 'text/html' }).end('a');
+    else if (url.pathname === '/b')
+      response.writeHead(status, { 'content-type': 'text/html' }).end('b');
+    else if (url.pathname === '/c')
+      response.writeHead(200, { 'content-type': 'text/html' }).end(body);
+    else if (url.pathname === '/broken.xml') response.writeHead(403).end();
+    else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const input = `${upstream.origin}/sitemap.xml`;
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [
+        {
+          stream: new WebStream({
+            name: 'pages',
+            primaryKey: ['id'],
+            readers: [new ListingReader()],
+            // Every page, and every failed one, is due in the next run.
+            revisit: new FailedWait({ every: 0, retryAfter: 0 }),
+            extractor: new BodyExtractor(),
+          }),
+          inputs: [input],
+        },
+      ],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+  const failures = () =>
+    database.connection
+      .prepare('SELECT inputUrl, url FROM pages_failures ORDER BY url')
+      .all()
+      .map((row) => ({ ...row }));
+
+  await assert.rejects(ingestion.run(), PipelineError);
+  const failed = failures();
+  // A record that the schema rejects ends the next read while /b still fails.
+  body = 'broken';
+  await assert.rejects(ingestion.run(), PipelineError);
+  const ended = failures();
+  status = 200;
+  body = 'c';
+  await assert.rejects(ingestion.run(), PipelineError);
+
+  const b = { inputUrl: input, url: `${upstream.origin}/b` };
+  assert.deepEqual(failed, [b]);
+  assert.deepEqual(ended, [b]);
+  assert.deepEqual(failures(), []);
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT id, heading FROM pages ORDER BY id')
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      { id: '/a', heading: 'a' },
+      { id: '/b', heading: 'b' },
+      { id: '/c', heading: 'c' },
+    ],
+  );
+});
+
 test('explicit URL patterns restrict article downloads and preserve matching query variants', async () => {
   await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: string[] = [];
@@ -2369,9 +2454,17 @@ test("the sync history names each web stream's own inputs as its coverage", asyn
     [
       { stream: 'blog', inputs: [`${upstream.origin}/blog/feed.xml`] },
       { stream: 'blog_crawls', inputs: [`${upstream.origin}/blog/feed.xml`] },
+      {
+        stream: 'blog_failures',
+        inputs: [`${upstream.origin}/blog/feed.xml`],
+      },
       { stream: 'blog_routes', inputs: [`${upstream.origin}/blog/feed.xml`] },
       { stream: 'news', inputs: [`${upstream.origin}/news/feed.xml`] },
       { stream: 'news_crawls', inputs: [`${upstream.origin}/news/feed.xml`] },
+      {
+        stream: 'news_failures',
+        inputs: [`${upstream.origin}/news/feed.xml`],
+      },
       { stream: 'news_routes', inputs: [`${upstream.origin}/news/feed.xml`] },
     ],
   );

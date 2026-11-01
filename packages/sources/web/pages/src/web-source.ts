@@ -18,10 +18,11 @@ import {
 import { AlwaysRevisit } from '@workspace/sdk-web-crawler';
 
 import { crawlRecords, crawlsStream } from './crawls-stream.ts';
+import { failureRecords, failuresStream } from './failures-stream.ts';
 import { WebClient } from './http/web-http.ts';
 import { routeRecords, routesState, routesStream } from './routes-stream.ts';
 import { WebRead } from './web-read.ts';
-import { type Outbox, WebScan, outbox } from './web-scan.ts';
+import { type CrawlEnd, type Outbox, WebScan, outbox } from './web-scan.ts';
 import { WebStream } from './web-stream.ts';
 
 const provenance = {
@@ -95,6 +96,11 @@ function crawlsName(stream: WebStream) {
   return `${stream.name}_crawls`;
 }
 
+// A web stream's failures stream, its dead-letter output, named as its routes stream is.
+function failuresName(stream: WebStream) {
+  return `${stream.name}_failures`;
+}
+
 const inputUrls = z.array(z.url({ protocol: /^https?$/ })).min(1);
 
 /** A web stream without a usable input: none, or a URL that is not http or https. The user chooses the inputs, so only the user can fix it. */
@@ -115,6 +121,11 @@ export class WebSource extends Source<WebRead> {
   >;
   // Each crawls stream's web stream and its inputs, by the crawls stream's name.
   readonly #crawls: ReadonlyMap<
+    string,
+    { readonly stream: WebStream; readonly inputs: readonly string[] }
+  >;
+  // Each failures stream's web stream and its inputs, by the failures stream's name.
+  readonly #failures: ReadonlyMap<
     string,
     { readonly stream: WebStream; readonly inputs: readonly string[] }
   >;
@@ -181,6 +192,7 @@ export class WebSource extends Source<WebRead> {
       }),
       ...streams.map(({ stream }) => routesStream(routesName(stream))),
       ...streams.map(({ stream }) => crawlsStream(crawlsName(stream))),
+      ...streams.map(({ stream }) => failuresStream(failuresName(stream))),
     ]);
     this.#streams = new Map(streams.map((entry) => [entry.stream.name, entry]));
     this.#routes = new Map(
@@ -189,12 +201,16 @@ export class WebSource extends Source<WebRead> {
     this.#crawls = new Map(
       streams.map((entry) => [crawlsName(entry.stream), entry]),
     );
+    this.#failures = new Map(
+      streams.map((entry) => [failuresName(entry.stream), entry]),
+    );
   }
   #entry({ name }: Stream) {
     const entry =
       this.#streams.get(name) ??
       this.#routes.get(name) ??
-      this.#crawls.get(name);
+      this.#crawls.get(name) ??
+      this.#failures.get(name);
     if (entry === undefined)
       throw new TypeError(`Stream ${name} is not a stream of this source`);
     return entry;
@@ -209,7 +225,9 @@ export class WebSource extends Source<WebRead> {
         ? 'Each URL in the scope of the crawls of chosen websites and feeds that a listing named, as the listings read; a listing that is read again completely replaces its rows.'
         : this.#crawls.has(stream.name)
           ? 'Whether the last crawl of each chosen website or feed is complete, and when its last complete crawl ended.'
-          : 'Records extracted from the pages crawled from chosen websites and feeds that match the configured URL patterns; listing disappearance does not imply deletion.',
+          : this.#failures.has(stream.name)
+            ? 'The pages of the crawls of chosen websites and feeds whose last visit failed, as the last crawl of each left them.'
+            : 'Records extracted from the pages crawled from chosen websites and feeds that match the configured URL patterns; listing disappearance does not imply deletion.',
       selection: {
         inputs,
         ...(include === undefined
@@ -268,10 +286,11 @@ export class WebSource extends Source<WebRead> {
     );
   }
   // A routes stream takes what the crawls of its web stream find in the same
-  // read, and a crawls stream how each crawl ended, and a read reads two
-  // streams at a time in the order given, so each web stream reads beside its
-  // routes stream, and its crawls stream follows. A routes or crawls stream
-  // whose web stream the read does not select reads last, and gives nothing.
+  // read, and a crawls or failures stream how each crawl ended, and a read
+  // reads two streams at a time in the order given, so each web stream reads
+  // beside its routes stream, and its crawls and failures streams follow. A
+  // routes, crawls or failures stream whose web stream the read does not
+  // select reads last, and gives nothing.
   override read(
     catalog: readonly CopyConfiguration[],
     states: { get(stream: string): unknown },
@@ -288,6 +307,10 @@ export class WebSource extends Source<WebRead> {
         ...catalog.filter(
           ({ stream }) =>
             stream.name === crawlsName(this.#entry(web.stream).stream),
+        ),
+        ...catalog.filter(
+          ({ stream }) =>
+            stream.name === failuresName(this.#entry(web.stream).stream),
         ),
       ]);
     return super.read(
@@ -377,9 +400,22 @@ export class WebSource extends Source<WebRead> {
         yield* crawlRecords(configuration, state, inputUrl, crawl);
       return;
     }
+    if (this.#failures.has(configuration.stream.name)) {
+      // A crawl that did not run in this read keeps its rows as they are.
+      const crawl = await scan.ended(stream.name, inputUrl, signal);
+      if (crawl !== undefined && crawl !== null)
+        yield* failureRecords(
+          configuration,
+          state,
+          inputUrl,
+          crawl.failures,
+          signal,
+        );
+      return;
+    }
     let due: number | null = null;
-    // Whether the crawl reached its end with every page read.
-    let complete = false;
+    // How the crawl ended; null until it begins.
+    let ended: CrawlEnd | null = null;
     // A full refresh that failed reads no later input.
     let stopping = false;
     // The groups that the routes stream was given so far.
@@ -432,6 +468,12 @@ export class WebSource extends Source<WebRead> {
         signal: requestSignal,
         include: stream.include,
         expand: stream.expand,
+      });
+      // How the crawl ended, now.
+      const end = (complete: boolean): CrawlEnd => ({
+        complete,
+        at: new Date().toISOString(),
+        failures: crawl.failures(),
       });
       const errors: Error[] = [];
       // Pages that are not due: the scan keeps their records unread.
@@ -562,7 +604,7 @@ export class WebSource extends Source<WebRead> {
               };
               await committed();
             } else yield message;
-        complete = crawl.snapshot().crawl === null;
+        ended = end(crawl.snapshot().crawl === null);
         due = crawl.nextDue();
       } catch (error) {
         // A read that failed for a reason that is not a page's, such as a
@@ -572,6 +614,7 @@ export class WebSource extends Source<WebRead> {
         // sync.
         crawl.abandon();
         due = crawl.nextDue();
+        ended = end(false);
         throw error;
       }
       if (errors.length > 0)
@@ -586,10 +629,7 @@ export class WebSource extends Source<WebRead> {
       // As before a failure: the routes stream also gets the groups found
       // since the last checkpoint, and the crawl's next run finds them again.
       give();
-      scan.end(stream.name, inputUrl, {
-        complete,
-        at: new Date().toISOString(),
-      });
+      scan.end(stream.name, inputUrl, ended);
       if (stopping) scan.stop(stream.name);
       const { name } = configuration.stream;
       const streamDue = this.#due.get(name) ?? new Map<string, number | null>();

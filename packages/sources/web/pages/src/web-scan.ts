@@ -40,8 +40,12 @@ class Crawling {
   }
 }
 
-/** How the crawl of one input in a read ended: whether it reached its end, and when it ended. */
-export type CrawlEnd = { readonly complete: boolean; readonly at: string };
+/** How the crawl of one input in a read ended: whether it reached its end, when it ended, and the pages whose last visit failed. */
+export type CrawlEnd = {
+  readonly complete: boolean;
+  readonly at: string;
+  readonly failures: readonly string[];
+};
 
 // The crawl of the input ended; null when it never starts in this read.
 class Ended {
@@ -136,8 +140,8 @@ export class WebScan {
       this.#deliveries.get(`${stream}\0${inputUrl}`)?.give(groups);
   }
 
-  /** The crawl of the input ended, as crawl says, and gives no more groups. */
-  end(stream: string, inputUrl: string, crawl: CrawlEnd) {
+  /** The crawl of the input ended, as crawl says, and gives no more groups; null when it did not begin. */
+  end(stream: string, inputUrl: string, crawl: CrawlEnd | null) {
     this.#deliveries.get(`${stream}\0${inputUrl}`)?.end(crawl);
   }
 

@@ -48,6 +48,10 @@ _Avoid_: Links table, graph, inlinks
 The third stream of a web stream, named `<name>_crawls`. It has one row for each input: `complete`, whether the last crawl of the input reached its end with every page read, and `since`, when the crawl that first gave that value ended ([ADR 0013](./docs/adr/0013-a-crawls-stream-tells-when-the-crawl-of-an-input-is-complete.md)).
 _Avoid_: Watermark (a watermark orders events by time), status, progress
 
+**Failures stream**:
+The fourth stream of a web stream, named `<name>_failures`: its dead-letter output. It has one row for each input and page whose last visit failed, keyed by `inputUrl` and `url`. A page leaves once a visit of it succeeds; a document that failed is no row ([ADR 0015](./docs/adr/0015-a-failures-stream-is-the-dead-letter-output-of-a-web-stream.md)).
+_Avoid_: Errors table, error log (the row keeps no reason), retry queue (the revisit policy schedules a failed page)
+
 **Web stream**:
 The configuration of one stream of the source: its name, its primary key, the readers of the crawler, the `include` patterns, the `expand` patterns and the extractor. The host gives each web stream its own inputs.
 _Avoid_: Wrapper, site adapter, scraper
