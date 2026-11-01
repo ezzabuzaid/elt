@@ -175,6 +175,12 @@ export interface Crawl extends AsyncIterable<
   snapshot(): CrawlMemento;
   /** The caller could not use a page it was handed back, so the page is due again as a failed one. */
   fail(url: string): void;
+  /**
+   * The caller could not finish the run for a reason that is not one page's,
+   * such as a full disk, so the next crawl is due when its starting URLs are
+   * due again as failed ones: a host's schedule outlives a failed run.
+   */
+  abandon(): void;
   /** When the next crawl has a known URL due, starting URLs included; null when none ever is. */
   nextDue(): number | null;
 }
@@ -245,6 +251,7 @@ export class WebCrawler {
           states,
           entries,
           starting,
+          starts: startUrls.map(start),
           known,
           // Only the current starting URLs' pages count.
           pages: new Map(
@@ -332,6 +339,15 @@ class Crawling {}
 // A run that requested every entry it had: its memento has no crawl to resume.
 class Finished {}
 
+// A run that its caller could not finish: the next crawl continues it when
+// the starting URLs are due again as failed ones, or never when null.
+class Abandoned {
+  readonly due: number | null;
+  constructor(due: number | null) {
+    this.due = due;
+  }
+}
+
 class CrawlRun implements Crawl {
   readonly #http: Got;
   readonly #origins: Origins;
@@ -363,6 +379,8 @@ class CrawlRun implements Crawl {
   readonly #again = new Set<string>();
   // Origins of the starting URLs.
   readonly #starting: readonly string[];
+  // The starting URLs' entries, which an abandoned run schedules as failed.
+  readonly #starts: readonly Entry[];
   // Pending entries of a blocked origin, or of an origin that spent its
   // expansion budget, out of the lanes until a later crawl resumes them.
   readonly #held = new Map<string, Entry>();
@@ -376,7 +394,7 @@ class CrawlRun implements Crawl {
     readonly before: KnownUrl | undefined;
     readonly after: KnownUrl;
   } | null = null;
-  #phase: Crawling | Finished = new Crawling();
+  #phase: Crawling | Finished | Abandoned = new Crawling();
   // Known URLs, offered once this crawl's findings run out, so a finding's fresh provenance comes first.
   readonly #revisits: Entry[];
 
@@ -391,6 +409,7 @@ class CrawlRun implements Crawl {
       states,
       entries,
       starting,
+      starts,
       known,
       pages,
       revisits,
@@ -399,6 +418,7 @@ class CrawlRun implements Crawl {
       readonly states: unknown[];
       readonly entries: readonly Entry[];
       readonly starting: readonly string[];
+      readonly starts: readonly Entry[];
       readonly known: Map<string, KnownUrl>;
       readonly pages: Map<string, string>;
       readonly revisits: Entry[];
@@ -414,6 +434,7 @@ class CrawlRun implements Crawl {
     this.#urls = known;
     this.#revisits = revisits;
     this.#starting = starting;
+    this.#starts = starts;
     this.#pages = pages;
     // Pending entries were admitted when found, in this run or the last.
     for (const entry of entries) this.#add(entry);
@@ -458,7 +479,24 @@ class CrawlRun implements Crawl {
     else this.#urls.set(url, after);
   }
 
+  abandon(): void {
+    let due: number | null = null;
+    for (const entry of this.#starts) {
+      const schedule = this.#schedule(
+        entry,
+        'failed',
+        null,
+        { kind: 'failed' },
+        this.#urls.get(entry.url),
+      );
+      if (schedule.due !== null && (due === null || schedule.due < due))
+        due = schedule.due;
+    }
+    this.#phase = new Abandoned(due);
+  }
+
   nextDue(): number | null {
+    if (this.#phase instanceof Abandoned) return this.#phase.due;
     // A crawl held back by blocks continues when the first one closes; one
     // held back by a spent expansion budget, or by a block that closed, is
     // due again at once.

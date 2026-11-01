@@ -128,7 +128,9 @@ export class WebSource extends Source<WebRead> {
   // each checkpoint while the crawl goes on. Two web streams can crawl at
   // once: the origins' records space the requests to each origin.
   protected override readonly concurrency = 2;
-  // Each input's earliest due URL by stream, as its last crawl left it; null when its crawl failed or nothing is ever due.
+  // Each input's earliest due URL by stream, as its last crawl left it, or
+  // its starting URL's as a failed one after a read that failed; null when
+  // nothing is ever due, or when the read stopped or failed before its crawl.
   readonly #due = new Map<string, Map<string, number | null>>();
   // Wakes a waiting observe() whenever an extraction ends, which can make a
   // stream due sooner than the time it waits for.
@@ -439,17 +441,89 @@ export class WebSource extends Source<WebRead> {
         savedAt = performance.now();
         return { diff, crawl: crawl.snapshot(), outbox: routes };
       };
-      for await (const entry of crawl) {
-        if ('deferred' in entry) {
-          kept.push({ key: entry.deferred.url, kept: true });
-          continue;
-        }
-        if ('routes' in entry && routed)
-          for (const group of entry.routes)
-            routes.push({ seq: next++, ...group });
-        if ('progress' in entry) {
-          // Listings and archives hand out no pages, so their progress is saved on an interval.
-          if (performance.now() - savedAt >= 1_000) {
+      try {
+        for await (const entry of crawl) {
+          if ('deferred' in entry) {
+            kept.push({ key: entry.deferred.url, kept: true });
+            continue;
+          }
+          if ('routes' in entry && routed)
+            for (const group of entry.routes)
+              routes.push({ seq: next++, ...group });
+          if ('progress' in entry) {
+            // Listings and archives hand out no pages, so their progress is saved on an interval.
+            if (performance.now() - savedAt >= 1_000) {
+              yield {
+                type: 'STATE',
+                stream: configuration.stream.name,
+                state: checkpoint(),
+              };
+              await committed();
+            }
+            continue;
+          }
+          if ('error' in entry) {
+            errors.push(entry.error);
+            yield {
+              type: 'STATE',
+              stream: configuration.stream.name,
+              state: checkpoint(),
+            };
+            await committed();
+            continue;
+          }
+          try {
+            const output = await run
+              .read(entry.response, requestSignal)
+              .catch(pageFailure);
+            for await (const message of diffGroupedSnapshot(
+              configuration,
+              [
+                {
+                  key: entry.url,
+                  fingerprint:
+                    output.fingerprint === null
+                      ? null
+                      : hash(
+                          'sha256',
+                          JSON.stringify([
+                            output.fingerprint,
+                            entry.listingUrl,
+                            entry.lastModified,
+                            entry.published,
+                          ]),
+                        ),
+                  async *records() {
+                    const records = await output.records().catch(pageFailure);
+                    yield* validateRecords(
+                      configuration.stream,
+                      records.map((record) => ({
+                        ...record,
+                        inputUrl,
+                        pageUrl: entry.url,
+                        listingUrl: entry.listingUrl,
+                        lastModified: entry.lastModified,
+                        published: entry.published,
+                      })),
+                      'Web',
+                    );
+                  },
+                },
+              ],
+              diff,
+              { continues: true, signal },
+            )) {
+              if ('type' in message && message.type === 'STATE') {
+                diff = message.state;
+                yield { ...message, state: checkpoint() };
+                await committed();
+              } else yield message;
+            }
+          } catch (error) {
+            requestSignal.throwIfAborted();
+            if (!(error instanceof PageFailure)) throw error;
+            errors.push(error.failure);
+            crawl.fail(entry.url);
             yield {
               type: 'STATE',
               stream: configuration.stream.name,
@@ -457,110 +531,49 @@ export class WebSource extends Source<WebRead> {
             };
             await committed();
           }
-          continue;
         }
-        if ('error' in entry) {
-          errors.push(entry.error);
+        requestSignal.throwIfAborted();
+        // A crawl that a blocked host left unfinished has not reached every
+        // group, so the scan goes on in the next run rather than ending here.
+        if (crawl.snapshot().crawl !== null) {
           yield {
             type: 'STATE',
             stream: configuration.stream.name,
             state: checkpoint(),
           };
           await committed();
-          continue;
-        }
-        try {
-          const output = await run
-            .read(entry.response, requestSignal)
-            .catch(pageFailure);
+        } else
           for await (const message of diffGroupedSnapshot(
             configuration,
-            [
-              {
-                key: entry.url,
-                fingerprint:
-                  output.fingerprint === null
-                    ? null
-                    : hash(
-                        'sha256',
-                        JSON.stringify([
-                          output.fingerprint,
-                          entry.listingUrl,
-                          entry.lastModified,
-                          entry.published,
-                        ]),
-                      ),
-                async *records() {
-                  const records = await output.records().catch(pageFailure);
-                  yield* validateRecords(
-                    configuration.stream,
-                    records.map((record) => ({
-                      ...record,
-                      inputUrl,
-                      pageUrl: entry.url,
-                      listingUrl: entry.listingUrl,
-                      lastModified: entry.lastModified,
-                      published: entry.published,
-                    })),
-                    'Web',
-                  );
-                },
-              },
-            ],
+            kept,
             diff,
-            { continues: true, signal },
-          )) {
+            {
+              signal,
+            },
+          ))
             if ('type' in message && message.type === 'STATE') {
-              diff = message.state;
-              yield { ...message, state: checkpoint() };
+              yield {
+                ...message,
+                state: {
+                  diff: message.state,
+                  crawl: crawl.snapshot(),
+                  outbox: routes,
+                },
+              };
               await committed();
             } else yield message;
-          }
-        } catch (error) {
-          requestSignal.throwIfAborted();
-          if (!(error instanceof PageFailure)) throw error;
-          errors.push(error.failure);
-          crawl.fail(entry.url);
-          yield {
-            type: 'STATE',
-            stream: configuration.stream.name,
-            state: checkpoint(),
-          };
-          await committed();
-        }
+        complete = crawl.snapshot().crawl === null;
+        due = crawl.nextDue();
+      } catch (error) {
+        // A read that failed for a reason that is not a page's, such as a
+        // record that the schema rejects or a full disk, is due again when
+        // its starting URL is as a failed one, so the watch reads it again
+        // once the pipeline's retries end, as a schedule outlives a failed
+        // sync.
+        crawl.abandon();
+        due = crawl.nextDue();
+        throw error;
       }
-      requestSignal.throwIfAborted();
-      // A crawl that a blocked host left unfinished has not reached every
-      // group, so the scan goes on in the next run rather than ending here.
-      if (crawl.snapshot().crawl !== null) {
-        yield {
-          type: 'STATE',
-          stream: configuration.stream.name,
-          state: checkpoint(),
-        };
-        await committed();
-      } else
-        for await (const message of diffGroupedSnapshot(
-          configuration,
-          kept,
-          diff,
-          {
-            signal,
-          },
-        ))
-          if ('type' in message && message.type === 'STATE') {
-            yield {
-              ...message,
-              state: {
-                diff: message.state,
-                crawl: crawl.snapshot(),
-                outbox: routes,
-              },
-            };
-            await committed();
-          } else yield message;
-      complete = crawl.snapshot().crawl === null;
-      due = crawl.nextDue();
       if (errors.length > 0)
         throw new AggregateError(
           errors,

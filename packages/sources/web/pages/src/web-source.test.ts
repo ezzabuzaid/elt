@@ -9,6 +9,7 @@ import { ClientRequestInterceptor } from '@mswjs/interceptors/ClientRequest';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
+import type { Response } from 'got';
 
 import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
 import {
@@ -30,6 +31,7 @@ import {
 } from '@workspace/sdk-web-crawler';
 
 import { ArticleExtractor } from './article-extractor.ts';
+import { RecordExtractor } from './record-extractor.ts';
 import { WebSource } from './web-source.ts';
 import { WebStream } from './web-stream.ts';
 
@@ -1585,6 +1587,187 @@ test(
       );
       controller.abort();
       assert.equal((await watch.next()).done, true);
+    } finally {
+      controller.abort();
+      await watch.return(undefined);
+    }
+  },
+);
+
+// A host's policy whose failed URLs wait the given time, where the crawler's
+// default waits two hours.
+class FailedWait extends FixedRevisit {
+  protected override readonly retryAfter: number;
+  constructor({
+    every,
+    retryAfter,
+  }: {
+    readonly every: number;
+    readonly retryAfter: number;
+  }) {
+    super({ every });
+    this.retryAfter = retryAfter;
+  }
+}
+
+// One record for each page, its body as the heading; while the page says
+// "broken", a number in place of the heading, which the schema rejects.
+class BodyExtractor extends RecordExtractor {
+  readonly properties = {
+    id: { type: 'string', description: 'The path of the page.' },
+    heading: { type: 'string', description: 'The body of the page.' },
+  } as const;
+  open() {
+    return {
+      negotiation: null,
+      async read(response: Response) {
+        const body = new TextDecoder().decode(response.rawBody);
+        return {
+          fingerprint: null,
+          async records() {
+            return [
+              {
+                id: new URL(response.url).pathname,
+                heading: body === 'broken' ? 42 : body,
+              },
+            ];
+          },
+        };
+      },
+    };
+  }
+}
+
+test(
+  'a watched input whose read failed for a reason that is not a page, such as a record that the schema rejects, is read again when its starting URL is due as a failed one',
+  { timeout: 20_000 },
+  async () => {
+    await using cache = await new TemporaryFiles().directory('web-cache-');
+    let body = 'broken';
+    await using upstream = await new HttpServer().start((request, response) => {
+      const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+      if (url.pathname === '/feed.xml')
+        response
+          .writeHead(200, { 'content-type': 'application/rss+xml' })
+          .end(
+            `<rss><channel><item><link>${url.origin}/page</link></item></channel></rss>`,
+          );
+      else if (url.pathname === '/page')
+        response.writeHead(200, { 'content-type': 'text/html' }).end(body);
+      else response.writeHead(404).end();
+    });
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const ingestion = await pipeline(
+      new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
+        streams: [
+          {
+            stream: new WebStream({
+              name: 'pages',
+              primaryKey: ['id'],
+              readers: [new ListingReader()],
+              revisit: new FailedWait({ every: day, retryAfter: 100 }),
+              extractor: new BodyExtractor(),
+            }),
+            inputs: [`${upstream.origin}/feed.xml`],
+          },
+        ],
+      }),
+      database.path,
+      checkpoints.path,
+    );
+    const controller = new AbortController();
+    const watch = ingestion.watch({ signal: controller.signal });
+    try {
+      const failed = await watch.next();
+      assert.ok(
+        !failed.done &&
+          failed.value.outcomes.some(({ failures }) => failures.length > 0),
+      );
+      body = 'fixed';
+      // The watch tries a failed copy again 10 s later on its own, so a pass
+      // before then comes from the source.
+      const next = await Promise.race([
+        watch.next(),
+        setTimeout(5_000, 'not read again'),
+      ]);
+
+      assert.notEqual(next, 'not read again');
+      assert.deepEqual(
+        database.connection
+          .prepare('SELECT id, heading FROM pages')
+          .all()
+          .map((row) => ({ ...row })),
+        [{ id: '/page', heading: 'fixed' }],
+      );
+    } finally {
+      controller.abort();
+      await watch.return(undefined);
+    }
+  },
+);
+
+test(
+  'a watched input whose read keeps failing is not read again before its starting URL is due as a failed one, so the watch does not retry it at once',
+  { timeout: 20_000 },
+  async () => {
+    await using cache = await new TemporaryFiles().directory('web-cache-');
+    const requests: string[] = [];
+    await using upstream = await new HttpServer().start((request, response) => {
+      const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+      requests.push(url.pathname);
+      if (url.pathname === '/feed.xml')
+        response
+          .writeHead(200, { 'content-type': 'application/rss+xml' })
+          .end(
+            `<rss><channel><item><link>${url.origin}/page</link></item></channel></rss>`,
+          );
+      else if (url.pathname === '/page')
+        response.writeHead(200, { 'content-type': 'text/html' }).end('broken');
+      else response.writeHead(404).end();
+    });
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const ingestion = await pipeline(
+      new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
+        streams: [
+          {
+            stream: new WebStream({
+              name: 'pages',
+              primaryKey: ['id'],
+              readers: [new ListingReader()],
+              revisit: new FailedWait({ every: day, retryAfter: 8_000 }),
+              extractor: new BodyExtractor(),
+            }),
+            inputs: [`${upstream.origin}/feed.xml`],
+          },
+        ],
+      }),
+      database.path,
+      checkpoints.path,
+    );
+    const controller = new AbortController();
+    const watch = ingestion.watch({ signal: controller.signal });
+    try {
+      const failed = await watch.next();
+      assert.ok(
+        !failed.done &&
+          failed.value.outcomes.some(({ failures }) => failures.length > 0),
+      );
+      requests.splice(0);
+      // A read again at once would request the feed within the origin's
+      // one-second delay; the starting URL is due 8 s after the read began,
+      // and the watch's own retry comes 10 s after the failure.
+      const next = watch.next();
+      await setTimeout(4_000);
+
+      assert.deepEqual(requests, []);
+      controller.abort();
+      await next;
     } finally {
       controller.abort();
       await watch.return(undefined);
