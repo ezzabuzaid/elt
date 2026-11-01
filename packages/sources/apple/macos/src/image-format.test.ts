@@ -7,7 +7,7 @@ import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { Fixed, LeaderFirst, Pool } from '@zukhruf/pool';
+import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { ImageFormat } from './document-formats/image-format.ts';
@@ -29,6 +29,7 @@ function ocr() {
   return new Pool({
     size: new Fixed(workers),
     startup: new LeaderFirst(),
+    eviction: new NoEviction(),
     create: () =>
       new VisionWorker(
         fileURLToPath(
@@ -75,7 +76,7 @@ async function image(path: string, text: string) {
   ]);
 }
 
-test('the warmed parser preserves OCR, concurrent responses and image errors, and recovers after its worker exits', async () => {
+test('the warmed parser preserves OCR, concurrent responses and image errors, and recovers after its worker exits', async (t) => {
   await using directory = await new TemporaryFiles().directory(
     'vision-parser-',
   );
@@ -132,6 +133,12 @@ test('the warmed parser preserves OCR, concurrent responses and image errors, an
   assert.deepEqual(
     await Promise.all([parser.parse(receipt), parser.parse(note)]),
     ['Invoice 4821 due Friday', 'Meet tomorrow'],
+  );
+  // The reads take idle workers; the eager pool replaces the killed one after
+  // its back-off (1 s after an early exit).
+  await t.waitFor(
+    async () => assert.equal((await workerPids()).length, workers),
+    { interval: 100, timeout: 30_000 },
   );
   const recovered = await workerPids();
   assert.equal(recovered.length, workers);
@@ -246,7 +253,7 @@ test('the parser waits for slow OCR warm-up beyond the image deadline and reuses
   }
 });
 
-test('a warm-up that does not finish in ten minutes fails the read waiting for it, and the next read starts a new worker', async (t) => {
+test('a warm-up that does not finish in ten minutes fails the read waiting for it, and later reads start a new worker in its slot', async (t) => {
   await using directory = await new TemporaryFiles().directory(
     'vision-warm-up-deadline-',
   );
@@ -271,7 +278,14 @@ test('a warm-up that does not finish in ten minutes fails the read waiting for i
       process.kill(leader!, 'SIGCONT');
     }
     await failed;
-    assert.equal(await format.text(path), 'Meet tomorrow');
+    // A job takes a ready worker before it starts one in an empty slot, so
+    // as many reads as workers at once make the pool start one there.
+    assert.deepEqual(
+      await Promise.all(
+        Array.from({ length: workers }, () => format.text(path)),
+      ),
+      Array.from({ length: workers }, () => 'Meet tomorrow'),
+    );
     const pids = await workerPids();
     assert.equal(pids.length, workers);
     assert.ok(!pids.includes(leader!));
@@ -280,7 +294,7 @@ test('a warm-up that does not finish in ten minutes fails the read waiting for i
   }
 });
 
-test('an image still times out after warm-up and the next read replaces its worker', async (t) => {
+test('an image still times out after warm-up, and the pool replaces its worker', async (t) => {
   await using directory = await new TemporaryFiles().directory(
     'vision-timeout-',
   );
@@ -306,6 +320,12 @@ test('an image still times out after warm-up and the next read replaces its work
   }
   await failed;
   assert.equal(await format.text(path), 'Meet tomorrow');
+  // The read takes an idle worker; the eager pool replaces the killed one
+  // after its back-off (1 s after an early exit).
+  await t.waitFor(
+    async () => assert.equal((await workerPids()).length, pids.length),
+    { interval: 100, timeout: 30_000 },
+  );
   const recovered = await workerPids();
   assert.equal(recovered.length, pids.length);
   assert.equal(

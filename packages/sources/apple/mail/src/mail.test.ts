@@ -19,7 +19,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 
-import { Fixed, LeaderFirst, Pool } from '@zukhruf/pool';
+import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -2346,6 +2346,7 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
   await using ocr = new Pool({
     size: new Fixed(2),
     startup: new LeaderFirst(),
+    eviction: new NoEviction(),
     create: () =>
       new VisionWorker(
         fileURLToPath(

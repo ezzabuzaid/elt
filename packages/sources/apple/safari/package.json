@@ -13,8 +13,8 @@
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-apple-safari": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
-    "@zukhruf/async": "^0.3.53",
-    "@zukhruf/snapshot-differential": "^0.3.53"
+    "@zukhruf/async": "^0.6.7",
+    "@zukhruf/snapshot-differential": "^0.6.7"
   },
   "devDependencies": {
     "@workspace/elt-sqlite": "0.0.1",

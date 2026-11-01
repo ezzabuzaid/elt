@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { Fixed, OnDemand, Parallel, Pool } from '@zukhruf/pool';
+import { Fixed, NoEviction, OnDemand, Parallel, Pool } from '@zukhruf/pool';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { LocalTranscriptionModel } from './local-transcription-model.ts';
@@ -28,6 +28,7 @@ test('real decoding and native model failures reject, and disposing the engines 
   await using engines = new Pool({
     size: new Fixed(1),
     startup: new Parallel(),
+    eviction: new NoEviction(),
     create: () => new TranscriptionWorker(helper, configuration),
   });
   const model = new LocalTranscriptionModel(configuration, engines);
@@ -67,6 +68,7 @@ test('a cancelled call never borrows an engine and invalid configuration is refu
   await using pool = new Pool({
     size: new Fixed(1),
     startup: new OnDemand(),
+    eviction: new NoEviction(),
     create: () => {
       engines++;
       return new TranscriptionWorker(helper, configuration);
@@ -102,6 +104,7 @@ test('a model is named by its name and language, not by where its file is, so a 
   await using engines = new Pool({
     size: new Fixed(1),
     startup: new OnDemand(),
+    eviction: new NoEviction(),
     create: (): TranscriptionWorker => {
       throw new Error('Naming a model starts no engine');
     },

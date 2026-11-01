@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@zukhruf/async": "^0.3.53",
-    "@zukhruf/snapshot-differential": "^0.3.53"
+    "@zukhruf/async": "^0.6.7",
+    "@zukhruf/snapshot-differential": "^0.6.7"
   },
   "exports": {
     ".": {

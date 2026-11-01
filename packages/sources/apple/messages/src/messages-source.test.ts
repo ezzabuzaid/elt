@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { Fixed, LeaderFirst, Pool } from '@zukhruf/pool';
+import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -408,6 +408,7 @@ test('the document parser reads every attachment kind and throws only on unreada
   await using ocr = new Pool({
     size: new Fixed(2),
     startup: new LeaderFirst(),
+    eviction: new NoEviction(),
     create: () =>
       new VisionWorker(
         fileURLToPath(
@@ -618,6 +619,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
   await using ocr = new Pool({
     size: new Fixed(2),
     startup: new LeaderFirst(),
+    eviction: new NoEviction(),
     create: () =>
       new VisionWorker(
         fileURLToPath(

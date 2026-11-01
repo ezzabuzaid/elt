@@ -13,7 +13,7 @@
     "@workspace/codec-plist": "0.0.1",
     "@workspace/sdk-macos-app-database": "0.0.1",
     "@zone-eu/mailsplit": "5.4.19",
-    "@zukhruf/sqlite-snapshot": "^0.3.52",
+    "@zukhruf/sqlite-snapshot": "^0.6.7",
     "libmime": "5.4.6"
   },
   "devDependencies": {

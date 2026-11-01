@@ -7,7 +7,7 @@ import { type TestContext, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { Fixed, Parallel, Pool } from '@zukhruf/pool';
+import { Fixed, NoEviction, Parallel, Pool } from '@zukhruf/pool';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { LocalTranscriptionModel } from '@workspace/transcription-local';
@@ -204,6 +204,7 @@ async function transcribe(
   await using engines = new Pool({
     size: new Fixed(1),
     startup: new Parallel(),
+    eviction: new NoEviction(),
     create: () =>
       new TranscriptionWorker(
         fileURLToPath(
