@@ -515,8 +515,6 @@ export abstract class SQLiteWriter extends Writer {
       { mode: 'immediate' },
     );
     const fresh = mode === 'create' || mode === 'reload';
-    // The hidden target of a reload exists once its first commit made it.
-    let opened = mode === 'continue';
     const columns = this.table.columns.map((column) => column.quotedName);
     const record = database.prepare(
       `INSERT INTO ${stage} (${op}, ${columns.join(', ')}) VALUES ('R', ${columns.map(() => '?').join(', ')})`,
@@ -538,7 +536,18 @@ export abstract class SQLiteWriter extends Writer {
       database.exec(`DELETE FROM ${stage}`);
       resets = [];
     };
-    let committed = false;
+    // The first commit claims the target: it owns the hidden target of a
+    // reload, or creates or adopts the table. Later commits find it claimed.
+    const claimTarget = () => {
+      if (open(mode)) {
+        this.own(database, writer);
+        return;
+      }
+      this.#create(database, writer, this.replaces);
+      if (this.replaces) this.replace(database);
+    };
+    const claimed = () => {};
+    let claim = claimTarget;
     return {
       fresh,
       get reloading() {
@@ -552,7 +561,6 @@ export abstract class SQLiteWriter extends Writer {
             // The whole stream starts over in a new hidden target.
             drop();
             mode = 'reload';
-            opened = false;
             return;
           }
           const [rows, values] = this.#scope(partition);
@@ -587,17 +595,12 @@ export abstract class SQLiteWriter extends Writer {
         transaction(
           database,
           () => {
-            if (open(mode)) {
-              if (!opened) {
-                database.exec(`DROP TABLE IF EXISTS ${hidden}`);
-                database.exec(`CREATE TABLE ${this.table.definition(hidden)}`);
-                this.build(database, hidden);
-              }
-              if (!committed) this.own(database, writer);
-            } else if (!committed) {
-              this.#create(database, writer, this.replaces);
-              if (this.replaces) this.replace(database);
+            if (mode === 'reload') {
+              database.exec(`DROP TABLE IF EXISTS ${hidden}`);
+              database.exec(`CREATE TABLE ${this.table.definition(hidden)}`);
+              this.build(database, hidden);
             }
+            claim();
             for (const partition of resets) {
               const [rows, values] = this.#scope(partition);
               database.prepare(`DELETE FROM ${into()}${rows}`).run(...values);
@@ -610,8 +613,9 @@ export abstract class SQLiteWriter extends Writer {
           },
           { mode: 'immediate' },
         );
-        opened = open(mode);
-        committed = true;
+        claim = claimed;
+        // Its first commit made the hidden target, so the reload continues.
+        if (mode === 'reload') mode = 'continue';
       },
       complete: async () => {
         if (!open(mode)) return;
@@ -636,7 +640,6 @@ export abstract class SQLiteWriter extends Writer {
           },
           { mode: 'immediate' },
         );
-        opened = false;
       },
       discard: async () => drop(),
       [Symbol.asyncDispose]: async () => {

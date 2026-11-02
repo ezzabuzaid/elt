@@ -516,8 +516,6 @@ export abstract class PostgresWriter extends Writer {
       return decided;
     });
     const fresh = mode === 'create' || mode === 'reload';
-    // The hidden target of a reload exists once its first commit made it.
-    let opened = mode === 'continue';
     const open = () => mode === 'reload' || mode === 'continue';
     const into = () => (open() ? this.#hidden : this.qualifiedName);
     const tables = () =>
@@ -547,7 +545,18 @@ export abstract class PostgresWriter extends Writer {
       await sql.unsafe(`TRUNCATE ${stage}`);
       for (const store of stores) await store.discard(sql);
     };
-    let committed = false;
+    // The first commit claims the target: it owns the hidden target of a
+    // reload, or creates or adopts the table. Later commits find it claimed.
+    const claimTarget = async (sql: Transaction) => {
+      if (open()) {
+        await this.#own(sql, writer);
+        return;
+      }
+      await this.#create(sql, writer, this.replaces);
+      if (this.replaces) await this.replace(sql);
+    };
+    const claimed = async () => {};
+    let claim: (sql: Transaction) => Promise<void> = claimTarget;
     return {
       fresh,
       get reloading() {
@@ -564,7 +573,6 @@ export abstract class PostgresWriter extends Writer {
             // The whole stream starts over in a new hidden target.
             await drop();
             mode = 'reload';
-            opened = false;
             return;
           }
           const [rows, values] = this.#scope(partition);
@@ -602,17 +610,12 @@ export abstract class PostgresWriter extends Writer {
       commit: async () => {
         await flush();
         await load.transaction(async (sql) => {
-          if (open()) {
-            if (!opened) {
-              await sql.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
-              await sql.unsafe(`CREATE TABLE ${this.#tableSQL(this.#hidden)}`);
-              await this.build(sql, this.#hidden);
-            }
-            if (!committed) await this.#own(sql, writer);
-          } else if (!committed) {
-            await this.#create(sql, writer, this.replaces);
-            if (this.replaces) await this.replace(sql);
+          if (mode === 'reload') {
+            await sql.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
+            await sql.unsafe(`CREATE TABLE ${this.#tableSQL(this.#hidden)}`);
+            await this.build(sql, this.#hidden);
           }
+          await claim(sql);
           for (const partition of resets) {
             const [rows, values] = this.#scope(partition);
             await sql.unsafe(`DELETE FROM ${into()}${rows}`, values);
@@ -622,8 +625,9 @@ export abstract class PostgresWriter extends Writer {
           await sql.unsafe(`TRUNCATE ${stage}`);
           for (const store of stores) await store.prune(sql, tables());
         });
-        opened = open();
-        committed = true;
+        claim = claimed;
+        // Its first commit made the hidden target, so the reload continues.
+        if (mode === 'reload') mode = 'continue';
         resets = [];
       },
       complete: async () => {
@@ -634,7 +638,6 @@ export abstract class PostgresWriter extends Writer {
             await store.prune(sql, [this.qualifiedName]);
         });
         mode = 'load';
-        opened = false;
       },
       discard: drop,
       [Symbol.asyncDispose]: async () => {
