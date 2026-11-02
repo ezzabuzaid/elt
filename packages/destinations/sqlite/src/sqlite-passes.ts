@@ -70,7 +70,8 @@ export type StreamPassStatus = {
 // The latest pass of a SQLite destination file and each stream's latest
 // outcome, as its sync history records them; null and empty until the history
 // recorded a pass, and while the history in the file is one another version
-// installed.
+// installed. A file that several connections load reads as one pass, made of
+// the latest pass of each connection.
 export function readPassStatus(path: string): {
   readonly pass: PassStatus | null;
   readonly streams: readonly StreamPassStatus[];
@@ -78,14 +79,14 @@ export function readPassStatus(path: string): {
   if (!existsSync(path)) return { pass: null, streams: [] };
   using data = readSQLite(path);
   if (syncHistory.drift(data) !== 'fits') return { pass: null, streams: [] };
-  const latest = data
+  const [first, ...others] = data
     .prepare(
       'SELECT status, started_at, completed_at, error, failure_type, last_successful_sync_at, current_as_of FROM sync_status',
     )
-    .get();
+    .all()
+    .map((row) => recorded(row, passState(row.status)));
   return {
-    pass:
-      latest === undefined ? null : recorded(latest, passState(latest.status)),
+    pass: first === undefined ? null : combined([first, ...others]),
     streams: data
       .prepare(
         'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status ORDER BY stream',
@@ -145,6 +146,84 @@ function recorded(
         failureType: failureType(row.failure_type),
       };
   }
+}
+
+type Ended = Exclude<PassStatus, { readonly state: 'running' }>;
+
+// The latest passes of the connections of one file as one pass, which is only
+// as good as its worst connection: it runs while any of them runs, began when
+// the first began, ended when the last ended, and is current only as of the
+// least current. A failure of one connection makes the pass partial, not
+// succeeded, and its error keeps the error of each connection that did not
+// succeed, as Go's errors.Join does, one on each line.
+function combined(passes: readonly [PassStatus, ...PassStatus[]]): PassStatus {
+  const started = {
+    startedAt: earliest(passes.map(({ startedAt }) => startedAt)),
+    lastSucceededAt: earliestOfAll(
+      passes.map(({ lastSucceededAt }) => lastSucceededAt),
+    ),
+    currentAsOf: earliestOfAll(passes.map(({ currentAsOf }) => currentAsOf)),
+  };
+  const ended = passes.filter(
+    (pass): pass is Ended => pass.state !== 'running',
+  );
+  if (ended.length < passes.length)
+    return {
+      ...started,
+      state: 'running',
+      completedAt: null,
+      error: null,
+      failureType: null,
+    };
+  const completedAt = latest(ended.map(({ completedAt }) => completedAt));
+  const error = ended
+    .flatMap((pass) => (pass.error === null ? [] : [pass.error]))
+    .join('\n');
+  if (ended.some(({ state }) => state === 'cancelled'))
+    return {
+      ...started,
+      state: 'cancelled',
+      completedAt,
+      error,
+      failureType: null,
+    };
+  if (ended.every(({ state }) => state === 'succeeded'))
+    return {
+      ...started,
+      state: 'succeeded',
+      completedAt,
+      error: null,
+      failureType: null,
+    };
+  return {
+    ...started,
+    state: ended.every(({ state }) => state === 'failed')
+      ? 'failed'
+      : 'partial',
+    completedAt,
+    error,
+    failureType: ended.some(({ failureType }) => failureType === 'config')
+      ? 'config'
+      : 'system',
+  };
+}
+
+function earliest(instants: readonly string[]): string {
+  return instants.reduce((first, next) =>
+    Date.parse(next) < Date.parse(first) ? next : first,
+  );
+}
+
+function latest(instants: readonly string[]): string {
+  return instants.reduce((last, next) =>
+    Date.parse(next) > Date.parse(last) ? next : last,
+  );
+}
+
+// The earliest instant, or null when any of them is null.
+function earliestOfAll(instants: readonly (string | null)[]): string | null {
+  const known = instants.filter((instant) => instant !== null);
+  return known.length < instants.length ? null : earliest(known);
 }
 
 function failureType(value: SQLOutputValue | undefined): FailureType {

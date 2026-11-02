@@ -15,10 +15,12 @@ import {
   Connection,
   Copy,
   type CopyConfiguration,
+  PassFinished,
   Pipeline,
   Source,
   type SourceWatchOptions,
   Stream,
+  passChannels,
 } from '@workspace/elt';
 
 import {
@@ -478,3 +480,178 @@ class Finishing extends LiveSource {
     yield { stream: configuration.stream.name, data: { id: 'n1' } };
   }
 }
+
+test('a file that several connections load reads as one pass, which is only as good as its worst connection', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-passes-');
+  // A source that loads one record, as current as its upstream says, and
+  // fails or waits as the test tells it to.
+  class Told extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    readonly identity: string;
+    readonly records = stream('records');
+    protected readonly catalog = new Catalog([this.records]);
+    upstream: Date | null = null;
+    failing: Error | null = null;
+    // What a read does once it emitted its record.
+    afterRead: () => Promise<void> = async () => {};
+
+    constructor(identity: string) {
+      super();
+      this.identity = identity;
+    }
+
+    override async currentAsOf() {
+      return this.upstream;
+    }
+
+    override failureType(error: unknown) {
+      return error instanceof StoreDeniedError ? 'config' : 'system';
+    }
+
+    protected override async open() {
+      if (this.failing !== null) throw this.failing;
+      return new AsyncDisposableStack();
+    }
+
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+
+    protected override async *extract(configuration: CopyConfiguration) {
+      yield { stream: configuration.stream.name, data: { id: 'kept' } };
+      await this.afterRead();
+    }
+  }
+  // What an SDK throws when macOS denies its store.
+  class StoreDeniedError extends Error {}
+  // Named so that the sync_status row of notes comes first.
+  const notes = new Told('notes');
+  const tasks = new Told('tasks');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    connections: [notes, tasks].map(
+      (source) =>
+        new Connection({
+          name: source.identity,
+          source,
+          destination,
+          steps: [
+            new Copy(
+              source.records,
+              destination.table(`${source.identity}_records`),
+            ),
+          ],
+        }),
+    ),
+    history: new SQLiteSyncHistory(),
+  });
+  const pass = async () => {
+    await pipeline.run().catch(() => {});
+    return readPassStatus(destination.path).pass;
+  };
+  const attempts = () =>
+    shell(
+      destination.path,
+      'SELECT connector, started_at, completed_at, last_successful_sync_at FROM sync_status ORDER BY connector',
+    ).rows;
+
+  tasks.failing = new StoreDeniedError('Tasks are behind Full Disk Access.');
+  const denied = await pass();
+  const deniedRows = attempts();
+  tasks.failing = new Error('The tasks store is corrupt.');
+  notes.failing = new Error('The notes store is corrupt.');
+  const broken = await pass();
+  notes.failing = null;
+  tasks.failing = new StoreDeniedError('Tasks are behind Full Disk Access.');
+  await pass();
+  notes.failing = new Error('The notes store is corrupt.');
+  const mixed = await pass();
+  tasks.failing = null;
+  notes.failing = null;
+  notes.upstream = new Date('2026-10-02T00:00:00.000Z');
+  tasks.upstream = new Date('2026-10-01T00:00:00.000Z');
+  const loaded = await pass();
+  const loadedRows = attempts();
+  const reading = Promise.withResolvers<void>();
+  const waiting = Promise.withResolvers<void>();
+  tasks.afterRead = () => {
+    reading.resolve();
+    return waiting.promise;
+  };
+  // The pass of notes ends while tasks still reads.
+  const notesEnded = Promise.withResolvers<void>();
+  const hear = (message: unknown) => {
+    if (message instanceof PassFinished && message.connection.source === notes)
+      notesEnded.resolve();
+  };
+  passChannels.finish.subscribe(hear);
+  const stop = new AbortController();
+  const running = pipeline.run({ signal: stop.signal }).catch(() => {});
+  let during;
+  try {
+    await Promise.all([reading.promise, notesEnded.promise]);
+    during = readPassStatus(destination.path).pass;
+  } finally {
+    passChannels.finish.unsubscribe(hear);
+    stop.abort(new Error('stopped by the test'));
+    waiting.resolve();
+    await running;
+  }
+  const stopped = readPassStatus(destination.path).pass;
+
+  assert.deepEqual(
+    [denied?.state, denied?.failureType, denied?.error],
+    [
+      'partial',
+      'config',
+      'The following copies did not load completely: records: Tasks are behind Full Disk Access.',
+    ],
+  );
+  // Tasks never loaded, so it is current as of no time.
+  assert.deepEqual(
+    [denied?.lastSucceededAt, denied?.currentAsOf],
+    [null, null],
+  );
+  assert.equal(
+    denied?.startedAt,
+    deniedRows.map((row: { started_at: string }) => row.started_at).sort()[0],
+  );
+  assert.equal(
+    denied?.completedAt,
+    deniedRows
+      .map((row: { completed_at: string }) => row.completed_at)
+      .sort()
+      .at(-1),
+  );
+  assert.deepEqual(
+    [broken?.state, broken?.failureType, broken?.error],
+    [
+      'failed',
+      'system',
+      'The following copies did not load completely: records: The notes store is corrupt.\nThe following copies did not load completely: records: The tasks store is corrupt.',
+    ],
+  );
+  assert.deepEqual([mixed?.state, mixed?.failureType], ['failed', 'config']);
+  assert.deepEqual(
+    [loaded?.state, loaded?.failureType, loaded?.error],
+    ['succeeded', null, null],
+  );
+  assert.equal(
+    loaded?.lastSucceededAt,
+    loadedRows
+      .map(
+        (row: { last_successful_sync_at: string }) =>
+          row.last_successful_sync_at,
+      )
+      .sort()[0],
+  );
+  assert.equal(loaded?.currentAsOf, '2026-10-01T00:00:00.000Z');
+  assert.equal(during?.state, 'running');
+  assert.deepEqual([stopped?.state, stopped?.failureType], ['cancelled', null]);
+  assert.match(stopped?.error ?? '', /stopped by the test/);
+});
