@@ -2,7 +2,11 @@
 
 ## Work in the one checkout
 
-Every session shares this checkout. Do not make a git worktree, a `git clone`, an exported tree or any other copy of the repository, not even to gate a commit or run a live check. Build and test here. To commit only your part of a shared file, stage your hunks with `git apply --cached`, read each staged hunk where it landed with `git diff --cached -U3`, and after committing check `git show --stat HEAD`. When a peer's unfinished work breaks a test, ask that peer; do not copy the tree to get around it.
+Every session shares this checkout. Do not make a git worktree, a `git clone`, an exported tree or any other copy of the repository, not even to gate a commit or run a live check. Build and test here.
+
+Never leave anything staged in the shared `.git/index`: a peer's plain `git commit` takes all of it. Commit whole files with `git commit --only -m <msg> -- <paths>`; for a new file, run `git add -- <new> && git commit --only -m <msg> -- <paths>` as one command. To commit only your hunks of a file that a peer also edits, use a private index: run `GIT_INDEX_FILE=<scratchpad>/index git read-tree HEAD`, then stage your hunks with `git apply --cached`, read them with `git diff --cached -U3` and commit, each with the same `GIT_INDEX_FILE`. Then set the shared index to the new HEAD for those paths with `git diff --cached -R --binary -- <paths> | git apply --cached`. After each commit, check that `git diff --cached --name-only` prints nothing and that `git show --stat HEAD` lists only your paths.
+
+When a peer's unfinished work breaks a test, ask that peer; do not copy the tree to get around it.
 
 ## Stored data is disposable
 
