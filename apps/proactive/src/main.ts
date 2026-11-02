@@ -29,9 +29,17 @@ const sql = stack.adopt(
 );
 
 // A rule starts from what the marts held before this run's pass, so the first
-// run, with nothing loaded yet, loads first and tells nothing.
+// run, with nothing loaded yet, loads first and tells nothing. A new warehouse
+// has no marts.sync_status (42P01, undefined_table) until the first pass
+// installs the sync history, so nothing is loaded there.
 const loaded =
-  await sql`SELECT connector FROM marts.sync_status WHERE connector IN ('apple-messages', 'slack', 'whatsapp', 'apple-calendar', 'apple-mail') AND last_successful_sync_at IS NOT NULL`;
+  await sql`SELECT connector FROM marts.sync_status WHERE connector IN ('apple-messages', 'slack', 'whatsapp', 'apple-calendar', 'apple-mail') AND last_successful_sync_at IS NOT NULL`.catch(
+    (error: unknown) => {
+      if (error instanceof postgres.PostgresError && error.code === '42P01')
+        return [];
+      throw error;
+    },
+  );
 if (loaded.length !== 5) {
   await pipeline.run({ signal: shutdown.signal });
 }
