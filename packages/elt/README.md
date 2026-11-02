@@ -47,13 +47,18 @@ const connection = new Connection({
     }),
   ],
 });
-const pipeline = new Pipeline({ history, connections: [connection] });
+const pipeline = new Pipeline({
+  history,
+  connections: [connection],
+  clock: globalThis,
+});
 
 const results = await pipeline.run(); // [{ copy, count, deleted }, ...] in declaration order
 ```
 
 - A `Connection` is the connection of Airbyte: the copies of one source into one destination, with the checkpoints that resume them. Readers of the sync history see its `name`.
 - A `Pipeline` is the orchestrator of one or more connections. See [Run and failures](#run-and-failures).
+- The pipeline waits and reads the time on its `clock`. An app gives `globalThis`. See [Run a pipeline on a clock](#run-a-pipeline-on-a-clock).
 - The copy of `accounts` declares its columns. The copy of `notes` infers its columns from the stream, and it deduplicates on the `id` key of the stream.
 - Apple Notes gives its streams as properties: `accounts`, `folders`, `notes`, `inlineAttachments` and `attachments`. `discover()` gives the same frozen streams to code that lists streams.
 - A declaration does not read Notes, and `discover()` does not read Notes. Neither opens a store.
@@ -535,6 +540,7 @@ const attachmentCopy = new Copy(
 
 await new Pipeline({
   history: new SQLiteSyncHistory(),
+  clock: globalThis,
   connections: [
     new Connection({
       name: 'apple-notes-attachments',
@@ -741,6 +747,15 @@ A custom source:
 
 The tests cover real file system events in temporary storage, the watch subscription of the EventKit helper and its stop on abort, and that the destination and the checkpoints show the data before the watch yields the results. The native file system test needs an environment that permits file system notices. The command sandbox of this host reports `EMFILE` also for one watcher of a temporary folder, and the same probe works outside the sandbox.
 
+## Run a pipeline on a clock
+
+A pipeline waits and reads the time: a watch waits before it watches again, and a source polls for changes. All of these use the `clock` that you give to the pipeline. The pipeline gives its clock to each source and to the destination on each call, so one pipeline runs on one clock. See [ADR 0019](./docs/adr/0019-a-pipeline-waits-and-reads-the-time-on-the-clock-that-its-caller-gives.md).
+
+- An app gives `globalThis`.
+- A test gives `createClock()` of `@sinonjs/fake-timers` and moves it with `await clock.tickAsync(ms)`. A test that does not wait gives `globalThis`.
+- A source that reads the time reads it from the clock of the call: `observe({ streams, signal, clock })`, and `open(streams, signal, states, clock)` for a read. A source that reads the time in `extract` keeps the clock in its context.
+- A destination reads the time of a load from `load({ clock })`.
+
 ## Sources and their hosts
 
 - Each Apple source is a package in `packages/sources/apple/<name>` (`source-apple-<name>`) with its readers and tests.
@@ -850,6 +865,7 @@ const history = new PostgresSyncHistory({ url });
 
 const recorded = new Pipeline({
   history,
+  clock: globalThis,
   connections: [
     new Connection({
       name: 'apple-notes',

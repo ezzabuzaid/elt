@@ -40,6 +40,10 @@ _Avoid_: Sync, execution
 One call of `pipeline.watch()`: a pass each time that a source tells of a change, until the signal aborts.
 _Avoid_: Subscription, daemon, poll
 
+**Clock**:
+The source of the time and the timers of a pipeline. The caller gives it to the pipeline: an app gives `globalThis`, and a test gives a fake clock that the test moves. The pipeline gives it to its sources and its destination on each call.
+_Avoid_: Timer (a timer is one wait that the clock starts), scheduler, time provider
+
 **Commit**:
 Rows that a destination made durable. A pass can make many commits.
 _Avoid_: Save, write, flush
