@@ -76,7 +76,8 @@
             "uid": "prometheus"
           },
           "expr": "sum by (elt_origin) (rate(elt_crawl_requests_total{service_name=\"$service\"}[$__rate_interval]))",
-          "legendFormat": "{{elt_origin}}"
+          "legendFormat": "{{elt_origin}}",
+          "interval": "5s"
         }
       ]
     },
@@ -124,7 +125,8 @@
             "uid": "prometheus"
           },
           "expr": "sum by (class) (label_replace(rate(elt_crawl_requests_total{service_name=\"$service\", http_response_status_code!=\"\"}[$__rate_interval]), \"class\", \"${1}xx\", \"http_response_status_code\", \"([0-9]).*\"))",
-          "legendFormat": "{{class}}"
+          "legendFormat": "{{class}}",
+          "interval": "5s"
         },
         {
           "refId": "B",
@@ -133,7 +135,8 @@
             "uid": "prometheus"
           },
           "expr": "sum by (error_type) (rate(elt_crawl_requests_total{service_name=\"$service\", http_response_status_code=\"\"}[$__rate_interval]))",
-          "legendFormat": "{{error_type}}"
+          "legendFormat": "{{error_type}}",
+          "interval": "5s"
         }
       ]
     },
@@ -171,7 +174,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(elt_origin_blocks_total{service_name=\"$service\"}[$__range]))"
+          "expr": "sum(increase(elt_origin_blocks_total{service_name=\"$service\"}[$__range]))",
+          "interval": "5s"
         }
       ]
     },
@@ -219,7 +223,8 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(elt_crawl_request_wait_seconds_sum{service_name=\"$service\"}[$__rate_interval]))",
-          "legendFormat": "wait for the origin"
+          "legendFormat": "wait for the origin",
+          "interval": "5s"
         },
         {
           "refId": "B",
@@ -228,7 +233,8 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(elt_crawl_request_duration_seconds_sum{service_name=\"$service\"}[$__rate_interval]))",
-          "legendFormat": "http"
+          "legendFormat": "http",
+          "interval": "5s"
         },
         {
           "refId": "C",
@@ -237,7 +243,8 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(elt_crawl_handoff_duration_seconds_sum{service_name=\"$service\"}[$__rate_interval])) - sum(rate(elt_web_extract_duration_seconds_sum{service_name=\"$service\"}[$__rate_interval]))",
-          "legendFormat": "consumer"
+          "legendFormat": "consumer",
+          "interval": "5s"
         },
         {
           "refId": "D",
@@ -246,7 +253,8 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(elt_web_extract_duration_seconds_sum{service_name=\"$service\"}[$__rate_interval]))",
-          "legendFormat": "extract"
+          "legendFormat": "extract",
+          "interval": "5s"
         }
       ]
     },
@@ -294,7 +302,8 @@
             "uid": "prometheus"
           },
           "expr": "histogram_quantile(0.5, sum by (le, elt_origin) (rate(elt_crawl_request_duration_seconds_bucket{service_name=\"$service\"}[$__rate_interval])))",
-          "legendFormat": "p50 {{elt_origin}}"
+          "legendFormat": "p50 {{elt_origin}}",
+          "interval": "5s"
         },
         {
           "refId": "B",
@@ -303,7 +312,8 @@
             "uid": "prometheus"
           },
           "expr": "histogram_quantile(0.95, sum by (le, elt_origin) (rate(elt_crawl_request_duration_seconds_bucket{service_name=\"$service\"}[$__rate_interval])))",
-          "legendFormat": "p95 {{elt_origin}}"
+          "legendFormat": "p95 {{elt_origin}}",
+          "interval": "5s"
         }
       ]
     },
@@ -350,7 +360,8 @@
             "uid": "prometheus"
           },
           "expr": "sum by (elt_crawl_lane) (elt_crawl_frontier_pending{service_name=\"$service\"})",
-          "legendFormat": "{{elt_crawl_lane}}"
+          "legendFormat": "{{elt_crawl_lane}}",
+          "interval": "5s"
         }
       ]
     },
@@ -386,7 +397,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(elt_crawl_frontier_held{service_name=\"$service\"})"
+          "expr": "sum(elt_crawl_frontier_held{service_name=\"$service\"})",
+          "interval": "5s"
         }
       ]
     },
@@ -433,7 +445,8 @@
             "uid": "prometheus"
           },
           "expr": "sum by (elt_connection, elt_stream) (increase(elt_copy_records_committed_total{service_name=\"$service\"}[$__rate_interval]))",
-          "legendFormat": "{{elt_connection}} {{elt_stream}}"
+          "legendFormat": "{{elt_connection}} {{elt_stream}}",
+          "interval": "5s"
         }
       ]
     },
