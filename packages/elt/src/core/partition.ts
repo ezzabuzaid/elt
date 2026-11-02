@@ -87,12 +87,19 @@ export function readPartitionStates(
   state: unknown,
 ): Map<string, PartitionState> {
   const identity = partitionIdentity(stream);
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds the envelope Source.read wrote; own state is not re-validated
-  const envelope = state as { partitions: PartitionState[] } | null;
+  const partitions: unknown = Reflect.get(Object(state), 'partitions');
+  if (partitions === undefined) return new Map();
+  if (!Array.isArray(partitions))
+    throw new TypeError(
+      `Stream ${stream.name} checkpoint holds partitions that are not a list`,
+    );
   return new Map(
-    (envelope?.partitions ?? []).map((entry) => [
-      identity.key(entry.partition),
-      entry,
-    ]),
+    partitions.map((entry: unknown) => {
+      const { key, partition } = readPartition(
+        identity,
+        Reflect.get(Object(entry), 'partition'),
+      );
+      return [key, { partition, state: Reflect.get(Object(entry), 'state') }];
+    }),
   );
 }
