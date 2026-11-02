@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react';
+import { type SubmitEvent, useState } from 'react';
 
 export function EditableList({
   label,
@@ -16,7 +16,7 @@ export function EditableList({
   onChange: (items: string[]) => void;
 }) {
   const [draft, setDraft] = useState('');
-  const add = (event: FormEvent) => {
+  const add = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     const item = draft.trim();
     if (item !== '' && !items.includes(item)) {
