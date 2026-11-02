@@ -3,59 +3,60 @@ import { createReadStream } from 'node:fs';
 import { copyFile, readFile, readdir, stat } from 'node:fs/promises';
 import { basename, join, relative, sep } from 'node:path';
 
+import { FileStamp } from '@zukhruf/fs';
+
 import { type PlistValue, readPlist } from '@workspace/codec-plist';
 
 import type { IndexedAttachment } from './envelope-index.ts';
 import { MailChangingError, MailSchemaError } from './errors.ts';
 import { plistList, plistObject, requiredString } from './mail-plists.ts';
 
-// One file of Mail's store as it stood when the store was listed. Its version
-// is its stat: device, inode, size, and mtime and ctime in nanoseconds; a
-// rewrite within one timestamp tick still changes ctime. Every read checks the
-// version before and after, so a file Mail changes while it is read fails the
-// read. Its fingerprint is what a copy of the store on another disk or Mac
-// keeps: size and mtime, as rsync's quick check and git's
-// core.checkStat=minimal compare files.
+// One file of Mail's store as it stood when the store was listed. Every read
+// compares the file's stamp before and after, so a file Mail changes or
+// removes while it is read fails the read. Its fingerprint is what a copy of
+// the store on another disk or Mac keeps: size and mtime, as rsync's quick
+// check and git's core.checkStat=minimal compare files. A stamp holds the
+// device, inode and ctime too, which a copy changes.
 export class MailFile {
   readonly path: string;
   readonly size: number;
   readonly fingerprint: string;
-  readonly #version: string;
+  readonly #stamp: FileStamp;
 
   private constructor(
     path: string,
     size: number,
-    version: string,
+    stamp: FileStamp,
     fingerprint: string,
   ) {
     this.path = path;
     this.size = size;
-    this.#version = version;
+    this.#stamp = stamp;
     this.fingerprint = fingerprint;
   }
 
+  // The stamp comes first: a change after it fails the first read, so the
+  // size and fingerprint are never older than the stamp that read compares.
   static async inspect(path: string): Promise<MailFile> {
+    const stamp = await FileStamp.read(path);
     const info = await stat(path, { bigint: true });
     if (!info.isFile())
       throw new MailSchemaError(`Mail content is not a regular file: ${path}`);
     return new MailFile(
       path,
       Number(info.size),
-      `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`,
+      stamp,
       `${info.size}:${info.mtimeNs}`,
     );
   }
 
   async assertUnchanged(): Promise<void> {
-    const current = await MailFile.inspect(this.path).catch(
-      (cause: unknown) => {
-        throw new MailChangingError(
-          `Mail removed a file during extraction: ${this.path}`,
-          { cause },
-        );
-      },
-    );
-    if (current.#version !== this.#version)
+    const current = await FileStamp.read(this.path);
+    if (current.modifiedAt === undefined)
+      throw new MailChangingError(
+        `Mail removed a file during extraction: ${this.path}`,
+      );
+    if (!current.equals(this.#stamp))
       throw new MailChangingError(
         `Mail changed a file during extraction: ${this.path}`,
       );

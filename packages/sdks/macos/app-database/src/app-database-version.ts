@@ -1,4 +1,4 @@
-import { DataVersion } from '@zukhruf/sqlite-data-version';
+import type { DataVersion } from '@zukhruf/sqlite-data-version';
 
 import {
   type UnavailableErrorClass,
@@ -12,14 +12,15 @@ export class AppDatabaseVersion implements Disposable {
   readonly #unavailable: UnavailableErrorClass;
   readonly #version: DataVersion;
 
-  constructor(path: string, unavailable: UnavailableErrorClass) {
+  // open makes the DataVersion of the owner's kind.
+  constructor(
+    path: string,
+    unavailable: UnavailableErrorClass,
+    open: () => DataVersion,
+  ) {
     this.#path = path;
     this.#unavailable = unavailable;
-    this.#version = readOrUnavailable(
-      path,
-      unavailable,
-      () => new DataVersion(path),
-    );
+    this.#version = readOrUnavailable(path, unavailable, open);
   }
 
   get current(): number {

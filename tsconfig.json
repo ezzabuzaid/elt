@@ -208,6 +208,33 @@
     },
     {
       "path": "./packages/sdks/macos/app-database"
+    },
+    {
+      "path": "./packages/sdks/chromium/browser"
+    },
+    {
+      "path": "./packages/sdks/chromium/bookmarks"
+    },
+    {
+      "path": "./packages/codecs/chromium-time"
+    },
+    {
+      "path": "./packages/sdks/chromium/history"
+    },
+    {
+      "path": "./packages/sources/chromium/browser"
+    },
+    {
+      "path": "./packages/sources/arc/desktop"
+    },
+    {
+      "path": "./packages/sources/dia/desktop"
+    },
+    {
+      "path": "./packages/sdks/arc/desktop"
+    },
+    {
+      "path": "./packages/sdks/dia/desktop"
     }
   ]
 }

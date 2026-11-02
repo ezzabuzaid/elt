@@ -13,6 +13,7 @@
     "@workspace/codec-apple-reference-date": "0.0.1",
     "@workspace/codec-plist": "0.0.1",
     "@workspace/sdk-macos-app-database": "0.0.1",
+    "@zukhruf/fs": "^0.6.14",
     "@zukhruf/sqlite-snapshot": "^0.6.7"
   }
 }

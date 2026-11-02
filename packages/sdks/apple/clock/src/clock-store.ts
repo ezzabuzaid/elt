@@ -1,5 +1,6 @@
-import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
+
+import { FileStamp } from '@zukhruf/fs';
 
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 
@@ -127,12 +128,7 @@ class ClockPreferencesVersion implements ClockVersion {
   }
   async current(): Promise<string> {
     try {
-      const stats = await stat(this.#path, {
-        bigint: true,
-        throwIfNoEntry: false,
-      });
-      if (stats === undefined) return 'missing';
-      return `${stats.ino}:${stats.size}:${stats.mtimeNs}`;
+      return String(await FileStamp.read(this.#path));
     } catch (cause) {
       throw new ClockUnavailableError(this.#path, cause);
     }

@@ -1,0 +1,22 @@
+{
+  "name": "@workspace/source-dia-desktop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./dia-desktop-source": {
+      "types": "./dist/dia-desktop-source.d.ts",
+      "default": "./dist/dia-desktop-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1",
+    "@zukhruf/async": "^0.6.7",
+    "@workspace/sdk-dia-desktop": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1",
+    "@zukhruf/testing": "^0.6.6"
+  }
+}

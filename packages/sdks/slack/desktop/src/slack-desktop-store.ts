@@ -2,6 +2,8 @@ import { readdirSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { FileStamps } from '@zukhruf/fs';
+
 import {
   type IndexedDBDatabase,
   IndexedDBFormatError,
@@ -49,15 +51,12 @@ export function slackDesktopDirectory(home: string): string {
       const path = join(directory, indexedDB);
       const files = readdirSync(path);
       if (!files.includes('CURRENT')) continue;
-      const modified = Math.max(
-        ...files.map(
-          (name) =>
-            statSync(join(path, name), { throwIfNoEntry: false })?.mtimeMs ?? 0,
-        ),
-      );
-      if (modified > newest) {
+      const modified = FileStamps.readSync(
+        files.map((name) => join(path, name)),
+      ).modifiedAt;
+      if (modified !== undefined && modified.getTime() > newest) {
         selected = directory;
-        newest = modified;
+        newest = modified.getTime();
       }
     } catch (error) {
       const code = errorCode(error);
@@ -111,35 +110,34 @@ export class SlackDesktopStore {
   // A value that changes whenever the app saves its state, a client's or its
   // own.
   version(): string {
-    return this.#saved()
-      .map(({ path, stats }) => `${path}:${stats?.size}:${stats?.mtimeMs}`)
-      .join('\n');
+    return String(this.#saved());
   }
 
   // When the app last saved its state, a client's or its own. It saves every
   // few minutes while it is open and when it quits, so a closed app's store
   // stays as of then.
   lastWrite(): Date {
-    return new Date(
-      Math.max(...this.#saved().flatMap(({ stats }) => stats?.mtimeMs ?? [])),
-    );
+    const written = this.#saved().modifiedAt;
+    if (written === undefined)
+      throw new SlackDesktopUnavailableError(
+        this.#directory,
+        new Error('Its database folder holds no file.'),
+      );
+    return written;
   }
 
   // The files the app saves its state to. A file LevelDB removed after the
-  // folder was listed, or a state the app has not saved yet, has no stats.
-  // CURRENT always has: LevelDB replaces it by a rename, never removes it.
-  #saved() {
+  // folder was listed, or a state the app has not saved yet, is missing.
+  // CURRENT never is: LevelDB replaces it by a rename, never removes it.
+  #saved(): FileStamps {
     const directory = join(this.#directory, indexedDB);
     try {
-      return [
+      return FileStamps.readSync([
         ...readdirSync(directory)
           .sort()
           .map((name) => join(directory, name)),
         join(this.#directory, rootState),
-      ].map((path) => ({
-        path,
-        stats: statSync(path, { throwIfNoEntry: false }),
-      }));
+      ]);
     } catch (error) {
       throw new SlackDesktopUnavailableError(this.#directory, error);
     }

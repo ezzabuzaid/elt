@@ -1,10 +1,9 @@
 import { createDecipheriv, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
-import { CookieDecryptionError } from './errors.ts';
+import { chromiumTime } from '@workspace/codec-chromium-time';
 
-// Chromium counts microseconds from 1601-01-01.
-const epochOffset = 11_644_473_600_000_000n;
+import { CookieDecryptionError } from './errors.ts';
 
 // One profile's Cookies database, opened read-only through SQLite's own
 // locks: the browser keeps it in rollback-journal mode and never holds it
@@ -26,7 +25,7 @@ export class CookieStore implements Disposable {
          AND (has_expires = 0 OR expires_utc > ?)`,
     );
     statement.setReadBigInts(true);
-    const row = statement.get(name, ...hosts, now());
+    const row = statement.get(name, ...hosts, chromiumTime(new Date()));
     return typeof row?.expires === 'bigint' ? row.expires : null;
   }
 
@@ -50,7 +49,7 @@ export class CookieStore implements Disposable {
            AND (has_expires = 0 OR expires_utc > ?)
          ORDER BY length(host_key), host_key`,
       )
-      .all(...hosts, now());
+      .all(...hosts, chromiumTime(new Date()));
     const cookies = new Map<string, string>();
     for (const row of rows) {
       const host = String(row.host_key);
@@ -76,10 +75,6 @@ function hostKeys(url: URL): string[] {
     .slice(0, -1)
     .map((_, index) => `.${labels.slice(index).join('.')}`);
   return [url.hostname, ...parents];
-}
-
-function now(): bigint {
-  return BigInt(Date.now()) * 1000n + epochOffset;
 }
 
 // A v10 value is AES-128-CBC with a fixed IV of spaces, and its plaintext

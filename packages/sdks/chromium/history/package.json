@@ -1,0 +1,17 @@
+{
+  "name": "@workspace/sdk-chromium-history",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/codec-chromium-time": "0.0.1",
+    "@workspace/sdk-macos-app-database": "0.0.1",
+    "@zukhruf/sqlite-snapshot": "^0.6.14"
+  }
+}

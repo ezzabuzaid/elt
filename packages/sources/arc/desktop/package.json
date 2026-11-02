@@ -1,0 +1,23 @@
+{
+  "name": "@workspace/source-arc-desktop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./arc-desktop-source": {
+      "types": "./dist/arc-desktop-source.d.ts",
+      "default": "./dist/arc-desktop-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1",
+    "@zukhruf/async": "^0.6.7",
+    "@zukhruf/snapshot-differential": "^0.6.7",
+    "@workspace/sdk-arc-desktop": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1",
+    "@zukhruf/testing": "^0.6.6"
+  }
+}

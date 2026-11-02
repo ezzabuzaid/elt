@@ -1,6 +1,8 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { FileStamp } from '@zukhruf/fs';
+
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 
 import { appDatabase } from './app-database.ts';
@@ -9,14 +11,6 @@ import {
   type SafariStore,
   storeFiles,
 } from './safari-location.ts';
-
-// A property list's identity on disk; a rewrite changes it. A missing file
-// reads as its own state, so its return is a change too.
-async function fingerprint(path: string): Promise<string> {
-  const stats = await stat(path, { throwIfNoEntry: false });
-  if (stats === undefined) return 'missing';
-  return `${stats.ino}:${stats.size}:${stats.mtimeMs}`;
-}
 
 // Every History.db: the default profile's, and each other profile's, so a
 // profile created while watching is picked up.
@@ -34,7 +28,9 @@ async function historyFiles(location: SafariLocation): Promise<string[]> {
       .filter((entry) => entry.isDirectory())
       .map(async (entry) => {
         const path = join(profiles, entry.name, 'History.db');
-        return (await fingerprint(path)) === 'missing' ? [] : [path];
+        return (await stat(path, { throwIfNoEntry: false })) === undefined
+          ? []
+          : [path];
       }),
   );
   return [storeFiles(location).history, ...others.flat()];
@@ -43,7 +39,7 @@ async function historyFiles(location: SafariLocation): Promise<string[]> {
 // What changes when one Safari store does. Databases report commits through
 // data_version, since Safari commits through WALs it keeps open and FSEvents
 // reports a write only when the file closes; Safari rewrites each property
-// list whole, so a changed stat marks a new one.
+// list whole, so a changed file stamp marks a new one.
 export class SafariVersion implements Disposable {
   readonly #location: SafariLocation;
   readonly #store: SafariStore;
@@ -67,7 +63,7 @@ export class SafariVersion implements Disposable {
     }
     if (this.#store === 'tabs' || this.#store === 'cloudTabs')
       return String(this.#version(files[this.#store]));
-    return fingerprint(files[this.#store]);
+    return String(await FileStamp.read(files[this.#store]));
   }
 
   [Symbol.dispose](): void {

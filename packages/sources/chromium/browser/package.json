@@ -1,0 +1,25 @@
+{
+  "name": "@workspace/source-chromium-browser",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./chromium-source": {
+      "types": "./dist/chromium-source.d.ts",
+      "default": "./dist/chromium-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1",
+    "@zukhruf/async": "^0.6.7",
+    "@zukhruf/snapshot-differential": "^0.6.7",
+    "@workspace/sdk-chromium-browser": "0.0.1",
+    "@workspace/sdk-chromium-history": "0.0.1",
+    "@workspace/sdk-chromium-bookmarks": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1",
+    "@zukhruf/testing": "^0.6.6"
+  }
+}

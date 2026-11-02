@@ -1,0 +1,9 @@
+{
+  "name": "source-arc-desktop",
+  "sourceRoot": "packages/sources/arc/desktop/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {}
+  }
+}

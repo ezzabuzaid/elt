@@ -1,0 +1,9 @@
+{
+  "name": "source-dia-desktop",
+  "sourceRoot": "packages/sources/dia/desktop/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {}
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "source-chromium-browser",
+  "sourceRoot": "packages/sources/chromium/browser/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {}
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "codec-chromium-time",
+  "sourceRoot": "packages/codecs/chromium-time/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:codec"],
+  "targets": {
+    "format": {}
+  }
+}

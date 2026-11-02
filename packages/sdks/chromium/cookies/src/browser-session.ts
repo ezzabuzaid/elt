@@ -1,8 +1,11 @@
+import { join } from 'node:path';
+
 import {
   type ChromiumBrowser,
   type ChromiumProfile,
   chromiumBrowsers,
-} from './chromium-browser.ts';
+} from '@workspace/sdk-chromium-browser';
+
 import { CookieStore } from './cookie-store.ts';
 import { BrowserSessionNotFoundError } from './errors.ts';
 import { safeStorageKey } from './safe-storage.ts';
@@ -40,8 +43,8 @@ export class BrowserSession {
       expires: bigint;
     } | null = null;
     for (const browser of chromiumBrowsers)
-      for (const profile of browser.profiles(home)) {
-        using store = new CookieStore(profile.cookies);
+      for (const profile of browser.profiles(home, 'Cookies')) {
+        using store = new CookieStore(join(profile.path, 'Cookies'));
         const expires = store.expiry(target, cookie);
         if (expires !== null && (newest === null || expires > newest.expires))
           newest = { browser, profile, expires };
@@ -51,14 +54,14 @@ export class BrowserSession {
         target.hostname,
         cookie,
         chromiumBrowsers
-          .filter((browser) => browser.profiles(home).length > 0)
+          .filter((browser) => browser.profiles(home, 'Cookies').length > 0)
           .map(({ name }) => name),
       );
     const key = await safeStorageKey(newest.browser, home);
-    using store = new CookieStore(newest.profile.cookies);
+    using store = new CookieStore(join(newest.profile.path, 'Cookies'));
     return new BrowserSession(
       newest.browser.name,
-      newest.profile.name,
+      newest.profile.folder,
       store.cookies(target, key, newest.browser.name),
     );
   }

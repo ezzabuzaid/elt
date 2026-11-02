@@ -1,4 +1,4 @@
-import { lastWrite } from '@zukhruf/sqlite-data-version';
+import { DataVersion, lastWrite } from '@zukhruf/sqlite-data-version';
 import {
   Snapshot,
   type SnapshotColumns,
@@ -38,8 +38,36 @@ export class AppDatabase {
     }
   }
 
+  // A store whose app holds SQLite's exclusive locking mode, as Chromium
+  // holds its History, lets no reader in: the snapshot reads a checked copy
+  // at the app's last commit.
+  async snapshotOfExclusiveOwner(
+    path: string,
+    columns?: SnapshotColumns,
+  ): Promise<Snapshot> {
+    try {
+      const snapshot = await Snapshot.ofExclusiveOwner(path);
+      if (columns) snapshot.requireColumns(columns);
+      return snapshot;
+    } catch (error) {
+      if (error instanceof UnavailableError)
+        throw new this.#errors.unavailable(path, error);
+      throw error;
+    }
+  }
+
   version(path: string): AppDatabaseVersion {
-    return new AppDatabaseVersion(path, this.#errors.unavailable);
+    return new AppDatabaseVersion(
+      path,
+      this.#errors.unavailable,
+      () => new DataVersion(path),
+    );
+  }
+
+  versionOfExclusiveOwner(path: string): AppDatabaseVersion {
+    return new AppDatabaseVersion(path, this.#errors.unavailable, () =>
+      DataVersion.ofExclusiveOwner(path),
+    );
   }
 
   lastWrite(path: string): Date {

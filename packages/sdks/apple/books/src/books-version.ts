@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises';
+import { FileStamps } from '@zukhruf/fs';
 
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 
@@ -8,18 +8,10 @@ import {
   storeFiles,
 } from './books-location.ts';
 
-// A preference file's identity on disk; a rewrite changes it. A missing file
-// reads as its own state, so its return is a change too.
-async function fingerprint(path: string): Promise<string> {
-  const stats = await stat(path, { throwIfNoEntry: false });
-  if (stats === undefined) return 'missing';
-  return `${stats.ino}:${stats.size}:${stats.mtimeMs}`;
-}
-
 // What changes when one Books store does. Books and bookdatastored commit
 // through WALs they keep open, so a database reports each commit through
 // data_version, opened when the probe is; preference files are rewritten
-// whole, so a changed stat of either marks a new one.
+// whole, so a changed file stamp of either marks a new one.
 export interface BooksVersion extends Disposable {
   current(): Promise<string>;
 }
@@ -48,7 +40,12 @@ export class BooksPreferencesVersion implements BooksVersion {
   }
 
   async current(): Promise<string> {
-    return `${await fingerprint(storeFiles(this.#location).preferences)}|${await fingerprint(sharedPreferences(this.#location))}`;
+    return String(
+      await FileStamps.read([
+        storeFiles(this.#location).preferences,
+        sharedPreferences(this.#location),
+      ]),
+    );
   }
 
   // A stat holds nothing open.

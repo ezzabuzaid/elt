@@ -1,6 +1,8 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { FileStamps } from '@zukhruf/fs';
+
 import {
   type IndexedDBDatabase,
   IndexedDBFormatError,
@@ -54,31 +56,32 @@ export class TeamsStore {
 
   // A value that changes whenever the web client writes its caches.
   version(): string {
-    return this.#saved()
-      .map(({ name, stats }) => `${name}:${stats?.size}:${stats?.mtimeMs}`)
-      .join('\n');
+    return String(this.#saved());
   }
 
   // When the web client last wrote its caches. It writes them only while
   // the app runs, so a closed app's store stays as of then.
   lastWrite(): Date {
-    return new Date(
-      Math.max(...this.#saved().flatMap(({ stats }) => stats?.mtimeMs ?? [])),
-    );
+    const written = this.#saved().modifiedAt;
+    if (written === undefined)
+      throw new TeamsUnavailableError(
+        this.#directory,
+        new Error('Its database folder holds no file.'),
+      );
+    return written;
   }
 
   // The files of the web client's database. A file LevelDB removed after the
-  // folder was listed has no stats. CURRENT always has: LevelDB replaces it
-  // by a rename, never removes it.
-  #saved() {
+  // folder was listed is missing. CURRENT never is: LevelDB replaces it by a
+  // rename, never removes it.
+  #saved(): FileStamps {
     const directory = join(this.#directory, indexedDB);
     try {
-      return readdirSync(directory)
-        .sort()
-        .map((name) => ({
-          name,
-          stats: statSync(join(directory, name), { throwIfNoEntry: false }),
-        }));
+      return FileStamps.readSync(
+        readdirSync(directory)
+          .sort()
+          .map((name) => join(directory, name)),
+      );
     } catch (error) {
       throw new TeamsUnavailableError(this.#directory, error);
     }

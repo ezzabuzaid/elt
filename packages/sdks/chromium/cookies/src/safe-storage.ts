@@ -3,7 +3,8 @@ import { pbkdf2Sync } from 'node:crypto';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import type { ChromiumBrowser } from './chromium-browser.ts';
+import type { ChromiumBrowser } from '@workspace/sdk-chromium-browser';
+
 import { SafeStorageUnavailableError } from './errors.ts';
 
 const run = promisify(execFile);
