@@ -607,12 +607,11 @@ test('a URL found as an archive and then listed as a page downloads in the page 
       handed.push(location(entry).url);
   assert.deepEqual(handed, [`${upstream.origin}/2020/`]);
   // As backfill, /2020/ would wait behind the nineteen years found before it.
-  // The crawl reads the origin's rules first; ListingReader reads robots.txt again for sitemaps.
-  assert.deepEqual(requests.slice(0, 6), [
+  // The crawl reads the origin's rules first; that one download gives ListingReader the sitemaps too.
+  assert.deepEqual(requests.slice(0, 5), [
     '/robots.txt',
     '/',
     '/feed.xml',
-    '/robots.txt',
     '/2020/',
     '/2001/',
   ]);

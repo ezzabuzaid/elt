@@ -615,7 +615,8 @@ test('every downloaded URL that is not handed back as a page or failure is hande
   );
   // The starting page, the feed, robots.txt's tolerated 404 and a page read only for its links.
   assert.deepEqual(progress, ['/', '/feed.xml', '/robots.txt', '/hub']);
-  // The crawl reads the origin's rules before its first request, without a progress entry.
+  // The crawl reads the origin's rules before its first request; that one
+  // download is also robots.txt's progress entry.
   assert.equal(requests[0], '/robots.txt');
   assert.deepEqual(handed.toSorted(), [
     '/keep/1',
@@ -623,10 +624,7 @@ test('every downloaded URL that is not handed back as a page or failure is hande
     '/keep/3',
     '/keep/bad',
   ]);
-  assert.deepEqual(
-    requests.slice(1).toSorted(),
-    [...progress, ...handed].toSorted(),
-  );
+  assert.deepEqual(requests.toSorted(), [...progress, ...handed].toSorted());
 });
 
 test('a snapshot taken at a progress entry resumes without downloading the documents read before it', async () => {
@@ -644,7 +642,7 @@ test('a snapshot taken at a progress entry resumes without downloading the docum
   );
   for await (const entry of first)
     if ('progress' in entry && pathOf(entry.progress) === '/robots.txt') break;
-  assert.deepEqual(requests, ['/robots.txt', '/', '/feed.xml', '/robots.txt']);
+  assert.deepEqual(requests, ['/robots.txt', '/', '/feed.xml']);
   const snapshot = JSON.parse(JSON.stringify(first.snapshot()));
   requests.length = 0;
   // The resumed crawl is a read of its own, whose origins' records start from the last read's.

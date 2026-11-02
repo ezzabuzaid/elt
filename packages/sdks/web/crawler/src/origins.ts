@@ -6,6 +6,7 @@ import {
   type Got,
   HTTPError,
   MaxRedirectsError,
+  type Response,
 } from 'got';
 import { z } from 'zod';
 
@@ -56,6 +57,17 @@ class Read {
   constructor(rules: RobotsRules, fetched: number) {
     this.rules = rules;
     this.fetched = fetched;
+  }
+}
+
+// Rules that this read downloaded, with the answer they came from, which the
+// crawls' robots.txt documents read: one download gives the rules and the
+// sitemaps. Rules that an earlier read left in the memento have no answer.
+class Downloaded extends Read {
+  readonly answer: Response;
+  constructor(rules: RobotsRules, fetched: number, answer: Response) {
+    super(rules, fetched);
+    this.answer = answer;
   }
 }
 
@@ -231,24 +243,55 @@ export class Origins {
     origin: string,
     signal: AbortSignal | undefined,
   ): Promise<RobotsRules | Unreachable> {
+    const robots = await this.#robots(origin, signal, false);
+    return robots instanceof Read ? robots.rules : robots;
+  }
+
+  /**
+   * The answer of the origin's robots.txt in this read, for a crawl's
+   * robots.txt document, so the read downloads it once for its rules and its
+   * sitemaps, as StormCrawler's FetcherBolt discovers sitemaps from the
+   * robots lookup that gave its rules and Nutch's SitemapProcessor from its
+   * robot rules. Rules that an earlier read left in the memento are
+   * downloaded again here, as the document needs an answer. Null when
+   * robots.txt redirected more than five times, which allows everything.
+   */
+  async robotsTxt(
+    origin: string,
+    signal: AbortSignal | undefined,
+  ): Promise<Response | Unreachable | null> {
+    const robots = await this.#robots(origin, signal, true);
+    if (!(robots instanceof Read)) return robots;
+    return robots instanceof Downloaded ? robots.answer : null;
+  }
+
+  // The origin's rules, read again once they are 24 hours old, or when an
+  // answer is needed and the rules have none. A request that reads them while
+  // another waits for them shares the one answer.
+  async #robots(
+    origin: string,
+    signal: AbortSignal | undefined,
+    answered: boolean,
+  ): Promise<Read | Unreachable> {
     const record = this.#record(origin);
     for (;;) {
       const { robots } = record;
       if (
         robots instanceof Read &&
-        Date.now() < robots.fetched + robotsLifetime
+        Date.now() < robots.fetched + robotsLifetime &&
+        (!answered || robots instanceof Downloaded)
       )
-        return robots.rules;
+        return robots;
       if (!(robots instanceof Reading)) break;
       await untilAborted(robots.read.wait(), signal);
     }
     const read = new Latch();
     record.robots = new Reading(read);
     try {
-      const rules = await this.#read(origin, record, signal);
-      if (rules instanceof RobotsRules) return rules;
+      const robots = await this.#read(origin, record, signal);
+      if (robots instanceof Read) return robots;
       record.robots = new Unread();
-      return rules;
+      return robots;
     } catch (error) {
       record.robots = new Unread();
       throw error;
@@ -319,10 +362,11 @@ export class Origins {
     origin: string,
     record: Origin,
     signal: AbortSignal | undefined,
-  ): Promise<RobotsRules | Unreachable> {
+  ): Promise<Read | Unreachable> {
     const url = `${origin}/robots.txt`;
     await this.pace(origin, signal);
     let body = '';
+    let answer: Response | null = null;
     try {
       const response = await this.#http(url, {
         signal,
@@ -346,6 +390,7 @@ export class Origins {
           cause: new HTTPError(response),
         };
       if (response.ok) body = response.body;
+      answer = response;
     } catch (cause) {
       signal?.throwIfAborted();
       // More redirects than five make the rules unavailable, as a 4xx does.
@@ -354,9 +399,13 @@ export class Origins {
     }
     const rules = new RobotsRules(url, body, this.#agent);
     const fetched = Date.now();
-    record.robots = new Read(rules, fetched);
+    const robots =
+      answer === null
+        ? new Read(rules, fetched)
+        : new Downloaded(rules, fetched, answer);
+    record.robots = robots;
     record.saved = { ...record.saved, robots: { body, fetched } };
-    return rules;
+    return robots;
   }
 
   // A redirect of robots.txt: the answer counts for its origin, and the next

@@ -82,6 +82,103 @@ test('a URL that robots.txt disallows is not requested, and the other pages are 
   assert.equal(result.memento.crawl, null);
 });
 
+test("one download of a starting page's robots.txt gives both its rules and its sitemaps", async () => {
+  const requests: string[] = [];
+  using server = new Msw().intercept(
+    site(requests, () =>
+      HttpResponse.text(
+        'User-agent: *\nDisallow: /private/\nSitemap: https://site.test/sitemap.xml\n',
+      ),
+    ),
+  );
+
+  const result = await crawled(
+    crawler().crawl(['https://site.test/'], null, options()),
+  );
+
+  assert.deepEqual(result.pages.filter((page) => page !== '/').toSorted(), [
+    '/a',
+    '/c',
+  ]);
+  assert.equal(
+    requests.filter((request) => request === '/robots.txt').length,
+    1,
+    requests.join(' '),
+  );
+});
+
+test('a read whose rules an earlier read left downloads robots.txt once for its sitemaps', async () => {
+  const requests: string[] = [];
+  using server = new Msw().intercept(
+    site(requests, () =>
+      HttpResponse.text(
+        'User-agent: *\nDisallow: /private/\nSitemap: https://site.test/sitemap.xml\n',
+      ),
+    ),
+  );
+  const http = got.extend({ retry: { limit: 0 } });
+  const earlier = new Origins(http, null);
+  await earlier.rules('https://site.test', undefined);
+  requests.length = 0;
+
+  const result = await crawled(
+    new WebCrawler(
+      http,
+      new Origins(http, earlier.snapshot()),
+      [new ListingReader()],
+      new AdaptiveRevisit(),
+    ).crawl(['https://site.test/'], null, options()),
+  );
+
+  assert.deepEqual(result.pages.filter((page) => page !== '/').toSorted(), [
+    '/a',
+    '/c',
+  ]);
+  assert.equal(
+    requests.filter((request) => request === '/robots.txt').length,
+    1,
+    requests.join(' '),
+  );
+});
+
+test('two crawls of one read on one website read its one robots.txt download', async () => {
+  const requests: string[] = [];
+  using server = new Msw().intercept(
+    site(requests, () =>
+      HttpResponse.text(
+        'User-agent: *\nDisallow: /private/\nSitemap: https://site.test/sitemap.xml\n',
+      ),
+    ),
+  );
+  const http = got.extend({ retry: { limit: 0 } });
+  const origins = new Origins(http, null);
+  const crawl = (start: string) =>
+    crawled(
+      new WebCrawler(
+        http,
+        origins,
+        [new ListingReader()],
+        new AdaptiveRevisit(),
+      ).crawl([start], null, options()),
+    );
+
+  const [first, second] = await Promise.all([
+    crawl('https://site.test/'),
+    crawl('https://site.test/home'),
+  ]);
+
+  for (const result of [first, second])
+    assert.deepEqual(
+      result.pages.filter((page) => !['/', '/home'].includes(page)).toSorted(),
+      ['/a', '/c'],
+    );
+  assert.equal(
+    requests.filter((request) => request === '/robots.txt').length,
+    1,
+    requests.join(' '),
+  );
+});
+
 test('rules for another user agent do not apply, and rules for the client user agent do', async () => {
   const robots = () =>
     HttpResponse.text(

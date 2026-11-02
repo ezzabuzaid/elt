@@ -944,14 +944,8 @@ test('a URL declared as both a page and a feed is fetched once and serves both r
       'https://site.test/',
     )
   ).map(location);
-  // The crawl reads the origin's rules first; ListingReader reads robots.txt again for sitemaps.
-  assert.deepEqual(requests, [
-    '/robots.txt',
-    '/',
-    '/feed',
-    '/robots.txt',
-    '/article',
-  ]);
+  // The crawl reads the origin's rules first; that one download gives ListingReader the sitemaps too.
+  assert.deepEqual(requests, ['/robots.txt', '/', '/feed', '/article']);
   assert.deepEqual(
     found.map((page) => new URL(page.url).pathname),
     ['/feed', '/article'],

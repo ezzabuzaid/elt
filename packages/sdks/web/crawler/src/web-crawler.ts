@@ -4,7 +4,7 @@ import { type Got, HTTPError, RequestError, type Response } from 'got';
 import { z } from 'zod';
 
 import { OriginLane } from './origin-lane.ts';
-import type { Origins } from './origins.ts';
+import type { Origins, Unreachable } from './origins.ts';
 import {
   type CrawlRequest,
   type Finding,
@@ -559,38 +559,53 @@ class CrawlRun implements Crawl {
         yield next.failure;
         continue;
       }
-      const { entry, included, wanted } = next;
+      const { entry, included, wanted, robots } = next;
       const before = this.#urls.get(entry.url);
       const page = this.#handedBack(entry);
       const { origin } = new URL(entry.url);
-      await this.#origins.pace(origin, signal);
       let response: Response;
-      try {
-        response = await this.#http(entry.url, {
-          signal,
-          responseType: 'buffer',
-          throwHttpErrors: false,
-          // A redirect is a request of its own, which passes the record of
-          // its own origin, as Heritrix and StormCrawler make the Location
-          // an outlink rather than follow it.
-          followRedirect: false,
-          retry: this.#origins.retry,
-          // Lets the caller's Got hooks tell pages it reads from documents readers read.
-          context:
-            entry.redirect === null
-              ? { page }
-              : { ...entry.redirect.context, page },
-        });
-      } catch (cause) {
-        signal.throwIfAborted();
-        const errorResponse =
-          cause instanceof RequestError ? cause.response : undefined;
-        this.#visited(entry, 'failed', null, { kind: 'failed' }, before);
-        yield this.#tolerates(entry, errorResponse?.statusCode)
-          ? { progress: entry.url, routes: [] }
-          : this.#failure(entry, page, errorResponse?.url ?? entry.url, cause);
-        continue;
-      }
+      if (robots !== undefined) {
+        // robots.txt redirected more than five times: it allows everything
+        // and gives the readers nothing.
+        if (robots.answer === null) {
+          this.#visited(entry, 'failed', null, { kind: 'failed' }, before);
+          yield { progress: entry.url, routes: [] };
+          continue;
+        }
+        response = robots.answer;
+      } else
+        try {
+          await this.#origins.pace(origin, signal);
+          response = await this.#http(entry.url, {
+            signal,
+            responseType: 'buffer',
+            throwHttpErrors: false,
+            // A redirect is a request of its own, which passes the record of
+            // its own origin, as Heritrix and StormCrawler make the Location
+            // an outlink rather than follow it.
+            followRedirect: false,
+            retry: this.#origins.retry,
+            // Lets the caller's Got hooks tell pages it reads from documents readers read.
+            context:
+              entry.redirect === null
+                ? { page }
+                : { ...entry.redirect.context, page },
+          });
+        } catch (cause) {
+          signal.throwIfAborted();
+          const errorResponse =
+            cause instanceof RequestError ? cause.response : undefined;
+          this.#visited(entry, 'failed', null, { kind: 'failed' }, before);
+          yield this.#tolerates(entry, errorResponse?.statusCode)
+            ? { progress: entry.url, routes: [] }
+            : this.#failure(
+                entry,
+                page,
+                errorResponse?.url ?? entry.url,
+                cause,
+              );
+          continue;
+        }
       signal.throwIfAborted();
       const headers = new Headers();
       for (const [name, value] of Object.entries(response.headers))
@@ -598,12 +613,16 @@ class CrawlRun implements Crawl {
           headers.set(name, Array.isArray(value) ? value.join(', ') : value);
       const { statusCode } = response;
       const tolerated = this.#tolerates(entry, statusCode);
-      const until = this.#origins.answered(
-        entry.url,
-        statusCode,
-        headers.get('retry-after'),
-        tolerated,
-      );
+      // The origin's record counted the robots.txt answer that it downloaded.
+      const until =
+        robots === undefined
+          ? this.#origins.answered(
+              entry.url,
+              statusCode,
+              headers.get('retry-after'),
+              tolerated,
+            )
+          : null;
       if (until !== null) {
         // A block is the host's, not the page's: the URL goes back to the
         // frontier, and the revisit policy does not schedule it.
@@ -889,6 +908,8 @@ class CrawlRun implements Crawl {
         readonly entry: Entry;
         readonly included: boolean;
         readonly wanted: readonly boolean[];
+        // The answer of the origin's robots.txt in this read, for its robots.txt document.
+        readonly robots?: { readonly answer: Response | null };
       }
     | { readonly failure: CrawlFailure }
     | undefined
@@ -928,26 +949,21 @@ class CrawlRun implements Crawl {
             this.#held.set(entry.url, entry);
             continue;
           }
+          let robots: { readonly answer: Response | null } | undefined;
           if (entry.url !== `${origin}/robots.txt`) {
             const rules = await this.#origins.rules(origin, signal);
-            if (!(rules instanceof RobotsRules)) {
-              this.#held.set(entry.url, entry);
-              this.#turn = { ...this.#turn, current: null };
-              return {
-                failure: this.#failure(
-                  entry,
-                  this.#handedBack(entry),
-                  `${origin}/robots.txt`,
-                  new Error(
-                    `${origin} could not give its robots.txt (${Error.isError(rules.cause) ? rules.cause.message : String(rules.cause)}), so the crawl requests nothing there until ${new Date(rules.until).toISOString()}`,
-                    { cause: rules.cause },
-                  ),
-                ),
-              };
-            }
+            if (!(rules instanceof RobotsRules))
+              return this.#unreachable(entry, origin, rules);
             // A disallowed URL is no failure: the crawl leaves it out, and the
             // revisit policy does not schedule it.
             if (!rules.allows(entry.url)) continue;
+          } else {
+            // The origin's record downloads robots.txt, once in a read, for its
+            // rules; the crawl's robots.txt document reads that answer.
+            const answer = await this.#origins.robotsTxt(origin, signal);
+            if (answer !== null && 'until' in answer)
+              return this.#unreachable(entry, origin, answer);
+            robots = { answer };
           }
           // A reader's budget counts admissions, and a second download of a
           // URL is none; a redirect carries the admissions of its request.
@@ -961,7 +977,9 @@ class CrawlRun implements Crawl {
           if (needed || wanted.includes(true)) {
             if (budgeted) this.#origins.spend(origin);
             this.#turn = { ...this.#turn, current: entry };
-            return { entry, included, wanted };
+            return robots === undefined
+              ? { entry, included, wanted }
+              : { entry, included, wanted, robots };
           }
           this.#known.delete(entry.url);
         }
@@ -971,6 +989,24 @@ class CrawlRun implements Crawl {
     }
     this.#turn = { ...this.#turn, current: null };
     return undefined;
+  }
+
+  // An entry whose origin could not give its robots.txt waits in the frontier
+  // until the origin's breaker closes; the crawl fails it once.
+  #unreachable(entry: Entry, origin: string, rules: Unreachable) {
+    this.#held.set(entry.url, entry);
+    this.#turn = { ...this.#turn, current: null };
+    return {
+      failure: this.#failure(
+        entry,
+        this.#handedBack(entry),
+        `${origin}/robots.txt`,
+        new Error(
+          `${origin} could not give its robots.txt (${Error.isError(rules.cause) ? rules.cause.message : String(rules.cause)}), so the crawl requests nothing there until ${new Date(rules.until).toISOString()}`,
+          { cause: rules.cause },
+        ),
+      ),
+    };
   }
 
   // Listings go strictly first: they are bounded, and their provenance must

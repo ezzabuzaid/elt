@@ -9,7 +9,7 @@ The `WebCrawler` engine. It keeps the frontier of one list of starting URLs, and
 _Avoid_: Spider, scraper, fetcher
 
 **Origin record**:
-What the crawls of one read know about one origin: its `robots.txt` rules and when they were read, its block, its slowdown, its run of 403 answers, the start of its last request and its expansion budget. `Origins` keeps one record for each origin, and every crawl of the read asks the same one ([ADR 0006](./docs/adr/0006-every-crawl-of-a-read-asks-one-record-of-each-origin.md)).
+What the crawls of one read know about one origin: its `robots.txt` rules and when they were read, the `robots.txt` answer that this read downloaded, its block, its slowdown, its run of 403 answers, the start of its last request and its expansion budget. `Origins` keeps one record for each origin, and every crawl of the read asks the same one ([ADR 0006](./docs/adr/0006-every-crawl-of-a-read-asks-one-record-of-each-origin.md)).
 _Avoid_: Site state, host cache, politeness
 
 **Read**:
