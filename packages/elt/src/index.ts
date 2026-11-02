@@ -1,11 +1,6 @@
 export { Catalog } from './core/catalog.ts';
 export { Connection } from './core/connection.ts';
-export {
-  Copy,
-  type CopyOutcome,
-  type CopyProgress,
-  type CopyResult,
-} from './core/copy.ts';
+export { Copy, type CopyOutcome, type CopyResult } from './core/copy.ts';
 export {
   CopyConfiguration,
   type DedupPolicy,
@@ -25,7 +20,13 @@ export {
   type RuleColumn,
   type RuleResult,
 } from './core/rule.ts';
-export type { ObservedPass, PassObserver } from './core/pass-observer.ts';
+export {
+  CopyProgress,
+  PassFailed,
+  PassFinished,
+  PassStarted,
+  passChannels,
+} from './core/pass-channels.ts';
 export { FileContent } from './core/file-content.ts';
 export { fileExtension } from './core/file-extension.ts';
 export { FileRead, FileReference } from './core/file-read.ts';

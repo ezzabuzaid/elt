@@ -11,7 +11,14 @@ import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 import type { Response } from 'got';
 
-import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
+import {
+  Connection,
+  Copy,
+  CopyProgress,
+  Pipeline,
+  PipelineError,
+  passChannels,
+} from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
@@ -750,26 +757,23 @@ test(
     );
     const controller = new AbortController();
     const reason = new Error('Stop after the first recovered article');
-    const observed = new Pipeline({
-      connections: retry.connections,
-      history: retry.history,
-      observer: {
-        begin: () => ({
-          progress: (progress) => {
-            if (progress.committed.count === 1) controller.abort(reason);
-          },
-          finish: () => {},
-          fail: () => {},
-        }),
-      },
-    });
+    const stopAfterOne = (message: unknown) => {
+      if (
+        message instanceof CopyProgress &&
+        message.connection === retry.connections[0] &&
+        message.committed.count === 1
+      )
+        controller.abort(reason);
+    };
+    passChannels.progress.subscribe(stopAfterOne);
     try {
       await assert.rejects(
-        observed.run({ signal: controller.signal }),
+        retry.run({ signal: controller.signal }),
         (error) => error === reason,
       );
     } finally {
       controller.abort(reason);
+      passChannels.progress.unsubscribe(stopAfterOne);
     }
     assert(
       requests.includes('/a'),
@@ -1237,24 +1241,23 @@ test('chosen websites and feeds persist article metadata, make unchanged reruns 
       checkpoints.path,
     );
     const emitted: number[] = [];
-    const observed = new Pipeline({
-      connections: rerun.connections,
-      history: rerun.history,
-      observer: {
-        begin: () => ({
-          progress: (progress) => {
-            emitted.push(progress.emitted.count);
-          },
-          finish: () => {},
-          fail: () => {},
-        }),
-      },
-    });
-    assert.equal(
-      (await observed.run())[0]?.count,
-      0,
-      'unchanged records must not be re-emitted',
-    );
+    const count = (message: unknown) => {
+      if (
+        message instanceof CopyProgress &&
+        message.connection === rerun.connections[0]
+      )
+        emitted.push(message.emitted.count);
+    };
+    passChannels.progress.subscribe(count);
+    try {
+      assert.equal(
+        (await rerun.run())[0]?.count,
+        0,
+        'unchanged records must not be re-emitted',
+      );
+    } finally {
+      passChannels.progress.unsubscribe(count);
+    }
     assert(emitted.length > 0);
     assert(
       emitted.every((count) => count === 0),

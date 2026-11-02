@@ -12,6 +12,7 @@ import {
   Connection,
   Copy,
   CopyConfiguration,
+  CopyProgress,
   type DeclaredCopy,
   DerivedDataset,
   Destination,
@@ -22,6 +23,9 @@ import {
   type Load,
   LocalFiles,
   type Partition,
+  PassFailed,
+  PassFinished,
+  PassStarted,
   Pipeline,
   PipelineError,
   type ReadMessage,
@@ -39,6 +43,7 @@ import {
   Writer,
   isCalendarDate,
   isTimestamp,
+  passChannels,
   passStatus,
   validateRecords,
 } from './index.ts';
@@ -1568,7 +1573,7 @@ class Watching extends ContextSource {
 
 // A watcher that fails once its first pass began, for a reason only the user
 // can fix, so its connection stops: one that fails for a system reason would
-// watch again. Not the default, so an observer sees what the source decided.
+// watch again. Not the default, so a test sees what the source decided.
 class Lost extends ContextSource {
   protected override async *observe({ streams }: SourceWatchOptions) {
     yield streams;
@@ -1731,24 +1736,38 @@ test("connections read side by side, so one connection's pass never waits for an
   ]);
 });
 
-test("an observed pass sees each copy's progress: what the source emitted, what committed, and how it ended", async () => {
-  const progress: string[] = [];
+// What the pass channels publish of the connection named name while the
+// returned object is in scope; tests of one file run one at a time.
+function listen(name: string) {
+  const heard: (PassStarted | CopyProgress | PassFinished | PassFailed)[] = [];
+  const hear = (message: unknown) => {
+    if (
+      (message instanceof PassStarted ||
+        message instanceof CopyProgress ||
+        message instanceof PassFinished ||
+        message instanceof PassFailed) &&
+      message.connection.name === name
+    )
+      heard.push(message);
+  };
+  const channels = Object.values(passChannels);
+  for (const channel of channels) channel.subscribe(hear);
+  return {
+    heard,
+    [Symbol.dispose]() {
+      for (const channel of channels) channel.unsubscribe(hear);
+    },
+  };
+}
+
+test("a pass publishes each copy's progress: what the source emitted, what committed, and how it ended", async () => {
+  using listened = listen('test');
   const source = new ContextSource({
     left: [record('left', 'a'), record('left', 'b')],
     right: [record('right', 'x'), new Error('right lost')],
   });
   const pipeline = new Pipeline({
     history: new MemoryHistory(),
-    observer: {
-      begin: () => ({
-        progress: ({ copy, status, emitted, committed }) =>
-          progress.push(
-            `${copy.from.name} ${status} emitted ${emitted.count} committed ${committed.count}`,
-          ),
-        finish: () => {},
-        fail: () => {},
-      }),
-    },
     connections: [
       new Connection({
         name: 'test',
@@ -1764,6 +1783,13 @@ test("an observed pass sees each copy's progress: what the source emitted, what 
 
   await pipeline.run().catch(() => {});
 
+  const progress = listened.heard.flatMap((message) =>
+    message instanceof CopyProgress
+      ? [
+          `${message.copy.from.name} ${message.status} emitted ${message.emitted.count} committed ${message.committed.count}`,
+        ]
+      : [],
+  );
   assert.deepEqual(
     progress.filter((entry) => entry.startsWith('left')),
     [
@@ -1786,160 +1812,55 @@ test("an observed pass sees each copy's progress: what the source emitted, what 
 });
 
 test('a copy that fails before reading still reports how it ended', async () => {
-  const progress: string[] = [];
+  using listened = listen('locked');
   const source = new LockedSource(new Error('store locked'));
   const pipeline = new Pipeline({
     history: new MemoryHistory(),
-    observer: {
-      begin: () => ({
-        progress: ({ copy, status }) =>
-          progress.push(`${copy.from.name} ${status}`),
-        finish: () => {},
-        fail: () => {},
-      }),
-    },
     connections: [leftOnly('locked', source)],
   });
 
   await pipeline.run().catch(() => {});
 
-  assert.deepEqual(progress, ['left incomplete']);
-});
-
-test('an observer whose pass throws never changes what a run loads or what its history records', async () => {
-  const history = new MemoryHistory();
-  const thrown = new Set<string>();
-  const broken = (hook: string) => () => {
-    thrown.add(hook);
-    throw new Error('renderer broke');
-  };
-  const source = new ContextSource({
-    left: [record('left', 'a'), record('left', 'b')],
-  });
-  const pipeline = new Pipeline({
-    history,
-    observer: {
-      begin: () => ({
-        progress: broken('progress'),
-        finish: broken('finish'),
-        fail: broken('fail'),
-      }),
-    },
-    connections: [leftOnly('steady', source)],
-  });
-
-  const results = await pipeline.run();
-
   assert.deepEqual(
-    results.map(({ copy, count }) => [copy.to.name, count]),
-    [['steady-left', 2]],
+    listened.heard.flatMap((message) =>
+      message instanceof CopyProgress
+        ? [`${message.copy.from.name} ${message.status}`]
+        : [],
+    ),
+    ['left incomplete'],
   );
-  assert.deepEqual(history.log, [
-    'begin steady left:test',
-    'finish steady succeeded',
-  ]);
-  assert.deepEqual([...thrown], ['progress', 'finish']);
 });
 
-test('an observer that throws, from begin or from a pass, never changes what a watch loads, how a stopped watcher is reported, or what its history records', async () => {
-  const thrown = new Set<string>();
-  const broken = (hook: string) => () => {
-    thrown.add(hook);
-    throw new Error('renderer broke');
-  };
-  for (const { observer, hooks } of [
-    { observer: { begin: broken('begin') }, hooks: ['begin'] },
-    {
-      observer: {
-        begin: () => ({
-          progress: broken('progress'),
-          finish: broken('finish'),
-          fail: broken('fail'),
-        }),
-      },
-      hooks: ['fail', 'finish', 'progress'],
-    },
-  ]) {
-    thrown.clear();
-    const history = new MemoryHistory();
-    const steady = new ContextSource();
-    const pipeline = new Pipeline({
-      history,
-      observer,
-      connections: [
-        new Connection({
-          name: 'steady',
-          source: steady,
-          destination: new DrainingDestination(),
-          steps: [
-            new Copy(steady.left, new NamedTarget('steady-left')),
-            new Copy(steady.right, new NamedTarget('steady-right')),
-          ],
-        }),
-        leftOnly('lost', new Lost()),
-      ],
-    });
-    const passes: string[] = [];
-
-    const error = await (async () => {
-      for await (const { connection, outcomes } of pipeline.watch({
-        signal: AbortSignal.timeout(5000),
-      }))
-        passes.push(
-          `${connection.name}:${outcomes.map(({ copy }) => copy.from.name).join(',')}`,
-        );
-    })().then(
-      () => assert.fail('the lost watcher must be reported'),
-      (error: unknown) => error,
-    );
-
-    assert.ok(error instanceof AggregateError);
-    assert.equal(error.message, 'Connection lost: watcher lost');
-    assert.deepEqual(passes.toSorted(), [
-      'lost:left',
-      'steady:left,right',
-      'steady:right',
-    ]);
-    // Passes of the two connections interleave, so the log is compared sorted.
-    assert.deepEqual(history.log.toSorted(), [
-      'begin lost left:test',
-      'begin lost left:test',
-      'begin steady left:test,right:test',
-      'begin steady right:test',
-      'fail lost watcher lost',
-      'finish lost succeeded',
-      'finish steady succeeded',
-      'finish steady succeeded',
-    ]);
-    assert.deepEqual([...thrown].toSorted(), hooks);
-  }
-});
-
-test('an observer sees each pass end once its history recorded it, and a stopped watcher as a failed pass with whose failure it is', async () => {
+test('a pass publishes its end once its history recorded it, and a stopped watcher as a failed pass with whose failure it is', async () => {
   const history = new MemoryHistory();
+  // Logged as the message arrives, so the log shows it after what the history recorded.
+  const hear = (message: unknown) => {
+    if (message instanceof PassFinished)
+      history.log.push(
+        `observed finish ${message.connection.name} ${passStatus(message.outcomes)}`,
+      );
+    if (message instanceof PassFailed)
+      history.log.push(
+        `observed fail ${message.connection.name} ${message.error instanceof Error ? message.error.message : String(message.error)} ${message.failureType}`,
+      );
+  };
+  passChannels.finish.subscribe(hear);
+  passChannels.failure.subscribe(hear);
   const pipeline = new Pipeline({
     history,
-    observer: {
-      begin: (connection) => ({
-        progress: () => {},
-        finish: (outcomes) =>
-          history.log.push(
-            `observed finish ${connection.name} ${passStatus(outcomes)}`,
-          ),
-        fail: (error, failureType) =>
-          history.log.push(
-            `observed fail ${connection.name} ${error instanceof Error ? error.message : String(error)} ${failureType}`,
-          ),
-      }),
-    },
     connections: [leftOnly('lost', new Lost())],
   });
 
-  await assert.rejects(async () => {
-    for await (const _ of pipeline.watch({
-      signal: AbortSignal.timeout(5000),
-    }));
-  }, /Connection lost: watcher lost/);
+  try {
+    await assert.rejects(async () => {
+      for await (const _ of pipeline.watch({
+        signal: AbortSignal.timeout(5000),
+      }));
+    }, /Connection lost: watcher lost/);
+  } finally {
+    passChannels.finish.unsubscribe(hear);
+    passChannels.failure.unsubscribe(hear);
+  }
 
   assert.deepEqual(history.log, [
     'begin lost left:test',
@@ -1968,18 +1889,11 @@ test('a failure is config when the source lists its class in configErrors, and s
       throw this.#error;
     }
   }
-  const observed: string[] = [];
+  using denied = listen('denied');
+  using lost = listen('lost');
   const watch = (name: string, source: ContextSource, signal: AbortSignal) =>
     new Pipeline({
       history: new MemoryHistory(),
-      observer: {
-        begin: () => ({
-          progress: () => {},
-          finish: () => {},
-          fail: (_error, failureType) =>
-            observed.push(`${name} ${failureType}`),
-        }),
-      },
       connections: [leftOnly(name, source)],
     }).watch({ signal });
 
@@ -1998,7 +1912,14 @@ test('a failure is config when the source lists its class in configErrors, and s
     AbortSignal.timeout(2000),
   ));
 
-  assert.deepEqual(observed, ['denied config', 'lost system']);
+  assert.deepEqual(
+    [...denied.heard, ...lost.heard].flatMap((message) =>
+      message instanceof PassFailed
+        ? [`${message.connection.name} ${message.failureType}`]
+        : [],
+    ),
+    ['denied config', 'lost system'],
+  );
 });
 
 test('a connection whose watcher fails for a config reason stops alone and is recorded; the others keep watching', async () => {

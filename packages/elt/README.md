@@ -868,14 +868,37 @@ const recorded = new Pipeline({
 });
 ```
 
-### Pass observer
+### Pass channels
 
-To show passes while they run, for example in a terminal, give a `PassObserver` as `Pipeline({ connections, history, observer })`.
+Each pass publishes what it does on `node:diagnostics_channel` channels, as Node asks a module to do (`doc/api/diagnostics_channel.md`) and as Got and undici do for their requests. To show passes while they run, for example in a terminal, subscribe to `passChannels`:
 
-- Its `begin(connection)` returns an `ObservedPass`.
-- `progress(progress)` sees each copy as a `CopyProgress`: its `status` (`running`, then one time `complete` or `incomplete`), and the records and deletions that the source `emitted` and that the destination `committed` until then.
-- `finish(outcomes)` and `fail(error, failureType)` see how the pass ended, each after the history recorded it.
-- The observer only advises. The pipeline does not wait for it. What it throws is ignored, and it never changes what loads or what the history records. Nothing keeps what it sees.
+| Channel                                       | Message        | When                                                                                                                                                                                         |
+| --------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `passChannels.start` (`elt:pass.start`)       | `PassStarted`  | The history recorded the start of the pass.                                                                                                                                                  |
+| `passChannels.progress` (`elt:copy.progress`) | `CopyProgress` | A copy changed: its `status` (`running`, then one time `complete` or `incomplete`), and the records and deletions that the source `emitted` and that the destination `committed` until then. |
+| `passChannels.finish` (`elt:pass.finish`)     | `PassFinished` | The history recorded the `outcomes` of the pass.                                                                                                                                             |
+| `passChannels.failure` (`elt:pass.failure`)   | `PassFailed`   | The history recorded why a connection gave no pass, with its `error` and `failureType`.                                                                                                      |
+
+```ts
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+import { CopyProgress, passChannels } from '@workspace/elt';
+
+const scope = new AsyncLocalStorage<string>();
+passChannels.progress.subscribe((message) => {
+  if (message instanceof CopyProgress && scope.getStore() === 'mail')
+    console.log(
+      message.copy.from.name,
+      message.status,
+      message.committed.count,
+    );
+});
+await scope.run('mail', () => pipeline.run());
+```
+
+- A subscriber gets each message as `unknown`, and tells it by its class.
+- Each message has its `connection`. A host that runs several pipelines in one process tells its own passes by their async context: it runs each in an `AsyncLocalStorage`, because Node calls a subscriber in the async context of the publisher.
+- The pipeline does not wait for a subscriber. A subscriber that throws does not stop the pass, but Node reports the error as an uncaught exception, so a subscriber catches its own errors.
 
 ### Failure types
 

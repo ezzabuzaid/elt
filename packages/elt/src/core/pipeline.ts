@@ -11,7 +11,12 @@ import {
 import type { DerivedDataset } from './derived-dataset.ts';
 import { DerivedRefreshes } from './derived-refreshes.ts';
 import { interleave } from './interleave.ts';
-import type { PassObserver } from './pass-observer.ts';
+import {
+  PassFailed,
+  PassFinished,
+  PassStarted,
+  passChannels,
+} from './pass-channels.ts';
 import { replicate } from './replication.ts';
 import type { Source } from './source.ts';
 import type { Stream } from './stream.ts';
@@ -89,19 +94,16 @@ export class WatchError extends AggregateError {
 export class Pipeline<Target extends DestinationTarget> {
   readonly connections: readonly Connection<Target>[];
   readonly history: SyncHistory<Target>;
-  readonly observer?: PassObserver<Target>;
   // In declared order, which is the order they refresh in.
   readonly derived: readonly DerivedDataset<Target>[];
 
   constructor({
     connections,
     history,
-    observer,
     derived,
   }: {
     connections: readonly Connection<Target>[];
     history: SyncHistory<NoInfer<Target>>;
-    observer?: PassObserver<NoInfer<Target>>;
     // A pipeline that keeps no derived data declares none.
     derived?: readonly DerivedDataset<NoInfer<Target>>[];
   }) {
@@ -111,7 +113,6 @@ export class Pipeline<Target extends DestinationTarget> {
       );
     this.connections = Object.freeze([...connections]);
     this.history = history;
-    this.observer = observer;
     this.derived = Object.freeze([...(derived ?? [])]);
     Object.freeze(this);
   }
@@ -458,13 +459,13 @@ export class Pipeline<Target extends DestinationTarget> {
       connection,
       steps.map((copy) => ({ copy, coverage: source.coverage(copy.from) })),
     );
-    const observed = advise(() => this.observer?.begin(connection));
+    passChannels.start.publish(new PassStarted(connection));
     const read = await replicate(
       source,
       connection.destination,
       connection.checkpoints,
       asked.flatMap((answer) => ('upstream' in answer ? [answer.copy] : [])),
-      observed && ((progress) => advise(() => observed.progress(progress))),
+      connection,
       committed,
       signal,
     );
@@ -502,7 +503,7 @@ export class Pipeline<Target extends DestinationTarget> {
         ),
       ),
     );
-    advise(() => observed?.finish(outcomes));
+    passChannels.finish.publish(new PassFinished(connection, outcomes));
     return Object.freeze({ connection, outcomes: Object.freeze(outcomes) });
   }
 
@@ -530,7 +531,9 @@ export class Pipeline<Target extends DestinationTarget> {
         `Connection ${connection.name} stopped (${message(failure)}), and its sync history could not record why: ${message(error)}`,
       );
     }
-    advise(() => this.observer?.begin(connection).fail(failure, failureType));
+    passChannels.failure.publish(
+      new PassFailed(connection, failure, failureType),
+    );
   }
 
   // Every declaration is checked before any connection reads, so a wiring
@@ -601,13 +604,4 @@ async function checked(
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-// A pass observer is advisory: what it throws never reaches the pass.
-function advise<T>(call: () => T): T | undefined {
-  try {
-    return call();
-  } catch {
-    return undefined;
-  }
 }

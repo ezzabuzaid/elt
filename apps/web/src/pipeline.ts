@@ -1,6 +1,12 @@
 import { join } from 'node:path';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  Connection,
+  Copy,
+  CopyProgress,
+  Pipeline,
+  passChannels,
+} from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
@@ -33,6 +39,23 @@ const checkpoints = new SQLiteCheckpointStore({
   path: join(directory, 'checkpoints.sqlite'),
 });
 
+// The page shows each copy of the web connection's pass while it runs.
+passChannels.progress.subscribe((message) => {
+  if (
+    message instanceof CopyProgress &&
+    message.connection.name === connector
+  ) {
+    activity.publish({
+      kind: 'syncing',
+      progress: {
+        status: message.status,
+        emitted: message.emitted,
+        committed: message.committed,
+      },
+    });
+  }
+});
+
 // Built on each Sync or Clear from the settings as they are then, because a
 // WebSource's inputs cannot change after construction.
 export default async function pipeline() {
@@ -62,17 +85,6 @@ export default async function pipeline() {
   });
   return new Pipeline({
     history,
-    observer: {
-      begin: () => ({
-        progress: ({ status, emitted, committed }) =>
-          activity.publish({
-            kind: 'syncing',
-            progress: { status, emitted, committed },
-          }),
-        finish: () => undefined,
-        fail: () => undefined,
-      }),
-    },
     connections: [
       new Connection({
         name: connector,

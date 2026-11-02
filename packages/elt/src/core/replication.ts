@@ -3,11 +3,13 @@ import type {
   CheckpointRun,
   CheckpointStore,
 } from '../state/checkpoint-store.ts';
+import type { Connection } from './connection.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
-import type { Copy, CopyOutcome, CopyProgress } from './copy.ts';
+import type { Copy, CopyOutcome } from './copy.ts';
 import type { Destination } from './destination.ts';
 import { FileTransfer } from './file-transfer.ts';
 import type { Partition } from './partition.ts';
+import { CopyProgress, passChannels } from './pass-channels.ts';
 import type { FieldSchema, ItemSchema } from './record-validation.ts';
 import {
   type KeyValue,
@@ -52,7 +54,7 @@ class Replicated<Target extends DestinationTarget> {
   #progress: Reporting | Settled = new Reporting();
 
   readonly copy: Copy<Target>;
-  readonly observe: ((progress: CopyProgress<Target>) => void) | undefined;
+  readonly connection: Connection<Target>;
   // Told each time the copy made rows visible in its target.
   readonly published: () => void;
   readonly files: FileTransfer;
@@ -60,13 +62,13 @@ class Replicated<Target extends DestinationTarget> {
 
   constructor(
     copy: Copy<Target>,
+    connection: Connection<Target>,
     source: Source,
     destination: Destination<Target>,
-    observe: ((progress: CopyProgress<Target>) => void) | undefined,
     published: () => void,
   ) {
     this.copy = copy;
-    this.observe = observe;
+    this.connection = connection;
     this.published = published;
     this.#source = source;
     this.files = new FileTransfer(
@@ -108,13 +110,16 @@ class Replicated<Target extends DestinationTarget> {
     this.#notify(this.failures.length === 0 ? 'complete' : 'incomplete');
   }
 
-  #notify(status: CopyProgress<Target>['status']): void {
-    this.observe?.({
-      copy: this.copy,
-      status,
-      emitted: { ...this.emitted },
-      committed: { ...this.committed },
-    });
+  #notify(status: CopyProgress['status']): void {
+    passChannels.progress.publish(
+      new CopyProgress(
+        this.connection,
+        this.copy,
+        status,
+        { ...this.emitted },
+        { ...this.committed },
+      ),
+    );
   }
 }
 
@@ -130,12 +135,12 @@ export async function replicate<Target extends DestinationTarget>(
   destination: Destination<Target>,
   checkpoints: CheckpointStore | undefined,
   copies: readonly Copy<Target>[],
-  observe: ((progress: CopyProgress<Target>) => void) | undefined,
+  connection: Connection<Target>,
   committed: () => void,
   signal: AbortSignal | undefined,
 ): Promise<CopyOutcome<Target>[]> {
   const replications = copies.map(
-    (copy) => new Replicated(copy, source, destination, observe, committed),
+    (copy) => new Replicated(copy, connection, source, destination, committed),
   );
   const bindings = new Map<string, CheckpointBinding>();
   for (const { copy } of replications)

@@ -6,7 +6,13 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  Connection,
+  Copy,
+  CopyProgress,
+  Pipeline,
+  passChannels,
+} from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
@@ -182,23 +188,24 @@ test('new URLs survive interruption, and only the page in flight and the due URL
   });
   const stop = new AbortController(),
     reason = new Error('stop after parent');
-  const first = new Pipeline({
-    connections: [connection],
-    history,
-    observer: {
-      begin: () => ({
-        progress: (progress) => {
-          if (progress.committed.count === 1) stop.abort(reason);
-        },
-        finish: () => {},
-        fail: () => {},
-      }),
-    },
-  });
-  await assert.rejects(
-    first.run({ signal: stop.signal }),
-    (error) => error === reason,
-  );
+  const first = new Pipeline({ connections: [connection], history });
+  const stopAfterOne = (message: unknown) => {
+    if (
+      message instanceof CopyProgress &&
+      message.connection === connection &&
+      message.committed.count === 1
+    )
+      stop.abort(reason);
+  };
+  passChannels.progress.subscribe(stopAfterOne);
+  try {
+    await assert.rejects(
+      first.run({ signal: stop.signal }),
+      (error) => error === reason,
+    );
+  } finally {
+    passChannels.progress.unsubscribe(stopAfterOne);
+  }
   requests.length = 0;
   const resumed = new Pipeline({ connections: [connection], history });
   assert.equal((await resumed.run())[0]?.count, 1);
