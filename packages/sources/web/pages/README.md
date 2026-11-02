@@ -117,7 +117,7 @@ Within each input, the crawler downloads one page at a time. Every crawl of a re
 
 ## Diagnostics channel
 
-The source publishes each page that it read on `pageChannels.extract` (`elt:web.extract`), a `node:diagnostics_channel` channel, as the crawler publishes its requests on `crawlChannels`. The message is a `PageExtracted`: the `stream` and the `url`, how long the extractor took to `read` the page and give its fingerprint, and what it `extracted`: the number of `records` and the `duration` of their extraction, or null when the fingerprint was the one of the last read, so the source extracted no records. Import it from `@workspace/source-web-pages/page-channels`.
+The source publishes each page that it read on `pageChannels.extract` (`elt:web.extract`), a `node:diagnostics_channel` channel, as the crawler publishes its requests on `crawlChannels`. The message is a `PageExtracted`: the `crawl` that handed out the page, the `stream` and the `url`, how long the extractor took to `read` the page and give its fingerprint, and what it `extracted`: the number of `records` and the `duration` of their extraction, or null when the fingerprint was the one of the last read, so the source extracted no records. Import it from `@workspace/source-web-pages/page-channels`.
 
 ## Documentation
 

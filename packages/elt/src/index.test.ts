@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -1809,6 +1810,40 @@ test("a pass publishes each copy's progress: what the source emitted, what commi
       'right incomplete emitted 1 committed 0',
     ],
   );
+});
+
+test("a store that a subscriber binds to a pass's start holds the pass while the pass publishes, such as each copy's progress", async () => {
+  const pass = new AsyncLocalStorage<PassStarted>();
+  const progressIn: (PassStarted | undefined)[] = [];
+  const hear = (message: unknown) => {
+    if (message instanceof CopyProgress && message.connection.name === 'stored')
+      progressIn.push(pass.getStore());
+  };
+  const source = new ContextSource({
+    left: [record('left', 'a'), record('left', 'b')],
+  });
+  const pipeline = new Pipeline({
+    history: new MemoryHistory(),
+    connections: [leftOnly('stored', source)],
+  });
+  passChannels.start.bindStore(pass);
+  passChannels.progress.subscribe(hear);
+
+  try {
+    await pipeline.run();
+  } finally {
+    passChannels.progress.unsubscribe(hear);
+    passChannels.start.unbindStore(pass);
+  }
+
+  assert.ok(progressIn.length > 0);
+  assert.ok(
+    progressIn.every(
+      (started) =>
+        started instanceof PassStarted && started.connection.name === 'stored',
+    ),
+  );
+  assert.equal(pass.getStore(), undefined);
 });
 
 test('a copy that fails before reading still reports how it ended', async () => {

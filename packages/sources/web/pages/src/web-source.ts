@@ -590,6 +590,7 @@ export class WebSource extends Source<WebRead> {
             }
             pageChannels.extract.publish(
               new PageExtracted(
+                crawl,
                 configuration.stream.name,
                 entry.url,
                 read,

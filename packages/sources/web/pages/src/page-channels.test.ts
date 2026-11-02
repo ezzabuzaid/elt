@@ -12,7 +12,12 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
-import { AlwaysRevisit, ListingReader } from '@workspace/sdk-web-crawler';
+import {
+  AlwaysRevisit,
+  CrawlStarted,
+  ListingReader,
+  crawlChannels,
+} from '@workspace/sdk-web-crawler';
 
 import { ArticleExtractor } from './article-extractor.ts';
 import { PageExtracted, pageChannels } from './page-channels.ts';
@@ -75,16 +80,20 @@ test('each page publishes the records it gave once read, and a page whose finger
     ],
   });
   const heard: PageExtracted[] = [];
+  const crawls: unknown[] = [];
   const hear = (message: unknown) => {
     if (message instanceof PageExtracted) heard.push(message);
+    if (message instanceof CrawlStarted) crawls.push(message.crawl);
   };
   pageChannels.extract.subscribe(hear);
+  crawlChannels.start.subscribe(hear);
 
   try {
     await pipeline.run();
     await pipeline.run();
   } finally {
     pageChannels.extract.unsubscribe(hear);
+    crawlChannels.start.unsubscribe(hear);
   }
 
   assert.deepEqual(
@@ -99,4 +108,10 @@ test('each page publishes the records it gave once read, and a page whose finger
     ],
   );
   assert.ok(heard.every(({ read }) => read >= 0));
+  // Each run's page names that run's crawl.
+  assert.equal(crawls.length, 2);
+  assert.deepEqual(
+    heard.map(({ crawl }) => crawls.indexOf(crawl)),
+    [0, 1],
+  );
 });

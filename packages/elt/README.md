@@ -898,6 +898,7 @@ await scope.run('mail', () => pipeline.run());
 
 - A subscriber gets each message as `unknown`, and tells it by its class.
 - Each message has its `connection`. A host that runs several pipelines in one process tells its own passes by their async context: it runs each in an `AsyncLocalStorage`, because Node calls a subscriber in the async context of the publisher.
+- The pass runs in the stores that subscribers bind to `passChannels.start` (`passChannels.start.bindStore(store)`): the pipeline starts the pass with `runStores`. Thus a subscriber's `store.getStore()` gives the pass's `PassStarted` in every message that the pass publishes, as the crawls of the pass publish theirs. An OpenTelemetry subscriber uses it to make a crawl's span a child of its pass's span.
 - The pipeline does not wait for a subscriber. A subscriber that throws does not stop the pass, but Node reports the error as an uncaught exception, so a subscriber catches its own errors.
 
 ### Failure types

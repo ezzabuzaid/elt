@@ -3,14 +3,17 @@ import { channel } from 'node:diagnostics_channel';
 import type { Timings } from 'got';
 
 import type { Priority } from './reader.ts';
+import type { Crawl } from './web-crawler.ts';
 
 // What each crawl publishes while it runs, on node:diagnostics_channel
 // channels, as elt's pipeline publishes its passes (elt passChannels) and Got
 // its requests. A subscriber gets each message as unknown and tells it by its
-// class. A host that runs several crawls tells its own by an
-// AsyncLocalStorage, as Node calls a subscriber in the async context of the
-// publisher. A subscriber that throws does not stop the crawl, but Node
-// reports the error as an uncaught exception.
+// class. Each message of a crawl carries the crawl, the object its host
+// iterates, so a subscriber pairs a crawl's messages when crawls run at the
+// same time, as each message of an undici request carries the request
+// (OpenTelemetry's instrumentation-undici pairs them in a WeakMap). A
+// subscriber that throws does not stop the crawl, but Node reports the error
+// as an uncaught exception.
 export const crawlChannels = {
   start: channel('elt:crawl.start'),
   request: channel('elt:crawl.request'),
@@ -21,9 +24,11 @@ export const crawlChannels = {
 
 /** A crawl began, new or continued from a memento with an unfinished crawl. */
 export class CrawlStarted {
+  readonly crawl: Crawl;
   readonly starts: readonly string[];
   readonly resumed: boolean;
-  constructor(starts: readonly string[], resumed: boolean) {
+  constructor(crawl: Crawl, starts: readonly string[], resumed: boolean) {
+    this.crawl = crawl;
     this.starts = starts;
     this.resumed = resumed;
   }
@@ -53,6 +58,7 @@ export type Errored = { readonly error: unknown };
  * the record: the crawl waited for nothing and sent no request.
  */
 export class CrawlRequested {
+  readonly crawl: Crawl;
   readonly url: string;
   readonly lane: Priority;
   readonly page: boolean;
@@ -68,6 +74,7 @@ export class CrawlRequested {
   readonly pending: Readonly<Record<Priority, number>>;
   readonly held: number;
   constructor(request: {
+    readonly crawl: Crawl;
     readonly url: string;
     readonly lane: Priority;
     readonly page: boolean;
@@ -81,6 +88,7 @@ export class CrawlRequested {
     readonly pending: Readonly<Record<Priority, number>>;
     readonly held: number;
   }) {
+    this.crawl = request.crawl;
     this.url = request.url;
     this.lane = request.lane;
     this.page = request.page;
@@ -103,14 +111,17 @@ export class CrawlRequested {
  * counts a task's backPressuredTimeMsPerSecond.
  */
 export class CrawlHandedOff {
+  readonly crawl: Crawl;
   readonly url: string;
   readonly kind: 'page' | 'failure' | 'progress' | 'deferral';
   readonly duration: number;
   constructor(
+    crawl: Crawl,
     url: string,
     kind: 'page' | 'failure' | 'progress' | 'deferral',
     duration: number,
   ) {
+    this.crawl = crawl;
     this.url = url;
     this.kind = kind;
     this.duration = duration;
@@ -119,9 +130,11 @@ export class CrawlHandedOff {
 
 /** A crawl ended: complete when it reached its end with every page read. */
 export class CrawlEnded {
+  readonly crawl: Crawl;
   readonly complete: boolean;
   readonly nextDue: number | null;
-  constructor(complete: boolean, nextDue: number | null) {
+  constructor(crawl: Crawl, complete: boolean, nextDue: number | null) {
+    this.crawl = crawl;
     this.complete = complete;
     this.nextDue = nextDue;
   }

@@ -459,52 +459,61 @@ export class Pipeline<Target extends DestinationTarget> {
       connection,
       steps.map((copy) => ({ copy, coverage: source.coverage(copy.from) })),
     );
-    passChannels.start.publish(new PassStarted(connection));
-    const read = await replicate(
-      source,
-      connection.destination,
-      connection.checkpoints,
-      asked.flatMap((answer) => ('upstream' in answer ? [answer.copy] : [])),
-      connection,
-      committed,
-      signal,
-    );
-    // A copy whose source could not tell how current its upstream is was not
-    // read: what it would load could not be dated.
-    const outcomes: CopyOutcome<Target>[] = [
-      ...read,
-      ...asked.flatMap((answer) =>
-        'unknown' in answer
-          ? [
-              {
-                copy: answer.copy,
-                count: 0,
-                deleted: 0,
-                failures: [
+    // The pass runs in the stores that subscribers bind to its start, so a
+    // subscriber's async context follows the pass's work, as a span's
+    // context follows it (Node diagnostics_channel, Channel.runStores).
+    return passChannels.start.runStores(
+      new PassStarted(connection),
+      async () => {
+        const read = await replicate(
+          source,
+          connection.destination,
+          connection.checkpoints,
+          asked.flatMap((answer) =>
+            'upstream' in answer ? [answer.copy] : [],
+          ),
+          connection,
+          committed,
+          signal,
+        );
+        // A copy whose source could not tell how current its upstream is was not
+        // read: what it would load could not be dated.
+        const outcomes: CopyOutcome<Target>[] = [
+          ...read,
+          ...asked.flatMap((answer) =>
+            'unknown' in answer
+              ? [
                   {
-                    partition: null,
-                    error: answer.unknown.error,
-                    failureType: source.failureType(answer.unknown.error),
+                    copy: answer.copy,
+                    count: 0,
+                    deleted: 0,
+                    failures: [
+                      {
+                        partition: null,
+                        error: answer.unknown.error,
+                        failureType: source.failureType(answer.unknown.error),
+                      },
+                    ],
+                    cancelled: false,
                   },
-                ],
-                cancelled: false,
-              },
-            ]
-          : [],
-      ),
-    ];
-    await record.finish(
-      outcomes,
-      new Map(
-        asked.flatMap((answer) =>
-          'upstream' in answer && answer.upstream !== null
-            ? [[answer.copy.from.name, answer.upstream]]
-            : [],
-        ),
-      ),
+                ]
+              : [],
+          ),
+        ];
+        await record.finish(
+          outcomes,
+          new Map(
+            asked.flatMap((answer) =>
+              'upstream' in answer && answer.upstream !== null
+                ? [[answer.copy.from.name, answer.upstream]]
+                : [],
+            ),
+          ),
+        );
+        passChannels.finish.publish(new PassFinished(connection, outcomes));
+        return Object.freeze({ connection, outcomes: Object.freeze(outcomes) });
+      },
     );
-    passChannels.finish.publish(new PassFinished(connection, outcomes));
-    return Object.freeze({ connection, outcomes: Object.freeze(outcomes) });
   }
 
   // Records a watcher's failure as a failed attempt: why its connection

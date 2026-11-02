@@ -577,6 +577,7 @@ class CrawlRun implements Crawl {
   > {
     crawlChannels.start.publish(
       new CrawlStarted(
+        this,
         this.#starts.map(({ url }) => url),
         this.#resumed,
       ),
@@ -588,24 +589,24 @@ class CrawlRun implements Crawl {
         const duration = performance.now() - handed;
         if ('response' in entry)
           crawlChannels.handOff.publish(
-            new CrawlHandedOff(entry.url, 'page', duration),
+            new CrawlHandedOff(this, entry.url, 'page', duration),
           );
         else if ('error' in entry)
           crawlChannels.handOff.publish(
-            new CrawlHandedOff(entry.url, 'failure', duration),
+            new CrawlHandedOff(this, entry.url, 'failure', duration),
           );
         else if ('progress' in entry)
           crawlChannels.handOff.publish(
-            new CrawlHandedOff(entry.progress, 'progress', duration),
+            new CrawlHandedOff(this, entry.progress, 'progress', duration),
           );
         else
           crawlChannels.handOff.publish(
-            new CrawlHandedOff(entry.deferred.url, 'deferral', duration),
+            new CrawlHandedOff(this, entry.deferred.url, 'deferral', duration),
           );
       }
     } finally {
       crawlChannels.end.publish(
-        new CrawlEnded(this.#phase instanceof Finished, this.nextDue()),
+        new CrawlEnded(this, this.#phase instanceof Finished, this.nextDue()),
       );
     }
   }
@@ -1069,6 +1070,7 @@ class CrawlRun implements Crawl {
   ) {
     crawlChannels.request.publish(
       new CrawlRequested({
+        crawl: this,
         url: entry.url,
         lane: entry.priority,
         page: entry.page,

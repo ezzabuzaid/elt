@@ -201,3 +201,53 @@ test('a request that gets no answer publishes its error', async () => {
   );
   assert.deepEqual(failed, ['/b']);
 });
+
+test('two crawls of one read that run at the same time put their own crawl on every message', async () => {
+  using server = new Msw().intercept(
+    site(),
+    http.get('https://other.test/*', ({ request }) =>
+      new URL(request.url).pathname === '/robots.txt'
+        ? new HttpResponse(null, { status: 404 })
+        : HttpResponse.html('<p>other</p>'),
+    ),
+  );
+  using listened = listen();
+  const client = got.extend({ retry: { limit: 0 } });
+  const origins = new Origins(client, null);
+  const crawl = (start: string) =>
+    origins
+      .crawler(client, [new ListingReader()], new AdaptiveRevisit())
+      .crawl([start], null, options());
+  const onSite = crawl('https://site.test/');
+  const onOther = crawl('https://other.test/');
+
+  await Promise.all(
+    [onSite, onOther].map(async (each) => {
+      for await (const _ of each);
+    }),
+  );
+
+  for (const [each, host] of [
+    [onSite, 'site.test'],
+    [onOther, 'other.test'],
+  ] as const) {
+    const own = listened.heard.filter(
+      (message) =>
+        (message instanceof CrawlStarted ||
+          message instanceof CrawlRequested ||
+          message instanceof CrawlHandedOff ||
+          message instanceof CrawlEnded) &&
+        message.crawl === each,
+    );
+    assert.ok(own[0] instanceof CrawlStarted, host);
+    assert.ok(own.at(-1) instanceof CrawlEnded, host);
+    const requested = own.flatMap((message) =>
+      message instanceof CrawlRequested ? [new URL(message.url).host] : [],
+    );
+    assert.ok(requested.length > 0, host);
+    assert.ok(
+      requested.every((requestedHost) => requestedHost === host),
+      requested.join(' '),
+    );
+  }
+});

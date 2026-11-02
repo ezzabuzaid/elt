@@ -150,7 +150,7 @@ Each crawl publishes what it does on `node:diagnostics_channel` channels, as Nod
 - The `outcome` of a request is `{ status, bytes, timings }` with Got's timings, or `{ error }` when the request got no answer. An answer that the HTTP cache gave without a request has no timings.
 - A request is `served` from the `'network'`, or from the `'origin record'` for a `robots.txt` that the record of its origin downloaded for its rules in the read. Such a request waited for nothing.
 - `pending` counts the URLs that wait in each lane after the request, and `held` the URLs that a block or a spent expansion budget holds.
-- A subscriber gets each message as `unknown`, and tells it by its class. A host that runs several crawls in one process tells its own by an `AsyncLocalStorage`, because Node calls a subscriber in the async context of the publisher. A subscriber that throws does not stop the crawl, but Node reports the error as an uncaught exception.
+- A subscriber gets each message as `unknown`, and tells it by its class. Each message of a crawl, except `OriginBlocked`, has its `crawl`: the object that the host iterates. Crawls run at the same time, so a subscriber pairs the messages of one crawl by its `crawl`, as OpenTelemetry's undici instrumentation pairs the messages of one request by the request. A host that runs several crawls in one process can also tell its own by an `AsyncLocalStorage`, because Node calls a subscriber in the async context of the publisher. A subscriber that throws does not stop the crawl, but Node reports the error as an uncaught exception.
 
 ## Recipes
 
