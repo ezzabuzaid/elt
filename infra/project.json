@@ -11,11 +11,17 @@
     "down-sqlserver": {
       "command": "docker compose -f infra/docker-compose.yml --profile sqlserver stop sqlserver"
     },
+    "up-otel": {
+      "command": "docker compose -f infra/docker-compose.yml --profile otel up -d --wait otel"
+    },
+    "down-otel": {
+      "command": "docker compose -f infra/docker-compose.yml --profile otel stop otel"
+    },
     "down-warehouse": {
       "command": "docker compose -f infra/docker-compose.yml stop warehouse warehouse-mcp"
     },
     "down": {
-      "command": "docker compose -f infra/docker-compose.yml --profile sqlserver down"
+      "command": "docker compose -f infra/docker-compose.yml --profile sqlserver --profile otel down"
     },
     "reset": {
       "command": "docker compose -f infra/docker-compose.yml --profile sqlserver down --volumes && docker compose -f infra/docker-compose.yml up -d --wait"

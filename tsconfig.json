@@ -235,6 +235,9 @@
     },
     {
       "path": "./packages/sdks/dia/desktop"
+    },
+    {
+      "path": "./packages/opentelemetry"
     }
   ]
 }

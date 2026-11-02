@@ -34,6 +34,7 @@ export {
   type Route,
   type RouteHow,
   type Visit,
+  priorities,
   routeHows,
 } from './reader.ts';
 export {

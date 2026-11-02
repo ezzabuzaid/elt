@@ -1,0 +1,11 @@
+# The dashboards of elt-opentelemetry, which compose mounts from
+# packages/opentelemetry/dashboards (docker-otel-lgtm README, "Add custom
+# dashboards").
+apiVersion: 1
+
+providers:
+  - name: elt
+    type: file
+    options:
+      path: /otel-lgtm/grafana/conf/provisioning/dashboards/elt
+      foldersFromFilesStructure: false

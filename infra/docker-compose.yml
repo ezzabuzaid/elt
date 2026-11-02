@@ -2,6 +2,7 @@
 # Start: npx nx run infra:up (reset the volume: npx nx run infra:reset)
 # Stop it and leave SQL Server running: npx nx run infra:down-warehouse
 # SQL Server, for the SQL Server source: npx nx run infra:up-sqlserver
+# Grafana with the crawl dashboard, for OpenTelemetry: npx nx run infra:up-otel
 name: elt
 
 services:
@@ -66,6 +67,28 @@ services:
       retries: 60
       start_period: 120s
 
+  # Grafana, Prometheus, Tempo and Loki behind one OpenTelemetry Collector,
+  # which takes OTLP over HTTP on 4318; Grafana provisions the dashboards of
+  # elt-opentelemetry. It sits in a profile, as SQL Server does.
+  otel:
+    image: grafana/otel-lgtm:0.39.0
+    profiles: [otel]
+    ports:
+      - 127.0.0.1:3000:3000
+      - 127.0.0.1:4318:4318
+    volumes:
+      - otel:/data
+      - ./otel/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/elt.yaml:ro
+      - ../packages/opentelemetry/dashboards:/otel-lgtm/grafana/conf/provisioning/dashboards/elt:ro
+    # The image's own check, which waits for every backend, more often than
+    # its 30 seconds, so up --wait returns soon after the stack is ready.
+    healthcheck:
+      test: [CMD, /otel-lgtm/docker/healthcheck.sh]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
 volumes:
   warehouse:
   sqlserver:
+  otel:

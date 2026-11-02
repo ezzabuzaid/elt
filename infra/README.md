@@ -1,6 +1,6 @@
 # infra
 
-The local services of the workspace, in `infra/docker-compose.yml`: the Postgres warehouse that the Google app loads, an optional MCP server that reads it as the reader role, and a SQL Server for the SQL Server source. The Postgres destination itself is in [elt-postgresql](../packages/destinations/postgresql/README.md).
+The local services of the workspace, in `infra/docker-compose.yml`: the Postgres warehouse that the Google app loads, an optional MCP server that reads it as the reader role, a SQL Server for the SQL Server source, and Grafana with the crawl dashboard of [elt-opentelemetry](../packages/opentelemetry/README.md). The Postgres destination itself is in [elt-postgresql](../packages/destinations/postgresql/README.md).
 
 ## Commands
 
@@ -10,16 +10,21 @@ npx nx run infra:reset            # delete the volumes, then start again
 npx nx run infra:down-warehouse   # stop the warehouse, keep SQL Server running
 npx nx run infra:up-sqlserver     # start SQL Server (profile sqlserver)
 npx nx run infra:down-sqlserver   # stop SQL Server
+npx nx run infra:up-otel          # start Grafana and its OTLP collector (profile otel)
+npx nx run infra:down-otel        # stop them
 npx nx run infra:down             # stop and remove all services
 ```
 
-| Service         | Image                                                       | Port              |
-| --------------- | ----------------------------------------------------------- | ----------------- |
-| `warehouse`     | `postgres:18`                                               | `127.0.0.1:55432` |
-| `warehouse-mcp` | `crystaldba/postgres-mcp:0.3.0`                             | `127.0.0.1:8000`  |
-| `sqlserver`     | `mcr.microsoft.com/mssql/server:2022-latest`, `linux/amd64` | `127.0.0.1:51433` |
+| Service         | Image                                                       | Port                                                          |
+| --------------- | ----------------------------------------------------------- | ------------------------------------------------------------- |
+| `warehouse`     | `postgres:18`                                               | `127.0.0.1:55432`                                             |
+| `warehouse-mcp` | `crystaldba/postgres-mcp:0.3.0`                             | `127.0.0.1:8000`                                              |
+| `sqlserver`     | `mcr.microsoft.com/mssql/server:2022-latest`, `linux/amd64` | `127.0.0.1:51433`                                             |
+| `otel`          | `grafana/otel-lgtm:0.39.0`                                  | `127.0.0.1:3000` (Grafana), `127.0.0.1:4318` (OTLP over HTTP) |
 
 Microsoft publishes the SQL Server image only for amd64, so on Apple silicon it runs emulated. It is in the `sqlserver` profile, so `infra:up` starts only the warehouse.
+
+`otel` is Grafana, Prometheus, Tempo and Loki behind one OpenTelemetry Collector, in the `otel` profile. A host sends OTLP to port 4318. Grafana provisions the dashboards of `packages/opentelemetry/dashboards` through `infra/otel/dashboards.yaml`, and opens without a login. The stack keeps its data in the `otel` volume. `infra:down` removes this container too.
 
 ## The warehouse
 
