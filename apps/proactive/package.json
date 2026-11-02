@@ -17,6 +17,7 @@
     "@workspace/source-apple-messages": "0.0.1",
     "@workspace/source-slack-desktop": "0.0.1",
     "@workspace/source-whatsapp-desktop": "0.0.1",
+    "@zukhruf/shutdown": "^0.6.13",
     "postgres": "^3.4.9"
   },
   "devDependencies": {

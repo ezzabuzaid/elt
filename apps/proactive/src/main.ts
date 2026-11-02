@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 
+import { Shutdown } from '@zukhruf/shutdown';
 import postgres from 'postgres';
 
 import type { Warehouse } from '@workspace/eca';
@@ -19,6 +20,7 @@ import { SpendSpike } from './spend-spike.ts';
 // Conditions read the marts as agent_reader, which can read nothing else.
 const readerUrl = 'postgres://agent_reader:agent@127.0.0.1:55432/warehouse';
 
+using shutdown = new Shutdown();
 // postgres.js has no Symbol.asyncDispose, so the stack ends the client.
 await using stack = new AsyncDisposableStack();
 const sql = stack.adopt(
@@ -31,14 +33,14 @@ const sql = stack.adopt(
 const loaded =
   await sql`SELECT connector FROM marts.sync_status WHERE connector IN ('apple-messages', 'slack', 'whatsapp', 'apple-calendar', 'apple-mail') AND last_successful_sync_at IS NOT NULL`;
 if (loaded.length !== 5) {
-  await pipeline.run();
+  await pipeline.run({ signal: shutdown.signal });
 }
 
 // This run's pass is the warehouse's one commit.
 const warehouse: Warehouse<postgres.Sql> = {
   sql,
   async *commits(signal) {
-    await pipeline.run();
+    await pipeline.run({ signal });
     if (!signal.aborted) {
       yield;
     }
@@ -61,12 +63,8 @@ await automations.add(
   new CareemCalories(fileURLToPath(new URL('agent/', outputs))),
 );
 
-const stop = new AbortController();
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(signal, () => stop.abort());
-}
 // A failed automation does not stop the others, but the run still exits
 // non-zero so the failure is not silent.
-if ((await automations.run(stop.signal)) > 0) {
+if ((await automations.run(shutdown.signal)) > 0) {
   process.exitCode = 1;
 }
