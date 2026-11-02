@@ -25,6 +25,19 @@ import {
 import { RobotsRules } from './robots-rules.ts';
 import { httpUrl, webUrl } from './web-url.ts';
 
+// The entry being handed out, the page handed back, and the visit's schedule,
+// added to #handed and the URLs once the next entry is requested.
+type Turn = {
+  readonly current: Entry | null;
+  readonly hand: string | null;
+  readonly visit: {
+    readonly before: KnownUrl | undefined;
+    readonly after: KnownUrl;
+  } | null;
+};
+
+const idle: Turn = { current: null, hand: null, visit: null };
+
 export class CrawlError extends Error {
   override readonly name = 'CrawlError';
   readonly url: string;
@@ -78,6 +91,10 @@ const entrySchema = z.object({
   listingUrl: z.string(),
   lastModified: z.string().nullable(),
   published: z.string().nullable(),
+  // The language copies that the listing declares for this URL.
+  localizedVersions: z
+    .array(z.object({ language: z.string(), url: z.string() }))
+    .readonly(),
   hops: z.number().int().nonnegative(),
   // The starting URL that this request is, or that a redirect of it led here; null for any other URL.
   start: z.string().nullable(),
@@ -281,6 +298,7 @@ export class WebCrawler {
       listingUrl: url,
       lastModified: null,
       published: null,
+      localizedVersions: [],
       hops: 0,
       start: url,
       page: false,
@@ -392,14 +410,8 @@ class CrawlRun implements Crawl {
   readonly #held = new Map<string, Entry>();
   // Each starting URL that answered with a page, with the origin that answered.
   readonly #pages: Map<string, string>;
-  // The page handed back last, added to #handed with its visit, as the entry stays pending.
-  #hand: string | null = null;
-  #current: Entry | null = null;
-  // The last visit's schedule, kept out of the URLs until the next entry is requested, as the entry stays pending.
-  #visit: {
-    readonly before: KnownUrl | undefined;
-    readonly after: KnownUrl;
-  } | null = null;
+  // What the entry handed out last leaves pending until the next entry is requested.
+  #turn: Turn = idle;
   #phase: Crawling | Finished | Abandoned = new Crawling();
   // Known URLs, offered once this crawl's findings run out, so a finding's fresh provenance comes first.
   readonly #revisits: Entry[];
@@ -453,7 +465,7 @@ class CrawlRun implements Crawl {
           ? null
           : {
               pending: [
-                ...(this.#current ? [this.#current] : []),
+                ...(this.#turn.current ? [this.#turn.current] : []),
                 ...priorities.flatMap((priority) => [
                   ...this.#lanes[priority].values(),
                 ]),
@@ -469,7 +481,7 @@ class CrawlRun implements Crawl {
 
   fail(url: string): void {
     const visit =
-      this.#visit?.after.entry.url === url ? this.#visit : undefined;
+      this.#turn.visit?.after.entry.url === url ? this.#turn.visit : undefined;
     const before = visit ? visit.before : this.#urls.get(url);
     const entry = visit?.after.entry ?? before?.entry;
     if (entry === undefined)
@@ -481,7 +493,7 @@ class CrawlRun implements Crawl {
       { kind: 'failed' },
       before,
     );
-    if (visit) this.#visit = { before, after };
+    if (visit) this.#turn = { ...this.#turn, visit: { before, after } };
     else this.#urls.set(url, after);
   }
 
@@ -513,7 +525,7 @@ class CrawlRun implements Crawl {
         ),
       );
     const known = [...this.#urls.values()];
-    if (this.#visit) known.push(this.#visit.after);
+    if (this.#turn.visit) known.push(this.#turn.visit.after);
     let next: number | null = null;
     for (const { due } of known)
       if (due !== null && (next === null || due < next)) next = due;
@@ -524,7 +536,8 @@ class CrawlRun implements Crawl {
     // The last visit, until the next entry is requested, is newer than the
     // URL's record.
     const known = new Map(this.#urls);
-    if (this.#visit) known.set(this.#visit.after.entry.url, this.#visit.after);
+    if (this.#turn.visit)
+      known.set(this.#turn.visit.after.entry.url, this.#turn.visit.after);
     return [...known.values()]
       .filter(
         ({ entry, last }) => last.kind === 'failed' && this.#handedBack(entry),
@@ -595,7 +608,7 @@ class CrawlRun implements Crawl {
         // A block is the host's, not the page's: the URL goes back to the
         // frontier, and the revisit policy does not schedule it.
         this.#held.set(entry.url, entry);
-        this.#current = null;
+        this.#turn = { ...this.#turn, current: null };
         yield this.#failure(
           entry,
           page,
@@ -653,11 +666,14 @@ class CrawlRun implements Crawl {
       // A reader can bring this URL's next visit forward, whatever the policy,
       // as for a feed that would roll items off before the visit.
       const revisitWithin = (within: number) => {
-        if (this.#visit === null) return;
-        const { before, after } = this.#visit;
+        if (this.#turn.visit === null) return;
+        const { before, after } = this.#turn.visit;
         const limit = this.#at + within;
         if (after.due === null || limit < after.due)
-          this.#visit = { before, after: { ...after, due: limit } };
+          this.#turn = {
+            ...this.#turn,
+            visit: { before, after: { ...after, due: limit } },
+          };
       };
       // A starting URL is read as a list too, as the readers of lists do.
       const list = (entry.list || entry.start !== null) && isHtml(type);
@@ -717,12 +733,13 @@ class CrawlRun implements Crawl {
       ];
       // A URL downloaded again for a role it adds is a page already handed back.
       if (included && !failed && !this.#handed.has(entry.url)) {
-        this.#hand = entry.url;
+        this.#turn = { ...this.#turn, hand: entry.url };
         yield {
           url: entry.url,
           listingUrl: entry.listingUrl,
           lastModified: entry.lastModified,
           published: entry.published,
+          localizedVersions: entry.localizedVersions,
           response,
           change,
           routes,
@@ -743,6 +760,7 @@ class CrawlRun implements Crawl {
             listingUrl: entry.listingUrl,
             lastModified: entry.lastModified,
             published: entry.published,
+            localizedVersions: entry.localizedVersions,
           },
         };
     this.#phase = new Finished();
@@ -828,9 +846,12 @@ class CrawlRun implements Crawl {
     last: Last,
     before: KnownUrl | undefined,
   ) {
-    this.#visit = {
-      before,
-      after: this.#schedule(entry, outcome, headers, last, before),
+    this.#turn = {
+      ...this.#turn,
+      visit: {
+        before,
+        after: this.#schedule(entry, outcome, headers, last, before),
+      },
     };
   }
 
@@ -854,11 +875,10 @@ class CrawlRun implements Crawl {
   }
 
   #commit() {
-    if (this.#hand !== null) this.#handed.add(this.#hand);
-    this.#hand = null;
-    if (this.#visit === null) return;
-    this.#urls.set(this.#visit.after.entry.url, this.#visit.after);
-    this.#visit = null;
+    const { hand, visit } = this.#turn;
+    if (hand !== null) this.#handed.add(hand);
+    if (visit !== null) this.#urls.set(visit.after.entry.url, visit.after);
+    this.#turn = { ...this.#turn, hand: null, visit: null };
   }
 
   // The next entry worth a download. One nobody needs, or that robots.txt
@@ -912,7 +932,7 @@ class CrawlRun implements Crawl {
             const rules = await this.#origins.rules(origin, signal);
             if (!(rules instanceof RobotsRules)) {
               this.#held.set(entry.url, entry);
-              this.#current = null;
+              this.#turn = { ...this.#turn, current: null };
               return {
                 failure: this.#failure(
                   entry,
@@ -940,7 +960,7 @@ class CrawlRun implements Crawl {
               : entry.redirect.wanted;
           if (needed || wanted.includes(true)) {
             if (budgeted) this.#origins.spend(origin);
-            this.#current = entry;
+            this.#turn = { ...this.#turn, current: entry };
             return { entry, included, wanted };
           }
           this.#known.delete(entry.url);
@@ -949,7 +969,7 @@ class CrawlRun implements Crawl {
       // Nutch's generate step: a known URL that is due returns even when nothing lists it in this crawl.
       for (const entry of this.#revisits.splice(0)) this.#enqueue(entry);
     }
-    this.#current = null;
+    this.#turn = { ...this.#turn, current: null };
     return undefined;
   }
 
@@ -1050,7 +1070,7 @@ class CrawlRun implements Crawl {
       next.document ||
       (next.page && this.#includes(next.url)) ||
       this.#urls.has(next.url) ||
-      this.#visit?.after.entry.url === next.url ||
+      this.#turn.visit?.after.entry.url === next.url ||
       this.#wouldAdmit(next)
     );
   }
@@ -1073,6 +1093,7 @@ class CrawlRun implements Crawl {
       listingUrl: entry.listingUrl,
       lastModified: entry.lastModified,
       published: entry.published,
+      localizedVersions: entry.localizedVersions,
       error: new CrawlError(url, cause, page),
     };
   }
@@ -1092,6 +1113,7 @@ class CrawlRun implements Crawl {
       listingUrl: parent.url,
       lastModified: finding.lastModified,
       published: finding.published,
+      localizedVersions: finding.localizedVersions,
       hops: parent.hops + (finding.linked ? 1 : 0),
       start: null,
       page: finding.page,
@@ -1126,8 +1148,8 @@ class CrawlRun implements Crawl {
         // This run downloaded the URL: it goes again only for a role that
         // download did not have, with every role, so Got's cache revalidates it.
         const visited = (
-          this.#visit?.after.entry.url === next.url
-            ? this.#visit.after
+          this.#turn.visit?.after.entry.url === next.url
+            ? this.#turn.visit.after
             : this.#urls.get(next.url)
         )?.entry;
         if (visited === undefined) return;
@@ -1224,6 +1246,7 @@ function merge(pending: Entry, next: Entry) {
     pending.listingUrl = next.listingUrl;
     pending.lastModified = next.lastModified;
     pending.published = next.published;
+    pending.localizedVersions = next.localizedVersions;
     pending.linked = next.linked;
   }
   // A URL that is also a page counts the hops of its page findings; a document's do not lower them.

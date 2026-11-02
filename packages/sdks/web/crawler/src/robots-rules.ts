@@ -1,11 +1,20 @@
 import * as robots from 'robots-parser';
 
-// robots-parser is CommonJS, but its types declare an ES default export
-// ("masquerading as ESM"), so TypeScript types the namespace's default as the
-// module. Node and bundlers give module.exports, the parser, as the default,
-// and a static import lets a host bundle it.
-// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- robots-parser 3.0.1's index.d.ts declares `export default` over `module.exports = function`
-const robotsParser = robots.default as unknown as typeof robots.default.default;
+// robots-parser 3.0.1 (its latest release) is CommonJS, but its index.d.ts
+// declares `export default` over `module.exports = function` ("masquerading
+// as ESM"), so TypeScript types the namespace's default as the module. Node
+// and bundlers give module.exports, the parser, as the default, and a static
+// import lets a host bundle it.
+const loaded: unknown = robots.default;
+if (!isRobotsParser(loaded))
+  throw new TypeError('robots-parser did not load as a function');
+const robotsParser = loaded;
+
+function isRobotsParser(
+  value: unknown,
+): value is typeof robots.default.default {
+  return typeof value === 'function';
+}
 
 /** An origin's robots.txt (RFC 9309) as the crawl obeys it for one user agent. */
 export class RobotsRules {
