@@ -27,7 +27,6 @@ import {
   AdaptiveRevisit,
   ListingReader,
   Origins,
-  WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
 // A blog whose post 2 answers 429 one time.
@@ -66,14 +65,11 @@ let memento: unknown = null;
 let records: unknown = null;
 for (const name of ['first read', 'second read']) {
   const origins = new Origins(http, records);
-  const crawl = new WebCrawler(
-    http,
-    origins,
-    [new ListingReader()],
-    new AdaptiveRevisit(),
-  ).crawl([`${origin}/feed.json`], memento, {
-    signal: AbortSignal.timeout(60_000),
-  });
+  const crawl = origins
+    .crawler(http, [new ListingReader()], new AdaptiveRevisit())
+    .crawl([`${origin}/feed.json`], memento, {
+      signal: AbortSignal.timeout(60_000),
+    });
   started.length = 0;
   const pages: string[] = [];
   for await (const entry of crawl) {

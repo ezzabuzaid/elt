@@ -16,7 +16,6 @@ import {
   Origins,
   PaginationReader,
   type RevisitPolicy,
-  WebCrawler,
   day,
 } from './index.ts';
 
@@ -26,9 +25,8 @@ const noRetries = got.extend({ retry: { limit: 0 } });
 // As the startup-credits app: a list of programs links the home page of each
 // company, and the crawl searches the home page one step for a program page.
 function programs(revisit: RevisitPolicy<unknown>) {
-  return new WebCrawler(
+  return new Origins(noRetries, null).crawler(
     noRetries,
-    new Origins(noRetries, null),
     [
       new PaginationReader({ strategy: 'all' }),
       new ListingReader(),
@@ -311,20 +309,17 @@ test('a feed names each item with its title, and a sitemap names its pages and i
   );
 
   const lines = await routes(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new ListingReader()],
-      new AdaptiveRevisit(),
-    ).crawl(
-      [
-        `${site.origin}/feed.xml`,
-        `${site.origin}/atom.xml`,
-        `${site.origin}/index.xml`,
-      ],
-      null,
-      { signal: AbortSignal.timeout(120_000) },
-    ),
+    new Origins(noRetries, null)
+      .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
+      .crawl(
+        [
+          `${site.origin}/feed.xml`,
+          `${site.origin}/atom.xml`,
+          `${site.origin}/index.xml`,
+        ],
+        null,
+        { signal: AbortSignal.timeout(120_000) },
+      ),
   );
 
   assert.deepEqual(
@@ -463,9 +458,8 @@ test('a page that LinkReader does not admit in a later crawl gives an incomplete
   );
   // One admitted page for each crawl; every page is handed back, so a page
   // that LinkReader does not admit is still downloaded and read.
-  const crawler = new WebCrawler(
+  const crawler = new Origins(noRetries, null).crawler(
     noRetries,
-    new Origins(noRetries, null),
     [new LinkReader({ maxDepth: 2, maxPages: 1 })],
     new FixedRevisit({ every: 0 }),
   );
@@ -507,16 +501,17 @@ test('a page that the crawl downloaded keeps its routes after the budget of Link
   );
 
   const lines = await routes(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new LinkReader({ maxDepth: 2, maxPages: 2 })],
-      new AdaptiveRevisit(),
-    ).crawl([`${site.origin}/`], null, {
-      signal: AbortSignal.timeout(120_000),
-      // No page is handed back: LinkReader admits each page that it reads.
-      include: [new URLPattern({ pathname: '/none' })],
-    }),
+    new Origins(noRetries, null)
+      .crawler(
+        noRetries,
+        [new LinkReader({ maxDepth: 2, maxPages: 2 })],
+        new AdaptiveRevisit(),
+      )
+      .crawl([`${site.origin}/`], null, {
+        signal: AbortSignal.timeout(120_000),
+        // No page is handed back: LinkReader admits each page that it reads.
+        include: [new URLPattern({ pathname: '/none' })],
+      }),
   );
 
   assert.ok(

@@ -13,7 +13,7 @@ import {
   crawlChannels,
 } from './crawl-channels.ts';
 import { OriginLane } from './origin-lane.ts';
-import type { Origins, Unreachable } from './origins.ts';
+import type { OriginRecords, Unreachable } from './origin-records.ts';
 import {
   type CrawlRequest,
   type Finding,
@@ -228,7 +228,7 @@ export interface Crawl extends AsyncIterable<
 
 export class WebCrawler {
   readonly #http: Got;
-  readonly #origins: Origins;
+  readonly #origins: OriginRecords;
   readonly #readers: readonly Reader<unknown, unknown>[];
   readonly #revisit: RevisitPolicy<unknown>;
 
@@ -239,7 +239,7 @@ export class WebCrawler {
    */
   constructor(
     http: Got,
-    origins: Origins,
+    origins: OriginRecords,
     readers: readonly Reader<unknown, unknown>[],
     revisit: RevisitPolicy<unknown>,
   ) {
@@ -393,7 +393,7 @@ class Abandoned {
 
 class CrawlRun implements Crawl {
   readonly #http: Got;
-  readonly #origins: Origins;
+  readonly #origins: OriginRecords;
   readonly #readers: readonly Reader<unknown, unknown>[];
   readonly #revisit: RevisitPolicy<unknown>;
   readonly #options: CrawlOptions;
@@ -439,7 +439,7 @@ class CrawlRun implements Crawl {
 
   constructor(
     http: Got,
-    origins: Origins,
+    origins: OriginRecords,
     readers: readonly Reader<unknown, unknown>[],
     revisit: RevisitPolicy<unknown>,
     options: CrawlOptions,

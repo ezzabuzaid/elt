@@ -11,7 +11,6 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-  WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
 import { ArticleError, HTMLExtraction, WebArticle } from './index.ts';
@@ -62,9 +61,8 @@ test('chosen websites and feeds compose with extraction without merging URL vari
         response.writeHead(404).end();
     }
   });
-  const crawler = new WebCrawler(
+  const crawler = new Origins(got, null).crawler(
     got,
-    new Origins(got, null),
     [new ListingReader(), new ArchiveReader(), new PaginationReader()],
     new AdaptiveRevisit(),
   );

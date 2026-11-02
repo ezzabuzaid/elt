@@ -13,7 +13,6 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-  WebCrawler,
   hour,
 } from './index.ts';
 
@@ -23,9 +22,8 @@ const noRetries = got.extend({ retry: { limit: 0 } });
 // As the startup-credits app: a list of programs links the home page of each
 // company, and the crawl searches the home page one step for a program page.
 function programs(origins: Origins) {
-  return new WebCrawler(
+  return origins.crawler(
     noRetries,
-    origins,
     [
       new PaginationReader({ strategy: 'all' }),
       new ListingReader(),
@@ -234,22 +232,19 @@ test("origins take turns: one starting site's many child sitemaps do not hold up
   // Starting origins are not budgeted, so the large site's index is read
   // whole in this run.
   await run(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new ListingReader()],
-      new AdaptiveRevisit(),
-    ).crawl(
-      [
-        `${microsoft.origin}/sitemap-index.xml`,
-        `${vercel.origin}/sitemap-index.xml`,
-      ],
-      null,
-      {
-        signal: AbortSignal.timeout(120_000),
-        include: [new URLPattern(`${vercel.origin}/*`)],
-      },
-    ),
+    new Origins(noRetries, null)
+      .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
+      .crawl(
+        [
+          `${microsoft.origin}/sitemap-index.xml`,
+          `${vercel.origin}/sitemap-index.xml`,
+        ],
+        null,
+        {
+          signal: AbortSignal.timeout(120_000),
+          include: [new URLPattern(`${vercel.origin}/*`)],
+        },
+      ),
     log,
   );
 
@@ -317,9 +312,8 @@ test('a run that continues a crawl held back by the budget reads its list again 
     website(log, () => ({ '/programs': `<main>${rows}</main>` })),
   );
   // The list is due every hour, as the startup-credits app reads its lists.
-  const crawler = new WebCrawler(
+  const crawler = new Origins(noRetries, null).crawler(
     noRetries,
-    new Origins(noRetries, null),
     [
       new PaginationReader({ strategy: 'all' }),
       new ListingReader(),
@@ -374,9 +368,8 @@ test('a run that continues a crawl at once does not read its list again before t
       '/programs': `<main><a href="${microsoft.origin}/">Microsoft</a></main>`,
     })),
   );
-  const crawler = new WebCrawler(
+  const crawler = new Origins(noRetries, null).crawler(
     noRetries,
-    new Origins(noRetries, null),
     [
       new PaginationReader({ strategy: 'all' }),
       new ListingReader(),

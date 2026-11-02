@@ -16,7 +16,6 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-  WebCrawler,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
@@ -63,14 +62,11 @@ test('depth and page limits bound which pages contribute links, while every foun
   ] satisfies [{ maxDepth: number; maxPages: number }, string[]][]) {
     requests.length = 0;
     const pages = await results(
-      new WebCrawler(
-        got,
-        new Origins(got, null),
-        [new LinkReader(limits)],
-        new AdaptiveRevisit(),
-      ).crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
-      }),
+      new Origins(got, null)
+        .crawler(got, [new LinkReader(limits)], new AdaptiveRevisit())
+        .crawl(['https://site.test/'], null, {
+          signal: AbortSignal.timeout(120_000),
+        }),
     );
     assert.deepEqual(pages.map(pathOf), paths, JSON.stringify(limits));
     assert.deepEqual(requests, ['/', ...paths], JSON.stringify(limits));
@@ -110,14 +106,15 @@ test('Markdown pages contribute their links on the starting origin', async () =>
     }),
   );
   const pages = await results(
-    new WebCrawler(
-      got,
-      new Origins(got, null),
-      [new LinkReader({ maxDepth: 2, maxPages: 100 })],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/'], null, {
-      signal: AbortSignal.timeout(120_000),
-    }),
+    new Origins(got, null)
+      .crawler(
+        got,
+        [new LinkReader({ maxDepth: 2, maxPages: 100 })],
+        new AdaptiveRevisit(),
+      )
+      .crawl(['https://site.test/'], null, {
+        signal: AbortSignal.timeout(120_000),
+      }),
   );
   assert.deepEqual(pages.map(pathOf), ['/guide.md', '/deeper.md']);
   assert.deepEqual(requests, ['/', '/guide.md', '/deeper.md']);
@@ -141,19 +138,20 @@ test('feed-only starts do not turn their articles into new link roots', async ()
         .end('<a href="/unrelated">More</a>');
   });
   const pages = await results(
-    new WebCrawler(
-      got,
-      new Origins(got, null),
-      [
-        new ListingReader(),
-        new ArchiveReader(),
-        new PaginationReader(),
-        new LinkReader({ maxDepth: 3, maxPages: 100 }),
-      ],
-      new AdaptiveRevisit(),
-    ).crawl([`${upstream.origin}/feed`], null, {
-      signal: AbortSignal.timeout(120_000),
-    }),
+    new Origins(got, null)
+      .crawler(
+        got,
+        [
+          new ListingReader(),
+          new ArchiveReader(),
+          new PaginationReader(),
+          new LinkReader({ maxDepth: 3, maxPages: 100 }),
+        ],
+        new AdaptiveRevisit(),
+      )
+      .crawl([`${upstream.origin}/feed`], null, {
+        signal: AbortSignal.timeout(120_000),
+      }),
   );
   assert.deepEqual(pages.map(pathOf), ['/article']);
   assert.deepEqual(requests, ['/robots.txt', '/feed', '/article']);
@@ -178,17 +176,18 @@ test('archive pages contribute their links, and declarations with non-HTTP URLs 
     else response.writeHead(404).end();
   });
   const pages = await results(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [
-        new ListingReader(),
-        new ArchiveReader(),
-        new PaginationReader(),
-        new LinkReader({ maxDepth: 3, maxPages: 100 }),
-      ],
-      new AdaptiveRevisit(),
-    ).crawl([upstream.origin], null, { signal: AbortSignal.timeout(120_000) }),
+    new Origins(noRetries, null)
+      .crawler(
+        noRetries,
+        [
+          new ListingReader(),
+          new ArchiveReader(),
+          new PaginationReader(),
+          new LinkReader({ maxDepth: 3, maxPages: 100 }),
+        ],
+        new AdaptiveRevisit(),
+      )
+      .crawl([upstream.origin], null, { signal: AbortSignal.timeout(120_000) }),
   );
   assert.deepEqual(pages.map(pathOf), ['/archive/', '/article']);
 });

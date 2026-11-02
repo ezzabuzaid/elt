@@ -11,7 +11,6 @@ import {
   Origins,
   type Reader,
   type RevisitPolicy,
-  WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
 import type { ExtractorRun } from '../record-extractor.ts';
@@ -134,7 +133,7 @@ export class WebClient implements AsyncDisposable {
     revisit: RevisitPolicy<unknown>,
     negotiation: ExtractorRun['negotiation'],
   ) {
-    return new WebCrawler(
+    return this.#origins.crawler(
       negotiation === null
         ? this.#http
         : this.#http.extend({
@@ -148,7 +147,6 @@ export class WebClient implements AsyncDisposable {
               afterResponse: [negotiation.afterResponse],
             },
           }),
-      this.#origins,
       readers,
       revisit,
     );

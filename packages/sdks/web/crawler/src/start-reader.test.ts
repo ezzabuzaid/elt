@@ -12,7 +12,6 @@ import {
   type CrawledPage,
   Origins,
   StartReader,
-  WebCrawler,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
@@ -62,14 +61,11 @@ test('a crawl that only reads its starting pages requests none of the pages they
   using server = mockWeb(marketplace(requests));
 
   const handed = await pages(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new StartReader()],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/en'], null, {
-      signal: AbortSignal.timeout(120_000),
-    }),
+    new Origins(noRetries, null)
+      .crawler(noRetries, [new StartReader()], new AdaptiveRevisit())
+      .crawl(['https://site.test/en'], null, {
+        signal: AbortSignal.timeout(120_000),
+      }),
   );
 
   assert.deepEqual(
@@ -87,14 +83,11 @@ test('each starting page is handed back as a page of its own provenance', async 
   using server = mockWeb(marketplace(requests));
 
   const handed = await pages(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new StartReader()],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/en', 'https://site.test/ar'], null, {
-      signal: AbortSignal.timeout(120_000),
-    }),
+    new Origins(noRetries, null)
+      .crawler(noRetries, [new StartReader()], new AdaptiveRevisit())
+      .crawl(['https://site.test/en', 'https://site.test/ar'], null, {
+        signal: AbortSignal.timeout(120_000),
+      }),
   );
 
   assert.deepEqual(

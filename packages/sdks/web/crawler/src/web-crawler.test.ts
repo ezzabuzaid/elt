@@ -19,7 +19,6 @@ import {
   Origins,
   PaginationReader,
   Reader,
-  WebCrawler,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
@@ -94,14 +93,15 @@ test('crawls links itself and preserves URL identity, provenance and Got respons
   });
   const pages = (
     await results(
-      new WebCrawler(
-        client,
-        new Origins(client, null),
-        [new LinkReader({ maxDepth: 3, maxPages: 100 })],
-        new AdaptiveRevisit(),
-      ).crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
-      }),
+      new Origins(client, null)
+        .crawler(
+          client,
+          [new LinkReader({ maxDepth: 3, maxPages: 100 })],
+          new AdaptiveRevisit(),
+        )
+        .crawl(['https://site.test/'], null, {
+          signal: AbortSignal.timeout(120_000),
+        }),
     )
   ).map(pageOf);
   // /docs/one links the starting page, so the start is a page too and comes back last; link elements and Link headers belong to ArchiveReader.
@@ -159,14 +159,15 @@ test('each found URL is requested once for each role it adds, and a redirect is 
   );
   const pages = (
     await results(
-      new WebCrawler(
-        got,
-        new Origins(got, null),
-        [new LinkReader({ maxDepth: 3, maxPages: 100 })],
-        new AdaptiveRevisit(),
-      ).crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
-      }),
+      new Origins(got, null)
+        .crawler(
+          got,
+          [new LinkReader({ maxDepth: 3, maxPages: 100 })],
+          new AdaptiveRevisit(),
+        )
+        .crawl(['https://site.test/'], null, {
+          signal: AbortSignal.timeout(120_000),
+        }),
     )
   ).map(pageOf);
   // The alias's redirect names /target, which the start also links, so
@@ -202,9 +203,8 @@ test('failures are handed out with their URL while independent pages continue, a
       return HttpResponse.html('<p>Good</p>');
     }),
   );
-  const crawler = new WebCrawler(
+  const crawler = new Origins(noRetries, null).crawler(
     noRetries,
-    new Origins(noRetries, null),
     [new LinkReader({ maxDepth: 3, maxPages: 100 })],
     new AdaptiveRevisit(),
   );
@@ -246,14 +246,15 @@ test('a failed starting URL is handed out as a failure', async () => {
     ),
   );
   const entries = await results(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new LinkReader({ maxDepth: 3, maxPages: 100 })],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/missing'], null, {
-      signal: AbortSignal.timeout(120_000),
-    }),
+    new Origins(noRetries, null)
+      .crawler(
+        noRetries,
+        [new LinkReader({ maxDepth: 3, maxPages: 100 })],
+        new AdaptiveRevisit(),
+      )
+      .crawl(['https://site.test/missing'], null, {
+        signal: AbortSignal.timeout(120_000),
+      }),
   );
   assert.equal(entries.length, 1);
   const [failure] = entries;
@@ -275,9 +276,8 @@ test('consumer backpressure and early break stop fetching, and crawls remain iso
       );
     }),
   );
-  const crawler = new WebCrawler(
+  const crawler = new Origins(got, null).crawler(
     got,
-    new Origins(got, null),
     [new LinkReader({ maxDepth: 3, maxPages: 100 })],
     new AdaptiveRevisit(),
   );
@@ -330,9 +330,8 @@ test(
     );
     const stop = new AbortController();
     const reason = new Error('stop this crawl');
-    const crawler = new WebCrawler(
+    const crawler = new Origins(got, null).crawler(
       got,
-      new Origins(got, null),
       [new LinkReader({ maxDepth: 3, maxPages: 100 })],
       new AdaptiveRevisit(),
     );
@@ -362,13 +361,11 @@ test(
 
 test('validates readers and starting URLs and accepts an empty crawl', async () => {
   assert.throws(
-    () =>
-      new WebCrawler(got, new Origins(got, null), [], new AdaptiveRevisit()),
+    () => new Origins(got, null).crawler(got, [], new AdaptiveRevisit()),
     TypeError,
   );
-  const crawler = new WebCrawler(
+  const crawler = new Origins(got, null).crawler(
     got,
-    new Origins(got, null),
     [new LinkReader({ maxDepth: 0, maxPages: 0 })],
     new AdaptiveRevisit(),
   );
@@ -400,15 +397,16 @@ test('include hands back only matching pages and never requests non-matching pag
   );
   const pages = (
     await results(
-      new WebCrawler(
-        got,
-        new Origins(got, null),
-        [new LinkReader({ maxDepth: 1, maxPages: 1 })],
-        new AdaptiveRevisit(),
-      ).crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
-        include: [new URLPattern({ pathname: '/keep/*' })],
-      }),
+      new Origins(got, null)
+        .crawler(
+          got,
+          [new LinkReader({ maxDepth: 1, maxPages: 1 })],
+          new AdaptiveRevisit(),
+        )
+        .crawl(['https://site.test/'], null, {
+          signal: AbortSignal.timeout(120_000),
+          include: [new URLPattern({ pathname: '/keep/*' })],
+        }),
     )
   ).map(pageOf);
   assert.deepEqual(
@@ -448,15 +446,16 @@ test('Got hooks see options.context.page only for handed-back pages that no read
   });
   const pages = (
     await results(
-      new WebCrawler(
-        client,
-        new Origins(client, null),
-        [new ListingReader(), new LinkReader({ maxDepth: 1, maxPages: 100 })],
-        new AdaptiveRevisit(),
-      ).crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
-        include: [new URLPattern({ pathname: '/keep/*' })],
-      }),
+      new Origins(client, null)
+        .crawler(
+          client,
+          [new ListingReader(), new LinkReader({ maxDepth: 1, maxPages: 100 })],
+          new AdaptiveRevisit(),
+        )
+        .crawl(['https://site.test/'], null, {
+          signal: AbortSignal.timeout(120_000),
+          include: [new URLPattern({ pathname: '/keep/*' })],
+        }),
     )
   ).map(pageOf);
   assert.deepEqual(pages.map((page) => pathOf(page.url)).toSorted(), [
@@ -490,9 +489,8 @@ test('a snapshot resumes the crawl without repeating finished work and hands out
       return HttpResponse.html('<p>Page</p>');
     }),
   );
-  const crawler = new WebCrawler(
+  const crawler = new Origins(got, null).crawler(
     got,
-    new Origins(got, null),
     [new LinkReader({ maxDepth: 3, maxPages: 100 })],
     new AdaptiveRevisit(),
   );
@@ -538,15 +536,16 @@ test('a failure is marked as a page only for a page include matches, not for a s
     }),
   );
   const entries = await results(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new ListingReader(), new LinkReader({ maxDepth: 1, maxPages: 100 })],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/', 'https://site.test/missing'], null, {
-      signal: AbortSignal.timeout(120_000),
-      include: [new URLPattern({ pathname: '/keep/*' })],
-    }),
+    new Origins(noRetries, null)
+      .crawler(
+        noRetries,
+        [new ListingReader(), new LinkReader({ maxDepth: 1, maxPages: 100 })],
+        new AdaptiveRevisit(),
+      )
+      .crawl(['https://site.test/', 'https://site.test/missing'], null, {
+        signal: AbortSignal.timeout(120_000),
+        include: [new URLPattern({ pathname: '/keep/*' })],
+      }),
   );
   const failures = entries.map((entry) => {
     assert.ok('error' in entry);
@@ -586,9 +585,8 @@ function progressSite(requests: string[]) {
 }
 
 function progressCrawler(origins: Origins) {
-  return new WebCrawler(
+  return origins.crawler(
     noRetries,
-    origins,
     [new ListingReader(), new LinkReader({ maxDepth: 1, maxPages: 100 })],
     new AdaptiveRevisit(),
   );
@@ -702,19 +700,20 @@ test('a page labeled Latin-1 in its Content-Type is handed back, and every reade
     }),
   );
   const entries = await results(
-    new WebCrawler(
-      got,
-      new Origins(got, null),
-      [
-        new ListingReader(),
-        new ArchiveReader(),
-        new PaginationReader(),
-        new LinkReader({ maxDepth: 2, maxPages: 10 }),
-      ],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/'], null, {
-      signal: AbortSignal.timeout(120_000),
-    }),
+    new Origins(got, null)
+      .crawler(
+        got,
+        [
+          new ListingReader(),
+          new ArchiveReader(),
+          new PaginationReader(),
+          new LinkReader({ maxDepth: 2, maxPages: 10 }),
+        ],
+        new AdaptiveRevisit(),
+      )
+      .crawl(['https://site.test/'], null, {
+        signal: AbortSignal.timeout(120_000),
+      }),
   );
   assert.deepEqual(
     entries.filter((entry) => 'error' in entry),
@@ -749,14 +748,15 @@ test('a page labeled only by its <meta charset> is read by that charset', async 
     }),
   );
   await results(
-    new WebCrawler(
-      got,
-      new Origins(got, null),
-      [new LinkReader({ maxDepth: 2, maxPages: 10 })],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/'], null, {
-      signal: AbortSignal.timeout(120_000),
-    }),
+    new Origins(got, null)
+      .crawler(
+        got,
+        [new LinkReader({ maxDepth: 2, maxPages: 10 })],
+        new AdaptiveRevisit(),
+      )
+      .crawl(['https://site.test/'], null, {
+        signal: AbortSignal.timeout(120_000),
+      }),
   );
   assert.ok(requests.includes('/caf%C3%A9'), requests.join(' '));
 });
@@ -782,14 +782,15 @@ test('an unlabeled page is read as UTF-8, and one that is not valid UTF-8 is sti
     }),
   );
   const entries = await results(
-    new WebCrawler(
-      got,
-      new Origins(got, null),
-      [new LinkReader({ maxDepth: 2, maxPages: 10 })],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/'], null, {
-      signal: AbortSignal.timeout(120_000),
-    }),
+    new Origins(got, null)
+      .crawler(
+        got,
+        [new LinkReader({ maxDepth: 2, maxPages: 10 })],
+        new AdaptiveRevisit(),
+      )
+      .crawl(['https://site.test/'], null, {
+        signal: AbortSignal.timeout(120_000),
+      }),
   );
   assert.deepEqual(
     entries.map((entry) =>
@@ -824,14 +825,15 @@ test('a reader that throws on a response does not stop the readers after it or d
     }),
   );
   const entries = await results(
-    new WebCrawler(
-      got,
-      new Origins(got, null),
-      [new BrokenReader(), new LinkReader({ maxDepth: 2, maxPages: 10 })],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/'], null, {
-      signal: AbortSignal.timeout(120_000),
-    }),
+    new Origins(got, null)
+      .crawler(
+        got,
+        [new BrokenReader(), new LinkReader({ maxDepth: 2, maxPages: 10 })],
+        new AdaptiveRevisit(),
+      )
+      .crawl(['https://site.test/'], null, {
+        signal: AbortSignal.timeout(120_000),
+      }),
   );
   assert.deepEqual(
     entries.flatMap((entry) => ('error' in entry ? [] : [pathOf(entry.url)])),
@@ -871,14 +873,15 @@ test('a declared listing that one reader cannot read keeps what the other reader
     }),
   );
   const entries = await results(
-    new WebCrawler(
-      got,
-      new Origins(got, null),
-      [new ListingReader(), new LinkReader({ maxDepth: 2, maxPages: 10 })],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/'], null, {
-      signal: AbortSignal.timeout(120_000),
-    }),
+    new Origins(got, null)
+      .crawler(
+        got,
+        [new ListingReader(), new LinkReader({ maxDepth: 2, maxPages: 10 })],
+        new AdaptiveRevisit(),
+      )
+      .crawl(['https://site.test/'], null, {
+        signal: AbortSignal.timeout(120_000),
+      }),
   );
   assert.deepEqual(
     entries.map((entry) =>

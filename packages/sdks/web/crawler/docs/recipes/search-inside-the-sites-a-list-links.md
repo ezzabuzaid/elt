@@ -33,7 +33,6 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-  WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
 // A list of startup programs, as a GitHub list, that links the home page of
@@ -88,9 +87,8 @@ const http = got.extend({
     lookup('127.0.0.1', options, callback),
 });
 
-const crawler = new WebCrawler(
+const crawler = new Origins(http, null).crawler(
   http,
-  new Origins(http, null),
   [
     new PaginationReader({ strategy: 'all' }),
     new ListingReader(),

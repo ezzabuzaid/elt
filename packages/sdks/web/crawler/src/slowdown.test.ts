@@ -15,7 +15,6 @@ import {
   ListingReader,
   Origins,
   type OriginsMemento,
-  WebCrawler,
 } from './index.ts';
 
 // Synthetic upstream sites make refusals reproducible offline.
@@ -37,9 +36,8 @@ function read(retries: number, origins: OriginsMemento | null) {
   const records = new Origins(client, origins);
   return {
     origins: records,
-    crawler: new WebCrawler(
+    crawler: records.crawler(
       client,
-      records,
       [new ListingReader()],
       new AdaptiveRevisit(),
     ),
@@ -411,9 +409,8 @@ async function readAgain(pages: readonly string[]) {
     const records = new Origins(client, origins);
     return {
       origins: records,
-      crawler: new WebCrawler(
+      crawler: records.crawler(
         client,
-        records,
         [new ListingReader()],
         new CompositeRevisit(
           [

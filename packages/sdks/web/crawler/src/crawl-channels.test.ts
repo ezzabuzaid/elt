@@ -15,7 +15,6 @@ import {
   ListingReader,
   OriginBlocked,
   Origins,
-  WebCrawler,
   crawlChannels,
 } from './index.ts';
 
@@ -53,9 +52,8 @@ const site = (page: (path: string) => Response | undefined = () => undefined) =>
 
 function crawler() {
   const http = got.extend({ retry: { limit: 0 } });
-  return new WebCrawler(
+  return new Origins(http, null).crawler(
     http,
-    new Origins(http, null),
     [new ListingReader()],
     new AdaptiveRevisit(),
   );

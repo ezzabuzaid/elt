@@ -12,7 +12,6 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-  WebCrawler,
   day,
   hour,
 } from './index.ts';
@@ -63,12 +62,9 @@ test('a redirect to another origin whose robots.txt disallows the target is not 
   );
 
   const { pages, failures } = await crawled(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new ListingReader()],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/sitemap.xml'], null, options()),
+    new Origins(noRetries, null)
+      .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
+      .crawl(['https://site.test/sitemap.xml'], null, options()),
   );
 
   assert.deepEqual(requests, [
@@ -106,12 +102,9 @@ test('a redirect target waits the delay of its own origin, not of the origin tha
   );
 
   const { pages } = await crawled(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new ListingReader()],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/sitemap.xml'], null, options()),
+    new Origins(noRetries, null)
+      .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
+      .crawl(['https://site.test/sitemap.xml'], null, options()),
   );
 
   const at = (url: string) => started.get(url) ?? Number.NaN;
@@ -143,12 +136,9 @@ test('without a Crawl-delay, two requests to one origin start one second apart',
   );
 
   await crawled(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new ListingReader()],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/sitemap.xml'], null, options()),
+    new Origins(noRetries, null)
+      .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
+      .crawl(['https://site.test/sitemap.xml'], null, options()),
   );
 
   const [a = 0, b = 0] = started;
@@ -171,18 +161,15 @@ test('the rules of robots.txt are read again 24 hours after they were read, and 
   // The last read read the rules at fetched; this read starts at 10 days.
   const read = (fetched: number) =>
     crawled(
-      new WebCrawler(
-        noRetries,
-        new Origins(noRetries, {
-          'https://site.test': {
-            robots: { body: 'User-agent: *\nAllow: /\n', fetched },
-            blocked: null,
-            slowdown: 0,
-          },
-        }),
-        [new ListingReader()],
-        new AdaptiveRevisit(),
-      ).crawl(['https://site.test/sitemap.xml'], null, options()),
+      new Origins(noRetries, {
+        'https://site.test': {
+          robots: { body: 'User-agent: *\nAllow: /\n', fetched },
+          blocked: null,
+          slowdown: 0,
+        },
+      })
+        .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
+        .crawl(['https://site.test/sitemap.xml'], null, options()),
     );
 
   await read(10 * day - 23 * hour);
@@ -208,12 +195,9 @@ test('a 503 with Retry-After holds its origin until then, as a 429 does', async 
       });
     }),
   );
-  const crawl = new WebCrawler(
-    noRetries,
-    new Origins(noRetries, null),
-    [new ListingReader()],
-    new AdaptiveRevisit(),
-  ).crawl(['https://site.test/sitemap.xml'], null, options());
+  const crawl = new Origins(noRetries, null)
+    .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
+    .crawl(['https://site.test/sitemap.xml'], null, options());
 
   const { failures } = await crawled(crawl);
 
@@ -257,9 +241,8 @@ test('two crawls of one read share the expansion budget of each origin', async (
   // Two inputs of one source, each its own crawl, in one read.
   const origins = new Origins(noRetries, null);
   const programs = () =>
-    new WebCrawler(
+    origins.crawler(
       noRetries,
-      origins,
       [
         new PaginationReader({ strategy: 'all' }),
         new ListingReader(),
@@ -324,12 +307,9 @@ test('a redirect whose target stays is scheduled as unchanged, and one whose tar
   // an hour.
   let memento: unknown = null;
   const run = async () => {
-    const crawl = new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new ListingReader()],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/sitemap.xml'], memento, options());
+    const crawl = new Origins(noRetries, null)
+      .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
+      .crawl(['https://site.test/sitemap.xml'], memento, options());
     await crawled(crawl);
     const snapshot = crawl.snapshot();
     memento = snapshot;

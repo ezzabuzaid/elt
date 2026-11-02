@@ -10,7 +10,6 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-  WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
 import { HTMLExtraction, MarkdownExtraction, WebArticle } from './index.ts';
@@ -120,12 +119,13 @@ test('a discovered article retains its introductory summary before the main body
     const signal = AbortSignal.timeout(120_000);
     const pages = (
       await Array.fromAsync(
-        new WebCrawler(
-          got,
-          new Origins(got, null),
-          [new ListingReader(), new ArchiveReader(), new PaginationReader()],
-          new AdaptiveRevisit(),
-        ).crawl([upstream.origin], null, { signal }),
+        new Origins(got, null)
+          .crawler(
+            got,
+            [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+            new AdaptiveRevisit(),
+          )
+          .crawl([upstream.origin], null, { signal }),
       )
     )
       // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
@@ -191,12 +191,13 @@ test('a feed article retains a figure caption containing a descriptive link', as
     const signal = AbortSignal.timeout(120_000);
     const pages = (
       await Array.fromAsync(
-        new WebCrawler(
-          got,
-          new Origins(got, null),
-          [new ListingReader(), new ArchiveReader(), new PaginationReader()],
-          new AdaptiveRevisit(),
-        ).crawl([`${upstream.origin}/feed.xml`], null, { signal }),
+        new Origins(got, null)
+          .crawler(
+            got,
+            [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+            new AdaptiveRevisit(),
+          )
+          .crawl([`${upstream.origin}/feed.xml`], null, { signal }),
       )
     )
       // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
@@ -275,12 +276,13 @@ test('a feed article retains acknowledgments and an authorship disclosure after 
     const signal = AbortSignal.timeout(120_000);
     const pages = (
       await Array.fromAsync(
-        new WebCrawler(
-          got,
-          new Origins(got, null),
-          [new ListingReader(), new ArchiveReader(), new PaginationReader()],
-          new AdaptiveRevisit(),
-        ).crawl([`${upstream.origin}/feed.xml`], null, { signal }),
+        new Origins(got, null)
+          .crawler(
+            got,
+            [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+            new AdaptiveRevisit(),
+          )
+          .crawl([`${upstream.origin}/feed.xml`], null, { signal }),
       )
     )
       // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.

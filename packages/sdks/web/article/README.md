@@ -12,14 +12,21 @@ import {
   MarkdownExtraction,
   WebArticle,
 } from '@workspace/sdk-web-article';
-import { ListingReader, WebCrawler } from '@workspace/sdk-web-crawler';
+import {
+  AdaptiveRevisit,
+  ListingReader,
+  Origins,
+} from '@workspace/sdk-web-crawler';
 
 const signal = AbortSignal.timeout(30_000);
+// The record of each origin for this read: the crawl and the reader's own
+// requests, such as an HTML companion, pass it.
+const origins = new Origins(got, null);
 const reader = new WebArticle(
   [new MarkdownExtraction(), new HTMLExtraction()],
-  got,
+  origins.http,
 );
-const crawler = new WebCrawler(
+const crawler = origins.crawler(
   got.extend({
     hooks: {
       beforeRequest: [
@@ -32,12 +39,13 @@ const crawler = new WebCrawler(
     },
   }),
   [new ListingReader()],
+  new AdaptiveRevisit(),
 );
-for await (const entry of crawler.run(['https://www.anthropic.com/'], {
+for await (const entry of crawler.crawl(['https://www.anthropic.com/'], null, {
   signal,
   include: [new URLPattern('https://www.anthropic.com/news/*')],
 })) {
-  if ('error' in entry || 'progress' in entry) continue;
+  if ('error' in entry || 'progress' in entry || 'deferred' in entry) continue;
   const article = await (await reader.read(entry.response, signal)).extract();
   // article.content: sanitized HTML; article.markdown: Markdown
   // article.textContent: readable plain text

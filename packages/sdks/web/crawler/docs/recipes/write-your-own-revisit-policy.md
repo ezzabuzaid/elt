@@ -30,7 +30,6 @@ import {
   ListingReader,
   Origins,
   type Schedule,
-  WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
 /** A page that loaded once is never due again. A failed or gone page is tried again. */
@@ -72,10 +71,9 @@ const origin = `http://127.0.0.1:${address.port}`;
 const http = got.extend({ timeout: { request: 30_000 } });
 // Each crawl is a read of its own; its origins' records start from the last read's.
 let origins = new Origins(http, null);
-const crawler = (records: Origins) =>
-  new WebCrawler(
+const crawler = (read: Origins) =>
+  read.crawler(
     http,
-    records,
     [new ListingReader()],
     // The feed is read in each crawl, so that new posts are found; each post follows NeverRevisit.
     new CompositeRevisit(

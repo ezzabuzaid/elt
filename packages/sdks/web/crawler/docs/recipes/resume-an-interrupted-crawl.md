@@ -28,7 +28,6 @@ import {
   AdaptiveRevisit,
   ListingReader,
   Origins,
-  WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
 // A blog with a feed that names five posts.
@@ -61,9 +60,8 @@ const file = join(directory, 'crawl.json');
 const http = got.extend({ timeout: { request: 30_000 } });
 // Each process is a read of its own, with its own records of the origins.
 const crawler = () =>
-  new WebCrawler(
+  new Origins(http, null).crawler(
     http,
-    new Origins(http, null),
     [new ListingReader()],
     new AdaptiveRevisit(),
   );

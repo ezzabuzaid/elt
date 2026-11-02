@@ -392,27 +392,35 @@ Manage permissions in **System Settings → Privacy & Security**. Calendar and R
 import got from 'got';
 
 import {
+  AdaptiveRevisit,
   ArchiveReader,
   LinkReader,
   ListingReader,
+  Origins,
   PaginationReader,
-  WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
-const crawler = new WebCrawler(got, [
-  new ListingReader(),
-  new ArchiveReader(),
-  new PaginationReader(),
-  new LinkReader({ maxDepth: 3, maxPages: 100 }),
-]);
-for await (const entry of crawler.run(['https://www.anthropic.com/'], {
+// One read: the record of each origin, which makes the read's crawlers.
+const origins = new Origins(got, null);
+const crawler = origins.crawler(
+  got,
+  [
+    new ListingReader(),
+    new ArchiveReader(),
+    new PaginationReader(),
+    new LinkReader({ maxDepth: 3, maxPages: 100 }),
+  ],
+  new AdaptiveRevisit(),
+);
+const crawl = crawler.crawl(['https://www.anthropic.com/'], null, {
   signal: AbortSignal.timeout(600_000),
-})) {
-  // { url, listingUrl, lastModified, response }, { url, ..., error } or { progress }
+});
+for await (const entry of crawl) {
+  // { url, listingUrl, lastModified, response }, { url, ..., error }, { progress } or { deferred }
 }
 ```
 
-The crawler hands back pages without publisher-specific filters. It reads sitemaps, feeds and archives completely and follows links within limits; article extraction and destination loading are separate steps. `crawl.snapshot()` and `crawler.resume(snapshot, options)` continue an interrupted crawl. See the [engine, readers and formats](packages/sdks/web/crawler/README.md).
+The crawler hands back pages without publisher-specific filters. It reads sitemaps, feeds and archives completely and follows links within limits; article extraction and destination loading are separate steps. `crawl.snapshot()`, given to the next `crawler.crawl(starts, memento, options)`, continues an interrupted crawl. See the [engine, readers and formats](packages/sdks/web/crawler/README.md).
 
 Pass a crawled page's response to `new WebArticle([new MarkdownExtraction(), new HTMLExtraction()], got).read(entry.response, signal)`, or a URL to `fetch(url, signal)`, from `@workspace/sdk-web-article` to read its content and extract sanitized HTML, readable text, metadata and its declared canonical URL. It prefers native Markdown and falls back to HTML, using Marked, Defuddle, Mozilla Readability, jsdom, DOMPurify and html-to-text. See the [article API, public tests and live quality findings](packages/sdks/web/article/README.md).
 

@@ -13,7 +13,6 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-  WebCrawler,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
@@ -25,9 +24,8 @@ function programs(link: {
   readonly maxDepth: number;
   readonly maxPages: number;
 }) {
-  return new WebCrawler(
+  return new Origins(noRetries, null).crawler(
     noRetries,
-    new Origins(noRetries, null),
     [
       new PaginationReader({ strategy: 'all' }),
       new ListingReader(),
@@ -244,24 +242,25 @@ test('a list that an expansion finds hands back only the pages that match, and e
   );
 
   const pages = await handed(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [
-        new PaginationReader({ strategy: 'all' }),
-        new ArchiveReader(),
-        new ListingReader(),
-        new LinkReader({ maxDepth: 0, maxPages: 0 }),
-      ],
-      new AdaptiveRevisit(),
-    ).crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(120_000),
-      include: [
-        new URLPattern(`${site.origin}/*`),
-        new URLPattern(`${elsewhere.origin}/*`),
-      ],
-      expand,
-    }),
+    new Origins(noRetries, null)
+      .crawler(
+        noRetries,
+        [
+          new PaginationReader({ strategy: 'all' }),
+          new ArchiveReader(),
+          new ListingReader(),
+          new LinkReader({ maxDepth: 0, maxPages: 0 }),
+        ],
+        new AdaptiveRevisit(),
+      )
+      .crawl([`${list.origin}/programs`], null, {
+        signal: AbortSignal.timeout(120_000),
+        include: [
+          new URLPattern(`${site.origin}/*`),
+          new URLPattern(`${elsewhere.origin}/*`),
+        ],
+        expand,
+      }),
   );
 
   assert.deepEqual(

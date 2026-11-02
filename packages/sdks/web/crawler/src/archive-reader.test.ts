@@ -13,16 +13,15 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-  WebCrawler,
+  type WebCrawler,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
 const noRetries = got.extend({ retry: { limit: 0 } });
 
 function listings() {
-  return new WebCrawler(
+  return new Origins(noRetries, null).crawler(
     noRetries,
-    new Origins(noRetries, null),
     [new ListingReader(), new ArchiveReader(), new PaginationReader()],
     new AdaptiveRevisit(),
   );
@@ -367,9 +366,8 @@ test('archives found on a crawled page are followed, and keep that page as prove
       else response.writeHead(request.url === '/broken-feed' ? 503 : 404).end();
     });
     const entries = await crawl(
-      new WebCrawler(
+      new Origins(noRetries, null).crawler(
         noRetries,
-        new Origins(noRetries, null),
         [
           new ListingReader(),
           new ArchiveReader(),
@@ -455,15 +453,16 @@ test('links nobody downloads do not use up turns, so listings are not starved be
       );
     else response.end('<p>A listing.</p>');
   });
-  for await (const entry of new WebCrawler(
-    got,
-    new Origins(got, null),
-    [new ArchiveReader(), new PaginationReader()],
-    new AdaptiveRevisit(),
-  ).crawl([`${upstream.origin}/m`], null, {
-    signal: AbortSignal.timeout(120_000),
-    include: [new URLPattern({ pathname: '/search/*' })],
-  }))
+  for await (const entry of new Origins(got, null)
+    .crawler(
+      got,
+      [new ArchiveReader(), new PaginationReader()],
+      new AdaptiveRevisit(),
+    )
+    .crawl([`${upstream.origin}/m`], null, {
+      signal: AbortSignal.timeout(120_000),
+      include: [new URLPattern({ pathname: '/search/*' })],
+    }))
     assert.ok(!('error' in entry));
   // Without the fix, the 40 skipped tags use 40 page turns, so ten archive pages download first.
   assert.ok(

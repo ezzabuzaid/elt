@@ -16,7 +16,7 @@ import {
   LinkReader,
   ListingReader,
   Origins,
-  WebCrawler,
+  type WebCrawler,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
@@ -33,18 +33,16 @@ function site(...handlers: HttpHandler[]) {
 }
 
 function listings() {
-  return new WebCrawler(
+  return new Origins(noRetries, null).crawler(
     noRetries,
-    new Origins(noRetries, null),
     [new ListingReader(), new ArchiveReader()],
     new AdaptiveRevisit(),
   );
 }
 
 function allReaders(limits: { maxDepth: number; maxPages: number }) {
-  return new WebCrawler(
+  return new Origins(noRetries, null).crawler(
     noRetries,
-    new Origins(noRetries, null),
     [new ListingReader(), new ArchiveReader(), new LinkReader(limits)],
     new AdaptiveRevisit(),
   );

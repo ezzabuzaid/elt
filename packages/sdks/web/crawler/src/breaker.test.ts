@@ -12,7 +12,6 @@ import {
   LinkReader,
   ListingReader,
   Origins,
-  WebCrawler,
   hour,
 } from './index.ts';
 
@@ -66,9 +65,8 @@ const starts = [
 
 // A crawler of one read: the origins' records start from the memento of the last read.
 function crawler(origins: Origins) {
-  return new WebCrawler(
+  return origins.crawler(
     noRetries,
-    origins,
     [new ListingReader()],
     new AdaptiveRevisit(),
   );
@@ -333,12 +331,13 @@ test('a tolerated 404 opens no breaker, so the rest of its origin still download
   );
 
   const first = await crawled(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new LinkReader({ maxDepth: 1, maxPages: 100 })],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/'], null, options()),
+    new Origins(noRetries, null)
+      .crawler(
+        noRetries,
+        [new LinkReader({ maxDepth: 1, maxPages: 100 })],
+        new AdaptiveRevisit(),
+      )
+      .crawl(['https://site.test/'], null, options()),
   );
 
   assert.deepEqual(requests, [

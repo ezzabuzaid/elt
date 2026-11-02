@@ -16,7 +16,6 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-  WebCrawler,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
@@ -78,9 +77,8 @@ function blog(requests: string[]) {
 }
 
 function blogCrawler() {
-  return new WebCrawler(
+  return new Origins(noRetries, null).crawler(
     noRetries,
-    new Origins(noRetries, null),
     [new ListingReader(), new ArchiveReader(), new PaginationReader()],
     new AdaptiveRevisit(),
   );
@@ -106,14 +104,11 @@ test('a starting page that its sitemap lists as a page is handed back once, with
   );
 
   const handed = await pages(
-    new WebCrawler(
-      noRetries,
-      new Origins(noRetries, null),
-      [new ListingReader()],
-      new AdaptiveRevisit(),
-    ).crawl(['https://site.test/'], null, {
-      signal: AbortSignal.timeout(120_000),
-    }),
+    new Origins(noRetries, null)
+      .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
+      .crawl(['https://site.test/'], null, {
+        signal: AbortSignal.timeout(120_000),
+      }),
   );
 
   assert.deepEqual(handed, [
@@ -187,14 +182,15 @@ test('a URL downloaded again for a role it adds is not admitted again, so it spe
       return HttpResponse.html('<p>X</p>');
     }),
   );
-  const crawl = new WebCrawler(
-    got,
-    new Origins(got, null),
-    [new LinkReader({ maxDepth: 1, maxPages: 100 }), new ArchiveReader()],
-    new AdaptiveRevisit(),
-  ).crawl(['https://site.test/'], null, {
-    signal: AbortSignal.timeout(120_000),
-  });
+  const crawl = new Origins(got, null)
+    .crawler(
+      got,
+      [new LinkReader({ maxDepth: 1, maxPages: 100 }), new ArchiveReader()],
+      new AdaptiveRevisit(),
+    )
+    .crawl(['https://site.test/'], null, {
+      signal: AbortSignal.timeout(120_000),
+    });
   let last: CrawlMemento | undefined;
   for await (const entry of crawl)
     if (!('deferred' in entry)) last = crawl.snapshot();

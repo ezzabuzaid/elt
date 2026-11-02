@@ -14,7 +14,6 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-  WebCrawler,
 } from '@workspace/sdk-web-crawler';
 
 const http = got.extend({ timeout: { request: 30_000 } });
@@ -22,9 +21,8 @@ const read = (file: string) =>
   readFile(file, 'utf8').then(JSON.parse, () => null);
 // One record of each origin for this read, shared by every crawl of the read.
 const origins = new Origins(http, await read('origins.json'));
-const crawler = new WebCrawler(
+const crawler = origins.crawler(
   http,
-  origins,
   [
     new ListingReader(),
     new ArchiveReader(),
@@ -50,7 +48,7 @@ await writeFile('origins.json', JSON.stringify(origins.snapshot()));
 
 ## Engine
 
-`WebCrawler` owns the crawl frontier: the URLs still to download, and every URL already pending or downloaded. It downloads each URL once through the Got client you supply, except `robots.txt`, which the record of its origin downloads. Got owns timeouts, caching and the retries of network errors. `Origins` owns the manners of each origin: its `robots.txt`, its delay, its slowdown, its breaker and its expansion budget ([ADR 0006](./docs/adr/0006-every-crawl-of-a-read-asks-one-record-of-each-origin.md)). Make one `Origins` for each read, and give it to every crawler of the read, so that two crawls on one origin ask one record. The engine gives each response to every reader, in the order you list them, and adds what they find to the frontier. It has no format knowledge.
+`WebCrawler` owns the crawl frontier: the URLs still to download, and every URL already pending or downloaded. It downloads each URL once through the Got client you supply, except `robots.txt`, which the record of its origin downloads. Got owns timeouts, caching and the retries of network errors. `Origins` owns the manners of each origin: its `robots.txt`, its delay, its slowdown, its breaker and its expansion budget ([ADR 0006](./docs/adr/0006-every-crawl-of-a-read-asks-one-record-of-each-origin.md)). Make one `Origins` for each read, and ask it for each crawler of the read with `origins.crawler(http, readers, revisit)`, so that two crawls on one origin ask one record. Only the crawlers of the read ask the records; a host gets the client for requests outside a crawl (`origins.http`) and the memento (`origins.snapshot()`), and changes no record ([ADR 0007](./docs/adr/0007-the-read-makes-its-crawlers.md)). The engine gives each response to every reader, in the order you list them, and adds what they find to the frontier. It has no format knowledge.
 
 - **Starting URLs** are downloaded and read in each run where they are new or due by the revisit policy. A starting URL is handed back as a page only when a reader finds it as one, such as a sitemap that lists it, a page that links it, or `StartReader`, as Nutch and StormCrawler treat a seed like any other URL. A failed starting URL is an error.
 - **Pages** are URLs a reader marks as pages. The crawl hands back a page with its Got response when the page matches `include`, or always when you omit `include`. The engine downloads a page that does not match only when a reader `wants` it.
@@ -88,7 +86,7 @@ Each run requests every starting URL that it never visited or that its revisit p
 - **Next crawl**: `crawl.nextDue()` gives when the next crawl has a known URL due, starting URLs included, or null when none ever is. Start the next crawl then. For a crawl that blocked hosts left unfinished, it gives when the first breaker closes. For a crawl that an expansion budget left unfinished, it gives the start of that crawl, so the next run is due at once.
 - **Feed window**: a feed rolls its oldest items off. `ListingReader` measures the time its items cover, from the oldest publication date to the newest, and the feed is due again within half that time, whatever the policy. A reader gives such a limit for the URL it reads with `visit.revisitWithin(ms)`.
 
-A `RevisitPolicy` decides when a URL is due; the fourth argument of `new WebCrawler` sets it. A listing that gives a page another `lastModified` than at the last visit makes the page due at once. In the policies below, which extend `IntervalRevisit`, a failed URL is due two hours later, as StormCrawler's `fetchInterval.fetch.error`, and a gone URL, 404 or 410, a day later, as Nutch asks gone pages again.
+A `RevisitPolicy` decides when a URL is due; the third argument of `origins.crawler` sets it. A listing that gives a page another `lastModified` than at the last visit makes the page due at once. In the policies below, which extend `IntervalRevisit`, a failed URL is due two hours later, as StormCrawler's `fetchInterval.fetch.error`, and a gone URL, 404 or 410, a day later, as Nutch asks gone pages again.
 
 | Policy              | A URL is due                                                                                                                                                                                                                 | Use it when                                                                                                                                                      |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |

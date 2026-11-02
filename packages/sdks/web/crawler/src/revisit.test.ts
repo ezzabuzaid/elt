@@ -20,7 +20,6 @@ import {
   OnceRevisit,
   Origins,
   type RevisitPolicy,
-  WebCrawler,
   day,
   hour,
 } from './index.ts';
@@ -67,9 +66,8 @@ function everyCrawl(start: string, revisit: RevisitPolicy<unknown>) {
 }
 
 function siteCrawler(revisit: RevisitPolicy<unknown>) {
-  return new WebCrawler(
+  return new Origins(got, null).crawler(
     got,
-    new Origins(got, null),
     [new LinkReader({ maxDepth: 1, maxPages: 100 })],
     everyCrawl('https://site.test/', revisit),
   );
@@ -281,9 +279,8 @@ test('a listing that gives a page another lastModified makes it due at once, and
         : HttpResponse.html('<p>A</p>'),
     ),
   );
-  const crawler = new WebCrawler(
+  const crawler = new Origins(got, null).crawler(
     got,
-    new Origins(got, null),
     [new ListingReader()],
     everyCrawl('https://site.test/sitemap.xml', new AdaptiveRevisit()),
   );
@@ -329,9 +326,8 @@ test('a known page that is due and that no listing names goes after the pages th
         : HttpResponse.html('<p>Page</p>');
     }),
   );
-  const crawler = new WebCrawler(
+  const crawler = new Origins(got, null).crawler(
     got,
-    new Origins(got, null),
     [new ListingReader()],
     new AlwaysRevisit(),
   );
@@ -393,9 +389,8 @@ test('a linked page that is not due spends no LinkReader budget, so the budget r
         : HttpResponse.html('<p>Page</p>');
     }),
   );
-  const crawler = new WebCrawler(
+  const crawler = new Origins(got, null).crawler(
     got,
-    new Origins(got, null),
     [new LinkReader({ maxDepth: 1, maxPages: 1 })],
     everyCrawl('https://site.test/', new AdaptiveRevisit()),
   );
@@ -570,12 +565,13 @@ test('nextDue gives when the next crawl has a known URL due, starting URLs inclu
         : new HttpResponse(null, { status: 400 }),
     ),
   );
-  const crawl = new WebCrawler(
-    got,
-    new Origins(got, null),
-    [new LinkReader({ maxDepth: 1, maxPages: 100 })],
-    new AdaptiveRevisit(),
-  ).crawl(['https://site.test/'], null, options());
+  const crawl = new Origins(got, null)
+    .crawler(
+      got,
+      [new LinkReader({ maxDepth: 1, maxPages: 100 })],
+      new AdaptiveRevisit(),
+    )
+    .crawl(['https://site.test/'], null, options());
   const before = crawl.nextDue();
 
   await crawled(crawl);
@@ -602,9 +598,8 @@ test('a feed is due again within half the time its items cover, whatever the pol
         : HttpResponse.html('<p>Page</p>'),
     ),
   );
-  const crawler = new WebCrawler(
+  const crawler = new Origins(got, null).crawler(
     got,
-    new Origins(got, null),
     [new ListingReader()],
     new AdaptiveRevisit(),
   );

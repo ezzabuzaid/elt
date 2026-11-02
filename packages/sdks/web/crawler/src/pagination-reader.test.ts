@@ -13,16 +13,15 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-  WebCrawler,
+  type WebCrawler,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
 const noRetries = got.extend({ retry: { limit: 0 } });
 
 function pagination() {
-  return new WebCrawler(
+  return new Origins(noRetries, null).crawler(
     noRetries,
-    new Origins(noRetries, null),
     [new PaginationReader()],
     new AdaptiveRevisit(),
   );
@@ -135,9 +134,8 @@ test('a /sitemap.xml guess answered by a soft 404 page is not read as a list', a
   });
 
   const pages = await crawl(
-    new WebCrawler(
+    new Origins(noRetries, null).crawler(
       noRetries,
-      new Origins(noRetries, null),
       [new ListingReader(), new PaginationReader()],
       new AdaptiveRevisit(),
     ),
@@ -171,9 +169,8 @@ test('an archive that ArchiveReader finds and that fits on one page hands back t
     });
 
     const pages = await crawl(
-      new WebCrawler(
+      new Origins(noRetries, null).crawler(
         noRetries,
-        new Origins(noRetries, null),
         readers,
         new AdaptiveRevisit(),
       ),
@@ -214,9 +211,8 @@ test('an archive that a later page of a list declares is no hop, so link limits 
   });
 
   const pages = await crawl(
-    new WebCrawler(
+    new Origins(noRetries, null).crawler(
       noRetries,
-      new Origins(noRetries, null),
       [
         new PaginationReader(),
         new ArchiveReader(),
@@ -521,9 +517,8 @@ test('a declared pagination form is followed in place of the page-number rule', 
   });
 
   const pages = await crawl(
-    new WebCrawler(
+    new Origins(noRetries, null).crawler(
       noRetries,
-      new Origins(noRetries, null),
       [
         new PaginationReader({
           pagination: [new URLPattern({ pathname: '/tag/:tag/page:n/' })],
@@ -602,9 +597,8 @@ test('a list with the strategy all hands back the pages on other origins that th
   });
 
   const pages = await crawl(
-    new WebCrawler(
+    new Origins(noRetries, null).crawler(
       noRetries,
-      new Origins(noRetries, null),
       [new PaginationReader({ strategy: 'all' })],
       new AdaptiveRevisit(),
     ),
@@ -670,9 +664,8 @@ test('a list with the strategy all follows no pagination to another origin', asy
   });
 
   const pages = await crawl(
-    new WebCrawler(
+    new Origins(noRetries, null).crawler(
       noRetries,
-      new Origins(noRetries, null),
       [new PaginationReader({ strategy: 'all' })],
       new AdaptiveRevisit(),
     ),
@@ -703,9 +696,8 @@ test('a list whose stylesheet jsdom cannot parse writes nothing to the console',
   const errors = t.mock.method(console, 'error', () => {});
 
   const pages = await crawl(
-    new WebCrawler(
+    new Origins(noRetries, null).crawler(
       noRetries,
-      new Origins(noRetries, null),
       [new ArchiveReader(), new PaginationReader()],
       new AdaptiveRevisit(),
     ),

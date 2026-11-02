@@ -19,7 +19,8 @@ export { IntervalRevisit } from './interval-revisit.ts';
 export { LinkReader } from './link-reader.ts';
 export { ListingReader } from './listing-reader.ts';
 export { OnceRevisit } from './once-revisit.ts';
-export { Origins, type OriginMemento, type OriginsMemento } from './origins.ts';
+export { type OriginMemento, type OriginsMemento } from './origin-records.ts';
+export { Origins } from './origins.ts';
 export { PaginationReader } from './pagination-reader.ts';
 export { StartReader } from './start-reader.ts';
 export {
@@ -49,7 +50,7 @@ export {
 } from './revisit-policy.ts';
 export {
   CrawlError,
-  WebCrawler,
+  type WebCrawler,
   type Crawl,
   type CrawlDeferral,
   type CrawlFailure,

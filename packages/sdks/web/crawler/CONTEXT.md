@@ -13,7 +13,7 @@ What the crawls of one read know about one origin: its `robots.txt` rules and wh
 _Avoid_: Site state, host cache, politeness
 
 **Read**:
-The work of a host that one `Origins` serves, such as one read of the web source. Its crawls run one after another or at the same time.
+The work of a host that one `Origins` serves, such as one read of the web source. `Origins` makes the crawlers of the read, so every crawl of the read asks the same records. Its crawls run one after another or at the same time.
 _Avoid_: Session, batch
 
 **Delay**:
