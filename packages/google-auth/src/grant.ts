@@ -11,11 +11,7 @@ export class GoogleGrant {
   // The store holds other secrets too; a grant this package wrote says so in
   // its kind. Anything else, or nothing, is no grant.
   static parse(value: unknown): GoogleGrant | undefined {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- only a grant this package wrote carries its kind; any other secret fails the kind check below
-    const credential = value as GoogleOAuthCredential | undefined;
-    return credential?.kind === 'GOOGLE_BIGQUERY_OAUTH'
-      ? new GoogleGrant(credential)
-      : undefined;
+    return isCredential(value) ? new GoogleGrant(value) : undefined;
   }
 
   constructor(credential: GoogleOAuthCredential) {
@@ -78,4 +74,22 @@ export class GoogleAccountGrant extends GoogleGrant {
     const { googleAccountEmail: email, googleAccountId: id } = this.#credential;
     return { email, id };
   }
+}
+
+function isCredential(value: unknown): value is GoogleOAuthCredential {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'kind' in value &&
+    value.kind === 'GOOGLE_BIGQUERY_OAUTH' &&
+    'clientId' in value &&
+    typeof value.clientId === 'string' &&
+    'refreshToken' in value &&
+    typeof value.refreshToken === 'string' &&
+    'scope' in value &&
+    typeof value.scope === 'string' &&
+    (!('googleAccountEmail' in value) ||
+      typeof value.googleAccountEmail === 'string') &&
+    (!('googleAccountId' in value) || typeof value.googleAccountId === 'string')
+  );
 }

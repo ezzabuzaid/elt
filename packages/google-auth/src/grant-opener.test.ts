@@ -39,7 +39,9 @@ function mapStore(initial?: GoogleOAuthCredential) {
   const rows = new Map<string, unknown>();
   if (initial) rows.set(REF, initial);
   const calls = { reads: 0, writes: 0 };
-  let refuseWrites: Error | undefined;
+  let save: GoogleGrantStore['write'] = async (ref, credential) => {
+    rows.set(ref, credential);
+  };
   const store: GoogleGrantStore = {
     async read(ref) {
       calls.reads += 1;
@@ -47,14 +49,15 @@ function mapStore(initial?: GoogleOAuthCredential) {
     },
     async write(ref, credential) {
       calls.writes += 1;
-      if (refuseWrites) throw refuseWrites;
-      rows.set(ref, credential);
+      return save(ref, credential);
     },
   };
   return {
     calls,
     refuseWrites(error: Error) {
-      refuseWrites = error;
+      save = async () => {
+        throw error;
+      };
     },
     rows,
     store,

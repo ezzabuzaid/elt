@@ -47,7 +47,8 @@ export async function listenForCallback({
   const answer = Promise.withResolvers<string>();
   // The timeout can fire before anyone asks for the callback.
   answer.promise.catch(() => {});
-  let expected: string | undefined;
+  // Until the app asks for a callback, no sign-in is the one it waits for.
+  let awaits = (_state: string | null): boolean => false;
   let closed = false;
 
   const close = (): void => {
@@ -68,7 +69,7 @@ export async function listenForCallback({
       response.writeHead(404, { connection: 'close' }).end();
       return;
     }
-    if (expected === undefined || url.searchParams.get('state') !== expected) {
+    if (!awaits(url.searchParams.get('state'))) {
       response
         .writeHead(400, {
           connection: 'close',
@@ -92,7 +93,7 @@ export async function listenForCallback({
   return {
     callback(state: string) {
       if (!state) throw new TypeError('A callback needs the flow state');
-      expected = state;
+      awaits = (received) => received === state;
       return answer.promise;
     },
     close,
