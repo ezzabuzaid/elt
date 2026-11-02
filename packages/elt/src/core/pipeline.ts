@@ -540,10 +540,17 @@ export class Pipeline<Target extends DestinationTarget> {
     failure: unknown,
   ): Promise<void> {
     const failureType = connection.source.failureType(failure);
+    // The attempt declares each stream once, as one read covers it once: a
+    // connection that copies a stream twice fails its validation for that,
+    // and the history still records why.
+    const streams = connection.steps.filter(
+      (copy, index, steps) =>
+        steps.findIndex(({ from }) => from.name === copy.from.name) === index,
+    );
     try {
       const record = await this.history.begin(
         connection,
-        connection.steps.map((copy) => ({
+        streams.map((copy) => ({
           copy,
           coverage: connection.source.coverage(copy.from),
         })),

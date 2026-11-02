@@ -15,6 +15,7 @@ import {
   Connection,
   Copy,
   type CopyConfiguration,
+  PassFailed,
   PassFinished,
   Pipeline,
   Source,
@@ -663,4 +664,87 @@ test('a file that several connections load reads as one pass, which is only as g
   assert.equal(during?.state, 'running');
   assert.deepEqual([stopped?.state, stopped?.failureType], ['cancelled', null]);
   assert.match(stopped?.error ?? '', /stopped by the test/);
+});
+
+test('a connection that copies one stream twice is recorded as a failed pass and published as one, with the reason that its validation gave', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-passes-');
+  class Notes extends LiveSource {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    readonly identity = 'notes';
+    readonly notes = new Stream({
+      name: 'notes',
+      jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+      supportedSyncModes: ['full_refresh'],
+    });
+    protected readonly catalog = new Catalog([this.notes]);
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+
+    protected override async *extract() {
+      yield { stream: 'notes', data: { id: 'never read' } };
+    }
+  }
+  const source = new Notes();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  // A wiring mistake: one stream copied into two tables, which one read
+  // cannot do, so the connection never reads.
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'twice',
+        source,
+        destination,
+        steps: [
+          new Copy(source.notes, destination.table('notes'), {
+            id: 'twice:notes',
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'overwrite',
+          }),
+          new Copy(source.notes, destination.table('notes_again'), {
+            id: 'twice:notes-again',
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'overwrite',
+          }),
+        ],
+      }),
+    ],
+  });
+  const why = 'Connection twice copies each stream once';
+  const failed: unknown[] = [];
+  const hear = (message: unknown) => {
+    if (message instanceof PassFailed && message.connection.name === 'twice')
+      failed.push(message.error);
+  };
+  passChannels.failure.subscribe(hear);
+
+  try {
+    await assert.rejects(pipeline.run(), new TypeError(why));
+  } finally {
+    passChannels.failure.unsubscribe(hear);
+  }
+
+  const { pass } = readPassStatus(destination.path);
+  assert.deepEqual([pass?.state, pass?.error], ['failed', why]);
+  // The failed attempt covers its stream once, through the first copy of it.
+  assert.deepEqual(
+    shell(
+      destination.path,
+      'SELECT stream, target_table, status FROM extraction_coverage WHERE attempt_id = (SELECT latest_attempt_id FROM sync_status)',
+    ).rows,
+    [{ stream: 'notes', target_table: 'notes', status: 'failed' }],
+  );
+  assert.deepEqual(failed, [new TypeError(why)]);
 });
