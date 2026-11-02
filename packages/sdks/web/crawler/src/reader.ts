@@ -4,6 +4,12 @@ import type { Response } from 'got';
 import sniffHtmlEncoding from 'html-encoding-sniffer';
 import type { z } from 'zod';
 
+/** A language copy of a page that a listing declares, such as a sitemap's <xhtml:link rel="alternate" hreflang>: its language in lower case and its URL. */
+export type LocalizedVersion = {
+  readonly language: string;
+  readonly url: string;
+};
+
 export type PageLocation = {
   readonly url: string;
   /** Final URL of the response that first named this URL. */
@@ -12,6 +18,8 @@ export type PageLocation = {
   readonly lastModified: string | null;
   /** When the listing says the page was published, such as an RSS pubDate or an Atom published, in ISO 8601 UTC. */
   readonly published: string | null;
+  /** The language copies of the page that the listing declares, resolved; empty when it declares none. */
+  readonly localizedVersions: readonly LocalizedVersion[];
 };
 
 /** A URL in the crawl, as every reader sees it. */
@@ -92,6 +100,7 @@ export type Finding<Note> = {
   readonly naming: Naming | null;
   readonly lastModified: string | null;
   readonly published: string | null;
+  readonly localizedVersions: readonly LocalizedVersion[];
   /** False for a document only a reader reads, such as a sitemap. */
   readonly page: boolean;
   /**

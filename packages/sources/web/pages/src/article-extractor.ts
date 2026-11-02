@@ -22,7 +22,25 @@ export class ArticleExtractor extends RecordExtractor {
     url: { ...text, description: 'Final HTTP response URL after redirects.' },
     canonicalUrl: {
       ...nullableText,
-      description: 'Declared HTTP(S) canonical URL.',
+      description:
+        'Declared HTTP(S) canonical URL, from the head or else the Link header.',
+    },
+    localizedVersions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          language: {
+            type: 'string',
+            description:
+              'The language code, such as en or de-de, in lower case.',
+          },
+          url: { type: 'string', description: 'The URL of the copy.' },
+        },
+        required: ['language', 'url'],
+      },
+      description:
+        'The language copies that the page declares with rel="alternate" hreflang, in its head and its Link header, itself included; empty when it declares none.',
     },
     title: { ...nullableText, description: 'Extracted article title.' },
     byline: {

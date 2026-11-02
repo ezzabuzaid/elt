@@ -492,6 +492,180 @@ test('array fields load as JSON arrays that SQLite checks and reads element by e
   );
 });
 
+test('an array of objects loads as a JSON array of objects, which SQLite reads field by field and keeps an array', async () => {
+  class PageSource extends LiveSource {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'pages';
+    readonly pages = new Stream({
+      name: 'pages',
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          // A page's language copies, as it declares them.
+          copies: {
+            type: ['array', 'null'],
+            items: {
+              type: 'object',
+              properties: {
+                language: { type: 'string' },
+                url: { type: 'string' },
+              },
+              required: ['language', 'url'],
+            },
+          },
+        },
+        required: ['id', 'copies'],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh'],
+    });
+
+    protected readonly catalog = new Catalog([this.pages]);
+
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+
+    protected override async *extract(configuration: CopyConfiguration) {
+      yield {
+        stream: configuration.stream.name,
+        data: {
+          id: 'a',
+          copies: [
+            { language: 'en', url: 'https://example.com/' },
+            { language: 'de', url: 'https://example.com/de/' },
+          ],
+        },
+      };
+      yield {
+        stream: configuration.stream.name,
+        data: { id: 'b', copies: null },
+      };
+    }
+  }
+
+  await using scratch = await new TemporaryFiles().directory('elt-pages-');
+  const source = new PageSource();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'pages.sqlite'),
+  });
+  const copy = new Copy(source.pages, destination.table('pages'));
+
+  const results = await new Pipeline({
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({ name: 'test', source, destination, steps: [copy] }),
+    ],
+  }).run();
+
+  assert.deepEqual(results, [{ copy, count: 2, deleted: 0 }]);
+  {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    assert.deepEqual(
+      database
+        .prepare(
+          "SELECT id, (SELECT group_concat(json_extract(value, '$.language') || ' ' || json_extract(value, '$.url'), ', ') FROM json_each(pages.copies)) AS copies FROM pages ORDER BY id",
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        {
+          id: 'a',
+          copies: 'en https://example.com/, de https://example.com/de/',
+        },
+        { id: 'b', copies: null },
+      ],
+    );
+  }
+  using writable = new DatabaseSync(destination.path);
+  assert.throws(
+    () => writable.exec("UPDATE pages SET copies = '{}' WHERE id = 'a'"),
+    /CHECK constraint failed/,
+  );
+});
+
+test('an array item whose field is not a scalar fails its copy', async () => {
+  // A source that validates nothing, so the destination is the last check.
+  class PageSource extends LiveSource {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'pages';
+    readonly pages = new Stream({
+      name: 'pages',
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          copies: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                language: { type: 'string' },
+                url: { type: 'string' },
+              },
+              required: ['language', 'url'],
+            },
+          },
+        },
+        required: ['id', 'copies'],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh'],
+    });
+    protected readonly catalog = new Catalog([this.pages]);
+
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+
+    protected override async *extract(configuration: CopyConfiguration) {
+      yield {
+        stream: configuration.stream.name,
+        data: {
+          id: 'a',
+          copies: [{ language: 'en', url: { href: 'https://example.com/' } }],
+        },
+      };
+    }
+  }
+
+  await using scratch = await new TemporaryFiles().directory('elt-pages-');
+  const source = new PageSource();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'pages.sqlite'),
+  });
+
+  await assert.rejects(
+    new Pipeline({
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [new Copy(source.pages, destination.table('pages'))],
+        }),
+      ],
+    }).run(),
+    /Field "copies" requires an array of object/,
+  );
+});
+
 test('a source accepts only the stream objects from its own catalog', async () => {
   class OwnedSource extends LiveSource {
     override coverage() {

@@ -16,6 +16,11 @@ export type SitemapListing = {
     readonly published: string | null;
     /** The text of an RSS item's title or an Atom entry's title. Sitemaps and text lists have none. */
     readonly title: string | null;
+    /** The language copies of the page that a sitemap's <xhtml:link rel="alternate" hreflang> elements declare, the language in lower case and the URL as written. Feeds and text lists declare none. */
+    readonly localizedVersions: readonly {
+      readonly language: string;
+      readonly url: string;
+    }[];
   }[];
   readonly sitemaps: readonly string[];
 };
@@ -55,7 +60,16 @@ export function decodeSitemap(bytes: Uint8Array): string {
 // neither children nor attributes ''.
 const empty = z.literal('');
 const entry = z.object({ loc: z.string(), lastmod: z.string().optional() });
-const urlset = z.object({ url: z.array(entry).optional() });
+const alternate = z.object({
+  '@rel': z.string().optional(),
+  '@hreflang': z.string().optional(),
+  '@href': z.string().optional(),
+});
+const urlset = z.object({
+  url: z
+    .array(entry.extend({ link: z.array(alternate).optional() }))
+    .optional(),
+});
 const sitemapindex = z.object({ sitemap: z.array(entry).optional() });
 // RSS 2.0 makes every element of an item optional, so an item may name no page.
 const rss = z.object({
@@ -141,6 +155,7 @@ export function parseSitemap(text: string): SitemapListing {
         lastModified: null,
         published: null,
         title: null,
+        localizedVersions: [],
       })),
       sitemaps: [],
     };
@@ -164,6 +179,13 @@ export function parseSitemap(text: string): SitemapListing {
           lastModified: hint(page.lastmod),
           published: null,
           title: null,
+          localizedVersions: (page.link ?? []).flatMap((link) => {
+            const language = link['@hreflang']?.trim().toLowerCase();
+            const url = link['@href']?.trim();
+            return link['@rel'] === 'alternate' && language && url
+              ? [{ language, url }]
+              : [];
+          }),
         })),
         sitemaps: [],
       };
@@ -193,6 +215,7 @@ export function parseSitemap(text: string): SitemapListing {
                       lastModified: null,
                       published: hint(item.pubDate),
                       title: hint(item.title),
+                      localizedVersions: [],
                     })),
               ),
         sitemaps: [],
@@ -216,6 +239,7 @@ export function parseSitemap(text: string): SitemapListing {
                       ? item.title['#text']
                       : item.title,
                   ),
+                  localizedVersions: [],
                 })),
         ),
         sitemaps: [],

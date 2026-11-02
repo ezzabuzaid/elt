@@ -22,6 +22,8 @@ function scalarType(
       return 'real';
     case 'boolean':
       return 'boolean';
+    case 'object':
+      return 'object';
     default:
       throw new TypeError(
         `Unsupported JSON Schema type for field ${name}: ${type}`,
@@ -31,8 +33,8 @@ function scalarType(
 
 // SQLite column declarations are independent of a source or connection.
 export class SQLiteColumns {
-  // Scalars, and arrays of scalars as JSON arrays in TEXT. String formats
-  // keep their kind, as in Postgres.
+  // Scalars, and arrays of scalars or of objects as JSON arrays in TEXT.
+  // String formats keep their kind, as in Postgres.
   static fromSchema({
     properties,
     required = [],

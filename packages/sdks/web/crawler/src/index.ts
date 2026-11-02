@@ -17,6 +17,7 @@ export {
   type CrawlRequest,
   type Finding,
   type Naming,
+  type LocalizedVersion,
   type PageLocation,
   type Priority,
   type Route,

@@ -7,6 +7,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import { Marked } from 'marked';
 import { isDocument, parseDocument } from 'yaml';
 
+import { linkDeclarations } from './declarations.ts';
 import { type Article, type ArticlePage, Extraction } from './extraction.ts';
 import { listsPages } from './list-page.ts';
 
@@ -75,7 +76,8 @@ export class MarkdownExtraction extends Extraction {
       });
       return {
         url: page.url,
-        canonicalUrl: null,
+        // A Markdown page has no head: only its Link header declares.
+        ...linkDeclarations(page),
         title:
           field('title') ?? document.querySelector('h1')?.textContent ?? null,
         byline: field('author'),

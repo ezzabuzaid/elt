@@ -90,6 +90,7 @@ export class LinkReader extends Reader<never, State> {
       naming: { how: 'link' as const, text },
       lastModified: null,
       published: null,
+      localizedVersions: [],
       page: true,
       list: false,
       linked: true,

@@ -4,8 +4,9 @@ import {
 } from './formats/declared-format.ts';
 
 // The JSON Schema subset stream properties use: scalar types, optionally
-// nullable, with enum, range, length and string formats; or an array of one
-// such scalar type, optionally nullable, whose items carry those constraints.
+// nullable, with enum, range, length and string formats; or an array,
+// optionally nullable, whose items are one such scalar type, or objects whose
+// fields are such scalars, every field required, as a record's properties are.
 export type ScalarSchema = {
   readonly description?: string;
   readonly format?:
@@ -27,9 +28,26 @@ export type ScalarSchema = {
   readonly enum?: readonly (string | number)[];
 };
 
-export type ItemSchema = ScalarSchema & {
+export type ScalarItemSchema = ScalarSchema & {
   readonly type: Exclude<ScalarType, 'null'>;
 };
+
+// A field of an object item: a scalar, optionally nullable.
+export type ObjectFieldSchema = ScalarSchema & {
+  readonly type: ScalarType | readonly ScalarType[];
+};
+
+// An item that is an object of scalar fields, such as a page's language copy
+// { language, url }; it names every field as required. Airbyte's type system
+// nests objects in arrays the same way.
+export type ObjectItemSchema = {
+  readonly type: 'object';
+  readonly description?: string;
+  readonly properties: Readonly<Record<string, ObjectFieldSchema>>;
+  readonly required: readonly string[];
+};
+
+export type ItemSchema = ScalarItemSchema | ObjectItemSchema;
 
 export type FieldSchema = ScalarSchema & {
   readonly type: FieldType | readonly FieldType[];
@@ -51,15 +69,21 @@ type ScalarValue<T> = T extends 'string'
         ? null
         : never;
 
-type Types<F extends FieldSchema> = F['type'] extends readonly (infer T)[]
-  ? T
-  : F['type'];
+type Types<F extends { readonly type: unknown }> =
+  F['type'] extends readonly (infer T)[] ? T : F['type'];
+
+type ItemValue<I extends ItemSchema> = I extends ObjectItemSchema
+  ? {
+      -readonly [K in keyof I['properties']]: ScalarValue<
+        Types<I['properties'][K]>
+      >;
+    }
+  : ScalarValue<I['type']>;
 
 type FieldValue<F extends FieldSchema> =
   'array' extends Types<F>
     ? F['items'] extends ItemSchema
-      ? | ScalarValue<F['items']['type']>[]
-        | ScalarValue<Exclude<Types<F>, 'array'>>
+      ? ItemValue<F['items']>[] | ScalarValue<Exclude<Types<F>, 'array'>>
       : never
     : ScalarValue<Types<F>>;
 
@@ -98,14 +122,38 @@ const isArrayField = (
 ): field is FieldSchema & { readonly items: ItemSchema } =>
   typesOf(field).includes('array');
 
+// Whether a scalar declares only scalar types.
+function scalarSupported(field: {
+  readonly type: unknown;
+  readonly items?: unknown;
+}): boolean {
+  const { type } = field;
+  const types: readonly unknown[] = Array.isArray(type) ? type : [type];
+  return (
+    field.items === undefined && types.every((each) => scalarTypes.has(each))
+  );
+}
+
+// Whether an object item declares scalar fields and names each one required.
+function objectSupported(items: ObjectItemSchema): boolean {
+  const { properties, required } = items;
+  if (properties === null || typeof properties !== 'object') return false;
+  const names = Object.keys(properties);
+  return (
+    names.length > 0 &&
+    Array.isArray(required) &&
+    required.length === names.length &&
+    names.every((name) => required.includes(name)) &&
+    Object.values(properties).every(scalarSupported)
+  );
+}
+
 // Whether a field declares a type validateRecords can check: scalar types, or
-// an array (alone or with null) of one non-null scalar type.
+// an array (alone or with null) of one non-null scalar type or of objects of
+// scalar fields.
 function supported(field: FieldSchema): boolean {
+  if (!isArrayField(field)) return scalarSupported(field);
   const types = typesOf(field);
-  if (!isArrayField(field))
-    return (
-      field.items === undefined && types.every((type) => scalarTypes.has(type))
-    );
   const { items } = field;
   return (
     types.every((type) => type === 'array' || type === 'null') &&
@@ -120,7 +168,9 @@ function supported(field: FieldSchema): boolean {
     field.minLength === undefined &&
     items !== null &&
     typeof items === 'object' &&
-    itemTypes.has(items.type)
+    (items.type === 'object'
+      ? objectSupported(items)
+      : itemTypes.has(items.type))
   );
 }
 
@@ -158,10 +208,47 @@ function scalarValid(
 
 type CheckedField = {
   readonly name: string;
-  readonly schema: FieldSchema;
-  // Of the field, or of each item of an array field.
-  readonly format: DeclaredFormat | null;
+  // Whether a value of the field is valid.
+  readonly valid: (value: unknown) => boolean;
 };
+
+// A check of one scalar value against its schema, nulls included when the
+// schema allows them; the format is read once.
+function scalarCheck(
+  field: ScalarSchema & { readonly type: string | readonly string[] },
+) {
+  const types = typesOf(field);
+  const format = declaredFormat(field);
+  return (value: unknown) =>
+    (value === null && types.includes('null')) ||
+    scalarValid(field, types, format, value);
+}
+
+// A check of one item of an array field.
+function itemCheck(items: ItemSchema): (item: unknown) => boolean {
+  if (items.type !== 'object') return scalarCheck(items);
+  const fields = Object.entries(items.properties).map(
+    ([name, field]) => [name, scalarCheck(field)] as const,
+  );
+  return (item) =>
+    item !== null &&
+    typeof item === 'object' &&
+    !Array.isArray(item) &&
+    Object.keys(item).length === fields.length &&
+    fields.every(
+      ([name, valid]) =>
+        Object.hasOwn(item, name) && valid(Reflect.get(item, name)),
+    );
+}
+
+// A check of one field: a scalar, or an array whose every item is valid.
+function fieldCheck(field: FieldSchema): (value: unknown) => boolean {
+  if (!isArrayField(field)) return scalarCheck(field);
+  const item = itemCheck(field.items);
+  const nullable = typesOf(field).includes('null');
+  return (value) =>
+    (value === null && nullable) || (Array.isArray(value) && value.every(item));
+}
 
 // Every property is required and a record carries exactly those properties, so
 // a projection that drops or misspells a field fails here instead of loading.
@@ -189,11 +276,7 @@ export function validateRecords<P extends Properties>(
         );
       if (!supported(schema)) throw unsupported();
       try {
-        return {
-          name,
-          schema,
-          format: declaredFormat(isArrayField(schema) ? schema.items : schema),
-        };
+        return { name, valid: fieldCheck(schema) };
       } catch (error) {
         throw unsupported(error);
       }
@@ -220,17 +303,7 @@ function assertRecord<P extends Properties>(
     Object.keys(record).length !== fields.length
   )
     throw new TypeError(`${source} returned an invalid ${stream} record`);
-  for (const { name, schema, format } of fields) {
-    const value: unknown = Reflect.get(record, name);
-    const types = typesOf(schema);
-    if (value === null && types.includes('null')) continue;
-    const valid = isArrayField(schema)
-      ? Array.isArray(value) &&
-        value.every((item) =>
-          scalarValid(schema.items, [schema.items.type], format, item),
-        )
-      : scalarValid(schema, types, format, value);
-    if (!valid)
+  for (const { name, valid } of fields)
+    if (!valid(Reflect.get(record, name)))
       throw new TypeError(`${source} returned invalid ${stream}.${name}`);
-  }
 }

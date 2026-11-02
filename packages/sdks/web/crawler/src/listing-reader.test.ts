@@ -135,6 +135,66 @@ test('HTML sitemap declarations discover older pages when robots is absent', asy
   );
 });
 
+test("a sitemap's xhtml:link language copies of a page are the page's localized versions, resolved, HTTP only and in lower case, and a feed's item has none", async () => {
+  // A sitemap as Google's localized-versions guide shows one.
+  await using upstream = await new HttpServer().start((request, response) => {
+    switch (request.url) {
+      case '/sitemap.xml':
+        response.setHeader('content-type', 'application/xml');
+        response.end(
+          '<sitemapindex><sitemap><loc>/pages.xml</loc></sitemap><sitemap><loc>/feed.xml</loc></sitemap></sitemapindex>',
+        );
+        break;
+      case '/pages.xml':
+        response.setHeader('content-type', 'application/xml');
+        response.end(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+<url><loc>/startups</loc>
+<xhtml:link rel="alternate" hreflang="en" href="/startups"/>
+<xhtml:link rel="alternate" hreflang="de-DE" href="/de/startups"/>
+<xhtml:link rel="alternate" hreflang="x-default" href="https://example.com/startups"/>
+<xhtml:link rel="alternate" hreflang="fr" href="mailto:startups@example.com"/>
+</url>
+</urlset>`);
+        break;
+      case '/feed.xml':
+        response.setHeader('content-type', 'application/rss+xml');
+        response.end(
+          '<rss><channel><item><link>/recent</link></item></channel></rss>',
+        );
+        break;
+      case '/startups':
+      case '/recent':
+        response.setHeader('content-type', 'text/html');
+        response.end(article);
+        break;
+      default:
+        response.writeHead(404).end();
+    }
+  });
+
+  const pages = await crawl(listings(), `${upstream.origin}/sitemap.xml`);
+
+  assert.deepEqual(
+    pages
+      .map((entry) => {
+        if ('error' in entry) throw entry.error;
+        return { url: entry.url, localizedVersions: entry.localizedVersions };
+      })
+      .toSorted((a, b) => a.url.localeCompare(b.url)),
+    [
+      { url: `${upstream.origin}/recent`, localizedVersions: [] },
+      {
+        url: `${upstream.origin}/startups`,
+        localizedVersions: [
+          { language: 'en', url: `${upstream.origin}/startups` },
+          { language: 'de-de', url: `${upstream.origin}/de/startups` },
+          { language: 'x-default', url: 'https://example.com/startups' },
+        ],
+      },
+    ],
+  );
+});
+
 test('JSON alternates are validated without hiding explicit listing errors', async () => {
   await using upstream = await new HttpServer().start((request, response) => {
     switch (request.url) {

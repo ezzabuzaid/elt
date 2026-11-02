@@ -30,6 +30,7 @@ export class StartReader extends Reader<null, null> {
         naming: null,
         lastModified: null,
         published: null,
+        localizedVersions: [],
         page: true,
         list: false,
         linked: false,

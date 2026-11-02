@@ -204,11 +204,12 @@ The greatest cursor wins:
 - Each value of a `date`, `date-time`, `date-time-local` or `time-local` field has the same width, so its byte order is its time order.
 - The destination validates each observation, also a version that loses.
 
-Stream properties are scalars, or arrays of one scalar type:
+Stream properties are scalars, or arrays of one scalar type or of objects:
 
 - An array field declares `type: 'array'` (or `['array', 'null']`) and an `items` schema. The `items` schema has the type of the element, and its `enum`, range, `minLength` and date `format`.
 - `validateRecords` checks each element. It refuses constraints on the array itself.
-- Arrays hold lists of values, such as keywords or counts for each day. A collection whose members have their own fields is a different stream of rows.
+- An array can also hold objects: `items` is `{ type: 'object', properties, required }`, its properties are scalars, and `required` names each of them, as a record names each property. `validateRecords` checks that each object has exactly those fields, each one valid. A page's language copies, `{ language, url }`, are an example; Airbyte's type system nests objects in arrays the same way.
+- Arrays hold lists of values, such as keywords, counts for each day or a page's language copies. A collection whose members are records of their own, with a key and a lifetime, is a different stream of rows.
 - Arrays cannot be keys or cursors.
 
 ### String formats

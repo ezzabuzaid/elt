@@ -2,11 +2,21 @@ export type ArticlePage = {
   readonly url: string;
   readonly body: string | Uint8Array;
   readonly contentType: string | undefined;
+  /** The response's Link header (RFC 8288), where a page can declare its canonical URL and its language copies. */
+  readonly link: string | undefined;
+};
+
+/** One language copy of a page, as the page declares it with rel="alternate" hreflang: its language code, lower case, and its URL. */
+export type LocalizedVersion = {
+  readonly language: string;
+  readonly url: string;
 };
 
 export type Article = {
   readonly url: string;
   readonly canonicalUrl: string | null;
+  /** The language copies that the page declares in its head and its Link header, itself included, in the order declared, without repeats; empty when it declares none. */
+  readonly localizedVersions: readonly LocalizedVersion[];
   readonly title: string | null | undefined;
   readonly byline: string | null | undefined;
   readonly excerpt: string | null | undefined;

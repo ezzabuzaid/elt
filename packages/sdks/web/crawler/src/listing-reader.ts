@@ -51,6 +51,7 @@ function document(
     naming: { how, text: null },
     lastModified: null,
     published: null,
+    localizedVersions: [],
     page: false,
     list: false,
     linked,
@@ -141,6 +142,13 @@ export class ListingReader extends Reader<Note, State> {
             : { how: 'sitemap-entry' as const, text: null },
           lastModified: page.lastModified,
           published: instant(page.published),
+          // A copy that is not an HTTP(S) URL is a hint lost, not a listing that fails.
+          localizedVersions: page.localizedVersions.flatMap(
+            ({ language, url }) => {
+              const resolved = httpUrl(url, response.url);
+              return resolved === null ? [] : [{ language, url: resolved }];
+            },
+          ),
           page: true,
           list: false,
           linked: false,

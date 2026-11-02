@@ -50,6 +50,22 @@ const provenance = {
     description:
       "When the listing says the page was published, such as an RSS pubDate or an Atom published; null when it gives no date that parses. Not the page's own date metadata.",
   },
+  listedVersions: {
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        language: {
+          type: 'string',
+          description: 'The language code, such as en or de-de, in lower case.',
+        },
+        url: { type: 'string', description: 'The URL of the copy.' },
+      },
+      required: ['language', 'url'],
+    },
+    description:
+      "The language copies that the listing declares for the page, such as a sitemap's xhtml:link hreflang elements; empty when it declares none. Not the page's own declaration.",
+  },
 } as const;
 
 const saved = z.object({
@@ -533,6 +549,7 @@ export class WebSource extends Source<WebRead> {
                             entry.listingUrl,
                             entry.lastModified,
                             entry.published,
+                            entry.localizedVersions,
                           ]),
                         ),
                   async *records() {
@@ -546,6 +563,7 @@ export class WebSource extends Source<WebRead> {
                         listingUrl: entry.listingUrl,
                         lastModified: entry.lastModified,
                         published: entry.published,
+                        listedVersions: entry.localizedVersions,
                       })),
                       'Web',
                     );

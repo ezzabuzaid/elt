@@ -31,6 +31,7 @@ test('a non-HTML extraction receives response bytes and returns its article unch
   const article: Article = {
     url: `${upstream.origin}/`,
     canonicalUrl: null,
+    localizedVersions: [],
     title: 'Café report',
     byline: null,
     excerpt: 'A short post.',

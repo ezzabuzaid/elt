@@ -21,6 +21,8 @@ const storageTypes = {
   local_timestamp: 'TIMESTAMP',
   local_time: 'TIME',
   blob: 'BYTEA',
+  // An object of scalar fields, only as an item of an array column.
+  object: 'JSONB',
 } as const;
 
 type Kind = keyof typeof storageTypes;
@@ -38,6 +40,7 @@ const dataTypes = {
   local_timestamp: 'timestamp without time zone',
   local_time: 'time without time zone',
   blob: 'bytea',
+  object: 'jsonb',
 } as const satisfies Record<Kind, string>;
 
 // The kind that stores each string format; base64 text loads as its bytes.
@@ -54,7 +57,14 @@ const formatKinds = {
 // The kinds a column holds without a format. The other kinds hold text that
 // only a format can check, so a column gets them from its format.
 type PlainKind =
-  'text' | 'integer' | 'real' | 'blob' | 'boolean' | 'date' | 'timestamp';
+  | 'text'
+  | 'integer'
+  | 'real'
+  | 'blob'
+  | 'boolean'
+  | 'date'
+  | 'timestamp'
+  | 'object';
 const plainKinds: ReadonlySet<string> = new Set<PlainKind>([
   'text',
   'integer',
@@ -63,6 +73,7 @@ const plainKinds: ReadonlySet<string> = new Set<PlainKind>([
   'boolean',
   'date',
   'timestamp',
+  'object',
 ]);
 
 // What a column holds: a kind of its own, or a string format, which decides
@@ -72,9 +83,16 @@ export type PostgresColumnType = PlainKind | DeclaredFormat;
 // Postgres keeps time to the microsecond.
 const finestPrecision = 6;
 
+// An object item of an array column: its scalar fields.
+type EncodedObject = Readonly<Record<string, string | number | boolean | null>>;
+
 // A value the batch insert can carry through JSON and cast back to the column type.
 export type EncodedValue =
-  string | number | boolean | null | readonly (string | number | boolean)[];
+  | string
+  | number
+  | boolean
+  | null
+  | readonly (string | number | boolean | EncodedObject)[];
 
 // ISO years count astronomically, so year 0000 is 1 BC, which Postgres spells
 // as year 0001 with a BC suffix; every other year reads the same in both.
@@ -117,7 +135,7 @@ export class PostgresColumn {
     this.array = options.array ?? false;
     if (this.array && (kind === 'blob' || options.primaryKey))
       throw new TypeError(
-        'Array columns hold scalar values and cannot be keys',
+        'Array columns hold scalar values or objects and cannot be keys',
       );
     this.fileRead = options.fileRead;
     if (
@@ -270,7 +288,7 @@ export class PostgresColumn {
     if (value === null && this.nullable) return null;
     if (this.array) {
       if (Array.isArray(value)) {
-        const elements = value.map((element) => this.#scalar(element));
+        const elements = value.map((element) => this.#element(element));
         if (elements.every((element) => element !== undefined)) return elements;
       }
       throw new TypeError(
@@ -282,6 +300,27 @@ export class PostgresColumn {
     throw new TypeError(
       `Field ${JSON.stringify(this.field)} requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
     );
+  }
+
+  // One element of an array in its batch encoding: an object item as its
+  // fields, any other as its scalar; undefined when the kind rejects it.
+  #element(
+    value: unknown,
+  ): string | number | boolean | EncodedObject | undefined {
+    if (this.kind !== 'object') return this.#scalar(value);
+    // jsonb holds no NUL character, as text holds none.
+    return value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      Object.values(value).every(
+        (field) =>
+          field === null ||
+          (typeof field === 'string' && !field.includes('\0')) ||
+          typeof field === 'boolean' ||
+          (typeof field === 'number' && Number.isFinite(field)),
+      )
+      ? Object.fromEntries(Object.entries(value))
+      : undefined;
   }
 
   // One scalar in its batch encoding, or undefined when the kind rejects it.
@@ -335,6 +374,9 @@ export class PostgresColumn {
             return value;
         } else if (value instanceof Uint8Array)
           return `\\x${Buffer.from(value).toString('hex')}`;
+        break;
+      // An object is only an array's item, which #element encodes.
+      case 'object':
     }
     return undefined;
   }

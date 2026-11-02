@@ -197,6 +197,90 @@ test('record validation enforces every property of the stream schema', () => {
   }
 });
 
+test('record validation checks an array of objects: each item has exactly its declared scalar fields, each one valid', () => {
+  // A page's language copies, as a web page declares them.
+  const stream = new Stream({
+    name: 'pages',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        copies: {
+          type: ['array', 'null'],
+          items: {
+            type: 'object',
+            properties: {
+              language: { type: 'string', minLength: 1 },
+              url: { type: 'string' },
+              checked: { type: ['string', 'null'], format: 'date-time' },
+            },
+            required: ['language', 'url', 'checked'],
+          },
+        },
+      },
+    },
+    supportedSyncModes: ['full_refresh'],
+  });
+  const copy = {
+    language: 'de',
+    url: 'https://example.com/de/',
+    checked: null,
+  };
+  const valid = { copies: [copy] };
+
+  assert.deepEqual(validateRecords(stream, [valid], 'Test'), [valid]);
+  assert.deepEqual(validateRecords(stream, [{ copies: [] }], 'Test'), [
+    { copies: [] },
+  ]);
+  assert.deepEqual(validateRecords(stream, [{ copies: null }], 'Test'), [
+    { copies: null },
+  ]);
+  for (const copies of [
+    [null],
+    ['de'],
+    [[copy]],
+    [{ language: 'de', url: 'https://example.com/de/' }],
+    [{ ...copy, extra: 1 }],
+    [{ ...copy, language: '' }],
+    [{ ...copy, url: null }],
+    [{ ...copy, checked: '2025-01-02T03:04:05Z' }],
+  ])
+    assert.throws(() => validateRecords(stream, [{ copies }], 'Test'), {
+      message: 'Test returned invalid pages.copies',
+    });
+  for (const copies of [
+    { type: 'array', items: { type: 'object', properties: {}, required: [] } },
+    {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { language: { type: 'string' } },
+        required: [],
+      },
+    },
+    {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          languages: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['languages'],
+      },
+    },
+  ]) {
+    const unsupported = new Stream({
+      name: 'nested',
+      // @ts-expect-error -- some of these schemas are invalid FieldSchemas; the check must reject them at run time too
+      jsonSchema: { type: 'object', properties: { copies } },
+      supportedSyncModes: ['full_refresh'],
+    });
+    assert.throws(
+      () => validateRecords(unsupported, [], 'Test'),
+      /nested\.copies declares an unsupported type/,
+    );
+  }
+});
+
 test('string formats accept exactly one canonical spelling of each value', () => {
   const stream = new Stream({
     name: 'values',

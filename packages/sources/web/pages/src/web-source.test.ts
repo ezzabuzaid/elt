@@ -1775,6 +1775,69 @@ test(
   },
 );
 
+test("an article's row keeps the language copies that the page declares, as localizedVersions, and those that its listing declares, as listedVersions, which a listing that declares other copies rewrites while the page stays the same", async () => {
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  // The languages that the sitemap declares copies in.
+  let languages = ['en', 'de'];
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    const path = (language: string) =>
+      language === 'en' ? '/startups' : `/${language}/startups`;
+    if (url.pathname === '/sitemap.xml')
+      response
+        .writeHead(200, { 'content-type': 'application/xml' })
+        .end(
+          `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml"><url><loc>${url.origin}/de/startups</loc>${languages.map((language) => `<xhtml:link rel="alternate" hreflang="${language}" href="${url.origin}${path(language)}"/>`).join('')}</url></urlset>`,
+        );
+    else if (url.pathname === '/de/startups')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          `<html lang="de"><head><title>Startups</title><link rel="alternate" hreflang="en-us" href="/startups"><link rel="alternate" hreflang="de-de" href="/de/startups"></head><body><article><p>Gutschriften und Hilfe für Startups, die auf unserer Plattform bauen.</p></article></body></html>`,
+        );
+    else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [
+        { stream: articles(), inputs: [`${upstream.origin}/sitemap.xml`] },
+      ],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+
+  await ingestion.run();
+
+  const row = database.connection
+    .prepare('SELECT localizedVersions, listedVersions FROM articles')
+    .get();
+  assert.deepEqual(JSON.parse(String(row?.localizedVersions)), [
+    { language: 'en-us', url: `${upstream.origin}/startups` },
+    { language: 'de-de', url: `${upstream.origin}/de/startups` },
+  ]);
+  assert.deepEqual(JSON.parse(String(row?.listedVersions)), [
+    { language: 'en', url: `${upstream.origin}/startups` },
+    { language: 'de', url: `${upstream.origin}/de/startups` },
+  ]);
+
+  languages = ['en', 'de', 'fr'];
+  await ingestion.run();
+
+  const relisted = database.connection
+    .prepare('SELECT listedVersions FROM articles')
+    .get();
+  assert.deepEqual(JSON.parse(String(relisted?.listedVersions)), [
+    { language: 'en', url: `${upstream.origin}/startups` },
+    { language: 'de', url: `${upstream.origin}/de/startups` },
+    { language: 'fr', url: `${upstream.origin}/fr/startups` },
+  ]);
+});
+
 test('a page whose last visit failed is a row of the failures stream until a visit of it succeeds, also through a read that a record ends, and a sitemap that failed is none', async () => {
   await using cache = await new TemporaryFiles().directory('web-cache-');
   let status = 403;

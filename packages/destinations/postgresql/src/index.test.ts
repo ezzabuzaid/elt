@@ -3358,6 +3358,179 @@ test('array fields load as native arrays of their item type, in order, and an un
   );
 });
 
+test('an array of objects loads as a jsonb array, each object with its fields, in order', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 2, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  // A page's language copies, as it declares them.
+  const pages = new Stream({
+    name: 'pages',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        copies: {
+          type: ['array', 'null'],
+          items: {
+            type: 'object',
+            properties: {
+              language: { type: 'string' },
+              url: { type: 'string' },
+            },
+            required: ['language', 'url'],
+          },
+        },
+      },
+      required: ['id', 'copies'],
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  class Snapshots extends ScriptedSource {
+    rows: Record<string, unknown>[] = [];
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      yield* diffSnapshot(configuration, this.rows, state, {
+        policy: new ClosedWorld(),
+        signal: undefined,
+      });
+    }
+  }
+  const source = new Snapshots([pages], {});
+  const destination = new PostgresDestination({
+    url: database.connectionString,
+    schema: 'raw',
+  });
+  source.rows = [
+    {
+      id: 'a',
+      copies: [
+        { language: 'en', url: 'https://example.com/' },
+        { language: 'de', url: 'https://example.com/de/' },
+      ],
+    },
+    { id: 'b', copies: null },
+  ];
+
+  const [result] = await new Pipeline({
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.connectionString,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(pages, destination.table('pages'), incremental('pages')),
+        ],
+      }),
+    ],
+  }).run();
+
+  assert.equal(result?.count, 2);
+  assert.deepEqual(
+    (
+      await sql`SELECT udt_name FROM information_schema.columns WHERE table_schema = 'raw' AND table_name = 'pages' AND column_name = 'copies'`
+    ).map(({ udt_name }) => udt_name),
+    ['_jsonb'],
+  );
+  assert.deepEqual(
+    (
+      await sql`SELECT id, (SELECT string_agg(copy->>'language' || ' ' || (copy->>'url'), ', ' ORDER BY position) FROM unnest(copies) WITH ORDINALITY AS item (copy, position)) AS copies FROM raw.pages ORDER BY id`
+    ).map((row) => ({ ...row })),
+    [
+      {
+        id: 'a',
+        copies: 'en https://example.com/, de https://example.com/de/',
+      },
+      { id: 'b', copies: null },
+    ],
+  );
+});
+
+test('an array item whose field is not a scalar fails its copy', async () => {
+  await using database = await databases.database();
+  const pages = new Stream({
+    name: 'pages',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        copies: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              language: { type: 'string' },
+              url: { type: 'string' },
+            },
+            required: ['language', 'url'],
+          },
+        },
+      },
+      required: ['id', 'copies'],
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  // A source that validates nothing, so the destination is the last check.
+  class Snapshots extends ScriptedSource {
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      yield* diffSnapshot(
+        configuration,
+        [
+          {
+            id: 'a',
+            copies: [{ language: 'en', url: { href: 'https://example.com/' } }],
+          },
+        ],
+        state,
+        { policy: new ClosedWorld(), signal: undefined },
+      );
+    }
+  }
+  const source = new Snapshots([pages], {});
+  const destination = new PostgresDestination({
+    url: database.connectionString,
+    schema: 'raw',
+  });
+  await assert.rejects(
+    new Pipeline({
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new PostgresCheckpointStore({
+            url: database.connectionString,
+            schema: 'raw',
+          }),
+          steps: [
+            new Copy(pages, destination.table('pages'), incremental('pages')),
+          ],
+        }),
+      ],
+    }).run(),
+    /Field "copies" requires an array of object/,
+  );
+});
+
 test("a statement that fails in one stream's merge does not erase a sibling's stage", async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();

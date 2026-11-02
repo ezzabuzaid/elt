@@ -67,6 +67,7 @@ Inferred columns follow the stream schema. The [string formats](../../elt/README
 | `number`                                        | `DOUBLE PRECISION`                                                 |
 | `boolean`                                       | `BOOLEAN`                                                          |
 | `array` of any of the above                     | a native array of that type, such as `BIGINT[]` or `TIMESTAMPTZ[]` |
+| `array` of objects                              | `JSONB[]`, one `jsonb` object for each element                     |
 
 - Postgres keeps time to the microsecond. A time with more fraction digits, such as the `datetime2(7)` of SQL Server, stays exact text. It sorts in time order, because each value of the column has the same width. Cast it (`::timestamp`) for date arithmetic, which rounds.
 - A `TIMESTAMPTZ` keeps the instant. It does not keep the offset that the value had.

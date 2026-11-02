@@ -20,6 +20,8 @@ function scalarType(
       return 'real';
     case 'boolean':
       return 'boolean';
+    case 'object':
+      return 'object';
     default:
       throw new TypeError(
         `Unsupported JSON Schema type for field ${name}: ${type}`,

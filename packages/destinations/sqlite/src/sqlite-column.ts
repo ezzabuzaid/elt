@@ -21,6 +21,8 @@ const storageTypes = {
   timestamp: 'TEXT',
   local_timestamp: 'TEXT',
   local_time: 'TEXT',
+  // An object of scalar fields, only as an item of an array column.
+  object: 'TEXT',
 } as const;
 
 type Kind = keyof typeof storageTypes;
@@ -39,7 +41,14 @@ const formatKinds = {
 // The kinds a column holds without a format. The other kinds hold text that
 // only a format can check, so a column gets them from its format.
 type PlainKind =
-  'text' | 'integer' | 'real' | 'blob' | 'boolean' | 'date' | 'timestamp';
+  | 'text'
+  | 'integer'
+  | 'real'
+  | 'blob'
+  | 'boolean'
+  | 'date'
+  | 'timestamp'
+  | 'object';
 const plainKinds: ReadonlySet<string> = new Set<PlainKind>([
   'text',
   'integer',
@@ -48,6 +57,7 @@ const plainKinds: ReadonlySet<string> = new Set<PlainKind>([
   'boolean',
   'date',
   'timestamp',
+  'object',
 ]);
 
 // What a column holds: a kind of its own, or a string format, which decides
@@ -127,7 +137,7 @@ export class SQLiteColumn {
     this.array = options.array ?? false;
     if (this.array && (kind === 'blob' || options.primaryKey))
       throw new TypeError(
-        'Array columns hold scalar values and cannot be keys',
+        'Array columns hold scalar values or objects and cannot be keys',
       );
     this.fileRead = options.fileRead;
     if (
@@ -326,6 +336,9 @@ export class SQLiteColumn {
           if (typeof value === 'number' && Number.isSafeInteger(value))
             return value;
         } else if (value instanceof Uint8Array) return value;
+        break;
+      // An object is only an array's item, which the array branch encodes.
+      case 'object':
     }
     throw new TypeError(
       `Field ${JSON.stringify(this.field)} requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
@@ -350,6 +363,19 @@ export class SQLiteColumn {
         return isCalendarDate(value);
       case 'timestamp':
         return isTimestamp(value);
+      case 'object':
+        return (
+          value !== null &&
+          typeof value === 'object' &&
+          !Array.isArray(value) &&
+          Object.values(value).every(
+            (field) =>
+              field === null ||
+              typeof field === 'string' ||
+              typeof field === 'boolean' ||
+              (typeof field === 'number' && Number.isFinite(field)),
+          )
+        );
       default:
         return false;
     }

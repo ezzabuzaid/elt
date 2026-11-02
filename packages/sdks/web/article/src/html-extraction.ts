@@ -6,7 +6,17 @@ import { convert } from 'html-to-text';
 import { type ConstructorOptions, JSDOM, VirtualConsole } from 'jsdom';
 import { NodeHtmlMarkdown } from 'node-html-markdown';
 
-import { type Article, type ArticlePage, Extraction } from './extraction.ts';
+import {
+  declaredUrl,
+  linkDeclarations,
+  uniqueVersions,
+} from './declarations.ts';
+import {
+  type Article,
+  type ArticlePage,
+  Extraction,
+  type LocalizedVersion,
+} from './extraction.ts';
 import { listsPages } from './list-page.ts';
 
 export type ArticleSelection = Omit<
@@ -15,6 +25,8 @@ export type ArticleSelection = Omit<
 > & {
   readonly content: string;
   readonly canonicalUrl: string | null;
+  /** The language copies that the head declares with <link rel="alternate" hreflang>. */
+  readonly localizedVersions: readonly LocalizedVersion[];
   readonly inferredPublished: string | null;
   /** What the page declares itself, or null when it declares neither. */
   readonly declared: 'live blog' | 'article' | 'list' | null;
@@ -72,6 +84,7 @@ export class HTMLExtraction extends Extraction {
       signal.throwIfAborted();
       if (!selection) return null;
       const { declared, ...article } = selection;
+      const header = linkDeclarations(page);
       const content = createDOMPurify(dom.window).sanitize(
         await minify(article.content, {
           collapseWhitespace: true,
@@ -108,6 +121,12 @@ export class HTMLExtraction extends Extraction {
         textContent,
         length: textContent.length,
         url: page.url,
+        // The head declares first; the Link header adds what it does not.
+        canonicalUrl: article.canonicalUrl ?? header.canonicalUrl,
+        localizedVersions: uniqueVersions([
+          ...article.localizedVersions,
+          ...header.localizedVersions,
+        ]),
         // Cards outweigh a declared article: a blog index keeps its CMS's
         // Article or og:type article (css-tricks.com, smashingmagazine.com).
         // A live blog's cards are its own updates, and no index declares
@@ -130,13 +149,25 @@ export class HTMLExtraction extends Extraction {
       'nav, [role="navigation"]',
     ))
       navigation.remove();
-    const canonical = dom.window.document.querySelector<HTMLLinkElement>(
+    const { document } = dom.window;
+    const canonical = document.querySelector<HTMLLinkElement>(
       'link[rel~="canonical"][href]',
     );
-    let canonicalUrl = canonical ? URL.parse(canonical.href) : null;
-    if (canonicalUrl && !['http:', 'https:'].includes(canonicalUrl.protocol))
-      canonicalUrl = null;
-    if (canonicalUrl) canonicalUrl.hash = '';
+    const canonicalUrl = canonical
+      ? declaredUrl(canonical.href, document.URL)
+      : null;
+    const localizedVersions = uniqueVersions(
+      [
+        ...document.querySelectorAll<HTMLLinkElement>(
+          'link[rel~="alternate"][hreflang][href]',
+        ),
+      ].flatMap((link) => {
+        const url = declaredUrl(link.href, document.URL);
+        return url === null
+          ? []
+          : [{ language: link.hreflang.toLowerCase(), url }];
+      }),
+    );
     // Post-class hints apply only where semantic article/main markup is
     // absent, and only on a page of one post: the first of several posts is
     // not the page's content. An .entry inside a .post is the same post.
@@ -265,7 +296,8 @@ export class HTMLExtraction extends Extraction {
       ...article,
       title,
       content: extracted.content,
-      canonicalUrl: canonicalUrl && canonicalUrl.href,
+      canonicalUrl,
+      localizedVersions,
       inferredPublished: Number.isNaN(published)
         ? null
         : new Date(published).toISOString(),

@@ -63,6 +63,7 @@ export class ArchiveReader extends Reader<null, null> {
         naming: { how: 'archive' as const, text },
         lastModified: null,
         published: null,
+        localizedVersions: [],
         page: false,
         list: true,
         // An archive that a list links is no hop; one that an ordinary page links is.

@@ -16,6 +16,7 @@ import {
 } from 'got';
 import { JSDOM, VirtualConsole } from 'jsdom';
 
+import { uniqueVersions } from './declarations.ts';
 import {
   type Article,
   type ArticlePage,
@@ -85,10 +86,12 @@ function readable(response: Response) {
 }
 
 function page(response: Response): ArticlePage {
+  const { link } = response.headers;
   return {
     url: response.url,
     body: response.rawBody,
     contentType: response.headers['content-type'],
+    link: Array.isArray(link) ? link.join(', ') : link,
   };
 }
 
@@ -353,6 +356,10 @@ export class WebArticle {
       publishedTime: native.publishedTime ?? html.publishedTime,
       excerpt: native.excerpt ?? html.excerpt,
       canonicalUrl: native.canonicalUrl ?? html.canonicalUrl,
+      localizedVersions: uniqueVersions([
+        ...native.localizedVersions,
+        ...html.localizedVersions,
+      ]),
       siteName: native.siteName ?? html.siteName,
       lang: native.lang ?? html.lang,
       dir: native.dir ?? html.dir,

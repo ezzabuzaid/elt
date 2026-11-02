@@ -24,7 +24,7 @@ Inferred columns map flat JSON Schema fields:
 | `string` + `format: 'decimal'`                                  | `TEXT`                                                                                      |
 | `string` + `date`, `date-time`, `date-time-local`, `time-local` | `TEXT`, with a `CHECK` that keeps the canonical form and its width                          |
 
-- Read an array with `json_each`.
+- Read an array with `json_each`. An array of objects is a JSON array of objects; read a field of each with `json_extract(value, '$.field')`.
 - The `data_type` of the catalog names each [string format](../../elt/README.md#string-formats) with its precision and scale, such as `timestamp(7)` or `decimal(19,4)`. A millisecond `date-time` stays `timestamp`.
 - Nullable scalars and arrays are possible for normal fields. A missing optional field becomes SQL `NULL`.
 - Explicit columns are `text`, `integer`, `int64`, `real`, `boolean`, `date`, `timestamp`, `localTimestamp(precision)` and `blob`. `int64` and `localTimestamp` keep the `int64` and `date-time-local` formats as an inferred column keeps them: the same value, `CHECK` and catalog `data_type`. A local timestamp has no default precision, so you give it. They permit null unless you mark them `.notNull()` or `.primaryKey()`. A missing or undefined explicit field fails. An explicit projection can leave out nested fields that SQLite cannot hold.
