@@ -10,6 +10,7 @@ import {
 } from 'got';
 import { z } from 'zod';
 
+import { OriginBlocked, crawlChannels } from './crawl-channels.ts';
 import { day, hour } from './revisit-policy.ts';
 import { RobotsRules } from './robots-rules.ts';
 
@@ -462,6 +463,7 @@ export class Origins {
     const record = this.#record(origin);
     record.saved = { ...record.saved, blocked: until };
     record.opened = until;
+    crawlChannels.block.publish(new OriginBlocked(origin, until));
     return until;
   }
 }

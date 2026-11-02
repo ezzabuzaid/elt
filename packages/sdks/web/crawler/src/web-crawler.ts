@@ -3,6 +3,15 @@ import { createHash } from 'node:crypto';
 import { type Got, HTTPError, RequestError, type Response } from 'got';
 import { z } from 'zod';
 
+import {
+  type Answered,
+  CrawlEnded,
+  CrawlHandedOff,
+  CrawlRequested,
+  CrawlStarted,
+  type Errored,
+  crawlChannels,
+} from './crawl-channels.ts';
 import { OriginLane } from './origin-lane.ts';
 import type { Origins, Unreachable } from './origins.ts';
 import {
@@ -81,6 +90,15 @@ export type CrawlProgress = {
 };
 /** A known page the crawl did not request, whose last download succeeded: it still exists, unchanged as far as the crawl knows. */
 export type CrawlDeferral = { readonly deferred: PageLocation };
+
+// What a response tells of its request: Got times each request it sends.
+function answered(response: Response): Answered {
+  return {
+    status: response.statusCode,
+    bytes: response.rawBody.byteLength,
+    timings: response.timings ?? null,
+  };
+}
 
 // Smooth weighted round-robin weights (nginx's deterministic form of the
 // biased front-queue selector, Introduction to Information Retrieval §20.2.3).
@@ -275,6 +293,7 @@ export class WebCrawler {
           entries,
           starting,
           starts: startUrls.map(start),
+          resumed: crawl !== null,
           known,
           // Only the current starting URLs' pages count.
           pages: new Map(
@@ -405,6 +424,8 @@ class CrawlRun implements Crawl {
   readonly #starting: readonly string[];
   // The starting URLs' entries, which an abandoned run schedules as failed.
   readonly #starts: readonly Entry[];
+  // The crawl continues an unfinished crawl of a memento.
+  readonly #resumed: boolean;
   // Pending entries of a blocked origin, or of an origin that spent its
   // expansion budget, out of the lanes until a later crawl resumes them.
   readonly #held = new Map<string, Entry>();
@@ -428,6 +449,7 @@ class CrawlRun implements Crawl {
       entries,
       starting,
       starts,
+      resumed,
       known,
       pages,
       revisits,
@@ -437,6 +459,7 @@ class CrawlRun implements Crawl {
       readonly entries: readonly Entry[];
       readonly starting: readonly string[];
       readonly starts: readonly Entry[];
+      readonly resumed: boolean;
       readonly known: Map<string, KnownUrl>;
       readonly pages: Map<string, string>;
       readonly revisits: Entry[];
@@ -453,6 +476,7 @@ class CrawlRun implements Crawl {
     this.#revisits = revisits;
     this.#starting = starting;
     this.#starts = starts;
+    this.#resumed = resumed;
     this.#pages = pages;
     // Pending entries were admitted when found, in this run or the last.
     for (const entry of entries) this.#add(entry);
@@ -546,7 +570,47 @@ class CrawlRun implements Crawl {
       .toSorted();
   }
 
+  // Each entry as the crawl hands it out, with what the crawl publishes
+  // around it: its start and end, and the consumer's time with each entry.
   async *[Symbol.asyncIterator](): AsyncGenerator<
+    CrawledPage | CrawlFailure | CrawlProgress | CrawlDeferral
+  > {
+    crawlChannels.start.publish(
+      new CrawlStarted(
+        this.#starts.map(({ url }) => url),
+        this.#resumed,
+      ),
+    );
+    try {
+      for await (const entry of this.#visits()) {
+        const handed = performance.now();
+        yield entry;
+        const duration = performance.now() - handed;
+        if ('response' in entry)
+          crawlChannels.handOff.publish(
+            new CrawlHandedOff(entry.url, 'page', duration),
+          );
+        else if ('error' in entry)
+          crawlChannels.handOff.publish(
+            new CrawlHandedOff(entry.url, 'failure', duration),
+          );
+        else if ('progress' in entry)
+          crawlChannels.handOff.publish(
+            new CrawlHandedOff(entry.progress, 'progress', duration),
+          );
+        else
+          crawlChannels.handOff.publish(
+            new CrawlHandedOff(entry.deferred.url, 'deferral', duration),
+          );
+      }
+    } finally {
+      crawlChannels.end.publish(
+        new CrawlEnded(this.#phase instanceof Finished, this.nextDue()),
+      );
+    }
+  }
+
+  async *#visits(): AsyncGenerator<
     CrawledPage | CrawlFailure | CrawlProgress | CrawlDeferral
   > {
     const { signal } = this.#options;
@@ -573,9 +637,12 @@ class CrawlRun implements Crawl {
           continue;
         }
         response = robots.answer;
-      } else
+        this.#requested(entry, 'origin record', 0, answered(response));
+      } else {
+        const paced = performance.now();
+        await this.#origins.pace(origin, signal);
+        const waited = performance.now() - paced;
         try {
-          await this.#origins.pace(origin, signal);
           response = await this.#http(entry.url, {
             signal,
             responseType: 'buffer',
@@ -593,6 +660,7 @@ class CrawlRun implements Crawl {
           });
         } catch (cause) {
           signal.throwIfAborted();
+          this.#requested(entry, 'network', waited, { error: cause });
           const errorResponse =
             cause instanceof RequestError ? cause.response : undefined;
           this.#visited(entry, 'failed', null, { kind: 'failed' }, before);
@@ -606,6 +674,8 @@ class CrawlRun implements Crawl {
               );
           continue;
         }
+        this.#requested(entry, 'network', waited, answered(response));
+      }
       signal.throwIfAborted();
       const headers = new Headers();
       for (const [name, value] of Object.entries(response.headers))
@@ -989,6 +1059,35 @@ class CrawlRun implements Crawl {
     }
     this.#turn = { ...this.#turn, current: null };
     return undefined;
+  }
+
+  #requested(
+    entry: Entry,
+    served: 'network' | 'origin record',
+    waited: number,
+    outcome: Answered | Errored,
+  ) {
+    crawlChannels.request.publish(
+      new CrawlRequested({
+        url: entry.url,
+        lane: entry.priority,
+        page: entry.page,
+        document: entry.document,
+        list: entry.list,
+        listingUrl: entry.listingUrl,
+        hops: entry.hops,
+        served,
+        waited,
+        outcome,
+        pending: {
+          listing: this.#lanes.listing.size,
+          page: this.#lanes.page.size,
+          link: this.#lanes.link.size,
+          backfill: this.#lanes.backfill.size,
+        },
+        held: this.#held.size,
+      }),
+    );
   }
 
   // An entry whose origin could not give its robots.txt waits in the frontier

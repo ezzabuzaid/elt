@@ -137,6 +137,23 @@ Readers decode HTML and Markdown pages by their byte order mark, their `Content-
 
 No JavaScript runs. Article extraction, checkpoints and destinations are outside this package.
 
+## Diagnostics channels
+
+Each crawl publishes what it does on `node:diagnostics_channel` channels, as Node asks a module to do (`doc/api/diagnostics_channel.md`) and as Got and undici do for their requests. Subscribe to `crawlChannels`:
+
+| Channel                                       | Message          | When                                                                                                                                                                                                                                                          |
+| --------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crawlChannels.start` (`elt:crawl.start`)     | `CrawlStarted`   | A crawl began: its `starts`, and `resumed` when it continues an unfinished crawl of a memento.                                                                                                                                                                |
+| `crawlChannels.request` (`elt:crawl.request`) | `CrawlRequested` | A URL of the frontier got its answer, as Heritrix's crawl.log has a line for each URI: its `lane`, its roles (`page`, `document`, `list`), its `listingUrl` and `hops`, the time it `waited` for the delay and the slowdown of its origin, and its `outcome`. |
+| `crawlChannels.handOff` (`elt:crawl.handOff`) | `CrawlHandedOff` | The consumer pulled the next entry: the `duration` from handing it an entry to that pull. The crawl requests nothing meanwhile.                                                                                                                               |
+| `crawlChannels.end` (`elt:crawl.end`)         | `CrawlEnded`     | A crawl ended, also when it stopped or failed: `complete` when it reached its end with every page read, and its `nextDue`.                                                                                                                                    |
+| `crawlChannels.block` (`elt:origin.block`)    | `OriginBlocked`  | The breaker of an `origin` opened, `until` a time.                                                                                                                                                                                                            |
+
+- The `outcome` of a request is `{ status, bytes, timings }` with Got's timings, or `{ error }` when the request got no answer. An answer that the HTTP cache gave without a request has no timings.
+- A request is `served` from the `'network'`, or from the `'origin record'` for a `robots.txt` that the record of its origin downloaded for its rules in the read. Such a request waited for nothing.
+- `pending` counts the URLs that wait in each lane after the request, and `held` the URLs that a block or a spent expansion budget holds.
+- A subscriber gets each message as `unknown`, and tells it by its class. A host that runs several crawls in one process tells its own by an `AsyncLocalStorage`, because Node calls a subscriber in the async context of the publisher. A subscriber that throws does not stop the crawl, but Node reports the error as an uncaught exception.
+
 ## Recipes
 
 One use case each, with a full program that you can run.

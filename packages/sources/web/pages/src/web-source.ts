@@ -20,6 +20,7 @@ import { AlwaysRevisit } from '@workspace/sdk-web-crawler';
 import { crawlRecords, crawlsStream } from './crawls-stream.ts';
 import { failureRecords, failuresStream } from './failures-stream.ts';
 import { WebClient } from './http/web-http.ts';
+import { PageExtracted, pageChannels } from './page-channels.ts';
 import { routeRecords, routesState, routesStream } from './routes-stream.ts';
 import { WebRead } from './web-read.ts';
 import { type CrawlEnd, type Outbox, WebScan, outbox } from './web-scan.ts';
@@ -531,9 +532,12 @@ export class WebSource extends Source<WebRead> {
             continue;
           }
           try {
+            const reading = performance.now();
             const output = await run
               .read(entry.response, requestSignal)
               .catch(pageFailure);
+            const read = performance.now() - reading;
+            let extracted: { records: number; duration: number } | null = null;
             for await (const message of diffGroupedSnapshot(
               configuration,
               [
@@ -553,7 +557,12 @@ export class WebSource extends Source<WebRead> {
                           ]),
                         ),
                   async *records() {
+                    const extracting = performance.now();
                     const records = await output.records().catch(pageFailure);
+                    extracted = {
+                      records: records.length,
+                      duration: performance.now() - extracting,
+                    };
                     yield* validateRecords(
                       configuration.stream,
                       records.map((record) => ({
@@ -579,6 +588,14 @@ export class WebSource extends Source<WebRead> {
                 await committed();
               } else yield message;
             }
+            pageChannels.extract.publish(
+              new PageExtracted(
+                configuration.stream.name,
+                entry.url,
+                read,
+                extracted,
+              ),
+            );
           } catch (error) {
             requestSignal.throwIfAborted();
             if (!(error instanceof PageFailure)) throw error;

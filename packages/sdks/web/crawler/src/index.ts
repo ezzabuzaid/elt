@@ -3,6 +3,16 @@ export { AlwaysRevisit } from './always-revisit.ts';
 export { ArchiveReader } from './archive-reader.ts';
 export { ChangeRateRevisit } from './change-rate-revisit.ts';
 export { CompositeRevisit } from './composite-revisit.ts';
+export {
+  type Answered,
+  CrawlEnded,
+  CrawlHandedOff,
+  CrawlRequested,
+  CrawlStarted,
+  type Errored,
+  OriginBlocked,
+  crawlChannels,
+} from './crawl-channels.ts';
 export { FixedRevisit } from './fixed-revisit.ts';
 export { HintRevisit } from './hint-revisit.ts';
 export { IntervalRevisit } from './interval-revisit.ts';

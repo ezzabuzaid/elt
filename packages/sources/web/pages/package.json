@@ -8,6 +8,10 @@
       "types": "./dist/article-extractor.d.ts",
       "default": "./dist/article-extractor.js"
     },
+    "./page-channels": {
+      "types": "./dist/page-channels.d.ts",
+      "default": "./dist/page-channels.js"
+    },
     "./record-extractor": {
       "types": "./dist/record-extractor.d.ts",
       "default": "./dist/record-extractor.js"
