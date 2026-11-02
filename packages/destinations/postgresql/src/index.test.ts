@@ -3531,6 +3531,98 @@ test('an array item whose field is not a scalar fails its copy', async () => {
   );
 });
 
+test('an array element of the wrong type fails its copy for each item type a stream declares, also when it is almost of that type', async () => {
+  await using database = await databases.database();
+  // Each item type, with an element that a looser check would take.
+  const cases = [
+    { items: { type: 'string' }, element: 1, kind: 'text' },
+    { items: { type: 'integer' }, element: 1.5, kind: 'integer' },
+    { items: { type: 'number' }, element: '1', kind: 'real' },
+    { items: { type: 'boolean' }, element: 1, kind: 'boolean' },
+    {
+      items: { type: 'string', format: 'date' },
+      element: '2026-02-30',
+      kind: 'date',
+    },
+    {
+      items: { type: 'string', format: 'date-time' },
+      element: '2026-11-02',
+      kind: 'timestamp',
+    },
+    {
+      items: { type: 'string', format: 'int64' },
+      element: '1.5',
+      kind: 'int64',
+    },
+  ] as const;
+  const streams = cases.map(
+    ({ kind, items }) =>
+      new Stream({
+        name: kind,
+        jsonSchema: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            values: { type: 'array', items },
+          },
+          required: ['id', 'values'],
+        },
+        primaryKey: ['id'],
+        supportedSyncModes: ['full_refresh', 'incremental'],
+        sourceDefinedCursor: true,
+        emitsDeletes: true,
+      }),
+  );
+  // A source that validates nothing, so the destination is the last check.
+  class Snapshots extends ScriptedSource {
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      const { element } =
+        cases.find(({ kind }) => kind === configuration.stream.name) ?? {};
+      yield* diffSnapshot(
+        configuration,
+        [{ id: 'a', values: [element] }],
+        state,
+        { policy: new ClosedWorld(), signal: undefined },
+      );
+    }
+  }
+  const source = new Snapshots(streams, {});
+  const destination = new PostgresDestination({
+    url: database.connectionString,
+    schema: 'raw',
+  });
+
+  for (const stream of streams)
+    await assert.rejects(
+      new Pipeline({
+        history: new PostgresSyncHistory({ url: database.connectionString }),
+        connections: [
+          new Connection({
+            name: 'test',
+            source,
+            destination,
+            checkpoints: new PostgresCheckpointStore({
+              url: database.connectionString,
+              schema: 'raw',
+            }),
+            steps: [
+              new Copy(
+                stream,
+                destination.table(stream.name),
+                incremental(stream.name),
+              ),
+            ],
+          }),
+        ],
+      }).run(),
+      new RegExp(`Field "values" requires an array of ${stream.name} `),
+      stream.name,
+    );
+});
+
 test("a statement that fails in one stream's merge does not erase a sibling's stage", async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();

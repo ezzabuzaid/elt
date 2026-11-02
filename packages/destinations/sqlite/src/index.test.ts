@@ -492,6 +492,96 @@ test('array fields load as JSON arrays that SQLite checks and reads element by e
   );
 });
 
+test('an array element of the wrong type fails its copy for each item type a stream declares, also when it is almost of that type', async () => {
+  // Each item type, with an element that a looser check would take.
+  const cases = [
+    { items: { type: 'string' }, element: 1, kind: 'text' },
+    { items: { type: 'integer' }, element: 1.5, kind: 'integer' },
+    { items: { type: 'number' }, element: '1', kind: 'real' },
+    { items: { type: 'boolean' }, element: 1, kind: 'boolean' },
+    {
+      items: { type: 'string', format: 'date' },
+      element: '2026-02-30',
+      kind: 'date',
+    },
+    {
+      items: { type: 'string', format: 'date-time' },
+      element: '2026-11-02',
+      kind: 'timestamp',
+    },
+    {
+      items: { type: 'string', format: 'int64' },
+      element: '1.5',
+      kind: 'int64',
+    },
+  ] as const;
+  const streams = cases.map(
+    ({ kind, items }) =>
+      new Stream({
+        name: kind,
+        jsonSchema: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            values: { type: 'array', items },
+          },
+          required: ['id', 'values'],
+        },
+        primaryKey: ['id'],
+        supportedSyncModes: ['full_refresh'],
+      }),
+  );
+  // A source that validates nothing, so the destination is the last check.
+  class ListSource extends LiveSource {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'lists';
+    protected readonly catalog = new Catalog(streams);
+
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+
+    protected override async *extract(configuration: CopyConfiguration) {
+      const { element } =
+        cases.find(({ kind }) => kind === configuration.stream.name) ?? {};
+      yield {
+        stream: configuration.stream.name,
+        data: { id: 'a', values: [element] },
+      };
+    }
+  }
+
+  await using scratch = await new TemporaryFiles().directory('elt-lists-');
+  const source = new ListSource();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'lists.sqlite'),
+  });
+
+  for (const stream of streams)
+    await assert.rejects(
+      new Pipeline({
+        history: new SQLiteSyncHistory(),
+        connections: [
+          new Connection({
+            name: 'test',
+            source,
+            destination,
+            steps: [new Copy(stream, destination.table(stream.name))],
+          }),
+        ],
+      }).run(),
+      new RegExp(`Field "values" requires an array of ${stream.name} `),
+      stream.name,
+    );
+});
+
 test('an array of objects loads as a JSON array of objects, which SQLite reads field by field and keeps an array', async () => {
   class PageSource extends LiveSource {
     override coverage() {

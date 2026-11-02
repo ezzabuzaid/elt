@@ -240,7 +240,7 @@ export class WebSource extends Source<WebRead> {
       description: this.#routes.has(stream.name)
         ? 'Each URL in the scope of the crawls of chosen websites and feeds that a listing named, as the listings read; a listing that is read again completely replaces its rows.'
         : this.#crawls.has(stream.name)
-          ? 'Whether the last crawl of each chosen website or feed is complete, and when its last complete crawl ended.'
+          ? 'Whether the last crawl of each chosen website or feed is complete, and when the first crawl that gave that answer ended.'
           : this.#failures.has(stream.name)
             ? 'The pages of the crawls of chosen websites and feeds whose last visit failed, as the last crawl of each left them.'
             : 'Records extracted from the pages crawled from chosen websites and feeds that match the configured URL patterns; listing disappearance does not imply deletion.',
