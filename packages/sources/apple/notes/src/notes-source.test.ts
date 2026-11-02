@@ -12,6 +12,7 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { gzipSync } from 'node:zlib';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -760,64 +761,93 @@ test('Notes names Full Disk Access when its store cannot be opened and refuses a
   });
 });
 
-test('a Notes watch keeps Notes running and loads each commit while Notes keeps its store open', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-notes-');
-  const path = await noteStoreFixture(scratch.path);
-  const source = new AppleNotesSource({ path });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'out.sqlite'),
-  });
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        checkpoints: new SQLiteCheckpointStore({
-          path: join(scratch.path, 'state.sqlite'),
-        }),
-        steps: [
-          new Copy(source.notes, destination.table('notes'), {
-            id: 'notes',
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
+test(
+  'a Notes watch keeps Notes running and loads each commit while Notes keeps its store open',
+  { timeout: 30_000 },
+  async (t) => {
+    const clock = createClock();
+    await using scratch = await new TemporaryFiles().directory('elt-notes-');
+    const path = await noteStoreFixture(scratch.path);
+    const source = new AppleNotesSource({ path });
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'out.sqlite'),
+    });
+    const pipeline = new Pipeline({
+      clock,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 'state.sqlite'),
           }),
-        ],
-      }),
-    ],
-  });
-  // Notes holds its connection, and so its WAL, open the whole time.
-  using notes = new DatabaseSync(path);
-  const controller = new AbortController();
-  const batches: number[] = [];
+          steps: [
+            new Copy(source.notes, destination.table('notes'), {
+              id: 'notes',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+          ],
+        }),
+      ],
+    });
+    // Notes holds its connection, and so its WAL, open the whole time.
+    using notes = new DatabaseSync(path);
+    const controller = new AbortController();
+    const batches: number[] = [];
 
-  for await (const { outcomes } of pipeline.watch({
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-  })) {
-    batches.push(outcomes[0]?.count ?? -1);
-    if (batches.length === 1)
-      notes.exec(
-        "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7) VALUES (12, 'NOTE-NEW', 'New', 2, 1)",
-      );
-    // Past the next one-second poll, so a spurious batch would show.
-    else setTimeout(() => controller.abort(), 1500);
-  }
+    const passes = pipeline.watch({
+      // A batch that never comes ends the watch, so the assertion fails.
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    });
+    for (let next = passes.next(); ;) {
+      const pass = await next;
+      if (pass.done) break;
+      const { outcomes } = pass.value;
+      batches.push(outcomes[0]?.count ?? -1);
+      // Pull the next pass before the clock moves, so a spurious pass shows.
+      next = passes.next();
+      // After the stop, the watch ends: a pass it still gave is counted above.
+      if (controller.signal.aborted) continue;
+      // The poll is due once the watch waits for it.
+      await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+        interval: 1,
+        timeout: 10_000,
+      });
+      if (batches.length === 1) {
+        notes.exec(
+          "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7) VALUES (12, 'NOTE-NEW', 'New', 2, 1)",
+        );
+        // The next one-second poll sees it.
+        await clock.tickAsync(1000);
+      }
+      // Past the next one-second poll, so a spurious batch would show.
+      else {
+        await clock.tickAsync(1500);
+        // The window's poll was read: the watch waits for the next one.
+        await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+          interval: 1,
+          timeout: 10_000,
+        });
+        controller.abort();
+      }
+    }
 
-  assert.deepEqual(batches, [3, 1]);
-  // The watch launched Notes hidden if it was closed; Notes stays open after.
-  const { stdout } = await execFile('/usr/bin/lsappinfo', [
-    'info',
-    '-only',
-    'pid',
-    '-app',
-    'com.apple.Notes',
-  ]);
-  // lsappinfo prints nothing for an app that is not running.
-  assert.match(stdout, /pid/);
-});
+    assert.deepEqual(batches, [3, 1]);
+    // The watch launched Notes hidden if it was closed; Notes stays open after.
+    const { stdout } = await execFile('/usr/bin/lsappinfo', [
+      'info',
+      '-only',
+      'pid',
+      '-app',
+      'com.apple.Notes',
+    ]);
+    // lsappinfo prints nothing for an app that is not running.
+    assert.match(stdout, /pid/);
+  },
+);
 
 test('Notes declares the local Apple store as the coverage of every stream', async () => {
   const notes = new AppleNotesSource({

@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -19,6 +20,7 @@ import {
   Copy,
   type CopyResult,
   Pipeline,
+  type PipelineClock,
   PipelineError,
   type Target,
 } from '@workspace/elt';
@@ -104,13 +106,17 @@ function rows(path: string, sql: string) {
     .map((row) => ({ ...row }));
 }
 
-async function pipeline(source: DiaDesktopSource, directory: string) {
+async function pipeline(
+  source: DiaDesktopSource,
+  directory: string,
+  clock: PipelineClock,
+) {
   const destination = new SQLiteDestination({
     path: join(directory, 'out.sqlite'),
   });
   const { streams } = await source.discover();
   return new Pipeline({
-    clock: globalThis,
+    clock,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -169,6 +175,7 @@ test('an archive in a format Dia did not write before fails the pass, names wher
   const run = await pipeline(
     new DiaDesktopSource({ home: dir.path }),
     dir.path,
+    globalThis,
   );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
@@ -241,6 +248,7 @@ test('a home without Dia’s archive fails as the user’s to fix and keeps what
   const run = await pipeline(
     new DiaDesktopSource({ home: dir.path }),
     dir.path,
+    globalThis,
   );
   const out = join(dir.path, 'out.sqlite');
   const missing = (error: unknown) => {
@@ -271,7 +279,11 @@ test('each archived tab loads every field Dia keeps, under its profile', async (
   const out = join(dir.path, 'out.sqlite');
 
   const results = await (
-    await pipeline(new DiaDesktopSource({ home: dir.path }), dir.path)
+    await pipeline(
+      new DiaDesktopSource({ home: dir.path }),
+      dir.path,
+      globalThis,
+    )
   ).run();
 
   assert.deepEqual(counts(results), {
@@ -327,6 +339,7 @@ test('a tab Dia removes from its archive stays loaded, and an unchanged archive 
   const run = await pipeline(
     new DiaDesktopSource({ home: dir.path }),
     dir.path,
+    globalThis,
   );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
@@ -350,6 +363,7 @@ test('a rewrite that orders keys differently writes nothing, and an edited tab i
   const run = await pipeline(
     new DiaDesktopSource({ home: dir.path }),
     dir.path,
+    globalThis,
   );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
@@ -409,7 +423,11 @@ test('an import scope keeps the tabs of the selected profiles archived within it
     });
 
     await (
-      await pipeline(new DiaDesktopSource({ home: dir.path, scope }), dir.path)
+      await pipeline(
+        new DiaDesktopSource({ home: dir.path, scope }),
+        dir.path,
+        globalThis,
+      )
     ).run();
 
     assert.deepEqual(
@@ -428,7 +446,11 @@ test('a pass is current as of Dia’s last write of its archive', async () => {
   await utimes(diaArchivePath(dir.path), new Date(), written);
 
   await (
-    await pipeline(new DiaDesktopSource({ home: dir.path }), dir.path)
+    await pipeline(
+      new DiaDesktopSource({ home: dir.path }),
+      dir.path,
+      globalThis,
+    )
   ).run();
 
   assert.deepEqual(
@@ -440,32 +462,62 @@ test('a pass is current as of Dia’s last write of its archive', async () => {
   );
 });
 
-test('a watch loads each write of the archive and nothing between writes', async () => {
-  await using dir = await new TemporaryFiles().directory('elt-dia-');
-  await writeArchive(dir.path, { 'Profile 1': [page] });
-  const run = await pipeline(
-    new DiaDesktopSource({ home: dir.path }),
-    dir.path,
-  );
-  const controller = new AbortController();
-  const batches: Record<string, { count: number; deleted: number }>[] = [];
+test(
+  'a watch loads each write of the archive and nothing between writes',
+  { timeout: 30_000 },
+  async (t) => {
+    const clock = createClock();
+    await using dir = await new TemporaryFiles().directory('elt-dia-');
+    await writeArchive(dir.path, { 'Profile 1': [page] });
+    const run = await pipeline(
+      new DiaDesktopSource({ home: dir.path }),
+      dir.path,
+      clock,
+    );
+    const controller = new AbortController();
+    const batches: Record<string, { count: number; deleted: number }>[] = [];
 
-  for await (const { outcomes } of run.watch({
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-  })) {
-    batches.push(counts(outcomes));
-    if (batches.length === 1)
-      await writeArchive(dir.path, { 'Profile 1': [page, supertab] });
-    // Past the next one-second poll, so a spurious batch would show.
-    else setTimeout(() => controller.abort(), 1500);
-  }
+    const passes = run.watch({
+      // A batch that never comes ends the watch, so the assertion fails.
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    });
+    for (let next = passes.next(); ;) {
+      const pass = await next;
+      if (pass.done) break;
+      const { outcomes } = pass.value;
+      batches.push(counts(outcomes));
+      // Pull the next pass before the clock moves, so a spurious pass shows.
+      next = passes.next();
+      // After the stop, the watch ends: a pass it still gave is counted above.
+      if (controller.signal.aborted) continue;
+      // The poll is due once the watch waits for it.
+      await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+        interval: 1,
+        timeout: 10_000,
+      });
+      if (batches.length === 1) {
+        await writeArchive(dir.path, { 'Profile 1': [page, supertab] });
+        // The next one-second poll sees it.
+        await clock.tickAsync(1000);
+      }
+      // Past the next one-second poll, so a spurious batch would show.
+      else {
+        await clock.tickAsync(1500);
+        // The window's poll was read: the watch waits for the next one.
+        await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+          interval: 1,
+          timeout: 10_000,
+        });
+        controller.abort();
+      }
+    }
 
-  assert.deepEqual(batches, [
-    { archivedTabs: { count: 1, deleted: 0 } },
-    { archivedTabs: { count: 1, deleted: 0 } },
-  ]);
-});
+    assert.deepEqual(batches, [
+      { archivedTabs: { count: 1, deleted: 0 } },
+      { archivedTabs: { count: 1, deleted: 0 } },
+    ]);
+  },
+);
 
 test('this Mac’s Dia archive loads every archived tab, and a second read writes nothing', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Dia runs on macOS');
@@ -474,6 +526,7 @@ test('this Mac’s Dia archive loads every archived tab, and a second read write
   const run = await pipeline(
     new DiaDesktopSource({ home: homedir() }),
     dir.path,
+    globalThis,
   );
 
   let first: ReturnType<typeof counts>;

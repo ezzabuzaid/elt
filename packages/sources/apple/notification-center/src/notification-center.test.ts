@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -16,6 +17,7 @@ import {
   Copy,
   type CopyResult,
   Pipeline,
+  type PipelineClock,
   PipelineError,
   type Target,
 } from '@workspace/elt';
@@ -308,6 +310,7 @@ function rows(path: string, sql: string) {
 async function pipeline(
   source: AppleNotificationCenterSource,
   directory: string,
+  clock: PipelineClock,
 ) {
   const destination = new SQLiteDestination({
     path: join(directory, 'out.sqlite'),
@@ -315,7 +318,7 @@ async function pipeline(
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   return new Pipeline({
-    clock: globalThis,
+    clock,
     history,
     connections: [
       new Connection({
@@ -368,6 +371,7 @@ test('a notification Notification Center drops stays loaded, while the next run 
   const run = await pipeline(
     new AppleNotificationCenterSource({ path }),
     dir.path,
+    globalThis,
   );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
@@ -410,7 +414,7 @@ test('every Notification Center stream loads the store decoded, and a second run
   const path = join(dir.path, 'db');
   notificationCenterFixture(path);
   const source = new AppleNotificationCenterSource({ path });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
   const out = join(dir.path, 'out.sqlite');
 
   const first = counts(await run.run());
@@ -577,6 +581,7 @@ test('an app that posts again under the same request loads the new notification 
   const run = await pipeline(
     new AppleNotificationCenterSource({ path }),
     dir.path,
+    globalThis,
   );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
@@ -639,6 +644,7 @@ test('a category an app registered twice loads both, told apart by position', as
   const run = await pipeline(
     new AppleNotificationCenterSource({ path }),
     dir.path,
+    globalThis,
   );
   const out = join(dir.path, 'out.sqlite');
 
@@ -670,6 +676,7 @@ test('an app macOS forgets deletes its app and categories while its notification
   const run = await pipeline(
     new AppleNotificationCenterSource({ path }),
     dir.path,
+    globalThis,
   );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
@@ -722,6 +729,7 @@ test('a date range loads the notifications delivered in it, to the microsecond, 
     const run = await pipeline(
       new AppleNotificationCenterSource({ path, scope }),
       runDir.path,
+      globalThis,
     );
     const out = join(runDir.path, 'out.sqlite');
 
@@ -745,6 +753,7 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
   const run = await pipeline(
     new AppleNotificationCenterSource({ path }),
     dir.path,
+    globalThis,
   );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
@@ -779,6 +788,7 @@ test('a store missing a column this reader reads fails every stream by name and 
   const run = await pipeline(
     new AppleNotificationCenterSource({ path }),
     dir.path,
+    globalThis,
   );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
@@ -802,45 +812,75 @@ test('a store missing a column this reader reads fails every stream by name and 
   assert.equal(rows(out, 'SELECT count(*) AS n FROM apps')[0]?.n, 3);
 });
 
-test('a Notification Center watch loads each commit while usernoted keeps its store open', async () => {
-  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
-  const path = join(dir.path, 'db');
-  notificationCenterFixture(path);
-  const run = await pipeline(
-    new AppleNotificationCenterSource({ path }),
-    dir.path,
-  );
-  // usernoted holds its connection, and so its WAL, open the whole time.
-  using usernoted = new ScratchNotificationCenter(path, { existing: true });
-  const controller = new AbortController();
-  const batches: Record<string, { count: number; deleted: number }>[] = [];
+test(
+  'a Notification Center watch loads each commit while usernoted keeps its store open',
+  { timeout: 30_000 },
+  async (t) => {
+    const clock = createClock();
+    await using dir = await new TemporaryFiles().directory('elt-notes-center-');
+    const path = join(dir.path, 'db');
+    notificationCenterFixture(path);
+    const run = await pipeline(
+      new AppleNotificationCenterSource({ path }),
+      dir.path,
+      clock,
+    );
+    // usernoted holds its connection, and so its WAL, open the whole time.
+    using usernoted = new ScratchNotificationCenter(path, { existing: true });
+    const controller = new AbortController();
+    const batches: Record<string, { count: number; deleted: number }>[] = [];
 
-  for await (const { outcomes } of run.watch({
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-  })) {
-    batches.push(counts(outcomes));
-    if (batches.length === 1)
-      deliver(usernoted, {
-        ...scriptEditorDelivery,
-        recId: 4,
-        uuid: '4E000000-0000-4000-8000-000000000004',
-        delivered: appleTime('2026-10-07T14:00:00.000Z'),
+    const passes = run.watch({
+      // A batch that never comes ends the watch, so the assertion fails.
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    });
+    for (let next = passes.next(); ;) {
+      const pass = await next;
+      if (pass.done) break;
+      const { outcomes } = pass.value;
+      batches.push(counts(outcomes));
+      // Pull the next pass before the clock moves, so a spurious pass shows.
+      next = passes.next();
+      // After the stop, the watch ends: a pass it still gave is counted above.
+      if (controller.signal.aborted) continue;
+      // The poll is due once the watch waits for it.
+      await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+        interval: 1,
+        timeout: 10_000,
       });
-    // Past the next one-second poll, so a spurious batch would show.
-    else setTimeout(() => controller.abort(), 1500);
-  }
+      if (batches.length === 1) {
+        deliver(usernoted, {
+          ...scriptEditorDelivery,
+          recId: 4,
+          uuid: '4E000000-0000-4000-8000-000000000004',
+          delivered: appleTime('2026-10-07T14:00:00.000Z'),
+        });
+        // The next one-second poll sees it.
+        await clock.tickAsync(1000);
+      }
+      // Past the next one-second poll, so a spurious batch would show.
+      else {
+        await clock.tickAsync(1500);
+        // The window's poll was read: the watch waits for the next one.
+        await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+          interval: 1,
+          timeout: 10_000,
+        });
+        controller.abort();
+      }
+    }
 
-  assert.deepEqual(batches, [
-    {
-      notifications: { count: 3, deleted: 0 },
-      apps: { count: 3, deleted: 0 },
-      categories: { count: 2, deleted: 0 },
-      categoryActions: { count: 2, deleted: 0 },
-    },
-    { ...unchanged, notifications: { count: 1, deleted: 0 } },
-  ]);
-});
+    assert.deepEqual(batches, [
+      {
+        notifications: { count: 3, deleted: 0 },
+        apps: { count: 3, deleted: 0 },
+        categories: { count: 2, deleted: 0 },
+        categoryActions: { count: 2, deleted: 0 },
+      },
+      { ...unchanged, notifications: { count: 1, deleted: 0 } },
+    ]);
+  },
+);
 
 test('this Mac’s Notification Center loads every notification and app it holds, ids as Biome writes them', async (t) => {
   if (process.platform !== 'darwin')
@@ -857,6 +897,7 @@ test('this Mac’s Notification Center loads every notification and app it holds
           path: notificationCenterStorePath(homedir()),
         }),
         dir.path,
+        globalThis,
       )
     ).run();
   } catch (error) {

@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -16,6 +17,7 @@ import {
   Copy,
   type CopyResult,
   Pipeline,
+  type PipelineClock,
   PipelineError,
   type Target,
 } from '@workspace/elt';
@@ -262,14 +264,18 @@ function rows(path: string, sql: string) {
     .map((row) => ({ ...row }));
 }
 
-async function pipeline(source: AppleCallHistorySource, directory: string) {
+async function pipeline(
+  source: AppleCallHistorySource,
+  directory: string,
+  clock: PipelineClock,
+) {
   const destination = new SQLiteDestination({
     path: join(directory, 'out.sqlite'),
   });
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   return new Pipeline({
-    clock: globalThis,
+    clock,
     history,
     connections: [
       new Connection({
@@ -328,7 +334,7 @@ test('every Call History stream loads the store decoded, and a second run writes
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   const source = new AppleCallHistorySource({ path });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
   const out = join(dir.path, 'out.sqlite');
 
   await run.run();
@@ -595,7 +601,11 @@ test('a call linked twice to the same handle loads one participant, and the next
       INSERT INTO Z_2REMOTEPARTICIPANTHANDLES VALUES (1, 6);
     `);
   }
-  const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
+  const run = await pipeline(
+    new AppleCallHistorySource({ path }),
+    dir.path,
+    globalThis,
+  );
   const out = join(dir.path, 'out.sqlite');
 
   await run.run();
@@ -615,7 +625,11 @@ test('a call deleted as Core Data deletes it removes its rows, and edited record
   await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
-  const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
+  const run = await pipeline(
+    new AppleCallHistorySource({ path }),
+    dir.path,
+    globalThis,
+  );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   {
@@ -669,7 +683,7 @@ test('a date range loads the calls that started in it and only their records', a
   const source = new AppleCallHistorySource({ path, scope });
   const out = join(dir.path, 'out.sqlite');
 
-  await (await pipeline(source, dir.path)).run();
+  await (await pipeline(source, dir.path, globalThis)).run();
 
   assert.deepEqual(rows(out, 'SELECT id FROM calls'), [{ id: 'CALL-GROUP' }]);
   assert.deepEqual(rows(out, 'SELECT DISTINCT callId FROM callParticipants'), [
@@ -707,7 +721,7 @@ test('a one-millisecond range selects the call that started within it, to the mi
   });
   const out = join(dir.path, 'out.sqlite');
 
-  await (await pipeline(source, dir.path)).run();
+  await (await pipeline(source, dir.path, globalThis)).run();
 
   assert.deepEqual(rows(out, 'SELECT id, startedAt FROM calls'), [
     { id: 'CALL-PHONE', startedAt: '2026-09-01T10:00:00.250123Z' },
@@ -730,7 +744,9 @@ test('participants load whatever entity numbers this macOS gives the join table'
   }
   const out = join(dir.path, 'out.sqlite');
 
-  await (await pipeline(new AppleCallHistorySource({ path }), dir.path)).run();
+  await (
+    await pipeline(new AppleCallHistorySource({ path }), dir.path, globalThis)
+  ).run();
 
   assert.deepEqual(
     rows(
@@ -757,7 +773,9 @@ test('a store without the participant join table fails the participants stream b
   const out = join(dir.path, 'out.sqlite');
 
   await assert.rejects(
-    (await pipeline(new AppleCallHistorySource({ path }), dir.path)).run(),
+    (
+      await pipeline(new AppleCallHistorySource({ path }), dir.path, globalThis)
+    ).run(),
     (error) => {
       assert.ok(error instanceof PipelineError);
       assert.equal(error.errors.length, 1);
@@ -775,7 +793,11 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
   await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
-  const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
+  const run = await pipeline(
+    new AppleCallHistorySource({ path }),
+    dir.path,
+    globalThis,
+  );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   // chmod stands in for macOS withdrawing Full Disk Access: SQLite reports
@@ -806,7 +828,11 @@ test('a store missing a column this reader reads fails every stream by name and 
   await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
-  const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
+  const run = await pipeline(
+    new AppleCallHistorySource({ path }),
+    dir.path,
+    globalThis,
+  );
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   {
@@ -832,46 +858,78 @@ test('a store missing a column this reader reads fails every stream by name and 
   );
 });
 
-test('a Call History watch loads each commit while callhistoryd keeps its store open', async () => {
-  await using dir = await new TemporaryFiles().directory('elt-calls-');
-  const path = join(dir.path, 'CallHistory.storedata');
-  callHistoryFixture(path);
-  const run = await pipeline(new AppleCallHistorySource({ path }), dir.path);
-  // callhistoryd holds its connection, and so its WAL, open the whole time.
-  using callhistoryd = new DatabaseSync(path);
-  const controller = new AbortController();
-  const batches: Record<string, { count: number; deleted: number }>[] = [];
+test(
+  'a Call History watch loads each commit while callhistoryd keeps its store open',
+  { timeout: 30_000 },
+  async (t) => {
+    await using dir = await new TemporaryFiles().directory('elt-calls-');
+    const path = join(dir.path, 'CallHistory.storedata');
+    callHistoryFixture(path);
+    const clock = createClock();
+    const run = await pipeline(
+      new AppleCallHistorySource({ path }),
+      dir.path,
+      clock,
+    );
+    // callhistoryd holds its connection, and so its WAL, open the whole time.
+    using callhistoryd = new DatabaseSync(path);
+    const controller = new AbortController();
+    const passes = run.watch({
+      // A batch that never comes ends the watch, so the assertion fails.
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    });
 
-  for await (const { outcomes } of run.watch({
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-  })) {
-    batches.push(counts(outcomes));
-    if (batches.length === 1)
-      callhistoryd.exec(`
-        INSERT INTO ZHANDLE (Z_PK, Z_ENT, ZTYPE, ZVALUE) VALUES (7, 4, 2, '+15550100200');
-        INSERT INTO ZCALLRECORD (Z_PK, Z_ENT, ZUNIQUE_ID, ZDATE, ZCALLTYPE) VALUES (5, 2, 'CALL-NEW', ${coreData('2026-10-06T09:00:00.000Z')}, 1);
-        INSERT INTO Z_2REMOTEPARTICIPANTHANDLES VALUES (5, 7);
-      `);
-    // Past the next one-second poll, so a spurious batch would show.
-    else setTimeout(() => controller.abort(), 1500);
-  }
+    // The first check loads the store.
+    const first = await passes.next();
+    callhistoryd.exec(`
+    INSERT INTO ZHANDLE (Z_PK, Z_ENT, ZTYPE, ZVALUE) VALUES (7, 4, 2, '+15550100200');
+    INSERT INTO ZCALLRECORD (Z_PK, Z_ENT, ZUNIQUE_ID, ZDATE, ZCALLTYPE) VALUES (5, 2, 'CALL-NEW', ${coreData('2026-10-06T09:00:00.000Z')}, 1);
+    INSERT INTO Z_2REMOTEPARTICIPANTHANDLES VALUES (5, 7);
+  `);
+    // The next one-second poll sees the commit.
+    const loading = passes.next();
+    // The poll is due once the watch waits for it.
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      interval: 1,
+      timeout: 10_000,
+    });
+    await clock.tickAsync(1000);
+    const second = await loading;
+    assert.equal(second.done, false, 'the poll after the commit loads it');
+    // Past the poll after it, nothing changed: no pass comes before the stop.
+    const after = passes.next();
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      interval: 1,
+      timeout: 10_000,
+    });
+    await clock.tickAsync(1500);
+    // The window's poll was read: the watch waits for the next one.
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      interval: 1,
+      timeout: 10_000,
+    });
+    controller.abort();
 
-  assert.deepEqual(batches, [
-    {
-      calls: { count: 5, deleted: 0 },
-      callParticipants: { count: 4, deleted: 0 },
-      callTimers: { count: 1, deleted: 0 },
-      emergencyMediaItems: { count: 2, deleted: 0 },
-      saintDavidsCounts: { count: 2, deleted: 0 },
-    },
-    {
-      ...unchanged,
-      calls: { count: 1, deleted: 0 },
-      callParticipants: { count: 1, deleted: 0 },
-    },
-  ]);
-});
+    assert.deepEqual(
+      [first, second].map((pass) => pass.done || counts(pass.value.outcomes)),
+      [
+        {
+          calls: { count: 5, deleted: 0 },
+          callParticipants: { count: 4, deleted: 0 },
+          callTimers: { count: 1, deleted: 0 },
+          emergencyMediaItems: { count: 2, deleted: 0 },
+          saintDavidsCounts: { count: 2, deleted: 0 },
+        },
+        {
+          ...unchanged,
+          calls: { count: 1, deleted: 0 },
+          callParticipants: { count: 1, deleted: 0 },
+        },
+      ],
+    );
+    assert.deepEqual(await after, { done: true, value: undefined });
+  },
+);
 
 test('this Mac’s call history loads every stream, one row per stored record', async (t) => {
   if (process.platform !== 'darwin')
@@ -884,6 +942,7 @@ test('this Mac’s call history loads every stream, one row per stored record', 
       await pipeline(
         new AppleCallHistorySource({ path: callHistoryStorePath(homedir()) }),
         dir.path,
+        globalThis,
       )
     ).run();
   } catch (error) {

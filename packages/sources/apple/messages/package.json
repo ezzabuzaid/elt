@@ -18,6 +18,7 @@
     "@zukhruf/snapshot-differential": "^0.6.15"
   },
   "devDependencies": {
+    "@sinonjs/fake-timers": "15.4.0",
     "@workspace/elt-sqlite": "0.0.1",
     "@zukhruf/pool": "^0.6.15",
     "@zukhruf/testing": "^0.6.15"

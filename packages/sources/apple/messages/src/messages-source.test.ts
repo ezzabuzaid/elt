@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
@@ -1076,54 +1077,83 @@ test('property lists decode as Foundation wrote them', async () => {
   );
 });
 
-test('a Messages watch loads each commit Messages makes while it keeps chat.db open', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-messages-');
-  const path = await chatFixture(scratch.path);
-  const source = new AppleMessagesSource({ path, home: scratch.path });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'out.sqlite'),
-  });
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        checkpoints: new SQLiteCheckpointStore({
-          path: join(scratch.path, 'state.sqlite'),
-        }),
-        steps: [
-          new Copy(source.messages, destination.table('messages'), {
-            id: 'messages',
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
+test(
+  'a Messages watch loads each commit Messages makes while it keeps chat.db open',
+  { timeout: 30_000 },
+  async (t) => {
+    const clock = createClock();
+    await using scratch = await new TemporaryFiles().directory('elt-messages-');
+    const path = await chatFixture(scratch.path);
+    const source = new AppleMessagesSource({ path, home: scratch.path });
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'out.sqlite'),
+    });
+    const pipeline = new Pipeline({
+      clock,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 'state.sqlite'),
           }),
-        ],
-      }),
-    ],
-  });
-  // Messages holds its connection, and so its WAL, open the whole time.
-  using messages = new DatabaseSync(path);
-  const controller = new AbortController();
-  const batches: number[] = [];
+          steps: [
+            new Copy(source.messages, destination.table('messages'), {
+              id: 'messages',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+          ],
+        }),
+      ],
+    });
+    // Messages holds its connection, and so its WAL, open the whole time.
+    using messages = new DatabaseSync(path);
+    const controller = new AbortController();
+    const batches: number[] = [];
 
-  for await (const { outcomes } of pipeline.watch({
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-  })) {
-    batches.push(outcomes[0]?.count ?? -1);
-    if (batches.length === 1)
-      messages.exec(
-        "INSERT INTO message (guid, text) VALUES ('m-new', 'arrived')",
-      );
-    // Past the next one-second poll, so a spurious batch would show.
-    else setTimeout(() => controller.abort(), 1500);
-  }
+    const passes = pipeline.watch({
+      // A batch that never comes ends the watch, so the assertion fails.
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    });
+    for (let next = passes.next(); ;) {
+      const pass = await next;
+      if (pass.done) break;
+      const { outcomes } = pass.value;
+      batches.push(outcomes[0]?.count ?? -1);
+      // Pull the next pass before the clock moves, so a spurious pass shows.
+      next = passes.next();
+      // After the stop, the watch ends: a pass it still gave is counted above.
+      if (controller.signal.aborted) continue;
+      // The poll is due once the watch waits for it.
+      await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+        interval: 1,
+        timeout: 10_000,
+      });
+      if (batches.length === 1) {
+        messages.exec(
+          "INSERT INTO message (guid, text) VALUES ('m-new', 'arrived')",
+        );
+        // The next one-second poll sees it.
+        await clock.tickAsync(1000);
+      }
+      // Past the next one-second poll, so a spurious batch would show.
+      else {
+        await clock.tickAsync(1500);
+        // The window's poll was read: the watch waits for the next one.
+        await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+          interval: 1,
+          timeout: 10_000,
+        });
+        controller.abort();
+      }
+    }
 
-  assert.deepEqual(batches, [6, 1]);
-});
+    assert.deepEqual(batches, [6, 1]);
+  },
+);
 
 test('Messages reads as documented views joined on both handle keys and counted at message grain', async () => {
   await using scratch = await new TemporaryFiles().directory('messages-marts-');

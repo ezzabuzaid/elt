@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -17,6 +18,7 @@ import {
   Copy,
   type CopyResult,
   Pipeline,
+  type PipelineClock,
   PipelineError,
   type Stream,
   type Target,
@@ -1021,14 +1023,18 @@ function table(path: string, name: string, order: string) {
   );
 }
 
-async function pipeline(source: TeamsSource, directory: string) {
+async function pipeline(
+  source: TeamsSource,
+  directory: string,
+  clock: PipelineClock,
+) {
   const destination = new SQLiteDestination({
     path: join(directory, 'out.sqlite'),
   });
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   return new Pipeline({
-    clock: globalThis,
+    clock,
     history,
     connections: [
       new Connection({
@@ -1106,7 +1112,7 @@ test('a Teams import is current only as of the web client’s last write, which 
     );
   const source = new TeamsSource({ directory: app.directory });
 
-  await (await pipeline(source, dir.path)).run();
+  await (await pipeline(source, dir.path, globalThis)).run();
 
   using data = new DatabaseSync(out, { readOnly: true });
   const current = data
@@ -1122,7 +1128,7 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
   await using _ = dir;
   await app.save(account());
   const source = new TeamsSource({ directory: app.directory });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
   await run.run();
   const { streams } = await source.discover();
   // chmod stands in for macOS withholding the app's container from a process
@@ -1153,7 +1159,7 @@ test('a store in a shape this reader does not know, or that fails to read for an
   await using _ = dir;
   await app.save(account());
   const source = new TeamsSource({ directory: app.directory });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
   await run.run();
   const { streams } = await source.discover();
   // A message with no conversation, which Teams has never written.
@@ -1257,7 +1263,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
     })),
   );
   const source = new TeamsSource({ directory: app.directory });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
 
   const first = counts(await run.run());
 
@@ -1930,7 +1936,7 @@ test('a message or reaction gone from the history the app holds is deleted, and 
   };
   await app.save(base);
   const source = new TeamsSource({ directory: app.directory });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
   await run.run();
   const messageIds = (conversationId: string) =>
     rows(
@@ -2067,7 +2073,7 @@ test('a second account loads beside the first without rewriting it, and an accou
   };
   await app.save(first);
   const source = new TeamsSource({ directory: app.directory });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
   await run.run();
   const perAccount = (name: string) =>
     rows(
@@ -2117,7 +2123,7 @@ test('people, meetings and searches the app drops stay, as do members and apps i
   const base = account();
   await app.save(base);
   const source = new TeamsSource({ directory: app.directory });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
   await run.run();
 
   // The app drops Ada's profile, the meeting (past the calendar's span) and
@@ -2184,7 +2190,7 @@ test('an edit, a deletion, an unpin, a read, a chat left and a folder change rea
   };
   await app.save(base);
   const source = new TeamsSource({ directory: app.directory });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
   await run.run();
 
   const edit = (c: Chain): Chain => {
@@ -2287,7 +2293,7 @@ test('a call, activity or saved entry gone from the part of its feed the app hol
   const base = account();
   await app.save(base);
   const source = new TeamsSource({ directory: app.directory });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
   await run.run();
   const without = (state: Account, gone: readonly string[]): Account => ({
     ...state,
@@ -2363,7 +2369,7 @@ test('a file the app lists several times in one message loads as one file of tha
   const base = account();
   await app.save({ ...base, chains: base.chains.map(repeated) });
   const source = new TeamsSource({ directory: app.directory });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
 
   const loaded = counts(await run.run());
 
@@ -2391,7 +2397,7 @@ test('an import scope keeps the selected accounts, conversations and dates, and 
       endAt: '2026-09-04T00:00:00.000Z',
     },
   });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
 
   await run.run();
 
@@ -2438,61 +2444,93 @@ test('an import scope keeps the selected accounts, conversations and dates, and 
   );
 });
 
-test('a Teams watch wakes every stream once, again when the app writes its store, and stops when aborted', async () => {
-  const { dir, app } = await scratch();
-  await using _ = dir;
-  const base = account();
-  await app.save(base);
-  const source = new TeamsSource({ directory: app.directory });
-  const run = await pipeline(source, dir.path);
-  const controller = new AbortController();
-  const batches: Record<string, { count: number; deleted: number }>[] = [];
+test(
+  'a Teams watch wakes every stream once, again when the app writes its store, and stops when aborted',
+  { timeout: 30_000 },
+  async (t) => {
+    const clock = createClock();
+    const { dir, app } = await scratch();
+    await using _ = dir;
+    const base = account();
+    await app.save(base);
+    const source = new TeamsSource({ directory: app.directory });
+    const run = await pipeline(source, dir.path, clock);
+    const controller = new AbortController();
+    const batches: Record<string, { count: number; deleted: number }>[] = [];
 
-  for await (const { outcomes } of run.watch({
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-  })) {
-    batches.push(counts(outcomes));
-    if (batches.length === 1)
-      await app.save({
-        ...base,
-        chains: [
-          ...base.chains,
-          chain([
-            message({
-              conversationId: chat,
-              id: id('2026-09-20T10:00:00.000Z'),
-              content: '<p>one more thing</p>',
-            }),
-          ]),
-        ],
+    const passes = run.watch({
+      // A batch that never comes ends the watch, so the assertion fails.
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    });
+    for (let next = passes.next(); ;) {
+      const pass = await next;
+      if (pass.done) break;
+      const { outcomes } = pass.value;
+      batches.push(counts(outcomes));
+      // Pull the next pass before the clock moves, so a spurious pass shows.
+      next = passes.next();
+      // After the stop, the watch ends: a pass it still gave is counted above.
+      if (controller.signal.aborted) continue;
+      // The poll is due once the watch waits for it.
+      await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+        interval: 1,
+        timeout: 10_000,
       });
-    // Past the next one-second poll, so a spurious batch would show.
-    else setTimeout(() => controller.abort(), 1500);
-  }
+      if (batches.length === 1) {
+        await app.save({
+          ...base,
+          chains: [
+            ...base.chains,
+            chain([
+              message({
+                conversationId: chat,
+                id: id('2026-09-20T10:00:00.000Z'),
+                content: '<p>one more thing</p>',
+              }),
+            ]),
+          ],
+        });
+        // The next one-second poll sees it.
+        await clock.tickAsync(1000);
+      }
+      // Past the next one-second poll, so a spurious batch would show.
+      else {
+        await clock.tickAsync(1500);
+        // The window's poll was read: the watch waits for the next one.
+        await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+          interval: 1,
+          timeout: 10_000,
+        });
+        controller.abort();
+      }
+    }
 
-  const { streams } = await source.discover();
-  const names = streams.map(({ name }) => name).sort();
-  assert.equal(batches.length, 2);
-  assert.deepEqual(Object.keys(batches[0] ?? {}).sort(), names);
-  assert.deepEqual(Object.keys(batches[1] ?? {}).sort(), names);
-  assert.deepEqual(batches[1]?.messages, { count: 1, deleted: 0 });
+    const { streams } = await source.discover();
+    const names = streams.map(({ name }) => name).sort();
+    assert.equal(batches.length, 2);
+    assert.deepEqual(Object.keys(batches[0] ?? {}).sort(), names);
+    assert.deepEqual(Object.keys(batches[1] ?? {}).sort(), names);
+    assert.deepEqual(batches[1]?.messages, { count: 1, deleted: 0 });
 
-  // The source's own watch ends as soon as its signal aborts, rather than
-  // polling the store every second for a host that stopped listening.
-  const stop = new AbortController();
-  const watch = source.watch({
-    clock: globalThis,
-    streams,
-    signal: stop.signal,
-  });
-  assert.deepEqual((await watch.next()).value, streams);
-  stop.abort();
-  assert.deepEqual(
-    await Promise.race([watch.next(), sleep(2500).then(() => 'still polling')]),
-    { done: true, value: undefined },
-  );
-});
+    // The source's own watch ends as soon as its signal aborts, rather than
+    // polling the store every second for a host that stopped listening.
+    const stop = new AbortController();
+    const watch = source.watch({
+      clock: globalThis,
+      streams,
+      signal: stop.signal,
+    });
+    assert.deepEqual((await watch.next()).value, streams);
+    stop.abort();
+    assert.deepEqual(
+      await Promise.race([
+        watch.next(),
+        sleep(2500).then(() => 'still polling'),
+      ]),
+      { done: true, value: undefined },
+    );
+  },
+);
 
 test('this Mac’s Teams app loads every account it keeps, and a second read with no write writes nothing', async (t) => {
   if (process.platform !== 'darwin')
@@ -2501,7 +2539,7 @@ test('this Mac’s Teams app loads every account it keeps, and a second read wit
   const out = join(dir.path, 'out.sqlite');
   const directory = teamsDirectory(homedir());
   const source = new TeamsSource({ directory });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
 
   try {
     await run.run();
@@ -2580,7 +2618,7 @@ test('an account Teams keeps in two languages loads the set it synced last, and 
   );
   await app.save(stale, live);
   const source = new TeamsSource({ directory: app.directory });
-  const run = await pipeline(source, dir.path);
+  const run = await pipeline(source, dir.path, globalThis);
   const only = () =>
     rows(
       out,

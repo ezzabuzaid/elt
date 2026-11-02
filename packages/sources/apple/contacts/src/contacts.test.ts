@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -1470,67 +1471,98 @@ test('Contacts rejects image data in an encoding it does not know', async () => 
   );
 });
 
-test('a Contacts watch loads each commit contactsd makes and each account added', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-contacts-');
-  const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
-  const source = new AppleContactsSource({
-    directory,
-    preferences: preferencesFixture(scratch.path),
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'out.sqlite'),
-  });
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        checkpoints: new SQLiteCheckpointStore({
-          path: join(scratch.path, 'state.sqlite'),
+test(
+  'a Contacts watch loads each commit contactsd makes and each account added',
+  { timeout: 30_000 },
+  async (t) => {
+    const clock = createClock();
+    await using scratch = await new TemporaryFiles().directory('elt-contacts-');
+    const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
+    const source = new AppleContactsSource({
+      directory,
+      preferences: preferencesFixture(scratch.path),
+    });
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'out.sqlite'),
+    });
+    const pipeline = new Pipeline({
+      clock,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 'state.sqlite'),
+          }),
+          steps: (await copies(source, destination)).filter(
+            ({ from }) => from.name === 'contacts',
+          ),
         }),
-        steps: (await copies(source, destination)).filter(
-          ({ from }) => from.name === 'contacts',
-        ),
-      }),
-    ],
-  });
-  // contactsd holds its connections, and so the WALs, open the whole time.
-  using contactsd = new DatabaseSync(
-    join(directory, 'Sources/ACCOUNT-A/AddressBook-v22.abcddb'),
-  );
-  const controller = new AbortController();
-  const batches: number[] = [];
+      ],
+    });
+    // contactsd holds its connections, and so the WALs, open the whole time.
+    using contactsd = new DatabaseSync(
+      join(directory, 'Sources/ACCOUNT-A/AddressBook-v22.abcddb'),
+    );
+    const controller = new AbortController();
+    const batches: number[] = [];
 
-  for await (const { outcomes } of pipeline.watch({
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-  })) {
-    batches.push(outcomes[0]?.count ?? -1);
-    if (batches.length === 1)
-      contactsd.exec(
-        `INSERT INTO ZABCDRECORD (Z_ENT, ZUNIQUEID, ZCONTAINER1, ZFIRSTNAME) VALUES (${contact}, 'NEW:ABPerson', 1, 'New')`,
-      );
-    else if (batches.length === 2)
-      createStore(join(directory, 'Sources/ACCOUNT-C'), {
-        ZABCDRECORD: [
-          { Z_PK: 1, Z_ENT: container, ZUNIQUEID: 'C:ABContainer' },
-          {
-            Z_PK: 2,
-            Z_ENT: contact,
-            ZUNIQUEID: 'CAROL:ABPerson',
-            ZCONTAINER1: 1,
-          },
-        ],
+    const passes = pipeline.watch({
+      // A batch that never comes ends the watch, so the assertion fails.
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    });
+    for (let next = passes.next(); ;) {
+      const pass = await next;
+      if (pass.done) break;
+      const { outcomes } = pass.value;
+      batches.push(outcomes[0]?.count ?? -1);
+      // Pull the next pass before the clock moves, so a spurious pass shows.
+      next = passes.next();
+      // After the stop, the watch ends: a pass it still gave is counted above.
+      if (controller.signal.aborted) continue;
+      // The poll is due once the watch waits for it.
+      await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+        interval: 1,
+        timeout: 10_000,
       });
-    // Past the next one-second poll, so a spurious batch would show.
-    else setTimeout(() => controller.abort(), 1500);
-  }
+      if (batches.length === 1) {
+        contactsd.exec(
+          `INSERT INTO ZABCDRECORD (Z_ENT, ZUNIQUEID, ZCONTAINER1, ZFIRSTNAME) VALUES (${contact}, 'NEW:ABPerson', 1, 'New')`,
+        );
+        // The next one-second poll sees it.
+        await clock.tickAsync(1000);
+      } else if (batches.length === 2) {
+        createStore(join(directory, 'Sources/ACCOUNT-C'), {
+          ZABCDRECORD: [
+            { Z_PK: 1, Z_ENT: container, ZUNIQUEID: 'C:ABContainer' },
+            {
+              Z_PK: 2,
+              Z_ENT: contact,
+              ZUNIQUEID: 'CAROL:ABPerson',
+              ZCONTAINER1: 1,
+            },
+          ],
+        });
+        // The next one-second poll sees it.
+        await clock.tickAsync(1000);
+      }
+      // Past the next one-second poll, so a spurious batch would show.
+      else {
+        await clock.tickAsync(1500);
+        // The window's poll was read: the watch waits for the next one.
+        await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+          interval: 1,
+          timeout: 10_000,
+        });
+        controller.abort();
+      }
+    }
 
-  assert.deepEqual(batches, [4, 1, 1]);
-});
+    assert.deepEqual(batches, [4, 1, 1]);
+  },
+);
 
 test('Contacts reads as documented views whose joins keep one row per contact', async () => {
   await using scratch = await new TemporaryFiles().directory('contacts-marts-');
