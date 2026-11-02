@@ -1,5 +1,3 @@
-import { scheduler } from 'node:timers/promises';
-
 import {
   DeletionPolicy,
   type KeptGroup,
@@ -106,26 +104,26 @@ export async function* diffGroupedSnapshot<
 // Each item of a scan until signal aborts. A scan that finds nothing changed
 // may never wait on I/O, and then no other task runs until it ends: not the
 // host's stop, its timers nor the requests it serves. So the scan gives the
-// event loop a turn every turnMs, and once the run is cancelled it ends with
-// the signal's reason, never as a complete scan the differential could
-// delete the unread keys of.
+// event loop a turn every turnItems items, and once the run is cancelled it
+// ends with the signal's reason, never as a complete scan the differential
+// could delete the unread keys of.
 async function* untilStopped<Item>(
   items: AsyncIterable<Item> | Iterable<Item>,
   signal: AbortSignal | undefined,
 ): AsyncGenerator<Item> {
-  let turn = performance.now();
+  let read = 0;
   for await (const item of items) {
-    if (performance.now() - turn > turnMs) {
-      await scheduler.yield();
-      turn = performance.now();
-    }
+    if (++read % turnItems === 0)
+      await new Promise((resolve) => setImmediate(resolve));
     signal?.throwIfAborted();
     yield item;
   }
 }
 
-// The longest a scan runs without letting another task run.
-const turnMs = 10;
+// The most items a scan reads without letting another task run. A count, not
+// a time, so the turns do not depend on a clock: an item diffs in
+// microseconds, so a turn comes within a few milliseconds.
+const turnItems = 1000;
 
 // A stream that declares no emitsDeletes has an upstream that forgets
 // records rather than deleting them: every vanished key leaves the snapshot
