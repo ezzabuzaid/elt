@@ -91,3 +91,5 @@ npx nx run infra:down-otel
 ```
 
 The panels are the requests of each origin, their outcomes, the blocks, where the crawl's time goes (the wait for the origin, HTTP, the consumer and the extraction), the request time of each origin, the frontier by lane, the held URLs, the records committed by stream, the recent crawls from Tempo, and the warnings and errors from Loki.
+
+On 2026-11-02, context-compiler's logful crawled `https://www.anthropic.com/news` into a new data folder, started with plain `node`, while `infra:up-otel` ran. The pass took 284 s and made 288 requests: 3 listings, 281 pages that answered 200 and 4 redirects (308). It committed 281 records. Of the 284 s, the requests waited 176 s for the delay of the origin, HTTP took 84 s and the consumer 22 s, of which the extraction took 20 s. The request time was 0.32 s at p50 and 0.49 s at p95. Prometheus gave series for each query of the dashboard, Tempo held the trace of the pass, its crawl and its requests, and Loki held the four milestone records with the trace id. A second run that SIGINT stopped after 20 s ended by the signal and still exported "Crawl ends incomplete" and the end of its pass.
