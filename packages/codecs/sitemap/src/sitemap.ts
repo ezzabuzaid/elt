@@ -1,6 +1,7 @@
 import { gunzipSync } from 'node:zlib';
 
 import { XMLParser } from 'fast-xml-parser';
+import { SyntaxValidator } from 'fast-xml-validator';
 import { z } from 'zod';
 
 export class SitemapFormatError extends Error {
@@ -162,9 +163,11 @@ export function parseSitemap(text: string): SitemapListing {
   }
   let document: unknown;
   try {
-    document = parser.parse(text, true);
+    SyntaxValidator.validate(text);
+    document = parser.parse(text);
   } catch (error) {
-    // fast-xml-parser throws a plain Error, with no code or cause.
+    // fast-xml-validator and fast-xml-parser throw an Error whose message
+    // names the fault.
     if (!Error.isError(error)) throw error;
     throw new SitemapFormatError(error.message);
   }

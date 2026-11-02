@@ -1,4 +1,4 @@
-import { XMLValidator } from 'fast-xml-parser';
+import { SyntaxValidator } from 'fast-xml-validator';
 import {
   detectAtomFeed,
   detectJsonFeed,
@@ -59,8 +59,7 @@ export function readListing(text: string): Listing {
   }
   if (detectRdfFeed(text)) {
     // Feedsmith parses RDF without asking its XML parser to validate it.
-    const valid = XMLValidator.validate(text);
-    if (valid !== true) throw new Error(valid.err.msg);
+    SyntaxValidator.validate(text);
     const feed = parseRdfFeed(text);
     return {
       pages: (feed.items ?? []).flatMap((item) =>
