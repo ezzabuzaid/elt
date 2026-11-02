@@ -1302,11 +1302,9 @@ test('A detached file removed mid-read fails only messageParts and attachments, 
   });
   // Removed once the read has opened, before its first stream reads.
   const atOpen = (change: () => Promise<void>) => {
-    let changed = false;
+    const unchanged = [change];
     return async (message: ReadMessage) => {
-      if (changed || !(message instanceof StreamStatus)) return;
-      changed = true;
-      await change();
+      if (message instanceof StreamStatus) await unchanged.shift()?.();
     };
   };
 

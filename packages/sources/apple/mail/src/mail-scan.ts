@@ -93,7 +93,10 @@ export class MailScan implements AsyncDisposable {
   // Read once per scan, and only by the two account streams: a store this
   // process cannot open fails those copies, not the rest of Mail.
   accountRecords(): MailAccountRecords {
-    if (this.#accounts !== null) return this.#accounts;
+    return (this.#accounts ??= this.#readAccountRecords());
+  }
+
+  #readAccountRecords(): MailAccountRecords {
     const hosts = new Map<string, string>();
     for (const url of this.snapshot.index.mailboxUrls()) {
       // mailboxes.url is NOT NULL in the index.
@@ -103,16 +106,18 @@ export class MailScan implements AsyncDisposable {
     }
     using snapshot = this.#accountsStore.open();
     const accounts = new MailAccounts(snapshot.accounts());
-    this.#accounts = {
+    return {
       accounts: accounts.accounts(hosts, this.snapshot.directory),
       smtpServers: accounts.smtpServers(),
     };
-    return this.#accounts;
   }
 
   // Gathered once per scan, for the messages the selection keeps.
   messageInputs(): MessageInputs {
-    if (this.#inputs !== null) return this.#inputs;
+    return (this.#inputs ??= this.#gatherMessageInputs());
+  }
+
+  #gatherMessageInputs(): MessageInputs {
     const detached = new Map<string, [string, readonly MailFile[]][]>();
     for (const [key, files] of [...this.snapshot.files.attachments].sort(
       ([a], [b]) => compareKeys(a, b),
@@ -126,8 +131,7 @@ export class MailScan implements AsyncDisposable {
         continue;
       indexed.set(row.message, [...(indexed.get(row.message) ?? []), row]);
     }
-    this.#inputs = { detached, indexed };
-    return this.#inputs;
+    return { detached, indexed };
   }
 
   // Everything a message's records are read from: the .emlx and detached

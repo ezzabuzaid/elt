@@ -13,7 +13,8 @@ export class MailVersion implements Disposable {
   readonly #resources: DisposableStack;
   readonly #index: AppDatabaseVersion;
   #events = 0;
-  #failure: Error | null = null;
+  // A failed watch replaces this read with one that throws its error.
+  #read = (): string => `${this.#index.current}:${this.#events}`;
 
   constructor(root: string, directory: string) {
     using resources = new DisposableStack();
@@ -25,14 +26,15 @@ export class MailVersion implements Disposable {
     });
     resources.defer(() => watcher.close());
     watcher.on('error', (error) => {
-      this.#failure = error;
+      this.#read = () => {
+        throw error;
+      };
     });
     this.#resources = resources.move();
   }
 
   get current(): string {
-    if (this.#failure !== null) throw this.#failure;
-    return `${this.#index.current}:${this.#events}`;
+    return this.#read();
   }
 
   [Symbol.dispose](): void {
