@@ -259,6 +259,7 @@ export class AppleMailSource extends Source<MailScan> {
   protected override async *observe({
     streams: selected,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using version = await this.#store.version();
@@ -274,6 +275,7 @@ export class AppleMailSource extends Source<MailScan> {
     for await (const changed of pollChanges(reads, {
       interval: pollIntervalMs,
       signal,
+      clock,
     })) {
       if (changed.has('mail')) yield selected;
       else if (changed.has('accounts')) yield accountsSelected;

@@ -315,6 +315,7 @@ test('Postgres stores per-field attachment references and reconciles only the fi
       },
     );
     const pipeline = new Pipeline({
+      clock: globalThis,
       history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
@@ -446,6 +447,7 @@ test('renamed file columns keep their original bytes and stored files through la
       schema: 'raw',
     });
     const pipeline = new Pipeline({
+      clock: globalThis,
       history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
@@ -550,6 +552,7 @@ test('schema annotations follow each copy, including projections, append history
     c.text('title'),
   ]);
   const full = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -561,6 +564,7 @@ test('schema annotations follow each copy, including projections, append history
     ],
   });
   const history = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -632,6 +636,7 @@ test('schema annotations follow each copy, including projections, append history
   const revisedSource = new Messages(revised);
   revisedSource.messages = rows(revised, [record]);
   await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -656,6 +661,7 @@ test('schema annotations follow each copy, including projections, append history
   const plainSource = new Messages(unschematized);
   plainSource.messages = rows(unschematized, [record]);
   await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -704,6 +710,7 @@ test('invalid schema annotations fail before extraction or storage access', asyn
       const source = new Messages(stream);
       await assert.rejects(
         new Pipeline({
+          clock: globalThis,
           history,
           connections: [
             new Connection({
@@ -771,6 +778,7 @@ test('file text and bounded original bytes survive replay, replacement and delet
   assert.ok(fileColumn);
   const store = new PostgresFileStore(destination.schema, table, fileColumn);
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -948,6 +956,7 @@ test('a copy creates its schema and a table typed from the stream schema', async
   });
 
   const [result] = await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -1043,6 +1052,7 @@ test('overwrite replaces rows while readers keep seeing the previous load', asyn
   const history = new PostgresSyncHistory({ url: database.connectionString });
   const load = (source: Source) =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -1106,6 +1116,7 @@ test('append keeps every load', async () => {
   const source = new Messages(stream);
   source.messages = rows(stream, [{ id: 'a' }]);
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -1169,6 +1180,7 @@ test('cursor_newer keeps the greatest cursor by byte order; replace keeps the ne
     const source = new Messages(stream);
     source.messages = rows(stream, data);
     return new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -1270,6 +1282,7 @@ test('deletions remove keyed rows in source order', async () => {
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -1345,6 +1358,7 @@ test('a source failure commits nothing: no table, rows or owner', async () => {
 
   await assert.rejects(
     new Pipeline({
+      clock: globalThis,
       history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
@@ -1408,6 +1422,7 @@ test('a table has one writer, even when another loads only its own partitions', 
   const history = new PostgresSyncHistory({ url: database.connectionString });
   const upsert = (id: string, source: Owned) =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -1437,6 +1452,7 @@ test('a table has one writer, even when another loads only its own partitions', 
   );
   await assert.rejects(
     new Pipeline({
+      clock: globalThis,
       history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
@@ -1459,6 +1475,7 @@ test('a table has one writer, even when another loads only its own partitions', 
   );
   await sql`DROP TABLE raw.records`;
   await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -1504,6 +1521,7 @@ test('an overwrite rebuilds a table whose key column is stored as another type r
   const history = new PostgresSyncHistory({ url: database.connectionString });
   const dedup = (primaryKey: string[]) =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -1586,6 +1604,7 @@ test('a stored column that is NOT NULL where the stream allows null is relaxed i
   const stored = await oid();
 
   await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -1649,6 +1668,7 @@ test('an explicit primary key a target gains or drops after a reset is added to 
   const run = (keyed: boolean, data: readonly object[]) => {
     source.messages = rows(stream, data);
     return new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -1753,6 +1773,7 @@ test('a file column the target drops takes its stored chunks with it, whether it
         },
       ];
       return new Pipeline({
+        clock: globalThis,
         history,
         connections: [
           new Connection({
@@ -1861,6 +1882,7 @@ test('an explicit column naming a field the stream does not declare fails before
 
   await assert.rejects(
     new Pipeline({
+      clock: globalThis,
       history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
@@ -1913,6 +1935,7 @@ test('a reader view over an undescribed field it renamed names the field, before
 
   await assert.rejects(
     new Pipeline({
+      clock: globalThis,
       history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
@@ -2032,6 +2055,7 @@ test('a checkpoint that cannot be saved after its rows commit is reported with t
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -2115,6 +2139,7 @@ test('a copy commits at each checkpoint, its rows share one loaded_at, and no ch
     schema: 'raw',
   });
   const running = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -2268,6 +2293,7 @@ test('clear empties a table and keeps views on it, releasing its owner and check
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -2451,6 +2477,7 @@ test('a stream that fails publishes none of its staged rows while its sibling co
     snapshot: [record('snapshot', 'old', 1)],
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -2558,6 +2585,7 @@ test("a failing partition's flushed rows are discarded while the next partition 
   });
 
   const error = await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -2634,6 +2662,7 @@ test('a staged unit merges like its operations applied one at a time, under repl
   });
 
   await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -2749,6 +2778,7 @@ test('every field name is sanitized as Airbyte does, around the names Postgres k
   });
 
   await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -2851,6 +2881,7 @@ test('a key named last merges like its operations applied one at a time', async 
   });
 
   await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -2927,6 +2958,7 @@ test('renamed columns keep their table across runs, and a field added upstream i
   const history = new PostgresSyncHistory({ url: database.connectionString });
   const run = (stream: Stream, script: readonly Scripted[]) =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -3041,6 +3073,7 @@ test('a key and cursor past 63 bytes merge under their renamed columns, which th
   });
 
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -3143,6 +3176,7 @@ test('a checkpoint lost between commit and save replays to the same rows', async
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -3238,6 +3272,7 @@ test('array fields load as native arrays of their item type, in order, and an un
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -3420,6 +3455,7 @@ test('an array of objects loads as a jsonb array, each object with its fields, i
   ];
 
   const [result] = await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -3511,6 +3547,7 @@ test('an array item whose field is not a scalar fails its copy', async () => {
   });
   await assert.rejects(
     new Pipeline({
+      clock: globalThis,
       history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
         new Connection({
@@ -3598,6 +3635,7 @@ test('an array element of the wrong type fails its copy for each item type a str
   for (const stream of streams)
     await assert.rejects(
       new Pipeline({
+        clock: globalThis,
         history: new PostgresSyncHistory({ url: database.connectionString }),
         connections: [
           new Connection({
@@ -3661,6 +3699,7 @@ test("a statement that fails in one stream's merge does not erase a sibling's st
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -3780,6 +3819,7 @@ test('year 0000, which ISO counts astronomically, loads as 1 BC, and year 0001 s
   });
 
   await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -3839,6 +3879,7 @@ test('each recorded failure keeps the causes its error chains, such as why a con
   });
   const history = new PostgresSyncHistory({ url: database.connectionString });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -3911,6 +3952,7 @@ test('a watch whose poll fails records the failure with the causes its error cha
   });
   const history = new PostgresSyncHistory({ url: database.connectionString });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -3981,6 +4023,7 @@ test('warehouse sync history distinguishes unchanged success, partial commits, f
   });
   const history = new PostgresSyncHistory({ url: database.connectionString });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -4131,6 +4174,7 @@ test('warehouse sync history distinguishes unchanged success, partial commits, f
   };
   const restarted = new PostgresSyncHistory({ url: database.connectionString });
   await new Pipeline({
+    clock: globalThis,
     history: restarted,
     connections: pipeline.connections,
   }).run();
@@ -4197,6 +4241,7 @@ test('warehouse records failed partitions and validation errors without fabricat
   const connection = { name: 'sites', source, destination, steps: [copy] };
   await assert.rejects(
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -4240,7 +4285,11 @@ test('warehouse records failed partitions and validation errors without fabricat
   );
 
   await assert.rejects(
-    new Pipeline({ history, connections: [new Connection(connection)] }).run(),
+    new Pipeline({
+      clock: globalThis,
+      history,
+      connections: [new Connection(connection)],
+    }).run(),
     /checkpoint store/,
   );
   const [invalid] =
@@ -4285,6 +4334,7 @@ test('one pipeline loads each connection into its own schema, and a failing conn
   };
   const history = new PostgresSyncHistory({ url: database.connectionString });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       connection('notes', {
@@ -4361,6 +4411,7 @@ test('each watch pass is recorded under its own connection when it completes', a
   };
   const history = new PostgresSyncHistory({ url: database.connectionString });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [connection('notes'), connection('mail')],
   });
@@ -4414,6 +4465,7 @@ test('stream_status keeps each stream own latest outcome when a watch pass reads
   });
   const history = new PostgresSyncHistory({ url: database.connectionString });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -4511,6 +4563,7 @@ async function readerNotes(url: string, files: LocalFiles) {
     },
   );
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -4797,6 +4850,7 @@ test('string formats load exactly: microsecond times typed, finer ones as text t
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -4924,6 +4978,7 @@ test('tables and reader views whose names sanitize alike, or pass 63 bytes, stay
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -5026,6 +5081,7 @@ test('a reset of a partition named by a renamed field replaces only that partiti
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -5145,6 +5201,7 @@ test('a reset replaces its partition, or the whole table, at the next commit; a 
     destinationSyncMode: 'append_dedup',
   } as const;
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -5268,6 +5325,7 @@ test('a stream whose shape changes is evolved in place under its reader view, ke
     const source = new Discovered(stream);
     source.messages = rows(stream, data);
     return new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -5440,6 +5498,7 @@ test('a load holds no transaction while the source reads, so a run over many tab
   });
 
   await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -5534,6 +5593,7 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -5638,6 +5698,7 @@ test('rows past one JSON string stage in batches by size, and a record too large
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
     connections: [
       new Connection({
@@ -5738,6 +5799,7 @@ async function checkedPipeline(url: string, sql: postgres.Sql) {
   const destination = new PostgresDestination({ url, schema: 'checked' });
   const history = new PostgresSyncHistory({ url });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({

@@ -106,6 +106,7 @@ test('the public ELT API copies source records into SQLite', async () => {
   });
   const copy = new Copy(source.records, destination.table('records'));
   const results = await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({ name: 'test', source, destination, steps: [copy] }),
@@ -166,6 +167,7 @@ test('the macOS sqlite3 shell reads the catalog of a loaded file: every describe
   });
   const history = new SQLiteSyncHistory();
   await new Pipeline({
+    clock: globalThis,
     connections: [
       new Connection({
         name: 'described',
@@ -284,6 +286,7 @@ test('every name is sanitized as Airbyte does, around the names SQLite takes as 
   const run = (names: readonly (readonly [string, string])[], pass: number) => {
     const odd = shaped(names);
     return new Pipeline({
+      clock: globalThis,
       connections: [
         new Connection({
           name: 'test',
@@ -457,6 +460,7 @@ test('array fields load as JSON arrays that SQLite checks and reads element by e
   const copy = new Copy(source.lists, destination.table('lists'));
 
   const results = await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({ name: 'test', source, destination, steps: [copy] }),
@@ -567,6 +571,7 @@ test('an array element of the wrong type fails its copy for each item type a str
   for (const stream of streams)
     await assert.rejects(
       new Pipeline({
+        clock: globalThis,
         history: new SQLiteSyncHistory(),
         connections: [
           new Connection({
@@ -650,6 +655,7 @@ test('an array of objects loads as a JSON array of objects, which SQLite reads f
   const copy = new Copy(source.pages, destination.table('pages'));
 
   const results = await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({ name: 'test', source, destination, steps: [copy] }),
@@ -742,6 +748,7 @@ test('an array item whose field is not a scalar fails its copy', async () => {
 
   await assert.rejects(
     new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -804,7 +811,7 @@ test('a source accepts only the stream objects from its own catalog', async () =
       /not from this source's discovered catalog/,
     );
     await assert.rejects(
-      source.watch({ streams: [stream], signal }).next(),
+      source.watch({ clock: globalThis, streams: [stream], signal }).next(),
       /not from this source's discovered catalog/,
     );
   }
@@ -813,7 +820,9 @@ test('a source accepts only the stream objects from its own catalog', async () =
     destination,
   );
   assert.deepEqual(
-    await source.watch({ streams: [source.records], signal }).next(),
+    await source
+      .watch({ clock: globalThis, streams: [source.records], signal })
+      .next(),
     { value: [source.records], done: false },
   );
 });
@@ -890,6 +899,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   });
   const other = new Copy(source.other, destination.table('other'));
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1066,6 +1076,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     { value: undefined, done: true },
   );
   const invalid = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1145,6 +1156,7 @@ test('a cursor inside the primary key is rejected unless the policy replaces', a
     modes: ConstructorParameters<typeof CopyConfiguration>[1] & { id?: string },
   ) =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -1269,6 +1281,7 @@ test('replace loads a restated fact that cursor_newer discards', async () => {
     for (const copy of [replacing, guarding])
       results.push(
         await new Pipeline({
+          clock: globalThis,
           history: new SQLiteSyncHistory(),
           connections: [
             new Connection({
@@ -1357,6 +1370,7 @@ test('deletions remove keyed rows from a deduplicating SQLite table', async () =
     path: join(scratch.path, 'd.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1485,6 +1499,7 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
   const history = new SQLiteSyncHistory();
   const run = (to = copy) =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -1522,6 +1537,7 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
   }
   await assert.rejects(
     new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -1586,6 +1602,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1656,7 +1673,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
   // A failed read ends the stream with a failure the stage discards, never a
   // partial scan that would delete keys.
   const messages = await Array.fromAsync(
-    source.read([copy.configuration], new Map()),
+    source.read([copy.configuration], new Map(), { clock: globalThis }),
   );
   const failure = messages.find(
     (message) => message instanceof StreamStatus && message.status === 'FAILED',
@@ -1728,6 +1745,7 @@ test('a snapshot stream that emits no deletions keeps the rows of keys its upstr
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1829,6 +1847,7 @@ test('a grouped snapshot stream that emits no deletions keeps the rows of a grou
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1931,6 +1950,7 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -2122,6 +2142,7 @@ test('a snapshot pass over an unchanged scan that the host stops partway ends lo
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -2230,6 +2251,7 @@ test('a grouped pass whose groups are all unchanged, stopped by the host partway
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -2340,6 +2362,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
       }),
   );
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -2538,6 +2561,7 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
     path: join(scratch.path, 'd.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -2683,6 +2707,7 @@ test('a diff whose next read repeats only a lookback window deletes none of the 
     path: join(scratch.path, 'd.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -2787,6 +2812,7 @@ test('a target has one writer, even when another loads only its own partitions',
   ) => {
     const upsert = (id: string, source: Records) =>
       new Pipeline({
+        clock: globalThis,
         history,
         connections: [
           new Connection({
@@ -2816,6 +2842,7 @@ test('a target has one writer, even when another loads only its own partitions',
     );
     await assert.rejects(
       new Pipeline({
+        clock: globalThis,
         history,
         connections: [
           new Connection({
@@ -2896,6 +2923,7 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
   const history = new SQLiteSyncHistory();
   const overwrite = (source: Records) =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -2909,6 +2937,7 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
 
   await overwrite(first);
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -2967,6 +2996,7 @@ test('an explicit column naming a field the stream does not declare fails before
 
   await assert.rejects(
     new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -3024,6 +3054,7 @@ test('explicit int64 and local timestamp columns keep what the stream spells, wi
   });
 
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -3201,6 +3232,7 @@ test('a partitioned stream resumes each partition from its own state', async () 
     path: join(scratch.path, 'state.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -3273,6 +3305,7 @@ test('a failing partition loads nothing and keeps its checkpoint, while the othe
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -3368,6 +3401,7 @@ test('clear drops a target with its checkpoint, and a target dropped by hand rel
       destinationSyncMode: 'append_dedup',
     });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -3394,6 +3428,7 @@ test('clear drops a target with its checkpoint, and a target dropped by hand rel
   await pipeline.run();
   assert.deepEqual(source.received, [['a', null]]);
   const other = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -3428,6 +3463,7 @@ test('a full refresh whose partition fails keeps the previous table', async () =
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -3492,6 +3528,7 @@ test('partition declarations are validated before extraction', async () => {
           }).configuration,
         ],
         new Map(),
+        { clock: globalThis },
       ),
     );
   };
@@ -3654,6 +3691,7 @@ test('file bytes load as bounded chunks that leave with their row', async () => 
     path: join(scratch.path, 'files.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -3710,6 +3748,7 @@ test("an overwrite removes the previous load's files", async () => {
     path: join(scratch.path, 'files.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -3742,6 +3781,7 @@ test('a record the cursor guard rejects leaves no stored file behind', async () 
     path: join(scratch.path, 'files.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -4015,8 +4055,8 @@ test('two loads into one SQLite file commit side by side across their commits, a
   const docs = new Copy(scripted('docs'), destination.table('docs'));
   const notes = new Copy(scripted('notes'), destination.table('notes'));
   // A second load on the same file stands in for another replication's run.
-  await using first = await destination.load();
-  await using second = await destination.load();
+  await using first = await destination.load({ clock: globalThis });
+  await using second = await destination.load({ clock: globalThis });
   await using docsStage = await first.prepare(docs.configuration, docs.to, {
     writer: 'docs',
     reloading: false,
@@ -4070,7 +4110,7 @@ test('a commit waits for a reader in another process instead of failing', async 
     path: join(scratch.path, 'out.sqlite'),
   });
   const copy = new Copy(scripted('docs'), destination.table('docs'));
-  await using load = await destination.load();
+  await using load = await destination.load({ clock: globalThis });
   const stage = await load.prepare(copy.configuration, copy.to, {
     writer: 'writer',
     reloading: false,
@@ -4097,7 +4137,7 @@ test('a clear waits for a reader in another process instead of failing', async (
   });
   const copy = new Copy(scripted('docs'), destination.table('docs'));
   {
-    await using load = await destination.load();
+    await using load = await destination.load({ clock: globalThis });
     await using stage = await load.prepare(copy.configuration, copy.to, {
       writer: 'writer',
       reloading: false,
@@ -4132,6 +4172,7 @@ test('file flush failure or cancellation leaves SQLite rows and checkpoints at t
   const history = new SQLiteSyncHistory();
   const pipeline = (storage: LocalFiles) =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -4293,6 +4334,7 @@ test('stored file references follow committed SQLite rows, including rejected up
       },
     );
     const pipeline = new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -4396,6 +4438,7 @@ test('a file whose own name ends in an extension too long to keep is stored unde
   });
 
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -4471,6 +4514,7 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
       cursorField: 'version',
     });
     const pipeline = new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -4522,6 +4566,7 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
     rejectSave = false;
 
     const snapshot = new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -4584,6 +4629,7 @@ test('a stream that fails publishes none of its staged rows while its sibling co
       destinationSyncMode: 'append_dedup',
     }) as const;
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -4677,6 +4723,7 @@ test('a staged unit merges like its operations applied one at a time, under repl
   });
 
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -4764,6 +4811,7 @@ test('a key named last merges like its operations applied one at a time', async 
   });
 
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -4848,6 +4896,7 @@ test('a key and cursor that sanitizing renames merge under their renamed columns
   const guarded = keyed('guarded', false);
 
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -4938,6 +4987,7 @@ test('renamed file columns keep their original bytes and stored files through la
   });
   const history = new SQLiteSyncHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     connections: [
       new Connection({
         name: 'test',
@@ -5043,6 +5093,7 @@ test('a load holds no write transaction while the source reads, and a stream tha
   }
 
   const error = await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -5115,6 +5166,7 @@ test('deduplicating a table whose history repeats a key is refused before the so
   const history = new SQLiteSyncHistory();
   const run = (destinationSyncMode: 'append' | 'append_dedup') =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -5201,6 +5253,7 @@ test('two file columns whose table and column names join alike keep their own ch
   } as const;
   // Table a_b with column c, and table a with column b_c.
   const pipeline = new Pipeline({
+    clock: globalThis,
     connections: [
       new Connection({
         name: 'test',
@@ -5311,6 +5364,7 @@ test('a reset of a partition named by a renamed field replaces only that partiti
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -5366,6 +5420,7 @@ test('a native transaction rollback retains the original merge error and committ
     items: [record('items', 'old', 1)],
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -5418,6 +5473,7 @@ test('an overwrite_dedup whose key narrows builds its index after the old rows a
   const history = new SQLiteSyncHistory();
   const run = (primaryKey: string[]) =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -5519,6 +5575,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
   });
   const statePath = join(scratch.path, 'state.sqlite');
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -5694,6 +5751,7 @@ for (const { outcome, next, expected } of leftBehind)
       path: join(scratch.path, 'out.sqlite'),
     });
     const pipeline = new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -5785,6 +5843,7 @@ test('clearing a table whose file column was declared after its first load empti
     docs: [record('docs', 'd1', 1)],
   });
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -5798,6 +5857,7 @@ test('clearing a table whose file column was declared after its first load empti
   const docs = new Stream({ ...scripted('docs'), supportsFileTransfer: true });
   const source = new ScriptedSource([docs], {});
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -5843,6 +5903,7 @@ test('text with a lone surrogate fails its stream instead of loading as a replac
     good: [record('good', 'g1', 1)],
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -5972,6 +6033,7 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
     path: join(scratch.path, 'ledger.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -6143,6 +6205,7 @@ test('a reset replaces only its partition at the next commit, and one a failure 
       .map(({ account, id }) => `${account}${id}`);
   };
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -6213,6 +6276,7 @@ test('a full refresh ignores resets, so an appending copy keeps its history', as
     path: join(scratch.path, 'items.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -6322,6 +6386,7 @@ async function shapeChanges(
       }
     }
     return new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -6716,6 +6781,7 @@ test('an overwrite whose stored table no longer fits reloads it rather than evol
       }
     }
     return new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -6807,6 +6873,7 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
     path: join(scratch.path, 'items.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -6880,6 +6947,7 @@ test('a stored table that no longer fits evolves without a reload, keeping every
     path: join(scratch.path, 'files.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -6950,6 +7018,7 @@ test('a file column the target drops takes its stored chunks with it, whether it
     const history = new SQLiteSyncHistory();
     const run = (withBytes: boolean) =>
       new Pipeline({
+        clock: globalThis,
         history,
         connections: [
           new Connection({
@@ -7081,6 +7150,7 @@ test('a copy that declares its columns from the stream and stores its files keep
       },
     );
     const results = await new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -7214,6 +7284,7 @@ async function checkedPipeline(directory: string) {
   const destination = new SQLiteDestination({ path });
   const history = new SQLiteSyncHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -7478,6 +7549,7 @@ test('one sync history records each connectionâ€™s first unchanged check at once
   const first = new CheckedSource();
   const second = new CheckedSource();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -7656,6 +7728,7 @@ test('a watch whose sync history cannot record a pass rejects with the historyâ€
   const busy = new CheckedSource();
   const idle = new CheckedSource();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({

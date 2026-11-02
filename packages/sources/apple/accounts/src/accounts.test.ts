@@ -377,6 +377,7 @@ async function pipeline(source: AppleAccountsSource, directory: string) {
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -681,6 +682,7 @@ test('watching the Accounts store reports each commit to it', async () => {
   const source = new AppleAccountsSource({ path });
   const abort = new AbortController();
   const watch = source.watch({
+    clock: globalThis,
     streams: [source.accounts, source.accountProperties],
     signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
   });
@@ -786,6 +788,7 @@ test('an Accounts watch keeps every stream current while the Accounts store hold
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
   const watching = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -877,7 +880,7 @@ test('an Accounts pass over a large store holds one authorization at a time, so 
     const destination = new SQLiteDestination({ path: process.env.OUT + '/out.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await new Pipeline({
+    await new Pipeline({ clock: globalThis,
       history,
       connections: [
         new Connection({

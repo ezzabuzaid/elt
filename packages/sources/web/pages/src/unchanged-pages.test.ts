@@ -169,6 +169,7 @@ test('restarted source keeps unchanged rows and detects listing metadata and art
     const destination = new SQLiteDestination({ path: database.path });
     const history = new SQLiteSyncHistory();
     return new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -270,6 +271,7 @@ test('an unchanged native-Markdown page requested again on a due visit loads not
     const destination = new SQLiteDestination({ path: database.path });
     const history = new SQLiteSyncHistory();
     return new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({

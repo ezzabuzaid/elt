@@ -26,6 +26,7 @@ test('real decoding and native model failures reject, and disposing the engines 
     language: 'ar',
   };
   await using engines = new Pool({
+    clock: globalThis,
     size: new Fixed(1),
     startup: new Parallel(),
     eviction: new NoEviction(),
@@ -66,6 +67,7 @@ test('a cancelled call never borrows an engine and invalid configuration is refu
   };
   let engines = 0;
   await using pool = new Pool({
+    clock: globalThis,
     size: new Fixed(1),
     startup: new OnDemand(),
     eviction: new NoEviction(),
@@ -102,6 +104,7 @@ test('a cancelled call never borrows an engine and invalid configuration is refu
 
 test('a model is named by its name and language, not by where its file is, so a store moved to another Mac keeps its transcripts', async () => {
   await using engines = new Pool({
+    clock: globalThis,
     size: new Fixed(1),
     startup: new OnDemand(),
     eviction: new NoEviction(),

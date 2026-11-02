@@ -30,7 +30,7 @@ const stream = new WebStream({
 const source = new WebSource({ streams: [{ stream, inputs: [input] }], cachePath, userAgent: 'elt-test/1.0' });
 const destination = new SQLiteDestination({ path });
 const history = new SQLiteSyncHistory();
-const result = await new Pipeline({ history, connections: [new Connection({
+const result = await new Pipeline({ clock: globalThis, history, connections: [new Connection({
   name: 'web', source, destination,
   checkpoints: new SQLiteCheckpointStore({ path: checkpoints }),
   steps: [new Copy((await source.discover()).get('articles'), destination.table('articles'), {

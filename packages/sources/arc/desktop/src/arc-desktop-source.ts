@@ -95,12 +95,13 @@ export class ArcDesktopSource extends Source<SidebarRead> {
   protected override async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     for await (const changed of pollChanges(
       new Map([
         ['sidebar', async () => (await this.#sidebar.stamp()).toString()],
       ]),
-      { interval: pollIntervalMs, signal },
+      { interval: pollIntervalMs, signal, clock },
     ))
       yield changed.size > 0 ? streams : [];
   }

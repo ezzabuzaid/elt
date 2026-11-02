@@ -119,6 +119,7 @@ function notesPipeline(directory: string) {
   });
   const target = destination.table('raw_notes').withReaderView('notes');
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({

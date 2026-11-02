@@ -315,6 +315,7 @@ async function pipeline(
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -916,6 +917,7 @@ test('a Notification Center watch keeps every stream current while usernoted cha
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
   const watching = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -1004,7 +1006,7 @@ test('a Notification Center pass over a large store holds one notification at a 
     const destination = new SQLiteDestination({ path: process.env.OUT + '/out.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await new Pipeline({
+    await new Pipeline({ clock: globalThis,
       history,
       connections: [
         new Connection({

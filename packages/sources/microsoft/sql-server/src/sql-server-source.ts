@@ -116,6 +116,7 @@ export class SqlServerSource extends Source<SqlServerSession> {
   protected override async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     await using session = await this.#database.open();
@@ -136,11 +137,12 @@ export class SqlServerSource extends Source<SqlServerSession> {
     for await (const changed of pollChanges(reads, {
       interval: pollIntervalMs,
       signal,
+      clock,
     })) {
       const kinds = [...changed];
-      if (Date.now() - refreshed >= fullRefreshIntervalMs) {
+      if (clock.Date.now() - refreshed >= fullRefreshIntervalMs) {
         kinds.push(FullRefreshStream);
-        refreshed = Date.now();
+        refreshed = clock.Date.now();
       }
       const woken = streams.filter((stream) =>
         kinds.some((kind) => this.#reader(stream) instanceof kind),

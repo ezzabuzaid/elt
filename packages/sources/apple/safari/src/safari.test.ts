@@ -83,7 +83,12 @@ async function appleImport(source: Source, directory: string) {
   });
   const history = new SQLiteSyncHistory();
   return {
-    load: () => new Pipeline({ history, connections: [connection] }).run(),
+    load: () =>
+      new Pipeline({
+        clock: globalThis,
+        history,
+        connections: [connection],
+      }).run(),
     read: (sql: string) => {
       using database = new DatabaseSync(path, { readOnly: true });
       return database.prepare(sql).all();
@@ -908,6 +913,7 @@ async function readStream(
         ).configuration,
       ],
       new Map(),
+      { clock: globalThis },
     ),
   );
   for (const message of messages)
@@ -2115,6 +2121,7 @@ test('Safari names Full Disk Access for an unreadable store, refuses an unknown 
         ).configuration,
       ],
       new Map(),
+      { clock: globalThis },
     ),
   );
   const status = messages.find(
@@ -2145,6 +2152,7 @@ test('a Safari watch wakes only the streams of the store that changed, while Saf
   const woken: string[][] = [];
 
   for await (const batch of source.watch({
+    clock: globalThis,
     streams,
     // A batch that never comes ends the watch, so the assertion fails.
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
@@ -2729,6 +2737,7 @@ test('a Safari watch wakes history when a profile History.db appears, and a prop
   const woken: string[][] = [];
 
   for await (const batch of source.watch({
+    clock: globalThis,
     streams: [source.historyVisits, source.bookmarks],
     // A batch that never comes ends the watch, so the assertion fails.
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
@@ -2766,6 +2775,7 @@ test('Safari reads this Mac’s stores into SQLite', async (t) => {
   const { streams } = await source.discover();
   const syncHistory = new SQLiteSyncHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: syncHistory,
     connections: [
       new Connection({
@@ -2838,6 +2848,7 @@ test('while Safari is closed, a Safari watch makes no pass while its stores hold
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
   const watching = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -2931,7 +2942,7 @@ test('a Safari pass over a large History.db holds one visit at a time, so it loa
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await new Pipeline({
+    await new Pipeline({ clock: globalThis,
       history,
       connections: [
         new Connection({

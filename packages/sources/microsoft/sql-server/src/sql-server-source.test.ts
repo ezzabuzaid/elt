@@ -95,6 +95,7 @@ function syncer(
   return async () => {
     const source = await SqlServerSource.discover(database);
     const pipeline = new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -670,6 +671,7 @@ test('a login the server refuses after discovery fails the copy as config, for t
 
   const error = await failing(() =>
     new Pipeline({
+      clock: globalThis,
       history: new PostgresSyncHistory({ url: warehouse.connectionString }),
       connections: [
         new Connection({
@@ -771,6 +773,7 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
   });
   const error = await failing(() =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -1001,6 +1004,7 @@ test('two databases that each hold a table of one name load side by side in one 
   };
 
   await new Pipeline({
+    clock: globalThis,
     history: new PostgresSyncHistory({ url: warehouse.connectionString }),
     connections: [
       await connection('billing', billing),
@@ -1137,6 +1141,7 @@ test(
     );
     const controller = new AbortController();
     const watch = source.watch({
+      clock: globalThis,
       streams: source.streams,
       signal: controller.signal,
     });

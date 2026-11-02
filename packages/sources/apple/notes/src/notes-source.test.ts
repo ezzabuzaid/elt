@@ -60,6 +60,7 @@ const acrossStreams = async (
   for await (const message of source.read(
     [configured(first), configured(second)],
     new Map(),
+    { clock: globalThis },
   )) {
     pinned.push(message);
     if (
@@ -70,7 +71,7 @@ const acrossStreams = async (
       write();
   }
   const later = await Array.fromAsync(
-    source.read([configured(second)], new Map()),
+    source.read([configured(second)], new Map(), { clock: globalThis }),
   );
   return { during: values(pinned), after: values(later) };
 };
@@ -314,6 +315,7 @@ const notesPipeline = async (source: AppleNotesSource, directory: string) => {
   return {
     destination,
     pipeline: new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -735,10 +737,10 @@ test('Notes names Full Disk Access when its store cannot be opened and refuses a
   const other = new AppleNotesSource({ path: unknown });
 
   const opening = Array.fromAsync(
-    missing.read([configured(missing.notes)], new Map()),
+    missing.read([configured(missing.notes)], new Map(), { clock: globalThis }),
   );
   const reading = Array.fromAsync(
-    other.read([configured(other.notes)], new Map()),
+    other.read([configured(other.notes)], new Map(), { clock: globalThis }),
   );
 
   await assert.rejects(opening, (error) => {
@@ -766,6 +768,7 @@ test('a Notes watch keeps Notes running and loads each commit while Notes keeps 
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -842,6 +845,7 @@ test('a Notes watch keeps every stream current while Notes runs and the note sto
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
   const watching = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -939,7 +943,7 @@ test('a Notes pass over a large store holds one note at a time, so it loads in a
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await new Pipeline({
+    await new Pipeline({ clock: globalThis,
       history,
       connections: [
         new Connection({

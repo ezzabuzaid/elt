@@ -97,6 +97,7 @@ test('a full refresh checks a snapshot stream’s declaration as an incremental 
     path: join(scratch.path, 'd.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -198,6 +199,7 @@ test('a full refresh of a snapshot stream loads every record of each scan as sca
   });
   const copy = new Copy(items, destination.table('items'));
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -285,6 +287,7 @@ test('a full refresh of a grouped snapshot stream reads every group, also one wh
   });
   const copy = new Copy(items, destination.table('items'));
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({

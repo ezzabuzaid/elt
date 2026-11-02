@@ -108,7 +108,11 @@ async function appleImport(source: Source, directory: string) {
   };
   return {
     load: (options?: { readonly signal: AbortSignal }) =>
-      new Pipeline({ history, connections: [connection] }).run(options),
+      new Pipeline({
+        clock: globalThis,
+        history,
+        connections: [connection],
+      }).run(options),
     read,
     // The documented views the streams publish, beside the catalog and the
     // sync history every SQLite load has.
@@ -131,6 +135,7 @@ async function readRows(source: Source, streams: readonly Stream[]) {
   for await (const message of source.read(
     streams.map((stream) => configured(stream)),
     new Map(),
+    { clock: globalThis },
   )) {
     if (message instanceof StreamStatus && message.status === 'FAILED')
       throw message.error;
@@ -728,6 +733,7 @@ test(
       path: join(scratch.path, 'reminders.sqlite'),
     });
     await new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -1120,6 +1126,7 @@ test('Reminders rejects malformed records and preserves its target on access or 
   const history = new SQLiteSyncHistory();
   const run = () =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -1217,6 +1224,7 @@ test(
       destinationSyncMode: 'append_dedup',
     });
     const pipeline = new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -1353,6 +1361,7 @@ test(
     const controller = new AbortController();
     try {
       const watching = source.watch({
+        clock: globalThis,
         streams: [source.reminders],
         signal: controller.signal,
       });
@@ -1373,6 +1382,7 @@ test(
 
       // A consumer that stops iterating also stops the helper.
       const stopped = source.watch({
+        clock: globalThis,
         streams: [source.reminders],
         signal: new AbortController().signal,
       });
@@ -1409,6 +1419,7 @@ test(
     const streams = (await source.discover()).streams;
 
     const outcomes = await new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -1462,6 +1473,7 @@ test(
     const history = new SQLiteSyncHistory();
     const { streams } = await source.discover();
     const watching = new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({

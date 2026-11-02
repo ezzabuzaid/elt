@@ -216,6 +216,7 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
   const destination = new SQLiteDestination({ path });
   const history = new SQLiteSyncHistory();
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({

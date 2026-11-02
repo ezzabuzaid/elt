@@ -257,6 +257,7 @@ async function run(
   });
   const destination = new SQLiteDestination({ path: database });
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({

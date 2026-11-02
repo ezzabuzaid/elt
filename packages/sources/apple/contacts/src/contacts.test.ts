@@ -85,7 +85,12 @@ async function appleImport(source: Source, directory: string) {
   });
   const history = new SQLiteSyncHistory();
   return {
-    load: () => new Pipeline({ history, connections: [connection] }).run(),
+    load: () =>
+      new Pipeline({
+        clock: globalThis,
+        history,
+        connections: [connection],
+      }).run(),
     read: (sql: string) => {
       using database = new DatabaseSync(path, { readOnly: true });
       return database.prepare(sql).all();
@@ -106,6 +111,7 @@ const readFirst = async (source: AppleContactsSource) => {
         ).configuration,
       ],
       new Map(),
+      { clock: globalThis },
     ),
   );
 };
@@ -604,6 +610,7 @@ test('Contacts scope keeps only one container and its related records and images
     path: join(scratch.path, 'out.sqlite'),
   });
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -654,6 +661,7 @@ test('a Contacts container scope keeps every stream to what belongs to that cont
   });
 
   const results = await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -758,6 +766,7 @@ test('Contacts reads subscribed records, every custom value type, archived vCard
       path: join(scratch.path, `${name}.sqlite`),
     });
     await new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -848,6 +857,7 @@ test('Contacts exports every stream of every account store by identifier', async
   });
 
   const results = await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1225,6 +1235,7 @@ test('Contacts loads edits incrementally, deletes removed rows and writes nothin
   });
   const all = await copies(source, destination);
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1312,6 +1323,7 @@ test('Contacts refuses a store it cannot read instead of reading its account as 
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1428,6 +1440,7 @@ test('Contacts rejects image data in an encoding it does not know', async () => 
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1468,6 +1481,7 @@ test('a Contacts watch loads each commit contactsd makes and each account added'
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1633,6 +1647,7 @@ test('a Contacts watch keeps every stream current while contactsd changes nothin
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
   const watching = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -1814,7 +1829,7 @@ test('a Contacts pass over a large store holds one contact at a time, so it load
     const sample = setInterval(() => {
       arrayBuffers = Math.max(arrayBuffers, process.memoryUsage().arrayBuffers);
     }, 5);
-    await new Pipeline({
+    await new Pipeline({ clock: globalThis,
       history,
       connections: [
         new Connection({

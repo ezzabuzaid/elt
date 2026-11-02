@@ -100,7 +100,12 @@ async function appleImport(source: Source, directory: string) {
     return database.prepare(sql).all();
   };
   return {
-    load: () => new Pipeline({ history, connections: [connection] }).run(),
+    load: () =>
+      new Pipeline({
+        clock: globalThis,
+        history,
+        connections: [connection],
+      }).run(),
     read,
     // The documented views the streams publish, beside the catalog and the
     // sync history every SQLite load has.
@@ -123,6 +128,7 @@ async function readRows(source: Source, streams: readonly Stream[]) {
   for await (const message of source.read(
     streams.map((stream) => configured(stream)),
     new Map(),
+    { clock: globalThis },
   )) {
     if (message instanceof StreamStatus && message.status === 'FAILED')
       throw message.error;
@@ -162,6 +168,7 @@ const acrossStreams = async (
   for await (const message of source.read(
     [configured(first), configured(second)],
     new Map(),
+    { clock: globalThis },
   )) {
     pinned.push(message);
     if (
@@ -172,7 +179,7 @@ const acrossStreams = async (
       write();
   }
   const later = await Array.fromAsync(
-    source.read([configured(second)], new Map()),
+    source.read([configured(second)], new Map(), { clock: globalThis }),
   );
   return { during: values(pinned), after: values(later) };
 };
@@ -406,6 +413,7 @@ const messagesRows = (path: string, sql: string) => {
 
 test('the document parser reads every attachment kind and throws only on unreadable files', async () => {
   await using ocr = new Pool({
+    clock: globalThis,
     size: new Fixed(2),
     startup: new LeaderFirst(),
     eviction: new NoEviction(),
@@ -478,6 +486,7 @@ test('the document parser reads every attachment kind and throws only on unreada
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -577,6 +586,7 @@ test('Messages scope filters chat and native dates before decoding attachments a
     path: join(scratch.path, 'out.sqlite'),
   });
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -617,6 +627,7 @@ test('Messages scope filters chat and native dates before decoding attachments a
 
 test('Messages exports every stream by guid, decodes archived text and streams local attachments', async () => {
   await using ocr = new Pool({
+    clock: globalThis,
     size: new Fixed(2),
     startup: new LeaderFirst(),
     eviction: new NoEviction(),
@@ -651,6 +662,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
   );
 
   const results = await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -861,6 +873,7 @@ test('Messages loads edits and unsends incrementally and deletes removed message
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -959,7 +972,9 @@ test('Messages names Full Disk Access when chat.db cannot be opened', async () =
   });
 
   const opening = Array.fromAsync(
-    source.read([configured(source.messages)], new Map()),
+    source.read([configured(source.messages)], new Map(), {
+      clock: globalThis,
+    }),
   );
 
   await assert.rejects(opening, (error) => {
@@ -1069,6 +1084,7 @@ test('a Messages watch loads each commit Messages makes while it keeps chat.db o
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1253,7 +1269,7 @@ test('a Messages pass over a large chat.db holds one message at a time, so it lo
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await new Pipeline({
+    await new Pipeline({ clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -1320,6 +1336,7 @@ test('a Messages watch keeps every stream current while chat.db holds still', as
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
   const watching = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({

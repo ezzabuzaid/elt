@@ -1028,6 +1028,7 @@ async function pipeline(source: TeamsSource, directory: string) {
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -2480,7 +2481,11 @@ test('a Teams watch wakes every stream once, again when the app writes its store
   // The source's own watch ends as soon as its signal aborts, rather than
   // polling the store every second for a host that stopped listening.
   const stop = new AbortController();
-  const watch = source.watch({ streams, signal: stop.signal });
+  const watch = source.watch({
+    clock: globalThis,
+    streams,
+    signal: stop.signal,
+  });
   assert.deepEqual((await watch.next()).value, streams);
   stop.abort();
   assert.deepEqual(

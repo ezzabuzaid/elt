@@ -86,6 +86,7 @@ function importIn(directory: string) {
   });
   const history = new SQLiteSyncHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     connections: [
       new Connection({
         name: 'counting',

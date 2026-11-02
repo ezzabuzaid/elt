@@ -13,12 +13,12 @@
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-microsoft-teams": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
-    "@zukhruf/async": "^0.6.7",
-    "@zukhruf/snapshot-differential": "^0.6.7"
+    "@zukhruf/async": "^0.6.15",
+    "@zukhruf/snapshot-differential": "^0.6.15"
   },
   "devDependencies": {
     "@workspace/codec-chromium-indexeddb": "0.0.1",
     "@workspace/elt-sqlite": "0.0.1",
-    "@zukhruf/testing": "^0.6.6"
+    "@zukhruf/testing": "^0.6.15"
   }
 }

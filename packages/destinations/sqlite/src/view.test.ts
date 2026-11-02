@@ -71,6 +71,7 @@ class Records extends Source {
 function recordsPipeline(path: string, source: Records, sql: string) {
   const destination = new SQLiteDestination({ path });
   return new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -206,6 +207,7 @@ test('a view that reads a view still waiting for its copy waits too, and both ap
   const source = new Records(['r1', 'r2']);
   const destination = new SQLiteDestination({ path });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -263,6 +265,7 @@ test('a view that reads a view declared after it fails the run with the error of
   const source = new Records(['r1', 'r2']);
   const destination = new SQLiteDestination({ path });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -312,6 +315,7 @@ test('under a watch, a view that reads a view still waiting for its copy waits t
   const source = new Records(['r1']);
   const destination = new SQLiteDestination({ path });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({

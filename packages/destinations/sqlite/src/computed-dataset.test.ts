@@ -132,6 +132,7 @@ async function filesImport(directory: string) {
   const target = destination.table('raw_files').withReaderView('files');
   let parser = new TextParser('text-v1');
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -246,6 +247,7 @@ test('a computed dataset reads a view declared before it: the text of each file 
   });
   const parser = new TextParser('text-v1');
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({

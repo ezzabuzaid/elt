@@ -266,6 +266,7 @@ async function arcImport(home: string, directory: string, scope?: ImportScope) {
   const destination = new SQLiteDestination({ path: out });
   const { streams } = await source.discover();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -658,6 +659,7 @@ test('a watch loads each write of the sidebar, fails as config when it goes away
   ]);
   assert.equal(read('select count(*) n from sidebarItems')[0]?.n, 11);
   const stopped = source.watch({
+    clock: globalThis,
     streams: [source.spaces],
     signal: AbortSignal.abort(),
   });

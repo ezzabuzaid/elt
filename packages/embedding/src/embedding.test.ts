@@ -119,6 +119,7 @@ function listingsImport(directory: string, model: () => LetterModel) {
   const target = destination.table('raw_listings').withReaderView('listings');
   const pipeline = () =>
     new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({

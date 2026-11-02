@@ -3,6 +3,7 @@ import type {
   CheckpointRun,
   CheckpointStore,
 } from '../state/checkpoint-store.ts';
+import type { PipelineClock } from './clock.ts';
 import type { Connection } from './connection.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { Copy, CopyOutcome } from './copy.ts';
@@ -138,6 +139,7 @@ export async function replicate<Target extends DestinationTarget>(
   connection: Connection<Target>,
   committed: () => void,
   signal: AbortSignal | undefined,
+  clock: PipelineClock,
 ): Promise<CopyOutcome<Target>[]> {
   const replications = copies.map(
     (copy) => new Replicated(copy, connection, source, destination, committed),
@@ -155,10 +157,10 @@ export async function replicate<Target extends DestinationTarget>(
       });
   try {
     if (checkpoints === undefined || bindings.size === 0)
-      await transfer(source, destination, null, replications, signal);
+      await transfer(source, destination, null, replications, signal, clock);
     else
       await checkpoints.run(bindings, (run) =>
-        transfer(source, destination, run, replications, signal),
+        transfer(source, destination, run, replications, signal, clock),
       );
   } catch (error) {
     for (const replication of replications)
@@ -178,6 +180,7 @@ async function transfer<Target extends DestinationTarget>(
   run: CheckpointRun | null,
   replications: readonly Replicated<Target>[],
   signal: AbortSignal | undefined,
+  clock: PipelineClock,
 ): Promise<void> {
   const byStream = new Map(
     replications.map((replication) => [replication.stream.name, replication]),
@@ -221,7 +224,7 @@ async function transfer<Target extends DestinationTarget>(
   }
   if (reading.length === 0) return;
   signal?.throwIfAborted();
-  await using load = await destination.load();
+  await using load = await destination.load({ clock });
   // Every target is prepared before anything is read; a copy whose target is
   // refused reads nothing.
   const prepared: Replicated<Target>[] = [];
@@ -248,7 +251,7 @@ async function transfer<Target extends DestinationTarget>(
     for await (const message of source.read(
       prepared.map(({ copy }) => copy.configuration),
       states,
-      signal,
+      { signal, clock },
     )) {
       signal?.throwIfAborted();
       const replication = byStream.get(validStream(message));

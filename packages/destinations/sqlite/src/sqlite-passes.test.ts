@@ -102,7 +102,11 @@ test('a pass and each of its streams read running while it runs and cancelled on
   const controller = new AbortController();
   const reason = new Error('stopped by the test');
 
-  const running = new Pipeline({ connections: [connection], history }).run({
+  const running = new Pipeline({
+    clock: globalThis,
+    connections: [connection],
+    history,
+  }).run({
     signal: controller.signal,
   });
   await reading.promise;
@@ -210,6 +214,7 @@ test("a pass that did not load says whether its failures are the user's to fix, 
   });
   const history = new SQLiteSyncHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     connections: [
       new Connection({
         name: 'guarded',
@@ -317,6 +322,7 @@ test('each recorded failure keeps the causes its error chains, such as why a con
   });
   const history = new SQLiteSyncHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     connections: [
       new Connection({
         name: 'fetching',
@@ -392,7 +398,7 @@ test('a pass a killed process left running stays running, until a history that i
     }
     const source = new Hanging();
     const destination = new SQLiteDestination({ path: process.env.DATABASE });
-    await new Pipeline({
+    await new Pipeline({ clock: globalThis,
       connections: [new Connection({ name: 'notes', source, destination, steps: [new Copy(source.notes, destination.table('notes'))] })],
       history: new SQLiteSyncHistory(),
     }).run();
@@ -428,11 +434,13 @@ test('a pass a killed process left running stays running, until a history that i
   };
 
   await new Pipeline({
+    clock: globalThis,
     connections: [connection],
     history: new SQLiteSyncHistory(),
   }).run();
   const shared = attempts();
   await new Pipeline({
+    clock: globalThis,
     connections: [connection],
     history: new SQLiteSyncHistory({ soleWriter: true }),
   }).run();
@@ -534,6 +542,7 @@ test('a file that several connections load reads as one pass, which is only as g
     path: join(scratch.path, 'data.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     connections: [notes, tasks].map(
       (source) =>
         new Connection({

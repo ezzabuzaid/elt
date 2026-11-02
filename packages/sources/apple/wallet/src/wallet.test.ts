@@ -384,6 +384,7 @@ async function pipeline(source: AppleWalletSource, directory: string) {
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -1635,6 +1636,7 @@ test('a Wallet watch keeps every stream current while passd changes nothing', as
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
   const watching = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({

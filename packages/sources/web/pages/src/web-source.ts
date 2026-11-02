@@ -10,6 +10,7 @@ import {
   type Partition,
   Source,
   type SourceMessage,
+  type SourceReadOptions,
   type SourceWatchOptions,
   Stream,
   diffGroupedSnapshot,
@@ -311,7 +312,7 @@ export class WebSource extends Source<WebRead> {
   override read(
     catalog: readonly CopyConfiguration[],
     states: { get(stream: string): unknown },
-    signal?: AbortSignal,
+    options: SourceReadOptions,
   ) {
     const ordered = catalog
       .filter(({ stream }) => this.#streams.has(stream.name))
@@ -333,7 +334,7 @@ export class WebSource extends Source<WebRead> {
     return super.read(
       [...ordered, ...catalog.filter((entry) => !ordered.includes(entry))],
       states,
-      signal,
+      options,
     );
   }
   protected override partitions(stream: Stream) {

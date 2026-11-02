@@ -61,6 +61,7 @@ test('each page publishes the records it gave once read, and a page whose finger
   });
   const destination = new SQLiteDestination({ path: database.path });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({

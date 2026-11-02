@@ -40,6 +40,7 @@ async function homePage(body: string) {
 async function pipeline(source: WebSource, path: string, checkpoints: string) {
   const destination = new SQLiteDestination({ path });
   return new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({

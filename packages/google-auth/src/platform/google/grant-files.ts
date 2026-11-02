@@ -38,7 +38,12 @@ export class GrantFiles implements GoogleGrantVaultStore {
   ): Promise<void> {
     const path = this.#path(ref);
     await mkdir(dirname(path), { mode: 0o700, recursive: true });
-    await atomicWrite(path, JSON.stringify(value), { mode: 0o600 });
+    // The write retries only a busy file on Windows: real time, as no caller
+    // has another correct value.
+    await atomicWrite(path, JSON.stringify(value), {
+      clock: globalThis,
+      mode: 0o600,
+    });
   }
 
   async remove(ref: string): Promise<void> {

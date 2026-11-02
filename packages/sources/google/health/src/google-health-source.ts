@@ -128,10 +128,11 @@ export class GoogleHealthSource extends Source<GoogleHealthScan> {
   protected override async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     for await (const changed of pollChanges(
       new Map([['fingerprint', () => this.#fingerprint(signal)]]),
-      { interval: this.pollIntervalMs, signal },
+      { interval: this.pollIntervalMs, signal, clock },
     ))
       yield changed.size > 0 ? streams : [];
   }

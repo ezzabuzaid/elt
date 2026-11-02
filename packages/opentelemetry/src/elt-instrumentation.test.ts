@@ -225,6 +225,7 @@ test("each crawl's span is a child of its own pass's span when two passes run at
       streams: [{ stream: articles(), inputs: [`${origin}/feed.xml`] }],
     });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       await connection(
@@ -286,6 +287,7 @@ test("each request's and each extraction's span is a child of its own crawl's sp
     ],
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       await connection(
@@ -340,6 +342,7 @@ test('a request that gets no answer is an error span, a warning and a request co
   await using data = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       await connection(
@@ -415,6 +418,7 @@ test('an origin that answers 429 is a block counted for the origin and a warning
   await using data = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       await connection(
@@ -476,6 +480,7 @@ test('a connection that makes no pass is an error span of the pass and an error 
   // A wiring mistake: an incremental copy in a connection with no checkpoint
   // store, so the connection never reads.
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -548,6 +553,7 @@ test('disabling exports the spans of the pass and the crawl that are open, and a
   await using data = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       await connection(
@@ -607,6 +613,7 @@ test('a pass holds its crawl, which holds each request, timed by its HTTP exchan
   await using data = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       await connection(
@@ -721,6 +728,7 @@ test("requests are counted and timed in seconds by origin, lane and status, and 
   await using data = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       await connection(
@@ -840,6 +848,7 @@ test("the consumer's time with each entry, each page's extraction and each copy'
     ],
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       await connection(
@@ -969,6 +978,7 @@ test("the frontier's waiting and held URLs are gauged while a crawl runs, and no
   await using data = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       await connection(
@@ -1013,6 +1023,7 @@ test("a pass's and its crawl's starts and ends are records in the trace of their
   await using data = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       await connection(
@@ -1091,6 +1102,7 @@ test("a request that the origin's record served is internal, waited for nothing,
   await using data = await new Sqlite().database();
   await using checkpoints = await new Sqlite().database();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       await connection(

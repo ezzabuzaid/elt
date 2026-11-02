@@ -202,6 +202,7 @@ async function transcribe(
   const path = join(directory.path, 'note.aiff');
   await promisify(execFile)('say', ['-v', voice, '-o', path, text]);
   await using engines = new Pool({
+    clock: globalThis,
     size: new Fixed(1),
     startup: new Parallel(),
     eviction: new NoEviction(),

@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 
+import type { PipelineClock } from './clock.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { Target as DestinationTarget } from './target.ts';
 import type { FieldValues, Stage, Writer } from './writer.ts';
@@ -67,7 +68,8 @@ export abstract class Destination<Target extends DestinationTarget> {
     target: Target,
   ): Writer;
 
-  abstract load(): Promise<Load<Target>>;
+  // A destination that records the time of a load reads it from clock.
+  abstract load(options: { clock: PipelineClock }): Promise<Load<Target>>;
 
   async clear(
     configuration: CopyConfiguration,

@@ -1,4 +1,5 @@
 export { Catalog } from './core/catalog.ts';
+export type { PipelineClock } from './core/clock.ts';
 export { Connection } from './core/connection.ts';
 export { Copy, type CopyOutcome, type CopyResult } from './core/copy.ts';
 export {
@@ -79,6 +80,7 @@ export {
   type ResetMessage,
   Source,
   type SourceMessage,
+  type SourceReadOptions,
   type SourceWatchOptions,
   type StateMessage,
   StreamStatus,

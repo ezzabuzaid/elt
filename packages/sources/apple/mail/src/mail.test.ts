@@ -112,7 +112,12 @@ async function appleImport(source: Source, directory: string) {
   });
   const history = new SQLiteSyncHistory();
   return {
-    load: () => new Pipeline({ history, connections: [connection] }).run(),
+    load: () =>
+      new Pipeline({
+        clock: globalThis,
+        history,
+        connections: [connection],
+      }).run(),
     read: (sql: string) => {
       using database = new DatabaseSync(path, { readOnly: true });
       return database.prepare(sql).all();
@@ -752,6 +757,7 @@ async function pipeline(source: AppleMailSource, directory: string) {
   });
   const { streams } = await source.discover();
   return new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -801,6 +807,7 @@ async function readStream(
         ).configuration,
       ],
       new Map(),
+      { clock: globalThis },
     ),
   );
   for (const message of messages)
@@ -836,6 +843,7 @@ async function readAll(
         ).configuration,
     ),
     new Map(),
+    { clock: globalThis },
   )) {
     await during(message);
     if (message instanceof StreamStatus) {
@@ -1952,6 +1960,7 @@ test('a Mail store copied to another folder keeps the identity of every unchange
           ).configuration,
         ],
         { get: () => state },
+        { clock: globalThis },
       ),
     );
     return messages.findLast(
@@ -2190,6 +2199,7 @@ test('An unreadable Accounts store leaves Mail’s watch running', async () => {
   });
   const abort = new AbortController();
   const watch = source.watch({
+    clock: globalThis,
     streams: [source.accounts, source.messages],
     signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
   });
@@ -2222,7 +2232,11 @@ test('Mail’s watch fails as unavailable when its version file or index cannot 
       accounts: store.accounts,
     });
     return source
-      .watch({ streams: [source.messages], signal: AbortSignal.timeout(10000) })
+      .watch({
+        clock: globalThis,
+        streams: [source.messages],
+        signal: AbortSignal.timeout(10000),
+      })
       .next();
   };
   const unavailable = {
@@ -2265,6 +2279,7 @@ test('Mail’s watch refreshes only accounts and smtpServers when only the Accou
   });
   const abort = new AbortController();
   const watch = source.watch({
+    clock: globalThis,
     streams: [source.accounts, source.smtpServers, source.messages],
     signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
   });
@@ -2308,6 +2323,7 @@ test('Mail watches index commits and file-only downloads, and cancels', async ()
   });
   const abort = new AbortController();
   const watch = source.watch({
+    clock: globalThis,
     streams: [source.messages, source.attachments],
     signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
   });
@@ -2342,6 +2358,7 @@ test('Mail watches index commits and file-only downloads, and cancels', async ()
 
 test('Mail tracking pixels keep exact local files and database bytes with null OCR text', async () => {
   await using ocr = new Pool({
+    clock: globalThis,
     size: new Fixed(2),
     startup: new LeaderFirst(),
     eviction: new NoEviction(),
@@ -2416,6 +2433,7 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
   });
   const files = new LocalFiles({ directory: join(dir.path, 'files') });
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -2493,6 +2511,7 @@ test('A MIME attachment whose extension alone passes the 255-byte file name limi
   const files = new LocalFiles({ directory: join(dir.path, 'files') });
 
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -2560,6 +2579,7 @@ test('An attachment Mail indexed before its message arrived, kept on disk under 
   const files = new LocalFiles({ directory: join(dir.path, 'files') });
 
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -2734,6 +2754,7 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
 
   try {
     await new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -2841,6 +2862,7 @@ test('a Mail watch makes no pass while Mail and the Accounts store hold still, a
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
   const watching = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({

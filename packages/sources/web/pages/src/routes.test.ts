@@ -119,6 +119,7 @@ async function pipeline(
   const destination = new SQLiteDestination({ path });
   const { streams } = await source.discover();
   return new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -226,6 +227,7 @@ test('while the crawl of an input goes on, the routes of each checkpoint reach t
   });
   const destination = new SQLiteDestination({ path: database.path });
   const ingestion = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -495,7 +497,9 @@ async function read(
       }),
   );
   const records: string[] = [];
-  for await (const message of source.read(catalog, states)) {
+  for await (const message of source.read(catalog, states, {
+    clock: globalThis,
+  })) {
     if (message instanceof StreamStatus) {
       assert.notEqual(message.status, 'FAILED', String(message.error));
     } else if ('type' in message) {

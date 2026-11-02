@@ -81,6 +81,7 @@ const mailDestination = new PostgresDestination({
 });
 
 export default new Pipeline({
+  clock: globalThis,
   history: new PostgresSyncHistory({ url: warehouseUrl }),
   connections: [
     new Connection({

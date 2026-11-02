@@ -10,6 +10,6 @@
     }
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.6.6"
+    "@zukhruf/testing": "^0.6.15"
   }
 }

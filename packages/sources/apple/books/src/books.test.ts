@@ -90,7 +90,12 @@ async function appleImport(source: Source, directory: string) {
   });
   const history = new SQLiteSyncHistory();
   return {
-    load: () => new Pipeline({ history, connections: [connection] }).run(),
+    load: () =>
+      new Pipeline({
+        clock: globalThis,
+        history,
+        connections: [connection],
+      }).run(),
     read: (sql: string) => {
       using database = new DatabaseSync(path, { readOnly: true });
       return database.prepare(sql).all();
@@ -705,6 +710,7 @@ async function readStream(
         ).configuration,
       ],
       new Map(),
+      { clock: globalThis },
     ),
   );
   for (const message of messages)
@@ -1297,6 +1303,7 @@ test('Books names Full Disk Access for an unreadable store, refuses an unknown l
         ).configuration,
       ],
       new Map(),
+      { clock: globalThis },
     ),
   );
   const status = messages.find(
@@ -1315,6 +1322,7 @@ test('Books names Full Disk Access for an unreadable store, refuses an unknown l
         ).configuration,
       ],
       new Map(),
+      { clock: globalThis },
     ),
   );
   const historyStatus = history.find(
@@ -1341,6 +1349,7 @@ test('a Books watch wakes only the streams of the store that changed, while Book
   const woken: string[][] = [];
 
   for await (const batch of source.watch({
+    clock: globalThis,
     streams,
     // A batch that never comes ends the watch, so the assertion fails.
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
@@ -1669,6 +1678,7 @@ test('a Books watch fails before its first batch when a watched database is miss
 
   const failure = await (async () => {
     for await (const batch of withoutThemes.watch({
+      clock: globalThis,
       streams: [withoutThemes.libraryAssets, withoutThemes.themes],
       signal: AbortSignal.timeout(10_000),
     }))
@@ -1678,6 +1688,7 @@ test('a Books watch fails before its first batch when a watched database is miss
     (error: unknown) => error,
   );
   for await (const batch of source.watch({
+    clock: globalThis,
     streams,
     // A batch that never comes ends the watch, so the assertion fails.
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
@@ -2403,6 +2414,7 @@ test('Books reads this Mac’s stores into SQLite without opening iCloud placeho
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -2477,6 +2489,7 @@ test('a Books watch keeps every stream current while its stores hold still', asy
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
   const watching = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -2563,7 +2576,7 @@ test('a Books pass over a large annotation store holds one annotation at a time,
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await new Pipeline({
+    await new Pipeline({ clock: globalThis,
       history,
       connections: [
         new Connection({

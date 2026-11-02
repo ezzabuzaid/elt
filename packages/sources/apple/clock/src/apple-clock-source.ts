@@ -110,6 +110,7 @@ export class AppleClockSource extends Source<ClockSnapshot> {
   protected override async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using resources = new DisposableStack();
@@ -120,7 +121,11 @@ export class AppleClockSource extends Source<ClockSnapshot> {
       const probe = resources.use(this.#store.version(store));
       reads.set(store, () => probe.current());
     }
-    for await (const changed of pollChanges(reads, { interval: 1000, signal }))
+    for await (const changed of pollChanges(reads, {
+      interval: 1000,
+      signal,
+      clock,
+    }))
       yield streams.filter((stream) => changed.has(readerOf(stream).store));
   }
 }

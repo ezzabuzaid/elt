@@ -187,6 +187,7 @@ async function load(
 ) {
   const { streams } = await source.discover();
   await new Pipeline({
+    clock: globalThis,
     history: warehouse.history,
     connections: [
       new Connection({
@@ -847,6 +848,7 @@ test(
     const woken: number[] = [];
     try {
       for await (const wake of source.watch({
+        clock: globalThis,
         signal: controller.signal,
         streams,
       })) {

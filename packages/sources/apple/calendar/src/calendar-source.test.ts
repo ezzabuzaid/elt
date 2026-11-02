@@ -126,7 +126,11 @@ async function appleImport(source: Source, directory: string) {
   };
   return {
     load: (options?: { readonly signal: AbortSignal }) =>
-      new Pipeline({ history, connections: [connection] }).run(options),
+      new Pipeline({
+        clock: globalThis,
+        history,
+        connections: [connection],
+      }).run(options),
     read,
     // The documented views the streams publish, beside the catalog and the
     // sync history every SQLite load has.
@@ -149,6 +153,7 @@ async function readRows(source: Source, streams: readonly Stream[]) {
   for await (const message of source.read(
     streams.map((stream) => configured(stream)),
     new Map(),
+    { clock: globalThis },
   )) {
     if (message instanceof StreamStatus && message.status === 'FAILED')
       throw message.error;
@@ -659,6 +664,7 @@ test(
       source.recurrenceRuleValues,
     ];
     const result = await new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -1033,6 +1039,7 @@ test(
       await assert.rejects(
         async () =>
           new Pipeline({
+            clock: globalThis,
             history: new SQLiteSyncHistory(),
             connections: [
               new Connection({
@@ -1055,6 +1062,7 @@ test(
     });
     await assert.rejects(
       new Pipeline({
+        clock: globalThis,
         history: new SQLiteSyncHistory(),
         connections: [
           new Connection({
@@ -1086,6 +1094,7 @@ test('Calendar rejects malformed records and preserves prior rows on native fail
   const history = new SQLiteSyncHistory();
   const run = () =>
     new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -1193,6 +1202,7 @@ test(
       path: join(scratch.path, 'calendar.sqlite'),
     });
     const pipeline = new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -1269,6 +1279,7 @@ test('Calendar snapshot incremental reconciles attendees who join and leave, whi
     path: join(scratch.path, 'calendar.sqlite'),
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1349,6 +1360,7 @@ test(
       destinationSyncMode: 'append_dedup',
     });
     const pipeline = new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -1526,6 +1538,7 @@ test(
       destinationSyncMode: 'append_dedup',
     });
     const pipeline = new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -1865,6 +1878,7 @@ test(
     const history = new SQLiteSyncHistory();
     const run = () =>
       new Pipeline({
+        clock: globalThis,
         history,
         connections: [
           new Connection({
@@ -1947,6 +1961,7 @@ test(
     ];
 
     await new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -2018,6 +2033,7 @@ test('Calendar ICS streams keep attachments and vendor properties, which a test 
   ];
 
   const counts = await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -2124,7 +2140,7 @@ test('a Calendar pass over a large ICS export holds one record of a stream at a 
     });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const history = new SQLiteSyncHistory();
-    await new Pipeline({
+    await new Pipeline({ clock: globalThis,
       history,
       connections: [new Connection({
         name: 'calendar',
@@ -2229,6 +2245,7 @@ test(
       path: join(scratch.path, 'ics.sqlite'),
     });
     const pipeline = new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -2329,6 +2346,7 @@ test(
 
     assert.deepEqual(
       await new Pipeline({
+        clock: globalThis,
         history: new SQLiteSyncHistory(),
         connections: [
           new Connection({
@@ -2414,6 +2432,7 @@ test(
     const files = new LocalFiles({ directory: join(scratch.path, 'files') });
 
     await new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -2478,6 +2497,7 @@ test(
     const history = new SQLiteSyncHistory();
     const run = (copy: Copy<SQLiteTable>) =>
       new Pipeline({
+        clock: globalThis,
         history,
         connections: [
           new Connection({
@@ -2545,6 +2565,7 @@ test(
       },
     );
     const pipeline = new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -2639,6 +2660,7 @@ async function googleAttachmentFiles(
   });
   const files = new LocalFiles({ directory: join(directory, 'files') });
   await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -3073,6 +3095,7 @@ test(
     const controller = new AbortController();
     try {
       const watching = source.watch({
+        clock: globalThis,
         streams: [source.events],
         signal: controller.signal,
       });
@@ -3090,6 +3113,7 @@ test(
 
       // A consumer that stops iterating also stops the helper.
       const stopped = source.watch({
+        clock: globalThis,
         streams: [source.events],
         signal: new AbortController().signal,
       });
@@ -3130,6 +3154,7 @@ test(
     const streams = (await source.discover()).streams;
 
     const outcomes = await new Pipeline({
+      clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({
@@ -3210,6 +3235,7 @@ test(
     const history = new SQLiteSyncHistory();
     const { streams } = await source.discover();
     const watching = new Pipeline({
+      clock: globalThis,
       history,
       connections: [
         new Connection({

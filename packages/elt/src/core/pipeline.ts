@@ -1,6 +1,7 @@
-import { setTimeout as sleep } from 'node:timers/promises';
+import { delay } from '@zukhruf/async';
 
 import type { StreamCheck, SyncHistory } from '../state/sync-history.ts';
+import type { PipelineClock } from './clock.ts';
 import { Connection } from './connection.ts';
 import {
   type Copy,
@@ -96,16 +97,21 @@ export class Pipeline<Target extends DestinationTarget> {
   readonly history: SyncHistory<Target>;
   // In declared order, which is the order they refresh in.
   readonly derived: readonly DerivedDataset<Target>[];
+  readonly #clock: PipelineClock;
 
   constructor({
     connections,
     history,
     derived,
+    clock,
   }: {
     connections: readonly Connection<Target>[];
     history: SyncHistory<NoInfer<Target>>;
     // A pipeline that keeps no derived data declares none.
     derived?: readonly DerivedDataset<NoInfer<Target>>[];
+    // Each wait and each read of the time of the pipeline, its sources and
+    // its destination (ADR 0019).
+    clock: PipelineClock;
   }) {
     if (!connections.every((connection) => connection instanceof Connection))
       throw new TypeError(
@@ -114,6 +120,7 @@ export class Pipeline<Target extends DestinationTarget> {
     this.connections = Object.freeze([...connections]);
     this.history = history;
     this.derived = Object.freeze([...(derived ?? [])]);
+    this.#clock = clock;
     Object.freeze(this);
   }
 
@@ -294,6 +301,7 @@ export class Pipeline<Target extends DestinationTarget> {
             for await (const changed of connection.source.watch({
               streams: [...streams.values()],
               signal: watching,
+              clock: this.#clock,
             })) {
               for (const stream of changed) {
                 if (!streams.has(stream.name)) {
@@ -319,8 +327,10 @@ export class Pipeline<Target extends DestinationTarget> {
               );
               if (current.length > 0)
                 try {
-                  await this.history.checked(connection, new Date(), (at) =>
-                    checked(connection.source, current, at),
+                  await this.history.checked(
+                    connection,
+                    new Date(this.#clock.Date.now()),
+                    (at) => checked(connection.source, current, at),
                   );
                 } catch (error) {
                   unrecorded = { error };
@@ -347,7 +357,8 @@ export class Pipeline<Target extends DestinationTarget> {
               unrecorded = { error: suppressed };
               return;
             }
-            await sleep(retryDelayMs(failures), undefined, {
+            await delay(retryDelayMs(failures), {
+              clock: this.#clock,
               signal: watching,
             }).catch(() => undefined);
             if (watching.aborted) return;
@@ -367,16 +378,19 @@ export class Pipeline<Target extends DestinationTarget> {
         // Retries end with the watcher, as its changes do.
         if (!finished)
           for (const [name, { at }] of retries)
-            if (at <= Date.now()) pending.add(name);
+            if (at <= this.#clock.Date.now()) pending.add(name);
         if (pending.size === 0) {
           if (finished) break;
           const woken = wake;
           const due = Math.min(...[...retries.values()].map(({ at }) => at));
           const retrying = Number.isFinite(due)
-            ? setTimeout(() => woken.resolve(), due - Date.now())
+            ? this.#clock.setTimeout(
+                () => woken.resolve(),
+                due - this.#clock.Date.now(),
+              )
             : undefined;
           await woken.promise;
-          clearTimeout(retrying);
+          if (retrying !== undefined) this.#clock.clearTimeout(retrying);
           continue;
         }
         const steps = connection.steps.filter((copy) =>
@@ -404,7 +418,7 @@ export class Pipeline<Target extends DestinationTarget> {
           )
             retries.set(name, {
               failures: inARow,
-              at: Date.now() + retryDelayMs(inARow),
+              at: this.#clock.Date.now() + retryDelayMs(inARow),
             });
           else retries.delete(name);
         }
@@ -425,9 +439,10 @@ export class Pipeline<Target extends DestinationTarget> {
       const graced = new AbortController();
       await Promise.race([
         receive,
-        sleep(stopGraceMs, undefined, {
-          ref: false,
+        delay(stopGraceMs, {
+          clock: this.#clock,
           signal: graced.signal,
+          ref: false,
         }).catch(() => undefined),
       ]);
       graced.abort();
@@ -475,6 +490,7 @@ export class Pipeline<Target extends DestinationTarget> {
           connection,
           committed,
           signal,
+          this.#clock,
         );
         // A copy whose source could not tell how current its upstream is was not
         // read: what it would load could not be dated.

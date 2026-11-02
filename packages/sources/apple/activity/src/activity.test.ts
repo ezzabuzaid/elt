@@ -47,6 +47,7 @@ async function appleImport(source: Source, directory: string) {
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -1416,6 +1417,7 @@ test('an Activity watch wakes only the streams whose segments or database change
   const woken: string[][] = [];
 
   for await (const batch of source.watch({
+    clock: globalThis,
     streams: [source.appFocus, source.appMenuItems, source.displayBacklight],
     // A batch that never comes ends the watch, so the assertion fails.
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
@@ -1543,6 +1545,7 @@ test('an Activity watch keeps every stream current while its stores hold still',
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
   const watching = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -1635,7 +1638,7 @@ test('an Activity pass over a large knowledgeC holds one event at a time, so it 
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await new Pipeline({
+    await new Pipeline({ clock: globalThis,
       history,
       connections: [
         new Connection({

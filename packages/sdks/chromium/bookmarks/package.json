@@ -11,6 +11,6 @@
   },
   "dependencies": {
     "@workspace/codec-chromium-time": "0.0.1",
-    "@zukhruf/fs": "^0.6.14"
+    "@zukhruf/fs": "^0.6.15"
   }
 }

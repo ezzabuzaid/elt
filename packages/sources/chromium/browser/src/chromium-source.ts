@@ -167,6 +167,7 @@ export class ChromiumSource extends Source<ChromiumScan> {
   protected override async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using versions = new DisposableStack();
@@ -205,6 +206,7 @@ export class ChromiumSource extends Source<ChromiumScan> {
     for await (const changed of pollChanges(reads, {
       interval: pollIntervalMs,
       signal,
+      clock,
     }))
       yield streams.filter((stream) =>
         changed.has(this.#streams.readerOf(stream).store),

@@ -1,4 +1,5 @@
 import type { Catalog } from './catalog.ts';
+import type { PipelineClock } from './clock.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { DocumentParser } from './document-parser.ts';
 import { FileContent } from './file-content.ts';
@@ -17,6 +18,15 @@ import type { Stream } from './stream.ts';
 export type SourceWatchOptions = {
   readonly streams: readonly Stream[];
   readonly signal: AbortSignal;
+  // The clock of the pipeline: a source waits and reads the time on it.
+  readonly clock: PipelineClock;
+};
+
+// What a read of a source gets besides its catalog and states.
+export type SourceReadOptions = {
+  readonly signal?: AbortSignal | undefined;
+  // The clock of the pipeline: a source waits and reads the time on it.
+  readonly clock: PipelineClock;
 };
 
 export type RecordMessage = {
@@ -152,10 +162,12 @@ export abstract class Source<
   // open that waits on its upstream stops once the run is cancelled. states
   // is the read's, so a context whose streams depend on each other's saved
   // state, such as a consumer's offset into a sibling's outbox, can read it.
+  // A source that reads the time in extract keeps clock in its context.
   protected abstract open(
     streams: readonly Stream[],
     signal: AbortSignal | undefined,
     states: { get(stream: string): unknown },
+    clock: PipelineClock,
   ): Promise<Context>;
 
   // Source-specific selection rules, checked without I/O.
@@ -232,7 +244,7 @@ export abstract class Source<
   async *read(
     catalog: readonly CopyConfiguration[],
     states: { get(stream: string): unknown },
-    signal?: AbortSignal,
+    { signal, clock }: SourceReadOptions,
   ): AsyncGenerator<ReadMessage> {
     for (const configuration of catalog) this.validate(configuration);
     if (
@@ -248,6 +260,7 @@ export abstract class Source<
       catalog.map(({ stream }) => stream),
       reading,
       states,
+      clock,
     );
     if (!Number.isSafeInteger(this.concurrency) || this.concurrency < 1)
       throw new TypeError('Source concurrency must be a positive integer');

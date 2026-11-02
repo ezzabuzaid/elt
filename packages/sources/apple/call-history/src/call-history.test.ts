@@ -269,6 +269,7 @@ async function pipeline(source: AppleCallHistorySource, directory: string) {
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -942,6 +943,7 @@ test('a Call History watch keeps every stream current while callhistoryd changes
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
   const watching = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -1036,7 +1038,7 @@ test('a Call History pass over a large store holds one call at a time, so it loa
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    await new Pipeline({
+    await new Pipeline({ clock: globalThis,
       history,
       connections: [
         new Connection({

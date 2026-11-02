@@ -3,17 +3,26 @@
 The shared macOS kit of the Apple sources. It is not the source of one app. It gives the document parser that turns stored files into text, the native Vision worker for text recognition in images, the import scope type, and other parts that several Apple sources use. Sources use the scope and schema parts. Hosts build the parser and the worker pools.
 
 ```ts
+import { availableParallelism } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { HillClimbing, LeaderFirst, Pool } from '@zukhruf/pool';
+import { HillClimbing, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
 
 import { ImageFormat } from '@workspace/source-apple-macos/image-format';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 import { VisionWorker } from '@workspace/source-apple-macos/vision';
 
 await using ocr = new Pool({
-  size: new HillClimbing({ memoryPerWorker: VisionWorker.memory }),
+  size: new HillClimbing({
+    memoryPerWorker: VisionWorker.memory,
+    computer: {
+      availableParallelism,
+      availableMemory: () => process.availableMemory(),
+    },
+  }),
   startup: new LeaderFirst(),
+  eviction: new NoEviction(),
+  clock: globalThis,
   create: () =>
     new VisionWorker(
       fileURLToPath(
@@ -68,10 +77,13 @@ Rules:
 A parser with local Vision and local transcription:
 
 ```ts
+import { availableParallelism } from 'node:os';
+
 import {
   Fixed,
   HillClimbing,
   LeaderFirst,
+  NoEviction,
   Parallel,
   Pool,
 } from '@zukhruf/pool';
@@ -89,13 +101,23 @@ const configuration = {
   language: 'ar',
 };
 await using ocr = new Pool({
-  size: new HillClimbing({ memoryPerWorker: VisionWorker.memory }),
+  size: new HillClimbing({
+    memoryPerWorker: VisionWorker.memory,
+    computer: {
+      availableParallelism,
+      availableMemory: () => process.availableMemory(),
+    },
+  }),
   startup: new LeaderFirst(),
+  eviction: new NoEviction(),
+  clock: globalThis,
   create: () => new VisionWorker('/path/to/vision-worker'),
 });
 await using engines = new Pool({
   size: new Fixed(1),
   startup: new Parallel(),
+  eviction: new NoEviction(),
+  clock: globalThis,
   create: () =>
     new TranscriptionWorker('/path/to/transcribe-local', configuration),
 });

@@ -1039,6 +1039,7 @@ async function pipeline(
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -2999,6 +3000,7 @@ test(
     const woken: string[][] = [];
 
     for await (const batch of source.watch({
+      clock: globalThis,
       streams,
       // A batch that never comes ends the watch, so the assertion fails.
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
@@ -3338,7 +3340,7 @@ test('large WhatsApp passes stream payloads and reuse compact metadata within a 
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
     const history = new SQLiteSyncHistory();
-    const pipeline = new Pipeline({
+    const pipeline = new Pipeline({ clock: globalThis,
       history,
       connections: [
         new Connection({
@@ -3419,7 +3421,9 @@ test('message streams reuse one completed metadata scan and refresh file availab
     );
   };
   const first: unknown[] = [];
-  for await (const message of source.read(catalog, states)) {
+  for await (const message of source.read(catalog, states, {
+    clock: globalThis,
+  })) {
     if (message instanceof StreamStatus)
       assert.notEqual(message.status, 'FAILED');
     else if ('type' in message && message.type === 'STATE') {
@@ -3439,7 +3443,9 @@ test('message streams reuse one completed metadata scan and refresh file availab
   assert.equal(first.length, 4);
   for (const snapshot of first) assert.deepEqual(snapshot, first[0]);
   const next: unknown[] = [];
-  for await (const message of source.read(catalog, states)) {
+  for await (const message of source.read(catalog, states, {
+    clock: globalThis,
+  })) {
     if (message instanceof StreamStatus)
       assert.notEqual(message.status, 'FAILED');
     else if ('type' in message && message.type === 'STATE')
@@ -3536,11 +3542,10 @@ test('cancelling a metadata build or replay publishes no partial checkpoint and 
     const reason = new Error('Stop the metadata pass');
     const committed: string[] = [];
     const failed: string[] = [];
-    for await (const message of source.read(
-      catalog,
-      new Map(),
-      controller.signal,
-    )) {
+    for await (const message of source.read(catalog, new Map(), {
+      signal: controller.signal,
+      clock: globalThis,
+    })) {
       if (message instanceof StreamStatus) {
         if (message.status === 'FAILED') {
           assert.equal(message.error, reason);
@@ -3557,7 +3562,9 @@ test('cancelling a metadata build or replay publishes no partial checkpoint and 
       catalog.slice(committed.length).map(({ stream }) => stream.name),
     );
     const recovered = new Map<string, number>();
-    for await (const message of source.read(catalog, new Map())) {
+    for await (const message of source.read(catalog, new Map(), {
+      clock: globalThis,
+    })) {
       if (message instanceof StreamStatus)
         assert.notEqual(message.status, 'FAILED');
       else if ('type' in message && message.type === 'STATE')
@@ -3571,7 +3578,9 @@ test('cancelling a metadata build or replay publishes no partial checkpoint and 
       catalog.map(({ stream }) => [stream.name, 7]),
     );
     // Closing the consumer early also closes the underlying SQLite iterators.
-    for await (const message of source.read(catalog, new Map())) {
+    for await (const message of source.read(catalog, new Map(), {
+      clock: globalThis,
+    })) {
       if (!(message instanceof StreamStatus) && !('type' in message)) break;
     }
     using database = new DatabaseSync(whatsapp.path('chatStorage'));

@@ -159,6 +159,7 @@ export class AppleActivitySource extends Source<ActivityScan> {
   protected override async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using versions = new DisposableStack();
@@ -186,6 +187,7 @@ export class AppleActivitySource extends Source<ActivityScan> {
     for await (const changed of pollChanges(probes, {
       interval: this.pollIntervalMs,
       signal,
+      clock,
     }))
       yield [...changed];
   }

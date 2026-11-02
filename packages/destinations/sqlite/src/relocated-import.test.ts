@@ -102,6 +102,7 @@ async function importIn(folder: string, source: Notes, storesFiles: boolean) {
     : destination.table('notes');
   const history = new SQLiteSyncHistory();
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({

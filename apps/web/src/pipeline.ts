@@ -60,6 +60,7 @@ export default async function pipeline() {
     userAgent: 'elt-web-playground/0.1 (+https://github.com/ezzabuzaid/elt)',
   });
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({

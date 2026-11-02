@@ -693,6 +693,7 @@ async function pipeline(source: SlackDesktopSource, directory: string) {
   });
   const { streams } = await source.discover();
   return new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -1418,6 +1419,7 @@ test('downloads stay after Slack clears its list, with the file’s bytes while 
   const source = new SlackDesktopSource({ directory: store.directory });
   const destination = new SQLiteDestination({ path: out });
   const run = new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({

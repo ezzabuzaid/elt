@@ -80,6 +80,7 @@ test('a deduplicating load that finds nothing new leaves the database schema as 
   });
   const history = new SQLiteSyncHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     connections: [
       new Connection({
         name: 'checkpointing',

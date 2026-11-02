@@ -5,7 +5,7 @@ A local transcription model for the AI SDK. `LocalTranscriptionModel` implements
 ```ts
 import { readFile } from 'node:fs/promises';
 
-import { Fixed, Parallel, Pool } from '@zukhruf/pool';
+import { Fixed, NoEviction, Parallel, Pool } from '@zukhruf/pool';
 import { transcribe } from 'ai';
 
 import { LocalTranscriptionModel } from '@workspace/transcription-local';
@@ -19,6 +19,8 @@ const configuration = {
 await using engines = new Pool({
   size: new Fixed(1),
   startup: new Parallel(),
+  eviction: new NoEviction(),
+  clock: globalThis,
   create: () =>
     new TranscriptionWorker('/path/to/transcribe-local', configuration),
 });

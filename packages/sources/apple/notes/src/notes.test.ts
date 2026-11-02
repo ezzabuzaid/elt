@@ -77,7 +77,12 @@ async function appleImport(source: Source, directory: string) {
     return database.prepare(sql).all();
   };
   return {
-    load: () => new Pipeline({ history, connections: [connection] }).run(),
+    load: () =>
+      new Pipeline({
+        clock: globalThis,
+        history,
+        connections: [connection],
+      }).run(),
     read,
     // The documented views the streams publish, beside the catalog and the
     // sync history every SQLite load has.

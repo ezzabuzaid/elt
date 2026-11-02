@@ -62,7 +62,7 @@ const passes = `
   const source = new Parameters();
   const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
   const history = new SQLiteSyncHistory();
-  const pipeline = new Pipeline({
+  const pipeline = new Pipeline({ clock: globalThis,
     history,
     connections: [new Connection({
       name: 'parameters',

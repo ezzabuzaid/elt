@@ -63,6 +63,7 @@ const { streams } = await source.discover();
 const { streams: healthStreams } = await health.discover();
 
 await new Pipeline({
+  clock: globalThis,
   history: new PostgresSyncHistory({ url: warehouseUrl }),
   connections: [
     new Connection({

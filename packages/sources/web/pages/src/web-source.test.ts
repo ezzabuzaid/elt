@@ -383,6 +383,7 @@ async function pipeline(source: WebSource, path: string, checkpoints: string) {
   const destination = new SQLiteDestination({ path });
   const history = new SQLiteSyncHistory();
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -1421,6 +1422,7 @@ test('a failed full refresh tries later articles and preserves the last complete
   const destination = new SQLiteDestination({ path: database.path });
   const history = new SQLiteSyncHistory();
   const refresh = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({

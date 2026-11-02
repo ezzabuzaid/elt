@@ -686,6 +686,7 @@ async function pipeline(source: InstagramWebSource, directory: string) {
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -1993,7 +1994,11 @@ test(
     });
     const { streams } = await source.discover();
     const watching = new AbortController();
-    const watch = source.watch({ streams, signal: watching.signal });
+    const watch = source.watch({
+      clock: globalThis,
+      streams,
+      signal: watching.signal,
+    });
     const checks = watch[Symbol.asyncIterator]();
     try {
       const first = await checks.next();

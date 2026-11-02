@@ -108,6 +108,7 @@ async function pipeline(
   const streams = selected ?? (await source.discover()).streams;
   const history = new SQLiteSyncHistory();
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -483,6 +484,7 @@ test('a Clock watch follows selected database and preference changes and cancels
     'Watch update',
   );
   const stopped = source.watch({
+    clock: globalThis,
     streams: [source.alarms],
     signal: AbortSignal.abort(),
   });
@@ -617,6 +619,7 @@ test('a Clock watch keeps every stream current while its stores hold still', asy
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
   const watching = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({

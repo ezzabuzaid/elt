@@ -26,7 +26,12 @@ export class SQLiteCheckpointStore extends CheckpointStore {
     if (!path || path === ':memory:' || path.includes('\0'))
       throw new TypeError('Checkpoints require a persistent SQLite file');
     this.path = resolve(path);
-    this.#locks = new Mutex(new SqliteStore(`${this.path}.locks`));
+    // The lock never waits (skipIfBusy makes one attempt), and the write of
+    // its token retries only a busy file on Windows: real time, as no caller
+    // has another correct value.
+    this.#locks = new Mutex(
+      new SqliteStore(`${this.path}.locks`, { clock: globalThis }),
+    );
     Object.freeze(this);
   }
 

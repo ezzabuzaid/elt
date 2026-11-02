@@ -229,6 +229,7 @@ async function crawl(
   });
   const destination = new SQLiteDestination({ path: database });
   const [result] = await new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({

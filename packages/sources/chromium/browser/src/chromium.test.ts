@@ -66,7 +66,12 @@ async function chromiumImport(source: Source, directory: string) {
   });
   const history = new SQLiteSyncHistory();
   return {
-    load: () => new Pipeline({ history, connections: [connection] }).run(),
+    load: () =>
+      new Pipeline({
+        clock: globalThis,
+        history,
+        connections: [connection],
+      }).run(),
     read: (sql: string) => {
       using database = new DatabaseSync(path, { readOnly: true });
       const statement = database.prepare(sql);
@@ -1072,6 +1077,7 @@ test('a Chromium watch wakes only the streams of the store that changed, while t
   const woken: string[][] = [];
 
   for await (const batch of source.watch({
+    clock: globalThis,
     streams,
     // A batch that never comes ends the watch, so the assertion fails.
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
@@ -1250,7 +1256,7 @@ test('a Chromium pass over a large History holds one visit at a time, so it load
     const { ChromiumSource } = await import(process.env.SOURCE);
     const source = new ChromiumSource({ browser: dia, home: process.env.HOME_FOLDER });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
-    await new Pipeline({
+    await new Pipeline({ clock: globalThis,
       history: new SQLiteSyncHistory(),
       connections: [
         new Connection({

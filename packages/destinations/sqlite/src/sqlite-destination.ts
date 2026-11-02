@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-import type { CopyConfiguration, Load } from '@workspace/elt';
+import type { CopyConfiguration, Load, PipelineClock } from '@workspace/elt';
 import { Destination } from '@workspace/elt';
 
 import { SQLiteAppendWriter } from './sqlite-append-writer.ts';
@@ -34,11 +34,15 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
 
   // Each stream's commit is its own short transaction, so no transaction
   // stays open while the sources read.
-  override async load(): Promise<Load<SQLiteTable>> {
+  override async load({
+    clock,
+  }: {
+    clock: PipelineClock;
+  }): Promise<Load<SQLiteTable>> {
     // A commit waits for readers, such as an agent's sqlite3 -readonly
     // query, to finish.
     const database = new DatabaseSync(this.path, { timeout: 30_000 });
-    const loadedAt = new Date().toISOString();
+    const loadedAt = new Date(clock.Date.now()).toISOString();
     return {
       prepare: async (configuration, target, binding) =>
         this.createWriter(configuration, target).prepare(

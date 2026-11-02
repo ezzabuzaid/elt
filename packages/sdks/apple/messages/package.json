@@ -12,9 +12,9 @@
   "dependencies": {
     "@workspace/codec-plist": "0.0.1",
     "@workspace/sdk-macos-app-database": "0.0.1",
-    "@zukhruf/sqlite-snapshot": "^0.6.7"
+    "@zukhruf/sqlite-snapshot": "^0.6.15"
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.6.6"
+    "@zukhruf/testing": "^0.6.15"
   }
 }

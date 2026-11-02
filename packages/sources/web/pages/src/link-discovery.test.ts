@@ -86,6 +86,7 @@ test('ordinary links reach unlisted articles while feed pages and unchanged reru
   const destination = new SQLiteDestination({ path: database.path });
   const history = new SQLiteSyncHistory();
   const ingestion = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -188,7 +189,11 @@ test('new URLs survive interruption, and only the page in flight and the due URL
   });
   const stop = new AbortController(),
     reason = new Error('stop after parent');
-  const first = new Pipeline({ connections: [connection], history });
+  const first = new Pipeline({
+    clock: globalThis,
+    connections: [connection],
+    history,
+  });
   const stopAfterOne = (message: unknown) => {
     if (
       message instanceof CopyProgress &&
@@ -207,7 +212,11 @@ test('new URLs survive interruption, and only the page in flight and the due URL
     passChannels.progress.unsubscribe(stopAfterOne);
   }
   requests.length = 0;
-  const resumed = new Pipeline({ connections: [connection], history });
+  const resumed = new Pipeline({
+    clock: globalThis,
+    connections: [connection],
+    history,
+  });
   assert.equal((await resumed.run())[0]?.count, 1);
   // The parent was in flight when the run stopped: it downloads once more, and the diff writes nothing for it.
   assert.equal(requests.filter((url) => url === '/articles/z').length, 1);
@@ -292,6 +301,7 @@ test('Markdown pages supply links, and feeds declared on crawled pages are read 
   const destination = new SQLiteDestination({ path: database.path }),
     history = new SQLiteSyncHistory();
   const ingestion = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -404,7 +414,11 @@ test('an interruption during a long stretch of archive pages keeps the progress 
   }, 10_000);
   try {
     await assert.rejects(
-      new Pipeline({ connections: [connection], history }).run({
+      new Pipeline({
+        clock: globalThis,
+        connections: [connection],
+        history,
+      }).run({
         signal: stop.signal,
       }),
       (error) => error === reason,
@@ -420,8 +434,13 @@ test('an interruption during a long stretch of archive pages keeps the progress 
   const firstRun = new Map(read.map(({ url, at }) => [url, at]));
   requests.length = 0;
   assert.equal(
-    (await new Pipeline({ connections: [connection], history }).run())[0]
-      ?.count,
+    (
+      await new Pipeline({
+        clock: globalThis,
+        connections: [connection],
+        history,
+      }).run()
+    )[0]?.count,
     1,
   );
   const again = requests.flatMap(({ url }) => {

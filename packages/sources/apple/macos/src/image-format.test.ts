@@ -27,6 +27,7 @@ const inFlight = () =>
 // The pool hosts build, sized to three workers on every Mac.
 function ocr() {
   return new Pool({
+    clock: globalThis,
     size: new Fixed(workers),
     startup: new LeaderFirst(),
     eviction: new NoEviction(),

@@ -175,6 +175,7 @@ export class AppleSafariSource extends Source<SafariScan> {
   protected override async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using versions = new DisposableStack();
@@ -189,6 +190,7 @@ export class AppleSafariSource extends Source<SafariScan> {
     for await (const changed of pollChanges(reads, {
       interval: pollIntervalMs,
       signal,
+      clock,
     }))
       yield streams.filter((stream) => changed.has(readerOf(stream).store));
   }

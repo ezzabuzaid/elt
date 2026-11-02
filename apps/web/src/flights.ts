@@ -14,4 +14,5 @@ await mkdir(flightsDirectory, { recursive: true });
 export default new SingleFlight<void>({
   directory: flightsDirectory,
   codec: { encode: () => '', decode: () => undefined },
+  clock: globalThis,
 });

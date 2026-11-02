@@ -67,6 +67,7 @@ test('stored file scopes flush when empty and remain usable across empty, null a
   });
   const history = new SQLiteSyncHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({

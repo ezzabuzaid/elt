@@ -114,12 +114,13 @@ export class AppleMessagesSource extends Source<MessagesScan> {
   protected override async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using version = this.#store.version();
     for await (const changed of pollChanges(
       new Map([['version', async () => version.current]]),
-      { interval: pollIntervalMs, signal },
+      { interval: pollIntervalMs, signal, clock },
     ))
       yield changed.size > 0 ? streams : [];
   }

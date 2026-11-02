@@ -110,6 +110,7 @@ async function pipeline(source: DiaDesktopSource, directory: string) {
   });
   const { streams } = await source.discover();
   return new Pipeline({
+    clock: globalThis,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({

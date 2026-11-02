@@ -33,6 +33,7 @@ import {
   type RecordedPass,
   Source,
   type SourceMessage,
+  type SourceReadOptions,
   type SourceWatchOptions,
   type Stage,
   type StoredCheckpoint,
@@ -645,6 +646,7 @@ const contextPipeline = (
   destination = new DrainingDestination(),
 ) =>
   new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [
       new Connection({
@@ -714,6 +716,7 @@ test('closing a read releases every active extract before its shared context', a
       (stream) => new Copy(stream, new NamedTarget(stream.name)).configuration,
     ),
     new Map(),
+    { clock: globalThis },
   );
 
   try {
@@ -757,6 +760,7 @@ test('a stream that fails outside its extract ends the read, also while another 
         return null;
       },
     },
+    { clock: globalThis },
   );
 
   const outcome = await settleWithin(
@@ -788,6 +792,7 @@ test("a source's open reads the read's saved states, so a context can depend on 
       (stream) => new Copy(stream, new NamedTarget(stream.name)).configuration,
     ),
     new Map([['right', { offset: 7 }]]),
+    { clock: globalThis },
   );
 
   for await (const message of read) void message;
@@ -919,6 +924,7 @@ test('each checkpoint commits its partition, and a failing partition keeps its l
   const destination = new DrainingDestination();
   const checkpoints = new MemoryCheckpoints(destination.log);
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [
       new Connection({
@@ -988,6 +994,7 @@ test('a full refresh commits once, and a failing partition commits nothing', asy
   const source = new Sites();
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [
       new Connection({
@@ -1042,6 +1049,7 @@ test('an empty full refresh still commits, so an overwrite clears its target', a
   const source = new ContextSource({ left: [] });
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [
       new Connection({
@@ -1072,6 +1080,7 @@ test('a read context that does not open fails every copy with its error, and not
   const source = new LockedSource(refusal);
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [
       new Connection({
@@ -1116,6 +1125,7 @@ test('a connection that copies one stream twice is refused before anything is pr
   const source = new ContextSource();
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [
       new Connection({
@@ -1145,6 +1155,7 @@ const incrementalPipeline = (
   checkpoints: MemoryCheckpoints,
 ) =>
   new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [
       new Connection({
@@ -1370,6 +1381,7 @@ test("an extract that emits another stream's message fails only its own stream, 
   });
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [
       new Connection({
@@ -1422,8 +1434,9 @@ test('a read that breaks fails every stream it had not ended, while a stream tha
     override async *read(
       catalog: readonly CopyConfiguration[],
       states: ReadonlyMap<string, unknown>,
+      options: SourceReadOptions,
     ): AsyncGenerator<ReadMessage> {
-      for await (const message of super.read(catalog, states)) {
+      for await (const message of super.read(catalog, states, options)) {
         yield message;
         if (message instanceof StreamStatus && message.stream === 'middle')
           throw new Error('read broke');
@@ -1433,6 +1446,7 @@ test('a read that breaks fails every stream it had not ended, while a stream tha
   const source = new BreakingSource();
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [
       new Connection({
@@ -1589,6 +1603,7 @@ class Lost extends ContextSource {
 test('one connection failing leaves the others loaded, and every pass is recorded', async () => {
   const history = new MemoryHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       leftOnly('steady', new ContextSource()),
@@ -1652,6 +1667,7 @@ test('a run its signal stops keeps each commit and checkpoint, drops what was st
   const checkpoints = new MemoryCheckpoints(destination.log);
   const history = new MemoryHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -1715,6 +1731,7 @@ test("connections read side by side, so one connection's pass never waits for an
     }
   }
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       leftOnly('slow', new Slow()),
@@ -1768,6 +1785,7 @@ test("a pass publishes each copy's progress: what the source emitted, what commi
     right: [record('right', 'x'), new Error('right lost')],
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [
       new Connection({
@@ -1823,6 +1841,7 @@ test("a store that a subscriber binds to a pass's start holds the pass while the
     left: [record('left', 'a'), record('left', 'b')],
   });
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [leftOnly('stored', source)],
   });
@@ -1850,6 +1869,7 @@ test('a copy that fails before reading still reports how it ended', async () => 
   using listened = listen('locked');
   const source = new LockedSource(new Error('store locked'));
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [leftOnly('locked', source)],
   });
@@ -1882,6 +1902,7 @@ test('a pass publishes its end once its history recorded it, and a stopped watch
   passChannels.finish.subscribe(hear);
   passChannels.failure.subscribe(hear);
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [leftOnly('lost', new Lost())],
   });
@@ -1928,6 +1949,7 @@ test('a failure is config when the source lists its class in configErrors, and s
   using lost = listen('lost');
   const watch = (name: string, source: ContextSource, signal: AbortSignal) =>
     new Pipeline({
+      clock: globalThis,
       history: new MemoryHistory(),
       connections: [leftOnly(name, source)],
     }).watch({ signal });
@@ -1961,6 +1983,7 @@ test('a connection whose watcher fails for a config reason stops alone and is re
   const history = new MemoryHistory();
   const steady = new ContextSource();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({
@@ -2017,6 +2040,7 @@ test(
       }
     }
     const pipeline = new Pipeline({
+      clock: globalThis,
       history: new MemoryHistory(),
       connections: [leftOnly('deaf', new Deaf())],
     });
@@ -2051,6 +2075,7 @@ test('a stopping watch waits for a source that heeds the abort to finish stoppin
     }
   }
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [leftOnly('slow', new Slow())],
   });
@@ -2071,6 +2096,7 @@ test('under a watch, a derived dataset whose refresh fails stops the watch, whic
     }
   }
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [leftOnly('watching', new Watching())],
     derived: [new Refused()],
@@ -2101,6 +2127,7 @@ test('a stopped watch ends only once the derived refresh it started has ended', 
     }
   }
   const pipeline = new Pipeline({
+    clock: globalThis,
     history: new MemoryHistory(),
     connections: [leftOnly('reading', new Watching())],
     derived: [new Held()],
@@ -2154,6 +2181,7 @@ test('a stopping watch ends the pass it is running, which the extract sees and t
   }
   const history = new MemoryHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [leftOnly('reading', new Reading())],
   });
@@ -2217,6 +2245,7 @@ test("breaking a watch's loop ends the pass another connection is running, recor
   }
   const history = new MemoryHistory();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       leftOnly('quick', new Quick()),
@@ -2249,6 +2278,7 @@ test('an invalid connection stops the whole pipeline before any read, and is rec
   const valid = new ContextSource();
   const invalid = new ContextSource();
   const pipeline = new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       leftOnly('valid', valid),

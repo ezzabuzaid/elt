@@ -88,6 +88,7 @@ export class AppleNotesSource extends Source<NotesScan> {
   protected override async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using version = this.#store.version();
@@ -107,6 +108,7 @@ export class AppleNotesSource extends Source<NotesScan> {
     for await (const changed of pollChanges(reads, {
       interval: pollIntervalMs,
       signal,
+      clock,
     }))
       yield changed.size > 0 ? streams : [];
   }

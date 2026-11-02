@@ -48,13 +48,13 @@
   },
   "dependencies": {
     "@workspace/elt": "0.0.1",
-    "@zukhruf/coprocess": "^0.6.7",
-    "@zukhruf/pool": "^0.6.7",
+    "@zukhruf/coprocess": "^0.6.15",
+    "@zukhruf/pool": "^0.6.15",
     "ai": "7.0.148",
     "file-type": "22.2.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.6.6"
+    "@zukhruf/testing": "^0.6.15"
   }
 }

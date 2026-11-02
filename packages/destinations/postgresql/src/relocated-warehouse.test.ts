@@ -82,6 +82,7 @@ async function passInto(url: string, source: Notes) {
   const history = new PostgresSyncHistory({ url });
   const destination = new PostgresDestination({ url, schema: 'notes' });
   return new Pipeline({
+    clock: globalThis,
     history,
     connections: [
       new Connection({

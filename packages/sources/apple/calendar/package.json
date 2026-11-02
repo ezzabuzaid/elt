@@ -18,10 +18,10 @@
     "@workspace/google-auth": "0.0.1",
     "@workspace/sdk-apple-eventkit": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
-    "@zukhruf/snapshot-differential": "^0.6.7"
+    "@zukhruf/snapshot-differential": "^0.6.15"
   },
   "devDependencies": {
     "@workspace/elt-sqlite": "0.0.1",
-    "@zukhruf/testing": "^0.6.6"
+    "@zukhruf/testing": "^0.6.15"
   }
 }
