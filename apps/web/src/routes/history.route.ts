@@ -38,12 +38,15 @@ export default function (router: Hono) {
           )
           .get(connector),
       );
+    // An attempt's status and error are its whole pass's; its coverage and
+    // counts are the articles copy's, the table the page lists.
     const attempts = z.array(attemptRow).parse(
       db
         .prepare(
           `SELECT a.attempt_id, a.started_at, a.completed_at, a.status, a.error, a.failure_type,
             c.description, c.selection, c.written_count, c.deleted_count, c.failures
-          FROM sync_attempts a LEFT JOIN extraction_coverage c ON c.attempt_id = a.attempt_id
+          FROM sync_attempts a LEFT JOIN extraction_coverage c
+            ON c.attempt_id = a.attempt_id AND c.stream = 'articles'
           WHERE a.connector = ? ORDER BY a.attempt_id DESC LIMIT 20`,
         )
         .all(connector),

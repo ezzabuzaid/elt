@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { ArticleList } from './article-list.tsx';
 import { ArticleView } from './article-view.tsx';
+import { CrawlLog } from './crawl-log.tsx';
 import { HistoryPanel } from './history-panel.tsx';
 import { SitesPanel } from './sites-panel.tsx';
 import { useActivity } from './use-activity.ts';
@@ -19,7 +20,10 @@ export function App() {
       </aside>
       <main className="content">
         {selected === null ? (
-          <ArticleList onOpen={setSelected} />
+          <>
+            {activity !== null && <CrawlLog run={activity} />}
+            <ArticleList onOpen={setSelected} />
+          </>
         ) : (
           <ArticleView article={selected} onBack={() => setSelected(null)} />
         )}

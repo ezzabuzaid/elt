@@ -1,7 +1,13 @@
 import { z } from 'zod';
 
 const text = z.string().nullable();
-const count = z.object({ count: z.number(), deleted: z.number() });
+const status = z.enum([
+  'running',
+  'succeeded',
+  'partial',
+  'failed',
+  'cancelled',
+]);
 
 export const settingsSchema = z.object({
   inputs: z.array(z.url({ protocol: /^https?$/ })),
@@ -11,19 +17,65 @@ export const settingsSchema = z.object({
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
-export const activitySchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('idle') }),
-  z.object({
-    kind: z.literal('syncing'),
-    progress: z
-      .object({
-        status: z.enum(['running', 'complete', 'incomplete']),
-        emitted: count,
-        committed: count,
-      })
-      .nullable(),
-  }),
-]);
+// One URL of a crawl once its request ended (milliseconds), and, for a page,
+// what the source extracted from it. A request failed when it got no answer,
+// or a 4xx or 5xx one.
+export const crawlRequestSchema = z.object({
+  id: z.number(),
+  url: z.string(),
+  list: z.boolean(),
+  waited: z.number(),
+  failed: z.boolean(),
+  outcome: z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('answered'),
+      status: z.number(),
+      // An answer that the HTTP cache or the origin's record gave took none.
+      duration: z.number().nullable(),
+    }),
+    z.object({ kind: z.literal('errored'), error: z.string() }),
+  ]),
+  page: z
+    .discriminatedUnion('kind', [
+      z.object({ kind: z.literal('extracted'), records: z.number() }),
+      z.object({ kind: z.literal('unchanged') }),
+    ])
+    .nullable(),
+});
+export type CrawlRequest = z.infer<typeof crawlRequestSchema>;
+
+// The last Sync, as it runs and once it ended (epoch milliseconds). A crawl
+// has no total: each page it reads can add URLs to its frontier, so waiting
+// is what the open crawls still hold, not what is left.
+export const runSchema = z.object({
+  startedAt: z.number(),
+  requests: z.number(),
+  failed: z.number(),
+  waiting: z.number(),
+  held: z.number(),
+  pages: z.number(),
+  unchanged: z.number(),
+  // Records committed to the articles table; a page that gives an article
+  // already there writes over its row.
+  written: z.number(),
+  blocks: z.array(z.object({ origin: z.string(), until: z.number() })),
+  // When the earliest page of the ended crawls is due again: a Sync before
+  // then reads nothing of it.
+  nextDue: z.number().nullable(),
+  // The latest requests, newest first.
+  log: z.array(crawlRequestSchema),
+  ended: z
+    .object({
+      at: z.number(),
+      status: status.exclude(['running']),
+      error: text,
+    })
+    .nullable(),
+});
+export type Run = z.infer<typeof runSchema>;
+
+// Null until the first Sync since the server started.
+export const activitySchema = runSchema.nullable();
 export type Activity = z.infer<typeof activitySchema>;
 
 export const articleSummarySchema = z.object({
@@ -51,14 +103,6 @@ export const articleSchema = articleSummarySchema.extend({
   dir: text,
 });
 export type Article = z.infer<typeof articleSchema>;
-
-const status = z.enum([
-  'running',
-  'succeeded',
-  'partial',
-  'failed',
-  'cancelled',
-]);
 
 export const attemptSchema = z.object({
   attempt_id: z.number(),

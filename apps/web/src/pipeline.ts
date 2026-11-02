@@ -1,12 +1,6 @@
 import { join } from 'node:path';
 
-import {
-  Connection,
-  Copy,
-  CopyProgress,
-  Pipeline,
-  passChannels,
-} from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
@@ -22,7 +16,6 @@ import { ArticleExtractor } from '@workspace/source-web-pages/article-extractor'
 import { WebSource } from '@workspace/source-web-pages/web-source';
 import { WebStream } from '@workspace/source-web-pages/web-stream';
 
-import activity from './activity.ts';
 import { articlesPath } from './db.ts';
 import directory from './directory.ts';
 import settings from './settings.ts';
@@ -37,23 +30,6 @@ const destination = new SQLiteDestination({ path: articlesPath });
 const history = new SQLiteSyncHistory({ soleWriter: true });
 const checkpoints = new SQLiteCheckpointStore({
   path: join(directory, 'checkpoints.sqlite'),
-});
-
-// The page shows each copy of the web connection's pass while it runs.
-passChannels.progress.subscribe((message) => {
-  if (
-    message instanceof CopyProgress &&
-    message.connection.name === connector
-  ) {
-    activity.publish({
-      kind: 'syncing',
-      progress: {
-        status: message.status,
-        emitted: message.emitted,
-        committed: message.committed,
-      },
-    });
-  }
 });
 
 // Built on each Sync or Clear from the settings as they are then, because a
@@ -91,10 +67,12 @@ export default async function pipeline() {
         source,
         destination,
         checkpoints,
+        // The articles stream and the routes, crawls and failures streams
+        // that the source declares beside it, each into a table of its name.
         steps: (await source.discover()).streams.map(
           (stream) =>
             new Copy(stream, destination.table(stream.name), {
-              id: 'web:articles',
+              id: `web:${stream.name}`,
               syncMode: 'incremental',
               destinationSyncMode: 'append_dedup',
             }),

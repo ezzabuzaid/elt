@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Activity, Settings } from '../../src/contract.ts';
 import { api } from './api.ts';
 import { EditableList } from './editable-list.tsx';
+import { RunSummary } from './run-summary.tsx';
 
 export function SitesPanel({ activity }: { activity: Activity }) {
   const queryClient = useQueryClient();
@@ -29,7 +30,7 @@ export function SitesPanel({ activity }: { activity: Activity }) {
   const current = settings.data;
   const update = (change: Partial<Settings>) =>
     save.mutate({ ...current, ...change });
-  const busy = activity.kind !== 'idle';
+  const busy = activity !== null && activity.ended === null;
   const error = save.error ?? sync.error ?? clear.error;
   return (
     <>
@@ -68,30 +69,7 @@ export function SitesPanel({ activity }: { activity: Activity }) {
         </button>
       </div>
       {error !== null && <p className="error">{error.message}</p>}
-      <ActivityLine activity={activity} />
+      {activity !== null && <RunSummary run={activity} />}
     </>
-  );
-}
-
-function ActivityLine({ activity }: { activity: Activity }) {
-  if (activity.kind === 'idle') {
-    return null;
-  }
-  const { progress } = activity;
-  return (
-    <dl className="activity">
-      <dt>Syncing</dt>
-      <dd>{progress?.status ?? 'starting'}</dd>
-      <dt>Emitted</dt>
-      <dd>
-        {progress?.emitted.count ?? 0} · {progress?.emitted.deleted ?? 0}{' '}
-        deleted
-      </dd>
-      <dt>Committed</dt>
-      <dd>
-        {progress?.committed.count ?? 0} · {progress?.committed.deleted ?? 0}{' '}
-        deleted
-      </dd>
-    </dl>
   );
 }

@@ -12,11 +12,12 @@ export default function (router: Hono) {
     }
     void flights
       .run('sync', async () => {
-        activity.publish({ kind: 'syncing', progress: null });
+        activity.start();
         try {
           await (await pipeline()).run();
-        } finally {
-          activity.publish({ kind: 'idle' });
+        } catch (error) {
+          activity.fail(error);
+          throw error;
         }
       })
       .catch((error: unknown) => console.error(error));
