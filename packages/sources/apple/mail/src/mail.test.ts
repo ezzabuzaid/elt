@@ -2367,6 +2367,7 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
         fileURLToPath(
           import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
         ),
+        globalThis,
       ),
   });
   await using dir = await new TemporaryFiles().directory('elt-mail-pixels-');

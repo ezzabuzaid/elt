@@ -32,7 +32,7 @@ test('real decoding and native model failures reject, and disposing the engines 
     eviction: new NoEviction(),
     create: () => new TranscriptionWorker(helper, configuration),
   });
-  const model = new LocalTranscriptionModel(configuration, engines);
+  const model = new LocalTranscriptionModel(configuration, engines, globalThis);
   const audio = await readFile(path);
   await assert.rejects(
     model.doGenerate({ audio, mediaType: 'audio/aiff' }),
@@ -76,7 +76,7 @@ test('a cancelled call never borrows an engine and invalid configuration is refu
       return new TranscriptionWorker(helper, configuration);
     },
   });
-  const model = new LocalTranscriptionModel(configuration, pool);
+  const model = new LocalTranscriptionModel(configuration, pool, globalThis);
   await assert.rejects(
     model.doGenerate({
       audio: new Uint8Array(),
@@ -116,7 +116,8 @@ test('a model is named by its name and language, not by where its file is, so a 
     path: string,
     name = 'cohere-transcribe-arabic-07-2026',
     language = 'ar',
-  ) => new LocalTranscriptionModel({ name, path, language }, engines);
+  ) =>
+    new LocalTranscriptionModel({ name, path, language }, engines, globalThis);
   const here = at('/Users/ada/.cache/huggingface/hub/cohere.gguf');
   const moved = at('/Users/grace/.cache/huggingface/hub/cohere.gguf');
   const other = at('/Users/ada/.cache/huggingface/hub/cohere.gguf', 'other');
@@ -133,6 +134,7 @@ test('a model is named by its name and language, not by where its file is, so a 
       path: '/Users/ada/.cache/huggingface/hub/cohere.gguf',
     },
     engines,
+    globalThis,
   );
 
   assert.equal(moved.modelId, here.modelId);

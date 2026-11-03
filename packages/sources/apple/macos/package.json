@@ -48,6 +48,7 @@
   },
   "dependencies": {
     "@workspace/elt": "0.0.1",
+    "@zukhruf/async": "^0.6.15",
     "@zukhruf/coprocess": "^0.6.15",
     "@zukhruf/pool": "^0.6.15",
     "ai": "7.0.148",

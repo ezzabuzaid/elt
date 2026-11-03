@@ -423,6 +423,7 @@ test('the document parser reads every attachment kind and throws only on unreada
         fileURLToPath(
           import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
         ),
+        globalThis,
       ),
   });
   await using scratch = await new TemporaryFiles().directory('elt-parse-');
@@ -637,6 +638,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
         fileURLToPath(
           import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
         ),
+        globalThis,
       ),
   });
   await using scratch = await new TemporaryFiles().directory('elt-messages-');

@@ -25,7 +25,7 @@ await using engines = new Pool({
     new TranscriptionWorker('/path/to/transcribe-local', configuration),
 });
 const { text } = await transcribe({
-  model: new LocalTranscriptionModel(configuration, engines),
+  model: new LocalTranscriptionModel(configuration, engines, globalThis),
   audio: await readFile('/path/to/voice-message.opus'),
 });
 ```

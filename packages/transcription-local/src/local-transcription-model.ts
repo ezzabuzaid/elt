@@ -33,14 +33,18 @@ export class LocalTranscriptionModel implements TranscriptionModelV4 {
   readonly provider = 'transcribe-cpp';
   readonly modelId: string;
   readonly #engines: Pool<TranscriptionWorker>;
+  // The clock that times each response.
+  readonly #clock: { readonly Date: { now(): number } };
 
   constructor(
     options: LocalTranscriptionConfiguration,
     engines: Pool<TranscriptionWorker>,
+    clock: { readonly Date: { now(): number } },
   ) {
     const { name, language } = LocalTranscriptionModel.parse(options);
     this.modelId = JSON.stringify({ name, language });
     this.#engines = engines;
+    this.#clock = clock;
   }
 
   static parse(value: unknown): LocalTranscriptionConfiguration {
@@ -52,7 +56,7 @@ export class LocalTranscriptionModel implements TranscriptionModelV4 {
   ): Promise<TranscriptionModelV4Result> {
     const signal = options.abortSignal;
     signal?.throwIfAborted();
-    const timestamp = new Date();
+    const timestamp = new Date(this.#clock.Date.now());
     await using temporary = await mkdtempDisposable(
       join(tmpdir(), 'transcribe-local-'),
     );

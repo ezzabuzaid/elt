@@ -28,6 +28,7 @@ await using ocr = new Pool({
       fileURLToPath(
         import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
       ),
+      globalThis,
     ),
 });
 const parser = new MacOSDocumentParser([new ImageFormat(ocr)]);
@@ -111,7 +112,7 @@ await using ocr = new Pool({
   startup: new LeaderFirst(),
   eviction: new NoEviction(),
   clock: globalThis,
-  create: () => new VisionWorker('/path/to/vision-worker'),
+  create: () => new VisionWorker('/path/to/vision-worker', globalThis),
 });
 await using engines = new Pool({
   size: new Fixed(1),
@@ -123,7 +124,9 @@ await using engines = new Pool({
 });
 const parser = new MacOSDocumentParser([
   new ImageFormat(ocr),
-  new AudioFormat(new LocalTranscriptionModel(configuration, engines)),
+  new AudioFormat(
+    new LocalTranscriptionModel(configuration, engines, globalThis),
+  ),
 ]);
 const text = await parser.parse('/path/to/voice-message.opus');
 ```

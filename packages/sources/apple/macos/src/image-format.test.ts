@@ -36,6 +36,7 @@ function ocr() {
         fileURLToPath(
           import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
         ),
+        globalThis,
       ),
   });
 }

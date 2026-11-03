@@ -215,7 +215,11 @@ async function transcribe(
         model.configuration,
       ),
   });
-  const local = new LocalTranscriptionModel(model.configuration, engines);
+  const local = new LocalTranscriptionModel(
+    model.configuration,
+    engines,
+    globalThis,
+  );
   const result = await local.doGenerate({
     audio: await readFile(path),
     mediaType: 'audio/aiff',
