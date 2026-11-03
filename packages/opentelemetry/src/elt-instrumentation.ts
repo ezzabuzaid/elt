@@ -71,9 +71,16 @@ export class EltInstrumentation extends InstrumentationBase {
   // What each running copy had committed at its last progress, so the
   // counter adds what is new; a copy that ends starts from none again.
   readonly #committed = new WeakMap<CopyProgress['copy'], number>();
+  // The clock that dates the spans which no message times: a host gives
+  // globalThis, the clock of its SDK's spans.
+  readonly #clock: { readonly Date: { now(): number } };
 
-  constructor(config: InstrumentationConfig = {}) {
+  constructor(
+    clock: { readonly Date: { now(): number } },
+    config: InstrumentationConfig = {},
+  ) {
     super('@workspace/elt-opentelemetry', '0.0.1', config);
+    this.#clock = clock;
   }
 
   // elt publishes on channels, so no module is patched.
@@ -178,7 +185,7 @@ export class EltInstrumentation extends InstrumentationBase {
   // A connection that made no pass, such as one that its validation stopped,
   // failed outside any pass: its pass is a span of no length.
   #passFailed(message: PassFailed) {
-    const now = Date.now();
+    const now = this.#clock.Date.now();
     const span = this.tracer.startSpan(
       'elt.pass',
       {
@@ -318,7 +325,7 @@ export class EltInstrumentation extends InstrumentationBase {
     this.instruments.extractDuration.record(duration / 1000, {
       'elt.stream': message.stream,
     });
-    const end = Date.now();
+    const end = this.#clock.Date.now();
     this.tracer
       .startSpan(
         'elt.web.extract',

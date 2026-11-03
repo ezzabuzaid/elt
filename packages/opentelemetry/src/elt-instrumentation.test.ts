@@ -69,7 +69,7 @@ function install() {
   const loggerProvider = new LoggerProvider({
     processors: [new SimpleLogRecordProcessor({ exporter: records })],
   });
-  const instrumentation = new EltInstrumentation();
+  const instrumentation = new EltInstrumentation(globalThis);
   const unregister = registerInstrumentations({
     instrumentations: [instrumentation],
     tracerProvider,

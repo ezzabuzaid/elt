@@ -24,7 +24,7 @@ const sdk = new NodeSDK({
   logRecordProcessors: [
     new BatchLogRecordProcessor({ exporter: new OTLPLogExporter() }),
   ],
-  instrumentations: [new EltInstrumentation()],
+  instrumentations: [new EltInstrumentation(globalThis)],
 });
 sdk.start();
 await using telemetry = new AsyncDisposableStack();
