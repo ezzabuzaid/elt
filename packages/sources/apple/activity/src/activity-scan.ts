@@ -51,8 +51,8 @@ export class ActivityScan implements AsyncDisposable {
   static async open(
     location: ActivityLocation,
     stores: ReadonlySet<ActivityStore>,
+    startedAt: Date,
   ): Promise<ActivityScan> {
-    const startedAt = new Date();
     await using resources = new AsyncDisposableStack();
     const open = async <S extends ActivityStore>(
       store: S,

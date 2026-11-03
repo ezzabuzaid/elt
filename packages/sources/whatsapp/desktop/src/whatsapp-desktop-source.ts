@@ -4,6 +4,7 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
+  type PipelineClock,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -165,13 +166,18 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
     Object.freeze(this);
   }
 
+  // The run starts now on the clock of the pipeline.
   protected override async open(
     streams: readonly Stream[],
+    signal: AbortSignal | undefined,
+    states: { get(stream: string): unknown },
+    clock: PipelineClock,
   ): Promise<WhatsAppScan> {
     return WhatsAppScan.open(
       this.#whatsapp,
       new Set(streams.map((stream) => readerOf(stream).store)),
       this.scope,
+      new Date(clock.Date.now()),
     );
   }
 

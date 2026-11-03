@@ -132,8 +132,9 @@ export class ChromiumScan implements AsyncDisposable {
     home: string,
     stores: ReadonlySet<ChromiumStore>,
     scope: ImportScope,
+    started: Date,
   ): Promise<ChromiumScan> {
-    const startedAt = new Date().toISOString();
+    const startedAt = started.toISOString();
     await using resources = new AsyncDisposableStack();
     const open = async <S extends ChromiumStore>(
       store: S,

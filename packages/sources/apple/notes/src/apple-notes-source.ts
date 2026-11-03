@@ -92,14 +92,14 @@ export class AppleNotesSource extends Source<NotesScan> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using version = this.#store.version();
-    let nextLaunch = Date.now();
+    let nextLaunch = clock.Date.now();
     const reads = new Map([
       [
         'version',
         async () => {
-          if (Date.now() >= nextLaunch) {
+          if (clock.Date.now() >= nextLaunch) {
             await launchNotesHidden();
-            nextLaunch = Date.now() + launchIntervalMs;
+            nextLaunch = clock.Date.now() + launchIntervalMs;
           }
           return version.current;
         },

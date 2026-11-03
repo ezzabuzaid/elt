@@ -8,6 +8,7 @@ import {
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  PipelineClock,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -147,11 +148,18 @@ export class AppleSafariSource extends Source<SafariScan> {
     Object.freeze(this);
   }
 
-  protected override open(streams: readonly Stream[]): Promise<SafariScan> {
+  // The run starts now on the clock of the pipeline.
+  protected override open(
+    streams: readonly Stream[],
+    signal: AbortSignal | undefined,
+    states: { get(stream: string): unknown },
+    clock: PipelineClock,
+  ): Promise<SafariScan> {
     return SafariScan.open(
       this.#safari,
       new Set(streams.map((stream) => readerOf(stream).store)),
       this.scope,
+      new Date(clock.Date.now()),
     );
   }
 

@@ -6,6 +6,7 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
+  type PipelineClock,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -122,12 +123,19 @@ export class ChromiumSource extends Source<ChromiumScan> {
     Object.freeze(this);
   }
 
-  protected override open(streams: readonly Stream[]): Promise<ChromiumScan> {
+  // The run starts now on the clock of the pipeline.
+  protected override open(
+    streams: readonly Stream[],
+    signal: AbortSignal | undefined,
+    states: { get(stream: string): unknown },
+    clock: PipelineClock,
+  ): Promise<ChromiumScan> {
     return ChromiumScan.open(
       this.browser,
       this.home,
       this.#stores(streams),
       this.scope,
+      new Date(clock.Date.now()),
     );
   }
 

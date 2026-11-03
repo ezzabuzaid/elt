@@ -217,8 +217,8 @@ export class SafariScan implements AsyncDisposable {
     safari: Safari,
     stores: ReadonlySet<SafariStore>,
     scope: ImportScope,
+    startedAt: Date,
   ): Promise<SafariScan> {
-    const startedAt = new Date();
     await using resources = new AsyncDisposableStack();
     const open = async <S extends SafariStore>(
       store: S,

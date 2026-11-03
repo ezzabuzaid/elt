@@ -3,6 +3,7 @@ import { pollChanges } from '@zukhruf/async';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  PipelineClock,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -126,10 +127,17 @@ export class AppleActivitySource extends Source<ActivityScan> {
     Object.freeze(this);
   }
 
-  protected override open(streams: readonly Stream[]): Promise<ActivityScan> {
+  // The run starts now on the clock of the pipeline.
+  protected override open(
+    streams: readonly Stream[],
+    signal: AbortSignal | undefined,
+    states: { get(stream: string): unknown },
+    clock: PipelineClock,
+  ): Promise<ActivityScan> {
     return ActivityScan.open(
       this.location,
       new Set(streams.map((stream) => readerOf(stream).store)),
+      new Date(clock.Date.now()),
     );
   }
 

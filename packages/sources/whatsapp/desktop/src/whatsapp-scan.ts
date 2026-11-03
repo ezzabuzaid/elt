@@ -42,18 +42,20 @@ type OpenedStores = { [S in WhatsAppStore]?: Opened<Readers[S]> };
 export class WhatsAppScan implements AsyncDisposable {
   readonly container: string;
   // When the run opened the stores, which expiring streams count from.
-  readonly startedAt = new Date();
+  readonly startedAt: Date;
   readonly #resources: DisposableStack;
   readonly #opened: OpenedStores;
   readonly #scoped: boolean;
 
   private constructor(
     container: string,
+    startedAt: Date,
     resources: DisposableStack,
     opened: OpenedStores,
     scoped: boolean,
   ) {
     this.container = container;
+    this.startedAt = startedAt;
     this.#resources = resources;
     this.#opened = opened;
     this.#scoped = scoped;
@@ -63,6 +65,7 @@ export class WhatsAppScan implements AsyncDisposable {
     whatsapp: WhatsApp,
     stores: ReadonlySet<WhatsAppStore>,
     scope: ImportScope,
+    startedAt: Date,
   ): WhatsAppScan {
     using resources = new DisposableStack();
     // A narrowed import keeps an association only for a message it keeps,
@@ -107,6 +110,7 @@ export class WhatsAppScan implements AsyncDisposable {
     };
     return new WhatsAppScan(
       whatsapp.container,
+      startedAt,
       resources.move(),
       opened,
       scoped,
