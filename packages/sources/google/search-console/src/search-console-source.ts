@@ -1,4 +1,4 @@
-import { setTimeout as sleep } from 'node:timers/promises';
+import { delay } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -6,6 +6,7 @@ import {
   type ExtractionCoverage,
   type FailureType,
   type Partition,
+  type PipelineClock,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -212,8 +213,13 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
   }
 
   // Each read shares its calls to Google through one scan, and asks again.
-  protected override async open(): Promise<SearchConsoleScan> {
-    return new SearchConsoleScan(this.#api, this.searchTypes);
+  protected override async open(
+    streams: readonly Stream[],
+    signal: AbortSignal | undefined,
+    states: { get(stream: string): unknown },
+    clock: PipelineClock,
+  ): Promise<SearchConsoleScan> {
+    return new SearchConsoleScan(this.#api, this.searchTypes, clock);
   }
 
   override coverage(stream: Stream): ExtractionCoverage {
@@ -294,6 +300,7 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
   protected override async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     const inspections = streams.filter(
       (stream) => this.#reader(stream) instanceof InspectionStream,
@@ -310,15 +317,15 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
     );
     const probes = [];
     for (const [woken, fingerprint] of [
-      [analytics, () => this.#totals(signal)],
-      [listings, () => this.#listings(signal)],
+      [analytics, () => this.#totals(signal, clock)],
+      [listings, () => this.#listings(signal, clock)],
     ] as const)
       if (woken.length > 0)
         probes.push({ woken, fingerprint, seen: await fingerprint() });
     // The first check wakes every stream, the inspection streams included.
-    let woke = Date.now();
+    let woke = clock.Date.now();
     yield streams;
-    let probeAt = Date.now() + this.pollIntervalMs;
+    let probeAt = clock.Date.now() + this.pollIntervalMs;
     while (!signal.aborted) {
       // A due time that no extraction moved past the last wake, because that
       // extraction failed or has not run, is checked again at the next poll.
@@ -327,12 +334,12 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
       const wake = Math.min(
         probes.length > 0 ? probeAt : Number.POSITIVE_INFINITY,
         inspections.length > 0 ? inspectAt : Number.POSITIVE_INFINITY,
-        Date.now() + this.pollIntervalMs,
+        clock.Date.now() + this.pollIntervalMs,
       );
-      await this.#sleep(wake, signal);
+      await this.#sleep(wake, signal, clock);
       const changed: Stream[] = [];
-      if (probes.length > 0 && Date.now() >= probeAt) {
-        probeAt = Date.now() + this.pollIntervalMs;
+      if (probes.length > 0 && clock.Date.now() >= probeAt) {
+        probeAt = clock.Date.now() + this.pollIntervalMs;
         for (const probe of probes) {
           const current = await probe.fingerprint();
           if (current !== probe.seen) {
@@ -341,8 +348,8 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
           }
         }
       }
-      if (inspections.length > 0 && Date.now() >= inspectAt) {
-        woke = Date.now();
+      if (inspections.length > 0 && clock.Date.now() >= inspectAt) {
+        woke = clock.Date.now();
         changed.push(...inspections);
       }
       if (changed.length > 0) yield changed;
@@ -350,19 +357,20 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
   }
 
   // Sleeps until wake, or until an extraction learns a due time.
-  async #sleep(wake: number, signal: AbortSignal): Promise<void> {
+  async #sleep(
+    wake: number,
+    signal: AbortSignal,
+    clock: PipelineClock,
+  ): Promise<void> {
     const learned = new AbortController();
     this.#dueLearned.addEventListener('learned', () => learned.abort(), {
       signal: learned.signal,
     });
     try {
-      await sleep(
-        Math.min(Math.max(0, wake - Date.now()), TIMER_MAX),
-        undefined,
-        {
-          signal: AbortSignal.any([signal, learned.signal]),
-        },
-      );
+      await delay(Math.min(Math.max(0, wake - clock.Date.now()), TIMER_MAX), {
+        clock,
+        signal: AbortSignal.any([signal, learned.signal]),
+      });
     } catch (error) {
       if (signal.aborted || !learned.signal.aborted) throw error;
     } finally {
@@ -408,12 +416,12 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
 
   // Each property's daily web totals; a change in any of them wakes the
   // analytics streams.
-  async #totals(signal: AbortSignal): Promise<string> {
+  async #totals(signal: AbortSignal, clock: PipelineClock): Promise<string> {
     const totals = [];
     for (const siteUrl of this.siteUrls)
       totals.push(
         await this.#probe(signal, async () => {
-          const endDate = today(new Date());
+          const endDate = today(new Date(clock.Date.now()));
           const page = await readSearchAnalytics(
             this.#api,
             siteUrl,
@@ -424,7 +432,7 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
               startDate: addDays(endDate, -PROBE_DAYS),
               type: 'WEB',
             },
-            { signal },
+            { signal, clock },
           );
           return {
             firstIncompleteDate: page.firstIncompleteDate,
@@ -441,14 +449,14 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
 
   // The properties the grant lists and each property's sitemaps, as Google
   // returns them; a change in any of them wakes the listing streams.
-  async #listings(signal: AbortSignal): Promise<string> {
+  async #listings(signal: AbortSignal, clock: PipelineClock): Promise<string> {
     const lists = [
-      await this.#probe(signal, () => this.#api.sites({ signal })),
+      await this.#probe(signal, () => this.#api.sites({ signal, clock })),
     ];
     for (const siteUrl of this.siteUrls)
       lists.push(
         await this.#probe(signal, () =>
-          this.#api.sitemaps(siteUrl, { signal }),
+          this.#api.sitemaps(siteUrl, { signal, clock }),
         ),
       );
     return JSON.stringify(lists);

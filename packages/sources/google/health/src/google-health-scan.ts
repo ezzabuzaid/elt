@@ -1,6 +1,8 @@
 import pMemoize from 'p-memoize';
 
+import type { PipelineClock } from '@workspace/elt';
 import {
+  type CallOptions,
   type CivilDate,
   type DataPoint,
   type GoogleHealthApi,
@@ -20,9 +22,18 @@ import { calendarDate } from './health-fields.ts';
  */
 export class GoogleHealthScan implements AsyncDisposable {
   readonly api: GoogleHealthApi;
+  // The clock of the pipeline: the read's dates, and each call paces and
+  // retries on it.
+  readonly clock: PipelineClock;
 
-  constructor(api: GoogleHealthApi) {
+  constructor(api: GoogleHealthApi, clock: PipelineClock) {
     this.api = api;
+    this.clock = clock;
+  }
+
+  /** The options of a call of this run: its signal, if any, and the clock of the pipeline. */
+  options(signal: AbortSignal | undefined): CallOptions {
+    return { ...(signal && { signal }), clock: this.clock };
   }
 
   /** Every point of a type, read for this stream alone. */
@@ -32,7 +43,7 @@ export class GoogleHealthScan implements AsyncDisposable {
   ): AsyncGenerator<DataPoint> {
     yield* this.api.dataPoints(type, {
       ...(LISTED_DATA_TYPES[type].daily && { since: await this.since(signal) }),
-      ...(signal && { signal }),
+      ...this.options(signal),
     });
   }
 
@@ -51,7 +62,7 @@ export class GoogleHealthScan implements AsyncDisposable {
   readonly since = pMemoize(
     async (signal: AbortSignal | undefined): Promise<CivilDate> => {
       const { membershipStartDate } = await this.api.profile(
-        signal && { signal },
+        this.options(signal),
       );
       const date = calendarDate(membershipStartDate);
       if (date === null)

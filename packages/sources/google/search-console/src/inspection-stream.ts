@@ -90,20 +90,20 @@ export abstract class InspectionStream extends SearchConsoleStream {
           saved: saved.inspected,
           universe,
           cached: shared.made,
-          now: Date.now(),
+          now: scan.clock.Date.now(),
           refreshMs: this.#refreshMs,
         });
         const inspections = [...plan.reuse];
         let nextDue = plan.nextDue;
         if (plan.due.length > 0) {
-          if (Date.now() < shared.quotaResetAt)
+          if (scan.clock.Date.now() < shared.quotaResetAt)
             nextDue = Math.min(nextDue, shared.quotaResetAt);
           else {
             const { inspections: made, exhausted } = await inspectUrls(
               scan.api,
               siteUrl,
               plan.due,
-              { concurrency: this.#concurrency, signal },
+              { concurrency: this.#concurrency, signal, clock: scan.clock },
             );
             for (const inspection of made) {
               shared.made.set(inspection.inspectionUrl, inspection);
@@ -114,7 +114,9 @@ export abstract class InspectionStream extends SearchConsoleStream {
             }
             inspections.push(...made);
             if (exhausted) {
-              shared.quotaResetAt = nextPacificMidnight(new Date()).getTime();
+              shared.quotaResetAt = nextPacificMidnight(
+                new Date(scan.clock.Date.now()),
+              ).getTime();
               nextDue = Math.min(nextDue, shared.quotaResetAt);
             }
           }
@@ -166,7 +168,7 @@ export abstract class InspectionStream extends SearchConsoleStream {
               [...next].sort(([left], [right]) => (left < right ? -1 : 1)),
             ),
             quotaResetAt:
-              quotaResetAt > Date.now()
+              quotaResetAt > scan.clock.Date.now()
                 ? new Date(quotaResetAt).toISOString()
                 : null,
             diff: message.state,

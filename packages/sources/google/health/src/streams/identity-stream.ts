@@ -29,7 +29,7 @@ export class IdentityStream extends AccountStream {
     signal: AbortSignal | undefined,
   ) {
     const { healthUserId, legacyUserId } = await scan.api.identity(
-      signal && { signal },
+      scan.options(signal),
     );
     return [{ healthUserId, legacyUserId: legacyUserId ?? null }];
   }

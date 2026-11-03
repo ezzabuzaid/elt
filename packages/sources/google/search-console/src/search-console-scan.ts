@@ -2,6 +2,7 @@ import { Mutex } from '@zukhruf/mutex';
 import { MemoryStore } from '@zukhruf/mutex/memory';
 import pMemoize from 'p-memoize';
 
+import type { PipelineClock } from '@workspace/elt';
 import {
   type SearchConsoleApi,
   type UrlInspection,
@@ -42,6 +43,8 @@ export type PropertyInspections = {
  */
 export class SearchConsoleScan implements AsyncDisposable {
   readonly api: SearchConsoleApi;
+  // The clock of the pipeline: the read's dates, waits and inspection times.
+  readonly clock: PipelineClock;
   readonly #searchTypes: readonly SearchAnalyticsType[];
   readonly #inspections = new Map<string, PropertyInspections>();
   // Inspection streams read at once take turns per property to plan and
@@ -52,9 +55,11 @@ export class SearchConsoleScan implements AsyncDisposable {
   constructor(
     api: SearchConsoleApi,
     searchTypes: readonly SearchAnalyticsType[],
+    clock: PipelineClock,
   ) {
     this.api = api;
     this.#searchTypes = searchTypes;
+    this.clock = clock;
   }
 
   // The sitemaps the property lists.
@@ -63,7 +68,10 @@ export class SearchConsoleScan implements AsyncDisposable {
       siteUrl: string,
       signal: AbortSignal | undefined,
     ): Promise<Sitemaps> => {
-      const { sitemap = [] } = await this.api.sitemaps(siteUrl, { signal });
+      const { sitemap = [] } = await this.api.sitemaps(siteUrl, {
+        signal,
+        clock: this.clock,
+      });
       return sitemap;
     },
   );
@@ -78,6 +86,7 @@ export class SearchConsoleScan implements AsyncDisposable {
       readSitemaps(
         (await this.sitemaps(siteUrl, signal)).map(({ path }) => path),
         signal,
+        this.clock,
       ),
   );
 
@@ -116,7 +125,7 @@ export class SearchConsoleScan implements AsyncDisposable {
     const reads = [...(await this.sitemapReads(siteUrl, signal)).values()];
     const sitemapUrls = reads.flatMap((read) => read.urls ?? []);
     const searchUrls = new Set<string>();
-    const endDate = today(new Date());
+    const endDate = today(new Date(this.clock.Date.now()));
     for (const type of this.#searchTypes) {
       const page = await readSearchAnalytics(
         this.api,
@@ -128,7 +137,7 @@ export class SearchConsoleScan implements AsyncDisposable {
           startDate: subMonths(endDate, RETENTION_MONTHS),
           type,
         },
-        { signal },
+        { signal, clock: this.clock },
       );
       for (const row of page.rows)
         if (row.keys[0] !== undefined) searchUrls.add(row.keys[0]);

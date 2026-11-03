@@ -1,3 +1,5 @@
+import { type Clock, timeout } from '@zukhruf/async';
+
 import {
   SitemapFormatError,
   type SitemapListing,
@@ -34,17 +36,19 @@ export type SitemapRead =
  * Reads each listed sitemap on its own, so one broken sitemap does not hide
  * the pages the others list; its failure is returned for the caller to
  * record rather than dropped. An abort of signal stops the read and rejects
- * with its reason; it is not a sitemap's failure.
+ * with its reason; it is not a sitemap's failure. Each download times out on
+ * clock.
  */
 export async function readSitemaps(
   sitemapUrls: readonly string[],
   signal: AbortSignal | undefined,
+  clock: Clock,
 ): Promise<Map<string, SitemapRead>> {
   const reads = new Map<string, SitemapRead>();
   for (const url of sitemapUrls) {
     try {
       reads.set(url, {
-        urls: [...(await readSitemapUrls([url], signal))],
+        urls: [...(await readSitemapUrls([url], signal, clock))],
         error: null,
       });
     } catch (error) {
@@ -63,6 +67,7 @@ export async function readSitemaps(
 async function readSitemapUrls(
   sitemapUrls: readonly string[],
   signal: AbortSignal | undefined,
+  clock: Clock,
 ): Promise<Set<string>> {
   const urls = new Set<string>();
   const visited = new Set<string>();
@@ -70,7 +75,7 @@ async function readSitemapUrls(
   for (let next = queue.shift(); next; next = queue.shift()) {
     if (visited.has(next.url)) continue;
     visited.add(next.url);
-    const listing = parse(next.url, await download(next.url, signal));
+    const listing = parse(next.url, await download(next.url, signal, clock));
     for (const { url } of listing.pages) urls.add(url);
     for (const child of listing.sitemaps) {
       if (next.depth >= MAX_DEPTH)
@@ -87,13 +92,15 @@ async function readSitemapUrls(
 async function download(
   url: string,
   signal: AbortSignal | undefined,
+  clock: Clock,
 ): Promise<string> {
   let bytes: Uint8Array;
   try {
+    using limit = timeout(TIMEOUT_MS, { clock });
     const response = await fetch(url, {
       redirect: 'follow',
       signal: AbortSignal.any([
-        AbortSignal.timeout(TIMEOUT_MS),
+        limit.signal,
         ...(signal === undefined ? [] : [signal]),
       ]),
     });

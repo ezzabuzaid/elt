@@ -14,7 +14,8 @@ const api = new GoogleHealthApi(
     directory,
   }),
 );
-for await (const point of api.dataPoints('heart-rate'))
+// Each call paces and waits its retries on the clock: an app gives globalThis.
+for await (const point of api.dataPoints('heart-rate', { clock: globalThis }))
   console.log(point.heartRate?.beatsPerMinute);
 ```
 

@@ -56,7 +56,7 @@ export class SearchAnalyticsCountriesStream extends ListingStream {
     signal: AbortSignal | undefined,
   ): Promise<Record<string, unknown>[]> {
     const siteUrl = this.siteUrl(partition);
-    const endDate = today(new Date());
+    const endDate = today(new Date(scan.clock.Date.now()));
     const startDate = subMonths(endDate, this.#breakdownMonths);
     const page = await readSearchAnalytics(
       scan.api,
@@ -68,7 +68,7 @@ export class SearchAnalyticsCountriesStream extends ListingStream {
         startDate,
         type: 'WEB',
       },
-      { signal },
+      { signal, clock: scan.clock },
     );
     return analyticsRecords(siteUrl, dimensions, page.rows, () => ({
       startDate,

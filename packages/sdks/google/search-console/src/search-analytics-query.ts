@@ -42,7 +42,7 @@ export async function readSearchAnalytics(
   api: SearchConsoleApi,
   siteUrl: string,
   request: SearchAnalyticsRequest,
-  options: CallOptions = {},
+  options: CallOptions,
 ): Promise<SearchAnalyticsPage> {
   const rows: SearchAnalyticsRow[] = [];
   const rowLimit = request.rowLimit ?? SEARCH_ANALYTICS_ROW_LIMIT;

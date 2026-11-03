@@ -7,5 +7,9 @@ export {
   GoogleHealthAccountNotLinkedError,
   GoogleHealthRateLimitError,
 } from './errors.ts';
-export { type CivilDate, GoogleHealthApi } from './google-health-api.ts';
+export {
+  type CallOptions,
+  type CivilDate,
+  GoogleHealthApi,
+} from './google-health-api.ts';
 export type { DailyRollupDataPoint, DataPoint } from './responses.ts';

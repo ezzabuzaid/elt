@@ -38,7 +38,7 @@ export class ExerciseRoutesStream extends GoogleHealthStream {
   async *#rows(scan: GoogleHealthScan, signal: AbortSignal | undefined) {
     for (const point of await scan.shared('exercise', signal)) {
       const exercise = nameOf(point);
-      const tcx = await scan.api.exerciseTcx(exercise, signal && { signal });
+      const tcx = await scan.api.exerciseTcx(exercise, scan.options(signal));
       yield { exercise, tcx: tcx ?? null };
     }
   }

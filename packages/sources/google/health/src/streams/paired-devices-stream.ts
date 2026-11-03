@@ -52,7 +52,7 @@ export class PairedDevicesStream extends AccountStream {
     signal: AbortSignal | undefined,
   ) {
     return Array.fromAsync(
-      scan.api.pairedDevices(signal && { signal }),
+      scan.api.pairedDevices(scan.options(signal)),
       (device) => ({
         name: device.name,
         deviceType: device.deviceType ?? null,

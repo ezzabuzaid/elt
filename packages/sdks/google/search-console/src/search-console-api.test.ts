@@ -102,7 +102,9 @@ test('a rate limit waits for the Retry-After the server asks for', async () => {
   const started = performance.now();
 
   assert.deepEqual(
-    await new SearchConsoleApi(searchConsole.requester).sites(),
+    await new SearchConsoleApi(searchConsole.requester).sites({
+      clock: globalThis,
+    }),
     { siteEntry: [] },
   );
   assert.equal(searchConsole.calls.length, 2);
@@ -119,7 +121,7 @@ test('a Retry-After longer than a minute fails without waiting', async () => {
   const started = performance.now();
 
   await assert.rejects(
-    new SearchConsoleApi(searchConsole.requester).sites(),
+    new SearchConsoleApi(searchConsole.requester).sites({ clock: globalThis }),
     (error: unknown) => {
       assert.ok(error instanceof SearchConsoleQuotaError);
       assert.equal(error.attempts, 1);
@@ -134,7 +136,7 @@ test('rate limits that never clear end after five attempts and say so', async ()
   using searchConsole = google({ reply: () => quotaExceeded() });
 
   await assert.rejects(
-    new SearchConsoleApi(searchConsole.requester).sites(),
+    new SearchConsoleApi(searchConsole.requester).sites({ clock: globalThis }),
     (error: unknown) => {
       assert.ok(error instanceof SearchConsoleQuotaError);
       assert.equal(error.status, 429);
@@ -167,9 +169,9 @@ test('a rate-limit 403 is retried but a scope 403 is not', async () => {
   using searchConsole = google({ reply: () => replies[served++]?.() });
   const api = new SearchConsoleApi(searchConsole.requester);
 
-  assert.deepEqual(await api.sites(), { siteEntry: [] });
+  assert.deepEqual(await api.sites({ clock: globalThis }), { siteEntry: [] });
   assert.equal(searchConsole.calls.length, 2);
-  await assert.rejects(api.sites(), (error: unknown) => {
+  await assert.rejects(api.sites({ clock: globalThis }), (error: unknown) => {
     assert.ok(error instanceof GaxiosError);
     assert.equal(error.status, 403);
     assert.equal(
@@ -200,10 +202,10 @@ test('a server error is retried, and one that persists passes through as Google 
   });
   const api = new SearchConsoleApi(searchConsole.requester);
 
-  assert.deepEqual(await api.sites(), { siteEntry: [] });
+  assert.deepEqual(await api.sites({ clock: globalThis }), { siteEntry: [] });
   assert.equal(searchConsole.calls.length, 2);
   failing = true;
-  await assert.rejects(api.sites(), (error: unknown) => {
+  await assert.rejects(api.sites({ clock: globalThis }), (error: unknown) => {
     assert.ok(error instanceof GaxiosError);
     assert.equal(error.status, 500);
     assert.equal(error.message, 'Internal error encountered.');

@@ -46,7 +46,7 @@ export abstract class DatedAnalyticsStream extends SearchConsoleStream {
     signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const siteUrl = this.siteUrl(partition);
-    const endDate = today(new Date());
+    const endDate = today(new Date(scan.clock.Date.now()));
     const saved = this.#checkpoint(state);
     const startDate =
       saved === null
@@ -67,7 +67,7 @@ export abstract class DatedAnalyticsStream extends SearchConsoleStream {
           startDate,
           type,
         },
-        { signal },
+        { signal, clock: scan.clock },
       );
       const { firstIncompleteDate } = page;
       rows.push(

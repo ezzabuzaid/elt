@@ -1,10 +1,11 @@
-import { setTimeout as wait } from 'node:timers/promises';
+import { delay } from '@zukhruf/async';
 
 import { messageOf, statusOf } from '@workspace/google-auth';
 
 import {
   type InspectionResult,
   type SearchConsoleApi,
+  type SearchConsoleClock,
   SearchConsoleQuotaError,
   URL_INSPECTION_QUOTA,
 } from './search-console-api.ts';
@@ -27,7 +28,8 @@ const REJECTED_URL_STATUSES = new Set([400, 404]);
  * the per-minute ceiling; a quota refusal can then only mean the daily quota.
  * On that refusal no new call starts, the ones in flight finish, and the
  * inspections that succeeded are returned with `exhausted` set. An abort of
- * signal stops the calls in flight and the pacing waits.
+ * signal stops the calls in flight and the pacing waits. The pacing waits,
+ * and each inspection is timed, on clock.
  */
 export async function inspectUrls(
   api: SearchConsoleApi,
@@ -36,7 +38,12 @@ export async function inspectUrls(
   {
     concurrency,
     signal,
-  }: { concurrency: number; signal: AbortSignal | undefined },
+    clock,
+  }: {
+    concurrency: number;
+    signal: AbortSignal | undefined;
+    clock: SearchConsoleClock;
+  },
 ): Promise<{ inspections: UrlInspection[]; exhausted: boolean }> {
   const results: (UrlInspection | undefined)[] = [];
   // A call that fails for every URL stops the others.
@@ -52,7 +59,7 @@ export async function inspectUrls(
 
   const pace = async () => {
     for (;;) {
-      const now = Date.now();
+      const now = clock.Date.now();
       while (starts.length > 0 && now - (starts[0] ?? 0) >= 60_000)
         starts.shift();
       const [oldest] = starts;
@@ -63,7 +70,7 @@ export async function inspectUrls(
         starts.push(now);
         return;
       }
-      await wait(60_000 - (now - oldest), undefined, { signal });
+      await delay(60_000 - (now - oldest), { clock, signal });
     }
   };
 
@@ -76,10 +83,11 @@ export async function inspectUrls(
       try {
         const { inspectionResult } = await api.inspect(siteUrl, inspectionUrl, {
           signal: stop,
+          clock,
         });
         results[index] = {
           inspectionUrl,
-          inspectedAt: new Date().toISOString(),
+          inspectedAt: new Date(clock.Date.now()).toISOString(),
           result: inspectionResult ?? {},
           error: null,
         };
@@ -89,7 +97,7 @@ export async function inspectUrls(
         else if (status !== undefined && REJECTED_URL_STATUSES.has(status))
           results[index] = {
             inspectionUrl,
-            inspectedAt: new Date().toISOString(),
+            inspectedAt: new Date(clock.Date.now()).toISOString(),
             result: null,
             error: { status, message: messageOf(error) },
           };

@@ -1,4 +1,4 @@
-import { setTimeout as wait } from 'node:timers/promises';
+import { type Clock, delay } from '@zukhruf/async';
 
 import {
   GaxiosError,
@@ -63,7 +63,14 @@ const REQUESTS_PER_MINUTE = 300;
  */
 const PAGE_SIZE = '10000';
 
-export type CallOptions = { readonly signal?: AbortSignal };
+/** The time and the timers of a caller: a host gives globalThis, a test a fake clock that it moves. */
+export type GoogleHealthClock = Clock & { readonly Date: { now(): number } };
+
+/** A call stops when signal aborts, and paces and waits its retries on clock. */
+export type CallOptions = {
+  readonly signal?: AbortSignal;
+  readonly clock: GoogleHealthClock;
+};
 
 /** A calendar date, `YYYY-MM-DD`. */
 export type CivilDate = string;
@@ -81,27 +88,25 @@ export class GoogleHealthApi {
     Object.freeze(this);
   }
 
-  async identity(options: CallOptions = {}) {
+  async identity(options: CallOptions) {
     return identity.parse(await this.#get('users/me/identity', {}, options));
   }
 
-  async profile(options: CallOptions = {}) {
+  async profile(options: CallOptions) {
     return profile.parse(await this.#get('users/me/profile', {}, options));
   }
 
-  async settings(options: CallOptions = {}) {
+  async settings(options: CallOptions) {
     return settings.parse(await this.#get('users/me/settings', {}, options));
   }
 
-  async irnProfile(options: CallOptions = {}) {
+  async irnProfile(options: CallOptions) {
     return irnProfile.parse(
       await this.#get('users/me/irnProfile', {}, options),
     );
   }
 
-  async *pairedDevices(
-    options: CallOptions = {},
-  ): AsyncGenerator<PairedDevice> {
+  async *pairedDevices(options: CallOptions): AsyncGenerator<PairedDevice> {
     let pageToken: string | undefined;
     do {
       const page = listPairedDevicesResponse.parse(
@@ -122,7 +127,7 @@ export class GoogleHealthApi {
    */
   async *dataPoints(
     type: ListedDataType,
-    options: CallOptions & { readonly since?: CivilDate } = {},
+    options: CallOptions & { readonly since?: CivilDate },
   ): AsyncGenerator<DataPoint> {
     const query: Record<string, string> = { pageSize: PAGE_SIZE };
     if (options.since !== undefined) {
@@ -147,7 +152,7 @@ export class GoogleHealthApi {
   }
 
   /** The most recent point of a data type, or undefined when it has none. */
-  async newest(type: ListedDataType, options: CallOptions = {}) {
+  async newest(type: ListedDataType, options: CallOptions) {
     const page = listDataPointsResponse.parse(
       await this.#get(
         `users/me/dataTypes/${type}/dataPoints`,
@@ -166,7 +171,7 @@ export class GoogleHealthApi {
   async *dailyRollUp(
     type: RolledUpDataType,
     range: { readonly start: CivilDate; readonly end: CivilDate },
-    options: CallOptions = {},
+    options: CallOptions,
   ): AsyncGenerator<DailyRollupDataPoint> {
     const { maxDays } = ROLLED_UP_DATA_TYPES[type];
     let start = range.start;
@@ -195,7 +200,7 @@ export class GoogleHealthApi {
    * An exercise's route and samples as a TCX document, or undefined when
    * Google keeps none. `name` is the exercise point's resource name.
    */
-  async exerciseTcx(name: string, options: CallOptions = {}) {
+  async exerciseTcx(name: string, options: CallOptions) {
     return exportExerciseTcxResponse.parse(
       await this.#get(
         `${name}:exportExerciseTcx`,
@@ -223,10 +228,10 @@ export class GoogleHealthApi {
     method: 'GET' | 'POST',
     path: string,
     { data }: { readonly data?: Record<string, unknown> },
-    { signal }: CallOptions,
+    { signal, clock }: CallOptions,
   ): Promise<unknown> {
     for (let attempt = 1; ; attempt += 1) {
-      await this.#pace(signal);
+      await this.#pace(signal, clock);
       try {
         const response = await this.#requester.request({
           method,
@@ -245,9 +250,9 @@ export class GoogleHealthApi {
           status === 429 || reasons.includes('RESOURCE_EXHAUSTED');
         if (!rateLimited && !(status && TRANSIENT_STATUSES.has(status)))
           throw cause;
-        const delay = this.#delay(cause, attempt);
-        if (attempt < RETRY.attempts && delay !== undefined) {
-          await wait(delay, undefined, { signal });
+        const wait = this.#delay(cause, attempt, clock.Date.now());
+        if (attempt < RETRY.attempts && wait !== undefined) {
+          await delay(wait, { clock, signal });
           continue;
         }
         if (!rateLimited) throw cause;
@@ -261,9 +266,12 @@ export class GoogleHealthApi {
   }
 
   // Waits until a request started now stays under the per-minute quota.
-  async #pace(signal: AbortSignal | undefined): Promise<void> {
+  async #pace(
+    signal: AbortSignal | undefined,
+    clock: GoogleHealthClock,
+  ): Promise<void> {
     for (;;) {
-      const now = Date.now();
+      const now = clock.Date.now();
       while (this.#starts.length > 0 && now - (this.#starts[0] ?? 0) >= 60_000)
         this.#starts.shift();
       const [oldest] = this.#starts;
@@ -271,7 +279,7 @@ export class GoogleHealthApi {
         this.#starts.push(now);
         return;
       }
-      await wait(60_000 - (now - oldest), undefined, { signal });
+      await delay(60_000 - (now - oldest), { clock, signal });
     }
   }
 
@@ -281,8 +289,8 @@ export class GoogleHealthApi {
    * backoff; otherwise the wait doubles per attempt with full jitter, so
    * concurrent callers do not retry in lockstep.
    */
-  #delay(error: unknown, attempt: number): number | undefined {
-    const requested = retryAfterMs(error);
+  #delay(error: unknown, attempt: number, now: number): number | undefined {
+    const requested = retryAfterMs(error, now);
     if (requested !== undefined)
       return requested <= RETRY.maxDelayMs ? requested : undefined;
     const ceiling = Math.min(
@@ -293,14 +301,15 @@ export class GoogleHealthApi {
   }
 }
 
-// Retry-After is either whole seconds or an HTTP date (RFC 9110 section 10.2.3).
-function retryAfterMs(error: unknown): number | undefined {
+// Retry-After is either whole seconds or an HTTP date (RFC 9110 section
+// 10.2.3), which counts from now.
+function retryAfterMs(error: unknown, now: number): number | undefined {
   if (!(error instanceof GaxiosError)) return undefined;
   const value = error.response?.headers.get('retry-after')?.trim();
   if (!value) return undefined;
   if (/^\d+$/.test(value)) return Number(value) * 1000;
   const at = Date.parse(value);
-  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : undefined;
+  return Number.isFinite(at) ? Math.max(0, at - now) : undefined;
 }
 
 const DAY_MS = 86_400_000;

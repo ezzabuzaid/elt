@@ -75,7 +75,7 @@ export class SettingsStream extends AccountStream {
     scan: GoogleHealthScan,
     signal: AbortSignal | undefined,
   ) {
-    const settings = await scan.api.settings(signal && { signal });
+    const settings = await scan.api.settings(scan.options(signal));
     return [
       {
         timeZone: settings.timeZone ?? null,

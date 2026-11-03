@@ -6,6 +6,7 @@ import {
   type ExtractionCoverage,
   type FailureType,
   type Partition,
+  type PipelineClock,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -78,8 +79,13 @@ export class GoogleHealthSource extends Source<GoogleHealthScan> {
   }
 
   // Each read shares its fetches through one scan, and asks again.
-  protected override async open(): Promise<GoogleHealthScan> {
-    return new GoogleHealthScan(this.#api);
+  protected override async open(
+    streams: readonly Stream[],
+    signal: AbortSignal | undefined,
+    states: { get(stream: string): unknown },
+    clock: PipelineClock,
+  ): Promise<GoogleHealthScan> {
+    return new GoogleHealthScan(this.#api, clock);
   }
 
   override coverage(stream: Stream): ExtractionCoverage {
@@ -131,7 +137,7 @@ export class GoogleHealthSource extends Source<GoogleHealthScan> {
     clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     for await (const changed of pollChanges(
-      new Map([['fingerprint', () => this.#fingerprint(signal)]]),
+      new Map([['fingerprint', () => this.#fingerprint(signal, clock)]]),
       { interval: this.pollIntervalMs, signal, clock },
     ))
       yield changed.size > 0 ? streams : [];
@@ -154,18 +160,23 @@ export class GoogleHealthSource extends Source<GoogleHealthScan> {
     return reader;
   }
 
-  async #fingerprint(signal: AbortSignal): Promise<string> {
+  async #fingerprint(
+    signal: AbortSignal,
+    clock: PipelineClock,
+  ): Promise<string> {
     const marks = [
       await this.#probe(signal, () =>
-        Array.fromAsync(this.#api.pairedDevices({ signal }), (device) => [
-          device.name,
-          device.lastSyncTime,
-        ]),
+        Array.fromAsync(
+          this.#api.pairedDevices({ signal, clock }),
+          (device) => [device.name, device.lastSyncTime],
+        ),
       ),
     ];
     for (const type of PROBED)
       marks.push(
-        await this.#probe(signal, () => this.#api.newest(type, { signal })),
+        await this.#probe(signal, () =>
+          this.#api.newest(type, { signal, clock }),
+        ),
       );
     return JSON.stringify(marks);
   }

@@ -34,7 +34,9 @@ export abstract class RollupStream extends GoogleHealthStream {
   ): AsyncGenerator<RecordMessage> {
     const start = await scan.since(signal);
     // The range ends after today wherever the user is: UTC+14 is a day ahead.
-    const end = new Date(Date.now() + 2 * DAY_MS).toISOString().slice(0, 10);
+    const end = new Date(scan.clock.Date.now() + 2 * DAY_MS)
+      .toISOString()
+      .slice(0, 10);
     yield* this.records(this.#rows(scan, { end, start }, signal));
   }
 
@@ -46,7 +48,7 @@ export abstract class RollupStream extends GoogleHealthStream {
     for await (const rollup of scan.api.dailyRollUp(
       this.type,
       range,
-      signal && { signal },
+      scan.options(signal),
     ))
       yield* this.rows(rollup);
   }

@@ -46,7 +46,7 @@ export class ProfileStream extends AccountStream {
     scan: GoogleHealthScan,
     signal: AbortSignal | undefined,
   ) {
-    const profile = await scan.api.profile(signal && { signal });
+    const profile = await scan.api.profile(scan.options(signal));
     return [
       {
         membershipStartDate: calendarDate(profile.membershipStartDate),

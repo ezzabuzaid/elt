@@ -39,7 +39,10 @@ export class SitesStream extends ListingStream {
     scan: SearchConsoleScan,
     signal: AbortSignal | undefined,
   ): Promise<Record<string, unknown>[]> {
-    const { siteEntry = [] } = await scan.api.sites({ signal });
+    const { siteEntry = [] } = await scan.api.sites({
+      signal,
+      clock: scan.clock,
+    });
     return siteEntry
       .filter((entry) => entry.permissionLevel !== 'siteUnverifiedUser')
       .map(({ siteUrl, permissionLevel }) => ({ permissionLevel, siteUrl }));

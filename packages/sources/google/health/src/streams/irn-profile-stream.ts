@@ -29,7 +29,7 @@ export class IrnProfileStream extends AccountStream {
     scan: GoogleHealthScan,
     signal: AbortSignal | undefined,
   ) {
-    const irn = await scan.api.irnProfile(signal && { signal });
+    const irn = await scan.api.irnProfile(scan.options(signal));
     return [
       {
         enrollmentStatus: irn.enrollmentStatus ?? null,

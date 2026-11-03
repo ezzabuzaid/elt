@@ -1,5 +1,4 @@
-import { setTimeout as wait } from 'node:timers/promises';
-
+import { type Clock, delay } from '@zukhruf/async';
 import { z } from 'zod';
 
 import {
@@ -65,7 +64,14 @@ export type SearchAnalyticsRequest = {
   readonly aggregationType?: string;
 };
 
-export type CallOptions = { readonly signal?: AbortSignal };
+/** The time and the timers of a caller: a host gives globalThis, a test a fake clock that it moves. */
+export type SearchConsoleClock = Clock & { readonly Date: { now(): number } };
+
+/** A call stops when signal aborts, and waits its retries on clock. */
+export type CallOptions = {
+  readonly signal?: AbortSignal;
+  readonly clock: SearchConsoleClock;
+};
 
 // Response shapes as the API returns them live, parsed at the one place each
 // body is read. int64 counts arrive as decimal strings; proto3 omits unset
@@ -166,13 +172,13 @@ export class SearchConsoleApi {
     Object.freeze(this);
   }
 
-  async sites(options: CallOptions = {}) {
+  async sites(options: CallOptions) {
     return sitesResponse.parse(
       await this.#send('GET', 'webmasters/v3/sites', undefined, options),
     );
   }
 
-  async sitemaps(siteUrl: string, options: CallOptions = {}) {
+  async sitemaps(siteUrl: string, options: CallOptions) {
     return sitemapsResponse.parse(
       await this.#send(
         'GET',
@@ -186,7 +192,7 @@ export class SearchConsoleApi {
   async searchAnalytics(
     siteUrl: string,
     request: SearchAnalyticsRequest,
-    options: CallOptions = {},
+    options: CallOptions,
   ) {
     return searchAnalyticsResponse.parse(
       await this.#send(
@@ -198,11 +204,7 @@ export class SearchConsoleApi {
     );
   }
 
-  async inspect(
-    siteUrl: string,
-    inspectionUrl: string,
-    options: CallOptions = {},
-  ) {
+  async inspect(siteUrl: string, inspectionUrl: string, options: CallOptions) {
     return inspectResponse.parse(
       await this.#send(
         'POST',
@@ -222,7 +224,7 @@ export class SearchConsoleApi {
     method: 'GET' | 'POST',
     path: string,
     data: Record<string, unknown> | undefined,
-    { signal }: CallOptions,
+    { signal, clock }: CallOptions,
   ): Promise<unknown> {
     for (let attempt = 1; ; attempt += 1) {
       try {
@@ -243,9 +245,9 @@ export class SearchConsoleApi {
           reasonsOf(cause).some((reason) => RATE_LIMIT_REASONS.has(reason));
         if (!rateLimited && !(status && TRANSIENT_STATUSES.has(status)))
           throw cause;
-        const delay = this.#delay(cause, attempt);
-        if (attempt < RETRY.attempts && delay !== undefined) {
-          await wait(delay, undefined, { signal });
+        const wait = this.#delay(cause, attempt, clock.Date.now());
+        if (attempt < RETRY.attempts && wait !== undefined) {
+          await delay(wait, { clock, signal });
           continue;
         }
         if (!rateLimited) throw cause;
@@ -265,8 +267,8 @@ export class SearchConsoleApi {
    * backoff; otherwise the wait doubles per attempt with full jitter, so
    * concurrent callers do not retry in lockstep.
    */
-  #delay(error: unknown, attempt: number): number | undefined {
-    const requested = retryAfterMs(error);
+  #delay(error: unknown, attempt: number, now: number): number | undefined {
+    const requested = retryAfterMs(error, now);
     if (requested !== undefined)
       return requested <= RETRY.maxDelayMs ? requested : undefined;
     const ceiling = Math.min(
@@ -277,12 +279,13 @@ export class SearchConsoleApi {
   }
 }
 
-// Retry-After is either whole seconds or an HTTP date (RFC 9110 section 10.2.3).
-function retryAfterMs(error: unknown): number | undefined {
+// Retry-After is either whole seconds or an HTTP date (RFC 9110 section
+// 10.2.3), which counts from now.
+function retryAfterMs(error: unknown, now: number): number | undefined {
   if (!(error instanceof GaxiosError)) return undefined;
   const value = error.response?.headers.get('retry-after')?.trim();
   if (!value) return undefined;
   if (/^\d+$/.test(value)) return Number(value) * 1000;
   const at = Date.parse(value);
-  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : undefined;
+  return Number.isFinite(at) ? Math.max(0, at - now) : undefined;
 }
