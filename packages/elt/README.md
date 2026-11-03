@@ -755,6 +755,7 @@ A pipeline waits and reads the time: a watch waits before it watches again, and 
 - A test gives `createClock()` of `@sinonjs/fake-timers` and moves it with `await clock.tickAsync(ms)`. A test that does not wait gives `globalThis`.
 - A source that reads the time reads it from the clock of the call: `observe({ streams, signal, clock })`, and `open(streams, signal, states, clock)` for a read. A source that reads the time in `extract` keeps the clock in its context.
 - A destination reads the time of a load from `load({ clock })`.
+- A sync history records the time that the pipeline gives with each event. See [Sync history](#sync-history).
 
 ## Sources and their hosts
 
@@ -844,10 +845,11 @@ As the platform of Airbyte keeps the jobs and attempts of each connection apart 
 The contract:
 
 - `validate(connection)` refuses, with no I/O, a connection that the history cannot record. The pipeline calls it when it validates.
-- `install(connections)` brings the storage of the history to its declaration. The pipeline calls it when it validates, after `validate` and before a read, on each run and watch. Thus no host calls it, and it is safe to repeat. See [ADR 0013](./docs/adr/0013-the-pipeline-installs-its-sync-history-before-each-run-and-watch.md).
-- `begin(connection, copies)` gets each selected copy with its `coverage`. It is durable when it resolves, before the read starts. Thus a pass that never ends stays visible as unfinished, not missing.
-- `begin` returns a `RecordedPass`. `finish(outcomes, upstream)` closes it with what each copy loaded and, for each stream, when its source told that its upstream was last current. `fail(error, failureType)` closes a pass that gave no outcomes, such as a connection that is not valid or a watcher that stopped.
+- `install(connections, at)` brings the storage of the history to its declaration. The pipeline calls it when it validates, after `validate` and before a read, on each run and watch. Thus no host calls it, and it is safe to repeat. See [ADR 0013](./docs/adr/0013-the-pipeline-installs-its-sync-history-before-each-run-and-watch.md).
+- `begin(connection, copies, at)` gets each selected copy with its `coverage`. It is durable when it resolves, before the read starts. Thus a pass that never ends stays visible as unfinished, not missing.
+- `begin` returns a `RecordedPass`. `finish(outcomes, upstream, at)` closes it with what each copy loaded and, for each stream, when its source told that its upstream was last current. `fail(error, failureType, at)` closes a pass that gave no outcomes, such as a connection that is not valid or a watcher that stopped.
 - A pass ends `succeeded`, `partial`, `failed` or, when the signal of its run stopped it, `cancelled`.
+- A history does not read a clock. `at` is the time of the event, which the pipeline reads from its clock: the start of a pass, its end, or the install. A history records `at`, not the time of its database, so the times of a pass and of a check come from one clock. See [ADR 0019](./docs/adr/0019-a-pipeline-waits-and-reads-the-time-on-the-clock-that-its-caller-gives.md).
 - A subclass implements `recordChecks(connection, checks)`, which is durable when it resolves. Each check is a `StreamCheck`, `{ stream, at }`. `checked()` calls it for the first check of a connection at once, and then at most one time each minute, because each record is a write.
 - The helpers `copyStatus`, `passStatus`, `passError` and `passFailureType` get from the outcomes the status (`SyncStatus`), the error text and the failure type of a copy or a pass. `recordedFailure` makes the failure entry that the two histories store. `DeclaredCopy` and `RecordedPass` type the contract.
 

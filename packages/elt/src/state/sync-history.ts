@@ -19,14 +19,16 @@ export type StreamCheck = { readonly stream: string; readonly at: Date };
 
 // One pass as recorded: declared before its read, closed with what it loaded.
 // upstream holds, by stream, when its source said its upstream was last
-// current; a stream it does not hold was read from a live upstream.
+// current; a stream it does not hold was read from a live upstream. at is
+// when the pass ended, on the clock of its pipeline.
 export type RecordedPass<Target extends DestinationTarget> = {
   finish(
     outcomes: readonly CopyOutcome<Target>[],
     upstream: ReadonlyMap<string, Date>,
+    at: Date,
   ): Promise<void>;
   // The pass produced no outcomes, so what it committed is unknown.
-  fail(error: unknown, failureType: FailureType): Promise<void>;
+  fail(error: unknown, failureType: FailureType, at: Date): Promise<void>;
 };
 
 // How often a history records the checks that found a connection's streams
@@ -36,7 +38,8 @@ const checkRecordMs = 60_000;
 
 // As Airbyte's platform keeps each connection's jobs and attempts apart from
 // any connector, the orchestrator records every pass here. A pass is one
-// connection's read over the copies it selected.
+// connection's read over the copies it selected. A history reads no clock:
+// the pipeline gives the time of each event it records, from its own clock.
 export abstract class SyncHistory<Target extends DestinationTarget> {
   // When each connection's checks were last recorded.
   readonly #checkedAt = new Map<string, number>();
@@ -47,14 +50,18 @@ export abstract class SyncHistory<Target extends DestinationTarget> {
   // Brings the history's storage to its declaration before the pipeline
   // records anything; as Airbyte's destinations set up their tables before
   // the first record, the pipeline calls it before every run or watch, so it
-  // is safe to repeat.
-  abstract install(connections: readonly Connection<Target>[]): Promise<void>;
+  // is safe to repeat. at is when the pipeline installs it.
+  abstract install(
+    connections: readonly Connection<Target>[],
+    at: Date,
+  ): Promise<void>;
 
   // Durable when it resolves, so a pass that never finishes stays visible as
-  // unfinished rather than missing.
+  // unfinished rather than missing. at is when the pass starts.
   abstract begin(
     connection: Connection<Target>,
     copies: readonly DeclaredCopy<Target>[],
+    at: Date,
   ): Promise<RecordedPass<Target>>;
 
   // At that moment a watch's source checked its streams and found them

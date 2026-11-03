@@ -69,7 +69,7 @@ export const syncHistoryTables = [
   `CREATE TABLE IF NOT EXISTS _warehouse.sync_attempts (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     connector text NOT NULL CHECK (btrim(connector) <> ''), source text NOT NULL,
-    started_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    started_at timestamptz NOT NULL,
     completed_at timestamptz,
     status text NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'succeeded', 'partial', 'failed', 'cancelled')),
     error text,

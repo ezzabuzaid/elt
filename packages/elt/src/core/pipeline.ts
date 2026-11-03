@@ -327,10 +327,8 @@ export class Pipeline<Target extends DestinationTarget> {
               );
               if (current.length > 0)
                 try {
-                  await this.history.checked(
-                    connection,
-                    new Date(this.#clock.Date.now()),
-                    (at) => checked(connection.source, current, at),
+                  await this.history.checked(connection, this.#now(), (at) =>
+                    checked(connection.source, current, at),
                   );
                 } catch (error) {
                   unrecorded = { error };
@@ -473,6 +471,7 @@ export class Pipeline<Target extends DestinationTarget> {
     const record = await this.history.begin(
       connection,
       steps.map((copy) => ({ copy, coverage: source.coverage(copy.from) })),
+      this.#now(),
     );
     // The pass runs in the stores that subscribers bind to its start, so a
     // subscriber's async context follows the pass's work, as a span's
@@ -525,6 +524,7 @@ export class Pipeline<Target extends DestinationTarget> {
                 : [],
             ),
           ),
+          this.#now(),
         );
         passChannels.finish.publish(new PassFinished(connection, outcomes));
         return Object.freeze({ connection, outcomes: Object.freeze(outcomes) });
@@ -554,8 +554,9 @@ export class Pipeline<Target extends DestinationTarget> {
           copy,
           coverage: connection.source.coverage(copy.from),
         })),
+        this.#now(),
       );
-      await record.fail(failure, failureType);
+      await record.fail(failure, failureType, this.#now());
     } catch (error) {
       throw new SuppressedError(
         error,
@@ -575,7 +576,7 @@ export class Pipeline<Target extends DestinationTarget> {
     this.#assertDistinct();
     for (const connection of this.connections)
       this.history.validate(connection);
-    await this.history.install(this.connections);
+    await this.history.install(this.connections, this.#now());
     for (const connection of this.connections)
       try {
         connection.validate();
@@ -584,6 +585,11 @@ export class Pipeline<Target extends DestinationTarget> {
         throw error;
       }
     for (const dataset of this.derived) dataset.validate(this.connections);
+  }
+
+  // The time of an event the history records, on the pipeline's clock.
+  #now(): Date {
+    return new Date(this.#clock.Date.now());
   }
 
   #assertDistinct(): void {

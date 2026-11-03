@@ -9,6 +9,7 @@ Thus `new Pipeline({ ..., clock })` takes a required clock: a `PipelineClock`, w
 - `source.watch({ streams, signal, clock })`
 - `source.read(catalog, states, { signal, clock })`, which gives the clock to `open(streams, signal, states, clock)`
 - `destination.load({ clock })`
+- `history.install(connections, at)`, `history.begin(connection, copies, at)`, and `finish(outcomes, upstream, at)` and `fail(error, failureType, at)` of the pass that `begin` returns, with the time of the event from the clock. `history.checked(connection, at, current)` also gets the time of the check.
 
 An app gives `globalThis`. A test gives `createClock()` of `@sinonjs/fake-timers` and moves it with `await clock.tickAsync(ms)`.
 
@@ -23,3 +24,4 @@ An app gives `globalThis`. A test gives `createClock()` of `@sinonjs/fake-timers
 - Each `new Pipeline` gives a clock, also in a test that does not wait: such a test gives `globalThis`.
 - A source that reads the time reads it from the clock of the call. A source that reads the time in `extract` keeps the clock of `open` in its context. A source that does not read the time does not declare the parameter.
 - A library of elt that waits or reads the time takes the clock from its caller. Only apps read `globalThis` directly, by giving it.
+- A sync history does not read a clock and does not use the time of its database. The start and the end of a pass and the time of a check come from the clock of the pipeline. Thus `current_as_of`, which compares the start of a pass with a later check, compares two times of one clock.

@@ -23,7 +23,6 @@ import {
   attempts,
   checks,
   coverage,
-  now,
   syncHistoryTables,
   syncHistoryViews,
 } from './sqlite-sync-history-schema.ts';
@@ -69,14 +68,15 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
   override async begin(
     connection: Connection<SQLiteTable>,
     copies: readonly DeclaredCopy<SQLiteTable>[],
+    at: Date,
   ): Promise<RecordedPass<SQLiteTable>> {
     const path = this.#path(connection);
     const id = write(path, (database) => {
       const attempt = database
         .prepare(
-          `INSERT INTO ${attempts} ("connector", "source", "started_at") VALUES (?, ?, ${now}) RETURNING "id"`,
+          `INSERT INTO ${attempts} ("connector", "source", "started_at") VALUES (?, ?, ?) RETURNING "id"`,
         )
-        .get(connection.name, connection.source.identity);
+        .get(connection.name, connection.source.identity, at.toISOString());
       if (attempt === undefined)
         throw new Error('Sync attempt was not recorded');
       const id = Number(attempt.id);
@@ -96,10 +96,12 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
       return id;
     });
     return {
-      finish: async (outcomes, upstream) =>
-        this.#finish(path, id, outcomes, upstream),
-      fail: async (error, failureType) =>
-        write(path, (database) => fail(database, id, error, failureType)),
+      finish: async (outcomes, upstream, ended) =>
+        this.#finish(path, id, outcomes, upstream, ended),
+      fail: async (error, failureType, ended) =>
+        write(path, (database) =>
+          fail(database, id, error, failureType, ended),
+        ),
     };
   }
 
@@ -113,6 +115,7 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
   // still be running them.
   override async install(
     connections: readonly Connection<SQLiteTable>[],
+    at: Date,
   ): Promise<void> {
     for (const path of new Set(connections.map((each) => this.#path(each)))) {
       write(path, (database) => {
@@ -122,10 +125,11 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
       installSQLiteCatalog({ path });
     }
     if (this.#soleWriter)
-      for (const connection of connections) this.#failUnfinished(connection);
+      for (const connection of connections)
+        this.#failUnfinished(connection, at);
   }
 
-  #failUnfinished(connection: Connection<SQLiteTable>): void {
+  #failUnfinished(connection: Connection<SQLiteTable>, at: Date): void {
     const error = new Error(
       'The process running this pass ended before the pass did',
     );
@@ -136,7 +140,7 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
         )
         .all(connection.name);
       for (const { id } of unfinished)
-        fail(database, Number(id), error, 'system');
+        fail(database, Number(id), error, 'system', at);
     });
   }
 
@@ -153,6 +157,7 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
     id: number,
     outcomes: readonly CopyOutcome<SQLiteTable>[],
     upstream: ReadonlyMap<string, Date>,
+    ended: Date,
   ): void {
     write(path, (database) => {
       const record = database.prepare(
@@ -174,9 +179,10 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
         bound.run(at.toISOString(), id, stream);
       database
         .prepare(
-          `UPDATE ${attempts} SET "completed_at" = ${now}, "status" = ?, "error" = ?, "failure_type" = ? WHERE "id" = ?`,
+          `UPDATE ${attempts} SET "completed_at" = ?, "status" = ?, "error" = ?, "failure_type" = ? WHERE "id" = ?`,
         )
         .run(
+          ended.toISOString(),
           passStatus(outcomes),
           passError(outcomes),
           passFailureType(outcomes),
@@ -192,6 +198,7 @@ function fail(
   id: number,
   error: unknown,
   failureType: FailureType,
+  at: Date,
 ): void {
   database
     .prepare(
@@ -205,9 +212,9 @@ function fail(
     );
   database
     .prepare(
-      `UPDATE ${attempts} SET "status" = 'failed', "completed_at" = ${now}, "error" = ?, "failure_type" = ? WHERE "id" = ?`,
+      `UPDATE ${attempts} SET "status" = 'failed', "completed_at" = ?, "error" = ?, "failure_type" = ? WHERE "id" = ?`,
     )
-    .run(message(error), failureType, id);
+    .run(at.toISOString(), message(error), failureType, id);
 }
 
 function persistent({ path }: SQLiteDestination): string {

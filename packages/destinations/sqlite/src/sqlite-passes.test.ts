@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 
@@ -489,6 +490,107 @@ class Finishing extends LiveSource {
     yield { stream: configuration.stream.name, data: { id: 'n1' } };
   }
 }
+
+test('a sync history dates each pass on the clock of its pipeline, not on the clock of the database', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-passes-');
+  const clock = createClock(Date.parse('2001-02-03T04:05:06.000Z'));
+  // Each read takes two seconds of the pipeline's clock.
+  class Slow extends Finishing {
+    protected override async *extract(configuration: CopyConfiguration) {
+      clock.tick(2_000);
+      yield* super.extract(configuration);
+    }
+  }
+  const source = new Slow();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  const connection = new Connection({
+    name: 'notes',
+    source,
+    destination,
+    steps: [new Copy(source.notes, destination.table('notes'))],
+  });
+  const attempts = () =>
+    shell(
+      destination.path,
+      'SELECT connector, started_at, completed_at, status FROM sync_attempts ORDER BY attempt_id',
+    ).rows;
+
+  await new Pipeline({
+    clock,
+    connections: [connection],
+    history: new SQLiteSyncHistory(),
+  }).run();
+  // A process begins a pass and is killed before the pass ends.
+  clock.tick(1_000);
+  await new SQLiteSyncHistory().begin(
+    connection,
+    connection.steps.map((copy) => ({ copy, coverage: source.coverage() })),
+    new Date(clock.Date.now()),
+  );
+  clock.tick(1_000);
+  await new Pipeline({
+    clock,
+    connections: [connection],
+    history: new SQLiteSyncHistory({ soleWriter: true }),
+  }).run();
+  // A connection that copies one stream twice fails before it reads.
+  clock.tick(1_000);
+  await assert.rejects(
+    new Pipeline({
+      clock,
+      connections: [
+        new Connection({
+          name: 'twice',
+          source,
+          destination,
+          steps: [
+            new Copy(source.notes, destination.table('notes'), {
+              id: 'twice:notes',
+              syncMode: 'full_refresh',
+              destinationSyncMode: 'overwrite',
+            }),
+            new Copy(source.notes, destination.table('notes_again'), {
+              id: 'twice:notes-again',
+              syncMode: 'full_refresh',
+              destinationSyncMode: 'overwrite',
+            }),
+          ],
+        }),
+      ],
+      history: new SQLiteSyncHistory(),
+    }).run(),
+    TypeError,
+  );
+
+  assert.deepEqual(attempts(), [
+    {
+      connector: 'notes',
+      started_at: '2001-02-03T04:05:06.000Z',
+      completed_at: '2001-02-03T04:05:08.000Z',
+      status: 'succeeded',
+    },
+    {
+      connector: 'notes',
+      started_at: '2001-02-03T04:05:09.000Z',
+      completed_at: '2001-02-03T04:05:10.000Z',
+      status: 'failed',
+    },
+    {
+      connector: 'notes',
+      started_at: '2001-02-03T04:05:10.000Z',
+      completed_at: '2001-02-03T04:05:12.000Z',
+      status: 'succeeded',
+    },
+    {
+      connector: 'twice',
+      started_at: '2001-02-03T04:05:13.000Z',
+      completed_at: '2001-02-03T04:05:13.000Z',
+      status: 'failed',
+    },
+  ]);
+});
 
 test('a file that several connections load reads as one pass, which is only as good as its worst connection', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-passes-');

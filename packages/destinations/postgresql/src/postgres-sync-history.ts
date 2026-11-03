@@ -75,12 +75,13 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
   override async begin(
     connection: Connection<PostgresTable>,
     copies: readonly DeclaredCopy<PostgresTable>[],
+    at: Date,
   ): Promise<RecordedPass<PostgresTable>> {
     const schema = this.#schema(connection);
     const id = await this.#write(async (transaction) => {
       const [attempt] = await transaction<{ id: string }[]>`
-        INSERT INTO _warehouse.sync_attempts (connector, source)
-        VALUES (${connection.name}, ${connection.source.identity}) RETURNING id`;
+        INSERT INTO _warehouse.sync_attempts (connector, source, started_at)
+        VALUES (${connection.name}, ${connection.source.identity}, ${at}) RETURNING id`;
       if (attempt === undefined)
         throw new Error('Sync attempt was not recorded');
       for (const { copy, coverage } of copies)
@@ -95,8 +96,9 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
       return attempt.id;
     });
     return {
-      finish: (outcomes, upstream) => this.#finish(id, outcomes, upstream),
-      fail: (error, failureType) =>
+      finish: (outcomes, upstream, ended) =>
+        this.#finish(id, outcomes, upstream, ended),
+      fail: (error, failureType, ended) =>
         this.#write(async (transaction) => {
           await transaction`
             UPDATE _warehouse.extraction_coverage SET status = 'failed',
@@ -104,7 +106,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
             WHERE attempt_id = ${id}`;
           await transaction`
             UPDATE _warehouse.sync_attempts SET status = 'failed',
-              completed_at = clock_timestamp(), error = ${message(error)},
+              completed_at = ${ended}, error = ${message(error)},
               failure_type = ${failureType}
             WHERE id = ${id}`;
         }),
@@ -137,6 +139,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
     id: string,
     outcomes: readonly CopyOutcome<PostgresTable>[],
     upstream: ReadonlyMap<string, Date>,
+    ended: Date,
   ): Promise<void> {
     return this.#write(async (transaction) => {
       for (const outcome of outcomes)
@@ -151,7 +154,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
           UPDATE _warehouse.extraction_coverage SET upstream_current_as_of = ${at}
           WHERE attempt_id = ${id} AND stream = ${stream}`;
       await transaction`
-        UPDATE _warehouse.sync_attempts SET completed_at = clock_timestamp(),
+        UPDATE _warehouse.sync_attempts SET completed_at = ${ended},
           status = ${passStatus(outcomes)}, error = ${passError(outcomes)},
           failure_type = ${passFailureType(outcomes)}
         WHERE id = ${id}`;
