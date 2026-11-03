@@ -47,8 +47,9 @@ export class StoriesStream extends SnapshotStream<typeof properties> {
     required: Object.keys(properties),
   } as const;
 
-  protected override policy(): DeletionPolicy {
-    return new Retention(new Date().toISOString());
+  // A story that expires after the run opened is still shown.
+  protected override policy({ run }: ReadContext): DeletionPolicy {
+    return new Retention(run.openedAt.toISOString());
   }
 
   protected async scan({

@@ -10,8 +10,8 @@ export type ScratchCookie = {
   readonly host: string;
   readonly name: string;
   readonly value: string;
-  // Days from now, a negative number having expired; null for a session
-  // cookie, which has no expiry.
+  // Days from the now that the profile is written at, a negative number
+  // having expired; null for a session cookie, which has no expiry.
   readonly days: number | null;
   // The host whose SHA-256 leads the plaintext: the cookie's own host,
   // unless a test signs it for another.
@@ -21,9 +21,10 @@ export type ScratchCookie = {
 const security = (...args: string[]) =>
   execFileSync('/usr/bin/security', args, { stdio: 'pipe' });
 
-// Microseconds since 1601-01-01, the clock Chromium stores times on.
-function chromiumTime(days: number): number {
-  return (Date.now() + days * 86_400_000) * 1000 + 11_644_473_600_000_000;
+// Microseconds since 1601-01-01, the clock Chromium stores times on, days
+// after now.
+function chromiumTime(now: Date, days: number): number {
+  return (now.getTime() + days * 86_400_000) * 1000 + 11_644_473_600_000_000;
 }
 
 // A Mac home for a test, in place of the user's: a temporary folder that
@@ -68,11 +69,13 @@ export class ScratchMac implements AsyncDisposable {
   // A browser profile's Cookies database, as Chromium writes it at meta
   // version 24: each value v10-encrypted with the key derived from password,
   // behind the SHA-256 of its host. profile is the folder under Application
-  // Support, such as Dia/User Data/Default.
+  // Support, such as Dia/User Data/Default. Each cookie is created at now,
+  // and expires its days after it.
   cookies(
     profile: string,
     password: string,
     cookies: readonly ScratchCookie[],
+    now: Date,
   ): void {
     const folder = join(this.path, 'Library/Application Support', profile);
     mkdirSync(folder, { recursive: true });
@@ -93,7 +96,7 @@ export class ScratchMac implements AsyncDisposable {
         Buffer.from(value),
       ]);
       insert.run(
-        chromiumTime(0),
+        chromiumTime(now, 0),
         host,
         name,
         Buffer.concat([
@@ -101,10 +104,10 @@ export class ScratchMac implements AsyncDisposable {
           cipher.update(plain),
           cipher.final(),
         ]),
-        days === null ? 0 : chromiumTime(days),
-        chromiumTime(0),
+        days === null ? 0 : chromiumTime(now, days),
+        chromiumTime(now, 0),
         days === null ? 0 : 1,
-        chromiumTime(0),
+        chromiumTime(now, 0),
       );
     }
   }

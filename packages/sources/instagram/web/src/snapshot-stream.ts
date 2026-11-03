@@ -26,7 +26,7 @@ export abstract class SnapshotStream<
 > extends InstagramStream<P> {
   protected abstract scan(context: ReadContext): Promise<Snapshot<P>>;
 
-  protected policy(): DeletionPolicy {
+  protected policy(_context: ReadContext): DeletionPolicy {
     return new ClosedWorld();
   }
 
@@ -36,7 +36,7 @@ export abstract class SnapshotStream<
     const valid = this.validated(records);
     yield* this.withImages(
       diffSnapshot(context.configuration, valid, context.state, {
-        policy: this.policy(),
+        policy: this.policy(context),
         signal: context.signal,
       }),
       images,

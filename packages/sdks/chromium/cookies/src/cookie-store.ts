@@ -16,8 +16,8 @@ export class CookieStore implements Disposable {
   }
 
   // When the named cookie that url is sent with expires, in Chromium's
-  // microseconds; null when the profile has none that is still valid.
-  expiry(url: URL, name: string): bigint | null {
+  // microseconds; null when the profile has none that is still valid at now.
+  expiry(url: URL, name: string, now: Date): bigint | null {
     const hosts = hostKeys(url);
     const statement = this.#database.prepare(
       `SELECT max(expires_utc) AS expires FROM cookies
@@ -25,13 +25,18 @@ export class CookieStore implements Disposable {
          AND (has_expires = 0 OR expires_utc > ?)`,
     );
     statement.setReadBigInts(true);
-    const row = statement.get(name, ...hosts, chromiumTime(new Date()));
+    const row = statement.get(name, ...hosts, chromiumTime(now));
     return typeof row?.expires === 'bigint' ? row.expires : null;
   }
 
-  // The cookies the browser sends with a request to url, by name; a cookie
-  // set for the exact host overrides one set for its domain.
-  cookies(url: URL, key: Buffer, browser: string): Map<string, string> {
+  // The cookies the browser sends with a request to url at now, by name; a
+  // cookie set for the exact host overrides one set for its domain.
+  cookies(
+    url: URL,
+    key: Buffer,
+    browser: string,
+    now: Date,
+  ): Map<string, string> {
     const version = Number(
       this.#database
         .prepare(`SELECT value FROM meta WHERE key = 'version'`)
@@ -49,7 +54,7 @@ export class CookieStore implements Disposable {
            AND (has_expires = 0 OR expires_utc > ?)
          ORDER BY length(host_key), host_key`,
       )
-      .all(...hosts, chromiumTime(new Date()));
+      .all(...hosts, chromiumTime(now));
     const cookies = new Map<string, string>();
     for (const row of rows) {
       const host = String(row.host_key);

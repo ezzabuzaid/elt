@@ -54,6 +54,7 @@ async function signedInMac() {
       value,
       days: 300,
     })),
+    new Date(),
   );
   return mac;
 }
@@ -792,10 +793,13 @@ test('a run reads at most 10 pages of a list, and the next run goes on with the 
   const profile = hive(posts(400));
   const world: World = { profiles: [profile], following: [] };
   using wire = instagram(world);
-  const source = await InstagramWebSource.connect({
-    home: mac.path,
-    profileIds: ['44555906095'],
-  });
+  const source = await InstagramWebSource.connect(
+    {
+      home: mac.path,
+      profileIds: ['44555906095'],
+    },
+    globalThis,
+  );
   const run = await pipeline(source, dir.path);
 
   await run.run();
@@ -824,10 +828,13 @@ test('a rate limit in the middle of a scan keeps the pages committed before it, 
   };
   using wire = instagram(world);
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
 
@@ -853,10 +860,13 @@ test('while a scan is under way no post is deleted; a post deleted before the sc
   const profile = hive(posts(400));
   using _wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
   const listed = String(profile.posts[5]?.pk);
@@ -889,10 +899,13 @@ test('a post published while a scan is under way loads at the next run', async (
   const profile = hive(posts(400));
   using _wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
   await run.run();
@@ -920,10 +933,13 @@ test('an old post pinned above the newest ones does not stop the read of new pos
   const profile = hive([pinned, ...posts(400)]);
   using _wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
   await run.run();
@@ -952,10 +968,13 @@ test('an edited caption updates its post when the scan reads the post again', as
   const profile = hive(posts(5));
   using _wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
   await run.run();
@@ -982,12 +1001,15 @@ test('a date range ends the walk at the first post older than its start, so a na
   // An import scope's end is exclusive: a post at that instant is out.
   const endAt = new Date((day - 2 * 86_400) * 1000).toISOString();
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-      startAt,
-      endAt,
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+        startAt,
+        endAt,
+      },
+      globalThis,
+    ),
     dir.path,
   );
 
@@ -1024,10 +1046,13 @@ test('a scope narrowed to one profile reads that profile’s lists and nothing o
     ],
   });
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
 
@@ -1075,10 +1100,13 @@ test('a second run with no change upstream writes nothing and downloads no image
     profiles: [profile],
     following: [{ pk: '44555906095', username: 'hivefitnationgym' }],
   });
-  const source = await InstagramWebSource.connect({
-    home: mac.path,
-    profileIds: ['44555906095'],
-  });
+  const source = await InstagramWebSource.connect(
+    {
+      home: mac.path,
+      profileIds: ['44555906095'],
+    },
+    globalThis,
+  );
   const run = await pipeline(source, dir.path);
   const first = counts(await run.run());
   const downloaded = [...wire.downloads].sort();
@@ -1129,10 +1157,13 @@ test(
     );
     using _wire = instagram({ profiles: [profile], following: [] });
     const run = await pipeline(
-      await InstagramWebSource.connect({
-        home: mac.path,
-        profileIds: ['44555906095'],
-      }),
+      await InstagramWebSource.connect(
+        {
+          home: mac.path,
+          profileIds: ['44555906095'],
+        },
+        globalThis,
+      ),
       dir.path,
     );
 
@@ -1188,10 +1219,13 @@ test('a post tagged with a place loads the place’s id, name and coordinates, a
 
   await (
     await pipeline(
-      await InstagramWebSource.connect({
-        home: mac.path,
-        profileIds: ['44555906095'],
-      }),
+      await InstagramWebSource.connect(
+        {
+          home: mac.path,
+          profileIds: ['44555906095'],
+        },
+        globalThis,
+      ),
       dir.path,
     )
   ).run();
@@ -1237,10 +1271,13 @@ test('a profile whose reel count Instagram leaves out loads its reels as NULL', 
 
   await (
     await pipeline(
-      await InstagramWebSource.connect({
-        home: mac.path,
-        profileIds: ['44555906095'],
-      }),
+      await InstagramWebSource.connect(
+        {
+          home: mac.path,
+          profileIds: ['44555906095'],
+        },
+        globalThis,
+      ),
       dir.path,
     )
   ).run();
@@ -1273,10 +1310,13 @@ test('every slide of a carousel, of a repost and of a tagged post is a media row
 
   await (
     await pipeline(
-      await InstagramWebSource.connect({
-        home: mac.path,
-        profileIds: ['44555906095'],
-      }),
+      await InstagramWebSource.connect(
+        {
+          home: mac.path,
+          profileIds: ['44555906095'],
+        },
+        globalThis,
+      ),
       dir.path,
     )
   ).run();
@@ -1351,10 +1391,13 @@ test('a video post and a reel load their cover frame as the file, and no video i
 
   await (
     await pipeline(
-      await InstagramWebSource.connect({
-        home: mac.path,
-        profileIds: ['44555906095'],
-      }),
+      await InstagramWebSource.connect(
+        {
+          home: mac.path,
+          profileIds: ['44555906095'],
+        },
+        globalThis,
+      ),
       dir.path,
     )
   ).run();
@@ -1394,10 +1437,13 @@ test('a story that Instagram stopped showing keeps its row, and one the profile 
   };
   using _wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
   await run.run();
@@ -1449,10 +1495,13 @@ test('a profile, a page of posts and a highlights tray Instagram refused to one 
     },
   });
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
 
@@ -1491,10 +1540,13 @@ test('highlights load with every story in them and its image, and a highlight th
   };
   using _wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
   await run.run();
@@ -1554,10 +1606,13 @@ test('a highlight story whose image Instagram’s CDN no longer has loads withou
 
   await (
     await pipeline(
-      await InstagramWebSource.connect({
-        home: mac.path,
-        profileIds: ['44555906095'],
-      }),
+      await InstagramWebSource.connect(
+        {
+          home: mac.path,
+          profileIds: ['44555906095'],
+        },
+        globalThis,
+      ),
       dir.path,
     )
   ).run();
@@ -1594,10 +1649,13 @@ test('an image whose connection the CDN drops once is asked for again and stored
 
   await (
     await pipeline(
-      await InstagramWebSource.connect({
-        home: mac.path,
-        profileIds: ['44555906095'],
-      }),
+      await InstagramWebSource.connect(
+        {
+          home: mac.path,
+          profileIds: ['44555906095'],
+        },
+        globalThis,
+      ),
       dir.path,
     )
   ).run();
@@ -1634,10 +1692,13 @@ test('an image the CDN answers 503 once is asked for again and stored', async ()
 
   await (
     await pipeline(
-      await InstagramWebSource.connect({
-        home: mac.path,
-        profileIds: ['44555906095'],
-      }),
+      await InstagramWebSource.connect(
+        {
+          home: mac.path,
+          profileIds: ['44555906095'],
+        },
+        globalThis,
+      ),
       dir.path,
     )
   ).run();
@@ -1676,10 +1737,13 @@ test('a highlight story whose image keeps failing fails the run, the highlights 
   };
   using wire = instagram(world);
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
 
@@ -1730,10 +1794,13 @@ test('comments load with their replies, are read again within a scan only when a
   const profile = hive([changed, unchanged, ...posts(398)]);
   using wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
   const reads = () =>
@@ -1800,10 +1867,13 @@ test('the reels tab, reposts and tagged posts load for the profile, page after p
 
   await (
     await pipeline(
-      await InstagramWebSource.connect({
-        home: mac.path,
-        profileIds: ['44555906095'],
-      }),
+      await InstagramWebSource.connect(
+        {
+          home: mac.path,
+          profileIds: ['44555906095'],
+        },
+        globalThis,
+      ),
       dir.path,
     )
   ).run();
@@ -1867,7 +1937,7 @@ test('overlapping following pages import each profile once and keep every distin
     ],
   });
   const run = await pipeline(
-    await InstagramWebSource.connect({ home: mac.path }),
+    await InstagramWebSource.connect({ home: mac.path }, globalThis),
     dir.path,
   );
 
@@ -1904,10 +1974,13 @@ test('the accounts the browser’s account follows load across pages, and one it
   };
   using _wire = instagram(world);
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
   await run.run();
@@ -1933,10 +2006,13 @@ test('a session Instagram no longer accepts fails as the user’s to fix, with t
   const world: World = { profiles: [hive(posts(5))], following: [] };
   using _wire = instagram(world);
   const run = await pipeline(
-    await InstagramWebSource.connect({
-      home: mac.path,
-      profileIds: ['44555906095'],
-    }),
+    await InstagramWebSource.connect(
+      {
+        home: mac.path,
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    ),
     dir.path,
   );
   await run.run();
@@ -1956,10 +2032,13 @@ test('a Mac where no browser is signed in to Instagram fails as the user’s to 
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
   using _wire = instagram({ profiles: [hive(posts(1))], following: [] });
-  const source = await InstagramWebSource.connect({
-    home: mac.path,
-    profileIds: ['44555906095'],
-  });
+  const source = await InstagramWebSource.connect(
+    {
+      home: mac.path,
+      profileIds: ['44555906095'],
+    },
+    globalThis,
+  );
   const run = await pipeline(source, dir.path);
   const cookies = join(
     mac.path,
@@ -1988,10 +2067,13 @@ test(
   async () => {
     // A source given its profiles signs in only when it reads, which a
     // watch does not.
-    const source = await InstagramWebSource.connect({
-      home: tmpdir(),
-      profileIds: ['44555906095'],
-    });
+    const source = await InstagramWebSource.connect(
+      {
+        home: tmpdir(),
+        profileIds: ['44555906095'],
+      },
+      globalThis,
+    );
     const { streams } = await source.discover();
     const watching = new AbortController();
     const watch = source.watch({
@@ -2036,10 +2118,13 @@ test('a comment Instagram lists twice in one answer loads once', async () => {
 
   await (
     await pipeline(
-      await InstagramWebSource.connect({
-        home: mac.path,
-        profileIds: ['44555906095'],
-      }),
+      await InstagramWebSource.connect(
+        {
+          home: mac.path,
+          profileIds: ['44555906095'],
+        },
+        globalThis,
+      ),
       dir.path,
     )
   ).run();

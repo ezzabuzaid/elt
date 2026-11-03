@@ -1,4 +1,4 @@
-import { setInterval } from 'node:timers/promises';
+import { delay } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -6,6 +6,7 @@ import {
   type ExtractionCoverage,
   type JsonValue,
   type Partition,
+  type PipelineClock,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -115,14 +116,19 @@ export class InstagramWebSource extends Source<InstagramRun> {
   }
 
   // A source for the profiles the options name, or, when they name none,
-  // for every account the signed-in account follows now.
+  // for every account the signed-in account follows now on clock.
   static async connect(
     options: InstagramWebOptions,
+    clock: PipelineClock,
     signal?: AbortSignal,
   ): Promise<InstagramWebSource> {
     if (options.profileIds !== undefined && options.profileIds.length > 0)
       return new InstagramWebSource(options);
-    await using run = await InstagramRun.open(options.home, signal);
+    await using run = await InstagramRun.open(
+      options.home,
+      new Date(clock.Date.now()),
+      signal,
+    );
     const followed: string[] = [];
     let next: string | null = null;
     do {
@@ -133,8 +139,14 @@ export class InstagramWebSource extends Source<InstagramRun> {
     return new InstagramWebSource({ ...options, profileIds: followed });
   }
 
-  protected override open(): Promise<InstagramRun> {
-    return InstagramRun.open(this.#home);
+  // The run opens now on the clock of the pipeline.
+  protected override open(
+    streams: readonly Stream[],
+    signal: AbortSignal | undefined,
+    states: { get(stream: string): unknown },
+    clock: PipelineClock,
+  ): Promise<InstagramRun> {
+    return InstagramRun.open(this.#home, new Date(clock.Date.now()));
   }
 
   protected override partitions(): readonly Partition[] {
@@ -168,14 +180,18 @@ export class InstagramWebSource extends Source<InstagramRun> {
   protected override async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     yield streams;
-    try {
-      for await (const _ of setInterval(pollIntervalMs, undefined, { signal }))
-        yield streams;
-    } catch (error) {
-      if (!(error instanceof Error && error.name === 'AbortError')) throw error;
+    for (;;) {
+      try {
+        await delay(pollIntervalMs, { clock, signal });
+      } catch (error) {
+        if (signal.aborted) return;
+        throw error;
+      }
+      yield streams;
     }
   }
 

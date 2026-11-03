@@ -66,11 +66,15 @@ export class InstagramRun implements AsyncDisposable {
   readonly reels: LaneReader<ReelMedia>;
   readonly reposts: LaneReader<ListMedia>;
   readonly tagged: LaneReader<ListMedia>;
+  // When the run opened: the session's cookies are valid then, and a story
+  // that expires after it is still shown.
+  readonly openedAt: Date;
   readonly #staging: string;
   #downloads = 0;
 
-  private constructor(web: InstagramWeb, staging: string) {
+  private constructor(web: InstagramWeb, openedAt: Date, staging: string) {
     this.web = web;
+    this.openedAt = openedAt;
     this.#staging = staging;
     this.posts = new LaneReader(new PostsLane(), web);
     this.reels = new LaneReader(new ReelsLane(), web);
@@ -78,17 +82,21 @@ export class InstagramRun implements AsyncDisposable {
     this.tagged = new LaneReader(new TaggedLane(), web);
   }
 
-  // Signs in with the session of the browser profile that signed in to
-  // Instagram last, in the home folder home.
-  static async open(home: string, signal?: AbortSignal): Promise<InstagramRun> {
+  // Signs in at now with the session of the browser profile that signed in
+  // to Instagram last, in the home folder home.
+  static async open(
+    home: string,
+    now: Date,
+    signal?: AbortSignal,
+  ): Promise<InstagramRun> {
     const session = await BrowserSession.newest(
       'https://www.instagram.com/',
       'sessionid',
-      { home },
+      { home, now },
     );
     const web = await InstagramWeb.open(session, signal);
     const staging = await mkdtemp(join(tmpdir(), 'elt-instagram-'));
-    return new InstagramRun(web, staging);
+    return new InstagramRun(web, now, staging);
   }
 
   readonly profile = pMemoize(
