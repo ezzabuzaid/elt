@@ -91,8 +91,9 @@ export class AppleRemindersSource extends Source<RemindersScan> {
   protected override async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    for await (const check of this.#store.checks(signal))
+    for await (const check of this.#store.checks(signal, clock))
       yield check === 'changed' ? streams : [];
   }
 

@@ -910,6 +910,7 @@ test('a quiet watch reports a check that found the store unchanged each second, 
   const controller = new AbortController();
   const checks = new CalendarStore(stub.path, { env: process.env }).checks(
     controller.signal,
+    globalThis,
   );
   const running = () =>
     execFile('pgrep', ['-P', String(process.pid), '-f', `${stub.path} watch`]);
@@ -932,6 +933,7 @@ test(
     stub.watch({ lines: ['changed'], then: 'wait' });
     const checks = new CalendarStore(stub.path, { env: process.env }).checks(
       new AbortController().signal,
+      globalThis,
     );
     const running = () =>
       execFile('pgrep', [
@@ -957,6 +959,7 @@ test('no check says the store held still before the helper confirms its subscrip
   const controller = new AbortController();
   const checks = new CalendarStore(stub.path, { env: process.env }).checks(
     controller.signal,
+    globalThis,
   );
 
   const first = checks.next();

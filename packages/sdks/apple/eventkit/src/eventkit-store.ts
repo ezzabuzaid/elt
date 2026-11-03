@@ -1,4 +1,4 @@
-import { setInterval } from 'node:timers/promises';
+import { type Clock, delay } from '@zukhruf/async';
 
 import type {
   AccountDocument,
@@ -75,23 +75,27 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
 
   // Yields changed once the subscription is confirmed and once per store
   // change, and unchanged each checkMs in between: a quiet second under a
-  // live subscription is a check that found the store unchanged. A consumer
-  // that stops reading stops the helper, as an abort does: a change the watch
-  // still waits for would otherwise hold its return forever.
-  async *checks(signal: AbortSignal): AsyncGenerator<'changed' | 'unchanged'> {
+  // live subscription is a check that found the store unchanged; the second
+  // passes on clock. A consumer that stops reading stops the helper, as an
+  // abort does: a change the watch still waits for would otherwise hold its
+  // return forever.
+  async *checks(
+    signal: AbortSignal,
+    clock: Clock,
+  ): AsyncGenerator<'changed' | 'unchanged'> {
     const controller = new AbortController();
     const checking = AbortSignal.any([signal, controller.signal]);
     const changes = this.watch(checking)[Symbol.asyncIterator]();
     try {
       if ((await changes.next()).done) return;
       yield 'changed';
-      const ticks = setInterval(checkMs, undefined, { signal: checking })[
-        Symbol.asyncIterator
-      ]();
       const nextChange = () =>
         changes.next().then(({ done }) => ({ done, changed: true }));
       const nextTick = () =>
-        ticks.next().then(({ done }) => ({ done, changed: false }));
+        delay(checkMs, { clock, signal: checking }).then(() => ({
+          done: false,
+          changed: false,
+        }));
       let change = nextChange();
       let tick = nextTick();
       for (;;) {
@@ -102,10 +106,12 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
         else tick = nextTick();
       }
     } catch (error) {
+      // A wait rejects with the reason of the abort; the helper's read with
+      // an AbortError.
       if (!(
         signal.aborted &&
-        error instanceof Error &&
-        error.name === 'AbortError'
+        (error === signal.reason ||
+          (error instanceof Error && error.name === 'AbortError'))
       ))
         throw error;
     } finally {
