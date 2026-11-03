@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import parse from 'html-react-parser';
 import { useState } from 'react';
 
 import { api } from './api.ts';
@@ -89,11 +90,11 @@ export function ArticleView({
               className="body prose"
               lang={data.lang ?? undefined}
               dir={data.dir ?? undefined}
-              // sdk-web-article sanitizes this HTML with DOMPurify.
-              dangerouslySetInnerHTML={{
-                __html: withoutRepeatedTitle(data.content, data.title),
-              }}
-            />
+            >
+              {/* sdk-web-article sanitizes this HTML with DOMPurify; React
+                  renders it as elements. */}
+              {parse(withoutRepeatedTitle(data.content, data.title))}
+            </div>
           )}
           {tab === 'Markdown' && <pre className="body">{data.markdown}</pre>}
           {tab === 'Text' && <pre className="body">{data.textContent}</pre>}
