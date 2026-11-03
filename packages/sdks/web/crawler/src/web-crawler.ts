@@ -13,7 +13,11 @@ import {
   crawlChannels,
 } from './crawl-channels.ts';
 import { OriginLane } from './origin-lane.ts';
-import type { OriginRecords, Unreachable } from './origin-records.ts';
+import type {
+  CrawlClock,
+  OriginRecords,
+  Unreachable,
+} from './origin-records.ts';
 import {
   type CrawlRequest,
   type Finding,
@@ -231,6 +235,7 @@ export class WebCrawler {
   readonly #origins: OriginRecords;
   readonly #readers: readonly Reader<unknown, unknown>[];
   readonly #revisit: RevisitPolicy<unknown>;
+  readonly #clock: CrawlClock;
 
   /**
    * One crawler for each list of starting URLs, with the revisit policy of
@@ -242,6 +247,7 @@ export class WebCrawler {
     origins: OriginRecords,
     readers: readonly Reader<unknown, unknown>[],
     revisit: RevisitPolicy<unknown>,
+    clock: CrawlClock,
   ) {
     if (readers.length === 0)
       throw new TypeError('At least one reader is required');
@@ -249,6 +255,7 @@ export class WebCrawler {
     this.#origins = origins;
     this.#readers = readers.slice();
     this.#revisit = revisit;
+    this.#clock = clock;
   }
 
   /**
@@ -287,6 +294,7 @@ export class WebCrawler {
         this.#readers,
         this.#revisit,
         options,
+        this.#clock,
         {
           at,
           states,
@@ -331,7 +339,7 @@ export class WebCrawler {
       notes: this.#readers.map(() => null),
       redirect: null,
     });
-    const now = Date.now();
+    const now = this.#clock.Date.now();
     // Each run is timed at its own start, and it requests each starting URL
     // that it never visited or that its revisit policy makes due by then, in
     // a new crawl and in one it continues, whatever ended the last run: as
@@ -397,6 +405,7 @@ class CrawlRun implements Crawl {
   readonly #readers: readonly Reader<unknown, unknown>[];
   readonly #revisit: RevisitPolicy<unknown>;
   readonly #options: CrawlOptions;
+  readonly #clock: CrawlClock;
   readonly #at: number;
   readonly #states: unknown[];
   readonly #urls: Map<string, KnownUrl>;
@@ -443,6 +452,7 @@ class CrawlRun implements Crawl {
     readers: readonly Reader<unknown, unknown>[],
     revisit: RevisitPolicy<unknown>,
     options: CrawlOptions,
+    clock: CrawlClock,
     {
       at,
       states,
@@ -470,6 +480,7 @@ class CrawlRun implements Crawl {
     this.#readers = readers;
     this.#revisit = revisit;
     this.#options = options;
+    this.#clock = clock;
     this.#at = at;
     this.#states = states;
     this.#urls = known;
@@ -584,9 +595,9 @@ class CrawlRun implements Crawl {
     );
     try {
       for await (const entry of this.#visits()) {
-        const handed = performance.now();
+        const handed = this.#clock.performance.now();
         yield entry;
-        const duration = performance.now() - handed;
+        const duration = this.#clock.performance.now() - handed;
         if ('response' in entry)
           crawlChannels.handOff.publish(
             new CrawlHandedOff(this, entry.url, 'page', duration),
@@ -640,9 +651,9 @@ class CrawlRun implements Crawl {
         response = robots.answer;
         this.#requested(entry, 'origin record', 0, answered(response));
       } else {
-        const paced = performance.now();
+        const paced = this.#clock.performance.now();
         await this.#origins.pace(origin, signal);
-        const waited = performance.now() - paced;
+        const waited = this.#clock.performance.now() - paced;
         try {
           response = await this.#http(entry.url, {
             signal,
@@ -789,6 +800,7 @@ class CrawlRun implements Crawl {
               request: this.#request(entry),
               note: entry.notes[index],
               wanted: wanted[index] === true,
+              at: this.#at,
               revisitWithin,
             },
             this.#states[index],

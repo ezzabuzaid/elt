@@ -62,7 +62,7 @@ test('a redirect to another origin whose robots.txt disallows the target is not 
   );
 
   const { pages, failures } = await crawled(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/sitemap.xml'], null, options()),
   );
@@ -102,7 +102,7 @@ test('a redirect target waits the delay of its own origin, not of the origin tha
   );
 
   const { pages } = await crawled(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/sitemap.xml'], null, options()),
   );
@@ -136,7 +136,7 @@ test('without a Crawl-delay, two requests to one origin start one second apart',
   );
 
   await crawled(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/sitemap.xml'], null, options()),
   );
@@ -161,13 +161,17 @@ test('the rules of robots.txt are read again 24 hours after they were read, and 
   // The last read read the rules at fetched; this read starts at 10 days.
   const read = (fetched: number) =>
     crawled(
-      new Origins(noRetries, {
-        'https://site.test': {
-          robots: { body: 'User-agent: *\nAllow: /\n', fetched },
-          blocked: null,
-          slowdown: 0,
+      new Origins(
+        noRetries,
+        {
+          'https://site.test': {
+            robots: { body: 'User-agent: *\nAllow: /\n', fetched },
+            blocked: null,
+            slowdown: 0,
+          },
         },
-      })
+        globalThis,
+      )
         .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
         .crawl(['https://site.test/sitemap.xml'], null, options()),
     );
@@ -195,7 +199,7 @@ test('a 503 with Retry-After holds its origin until then, as a 429 does', async 
       });
     }),
   );
-  const crawl = new Origins(noRetries, null)
+  const crawl = new Origins(noRetries, null, globalThis)
     .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
     .crawl(['https://site.test/sitemap.xml'], null, options());
 
@@ -239,7 +243,7 @@ test('two crawls of one read share the expansion budget of each origin', async (
     }),
   );
   // Two inputs of one source, each its own crawl, in one read.
-  const origins = new Origins(noRetries, null);
+  const origins = new Origins(noRetries, null, globalThis);
   const programs = () =>
     origins.crawler(
       noRetries,
@@ -307,7 +311,7 @@ test('a redirect whose target stays is scheduled as unchanged, and one whose tar
   // an hour.
   let memento: unknown = null;
   const run = async () => {
-    const crawl = new Origins(noRetries, null)
+    const crawl = new Origins(noRetries, null, globalThis)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/sitemap.xml'], memento, options());
     await crawled(crawl);

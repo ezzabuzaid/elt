@@ -119,7 +119,7 @@ test('a discovered article retains its introductory summary before the main body
     const signal = AbortSignal.timeout(120_000);
     const pages = (
       await Array.fromAsync(
-        new Origins(got, null)
+        new Origins(got, null, globalThis)
           .crawler(
             got,
             [new ListingReader(), new ArchiveReader(), new PaginationReader()],
@@ -191,7 +191,7 @@ test('a feed article retains a figure caption containing a descriptive link', as
     const signal = AbortSignal.timeout(120_000);
     const pages = (
       await Array.fromAsync(
-        new Origins(got, null)
+        new Origins(got, null, globalThis)
           .crawler(
             got,
             [new ListingReader(), new ArchiveReader(), new PaginationReader()],
@@ -276,7 +276,7 @@ test('a feed article retains acknowledgments and an authorship disclosure after 
     const signal = AbortSignal.timeout(120_000);
     const pages = (
       await Array.fromAsync(
-        new Origins(got, null)
+        new Origins(got, null, globalThis)
           .crawler(
             got,
             [new ListingReader(), new ArchiveReader(), new PaginationReader()],

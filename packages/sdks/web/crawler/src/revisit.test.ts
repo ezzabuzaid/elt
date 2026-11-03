@@ -66,7 +66,7 @@ function everyCrawl(start: string, revisit: RevisitPolicy<unknown>) {
 }
 
 function siteCrawler(revisit: RevisitPolicy<unknown>) {
-  return new Origins(got, null).crawler(
+  return new Origins(got, null, globalThis).crawler(
     got,
     [new LinkReader({ maxDepth: 1, maxPages: 100 })],
     everyCrawl('https://site.test/', revisit),
@@ -279,7 +279,7 @@ test('a listing that gives a page another lastModified makes it due at once, and
         : HttpResponse.html('<p>A</p>'),
     ),
   );
-  const crawler = new Origins(got, null).crawler(
+  const crawler = new Origins(got, null, globalThis).crawler(
     got,
     [new ListingReader()],
     everyCrawl('https://site.test/sitemap.xml', new AdaptiveRevisit()),
@@ -326,7 +326,7 @@ test('a known page that is due and that no listing names goes after the pages th
         : HttpResponse.html('<p>Page</p>');
     }),
   );
-  const crawler = new Origins(got, null).crawler(
+  const crawler = new Origins(got, null, globalThis).crawler(
     got,
     [new ListingReader()],
     new AlwaysRevisit(),
@@ -389,7 +389,7 @@ test('a linked page that is not due spends no LinkReader budget, so the budget r
         : HttpResponse.html('<p>Page</p>');
     }),
   );
-  const crawler = new Origins(got, null).crawler(
+  const crawler = new Origins(got, null, globalThis).crawler(
     got,
     [new LinkReader({ maxDepth: 1, maxPages: 1 })],
     everyCrawl('https://site.test/', new AdaptiveRevisit()),
@@ -565,7 +565,7 @@ test('nextDue gives when the next crawl has a known URL due, starting URLs inclu
         : new HttpResponse(null, { status: 400 }),
     ),
   );
-  const crawl = new Origins(got, null)
+  const crawl = new Origins(got, null, globalThis)
     .crawler(
       got,
       [new LinkReader({ maxDepth: 1, maxPages: 100 })],
@@ -598,7 +598,7 @@ test('a feed is due again within half the time its items cover, whatever the pol
         : HttpResponse.html('<p>Page</p>'),
     ),
   );
-  const crawler = new Origins(got, null).crawler(
+  const crawler = new Origins(got, null, globalThis).crawler(
     got,
     [new ListingReader()],
     new AdaptiveRevisit(),

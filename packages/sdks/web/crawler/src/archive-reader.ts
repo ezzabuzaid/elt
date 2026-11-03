@@ -28,9 +28,10 @@ const calendarPath = new RegExp(
   'i',
 );
 
-function isCalendar(pathname: string) {
+// A year up to the one after now, which is when the crawl run started.
+function isCalendar(pathname: string, now: number) {
   const year = Number(calendarPath.exec(pathname)?.[1]);
-  return year >= 1900 && year <= new Date().getUTCFullYear() + 1;
+  return year >= 1900 && year <= new Date(now).getUTCFullYear() + 1;
 }
 
 /**
@@ -55,9 +56,10 @@ export class ArchiveReader extends Reader<null, null> {
     headers,
     type,
     request,
+    at,
   }: Visit<null>): readonly Finding<null>[] {
     if (response.statusCode !== 200 || !isHtml(type)) return [];
-    return [...readArchives(pageText(response), response.url, headers)].map(
+    return [...readArchives(pageText(response), response.url, headers, at)].map(
       ([url, text]) => ({
         url,
         naming: { how: 'archive' as const, text },
@@ -77,7 +79,12 @@ export class ArchiveReader extends Reader<null, null> {
   }
 }
 
-function readArchives(html: string, url: string, headers: Headers) {
+function readArchives(
+  html: string,
+  url: string,
+  headers: Headers,
+  now: number,
+) {
   // jsdom's own console writes its errors, such as a stylesheet it cannot
   // parse, to the host's console.
   const dom = new JSDOM(html, { url, virtualConsole: new VirtualConsole() });
@@ -99,7 +106,7 @@ function readArchives(html: string, url: string, headers: Headers) {
       if (
         link.relList.contains('archives') ||
         /\/archives?(?:\/|$)/i.test(target.pathname) ||
-        isCalendar(target.pathname) ||
+        isCalendar(target.pathname, now) ||
         /^(?:(?:blog|post|article|full|complete) )?archives?$|(?:^|\s)(?:older|newer|previous|next) (?:posts|entries|articles|page)(?:\s|$)|^(?:all|more) (?:posts|entries|articles|content)$|^content index$/i.test(
           link.textContent.trim(),
         )

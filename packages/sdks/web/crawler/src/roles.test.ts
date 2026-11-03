@@ -77,7 +77,7 @@ function blog(requests: string[]) {
 }
 
 function blogCrawler() {
-  return new Origins(noRetries, null).crawler(
+  return new Origins(noRetries, null, globalThis).crawler(
     noRetries,
     [new ListingReader(), new ArchiveReader(), new PaginationReader()],
     new AdaptiveRevisit(),
@@ -104,7 +104,7 @@ test('a starting page that its sitemap lists as a page is handed back once, with
   );
 
   const handed = await pages(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/'], null, {
         signal: AbortSignal.timeout(120_000),
@@ -182,7 +182,7 @@ test('a URL downloaded again for a role it adds is not admitted again, so it spe
       return HttpResponse.html('<p>X</p>');
     }),
   );
-  const crawl = new Origins(got, null)
+  const crawl = new Origins(got, null, globalThis)
     .crawler(
       got,
       [new LinkReader({ maxDepth: 1, maxPages: 100 }), new ArchiveReader()],

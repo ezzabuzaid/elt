@@ -33,7 +33,7 @@ function sitemap(origin: string, paths: readonly string[]) {
 // it never retries a refusal, which is the record's.
 function read(retries: number, origins: OriginsMemento | null) {
   const client = got.extend({ retry: { limit: retries } });
-  const records = new Origins(client, origins);
+  const records = new Origins(client, origins, globalThis);
   return {
     origins: records,
     crawler: records.crawler(
@@ -406,7 +406,7 @@ async function readAgain(pages: readonly string[]) {
   // The sitemap is read in every crawl, as a host reads its lists.
   const crawler = (origins: OriginsMemento | null) => {
     const client = got.extend({ retry: { limit: 0 } });
-    const records = new Origins(client, origins);
+    const records = new Origins(client, origins, globalThis);
     return {
       origins: records,
       crawler: records.crawler(

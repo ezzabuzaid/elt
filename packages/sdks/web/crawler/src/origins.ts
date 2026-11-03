@@ -1,6 +1,10 @@
 import type { Got } from 'got';
 
-import { OriginRecords, type OriginsMemento } from './origin-records.ts';
+import {
+  type CrawlClock,
+  OriginRecords,
+  type OriginsMemento,
+} from './origin-records.ts';
 import type { Reader } from './reader.ts';
 import type { RevisitPolicy } from './revisit-policy.ts';
 import { WebCrawler } from './web-crawler.ts';
@@ -14,6 +18,7 @@ import { WebCrawler } from './web-crawler.ts';
  */
 export class Origins {
   readonly #records: OriginRecords;
+  readonly #clock: CrawlClock;
   /**
    * The client for requests that no crawl's frontier holds, such as the HTML
    * companion of a Markdown page. Each request, and each redirect it follows,
@@ -22,9 +27,13 @@ export class Origins {
    */
   readonly http: Got;
 
-  /** A null memento knows no origin. */
-  constructor(http: Got, memento: unknown) {
-    this.#records = new OriginRecords(http, memento);
+  /**
+   * A null memento knows no origin. The read waits and reads the time on
+   * clock: a host gives globalThis, a test a fake clock that it moves.
+   */
+  constructor(http: Got, memento: unknown, clock: CrawlClock) {
+    this.#clock = clock;
+    this.#records = new OriginRecords(http, memento, clock);
     this.http = this.#records.http;
   }
 
@@ -38,7 +47,7 @@ export class Origins {
     readers: readonly Reader<unknown, unknown>[],
     revisit: RevisitPolicy<unknown>,
   ): WebCrawler {
-    return new WebCrawler(http, this.#records, readers, revisit);
+    return new WebCrawler(http, this.#records, readers, revisit, this.#clock);
   }
 
   /** Every origin's record as plain data, for the next read. */

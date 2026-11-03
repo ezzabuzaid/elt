@@ -61,7 +61,7 @@ test('a crawl that only reads its starting pages requests none of the pages they
   using server = mockWeb(marketplace(requests));
 
   const handed = await pages(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(noRetries, [new StartReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/en'], null, {
         signal: AbortSignal.timeout(120_000),
@@ -83,7 +83,7 @@ test('each starting page is handed back as a page of its own provenance', async 
   using server = mockWeb(marketplace(requests));
 
   const handed = await pages(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(noRetries, [new StartReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/en', 'https://site.test/ar'], null, {
         signal: AbortSignal.timeout(120_000),

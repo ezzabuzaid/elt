@@ -20,7 +20,7 @@ import {
 const noRetries = got.extend({ retry: { limit: 0 } });
 
 function listings() {
-  return new Origins(noRetries, null).crawler(
+  return new Origins(noRetries, null, globalThis).crawler(
     noRetries,
     [new ListingReader(), new ArchiveReader(), new PaginationReader()],
     new AdaptiveRevisit(),
@@ -366,7 +366,7 @@ test('archives found on a crawled page are followed, and keep that page as prove
       else response.writeHead(request.url === '/broken-feed' ? 503 : 404).end();
     });
     const entries = await crawl(
-      new Origins(noRetries, null).crawler(
+      new Origins(noRetries, null, globalThis).crawler(
         noRetries,
         [
           new ListingReader(),
@@ -453,7 +453,7 @@ test('links nobody downloads do not use up turns, so listings are not starved be
       );
     else response.end('<p>A listing.</p>');
   });
-  for await (const entry of new Origins(got, null)
+  for await (const entry of new Origins(got, null, globalThis)
     .crawler(
       got,
       [new ArchiveReader(), new PaginationReader()],

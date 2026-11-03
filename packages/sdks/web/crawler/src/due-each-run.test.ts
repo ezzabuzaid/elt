@@ -71,7 +71,7 @@ test('a page that is due every hour is requested again in the next run while the
       '/programs': `<main><a href="${microsoft.origin}/">Microsoft</a><a href="${news.origin}/credits">Credits</a></main>`,
     })),
   );
-  const crawler = new Origins(noRetries, null).crawler(
+  const crawler = new Origins(noRetries, null, globalThis).crawler(
     noRetries,
     [
       new PaginationReader({ strategy: 'all' }),
@@ -118,7 +118,7 @@ test('a new crawl does not request a starting URL that is not due', async () => 
       '/post': '<p>A post.</p>',
     })),
   );
-  const crawler = new Origins(noRetries, null).crawler(
+  const crawler = new Origins(noRetries, null, globalThis).crawler(
     noRetries,
     [new ListingReader()],
     new FixedRevisit({ every: day }),

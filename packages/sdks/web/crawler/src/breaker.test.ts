@@ -101,7 +101,11 @@ test('a 429 with Retry-After stops requests to its origin, reports the block onc
   );
 
   const first = await crawled(
-    crawler(new Origins(noRetries, null)).crawl(starts, null, options()),
+    crawler(new Origins(noRetries, null, globalThis)).crawl(
+      starts,
+      null,
+      options(),
+    ),
   );
 
   // The origins take turns.
@@ -142,14 +146,18 @@ test('a crawl resumed before its block ends requests nothing there, and one resu
     sites(requests, { path: '', status: 200 }),
   );
   // Each run is a read of its own, whose origins' records start from the last read's.
-  const firstOrigins = new Origins(noRetries, null);
+  const firstOrigins = new Origins(noRetries, null, globalThis);
   const first = await crawled(
     crawler(firstOrigins).crawl(starts, null, options()),
   );
   t.mock.timers.setTime(60_000);
   requests.length = 0;
 
-  const earlyOrigins = new Origins(noRetries, firstOrigins.snapshot());
+  const earlyOrigins = new Origins(
+    noRetries,
+    firstOrigins.snapshot(),
+    globalThis,
+  );
   const early = await crawled(
     crawler(earlyOrigins).crawl(starts, first.memento, options()),
   );
@@ -157,7 +165,7 @@ test('a crawl resumed before its block ends requests nothing there, and one resu
   t.mock.timers.setTime(120_000);
   blocking = false;
   const late = await crawled(
-    crawler(new Origins(noRetries, earlyOrigins.snapshot())).crawl(
+    crawler(new Origins(noRetries, earlyOrigins.snapshot(), globalThis)).crawl(
       starts,
       early.memento,
       options(),
@@ -193,7 +201,7 @@ test('three 403s in a row without Retry-After block their origin for an hour', a
   );
 
   const first = await crawled(
-    crawler(new Origins(noRetries, null)).crawl(
+    crawler(new Origins(noRetries, null, globalThis)).crawl(
       ['https://site.test/sitemap.xml'],
       null,
       options(),
@@ -217,7 +225,11 @@ test('a single 403 is a failure of its page, not a block, so the rest of its ori
   );
 
   const first = await crawled(
-    crawler(new Origins(noRetries, null)).crawl(starts, null, options()),
+    crawler(new Origins(noRetries, null, globalThis)).crawl(
+      starts,
+      null,
+      options(),
+    ),
   );
 
   // The origins take turns.
@@ -247,7 +259,11 @@ test('a 429 with an HTTP-date Retry-After blocks its origin until that date', as
   );
 
   const first = await crawled(
-    crawler(new Origins(noRetries, null)).crawl(starts, null, options()),
+    crawler(new Origins(noRetries, null, globalThis)).crawl(
+      starts,
+      null,
+      options(),
+    ),
   );
 
   assert.equal(first.nextDue, 300_000);
@@ -284,7 +300,7 @@ test('a block reached through a redirect stops requests to the origin that answe
   );
 
   const first = await crawled(
-    crawler(new Origins(noRetries, null)).crawl(
+    crawler(new Origins(noRetries, null, globalThis)).crawl(
       ['http://site.test/sitemap.xml'],
       null,
       options(),
@@ -331,7 +347,7 @@ test('a tolerated 404 opens no breaker, so the rest of its origin still download
   );
 
   const first = await crawled(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(
         noRetries,
         [new LinkReader({ maxDepth: 1, maxPages: 100 })],

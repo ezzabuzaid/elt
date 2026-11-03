@@ -21,7 +21,7 @@ import {
 const signal = AbortSignal.timeout(30_000);
 // The record of each origin for this read: the crawl and the reader's own
 // requests, such as an HTML companion, pass it.
-const origins = new Origins(got, null);
+const origins = new Origins(got, null, globalThis);
 const reader = new WebArticle(
   [new MarkdownExtraction(), new HTMLExtraction()],
   origins.http,

@@ -52,7 +52,7 @@ const site = (page: (path: string) => Response | undefined = () => undefined) =>
 
 function crawler() {
   const http = got.extend({ retry: { limit: 0 } });
-  return new Origins(http, null).crawler(
+  return new Origins(http, null, globalThis).crawler(
     http,
     [new ListingReader()],
     new AdaptiveRevisit(),
@@ -213,7 +213,7 @@ test('two crawls of one read that run at the same time put their own crawl on ev
   );
   using listened = listen();
   const client = got.extend({ retry: { limit: 0 } });
-  const origins = new Origins(client, null);
+  const origins = new Origins(client, null, globalThis);
   const crawl = (start: string) =>
     origins
       .crawler(client, [new ListingReader()], new AdaptiveRevisit())

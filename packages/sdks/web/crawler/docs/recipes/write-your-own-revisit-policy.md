@@ -70,7 +70,7 @@ const origin = `http://127.0.0.1:${address.port}`;
 
 const http = got.extend({ timeout: { request: 30_000 } });
 // Each crawl is a read of its own; its origins' records start from the last read's.
-let origins = new Origins(http, null);
+let origins = new Origins(http, null, globalThis);
 const crawler = (read: Origins) =>
   read.crawler(
     http,
@@ -84,7 +84,7 @@ const crawler = (read: Origins) =>
 let memento: unknown = null;
 for (const name of ['first crawl', 'second crawl']) {
   requested = [];
-  origins = new Origins(http, origins.snapshot());
+  origins = new Origins(http, origins.snapshot(), globalThis);
   const crawl = crawler(origins).crawl([`${origin}/feed.json`], memento, {
     signal: AbortSignal.timeout(60_000),
   });

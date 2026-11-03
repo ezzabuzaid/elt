@@ -33,7 +33,7 @@ function site(...handlers: HttpHandler[]) {
 }
 
 function listings() {
-  return new Origins(noRetries, null).crawler(
+  return new Origins(noRetries, null, globalThis).crawler(
     noRetries,
     [new ListingReader(), new ArchiveReader()],
     new AdaptiveRevisit(),
@@ -41,7 +41,7 @@ function listings() {
 }
 
 function allReaders(limits: { maxDepth: number; maxPages: number }) {
-  return new Origins(noRetries, null).crawler(
+  return new Origins(noRetries, null, globalThis).crawler(
     noRetries,
     [new ListingReader(), new ArchiveReader(), new LinkReader(limits)],
     new AdaptiveRevisit(),

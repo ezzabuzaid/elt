@@ -156,6 +156,8 @@ export type Visit<Note> = {
   readonly note: Note | null;
   /** This reader asked for the download through wants(). */
   readonly wanted: boolean;
+  /** When this run of the crawl started, in milliseconds since the epoch: the reader's now. */
+  readonly at: number;
   /**
    * The response says that its URL must be visited again within this many
    * milliseconds, whatever the revisit policy, such as a feed that would

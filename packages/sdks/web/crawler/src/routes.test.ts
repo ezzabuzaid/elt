@@ -25,7 +25,7 @@ const noRetries = got.extend({ retry: { limit: 0 } });
 // As the startup-credits app: a list of programs links the home page of each
 // company, and the crawl searches the home page one step for a program page.
 function programs(revisit: RevisitPolicy<unknown>) {
-  return new Origins(noRetries, null).crawler(
+  return new Origins(noRetries, null, globalThis).crawler(
     noRetries,
     [
       new PaginationReader({ strategy: 'all' }),
@@ -309,7 +309,7 @@ test('a feed names each item with its title, and a sitemap names its pages and i
   );
 
   const lines = await routes(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
       .crawl(
         [
@@ -458,7 +458,7 @@ test('a page that LinkReader does not admit in a later crawl gives an incomplete
   );
   // One admitted page for each crawl; every page is handed back, so a page
   // that LinkReader does not admit is still downloaded and read.
-  const crawler = new Origins(noRetries, null).crawler(
+  const crawler = new Origins(noRetries, null, globalThis).crawler(
     noRetries,
     [new LinkReader({ maxDepth: 2, maxPages: 1 })],
     new FixedRevisit({ every: 0 }),
@@ -501,7 +501,7 @@ test('a page that the crawl downloaded keeps its routes after the budget of Link
   );
 
   const lines = await routes(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(
         noRetries,
         [new LinkReader({ maxDepth: 2, maxPages: 2 })],

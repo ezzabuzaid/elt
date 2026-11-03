@@ -66,7 +66,7 @@ const http = got.extend({
     lookup('127.0.0.1', options, callback),
 });
 
-const crawler = new Origins(http, null).crawler(
+const crawler = new Origins(http, null, globalThis).crawler(
   http,
   [new PaginationReader({ strategy: 'all' })],
   new AdaptiveRevisit(),

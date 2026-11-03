@@ -122,7 +122,7 @@ test("a small site's program page comes back in the first run, before the large 
   );
 
   const pages = await run(
-    programs(new Origins(noRetries, null)).crawl(
+    programs(new Origins(noRetries, null, globalThis)).crawl(
       [`${list.origin}/programs`],
       null,
       {
@@ -163,9 +163,9 @@ test("the large site's other child sitemaps are read in later runs, each once, u
   let runs = 0;
   // Each run is a read of its own: its origins' records start from the last
   // read's, and each read spends a new expansion budget.
-  let origins = new Origins(noRetries, null);
+  let origins = new Origins(noRetries, null, globalThis);
   do {
-    origins = new Origins(noRetries, origins.snapshot());
+    origins = new Origins(noRetries, origins.snapshot(), globalThis);
     const crawl = programs(origins).crawl(
       [`${list.origin}/programs`],
       memento,
@@ -232,7 +232,7 @@ test("origins take turns: one starting site's many child sitemaps do not hold up
   // Starting origins are not budgeted, so the large site's index is read
   // whole in this run.
   await run(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
       .crawl(
         [
@@ -277,7 +277,7 @@ test('a second expanded site whose robots.txt names no sitemap gets its /sitemap
   );
 
   const pages = await run(
-    programs(new Origins(noRetries, null)).crawl(
+    programs(new Origins(noRetries, null, globalThis)).crawl(
       [`${list.origin}/programs`],
       null,
       {
@@ -312,7 +312,7 @@ test('a run that continues a crawl held back by the budget reads its list again 
     website(log, () => ({ '/programs': `<main>${rows}</main>` })),
   );
   // The list is due every hour, as the startup-credits app reads its lists.
-  const crawler = new Origins(noRetries, null).crawler(
+  const crawler = new Origins(noRetries, null, globalThis).crawler(
     noRetries,
     [
       new PaginationReader({ strategy: 'all' }),
@@ -368,7 +368,7 @@ test('a run that continues a crawl at once does not read its list again before t
       '/programs': `<main><a href="${microsoft.origin}/">Microsoft</a></main>`,
     })),
   );
-  const crawler = new Origins(noRetries, null).crawler(
+  const crawler = new Origins(noRetries, null, globalThis).crawler(
     noRetries,
     [
       new PaginationReader({ strategy: 'all' }),

@@ -6,6 +6,7 @@ import got, { type Got } from 'got';
 import { Keyv } from 'keyv';
 import { z } from 'zod';
 
+import type { PipelineClock } from '@workspace/elt';
 import {
   type OriginMemento,
   Origins,
@@ -49,11 +50,12 @@ export class WebClient implements AsyncDisposable {
     this.#saved = new Map(Object.entries(origins.snapshot()));
   }
 
-  /** Opens the cache in cachePath, creating its folder, and reads the records of the origins. */
+  /** Opens the cache in cachePath, creating its folder, and reads the records of the origins, which wait and read the time on clock. */
   static async open(
     cachePath: string,
     userAgent: string | undefined,
     signal: AbortSignal | undefined,
+    clock: PipelineClock,
   ) {
     await using resources = new AsyncDisposableStack();
     await mkdir(dirname(cachePath), { recursive: true, mode: 0o700 });
@@ -108,7 +110,7 @@ export class WebClient implements AsyncDisposable {
     }
     return new WebClient(
       http,
-      new Origins(http, stored),
+      new Origins(http, stored, clock),
       store,
       signal === undefined
         ? stop.signal

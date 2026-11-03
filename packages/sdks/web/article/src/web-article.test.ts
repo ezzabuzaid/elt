@@ -61,7 +61,7 @@ test('chosen websites and feeds compose with extraction without merging URL vari
         response.writeHead(404).end();
     }
   });
-  const crawler = new Origins(got, null).crawler(
+  const crawler = new Origins(got, null, globalThis).crawler(
     got,
     [new ListingReader(), new ArchiveReader(), new PaginationReader()],
     new AdaptiveRevisit(),

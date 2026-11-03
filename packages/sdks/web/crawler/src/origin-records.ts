@@ -1,6 +1,4 @@
-import { setTimeout } from 'node:timers/promises';
-
-import { Latch, untilAborted } from '@zukhruf/async';
+import { type Clock, Latch, delay, untilAborted } from '@zukhruf/async';
 import {
   type BeforeRedirectHook,
   type Got,
@@ -31,6 +29,9 @@ export type OriginMemento = z.infer<typeof recordSchema>;
 
 /** Every origin's record as plain data, by origin. */
 export type OriginsMemento = z.infer<typeof mementoSchema>;
+
+/** The time and the timers of a read: a host gives globalThis, a test a fake clock that it moves. */
+export type CrawlClock = Clock & { readonly Date: { now(): number } };
 
 /** An origin that could not give its robots.txt: its breaker is open until `until`. */
 export type Unreachable = { readonly until: number; readonly cause: unknown };
@@ -119,9 +120,11 @@ export class OriginRecords {
   // Got's retried statuses without the refusals: a refusal is the record's, not Got's.
   readonly #retried: readonly number[];
   readonly #origins: Map<string, Origin>;
+  readonly #clock: CrawlClock;
 
   /** A null memento knows no origin. */
-  constructor(http: Got, memento: unknown) {
+  constructor(http: Got, memento: unknown, clock: CrawlClock) {
+    this.#clock = clock;
     const agent = http.defaults.options.headers['user-agent'];
     this.#agent = typeof agent === 'string' ? agent : '*';
     this.#http = http;
@@ -197,20 +200,21 @@ export class OriginRecords {
   until(origin: string): number | null {
     const { opened, saved } = this.#record(origin);
     if (opened !== null) return opened;
-    return saved.blocked !== null && saved.blocked > Date.now()
+    return saved.blocked !== null && saved.blocked > this.#clock.Date.now()
       ? saved.blocked
       : null;
   }
 
   /** Whether a request to the origin would wait for nothing. */
   ready(origin: string) {
-    return this.#askable(this.#record(origin)) <= performance.now();
+    return this.#askable(this.#record(origin)) <= this.#clock.performance.now();
   }
 
   /** Waits until the origin can be asked again, and takes that moment for the next request. */
   async pace(origin: string, signal: AbortSignal | undefined) {
     const record = this.#record(origin);
     const until = this.#askable(record);
+    const { performance } = this.#clock;
     record.started = Math.max(until, performance.now());
     // A timer can fire up to a millisecond early by the high-resolution clock.
     for (
@@ -218,10 +222,7 @@ export class OriginRecords {
       wait > 0;
       wait = until - performance.now()
     )
-      await setTimeout(wait, undefined, { signal }).catch((error: unknown) => {
-        signal?.throwIfAborted();
-        throw error;
-      });
+      await delay(wait, { clock: this.#clock, signal });
   }
 
   /** Whether the origin can download one more document for one-step expansions in this read. */
@@ -281,7 +282,7 @@ export class OriginRecords {
       const { robots } = record;
       if (
         robots instanceof Read &&
-        Date.now() < robots.fetched + robotsLifetime &&
+        this.#clock.Date.now() < robots.fetched + robotsLifetime &&
         (!answered || robots instanceof Downloaded)
       )
         return robots;
@@ -356,7 +357,7 @@ export class OriginRecords {
         : 0;
     return (
       record.started +
-      (crawlDelay > 0 ? crawlDelay * 1000 : delay) +
+      (crawlDelay > 0 ? crawlDelay * 1000 : defaultDelay) +
       record.saved.slowdown
     );
   }
@@ -401,7 +402,7 @@ export class OriginRecords {
         return { until: this.#open(origin, null), cause };
     }
     const rules = new RobotsRules(url, body, this.#agent);
-    const fetched = Date.now();
+    const fetched = this.#clock.Date.now();
     const robots =
       answer === null
         ? new Read(rules, fetched)
@@ -461,7 +462,7 @@ export class OriginRecords {
   }
 
   #open(origin: string, retryAfter: string | null) {
-    const until = blockedUntil(retryAfter);
+    const until = blockedUntil(retryAfter, this.#clock.Date.now());
     const record = this.#record(origin);
     record.saved = { ...record.saved, blocked: until };
     record.opened = until;
@@ -482,10 +483,9 @@ function target({ url }: { readonly url: URL | undefined }) {
   return url;
 }
 
-// When a block ends, by its Retry-After in seconds or as an HTTP-date (RFC
-// 9110 §10.2.3), at most a day later; an hour later without one.
-function blockedUntil(retryAfter: string | null) {
-  const now = Date.now();
+// When a block that opens at now ends, by its Retry-After in seconds or as
+// an HTTP-date (RFC 9110 §10.2.3), at most a day later; an hour later without one.
+function blockedUntil(retryAfter: string | null, now: number) {
   if (retryAfter === null) return now + unannouncedBlock;
   const value = retryAfter.trim();
   const until = /^\d+$/.test(value)
@@ -501,7 +501,7 @@ function blockedUntil(retryAfter: string | null) {
 // waits 5 seconds and Heritrix at least 3; one second keeps one origin at
 // one request a second, the rate a host that names no Crawl-delay is assumed
 // to bear, while a crawl of many origins still moves.
-const delay = 1000;
+const defaultDelay = 1000;
 
 // The longest Crawl-delay the crawl honors, in seconds: a longer one waits 60
 // seconds, so the crawl never leaves an origin's URLs out. Nutch skips an

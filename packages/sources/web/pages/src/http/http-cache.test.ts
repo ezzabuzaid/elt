@@ -60,7 +60,7 @@ import { WebClient } from ${JSON.stringify(new URL('./web-http.ts', import.meta.
 const [origin, cachePath] = process.argv.slice(1);
 const rejected = [];
 {
-  await using client = await WebClient.open(cachePath, 'elt-test/1.0', undefined);
+  await using client = await WebClient.open(cachePath, 'elt-test/1.0', undefined, globalThis);
   assert.equal(client.signal.aborted, false);
   await client.http(origin + '/first', { signal: client.signal });
   await client.http(origin + '/second', { signal: client.signal });

@@ -24,7 +24,7 @@ function programs(link: {
   readonly maxDepth: number;
   readonly maxPages: number;
 }) {
-  return new Origins(noRetries, null).crawler(
+  return new Origins(noRetries, null, globalThis).crawler(
     noRetries,
     [
       new PaginationReader({ strategy: 'all' }),
@@ -242,7 +242,7 @@ test('a list that an expansion finds hands back only the pages that match, and e
   );
 
   const pages = await handed(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(
         noRetries,
         [

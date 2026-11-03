@@ -55,7 +55,7 @@ if (address === null || typeof address === 'string') throw new Error('No port');
 const origin = `http://127.0.0.1:${address.port}`;
 
 const http = got.extend({ timeout: { request: 30_000 } });
-const crawler = new Origins(http, null).crawler(
+const crawler = new Origins(http, null, globalThis).crawler(
   http,
   [new ListingReader()],
   new CompositeRevisit(

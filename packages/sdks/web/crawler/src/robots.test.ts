@@ -35,7 +35,7 @@ function site(requests: string[], robots: () => Response) {
 
 function crawler(headers: Record<string, string> = {}) {
   const http = got.extend({ retry: { limit: 0 }, headers });
-  return new Origins(http, null).crawler(
+  return new Origins(http, null, globalThis).crawler(
     http,
     [new ListingReader()],
     new AdaptiveRevisit(),
@@ -116,14 +116,14 @@ test('a read whose rules an earlier read left downloads robots.txt once for its 
   );
   const http = got.extend({ retry: { limit: 0 } });
   // An earlier read crawled the site, so its memento holds the rules.
-  const earlier = new Origins(http, null);
+  const earlier = new Origins(http, null, globalThis);
   for await (const _ of earlier
     .crawler(http, [new ListingReader()], new AdaptiveRevisit())
     .crawl(['https://site.test/'], null, options()));
   requests.length = 0;
 
   const result = await crawled(
-    new Origins(http, earlier.snapshot())
+    new Origins(http, earlier.snapshot(), globalThis)
       .crawler(http, [new ListingReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/'], null, options()),
   );
@@ -149,7 +149,7 @@ test('two crawls of one read on one website read its one robots.txt download', a
     ),
   );
   const http = got.extend({ retry: { limit: 0 } });
-  const origins = new Origins(http, null);
+  const origins = new Origins(http, null, globalThis);
   const crawl = (start: string) =>
     crawled(
       origins
@@ -248,7 +248,7 @@ test('a link that robots.txt disallows spends no LinkReader budget', async () =>
 
   // No page links /nothing, so a linked page downloads only when LinkReader admits it.
   await crawled(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(
         noRetries,
         [new LinkReader({ maxDepth: 1, maxPages: 1 })],
@@ -291,7 +291,7 @@ test('a start that redirects to another origin spends no LinkReader budget on a 
 
   // No page links /nothing, so a linked page downloads only when LinkReader admits it.
   await crawled(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(
         noRetries,
         [new LinkReader({ maxDepth: 1, maxPages: 1 })],
@@ -324,7 +324,7 @@ test('a link that the crawl does not select is dropped, not held, on a website w
   );
 
   const result = await crawled(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(
         noRetries,
         [new PaginationReader({ strategy: 'all' })],
@@ -366,7 +366,7 @@ test('a link that the crawl does not select asks its website nothing, so a websi
   );
 
   const result = await crawled(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(
         noRetries,
         [new PaginationReader({ strategy: 'all' })],

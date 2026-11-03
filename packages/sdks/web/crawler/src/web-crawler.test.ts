@@ -93,7 +93,7 @@ test('crawls links itself and preserves URL identity, provenance and Got respons
   });
   const pages = (
     await results(
-      new Origins(client, null)
+      new Origins(client, null, globalThis)
         .crawler(
           client,
           [new LinkReader({ maxDepth: 3, maxPages: 100 })],
@@ -159,7 +159,7 @@ test('each found URL is requested once for each role it adds, and a redirect is 
   );
   const pages = (
     await results(
-      new Origins(got, null)
+      new Origins(got, null, globalThis)
         .crawler(
           got,
           [new LinkReader({ maxDepth: 3, maxPages: 100 })],
@@ -203,7 +203,7 @@ test('failures are handed out with their URL while independent pages continue, a
       return HttpResponse.html('<p>Good</p>');
     }),
   );
-  const crawler = new Origins(noRetries, null).crawler(
+  const crawler = new Origins(noRetries, null, globalThis).crawler(
     noRetries,
     [new LinkReader({ maxDepth: 3, maxPages: 100 })],
     new AdaptiveRevisit(),
@@ -246,7 +246,7 @@ test('a failed starting URL is handed out as a failure', async () => {
     ),
   );
   const entries = await results(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(
         noRetries,
         [new LinkReader({ maxDepth: 3, maxPages: 100 })],
@@ -276,7 +276,7 @@ test('consumer backpressure and early break stop fetching, and crawls remain iso
       );
     }),
   );
-  const crawler = new Origins(got, null).crawler(
+  const crawler = new Origins(got, null, globalThis).crawler(
     got,
     [new LinkReader({ maxDepth: 3, maxPages: 100 })],
     new AdaptiveRevisit(),
@@ -330,7 +330,7 @@ test(
     );
     const stop = new AbortController();
     const reason = new Error('stop this crawl');
-    const crawler = new Origins(got, null).crawler(
+    const crawler = new Origins(got, null, globalThis).crawler(
       got,
       [new LinkReader({ maxDepth: 3, maxPages: 100 })],
       new AdaptiveRevisit(),
@@ -361,10 +361,15 @@ test(
 
 test('validates readers and starting URLs and accepts an empty crawl', async () => {
   assert.throws(
-    () => new Origins(got, null).crawler(got, [], new AdaptiveRevisit()),
+    () =>
+      new Origins(got, null, globalThis).crawler(
+        got,
+        [],
+        new AdaptiveRevisit(),
+      ),
     TypeError,
   );
-  const crawler = new Origins(got, null).crawler(
+  const crawler = new Origins(got, null, globalThis).crawler(
     got,
     [new LinkReader({ maxDepth: 0, maxPages: 0 })],
     new AdaptiveRevisit(),
@@ -397,7 +402,7 @@ test('include hands back only matching pages and never requests non-matching pag
   );
   const pages = (
     await results(
-      new Origins(got, null)
+      new Origins(got, null, globalThis)
         .crawler(
           got,
           [new LinkReader({ maxDepth: 1, maxPages: 1 })],
@@ -446,7 +451,7 @@ test('Got hooks see options.context.page only for handed-back pages that no read
   });
   const pages = (
     await results(
-      new Origins(client, null)
+      new Origins(client, null, globalThis)
         .crawler(
           client,
           [new ListingReader(), new LinkReader({ maxDepth: 1, maxPages: 100 })],
@@ -489,7 +494,7 @@ test('a snapshot resumes the crawl without repeating finished work and hands out
       return HttpResponse.html('<p>Page</p>');
     }),
   );
-  const crawler = new Origins(got, null).crawler(
+  const crawler = new Origins(got, null, globalThis).crawler(
     got,
     [new LinkReader({ maxDepth: 3, maxPages: 100 })],
     new AdaptiveRevisit(),
@@ -536,7 +541,7 @@ test('a failure is marked as a page only for a page include matches, not for a s
     }),
   );
   const entries = await results(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(
         noRetries,
         [new ListingReader(), new LinkReader({ maxDepth: 1, maxPages: 100 })],
@@ -596,7 +601,7 @@ test('every downloaded URL that is not handed back as a page or failure is hande
   const requests: string[] = [];
   using server = progressSite(requests);
   const entries = await Array.fromAsync(
-    progressCrawler(new Origins(noRetries, null)).crawl(
+    progressCrawler(new Origins(noRetries, null, globalThis)).crawl(
       ['https://site.test/'],
       null,
       {
@@ -632,7 +637,7 @@ test('a snapshot taken at a progress entry resumes without downloading the docum
     signal: AbortSignal.timeout(120_000),
     include: [new URLPattern({ pathname: '/keep/*' })],
   };
-  const origins = new Origins(noRetries, null);
+  const origins = new Origins(noRetries, null, globalThis);
   const first = progressCrawler(origins).crawl(
     ['https://site.test/'],
     null,
@@ -645,11 +650,9 @@ test('a snapshot taken at a progress entry resumes without downloading the docum
   requests.length = 0;
   // The resumed crawl is a read of its own, whose origins' records start from the last read's.
   const resumed = await results(
-    progressCrawler(new Origins(noRetries, origins.snapshot())).crawl(
-      ['https://site.test/'],
-      snapshot,
-      options,
-    ),
+    progressCrawler(
+      new Origins(noRetries, origins.snapshot(), globalThis),
+    ).crawl(['https://site.test/'], snapshot, options),
   );
   // The starting page is not due, so it is not read again. The progress
   // entry's own URL is unfinished until the next entry is requested, so it is
@@ -700,7 +703,7 @@ test('a page labeled Latin-1 in its Content-Type is handed back, and every reade
     }),
   );
   const entries = await results(
-    new Origins(got, null)
+    new Origins(got, null, globalThis)
       .crawler(
         got,
         [
@@ -748,7 +751,7 @@ test('a page labeled only by its <meta charset> is read by that charset', async 
     }),
   );
   await results(
-    new Origins(got, null)
+    new Origins(got, null, globalThis)
       .crawler(
         got,
         [new LinkReader({ maxDepth: 2, maxPages: 10 })],
@@ -782,7 +785,7 @@ test('an unlabeled page is read as UTF-8, and one that is not valid UTF-8 is sti
     }),
   );
   const entries = await results(
-    new Origins(got, null)
+    new Origins(got, null, globalThis)
       .crawler(
         got,
         [new LinkReader({ maxDepth: 2, maxPages: 10 })],
@@ -825,7 +828,7 @@ test('a reader that throws on a response does not stop the readers after it or d
     }),
   );
   const entries = await results(
-    new Origins(got, null)
+    new Origins(got, null, globalThis)
       .crawler(
         got,
         [new BrokenReader(), new LinkReader({ maxDepth: 2, maxPages: 10 })],
@@ -873,7 +876,7 @@ test('a declared listing that one reader cannot read keeps what the other reader
     }),
   );
   const entries = await results(
-    new Origins(got, null)
+    new Origins(got, null, globalThis)
       .crawler(
         got,
         [new ListingReader(), new LinkReader({ maxDepth: 2, maxPages: 10 })],

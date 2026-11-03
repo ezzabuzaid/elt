@@ -1,6 +1,6 @@
 import { hash } from 'node:crypto';
-import { setTimeout } from 'node:timers/promises';
 
+import { delay } from '@zukhruf/async';
 import { z } from 'zod';
 
 import {
@@ -8,6 +8,7 @@ import {
   type CopyConfiguration,
   type KeptGroup,
   type Partition,
+  type PipelineClock,
   Source,
   type SourceMessage,
   type SourceReadOptions,
@@ -276,6 +277,7 @@ export class WebSource extends Source<WebRead> {
     streams: readonly Stream[],
     signal: AbortSignal | undefined,
     states: { get(stream: string): unknown },
+    clock: PipelineClock,
   ) {
     const crawled = new Map(
       streams.flatMap(({ name }) => {
@@ -300,7 +302,8 @@ export class WebSource extends Source<WebRead> {
     }
     return new WebRead(
       new WebScan(crawled, routed, undelivered),
-      await WebClient.open(this.#cachePath, this.#userAgent, signal),
+      await WebClient.open(this.#cachePath, this.#userAgent, signal, clock),
+      clock,
     );
   }
   // A routes stream takes what the crawls of its web stream find in the same
@@ -347,6 +350,7 @@ export class WebSource extends Source<WebRead> {
   protected async *observe({
     streams,
     signal,
+    clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     yield streams;
     // A routes stream is due with its web stream.
@@ -357,7 +361,7 @@ export class WebSource extends Source<WebRead> {
         : Math.min(...[...due.values()].map((at) => at ?? Infinity));
     };
     for (;;) {
-      const due = streams.filter((stream) => dueAt(stream) <= Date.now());
+      const due = streams.filter((stream) => dueAt(stream) <= clock.Date.now());
       if (due.length === 0) {
         const next = Math.min(...streams.map(dueAt));
         const extracted = new AbortController();
@@ -365,13 +369,10 @@ export class WebSource extends Source<WebRead> {
           signal: extracted.signal,
         });
         try {
-          await setTimeout(
-            Math.min(next - Date.now(), 2 ** 31 - 1),
-            undefined,
-            {
-              signal: AbortSignal.any([signal, extracted.signal]),
-            },
-          );
+          await delay(Math.min(next - clock.Date.now(), 2 ** 31 - 1), {
+            clock,
+            signal: AbortSignal.any([signal, extracted.signal]),
+          });
         } catch (error) {
           if (signal.aborted || !extracted.signal.aborted) throw error;
         } finally {
@@ -389,7 +390,7 @@ export class WebSource extends Source<WebRead> {
     configuration: CopyConfiguration,
     state: unknown,
     partition: Partition | null,
-    { scan, client }: WebRead,
+    { scan, client, clock }: WebRead,
     signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const inputUrl = z.string().parse(partition?.inputUrl);
@@ -490,15 +491,15 @@ export class WebSource extends Source<WebRead> {
       // How the crawl ended, now.
       const end = (complete: boolean): CrawlEnd => ({
         complete,
-        at: new Date().toISOString(),
+        at: new Date(clock.Date.now()).toISOString(),
         failures: crawl.failures(),
       });
       const errors: Error[] = [];
       // Pages that are not due: the scan keeps their records unread.
       const kept: KeptGroup[] = [];
-      let savedAt = performance.now();
+      let savedAt = clock.performance.now();
       const checkpoint = () => {
-        savedAt = performance.now();
+        savedAt = clock.performance.now();
         return { diff, crawl: crawl.snapshot(), outbox: routes };
       };
       try {
@@ -512,7 +513,7 @@ export class WebSource extends Source<WebRead> {
               routes.push({ seq: next++, ...group });
           if ('progress' in entry) {
             // Listings and archives hand out no pages, so their progress is saved on an interval.
-            if (performance.now() - savedAt >= 1_000) {
+            if (clock.performance.now() - savedAt >= 1_000) {
               yield {
                 type: 'STATE',
                 stream: configuration.stream.name,
@@ -533,11 +534,11 @@ export class WebSource extends Source<WebRead> {
             continue;
           }
           try {
-            const reading = performance.now();
+            const reading = clock.performance.now();
             const output = await run
               .read(entry.response, requestSignal)
               .catch(pageFailure);
-            const read = performance.now() - reading;
+            const read = clock.performance.now() - reading;
             let extracted: { records: number; duration: number } | null = null;
             for await (const message of diffGroupedSnapshot(
               configuration,
@@ -558,11 +559,11 @@ export class WebSource extends Source<WebRead> {
                           ]),
                         ),
                   async *records() {
-                    const extracting = performance.now();
+                    const extracting = clock.performance.now();
                     const records = await output.records().catch(pageFailure);
                     extracted = {
                       records: records.length,
-                      duration: performance.now() - extracting,
+                      duration: clock.performance.now() - extracting,
                     };
                     yield* validateRecords(
                       configuration.stream,

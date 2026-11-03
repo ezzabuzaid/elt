@@ -64,7 +64,7 @@ const http = got.extend({ timeout: { request: 30_000 } });
 let memento: unknown = null;
 let records: unknown = null;
 for (const name of ['first read', 'second read']) {
-  const origins = new Origins(http, records);
+  const origins = new Origins(http, records, globalThis);
   const crawl = origins
     .crawler(http, [new ListingReader()], new AdaptiveRevisit())
     .crawl([`${origin}/feed.json`], memento, {

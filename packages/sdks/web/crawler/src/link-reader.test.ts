@@ -62,7 +62,7 @@ test('depth and page limits bound which pages contribute links, while every foun
   ] satisfies [{ maxDepth: number; maxPages: number }, string[]][]) {
     requests.length = 0;
     const pages = await results(
-      new Origins(got, null)
+      new Origins(got, null, globalThis)
         .crawler(got, [new LinkReader(limits)], new AdaptiveRevisit())
         .crawl(['https://site.test/'], null, {
           signal: AbortSignal.timeout(120_000),
@@ -106,7 +106,7 @@ test('Markdown pages contribute their links on the starting origin', async () =>
     }),
   );
   const pages = await results(
-    new Origins(got, null)
+    new Origins(got, null, globalThis)
       .crawler(
         got,
         [new LinkReader({ maxDepth: 2, maxPages: 100 })],
@@ -138,7 +138,7 @@ test('feed-only starts do not turn their articles into new link roots', async ()
         .end('<a href="/unrelated">More</a>');
   });
   const pages = await results(
-    new Origins(got, null)
+    new Origins(got, null, globalThis)
       .crawler(
         got,
         [
@@ -176,7 +176,7 @@ test('archive pages contribute their links, and declarations with non-HTTP URLs 
     else response.writeHead(404).end();
   });
   const pages = await results(
-    new Origins(noRetries, null)
+    new Origins(noRetries, null, globalThis)
       .crawler(
         noRetries,
         [
