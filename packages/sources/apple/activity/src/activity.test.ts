@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { crc32 } from 'node:zlib';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -1536,7 +1537,7 @@ test('Activity reads this Mac’s activity into SQLite', async (t) => {
   );
 });
 
-test('an Activity watch keeps every stream current while its stores hold still', async () => {
+test('an Activity watch keeps every stream current while its stores hold still', async (t) => {
   await using dir = await new TemporaryFiles().directory('activity-current-');
   const location = await activityFixture(dir.path);
   const source = new AppleActivitySource({ ...location, pollIntervalMs: 50 });
@@ -1544,8 +1545,10 @@ test('an Activity watch keeps every stream current while its stores hold still',
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
+  const clock = createClock();
+  const controller = new AbortController();
   const watching = new Pipeline({
-    clock: globalThis,
+    clock,
     history,
     connections: [
       new Connection({
@@ -1560,7 +1563,10 @@ test('an Activity watch keeps every stream current while its stores hold still',
         ),
       }),
     ],
-  }).watch({ signal: AbortSignal.timeout(30_000) });
+  }).watch({
+    // A check that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  });
   try {
     await watching.next();
     using out = new DatabaseSync(data, { readOnly: true });
@@ -1570,7 +1576,15 @@ test('an Activity watch keeps every stream current while its stores hold still',
     const [pass] = out
       .prepare('SELECT started_at, completed_at FROM sync_attempts')
       .all();
+    // A pass that a check starts would come here.
+    const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
+    // The check is due once the watch waits for its next poll.
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      interval: 1,
+      timeout: 10_000,
+    });
+    await clock.tickAsync(50);
     await timebox(
       () => {
         const rows = status.all();
@@ -1597,7 +1611,10 @@ test('an Activity watch keeps every stream current while its stores hold still',
       assert.equal(row.status, 'succeeded', String(row.stream));
       assert.equal(row.last_successful_sync_at, pass?.completed_at);
     }
+    controller.abort();
+    assert.deepEqual(await after, { done: true, value: undefined });
   } finally {
+    controller.abort();
     await watching.return(undefined);
   }
 });

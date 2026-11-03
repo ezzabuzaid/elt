@@ -946,7 +946,7 @@ test('this Mac’s Notification Center loads every notification and app it holds
   );
 });
 
-test('a Notification Center watch keeps every stream current while usernoted changes nothing', async () => {
+test('a Notification Center watch keeps every stream current while usernoted changes nothing', async (t) => {
   await using dir = await new TemporaryFiles().directory(
     'elt-notes-center-current-',
   );
@@ -957,8 +957,10 @@ test('a Notification Center watch keeps every stream current while usernoted cha
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
+  const clock = createClock();
+  const controller = new AbortController();
   const watching = new Pipeline({
-    clock: globalThis,
+    clock,
     history,
     connections: [
       new Connection({
@@ -973,7 +975,10 @@ test('a Notification Center watch keeps every stream current while usernoted cha
         ),
       }),
     ],
-  }).watch({ signal: AbortSignal.timeout(30_000) });
+  }).watch({
+    // A check that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  });
   try {
     await watching.next();
     using out = new DatabaseSync(data, { readOnly: true });
@@ -983,7 +988,15 @@ test('a Notification Center watch keeps every stream current while usernoted cha
     const [pass] = out
       .prepare('SELECT started_at, completed_at FROM sync_attempts')
       .all();
+    // A pass that a check starts would come here.
+    const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
+    // The check is due once the watch waits for its next poll.
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      interval: 1,
+      timeout: 10_000,
+    });
+    await clock.tickAsync(1000);
     await timebox(
       () => {
         const rows = status.all();
@@ -1010,7 +1023,10 @@ test('a Notification Center watch keeps every stream current while usernoted cha
       assert.equal(row.status, 'succeeded', String(row.stream));
       assert.equal(row.last_successful_sync_at, pass?.completed_at);
     }
+    controller.abort();
+    assert.deepEqual(await after, { done: true, value: undefined });
   } finally {
+    controller.abort();
     await watching.return(undefined);
   }
 });

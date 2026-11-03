@@ -12,10 +12,17 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
+import {
+  Connection,
+  Copy,
+  Pipeline,
+  type PipelineClock,
+  PipelineError,
+} from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
@@ -260,13 +267,18 @@ async function writeSidebar(
   return file;
 }
 
-async function arcImport(home: string, directory: string, scope?: ImportScope) {
+async function arcImport(
+  home: string,
+  directory: string,
+  clock: PipelineClock,
+  scope?: ImportScope,
+) {
   const source = new ArcDesktopSource({ home, scope });
   const out = join(directory, 'out.sqlite');
   const destination = new SQLiteDestination({ path: out });
   const { streams } = await source.discover();
   const pipeline = new Pipeline({
-    clock: globalThis,
+    clock,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -310,7 +322,11 @@ const tree =
 test('a denied or missing sidebar fails every stream as a config failure and keeps the loaded rows', async () => {
   await using dir = await new TemporaryFiles().directory('arc-missing-');
   const file = await writeSidebar(dir.path, sidebar());
-  const { source, pipeline, read } = await arcImport(dir.path, dir.path);
+  const { source, pipeline, read } = await arcImport(
+    dir.path,
+    dir.path,
+    globalThis,
+  );
   await pipeline.run();
 
   for (const take of [() => chmod(file, 0o000), () => rm(file)]) {
@@ -334,7 +350,11 @@ test('a denied or missing sidebar fails every stream as a config failure and kee
 test('a malformed sidebar fails with what is wrong and deletes nothing', async () => {
   await using dir = await new TemporaryFiles().directory('arc-format-');
   const file = await writeSidebar(dir.path, sidebar());
-  const { source, pipeline, read } = await arcImport(dir.path, dir.path);
+  const { source, pipeline, read } = await arcImport(
+    dir.path,
+    dir.path,
+    globalThis,
+  );
   await pipeline.run();
   const unknownKind = sidebar();
   unknownKind.items.push(item('easel-1', 'home-unpinned', { easel: {} }));
@@ -366,7 +386,11 @@ test('a malformed sidebar fails with what is wrong and deletes nothing', async (
 test('an Arc import loads the spaces and every item with its place in the tree', async () => {
   await using dir = await new TemporaryFiles().directory('arc-load-');
   await writeSidebar(dir.path, sidebar());
-  const { read, source, written } = await arcImport(dir.path, dir.path);
+  const { read, source, written } = await arcImport(
+    dir.path,
+    dir.path,
+    globalThis,
+  );
 
   assert.equal(source.identity, 'arc-desktop');
   assert.deepEqual(await written(), {
@@ -531,7 +555,7 @@ test('an Arc import loads the spaces and every item with its place in the tree',
 test('a rerun writes nothing, and edits, moves and removals reach the rows', async () => {
   await using dir = await new TemporaryFiles().directory('arc-edit-');
   await writeSidebar(dir.path, sidebar());
-  const { read, written } = await arcImport(dir.path, dir.path);
+  const { read, written } = await arcImport(dir.path, dir.path, globalThis);
   await written();
 
   const unchanged = await written();
@@ -594,9 +618,14 @@ test('a rerun writes nothing, and edits, moves and removals reach the rows', asy
 test('an import of one profile holds its spaces, their items and its favorites only', async () => {
   await using dir = await new TemporaryFiles().directory('arc-scope-');
   await writeSidebar(dir.path, sidebar());
-  const { read, source, written } = await arcImport(dir.path, dir.path, {
-    collectionIds: ['Profile 2'],
-  });
+  const { read, source, written } = await arcImport(
+    dir.path,
+    dir.path,
+    globalThis,
+    {
+      collectionIds: ['Profile 2'],
+    },
+  );
 
   await written();
 
@@ -614,7 +643,11 @@ test('an import of one profile holds its spaces, their items and its favorites o
 test('a watch loads each write of the sidebar, fails as config when it goes away, and stops when cancelled', async () => {
   await using dir = await new TemporaryFiles().directory('arc-watch-');
   const file = await writeSidebar(dir.path, sidebar());
-  const { source, pipeline, read } = await arcImport(dir.path, dir.path);
+  const { source, pipeline, read } = await arcImport(
+    dir.path,
+    dir.path,
+    globalThis,
+  );
   const renamed = sidebar();
   const space = renamed.spaces[1];
   assert.ok(space);
@@ -666,15 +699,29 @@ test('a watch loads each write of the sidebar, fails as config when it goes away
   assert.equal((await stopped.next()).done, true);
 });
 
-test('a watch over a sidebar that holds still runs no pass and records it current as of its last write', async () => {
+test('a watch over a sidebar that holds still runs no pass and records it current as of its last write', async (t) => {
   await using dir = await new TemporaryFiles().directory('arc-current-');
   const file = await writeSidebar(dir.path, sidebar());
   const lastWrite = new Date('2026-01-01T17:35:02.253Z');
   await utimes(file, lastWrite, lastWrite);
-  const { pipeline, read } = await arcImport(dir.path, dir.path);
-  const watching = pipeline.watch({ signal: AbortSignal.timeout(30_000) });
+  // The pipeline's clock reads after the sidebar's last write.
+  const clock = createClock(Date.parse('2026-10-22T00:00:00.000Z'));
+  const { pipeline, read } = await arcImport(dir.path, dir.path, clock);
+  const controller = new AbortController();
+  const watching = pipeline.watch({
+    // A check that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  });
   try {
     await watching.next();
+    // A pass that a check starts would come here.
+    const after = watching.next();
+    // The check is due once the watch waits for its next poll.
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      interval: 1,
+      timeout: 10_000,
+    });
+    await clock.tickAsync(1000);
 
     // The watch's next check finds the file unchanged and records each
     // stream current as of the file's last write, with no pass.
@@ -703,7 +750,10 @@ test('a watch over a sidebar that holds still runs no pass and records it curren
       ],
     );
     assert.deepEqual(read('select count(*) n from sync_attempts'), [{ n: 1 }]);
+    controller.abort();
+    assert.deepEqual(await after, { done: true, value: undefined });
   } finally {
+    controller.abort();
     await watching.return(undefined);
   }
 });
@@ -720,7 +770,7 @@ test('this Mac’s Arc sidebar loads read-only through the real pipeline', async
     return t.skip('Arc’s sidebar is not on this Mac');
   }
   await using dir = await new TemporaryFiles().directory('arc-live-');
-  const { read, written } = await arcImport(homedir(), dir.path);
+  const { read, written } = await arcImport(homedir(), dir.path, globalThis);
 
   const first = await written();
   const again = await written();

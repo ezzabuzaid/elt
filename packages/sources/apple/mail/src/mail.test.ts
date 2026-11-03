@@ -19,6 +19,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
@@ -2838,7 +2839,7 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
     ]);
 });
 
-test('a Mail watch makes no pass while Mail and the Accounts store hold still, and keeps every stream current only as of the last write of the index', async () => {
+test('a Mail watch makes no pass while Mail and the Accounts store hold still, and keeps every stream current only as of the last write of the index', async (t) => {
   await using dir = await new TemporaryFiles().directory('elt-mail-current-');
   const store = await fixture(join(dir.path, 'Mail'));
   // Mail holds its index, and so its WAL, open the whole time; a first reader
@@ -2862,8 +2863,11 @@ test('a Mail watch makes no pass while Mail and the Accounts store hold still, a
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
+  // The pipeline's clock reads after Mail's last write.
+  const clock = createClock(Date.parse('2026-10-22T00:00:00.000Z'));
+  const controller = new AbortController();
   const watching = new Pipeline({
-    clock: globalThis,
+    clock,
     history,
     connections: [
       new Connection({
@@ -2878,10 +2882,21 @@ test('a Mail watch makes no pass while Mail and the Accounts store hold still, a
         ),
       }),
     ],
-  }).watch({ signal: AbortSignal.timeout(30_000) });
+  }).watch({
+    // A check that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  });
   try {
     await watching.next();
     using out = new DatabaseSync(data, { readOnly: true });
+    // A pass that a check starts would come here.
+    const after = watching.next();
+    // The check is due once the watch waits for its next poll.
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      interval: 1,
+      timeout: 10_000,
+    });
+    await clock.tickAsync(1000);
     // Waits for a check the watch recorded, as its sync history keeps it.
     await timebox(
       () => {
@@ -2920,7 +2935,10 @@ test('a Mail watch makes no pass while Mail and the Accounts store hold still, a
         String(row.stream),
       );
     }
+    controller.abort();
+    assert.deepEqual(await after, { done: true, value: undefined });
   } finally {
+    controller.abort();
     await watching.return(undefined);
   }
 });

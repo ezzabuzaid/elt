@@ -864,7 +864,7 @@ test('Notes declares the local Apple store as the coverage of every stream', asy
     );
 });
 
-test('a Notes watch keeps every stream current while Notes runs and the note store holds still', async () => {
+test('a Notes watch keeps every stream current while Notes runs and the note store holds still', async (t) => {
   // The watch launches Notes hidden, and a running Notes keeps its store
   // live, so the source says nothing earlier than each check.
   await using dir = await new TemporaryFiles().directory('elt-notes-current-');
@@ -874,8 +874,10 @@ test('a Notes watch keeps every stream current while Notes runs and the note sto
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
+  const clock = createClock();
+  const controller = new AbortController();
   const watching = new Pipeline({
-    clock: globalThis,
+    clock,
     history,
     connections: [
       new Connection({
@@ -890,7 +892,10 @@ test('a Notes watch keeps every stream current while Notes runs and the note sto
         ),
       }),
     ],
-  }).watch({ signal: AbortSignal.timeout(30_000) });
+  }).watch({
+    // A check that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  });
   try {
     await watching.next();
     using out = new DatabaseSync(data, { readOnly: true });
@@ -900,7 +905,15 @@ test('a Notes watch keeps every stream current while Notes runs and the note sto
     const [pass] = out
       .prepare('SELECT started_at, completed_at FROM sync_attempts')
       .all();
+    // A pass that a check starts would come here.
+    const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
+    // The check is due once the watch waits for its next poll.
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      interval: 1,
+      timeout: 10_000,
+    });
+    await clock.tickAsync(1000);
     await timebox(
       () => {
         const rows = status.all();
@@ -927,7 +940,10 @@ test('a Notes watch keeps every stream current while Notes runs and the note sto
       assert.equal(row.status, 'succeeded', String(row.stream));
       assert.equal(row.last_successful_sync_at, pass?.completed_at);
     }
+    controller.abort();
+    assert.deepEqual(await after, { done: true, value: undefined });
   } finally {
+    controller.abort();
     await watching.return(undefined);
   }
 });

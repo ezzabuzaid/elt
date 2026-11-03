@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -1624,7 +1625,7 @@ test('a Wallet import on a Mac that has never fetched its passes from iCloud is 
   assert.deepEqual(new Set(current), new Set([pass?.started_at]));
 });
 
-test('a Wallet watch keeps every stream current while passd changes nothing', async () => {
+test('a Wallet watch keeps every stream current while passd changes nothing', async (t) => {
   await using dir = await new TemporaryFiles().directory('elt-wallet-current-');
   {
     using wallet = new ScratchWallet(dir.path);
@@ -1635,8 +1636,10 @@ test('a Wallet watch keeps every stream current while passd changes nothing', as
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
+  const clock = createClock();
+  const controller = new AbortController();
   const watching = new Pipeline({
-    clock: globalThis,
+    clock,
     history,
     connections: [
       new Connection({
@@ -1651,7 +1654,10 @@ test('a Wallet watch keeps every stream current while passd changes nothing', as
         ),
       }),
     ],
-  }).watch({ signal: AbortSignal.timeout(30_000) });
+  }).watch({
+    // A check that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  });
   try {
     await watching.next();
     using out = new DatabaseSync(data, { readOnly: true });
@@ -1661,7 +1667,15 @@ test('a Wallet watch keeps every stream current while passd changes nothing', as
     const [pass] = out
       .prepare('SELECT started_at, completed_at FROM sync_attempts')
       .all();
+    // A pass that a check starts would come here.
+    const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
+    // The check is due once the watch waits for its next poll.
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      interval: 1,
+      timeout: 10_000,
+    });
+    await clock.tickAsync(1000);
     await timebox(
       () => {
         const rows = status.all();
@@ -1688,7 +1702,10 @@ test('a Wallet watch keeps every stream current while passd changes nothing', as
       assert.equal(row.status, 'succeeded', String(row.stream));
       assert.equal(row.last_successful_sync_at, pass?.completed_at);
     }
+    controller.abort();
+    assert.deepEqual(await after, { done: true, value: undefined });
   } finally {
+    controller.abort();
     await watching.return(undefined);
   }
 });

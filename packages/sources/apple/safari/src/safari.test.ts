@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { deflateSync } from 'node:zlib';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -2847,8 +2848,11 @@ test('while Safari is closed, a Safari watch makes no pass while its stores hold
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
+  // The pipeline's clock reads after Safari's last write.
+  const clock = createClock(Date.parse('2026-10-22T00:00:00.000Z'));
+  const controller = new AbortController();
   const watching = new Pipeline({
-    clock: globalThis,
+    clock,
     history,
     connections: [
       new Connection({
@@ -2863,10 +2867,21 @@ test('while Safari is closed, a Safari watch makes no pass while its stores hold
         ),
       }),
     ],
-  }).watch({ signal: AbortSignal.timeout(30_000) });
+  }).watch({
+    // A check that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  });
   try {
     await watching.next();
     using out = new DatabaseSync(data, { readOnly: true });
+    // A pass that a check starts would come here.
+    const after = watching.next();
+    // The check is due once the watch waits for its next poll.
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      interval: 1,
+      timeout: 10_000,
+    });
+    await clock.tickAsync(1000);
     // Waits for a check the watch recorded, as its sync history keeps it.
     await timebox(
       () => {
@@ -2905,7 +2920,10 @@ test('while Safari is closed, a Safari watch makes no pass while its stores hold
       else
         assert.ok(String(row.current_as_of) > String(pass?.started_at), stream);
     }
+    controller.abort();
+    assert.deepEqual(await after, { done: true, value: undefined });
   } finally {
+    controller.abort();
     await watching.return(undefined);
   }
 });

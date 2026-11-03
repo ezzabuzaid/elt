@@ -992,7 +992,7 @@ test('this Mac’s call history loads every stream, one row per stored record', 
   );
 });
 
-test('a Call History watch keeps every stream current while callhistoryd changes nothing', async () => {
+test('a Call History watch keeps every stream current while callhistoryd changes nothing', async (t) => {
   await using dir = await new TemporaryFiles().directory('elt-calls-current-');
   const store = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(store);
@@ -1001,8 +1001,10 @@ test('a Call History watch keeps every stream current while callhistoryd changes
   const destination = new SQLiteDestination({ path: data });
   const history = new SQLiteSyncHistory();
   const { streams } = await source.discover();
+  const clock = createClock();
+  const controller = new AbortController();
   const watching = new Pipeline({
-    clock: globalThis,
+    clock,
     history,
     connections: [
       new Connection({
@@ -1017,7 +1019,10 @@ test('a Call History watch keeps every stream current while callhistoryd changes
         ),
       }),
     ],
-  }).watch({ signal: AbortSignal.timeout(30_000) });
+  }).watch({
+    // A check that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  });
   try {
     await watching.next();
     using out = new DatabaseSync(data, { readOnly: true });
@@ -1027,7 +1032,15 @@ test('a Call History watch keeps every stream current while callhistoryd changes
     const [pass] = out
       .prepare('SELECT started_at, completed_at FROM sync_attempts')
       .all();
+    // A pass that a check starts would come here.
+    const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
+    // The check is due once the watch waits for its next poll.
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      interval: 1,
+      timeout: 10_000,
+    });
+    await clock.tickAsync(1000);
     await timebox(
       () => {
         const rows = status.all();
@@ -1054,7 +1067,10 @@ test('a Call History watch keeps every stream current while callhistoryd changes
       assert.equal(row.status, 'succeeded', String(row.stream));
       assert.equal(row.last_successful_sync_at, pass?.completed_at);
     }
+    controller.abort();
+    assert.deepEqual(await after, { done: true, value: undefined });
   } finally {
+    controller.abort();
     await watching.return(undefined);
   }
 });

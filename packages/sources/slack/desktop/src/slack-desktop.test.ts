@@ -2338,7 +2338,7 @@ test('this Mac’s Slack app loads every workspace it keeps, and a second read w
   assert.deepEqual(second, unchanged);
 });
 
-test('a Slack watch makes no pass while the app saves nothing, and keeps every stream current only as of the app’s last save', async () => {
+test('a Slack watch makes no pass while the app saves nothing, and keeps every stream current only as of the app’s last save', async (t) => {
   const { dir, store, out } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
@@ -2352,12 +2352,24 @@ test('a Slack watch makes no pass while the app saves nothing, and keeps every s
   ])
     await utimes(path, new Date(+saved + 100_000_000), saved);
   const source = new SlackDesktopSource({ directory: store.directory });
-  const watching = (await pipeline(source, dir.path, globalThis)).watch({
-    signal: AbortSignal.timeout(30_000),
+  // The pipeline's clock reads after Slack's last save.
+  const clock = createClock(Date.parse('2026-10-22T00:00:00.000Z'));
+  const controller = new AbortController();
+  const watching = (await pipeline(source, dir.path, clock)).watch({
+    // A check that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
   });
   try {
     await watching.next();
     using data = new DatabaseSync(out, { readOnly: true });
+    // A pass that a check starts would come here.
+    const after = watching.next();
+    // The check is due once the watch waits for its next poll.
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      interval: 1,
+      timeout: 10_000,
+    });
+    await clock.tickAsync(1000);
     // Waits for a check the watch recorded, as its sync history keeps it.
     await timebox(
       () => {
@@ -2392,7 +2404,10 @@ test('a Slack watch makes no pass while the app saves nothing, and keeps every s
       assert.equal(row.last_successful_sync_at, pass?.completed_at);
       assert.equal(row.current_as_of, saved.toISOString(), String(row.stream));
     }
+    controller.abort();
+    assert.deepEqual(await after, { done: true, value: undefined });
   } finally {
+    controller.abort();
     await watching.return(undefined);
   }
 });
