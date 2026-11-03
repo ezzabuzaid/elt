@@ -146,6 +146,7 @@ const requester = await googleSession({
     process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'),
     'elt',
   ),
+  clock: globalThis,
 });
 const calendar = new AppleCalendarSource({
   store: new CalendarStore(

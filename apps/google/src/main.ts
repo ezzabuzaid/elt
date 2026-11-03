@@ -37,6 +37,7 @@ const requester = await googleSession({
   clientSecret,
   scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
   directory,
+  clock: globalThis,
 });
 const source = new SearchConsoleSource({
   requester,
@@ -52,6 +53,7 @@ const health = new GoogleHealthSource({
     clientSecret,
     scopes: GOOGLE_HEALTH_SCOPES,
     directory,
+    clock: globalThis,
   }),
 });
 const healthDestination = new PostgresDestination({

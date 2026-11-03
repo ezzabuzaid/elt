@@ -32,6 +32,7 @@ const source = new SearchConsoleSource({
       process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'),
       'elt',
     ),
+    clock: globalThis,
   }),
   siteUrls: ['sc-domain:example.com', 'sc-domain:example.org'],
 });

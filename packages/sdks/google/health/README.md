@@ -12,6 +12,7 @@ const api = new GoogleHealthApi(
     clientSecret,
     scopes: GOOGLE_HEALTH_SCOPES,
     directory,
+    clock: globalThis,
   }),
 );
 // Each call paces and waits its retries on the clock: an app gives globalThis.

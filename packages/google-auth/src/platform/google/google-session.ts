@@ -1,3 +1,5 @@
+import type { Clock } from '@zukhruf/async';
+
 import { GoogleOAuthApp } from '../../app.ts';
 import { GoogleConsent } from '../../consent.ts';
 import { GoogleGrantRevokedError } from '../../errors.ts';
@@ -21,6 +23,8 @@ export type GoogleSessionOptions = {
   readonly directory: string;
   readonly openBrowser?: (url: string) => Promise<void>;
   readonly timeoutMs?: number;
+  /** The clock that the sign-in times out on: an app gives globalThis. */
+  readonly clock: Clock;
 };
 
 /**
@@ -36,6 +40,7 @@ export async function googleSession({
   directory,
   openBrowser = openInBrowser,
   timeoutMs,
+  clock,
 }: GoogleSessionOptions): Promise<GoogleRequester> {
   if (!clientId || !clientSecret)
     throw new TypeError('A Google session needs an OAuth client id and secret');
@@ -48,6 +53,7 @@ export async function googleSession({
   const authorize = async (): Promise<string> => {
     using listener = await listenForCallback({
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      clock,
     });
     const { ticket, url } = await consent.begin(USER, scopes, {
       differentAccount: false,

@@ -177,7 +177,10 @@ export class GoogleOAuthApp {
       }
       return {
         access_token: data.access_token,
-        expiry_date: Date.now() + data.expires_in * 1000,
+        // google-auth-library compares expiry_date with its own Date.now(),
+        // so only the real clock gives an expiry it reads right; no caller
+        // has another correct value.
+        expiry_date: expiryDate(data.expires_in, globalThis),
       };
     };
     return oauth;
@@ -203,4 +206,12 @@ export class GoogleOAuthApp {
       redirectUri,
     });
   }
+}
+
+// When a token that expires in expiresIn seconds from now on clock expires.
+function expiryDate(
+  expiresIn: number,
+  clock: { readonly Date: { now(): number } },
+): number {
+  return clock.Date.now() + expiresIn * 1000;
 }

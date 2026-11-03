@@ -43,7 +43,7 @@ test('a grant file is owner-only, lands whole, and reads back', async () => {
 });
 
 test('the loopback listener settles only on the redirect carrying its state', async () => {
-  using listener = await listenForCallback();
+  using listener = await listenForCallback({ clock: globalThis });
   const answered = listener.callback('expected-state');
 
   const stray = await fetch(`${listener.redirectUri}?code=c&state=other`);
@@ -60,7 +60,7 @@ test('the loopback listener settles only on the redirect carrying its state', as
 });
 
 test('a refused consent still settles the listener so the flow can report it', async () => {
-  using listener = await listenForCallback();
+  using listener = await listenForCallback({ clock: globalThis });
   const answered = listener.callback('state-1');
 
   const redirect = `${listener.redirectUri}?error=access_denied&state=state-1`;
@@ -69,7 +69,10 @@ test('a refused consent still settles the listener so the flow can report it', a
 });
 
 test('a listener nobody answers times out and closes', async () => {
-  using listener = await listenForCallback({ timeoutMs: 20 });
+  using listener = await listenForCallback({
+    timeoutMs: 20,
+    clock: globalThis,
+  });
 
   await assert.rejects(
     listener.callback('state-1'),
@@ -255,6 +258,7 @@ test('a session asks Google for a token with only its own scopes, so Health answ
   const options = {
     ...client,
     directory: scratch.path,
+    clock: globalThis,
     openBrowser: account.openBrowser,
   };
   await googleSession({
@@ -277,6 +281,7 @@ test('a failed browser opener rejects consent and closes the callback listener',
     googleSession({
       ...client,
       directory: scratch.path,
+      clock: globalThis,
       scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
       async openBrowser(url) {
         redirectUri = new URL(url).searchParams.get('redirect_uri');
@@ -295,6 +300,7 @@ test('the first session runs consent and stores the grant; the next reuses it', 
   const options = {
     ...client,
     directory: scratch.path,
+    clock: globalThis,
     openBrowser: account.openBrowser,
     scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
   };
@@ -328,6 +334,7 @@ test('a grant that lacks a newly needed scope asks for consent again', async () 
   const options = {
     ...client,
     directory: scratch.path,
+    clock: globalThis,
     openBrowser: account.openBrowser,
   };
 
@@ -352,6 +359,7 @@ test('a grant Google no longer honors is replaced through consent', async () => 
   const options = {
     ...client,
     directory: scratch.path,
+    clock: globalThis,
     openBrowser: account.openBrowser,
     scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
   };
@@ -370,6 +378,7 @@ test('sessions with different scopes reuse one grant without consent, and each c
   const options = {
     ...client,
     directory: scratch.path,
+    clock: globalThis,
     openBrowser: account.openBrowser,
   };
   await googleSession({ ...options, scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE] });
@@ -395,6 +404,7 @@ test('a refresh token Google rotates is kept, so the next session refreshes with
   const options = {
     ...client,
     directory: scratch.path,
+    clock: globalThis,
     openBrowser: account.openBrowser,
     scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
   };

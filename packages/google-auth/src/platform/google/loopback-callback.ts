@@ -1,5 +1,7 @@
 import { createServer } from 'node:http';
 
+import type { Clock } from '@zukhruf/async';
+
 export class OAuthCallbackTimeoutError extends Error {
   override readonly name = 'OAuthCallbackTimeoutError';
   readonly timeoutMs: number;
@@ -23,13 +25,16 @@ export type LoopbackCallback = Disposable & {
 /**
  * Receives Google's redirect on an ephemeral loopback port. Only a redirect
  * carrying the expected `state` settles it; any other hit is refused and the
- * listener keeps waiting, so a stray request cannot end the sign-in.
+ * listener keeps waiting, so a stray request cannot end the sign-in. The
+ * listener times out on clock.
  */
 export async function listenForCallback({
   timeoutMs = 5 * 60_000,
+  clock,
 }: {
   timeoutMs?: number;
-} = {}): Promise<LoopbackCallback> {
+  clock: Clock;
+}): Promise<LoopbackCallback> {
   const server = createServer();
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -54,11 +59,11 @@ export async function listenForCallback({
   const close = (): void => {
     if (closed) return;
     closed = true;
-    clearTimeout(timeout);
+    clock.clearTimeout(timeout);
     server.close();
     server.closeIdleConnections();
   };
-  const timeout = setTimeout(() => {
+  const timeout = clock.setTimeout(() => {
     close();
     answer.reject(new OAuthCallbackTimeoutError(timeoutMs));
   }, timeoutMs);

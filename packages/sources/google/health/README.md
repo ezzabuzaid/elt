@@ -16,6 +16,7 @@ const source = new GoogleHealthSource({
     clientSecret,
     scopes: GOOGLE_HEALTH_SCOPES,
     directory,
+    clock: globalThis,
   }),
 });
 ```
