@@ -16,11 +16,13 @@ import {
   Copy,
   CopyConfiguration,
   type CopyResult,
+  type DestinationSyncMode,
   LocalFiles,
   Pipeline,
   PipelineError,
   type Stream,
   StreamStatus,
+  type SyncMode,
   type Target,
 } from '@workspace/elt';
 import {
@@ -1026,11 +1028,15 @@ const statusSeconds = (date: Date) => date.getTime() / 1000 - 978307200;
 
 // The source loaded as the Apple hosts load it: every stream incrementally
 // into a table of its name, with the files of the streams that carry them
-// kept beside it.
+// kept beside it. A full refresh gives its own modes.
 async function pipeline(
   source: WhatsAppDesktopSource,
   directory: string,
   only?: (stream: Stream) => boolean,
+  modes: { syncMode: SyncMode; destinationSyncMode: DestinationSyncMode } = {
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+  },
 ) {
   const destination = new SQLiteDestination({
     path: join(directory, 'out.sqlite'),
@@ -1066,11 +1072,7 @@ async function pipeline(
                       ]
                     : undefined,
                 ),
-                {
-                  id: stream.name,
-                  syncMode: 'incremental',
-                  destinationSyncMode: 'append_dedup',
-                },
+                { id: stream.name, ...modes },
               ),
           ),
       }),
@@ -1758,6 +1760,63 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
       ringtone: 'ring',
     },
   ]);
+});
+
+test('a group change WhatsApp keeps twice loads once, beside changes that differ from it in one part, and every stream still loads', async () => {
+  const { dir, whatsapp, out } = await scratch();
+  await using _ = dir;
+  // The fixture's change (Z_PK 1).
+  const change = {
+    Z_ENT: 7,
+    ZGROUPJID: group,
+    ZCHANGEDATE: coreData('2026-09-01T08:00:00.000Z'),
+    ZCHANGETYPE: 4,
+    ZMEMBERJIDS: aliceLid,
+    ZPHASHBEFORECHANGE: '2:abc',
+  };
+  for (const row of [
+    // WhatsApp wrote it a second time: only Z_PK differs, as with two rows of
+    // a live store.
+    { ...change, Z_PK: 2 },
+    // Each of these differs from it in one part of the key, so none is a copy.
+    { ...change, Z_PK: 3, ZGROUPJID: '120363000000000002@g.us' },
+    { ...change, Z_PK: 4, ZCHANGEDATE: coreData('2026-09-01T08:00:01.000Z') },
+    { ...change, Z_PK: 5, ZCHANGETYPE: 5 },
+    { ...change, Z_PK: 6, ZMEMBERJIDS: bobLid },
+  ])
+    whatsapp.insert('chatStorage', 'ZWAGROUPMEMBERSCHANGE', row);
+
+  const results = await (
+    await pipeline(
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
+      dir.path,
+    )
+  ).run();
+
+  assert.deepEqual(counts(results).groupMembersChanges, {
+    count: 5,
+    deleted: 0,
+  });
+  const loaded = {
+    groupJid: group,
+    changeDate: '2026-09-01T08:00:00.000000Z',
+    changeType: 4,
+    memberJids: aliceLid,
+  };
+  assert.deepEqual(
+    table(
+      out,
+      'groupMembersChanges',
+      '"changeDate", "changeType", "groupJid", "memberJids"',
+    ),
+    [
+      loaded,
+      { ...loaded, memberJids: bobLid },
+      { ...loaded, groupJid: '120363000000000002@g.us' },
+      { ...loaded, changeType: 5 },
+      { ...loaded, changeDate: '2026-09-01T08:00:01.000000Z' },
+    ],
+  );
 });
 
 test('contacts, users with the phone number behind each LID, and calls with their call-log entry and every participant the entry lists load', async () => {
@@ -2977,6 +3036,95 @@ test('a downloaded photo, a profile picture’s thumbnail and sticker files load
   );
 });
 
+test('a full refresh loads every stream as an incremental first pass does, its files and a change WhatsApp keeps twice included, and the next one leaves out a message WhatsApp lost', async () => {
+  const { dir, whatsapp, out } = await scratch();
+  await using _ = dir;
+  await using incremental = await new TemporaryFiles().directory(
+    'elt-whatsapp-',
+  );
+  whatsapp.insert('chatStorage', 'ZWAGROUPMEMBERSCHANGE', {
+    Z_PK: 2,
+    Z_ENT: 7,
+    ZGROUPJID: group,
+    ZCHANGEDATE: coreData('2026-09-01T08:00:00.000Z'),
+    ZCHANGETYPE: 4,
+    ZMEMBERJIDS: aliceLid,
+    ZPHASHBEFORECHANGE: '2:abc',
+  });
+  const refresh = await pipeline(
+    new WhatsAppDesktopSource({ container: whatsapp.container }),
+    dir.path,
+    undefined,
+    { syncMode: 'full_refresh', destinationSyncMode: 'overwrite' },
+  );
+  const { streams } = await new WhatsAppDesktopSource({
+    container: whatsapp.container,
+  }).discover();
+  // Every table as table() reads it, with integers as bigints: a certificate
+  // serial is past 2^53.
+  const loaded = (path: string) => {
+    using db = new DatabaseSync(path, { readOnly: true, readBigInts: true });
+    return Object.fromEntries(
+      streams.map(({ name, primaryKey }) => [
+        name,
+        db
+          .prepare(
+            `SELECT * FROM "${name}" ORDER BY ${primaryKey.map((column) => `"${column}"`).join()}`,
+          )
+          .all()
+          .map((row) =>
+            Object.fromEntries(
+              Object.entries(row).filter(
+                ([column]) =>
+                  column !== 'loaded_at' && !column.startsWith('_elt'),
+              ),
+            ),
+          ),
+      ]),
+    );
+  };
+
+  await refresh.run();
+  assert.deepEqual(table(out, 'groupMembersChanges', 'changeDate'), [
+    {
+      groupJid: group,
+      changeDate: '2026-09-01T08:00:00.000000Z',
+      changeType: 4,
+      memberJids: aliceLid,
+    },
+  ]);
+  await (
+    await pipeline(
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
+      incremental.path,
+    )
+  ).run();
+  assert.deepEqual(loaded(out), loaded(join(incremental.path, 'out.sqlite')));
+  const [photo] = rows(
+    out,
+    `SELECT "attachmentRef" FROM messages WHERE "stanzaId" = 'G1'`,
+  );
+  assert.equal(
+    await readFile(
+      join(dir.path, 'files', String(photo?.attachmentRef)),
+      'utf8',
+    ),
+    'jpeg',
+  );
+
+  whatsapp.exec('chatStorage', "DELETE FROM ZWAMESSAGE WHERE ZSTANZAID = 'B1'");
+  assert.deepEqual(counts(await refresh.run()).messages, {
+    count: 6,
+    deleted: 0,
+  });
+  assert.deepEqual(
+    rows(out, 'SELECT "stanzaId" FROM messages ORDER BY "stanzaId"').map(
+      ({ stanzaId }) => stanzaId,
+    ),
+    ['A1', 'A2', 'G1', 'G2', 'G3', 'N1'],
+  );
+});
+
 // A watch that ignores its signal would never end; the timeout fails it
 // instead of hanging the suite.
 test(
@@ -3047,7 +3195,7 @@ test('this Mac’s WhatsApp loads every stream of each store it holds', async (t
       ],
       [
         'groupMembersChanges',
-        'SELECT count(*) AS n FROM ZWAGROUPMEMBERSCHANGE',
+        'SELECT count(*) AS n FROM (SELECT DISTINCT ZGROUPJID, ZCHANGEDATE, ZCHANGETYPE, ZMEMBERJIDS FROM ZWAGROUPMEMBERSCHANGE)',
       ],
       [
         'messageDataItems',

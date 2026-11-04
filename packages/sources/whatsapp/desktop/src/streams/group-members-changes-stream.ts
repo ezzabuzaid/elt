@@ -37,7 +37,7 @@ export class GroupMembersChangesStream extends WhatsAppStream<
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per change to a group’s members WhatsApp keeps (ZWAGROUPMEMBERSCHANGE). Primary key groupJid, changeDate, changeType, memberJids.',
+      'One record per change to a group’s members WhatsApp keeps (ZWAGROUPMEMBERSCHANGE). Primary key groupJid, changeDate, changeType, memberJids. WhatsApp keeps a second copy of a few changes; the first stands for both.',
     properties,
     required: Object.keys(properties),
   } as const;

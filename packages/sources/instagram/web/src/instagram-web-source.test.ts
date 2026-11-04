@@ -2000,6 +2000,58 @@ test('the accounts the browser’s account follows load across pages, and one it
   );
 });
 
+test('a full refresh loads every account the browser’s account follows, and the next one leaves out an account it unfollowed', async () => {
+  await using mac = await signedInMac();
+  await using dir = await new TemporaryFiles().directory('instagram-load-');
+  const world: World = {
+    profiles: [hive([])],
+    following: Array.from({ length: 103 }, (_, index) => ({
+      pk: String(10_000 + index),
+      username: `account${index}`,
+    })),
+  };
+  using _wire = instagram(world);
+  const source = await InstagramWebSource.connect(
+    { home: mac.path, profileIds: ['44555906095'] },
+    globalThis,
+  );
+  const following = (await source.discover()).streams.find(
+    ({ name }) => name === 'following',
+  );
+  assert.ok(following);
+  const destination = new SQLiteDestination({
+    path: join(dir.path, 'out.sqlite'),
+  });
+  const run = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(following, destination.table('following'), {
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'overwrite',
+          }),
+        ],
+      }),
+    ],
+  });
+
+  const first = counts(await run.run());
+  world.following = world.following.filter(({ pk }) => pk !== '10050');
+  const second = counts(await run.run());
+
+  assert.deepEqual(first, { following: { count: 103, deleted: 0 } });
+  assert.deepEqual(second, { following: { count: 102, deleted: 0 } });
+  assert.deepEqual(
+    ids(dir.path, 'SELECT id FROM following ORDER BY id'),
+    world.following.map(({ pk }) => pk),
+  );
+});
+
 test('a session Instagram no longer accepts fails as the user’s to fix, with the sign-in step, and keeps every row loaded', async () => {
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
