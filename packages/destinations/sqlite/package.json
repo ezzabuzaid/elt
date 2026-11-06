@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/async": "^0.6.15",
+    "@zukhruf/async": "^0.8.0",
     "@zukhruf/snapshot-differential": "^0.6.15",
     "@zukhruf/testing": "^0.6.15"
   }

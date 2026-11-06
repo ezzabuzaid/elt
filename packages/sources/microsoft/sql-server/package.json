@@ -16,7 +16,7 @@
   "dependencies": {
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-microsoft-sql-server": "0.0.1",
-    "@zukhruf/async": "^0.6.15",
+    "@zukhruf/async": "^0.8.0",
     "@zukhruf/snapshot-differential": "^0.6.15"
   },
   "devDependencies": {

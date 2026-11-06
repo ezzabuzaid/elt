@@ -12,7 +12,7 @@
   "dependencies": {
     "@workspace/codec-sitemap": "0.0.1",
     "@workspace/google-auth": "0.0.1",
-    "@zukhruf/async": "^0.6.15",
+    "@zukhruf/async": "^0.8.0",
     "zod": "4.6.5"
   },
   "devDependencies": {

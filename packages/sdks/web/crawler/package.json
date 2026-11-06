@@ -12,7 +12,7 @@
   "dependencies": {
     "@crawlee/utils": "3.18.2",
     "@workspace/codec-sitemap": "0.0.1",
-    "@zukhruf/async": "^0.6.15",
+    "@zukhruf/async": "^0.8.0",
     "fast-xml-parser": "^5.11.1",
     "fast-xml-validator": "^1.4.2",
     "feedscout": "2.2.1",

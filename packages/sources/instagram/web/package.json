@@ -13,7 +13,7 @@
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-chromium-cookies": "0.0.1",
     "@workspace/sdk-instagram-web": "0.0.1",
-    "@zukhruf/async": "^0.6.15",
+    "@zukhruf/async": "^0.8.0",
     "@zukhruf/snapshot-differential": "^0.6.15",
     "@zukhruf/sqlite-open": "^0.7.0",
     "p-memoize": "^8.0.0"

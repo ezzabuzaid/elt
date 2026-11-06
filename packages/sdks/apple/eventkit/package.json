@@ -15,7 +15,7 @@
     "./eventkit-helper": "./dist/eventkit-helper"
   },
   "dependencies": {
-    "@zukhruf/async": "^0.6.15"
+    "@zukhruf/async": "^0.8.0"
   },
   "devDependencies": {
     "@zukhruf/sqlite-open": "^0.7.0",
