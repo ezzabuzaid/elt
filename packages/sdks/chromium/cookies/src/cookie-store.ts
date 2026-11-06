@@ -1,5 +1,7 @@
 import { createDecipheriv, createHash } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+
+import { open } from '@zukhruf/sqlite-open';
 
 import { chromiumTime } from '@workspace/codec-chromium-time';
 
@@ -12,7 +14,7 @@ export class CookieStore implements Disposable {
   readonly #database: DatabaseSync;
 
   constructor(path: string) {
-    this.#database = new DatabaseSync(path, { readOnly: true, timeout: 5000 });
+    this.#database = open(path, { readOnly: true });
   }
 
   // When the named cookie that url is sent with expires, in Chromium's

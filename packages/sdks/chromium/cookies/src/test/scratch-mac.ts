@@ -4,7 +4,8 @@ import { mkdirSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 
 export type ScratchCookie = {
   readonly host: string;
@@ -79,7 +80,9 @@ export class ScratchMac implements AsyncDisposable {
   ): void {
     const folder = join(this.path, 'Library/Application Support', profile);
     mkdirSync(folder, { recursive: true });
-    using database = new DatabaseSync(join(folder, 'Cookies'));
+    using database = open(join(folder, 'Cookies'), {
+      journal: new RollbackJournal(),
+    });
     database.exec(`
       CREATE TABLE meta(key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR);
       CREATE TABLE cookies(creation_utc INTEGER NOT NULL,host_key TEXT NOT NULL,top_frame_site_key TEXT NOT NULL,name TEXT NOT NULL,value TEXT NOT NULL,encrypted_value BLOB NOT NULL,path TEXT NOT NULL,expires_utc INTEGER NOT NULL,is_secure INTEGER NOT NULL,is_httponly INTEGER NOT NULL,last_access_utc INTEGER NOT NULL,has_expires INTEGER NOT NULL,is_persistent INTEGER NOT NULL,priority INTEGER NOT NULL,samesite INTEGER NOT NULL,source_scheme INTEGER NOT NULL,source_port INTEGER NOT NULL,last_update_utc INTEGER NOT NULL,source_type INTEGER NOT NULL,has_cross_site_ancestor INTEGER NOT NULL);

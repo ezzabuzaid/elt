@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { chmod, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { RollbackJournal, UnavailableError, open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { Msw } from '@zukhruf/testing/msw';
 import { HttpResponse, http } from 'msw';
@@ -26,6 +26,7 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { BrowserSessionNotFoundError } from '@workspace/sdk-chromium-cookies';
 import { ScratchMac } from '@workspace/sdk-chromium-cookies/test';
 
 import { InstagramWebSource } from './instagram-web-source.ts';
@@ -725,7 +726,7 @@ async function pipeline(source: InstagramWebSource, directory: string) {
 }
 
 function rows(directory: string, sql: string) {
-  using db = new DatabaseSync(join(directory, 'out.sqlite'), {
+  using db = open(join(directory, 'out.sqlite'), {
     readOnly: true,
   });
   return db
@@ -2097,7 +2098,7 @@ test('a Mac where no browser is signed in to Instagram fails as the user’s to 
     'Library/Application Support/Dia/User Data/Default/Cookies',
   );
   {
-    using database = new DatabaseSync(cookies);
+    using database = open(cookies, { journal: new RollbackJournal() });
     database.exec(`DELETE FROM cookies WHERE name = 'sessionid'`);
   }
 
@@ -2111,6 +2112,52 @@ test('a Mac where no browser is signed in to Instagram fails as the user’s to 
     String(failed.posts?.[0]?.error),
     /No browser profile holds an unexpired sessionid cookie for www\.instagram\.com\. Sign in to www\.instagram\.com in Dia/,
   );
+});
+
+test('a Cookies file that is missing or that the process may not read fails every stream as the user’s to fix', async (t) => {
+  if (process.platform === 'win32' || process.getuid?.() === 0)
+    return t.skip('chmod does not deny this process');
+  await using mac = await signedInMac();
+  await using dir = await new TemporaryFiles().directory('instagram-load-');
+  using _wire = instagram({ profiles: [hive(posts(1))], following: [] });
+  const source = await InstagramWebSource.connect(
+    {
+      home: mac.path,
+      profileIds: ['44555906095'],
+    },
+    globalThis,
+  );
+  const run = await pipeline(source, dir.path);
+  const { streams } = await source.discover();
+  const cookies = join(
+    mac.path,
+    'Library/Application Support/Dia/User Data/Default/Cookies',
+  );
+
+  // chmod stands in for macOS withholding access: SQLite reports CANTOPEN
+  // (14) for chmod and for a privacy denial alike.
+  await chmod(cookies, 0o000);
+  const denied = await failedRun(run.run()).finally(() =>
+    chmod(cookies, 0o600),
+  );
+  await rm(cookies);
+  const missing = await failedRun(run.run());
+
+  for (const failed of [denied, missing]) {
+    assert.deepEqual(
+      Object.keys(failed).sort(),
+      streams.map(({ name }) => name).sort(),
+    );
+    assert.deepEqual(
+      Object.values(failed).map((failures) => failures[0]?.failureType),
+      Object.values(failed).map(() => 'config'),
+    );
+  }
+  const error = denied.posts?.[0]?.error;
+  assert.ok(error instanceof UnavailableError);
+  assert.equal(error.path, cookies);
+  // A profile without a Cookies file is no profile to sign in with.
+  assert.ok(missing.posts?.[0]?.error instanceof BrowserSessionNotFoundError);
 });
 
 test(

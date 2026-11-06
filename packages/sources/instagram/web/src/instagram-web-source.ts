@@ -1,4 +1,5 @@
 import { delay } from '@zukhruf/async';
+import { UnavailableError } from '@zukhruf/sqlite-open';
 
 import {
   Catalog,
@@ -156,6 +157,7 @@ export class InstagramWebSource extends Source<InstagramRun> {
   protected override readonly configErrors = [
     BrowserSessionNotFoundError,
     SafeStorageUnavailableError,
+    UnavailableError,
     InstagramLoginError,
   ];
 
