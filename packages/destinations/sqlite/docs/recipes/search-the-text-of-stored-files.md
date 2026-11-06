@@ -19,7 +19,8 @@ The source of this program reads a folder with three files: a text invoice, an H
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+
+import { open } from '@zukhruf/sqlite-open';
 
 import {
   Catalog,
@@ -141,7 +142,7 @@ const pipeline = new Pipeline({
 
 await pipeline.run();
 
-using database = new DatabaseSync(sqlite.path, { readOnly: true });
+using database = open(sqlite.path, { readOnly: true });
 const text = database
   .prepare(
     `SELECT d.name, t.status, t.content, t.error

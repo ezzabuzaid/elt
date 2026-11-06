@@ -33,7 +33,9 @@ eca does not open the warehouse, and it does not know what holds it. The host gi
 
 ```ts
 import { EventEmitter, on } from 'node:events';
-import { DatabaseSync, type SQLTagStore } from 'node:sqlite';
+import type { SQLTagStore } from 'node:sqlite';
+
+import { open } from '@zukhruf/sqlite-open';
 
 import type { Warehouse } from '@workspace/eca';
 
@@ -42,7 +44,7 @@ class ImportWarehouse implements Warehouse<SQLTagStore> {
   readonly #commits = new EventEmitter();
 
   constructor(path: string) {
-    this.sql = new DatabaseSync(path, { readOnly: true }).createTagStore();
+    this.sql = open(path, { readOnly: true }).createTagStore();
   }
 
   commit(): void {
