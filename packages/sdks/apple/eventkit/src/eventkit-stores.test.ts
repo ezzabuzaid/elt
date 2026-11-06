@@ -6,12 +6,13 @@ import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -110,7 +111,10 @@ class ScratchEventKit implements AsyncDisposable {
   static #hold(): DatabaseSync {
     const path = join(homedir(), 'Library/Caches/elt/eventkit-tests.sqlite');
     mkdirSync(dirname(path), { recursive: true });
-    const lock = new DatabaseSync(path, { timeout: 600_000 });
+    const lock = open(path, {
+      journal: new UnchangedJournal(),
+      timeout: 600_000,
+    });
     lock.exec('BEGIN EXCLUSIVE');
     return lock;
   }

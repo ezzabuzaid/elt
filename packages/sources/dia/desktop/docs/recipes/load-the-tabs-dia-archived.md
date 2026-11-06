@@ -16,7 +16,8 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+
+import { open } from '@zukhruf/sqlite-open';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
@@ -58,7 +59,7 @@ for (const pass of ['first', 'second']) {
   );
 }
 
-const database = new DatabaseSync(path, { readOnly: true });
+const database = open(path, { readOnly: true });
 console.table(
   database
     .prepare(

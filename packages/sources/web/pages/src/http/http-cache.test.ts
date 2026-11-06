@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { gzipSync } from 'node:zlib';
 
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
@@ -174,7 +174,7 @@ test('production cache survives process restarts, revalidates fresh responses an
   assert.equal((await stat(join(directory.path, 'http'))).mode & 0o777, 0o700);
   // The host chose where the cache lives, so nothing lands in the working directory.
   assert.deepEqual(await readdir(cwd.path), []);
-  using cache = new DatabaseSync(cachePath);
+  using cache = open(cachePath, { journal: new RollbackJournal() });
   freshness = 7200;
   assert.deepEqual(await run(), [0]);
   for (const row of cache.prepare('SELECT value FROM keyv').all()) {
@@ -303,9 +303,9 @@ for (const revalidate of [false, true])
             request.headers['if-none-match'],
             revalidate ? '"article"' : undefined,
           );
-          using cache = new DatabaseSync(
-            join(directory.path, 'web-http.sqlite'),
-          );
+          using cache = open(join(directory.path, 'web-http.sqlite'), {
+            journal: new RollbackJournal(),
+          });
           cache.exec('DROP TABLE keyv');
         }
         response.setHeader('etag', '"article"');

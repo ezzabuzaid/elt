@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import type {
@@ -8,6 +7,7 @@ import type {
   EmbeddingModelV4CallOptions,
   EmbeddingModelV4Result,
 } from '@ai-sdk/provider';
+import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -144,7 +144,7 @@ function listingsImport(directory: string, model: () => LetterModel) {
       ],
     });
   const vectors = () => {
-    using database = new DatabaseSync(path, { readOnly: true });
+    using database = open(path, { readOnly: true });
     return database
       .prepare(
         'SELECT id, status, rule, error, vector FROM listing_vectors ORDER BY id',

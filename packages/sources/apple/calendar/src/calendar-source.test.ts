@@ -5,12 +5,13 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
+import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -121,7 +122,7 @@ async function appleImport(source: Source, directory: string) {
   });
   const history = new SQLiteSyncHistory();
   const read = (sql: string) => {
-    using database = new DatabaseSync(path, { readOnly: true });
+    using database = open(path, { readOnly: true });
     return database.prepare(sql).all();
   };
   return {
@@ -399,7 +400,10 @@ class ScratchCalendar implements AsyncDisposable {
   static #hold(): DatabaseSync {
     const path = join(homedir(), 'Library/Caches/elt/eventkit-tests.sqlite');
     mkdirSync(dirname(path), { recursive: true });
-    const lock = new DatabaseSync(path, { timeout: 600_000 });
+    const lock = open(path, {
+      journal: new UnchangedJournal(),
+      timeout: 600_000,
+    });
     lock.exec('BEGIN EXCLUSIVE');
     return lock;
   }
@@ -685,7 +689,7 @@ test(
     );
     const id = liveEventId(calendar, itemId, '2025-01-31T06:00:00.000Z');
     const ruleId = JSON.stringify([id, 'recurrenceRule', 0]);
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     // Every column the stream documents.
     const table = (stream: Stream) => {
       const columns = Object.keys(Object(stream.jsonSchema.properties));
@@ -1106,7 +1110,7 @@ test('Calendar rejects malformed records and preserves prior rows on native fail
       ],
     }).run();
   const loaded = () => {
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     return database
       .prepare('SELECT id, name FROM events')
       .all()
@@ -1225,7 +1229,7 @@ test(
     const run = async () =>
       (await pipeline.run()).map(({ count, deleted }) => ({ count, deleted }));
     const loaded = () => {
-      using database = new DatabaseSync(sqlite.path, { readOnly: true });
+      using database = open(sqlite.path, { readOnly: true });
       return database
         .prepare('SELECT id, name FROM events ORDER BY name')
         .all()
@@ -1309,7 +1313,7 @@ test('Calendar snapshot incremental reconciles attendees who join and leave, whi
     documents: [event('e1', 'Daily', ['Ann']), event('e3', 'Planning', ['Cy'])],
   });
   assert.deepEqual(await run(), [{ count: 1, deleted: 1 }]);
-  using database = new DatabaseSync(sqlite.path, { readOnly: true });
+  using database = open(sqlite.path, { readOnly: true });
   assert.deepEqual(
     database
       .prepare('SELECT id, name FROM attendees ORDER BY id')
@@ -1377,7 +1381,7 @@ test(
 
     assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
     assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     assert.deepEqual(
       database
         .prepare('SELECT id, name FROM events ORDER BY name')
@@ -1569,7 +1573,7 @@ test(
     const [{ deleted } = { deleted: -1 }] = await pipeline.run();
 
     assert.equal(deleted, 0);
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     assert.deepEqual(
       {
         ...database
@@ -1975,7 +1979,7 @@ test(
       ],
     }).run();
 
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     const events = (itemId: string) =>
       database
         .prepare(
@@ -2051,7 +2055,7 @@ test('Calendar ICS streams keep attachments and vendor properties, which a test 
     counts.map(({ count }) => count),
     [2, 6, 2],
   );
-  using database = new DatabaseSync(sqlite.path, { readOnly: true });
+  using database = open(sqlite.path, { readOnly: true });
   assert.deepEqual(
     database
       .prepare('SELECT name, uid, eventId FROM icsComponents ORDER BY id')
@@ -2175,7 +2179,7 @@ test('a Calendar pass over a large ICS export holds one record of a stream at a 
     0,
     `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
   );
-  using imported = new DatabaseSync(join(directory.path, 'data.sqlite'), {
+  using imported = open(join(directory.path, 'data.sqlite'), {
     readOnly: true,
   });
   assert.deepEqual(
@@ -2281,7 +2285,7 @@ test(
         { count: 0, deleted: 2 },
       ],
     );
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     assert.equal(
       database
         .prepare(
@@ -2361,7 +2365,7 @@ test(
     );
     // Inline content never reaches the fetcher.
     assert.deepEqual(fetched, ['diagram.png:image/png', 'private.pdf:null']);
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     assert.deepEqual(
       database
         .prepare(
@@ -2454,7 +2458,7 @@ test(
       ],
     }).run();
 
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     const stored = database
       .prepare('SELECT filename, attachmentRef FROM attachments ORDER BY rowid')
       .all();
@@ -2681,7 +2685,7 @@ async function googleAttachmentFiles(
       }),
     ],
   }).run();
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   const saved: Record<string, Uint8Array | null> = {};
   for (const { uri, attachmentRef } of database
     .prepare('SELECT uri, attachmentRef FROM attachments ORDER BY rowid')
@@ -3180,7 +3184,7 @@ test(
     if (outcomes === null) return t.skip('no Calendar access');
 
     assert.equal(outcomes.length, streams.length);
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     for (const { copy, count } of outcomes)
       assert.equal(
         database
@@ -3253,7 +3257,7 @@ test(
     }).watch({ signal: AbortSignal.timeout(60_000) });
     try {
       await watching.next();
-      using out = new DatabaseSync(data, { readOnly: true });
+      using out = open(data, { readOnly: true });
       const status = out.prepare(
         'SELECT stream, status, current_as_of FROM stream_status',
       );

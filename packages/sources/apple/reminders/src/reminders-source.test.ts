@@ -5,12 +5,13 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -103,7 +104,7 @@ async function appleImport(source: Source, directory: string) {
   });
   const history = new SQLiteSyncHistory();
   const read = (sql: string) => {
-    using database = new DatabaseSync(path, { readOnly: true });
+    using database = open(path, { readOnly: true });
     return database.prepare(sql).all();
   };
   return {
@@ -346,7 +347,10 @@ class ScratchList implements AsyncDisposable {
   static #hold(): DatabaseSync {
     const path = join(homedir(), 'Library/Caches/elt/eventkit-tests.sqlite');
     mkdirSync(dirname(path), { recursive: true });
-    const lock = new DatabaseSync(path, { timeout: 600_000 });
+    const lock = open(path, {
+      journal: new UnchangedJournal(),
+      timeout: 600_000,
+    });
     lock.exec('BEGIN EXCLUSIVE');
     return lock;
   }
@@ -746,7 +750,7 @@ test(
         }),
       ],
     }).run();
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     for (const stream of streams) {
       const rows = records(stream);
       // Attendees need participants, which only the stub test can give.
@@ -1138,7 +1142,7 @@ test('Reminders rejects malformed records and preserves its target on access or 
       ],
     }).run();
   const loaded = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT * FROM reminders')
       .all()
@@ -1246,7 +1250,7 @@ test(
     assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 1 }]);
     assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
 
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     assert.deepEqual(
       database
         .prepare('SELECT name FROM reminders ORDER BY name')
@@ -1445,7 +1449,7 @@ test(
     if (outcomes === null) return t.skip('no Reminders access');
 
     assert.equal(outcomes.length, streams.length);
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     for (const { copy, count } of outcomes)
       assert.equal(
         database
@@ -1491,7 +1495,7 @@ test(
     }).watch({ signal: AbortSignal.timeout(60_000) });
     try {
       await watching.next();
-      using out = new DatabaseSync(data, { readOnly: true });
+      using out = open(data, { readOnly: true });
       const status = out.prepare(
         'SELECT stream, status, current_as_of FROM stream_status',
       );

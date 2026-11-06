@@ -6,7 +6,8 @@ A user wants to know what Arc's sidebar holds before an agent reads it: how many
 import { mkdtemp } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+
+import { open } from '@zukhruf/sqlite-open';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
@@ -47,7 +48,7 @@ for (const pass of ['first', 'second'])
   for (const { copy, count, deleted } of await pipeline.run())
     console.log(pass, copy.from.name, { count, deleted });
 
-using database = new DatabaseSync(join(directory, 'arc.sqlite'), {
+using database = open(join(directory, 'arc.sqlite'), {
   readOnly: true,
 });
 console.table(

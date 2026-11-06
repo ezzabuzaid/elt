@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { chmod, mkdir, readdir, rm, utimes } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -1004,7 +1004,7 @@ function holding(
 }
 
 function rows(path: string, sql: string) {
-  using db = new DatabaseSync(path, { readOnly: true });
+  using db = open(path, { readOnly: true });
   return db
     .prepare(sql)
     .all()
@@ -1114,7 +1114,7 @@ test('a Teams import is current only as of the web client’s last write, which 
 
   await (await pipeline(source, dir.path, globalThis)).run();
 
-  using data = new DatabaseSync(out, { readOnly: true });
+  using data = open(out, { readOnly: true });
   const current = data
     .prepare('SELECT current_as_of FROM stream_status')
     .all()

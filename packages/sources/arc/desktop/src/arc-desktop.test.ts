@@ -9,10 +9,10 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -300,7 +300,7 @@ async function arcImport(
     ],
   });
   const read = (sql: string) => {
-    using db = new DatabaseSync(out, { readOnly: true });
+    using db = open(out, { readOnly: true });
     return db
       .prepare(sql)
       .all()

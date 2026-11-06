@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import { type DatabaseSync, DatabaseSync as NodeDatabase } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { Latch } from '@zukhruf/async';
+import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
@@ -257,10 +258,7 @@ test('while the crawl of an input goes on, the routes of each checkpoint reach t
   });
   // What a reader finds while the run writes, waiting out a commit.
   const found = (sql: string) => {
-    using reader = new NodeDatabase(database.path, {
-      readOnly: true,
-      timeout: 5_000,
-    });
+    using reader = open(database.path, { readOnly: true });
     try {
       return reader
         .prepare(sql)

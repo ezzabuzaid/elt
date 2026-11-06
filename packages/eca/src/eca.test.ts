@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { EventEmitter, on } from 'node:events';
 import { join } from 'node:path';
-import { DatabaseSync, type SQLTagStore } from 'node:sqlite';
+import type { DatabaseSync, SQLTagStore } from 'node:sqlite';
 import { test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 
+import { PersistentWriteAheadLog, open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { type Condition, Eca, type Match, type Warehouse } from './index.ts';
@@ -14,7 +15,7 @@ type Sms = { guid: string; handle: string; text: string; date: string };
 // A Messages import as elt's SQLite destination writes one: a STRICT
 // raw_messages table with loaded_at and a reader view over every column.
 function writeImport(path: string, messages: readonly Sms[]): void {
-  using database = new DatabaseSync(path);
+  using database = open(path, { journal: new PersistentWriteAheadLog() });
   database.exec(
     `CREATE TABLE "raw_messages" ("guid" TEXT NOT NULL, "handle" TEXT, "text" TEXT, "date" TEXT, "loaded_at" TEXT NOT NULL) STRICT;
      CREATE VIEW "messages" AS SELECT "guid", "handle", "text", "date", "loaded_at" FROM "raw_messages";`,
@@ -23,7 +24,7 @@ function writeImport(path: string, messages: readonly Sms[]): void {
 }
 
 function load(path: string, messages: readonly Sms[]): void {
-  using database = new DatabaseSync(path);
+  using database = open(path, { journal: new PersistentWriteAheadLog() });
   const insert = database.prepare(
     'INSERT INTO raw_messages (guid, handle, text, date, loaded_at) VALUES (?, ?, ?, ?, ?)',
   );
@@ -33,7 +34,7 @@ function load(path: string, messages: readonly Sms[]): void {
 
 // elt deletes a record its source no longer has.
 function remove(path: string, guid: string): void {
-  using database = new DatabaseSync(path);
+  using database = open(path, { journal: new PersistentWriteAheadLog() });
   database.prepare('DELETE FROM raw_messages WHERE guid = ?').run(guid);
 }
 
@@ -45,7 +46,7 @@ class ImportWarehouse implements Warehouse<SQLTagStore>, Disposable {
   readonly #commits = new EventEmitter();
 
   constructor(path: string) {
-    this.#database = new DatabaseSync(path, { readOnly: true });
+    this.#database = open(path, { readOnly: true });
     this.sql = this.#database.createTagStore();
   }
 

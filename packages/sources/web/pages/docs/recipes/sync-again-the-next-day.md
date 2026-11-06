@@ -22,7 +22,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+
+import { open } from '@zukhruf/sqlite-open';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
@@ -112,7 +113,7 @@ const pipeline = new Pipeline({
 async function sync(name: string) {
   requested = [];
   const [result] = await pipeline.run();
-  const database = new DatabaseSync(articles, { readOnly: true });
+  const database = open(articles, { readOnly: true });
   const rows = database
     .prepare('SELECT pageUrl, textContent FROM articles ORDER BY pageUrl')
     .all()
