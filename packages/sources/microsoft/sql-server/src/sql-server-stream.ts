@@ -1,3 +1,5 @@
+import type { Gauge } from '@zukhruf/async';
+
 import {
   type CopyConfiguration,
   type ExtractionCoverage,
@@ -12,21 +14,19 @@ import type {
   SqlServerTable,
 } from '@workspace/sdk-microsoft-sql-server';
 
-import type { ChangeSignal } from './signals/change-signal.ts';
 import { TableFields, sentence } from './sql-server-fields.ts';
+import type { WatchGauges } from './watch-gauges.ts';
 
 // Rows per page of a resumable read: each page ends in a checkpoint, so a
 // read that fails resumes after the last page it committed.
 export const pageSize = 10_000;
 
-// How a subclass syncs its table, and says so in the stream's description,
-// and the signals that wake it in a watch.
+// How a subclass syncs its table, and says so in the stream's description.
 type SyncTraits = {
   readonly supportedSyncModes: readonly SyncMode[];
   readonly sourceDefinedCursor?: true;
   readonly emitsDeletes?: true;
   readonly strategy: string;
-  readonly signals: readonly ChangeSignal[];
 };
 
 // One table as a stream. Each way of reading a table is its own subclass:
@@ -36,11 +36,9 @@ export abstract class SqlServerStream {
   readonly table: SqlServerTable;
   readonly fields: TableFields;
   readonly stream: Stream;
-  readonly signals: readonly ChangeSignal[];
 
   constructor(table: SqlServerTable, traits: SyncTraits) {
     this.table = table;
-    this.signals = traits.signals;
     this.fields = new TableFields(table);
     const { properties } = this.fields;
     this.stream = new Stream({
@@ -69,6 +67,10 @@ export abstract class SqlServerStream {
   }
 
   abstract coverage(): ExtractionCoverage;
+
+  // The gauges of a watch that can see the changes this stream's read finds:
+  // a check wakes the stream when one of them changed.
+  abstract gauges(watch: WatchGauges): readonly Gauge[];
 
   // The fields a read carries. A cursor's state records them, since a field
   // the table gains later reaches only rows changed after it unless every row

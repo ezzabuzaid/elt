@@ -8,18 +8,25 @@ import type {
   SqlServerTable,
 } from '@workspace/sdk-microsoft-sql-server';
 
-import type { WholeTableSignals } from './signals/whole-table-signals.ts';
 import { SqlServerStream } from './sql-server-stream.ts';
+import type { WatchGauges } from './watch-gauges.ts';
+import type { WholeTableGauges } from './whole-table-gauges.ts';
 
 // A table with no key the login can read in full, so no change can apply by
 // key: every read takes every row, and a copy replaces what it loaded before.
 export class FullRefreshStream extends SqlServerStream {
-  constructor(table: SqlServerTable, watch: WholeTableSignals) {
+  readonly #whole: WholeTableGauges;
+
+  constructor(table: SqlServerTable, whole: WholeTableGauges) {
     super(table, {
       supportedSyncModes: ['full_refresh'],
-      strategy: `Read in full on every sync.${watch.hint}`,
-      signals: watch.signals,
+      strategy: `Read in full on every sync.${whole.hint}`,
     });
+    this.#whole = whole;
+  }
+
+  gauges(watch: WatchGauges) {
+    return this.#whole.gauges(this.table, watch);
   }
 
   coverage(): ExtractionCoverage {

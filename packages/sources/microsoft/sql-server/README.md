@@ -45,7 +45,7 @@ await new Pipeline({
 3. Call `sqlServerCopies` to make one copy for each discovered table, with the sync strategy that discovery selected.
 4. Connect the copies to a destination and a checkpoint store through `Connection` and `Pipeline`.
 
-`@workspace/sdk-microsoft-sql-server` owns the database: the connection string, discovery, exact reads, Change Tracking and the change signal. The source owns the streams, their schemas and the sync strategy. The SDK and the source hold no configuration from environment variables or for a standalone app.
+`@workspace/sdk-microsoft-sql-server` owns the database: the connection string, discovery, exact reads, Change Tracking and the values that a watch reads. The source owns the streams, their schemas and the sync strategy. The SDK and the source hold no configuration from environment variables or for a standalone app.
 
 `sqlServerCopies` makes each stream a copy:
 
@@ -142,20 +142,24 @@ Pages compare the full primary key as a tuple. Each part is cast to the declared
 
 ## Watching
 
-`observe()` checks every 30 seconds. Each sync strategy names its change signals. On each check, each signal reads one value for each table, in one query. A check wakes a stream when the value of one of its signals is not the value of the last check.
+`observe()` checks every 30 seconds, with the `ChangeWatcher` of `@zukhruf/async`. It opens one session for the watch. Each sync strategy names the gauges of its stream, and the gauges of one stream are one group. On each check, each collector reads the values of all tables in one query, and the database version gives the Change Tracking version and the last rowversion in one query. A check wakes a stream when one gauge of its group changed. The first check wakes every stream. A check that wakes no stream yields nothing.
 
-| Sync strategy             | Change signals                                                   |
-| ------------------------- | ---------------------------------------------------------------- |
-| Change Tracking           | the Change Tracking version                                      |
-| Rowversion                | the last rowversion                                              |
-| Snapshot and full refresh | the statistics, the row count, the last write (optional), hourly |
+| Sync strategy             | Gauges                                                             |
+| ------------------------- | ------------------------------------------------------------------ |
+| Change Tracking           | the Change Tracking version                                        |
+| Rowversion                | the last rowversion                                                |
+| Snapshot and full refresh | the statistics, the row count, the last write (optional), the hour |
 
-- **The Change Tracking version** (`CHANGE_TRACKING_CURRENT_VERSION()`) of the database. A change to a tracked table moves it, in the transaction of the change.
-- **The last rowversion** (`@@DBTS`) of the database. An insert or an update of a row with a `rowversion` column moves it.
+- **The Change Tracking version** (`CHANGE_TRACKING_CURRENT_VERSION()`) of the database, one gauge for all streams. A change to a tracked table moves it, in the transaction of the change.
+- **The last rowversion** (`@@DBTS`) of the database, one gauge for all streams. An insert or an update of a row with a `rowversion` column moves it.
 - **The statistics** of the table (`sys.dm_db_stats_properties`): their count, the rows changed in their columns, and the time of their last refresh. An insert, a delete, a `TRUNCATE` or an update of a column with statistics moves it. A restart keeps it. A refresh of statistics sets the count to 0 and changes the time. `db_datareader` can read it.
 - **The row count** of the table (`sys.partitions`). An insert, a delete or a `TRUNCATE` moves it, also when SQL Server has not built the statistics of the table. An update does not move it. `db_datareader` can read it.
-- **The last write** of the table (`sys.dm_db_index_usage_stats`): the writes and the time of the last write. Each insert, update or delete moves it, also of a column with no statistics. A `TRUNCATE` does not move it. A restart clears it, which also wakes the stream. Discovery reads it one time. When the login cannot read it, the streams do not use it, and their description names the grant.
-- **Hourly**: the number of whole hours since the watch started. Each hour, it wakes the streams again, and the read finds a change that the other signals did not see.
+- **The last write** of the table (`sys.dm_db_index_usage_stats`): the writes and the time of the last write. Each insert, update or delete moves it, also of a column with no statistics. A `TRUNCATE` does not move it. Discovery reads it one time. When the login cannot read it, the streams do not use it, and their description names the grant.
+- **The hour**: a period of one hour, the number of whole hours since the watch started. Each hour, it wakes the streams again, and the read finds a change that the other gauges did not see.
+
+The statistics, the row count and the last write are collectors: one key for each table, by its quoted name. A table that a collector does not give, for example a table dropped after discovery, changed, so its stream wakes and its read fails.
+
+The queries of one check have 10 seconds. When a gauge fails, for example because its query took longer, the watch fails with the error of the gauge. A restart of the SQL Server engine drops the connection of the watch, so the watch also fails. elt's pipeline watches again after a system failure, and the first check of the new watch wakes every stream.
 
 The database is current whenever the source reads it, so the source gives no `currentAsOf`.
 

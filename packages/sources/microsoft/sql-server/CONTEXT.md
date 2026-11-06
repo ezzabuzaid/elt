@@ -12,9 +12,9 @@ _Avoid_: Scan, introspection, catalog read
 How a stream reads its table: Change Tracking, rowversion, snapshot or full refresh. Discovery selects the first strategy that the table and the login allow.
 _Avoid_: Sync mode (a sync mode is elt's `incremental` or `full_refresh`), method, cursor
 
-**Change signal**:
-A value that a watch reads for each table on each check, such as the count of its statistics. A check wakes a stream when the value of one of the signals that its sync strategy names changed.
-_Avoid_: Probe, trigger, counter (a counter is one kind of value)
+**Gauge**:
+A value that a watch reads on each check, such as the statistics of one table or the Change Tracking version of the database. Each sync strategy names the gauges of its stream. A check wakes a stream when one of its gauges changed.
+_Avoid_: Change signal, probe, trigger, counter (a counter is one kind of value)
 
 **Position**:
 Where a Change Tracking stream is in the change history of its table: a Change Tracking version and the tracking generation of the table.

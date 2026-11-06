@@ -11,8 +11,9 @@ import type {
   SqlServerTable,
 } from '@workspace/sdk-microsoft-sql-server';
 
-import type { WholeTableSignals } from './signals/whole-table-signals.ts';
 import { SqlServerStream } from './sql-server-stream.ts';
+import type { WatchGauges } from './watch-gauges.ts';
+import type { WholeTableGauges } from './whole-table-gauges.ts';
 
 // A keyed table with no Change Tracking or rowversion the login can read:
 // every read takes every row, and an incremental copy compares the read with
@@ -20,7 +21,9 @@ import { SqlServerStream } from './sql-server-stream.ts';
 // changed and deletes the rows that are gone. The read lists every row, so a
 // key it does not list was deleted.
 export class SnapshotStream extends SqlServerStream {
-  constructor(table: SqlServerTable, watch: WholeTableSignals) {
+  readonly #whole: WholeTableGauges;
+
+  constructor(table: SqlServerTable, whole: WholeTableGauges) {
     const hint =
       table.changeTracking === 'denied'
         ? ` Granting the login VIEW CHANGE TRACKING ON ${table.quoted} would read only changes and deletions.`
@@ -29,9 +32,13 @@ export class SnapshotStream extends SqlServerStream {
       supportedSyncModes: ['full_refresh', 'incremental'],
       sourceDefinedCursor: true,
       emitsDeletes: true,
-      strategy: `Read in full on every sync; new and changed rows and deletions apply.${hint}${watch.hint}`,
-      signals: watch.signals,
+      strategy: `Read in full on every sync; new and changed rows and deletions apply.${hint}${whole.hint}`,
     });
+    this.#whole = whole;
+  }
+
+  gauges(watch: WatchGauges) {
+    return this.#whole.gauges(this.table, watch);
   }
 
   coverage(): ExtractionCoverage {

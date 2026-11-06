@@ -1,4 +1,4 @@
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher, type Gauge, Group } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -23,25 +23,42 @@ import {
 import { ChangeTrackingStream } from './change-tracking-stream.ts';
 import { FullRefreshStream } from './full-refresh-stream.ts';
 import { RowversionStream } from './rowversion-stream.ts';
-import type { ChangeSignal } from './signals/change-signal.ts';
-import { WholeTableSignals } from './signals/whole-table-signals.ts';
 import { SnapshotStream } from './snapshot-stream.ts';
 import type { SqlServerStream } from './sql-server-stream.ts';
+import { WatchGauges } from './watch-gauges.ts';
+import { WholeTableGauges } from './whole-table-gauges.ts';
 
 // How often a watch asks the database whether anything changed.
 const pollIntervalMs = 30_000;
+
+// How long the queries of one check can take. Each query took 160 to 300 ms
+// on Azure SQL Database, and a check runs at most four at once, one on each
+// connection of the session. A check that takes a third of the interval is
+// stuck: its gauges fail, and the watch fails with them, as a system failure
+// that the pipeline watches again after.
+const checkTimeoutMs = 10_000;
+
+// The gauges of one stream: a check wakes the stream when one changed.
+class StreamGroup extends Group {
+  readonly stream: Stream;
+
+  constructor(stream: Stream, members: readonly Gauge[]) {
+    super(members);
+    this.stream = stream;
+  }
+}
 
 // Change Tracking when the login can read it, else the rowversion, else a
 // snapshot of the whole table, all by key; a table with no key in full.
 function streamFor(
   table: SqlServerTable,
-  watch: WholeTableSignals,
+  whole: WholeTableGauges,
 ): SqlServerStream {
-  if (table.primaryKey.length === 0) return new FullRefreshStream(table, watch);
+  if (table.primaryKey.length === 0) return new FullRefreshStream(table, whole);
   if (table.changeTracking === 'readable')
     return new ChangeTrackingStream(table);
   if (table.rowversion !== undefined) return new RowversionStream(table);
-  return new SnapshotStream(table, watch);
+  return new SnapshotStream(table, whole);
 }
 
 // Every table one SQL Server database holds that the login can read, one
@@ -73,10 +90,10 @@ export class SqlServerSource extends Source<SqlServerSession> {
         throw new TypeError(
           `The schemas to keep name ${schema}, which holds no table this login can read in ${database.location}`,
         );
-    const watch = await WholeTableSignals.discover(session);
+    const whole = await WholeTableGauges.discover(session);
     return new SqlServerSource(
       database,
-      tables.map((table) => streamFor(table, watch)),
+      tables.map((table) => streamFor(table, whole)),
     );
   }
 
@@ -118,9 +135,9 @@ export class SqlServerSource extends Source<SqlServerSession> {
     return null;
   }
 
-  // Checks the signals of the streams every 30 s: each signal reads once for
-  // every table, and a stream wakes when the value of any signal it names
-  // moved since the last check.
+  // Checks the gauges of the streams every 30 s, and yields the streams
+  // whose gauges changed. The first check wakes every stream; a check that
+  // wakes none yields nothing; a gauge that fails fails the watch.
   protected override async *observe({
     streams,
     signal,
@@ -128,41 +145,22 @@ export class SqlServerSource extends Source<SqlServerSession> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     await using session = await this.#database.open();
-    const started = clock.Date.now();
-    // The reads of one check, by signal. pollChanges reads in the order of
-    // the map, so the first stream's read starts a new check, and each
-    // stream after it takes the reads of the signals it shares.
-    let check = new Map<ChangeSignal, ReturnType<ChangeSignal['read']>>();
-    const read = (changeSignal: ChangeSignal) => {
-      const known = check.get(changeSignal);
-      if (known !== undefined) return known;
-      const values = changeSignal.read({
-        session,
-        started,
-        now: clock.Date.now(),
-      });
-      check.set(changeSignal, values);
-      return values;
-    };
-    const probes = new Map(
-      streams.map((stream, index) => {
-        const reader = this.#reader(stream);
-        return [
-          stream,
-          async () => {
-            if (index === 0) check = new Map();
-            const values = await Promise.all(reader.signals.map(read));
-            return JSON.stringify(values.map((value) => value(reader.table)));
-          },
-        ];
-      }),
+    const gauges = new WatchGauges(session);
+    const watcher = new ChangeWatcher(
+      streams.map(
+        (stream) =>
+          new StreamGroup(stream, this.#reader(stream).gauges(gauges)),
+      ),
+      { interval: pollIntervalMs, timeout: checkTimeoutMs, clock },
     );
-    for await (const changed of pollChanges(probes, {
-      interval: pollIntervalMs,
-      signal,
-      clock,
-    }))
-      if (changed.size > 0) yield [...changed];
+    for await (const outcomes of watcher.watch(signal)) {
+      const woken: Stream[] = [];
+      for (const [group, outcome] of outcomes) {
+        if (outcome.state === 'failed') throw outcome.error;
+        if (outcome.state === 'changed') woken.push(group.stream);
+      }
+      if (woken.length > 0) yield woken;
+    }
   }
 
   protected override extract(
