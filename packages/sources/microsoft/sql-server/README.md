@@ -144,15 +144,16 @@ Pages compare the full primary key as a tuple. Each part is cast to the declared
 
 `observe()` checks every 30 seconds. Each sync strategy names its change signals. On each check, each signal reads one value for each table, in one query. A check wakes a stream when the value of one of its signals is not the value of the last check.
 
-| Sync strategy             | Change signals                                    |
-| ------------------------- | ------------------------------------------------- |
-| Change Tracking           | the Change Tracking version                       |
-| Rowversion                | the last rowversion                               |
-| Snapshot and full refresh | the statistics, the last write (optional), hourly |
+| Sync strategy             | Change signals                                                   |
+| ------------------------- | ---------------------------------------------------------------- |
+| Change Tracking           | the Change Tracking version                                      |
+| Rowversion                | the last rowversion                                              |
+| Snapshot and full refresh | the statistics, the row count, the last write (optional), hourly |
 
 - **The Change Tracking version** (`CHANGE_TRACKING_CURRENT_VERSION()`) of the database. A change to a tracked table moves it, in the transaction of the change.
 - **The last rowversion** (`@@DBTS`) of the database. An insert or an update of a row with a `rowversion` column moves it.
 - **The statistics** of the table (`sys.dm_db_stats_properties`): their count, the rows changed in their columns, and the time of their last refresh. An insert, a delete, a `TRUNCATE` or an update of a column with statistics moves it. A restart keeps it. A refresh of statistics sets the count to 0 and changes the time. `db_datareader` can read it.
+- **The row count** of the table (`sys.partitions`). An insert, a delete or a `TRUNCATE` moves it, also when SQL Server has not built the statistics of the table. An update does not move it. `db_datareader` can read it.
 - **The last write** of the table (`sys.dm_db_index_usage_stats`): the writes and the time of the last write. Each insert, update or delete moves it, also of a column with no statistics. A `TRUNCATE` does not move it. A restart clears it, which also wakes the stream. Discovery reads it one time. When the login cannot read it, the streams do not use it, and their description names the grant.
 - **Hourly**: the number of whole hours since the watch started. Each hour, it wakes the streams again, and the read finds a change that the other signals did not see.
 
@@ -161,8 +162,8 @@ The database is current whenever the source reads it, so the source gives no `cu
 ## Limitations
 
 - Rowversion tables do not see deletions. A deleted row stays.
-- Without the last write, an update of a column with no statistics loads only at the next hour. A table with no statistics at all, such as a table with no key and no index, also waits for the hour.
-- SQL Server builds the statistics of a table when a query first needs them. Until then, they count nothing. A table that no query has read by a column since it was created empty thus wakes only by its last write or by the hour.
+- Without the last write, an update of a column with no statistics loads only at the next hour.
+- SQL Server builds the statistics of a table when a query first needs them. Until then, they count nothing. In a table that no query has read by a column since it was created empty, an insert or a delete moves the row count, and an update waits for the last write or the hour. A table with no key and no index has no statistics at all, so the same is true for it.
 - The source does not read CDC (backlog #2315).
 - The source discovers tables only, not views (backlog #3253).
 - In one case, the source does not see a truncate, or tracking that was turned off and on again: when the table's tracking began at the version that the last sync read, and nothing that is tracked changed in the database since. No metadata that a read-only login can see changes then.
@@ -193,7 +194,8 @@ Run on 2026-11-06 against SQL Server 2022 in a container, through a `db_dataread
 - A `TRUNCATE` moved neither the last write nor the row counts. It moved the count of the statistics.
 - An update of 100 rows in a column with no statistics did not move the count of the statistics. `UPDATE STATISTICS` set the count to 0 and changed the time of the refresh.
 - An `UPDATE` of no row and an `UPDATE` that was rolled back moved the last write.
-- `db_datareader` could read the count of the statistics, and got error 297 for the last writes and the row counts.
+- `db_datareader` could read the count of the statistics and the row counts of `sys.partitions`, and got error 297 for the last writes and the row counts of `sys.dm_db_index_operational_stats`.
+- Statistics that an index created on an empty table made had no count and no time of refresh until `UPDATE STATISTICS` built them. Rows inserted before then moved only the row count.
 - `CHECKSUM_AGG(BINARY_CHECKSUM(*))` read every page of the table. It did not change for a value changed from `' !'` to `''Q'`, for two rows that swapped a value, or for two equal rows added to a table with no key. A SHA-256 hash of each row found all three.
 
 ## Decisions

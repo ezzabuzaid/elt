@@ -1273,10 +1273,13 @@ test(
     assert.deepEqual(await watch.woken(), ['dbo.notes']);
     await admin.request().batch('UPDATE STATISTICS dbo.notes;');
     assert.deepEqual(await watch.woken(), ['dbo.notes']);
-    // The refresh sets the count back to 0, the count the last check read.
+    // The refresh sets the count back to 0, the count the last check read,
+    // and an update leaves the row count as it was.
     await admin
       .request()
-      .batch("INSERT dbo.notes VALUES (3, N'd'); UPDATE STATISTICS dbo.notes;");
+      .batch(
+        "UPDATE dbo.notes SET title = N'd' WHERE id = 1; UPDATE STATISTICS dbo.notes;",
+      );
     assert.deepEqual(await watch.woken(), ['dbo.notes']);
     await admin.request().batch('TRUNCATE TABLE dbo.notes;');
     assert.deepEqual(await watch.woken(), ['dbo.notes']);
@@ -1398,5 +1401,35 @@ test(
     assert.deepEqual(await watch.woken(), ['dbo.notes']);
     await admin.request().batch("INSERT dbo.log VALUES (N'started');");
     assert.deepEqual(await watch.woken(), ['dbo.log']);
+  },
+);
+
+test(
+  'a watch wakes a table whose statistics SQL Server has not built within one check of an insert or a delete, with a login that reads nothing more',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    // Created empty, and no query has needed their statistics since, so
+    // SQL Server has not built them and they count nothing.
+    await admin.request().batch(`
+    CREATE TABLE dbo.notes (id int PRIMARY KEY, title nvarchar(20) NOT NULL);
+    CREATE TABLE dbo.other (id int PRIMARY KEY);`);
+    await using reader = await readOnlyLogin(server, admin, '');
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(reader.connectionString),
+    );
+    await using watch = watcher(t, source);
+    assert.deepEqual(await watch.first(), ['dbo.notes', 'dbo.other']);
+
+    await admin.request().batch("INSERT dbo.notes VALUES (1, N'a');");
+    assert.deepEqual(await watch.woken(), ['dbo.notes']);
+    await admin.request().batch('DELETE dbo.notes WHERE id = 1;');
+    assert.deepEqual(await watch.woken(), ['dbo.notes']);
   },
 );

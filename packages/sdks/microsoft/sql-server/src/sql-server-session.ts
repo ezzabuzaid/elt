@@ -58,6 +58,15 @@ LEFT JOIN sys.stats AS st ON st.object_id = t.object_id
 OUTER APPLY sys.dm_db_stats_properties(st.object_id, st.stats_id) AS p
 GROUP BY t.schema_id, t.name`;
 
+// For each table: the rows of its heap or clustered index, in every
+// partition.
+const rowCountsQuery = `
+SELECT QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name),
+  CONVERT(varchar(20), SUM(p.rows))
+FROM sys.tables AS t
+JOIN sys.partitions AS p ON p.object_id = t.object_id AND p.index_id IN (0, 1)
+GROUP BY t.schema_id, t.name`;
+
 // For each table: the writes counted on its indexes since the engine
 // started, and the last.
 const lastWritesQuery = `
@@ -226,6 +235,20 @@ export class SqlServerSession implements AsyncDisposable {
       rows.map(([table, counts]) => [
         cellText(table, 'table'),
         cellText(counts, 'statistics'),
+      ]),
+    );
+  }
+
+  // How many rows each table holds, by its quoted name, as SQL Server keeps
+  // it in the table's metadata: an insert, a delete or a TRUNCATE moves it,
+  // also in a table whose statistics SQL Server has not built, but an update
+  // does not. A login that can read a table can read its count.
+  async rowCounts(): Promise<ReadonlyMap<string, string>> {
+    const rows = await query(this.#pool.request(), rowCountsQuery);
+    return new Map(
+      rows.map(([table, count]) => [
+        cellText(table, 'table'),
+        cellText(count, 'row count'),
       ]),
     );
   }
