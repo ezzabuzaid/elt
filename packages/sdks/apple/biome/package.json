@@ -18,6 +18,7 @@
     "@zukhruf/sqlite-snapshot": "^0.6.15"
   },
   "devDependencies": {
+    "@zukhruf/sqlite-open": "^0.7.0",
     "@zukhruf/testing": "^0.6.15"
   }
 }

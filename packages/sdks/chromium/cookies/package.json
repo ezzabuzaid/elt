@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@workspace/codec-chromium-time": "0.0.1",
-    "@workspace/sdk-chromium-browser": "0.0.1"
+    "@workspace/sdk-chromium-browser": "0.0.1",
+    "@zukhruf/sqlite-open": "^0.7.0"
   }
 }

@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@types/libmime": "5.3.0",
+    "@zukhruf/sqlite-open": "^0.7.0",
     "@zukhruf/testing": "^0.6.15"
   }
 }
