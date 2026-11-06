@@ -1,4 +1,4 @@
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher, Gauge } from '@zukhruf/async';
 import {
   ClosedWorld,
   type DeletionPolicy,
@@ -18,6 +18,7 @@ import {
   Safari,
   type SafariLocation,
   type SafariStore,
+  type SafariVersion,
   StoreUnavailableError,
   safariRunning,
 } from '@workspace/sdk-apple-safari';
@@ -91,6 +92,22 @@ function readerOf(stream: Stream): SafariReader {
 
 // How often a watch checks the stores for changes.
 const pollIntervalMs = 1000;
+
+// The version of one Safari store.
+class SafariStoreGauge extends Gauge<string> {
+  readonly store: SafariStore;
+  readonly #version: SafariVersion;
+
+  constructor(store: SafariStore, version: SafariVersion) {
+    super();
+    this.store = store;
+    this.#version = version;
+  }
+
+  protected read(): Promise<string> {
+    return this.#version.current();
+  }
+}
 
 // Reads Safari's own stores, so Safari need not run to export. Only Safari
 // fetches history and tabs from the user's other devices, so what they
@@ -187,20 +204,27 @@ export class AppleSafariSource extends Source<SafariScan> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using versions = new DisposableStack();
-    const reads = new Map(
-      [...new Set(streams.map((stream) => readerOf(stream).store))].map(
-        (store) => {
-          const probe = versions.use(this.#safari.version(store));
-          return [store, () => probe.current()];
-        },
-      ),
+    const gauges = [
+      ...new Set(streams.map((stream) => readerOf(stream).store)),
+    ].map(
+      (store) =>
+        new SafariStoreGauge(store, versions.use(this.#safari.version(store))),
     );
-    for await (const changed of pollChanges(reads, {
+    const watcher = new ChangeWatcher(gauges, {
       interval: pollIntervalMs,
-      signal,
+      // The reads are local, data_version, a profile listing and file
+      // stamps: a check that takes the whole interval is stuck.
+      timeout: pollIntervalMs,
       clock,
-    }))
+    });
+    for await (const outcomes of watcher.watch(signal)) {
+      const changed = new Set<SafariStore>();
+      for (const [gauge, outcome] of outcomes) {
+        if (outcome.state === 'failed') throw outcome.error;
+        if (outcome.state === 'changed') changed.add(gauge.store);
+      }
       yield streams.filter((stream) => changed.has(readerOf(stream).store));
+    }
   }
 
   protected override async *extract(

@@ -1,4 +1,4 @@
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher, Gauge } from '@zukhruf/async';
 import { Coverage } from '@zukhruf/snapshot-differential';
 
 import {
@@ -73,6 +73,21 @@ const readersByName = new Map<string, TeamsReader>(
 // How often a watch checks whether the web client wrote its caches.
 const pollIntervalMs = 1000;
 
+// The version of the store: it changes whenever the web client writes its
+// caches.
+class StoreVersion extends Gauge<string> {
+  readonly #store: TeamsStore;
+
+  constructor(store: TeamsStore) {
+    super();
+    this.#store = store;
+  }
+
+  protected async read() {
+    return this.#store.version();
+  }
+}
+
 // Reads what the Microsoft Teams app keeps on this Mac, from its own store,
 // without Microsoft Graph, a token or the network.
 export class TeamsSource extends Source<TeamsScan> {
@@ -146,11 +161,17 @@ export class TeamsSource extends Source<TeamsScan> {
     signal,
     clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    for await (const changed of pollChanges(
-      new Map([['version', async () => this.#store.version()]]),
-      { interval: pollIntervalMs, signal, clock },
-    ))
-      yield changed.size > 0 ? streams : [];
+    // A local read: a check that takes the whole interval is stuck.
+    const watcher = new ChangeWatcher([new StoreVersion(this.#store)], {
+      interval: pollIntervalMs,
+      timeout: pollIntervalMs,
+      clock,
+    });
+    for await (const outcomes of watcher.watch(signal))
+      for (const outcome of outcomes.values()) {
+        if (outcome.state === 'failed') throw outcome.error;
+        yield outcome.state === 'changed' ? streams : [];
+      }
   }
 
   protected override async *extract(

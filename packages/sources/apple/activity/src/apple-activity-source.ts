@@ -1,4 +1,4 @@
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher, Gauge } from '@zukhruf/async';
 
 import type {
   CopyConfiguration,
@@ -9,7 +9,11 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source } from '@workspace/elt';
-import { BiomeStore, StoreUnavailableError } from '@workspace/sdk-apple-biome';
+import {
+  BiomeStore,
+  type BiomeStream,
+  StoreUnavailableError,
+} from '@workspace/sdk-apple-biome';
 import { KnowledgeStore } from '@workspace/sdk-apple-knowledge';
 
 import type { ActivityReader } from './activity-reader.ts';
@@ -33,6 +37,22 @@ import { SafariNavigationsStream } from './streams/safari-navigations-stream.ts'
 import { ScreenTimeAppUsageStream } from './streams/screen-time-app-usage-stream.ts';
 import { ScreenshotsStream } from './streams/screenshots-stream.ts';
 import { WebUsageStream } from './streams/web-usage-stream.ts';
+
+// The fingerprints of one Biome stream's segments.
+class BiomeStreamGauge extends Gauge<string> {
+  readonly #store: BiomeStore;
+  readonly #stream: BiomeStream<unknown>;
+
+  constructor(store: BiomeStore, stream: BiomeStream<unknown>) {
+    super();
+    this.#store = store;
+    this.#stream = stream;
+  }
+
+  protected read(): Promise<string> {
+    return this.#store.version(this.#stream);
+  }
+}
 
 const readers = {
   appFocus: new AppFocusStream(),
@@ -170,28 +190,36 @@ export class AppleActivitySource extends Source<ActivityScan> {
       knowledge: () => new KnowledgeStore(this.location.knowledge).version(),
       devices: () => biome.syncVersion(),
     };
-    const probes = new Map<Stream, () => Promise<string>>();
-    const opened = new Map<keyof typeof databases, () => Promise<string>>();
+    // The streams of one database watch its one version.
+    const watched = new Map<Stream, Gauge>();
+    const opened = new Map<keyof typeof databases, Gauge>();
     for (const stream of streams) {
       const reader = readerOf(stream);
       if (reader.store === 'biome') {
-        probes.set(stream, () => biome.version(reader.biome));
+        watched.set(stream, new BiomeStreamGauge(biome, reader.biome));
         continue;
       }
-      let probe = opened.get(reader.store);
-      if (probe === undefined) {
-        const version = versions.use(databases[reader.store]());
-        probe = async () => String(version.current);
-        opened.set(reader.store, probe);
+      let version = opened.get(reader.store);
+      if (version === undefined) {
+        version = versions.use(databases[reader.store]());
+        opened.set(reader.store, version);
       }
-      probes.set(stream, probe);
+      watched.set(stream, version);
     }
-    for await (const changed of pollChanges(probes, {
+    const watcher = new ChangeWatcher(new Set(watched.values()), {
       interval: this.pollIntervalMs,
-      signal,
+      // The reads are local, segment fingerprints and data_version: a check
+      // that takes the whole interval is stuck.
+      timeout: this.pollIntervalMs,
       clock,
-    }))
-      yield [...changed];
+    });
+    for await (const outcomes of watcher.watch(signal)) {
+      for (const outcome of outcomes.values())
+        if (outcome.state === 'failed') throw outcome.error;
+      yield [...watched]
+        .filter(([, gauge]) => outcomes.get(gauge)?.state === 'changed')
+        .map(([stream]) => stream);
+    }
   }
 
   protected override extract(

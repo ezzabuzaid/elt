@@ -1,4 +1,4 @@
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher, Gauge } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -14,6 +14,7 @@ import {
   StoreUnavailableError,
   WhatsApp,
   type WhatsAppStore,
+  type WhatsAppVersion,
   whatsappRunning,
 } from '@workspace/sdk-whatsapp-desktop';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -103,6 +104,22 @@ function readerOf(stream: Stream): WhatsAppReader {
 
 // How often a watch checks the stores for commits.
 const pollIntervalMs = 1000;
+
+// The version of one WhatsApp store.
+class WhatsAppStoreGauge extends Gauge<string> {
+  readonly store: WhatsAppStore;
+  readonly #version: WhatsAppVersion;
+
+  constructor(store: WhatsAppStore, version: WhatsAppVersion) {
+    super();
+    this.store = store;
+    this.#version = version;
+  }
+
+  protected async read(): Promise<string> {
+    return this.#version.current;
+  }
+}
 
 // Reads what WhatsApp for Mac keeps on this Mac, from its own stores, without
 // WhatsApp's servers, a session or the network.
@@ -207,20 +224,30 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using versions = new DisposableStack();
-    const reads = new Map(
-      [...new Set(streams.map((stream) => readerOf(stream).store))].map(
-        (store) => {
-          const probe = versions.use(this.#whatsapp.version(store));
-          return [store, async () => probe.current];
-        },
-      ),
+    const gauges = [
+      ...new Set(streams.map((stream) => readerOf(stream).store)),
+    ].map(
+      (store) =>
+        new WhatsAppStoreGauge(
+          store,
+          versions.use(this.#whatsapp.version(store)),
+        ),
     );
-    for await (const changed of pollChanges(reads, {
+    const watcher = new ChangeWatcher(gauges, {
       interval: pollIntervalMs,
-      signal,
+      // A data_version read is local: a check that takes the whole interval
+      // is stuck.
+      timeout: pollIntervalMs,
       clock,
-    }))
+    });
+    for await (const outcomes of watcher.watch(signal)) {
+      const changed = new Set<WhatsAppStore>();
+      for (const [gauge, outcome] of outcomes) {
+        if (outcome.state === 'failed') throw outcome.error;
+        if (outcome.state === 'changed') changed.add(gauge.store);
+      }
       yield streams.filter((stream) => changed.has(readerOf(stream).store));
+    }
   }
 
   protected override async *extract(

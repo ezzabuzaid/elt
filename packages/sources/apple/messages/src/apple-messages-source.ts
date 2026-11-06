@@ -1,4 +1,4 @@
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import type {
@@ -118,11 +118,21 @@ export class AppleMessagesSource extends Source<MessagesScan> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using version = this.#store.version();
-    for await (const changed of pollChanges(
-      new Map([['version', async () => version.current]]),
-      { interval: pollIntervalMs, signal, clock },
-    ))
-      yield changed.size > 0 ? streams : [];
+    const watcher = new ChangeWatcher([version], {
+      interval: pollIntervalMs,
+      // A data_version read is local: a check that takes the whole interval
+      // is stuck.
+      timeout: pollIntervalMs,
+      clock,
+    });
+    for await (const outcomes of watcher.watch(signal)) {
+      let changed = false;
+      for (const outcome of outcomes.values()) {
+        if (outcome.state === 'failed') throw outcome.error;
+        if (outcome.state === 'changed') changed = true;
+      }
+      yield changed ? streams : [];
+    }
   }
 
   protected override async *extract(

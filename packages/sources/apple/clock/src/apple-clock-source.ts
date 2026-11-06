@@ -1,4 +1,4 @@
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher, Gauge } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import {
@@ -15,6 +15,7 @@ import {
   type ClockSnapshot,
   ClockStore,
   type ClockStoreKind,
+  type ClockVersion,
   StoreUnavailableError,
 } from '@workspace/sdk-apple-clock/clock-store';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -53,6 +54,22 @@ const readers = [
   stopwatchLapsReader,
 ];
 const catalog = new Catalog(readers.map((reader) => reader.describe()));
+
+// The version of one Clock store.
+class ClockStoreGauge extends Gauge<string> {
+  readonly store: ClockStoreKind;
+  readonly #version: ClockVersion;
+
+  constructor(store: ClockStoreKind, version: ClockVersion) {
+    super();
+    this.store = store;
+    this.#version = version;
+  }
+
+  protected read(): Promise<string> {
+    return this.#version.current();
+  }
+}
 
 function readerOf(stream: Stream) {
   const reader = readers.find((reader) => reader.name === stream.name);
@@ -114,18 +131,26 @@ export class AppleClockSource extends Source<ClockSnapshot> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using resources = new DisposableStack();
-    const reads = new Map<ClockStoreKind, () => Promise<string>>();
-    for (const stream of streams) {
-      const store = readerOf(stream).store;
-      if (reads.has(store)) continue;
-      const probe = resources.use(this.#store.version(store));
-      reads.set(store, () => probe.current());
-    }
-    for await (const changed of pollChanges(reads, {
+    const gauges = [
+      ...new Set(streams.map((stream) => readerOf(stream).store)),
+    ].map(
+      (store) =>
+        new ClockStoreGauge(store, resources.use(this.#store.version(store))),
+    );
+    const watcher = new ChangeWatcher(gauges, {
       interval: 1000,
-      signal,
+      // The reads are local, data_version and file stamps: a check that
+      // takes the whole interval is stuck.
+      timeout: 1000,
       clock,
-    }))
+    });
+    for await (const outcomes of watcher.watch(signal)) {
+      const changed = new Set<ClockStoreKind>();
+      for (const [gauge, outcome] of outcomes) {
+        if (outcome.state === 'failed') throw outcome.error;
+        if (outcome.state === 'changed') changed.add(gauge.store);
+      }
       yield streams.filter((stream) => changed.has(readerOf(stream).store));
+    }
   }
 }

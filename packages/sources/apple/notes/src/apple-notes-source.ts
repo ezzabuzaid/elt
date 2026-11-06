@@ -1,4 +1,4 @@
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import type {
@@ -92,25 +92,27 @@ export class AppleNotesSource extends Source<NotesScan> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using version = this.#store.version();
-    let nextLaunch = clock.Date.now();
-    const reads = new Map([
-      [
-        'version',
-        async () => {
-          if (clock.Date.now() >= nextLaunch) {
-            await launchNotesHidden();
-            nextLaunch = clock.Date.now() + launchIntervalMs;
-          }
-          return version.current;
-        },
-      ],
-    ]);
-    for await (const changed of pollChanges(reads, {
+    const watcher = new ChangeWatcher([version], {
       interval: pollIntervalMs,
-      signal,
+      // A data_version read is local: a check that takes the whole interval
+      // is stuck.
+      timeout: pollIntervalMs,
       clock,
-    }))
-      yield changed.size > 0 ? streams : [];
+    });
+    let nextLaunch = clock.Date.now();
+    for await (const outcomes of watcher.watch(signal)) {
+      // Launching Notes is work between checks, not a read of the store.
+      if (clock.Date.now() >= nextLaunch) {
+        await launchNotesHidden();
+        nextLaunch = clock.Date.now() + launchIntervalMs;
+      }
+      let changed = false;
+      for (const outcome of outcomes.values()) {
+        if (outcome.state === 'failed') throw outcome.error;
+        if (outcome.state === 'changed') changed = true;
+      }
+      yield changed ? streams : [];
+    }
   }
 
   protected override async *extract(

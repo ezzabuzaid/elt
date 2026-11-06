@@ -78,7 +78,7 @@ Each pass reads each selected store whole, and a snapshot diff writes only the r
 
 ## Watch and currency
 
-`observe()` checks each store each second, with `pollChanges` of `@zukhruf/async`. A commit to a History, a new Bookmarks file, a new Local State, or a profile that gets or loses one of these files wakes the streams of that store only.
+`observe()` checks each store each second, with a `ChangeWatcher` of `@zukhruf/async` that reads one gauge for each store. A commit to a History, a new Bookmarks file, a new Local State, or a profile that gets or loses one of these files wakes the streams of that store only.
 
 While the browser is closed, the History and Bookmarks streams are current as of the last write of the browser to them. While it runs, each stream is current as of the pass. See [ADR 0002](./docs/adr/0002-a-browser-runs-while-its-singleton-lock-names-a-live-process.md).
 

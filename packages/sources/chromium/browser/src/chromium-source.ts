@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -21,7 +21,6 @@ import type { ChromiumBrowser } from '@workspace/sdk-chromium-browser';
 import {
   StoreUnavailableError,
   chromiumHistoryLastWrite,
-  chromiumHistoryVersion,
 } from '@workspace/sdk-chromium-history';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
@@ -32,6 +31,7 @@ import {
   storeFiles,
 } from './chromium-scan.ts';
 import type { ChromiumReader } from './chromium-stream.ts';
+import { BookmarksGauge, HistoryGauge, ProfilesGauge } from './store-gauges.ts';
 import { BookmarksStream } from './streams/bookmarks-stream.ts';
 import { DownloadsStream } from './streams/downloads-stream.ts';
 import { HistoryItemsStream } from './streams/history-items-stream.ts';
@@ -179,46 +179,36 @@ export class ChromiumSource extends Source<ChromiumScan> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using versions = new DisposableStack();
-    const histories = new Map<
-      string,
-      ReturnType<typeof chromiumHistoryVersion>
-    >();
-    const historyVersion = (path: string) => {
-      let version = histories.get(path);
-      if (version === undefined) {
-        version = versions.use(chromiumHistoryVersion(path));
-        histories.set(path, version);
-      }
-      return `${path}:${version.current}`;
-    };
-    const checks: Record<ChromiumStore, () => Promise<unknown>> = {
-      history: async () => this.#files('history').map(historyVersion).join(),
-      bookmarks: async () =>
-        (
-          await Promise.all(
-            this.#files('bookmarks').map(async (path) =>
-              String(await ChromiumBookmarks.stamp(path)),
-            ),
-          )
-        ).join(),
-      profiles: async () =>
-        [
-          String(await this.browser.localStateStamp(this.home)),
+    const gauges = {
+      history: () =>
+        versions.use(new HistoryGauge(() => this.#files('history'))),
+      bookmarks: () => new BookmarksGauge(() => this.#files('bookmarks')),
+      profiles: () =>
+        new ProfilesGauge(this.browser, this.home, () => [
           ...this.#files('history'),
           ...this.#files('bookmarks'),
-        ].join(),
+        ]),
     };
-    const reads = new Map(
-      [...this.#stores(streams)].map((store) => [store, checks[store]]),
+    const watcher = new ChangeWatcher(
+      [...this.#stores(streams)].map((store) => gauges[store]()),
+      {
+        interval: pollIntervalMs,
+        // The reads are local, data_version and file stamps: a check that
+        // takes the whole interval is stuck.
+        timeout: pollIntervalMs,
+        clock,
+      },
     );
-    for await (const changed of pollChanges(reads, {
-      interval: pollIntervalMs,
-      signal,
-      clock,
-    }))
+    for await (const outcomes of watcher.watch(signal)) {
+      const changed = new Set<ChromiumStore>();
+      for (const [gauge, outcome] of outcomes) {
+        if (outcome.state === 'failed') throw outcome.error;
+        if (outcome.state === 'changed') changed.add(gauge.store);
+      }
       yield streams.filter((stream) =>
         changed.has(this.#streams.readerOf(stream).store),
       );
+    }
   }
 
   protected override async *extract(

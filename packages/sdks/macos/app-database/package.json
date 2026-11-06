@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "@zukhruf/async": "^0.6.15",
     "@zukhruf/sqlite-data-version": "^0.6.15",
     "@zukhruf/sqlite-snapshot": "^0.6.15"
   },

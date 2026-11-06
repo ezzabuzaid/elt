@@ -1,4 +1,4 @@
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher, Gauge } from '@zukhruf/async';
 
 import type {
   CopyConfiguration,
@@ -116,6 +116,21 @@ const accountStreams: ReadonlySet<string> = new Set([
 ]);
 // How often a watch checks the store for changes.
 const pollIntervalMs = 1000;
+
+// Mail's version: it changes with each commit to the index and each file
+// change in the store.
+class MailGauge extends Gauge<string> {
+  readonly #version: Awaited<ReturnType<MailStore['version']>>;
+
+  constructor(version: Awaited<ReturnType<MailStore['version']>>) {
+    super();
+    this.#version = version;
+  }
+
+  protected async read(): Promise<string> {
+    return this.#version.current;
+  }
+}
 
 // These native records have no proven account/message ownership. A restricted
 // import omits them rather than copying unrelated settings or guessing joins.
@@ -262,17 +277,23 @@ export class AppleMailSource extends Source<MailScan> {
     );
     using accounts =
       accountsSelected.length === 0 ? null : this.#accountsVersion();
-    const reads = new Map<'mail' | 'accounts', () => Promise<unknown>>([
-      ['mail', async () => version.current],
-    ]);
-    if (accounts !== null) reads.set('accounts', async () => accounts.current);
-    for await (const changed of pollChanges(reads, {
-      interval: pollIntervalMs,
-      signal,
-      clock,
-    })) {
-      if (changed.has('mail')) yield selected;
-      else if (changed.has('accounts')) yield accountsSelected;
+    const mail = new MailGauge(version);
+    const watcher = new ChangeWatcher(
+      accounts === null ? [mail] : [mail, accounts],
+      {
+        interval: pollIntervalMs,
+        // The reads are local, data_version and a count of file events: a
+        // check that takes the whole interval is stuck.
+        timeout: pollIntervalMs,
+        clock,
+      },
+    );
+    for await (const outcomes of watcher.watch(signal)) {
+      for (const outcome of outcomes.values())
+        if (outcome.state === 'failed') throw outcome.error;
+      if (outcomes.get(mail)?.state === 'changed') yield selected;
+      else if (accounts !== null && outcomes.get(accounts)?.state === 'changed')
+        yield accountsSelected;
       else yield [];
     }
   }

@@ -1,4 +1,4 @@
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher, type Check, Gauge } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -40,6 +40,28 @@ export type GoogleHealthOptions = {
 // The types whose newest point moves when a device or app syncs: steps and
 // heart rate from Fitbit and Apple Health alike, and the logs a user writes.
 const PROBED = ['steps', 'heart-rate', 'exercise', 'sleep', 'weight'] as const;
+
+// How long the probe of one check may take. It makes its calls one after
+// another: the paired devices, then the newest point of each probed type. The
+// API retries a call up to four times and waits at most 60 seconds before
+// each retry, so a call that gets an answer waits at most four minutes. A
+// probe that takes longer than that for each of its calls is stuck.
+const probeTimeoutMs = (1 + PROBED.length) * 4 * 60_000;
+
+// The fingerprint of what moves when a device or app syncs, read over the
+// network.
+class Fingerprint extends Gauge<string> {
+  readonly #read: (signal: AbortSignal) => Promise<string>;
+
+  constructor(read: (signal: AbortSignal) => Promise<string>) {
+    super();
+    this.#read = read;
+  }
+
+  protected read(check: Check) {
+    return this.#read(check.signal);
+  }
+}
 
 /**
  * Everything a Google account keeps in Google Health: each data type's points
@@ -136,11 +158,19 @@ export class GoogleHealthSource extends Source<GoogleHealthScan> {
     signal,
     clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    for await (const changed of pollChanges(
-      new Map([['fingerprint', () => this.#fingerprint(signal, clock)]]),
-      { interval: this.pollIntervalMs, signal, clock },
-    ))
-      yield changed.size > 0 ? streams : [];
+    const fingerprint = new Fingerprint((probe) =>
+      this.#fingerprint(probe, clock),
+    );
+    const watcher = new ChangeWatcher([fingerprint], {
+      interval: this.pollIntervalMs,
+      timeout: probeTimeoutMs,
+      clock,
+    });
+    for await (const outcomes of watcher.watch(signal))
+      for (const outcome of outcomes.values()) {
+        if (outcome.state === 'failed') throw outcome.error;
+        yield outcome.state === 'changed' ? streams : [];
+      }
   }
 
   protected override extract(

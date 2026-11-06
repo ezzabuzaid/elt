@@ -1,4 +1,4 @@
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher, Gauge } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -87,6 +87,20 @@ const catalog = new Catalog([archivedTabs]);
 // How often a watch checks the file for a write.
 const pollIntervalMs = 1000;
 
+// The stamp of the archive file: it changes whenever Dia writes the file.
+class ArchiveStamp extends Gauge<string> {
+  readonly #archive: DiaArchive;
+
+  constructor(archive: DiaArchive) {
+    super();
+    this.#archive = archive;
+  }
+
+  protected async read() {
+    return (await this.#archive.stamp()).toString();
+  }
+}
+
 // An archive date cut to the millisecond, the precision of an import's dates,
 // so it compares with them as text.
 const toMilliseconds = (instant: string) => `${instant.slice(0, 23)}Z`;
@@ -135,13 +149,17 @@ export class DiaDesktopSource extends Source<AsyncDisposableStack> {
     signal,
     clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    for await (const changed of pollChanges(
-      new Map([
-        ['archive', async () => (await this.#archive.stamp()).toString()],
-      ]),
-      { interval: pollIntervalMs, signal, clock },
-    ))
-      yield changed.size > 0 ? streams : [];
+    // A local read: a check that takes the whole interval is stuck.
+    const watcher = new ChangeWatcher([new ArchiveStamp(this.#archive)], {
+      interval: pollIntervalMs,
+      timeout: pollIntervalMs,
+      clock,
+    });
+    for await (const outcomes of watcher.watch(signal))
+      for (const outcome of outcomes.values()) {
+        if (outcome.state === 'failed') throw outcome.error;
+        yield outcome.state === 'changed' ? streams : [];
+      }
   }
 
   // No policy: Dia records no reason for a removal, so the diff never

@@ -13,7 +13,7 @@ SQLite changes `PRAGMA data_version` on a connection when another connection com
 
 - A watch finds a commit in approximately one second.
 - A watch does not read rows. It only tells the pipeline to run the copies again.
-- The watch uses `pollChanges` from `@zukhruf/async`.
+- The watch reads the data version as a gauge, with the `ChangeWatcher` of `@zukhruf/async`.
 
 ## Sources
 

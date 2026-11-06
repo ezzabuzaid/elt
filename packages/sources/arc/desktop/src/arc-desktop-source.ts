@@ -1,4 +1,4 @@
-import { pollChanges } from '@zukhruf/async';
+import { ChangeWatcher, Gauge } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import {
@@ -35,6 +35,20 @@ function readerOf(stream: Stream) {
 
 // How often a watch checks the file for a write.
 const pollIntervalMs = 1000;
+
+// The stamp of the sidebar file: it changes whenever Arc writes the file.
+class SidebarStamp extends Gauge<string> {
+  readonly #sidebar: ArcSidebar;
+
+  constructor(sidebar: ArcSidebar) {
+    super();
+    this.#sidebar = sidebar;
+  }
+
+  protected async read() {
+    return (await this.#sidebar.stamp()).toString();
+  }
+}
 
 // One read of the sidebar file for a run, so items and the spaces they name
 // come from one version of it.
@@ -97,13 +111,17 @@ export class ArcDesktopSource extends Source<SidebarRead> {
     signal,
     clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    for await (const changed of pollChanges(
-      new Map([
-        ['sidebar', async () => (await this.#sidebar.stamp()).toString()],
-      ]),
-      { interval: pollIntervalMs, signal, clock },
-    ))
-      yield changed.size > 0 ? streams : [];
+    // A local read: a check that takes the whole interval is stuck.
+    const watcher = new ChangeWatcher([new SidebarStamp(this.#sidebar)], {
+      interval: pollIntervalMs,
+      timeout: pollIntervalMs,
+      clock,
+    });
+    for await (const outcomes of watcher.watch(signal))
+      for (const outcome of outcomes.values()) {
+        if (outcome.state === 'failed') throw outcome.error;
+        yield outcome.state === 'changed' ? streams : [];
+      }
   }
 
   // The file is the whole sidebar now, so an item that left it was removed.
