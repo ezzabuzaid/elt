@@ -3,6 +3,7 @@ import { chmod, mkdir, rename, utimes } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
+import { ChangeWatcher } from '@zukhruf/async';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -50,7 +51,7 @@ test('a store WhatsApp has not created is unavailable, not a time', async () => 
 });
 
 test(
-  'a store WhatsApp replaced with one this process cannot open reads as missing, and as a version again once a readable store is back',
+  'a store WhatsApp replaced with one this process cannot open is a change that does not fail the watch, and a readable store back is a change again',
   {
     // chmod denies nothing on Windows, and nothing to root.
     skip: process.platform === 'win32' || process.getuid?.() === 0,
@@ -60,20 +61,31 @@ test(
     const path = join(container.path, 'ChatStorage.sqlite');
     await writtenAt(path, 1_800_000_000);
     using version = new WhatsApp(container.path).version('chatStorage');
-    const opened = version.current;
-    const denied = join(container.path, 'denied.sqlite');
-    await writtenAt(denied, 1_800_000_060);
-    await chmod(denied, 0o000);
-    const readable = join(container.path, 'readable.sqlite');
-    await writtenAt(readable, 1_800_000_120);
+    const stop = new AbortController();
+    const checks = new ChangeWatcher([version], {
+      interval: 5,
+      timeout: 5,
+      clock: globalThis,
+    }).watch(stop.signal);
+    try {
+      const opened = await checks.next();
+      const denied = join(container.path, 'denied.sqlite');
+      await writtenAt(denied, 1_800_000_060);
+      await chmod(denied, 0o000);
+      const readable = join(container.path, 'readable.sqlite');
+      await writtenAt(readable, 1_800_000_120);
 
-    await rename(denied, path);
-    const replaced = version.current;
-    await rename(readable, path);
-    const back = version.current;
+      await rename(denied, path);
+      const replaced = await checks.next();
+      await rename(readable, path);
+      const back = await checks.next();
 
-    assert.match(opened, /^\d+$/);
-    assert.equal(replaced, 'missing');
-    assert.match(back, /^\d+$/);
+      assert.deepEqual(opened.value?.get(version), { state: 'changed' });
+      assert.deepEqual(replaced.value?.get(version), { state: 'changed' });
+      assert.deepEqual(back.value?.get(version), { state: 'changed' });
+    } finally {
+      stop.abort();
+      await checks.return();
+    }
   },
 );

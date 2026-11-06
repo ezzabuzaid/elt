@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 
+import { Gauge } from '@zukhruf/async';
 import { FileStamp } from '@zukhruf/fs';
 
 import {
@@ -45,7 +46,7 @@ export class ClockStore {
     const path = this.#location[store];
     return store === 'database'
       ? new ClockDatabaseVersion(appDatabase.version(path))
-      : new ClockPreferencesVersion(path);
+      : new ClockPreferencesVersion(store, path);
   }
 }
 
@@ -106,16 +107,23 @@ export class ClockSnapshot implements AsyncDisposable {
 
 // SQLite sees WAL commits; preferences are atomically rewritten. A version
 // probe never loads records. Missing preference files still change on return.
-export interface ClockVersion extends Disposable {
-  current(): Promise<string>;
+// A change watcher reads it as a gauge.
+export abstract class ClockVersion extends Gauge<string> implements Disposable {
+  readonly store: ClockStoreKind;
+  constructor(store: ClockStoreKind) {
+    super();
+    this.store = store;
+  }
+  abstract [Symbol.dispose](): void;
 }
 
-class ClockDatabaseVersion implements ClockVersion {
+class ClockDatabaseVersion extends ClockVersion {
   readonly #version: AppDatabaseVersion;
   constructor(version: AppDatabaseVersion) {
+    super('database');
     this.#version = version;
   }
-  async current(): Promise<string> {
+  protected async read(): Promise<string> {
     return String(this.#version.current);
   }
   [Symbol.dispose](): void {
@@ -123,12 +131,13 @@ class ClockDatabaseVersion implements ClockVersion {
   }
 }
 
-class ClockPreferencesVersion implements ClockVersion {
+class ClockPreferencesVersion extends ClockVersion {
   readonly #path: string;
-  constructor(path: string) {
+  constructor(store: Exclude<ClockStoreKind, 'database'>, path: string) {
+    super(store);
     this.#path = path;
   }
-  async current(): Promise<string> {
+  protected async read(): Promise<string> {
     try {
       return String(await FileStamp.read(this.#path));
     } catch (cause) {

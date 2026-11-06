@@ -1,5 +1,7 @@
 import { join } from 'node:path';
 
+import { Gauge } from '@zukhruf/async';
+
 import {
   type AppDatabaseVersion,
   StoreUnavailableError,
@@ -92,7 +94,7 @@ export class WhatsApp {
 
   // A probe whose current value changes with each commit to the store.
   version(store: WhatsAppStore): WhatsAppVersion {
-    return new WhatsAppVersion(this.#file(store));
+    return new WhatsAppVersion(store, this.#file(store));
   }
 
   // When WhatsApp last wrote this store. While the app is closed it writes
@@ -109,15 +111,19 @@ export class WhatsApp {
 
 // What changes when a store does: SQLite's data_version, which changes with
 // every commit WhatsApp makes. A store that cannot be opened reads as missing,
-// so its appearance is a change; reading it reports why.
-export class WhatsAppVersion implements Disposable {
+// so its appearance is a change; reading it reports why. A change watcher
+// reads it as a gauge.
+export class WhatsAppVersion extends Gauge<string> implements Disposable {
+  readonly store: WhatsAppStore;
   #state: StoreState;
 
-  constructor(path: string) {
+  constructor(store: WhatsAppStore, path: string) {
+    super();
+    this.store = store;
     this.#state = new MissingStore(path);
   }
 
-  get current(): string {
+  protected async read(): Promise<string> {
     const reading = this.#state.read();
     this.#state = reading.state;
     return reading.value;

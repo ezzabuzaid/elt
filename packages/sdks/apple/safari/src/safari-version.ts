@@ -1,6 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { Gauge } from '@zukhruf/async';
 import { FileStamp } from '@zukhruf/fs';
 
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
@@ -39,20 +40,22 @@ async function historyFiles(location: SafariLocation): Promise<string[]> {
 // What changes when one Safari store does. Databases report commits through
 // data_version, since Safari commits through WALs it keeps open and FSEvents
 // reports a write only when the file closes; Safari rewrites each property
-// list whole, so a changed file stamp marks a new one.
-export class SafariVersion implements Disposable {
+// list whole, so a changed file stamp marks a new one. A change watcher reads
+// it as a gauge.
+export class SafariVersion extends Gauge<string> implements Disposable {
   readonly #location: SafariLocation;
-  readonly #store: SafariStore;
+  readonly store: SafariStore;
   readonly #databases = new Map<string, AppDatabaseVersion>();
 
   constructor(location: SafariLocation, store: SafariStore) {
+    super();
     this.#location = location;
-    this.#store = store;
+    this.store = store;
   }
 
-  async current(): Promise<string> {
+  protected async read(): Promise<string> {
     const files = storeFiles(this.#location);
-    if (this.#store === 'history') {
+    if (this.store === 'history') {
       const paths = await historyFiles(this.#location);
       for (const [path, version] of this.#databases)
         if (!paths.includes(path)) {
@@ -61,9 +64,9 @@ export class SafariVersion implements Disposable {
         }
       return paths.map((path) => this.#version(path)).join(',');
     }
-    if (this.#store === 'tabs' || this.#store === 'cloudTabs')
-      return String(this.#version(files[this.#store]));
-    return String(await FileStamp.read(files[this.#store]));
+    if (this.store === 'tabs' || this.store === 'cloudTabs')
+      return String(this.#version(files[this.store]));
+    return String(await FileStamp.read(files[this.store]));
   }
 
   [Symbol.dispose](): void {

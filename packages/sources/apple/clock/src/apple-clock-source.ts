@@ -1,4 +1,4 @@
-import { ChangeWatcher, Gauge } from '@zukhruf/async';
+import { ChangeWatcher } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import {
@@ -15,7 +15,6 @@ import {
   type ClockSnapshot,
   ClockStore,
   type ClockStoreKind,
-  type ClockVersion,
   StoreUnavailableError,
 } from '@workspace/sdk-apple-clock/clock-store';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -54,22 +53,6 @@ const readers = [
   stopwatchLapsReader,
 ];
 const catalog = new Catalog(readers.map((reader) => reader.describe()));
-
-// The version of one Clock store.
-class ClockStoreGauge extends Gauge<string> {
-  readonly store: ClockStoreKind;
-  readonly #version: ClockVersion;
-
-  constructor(store: ClockStoreKind, version: ClockVersion) {
-    super();
-    this.store = store;
-    this.#version = version;
-  }
-
-  protected read(): Promise<string> {
-    return this.#version.current();
-  }
-}
 
 function readerOf(stream: Stream) {
   const reader = readers.find((reader) => reader.name === stream.name);
@@ -133,10 +116,7 @@ export class AppleClockSource extends Source<ClockSnapshot> {
     using resources = new DisposableStack();
     const gauges = [
       ...new Set(streams.map((stream) => readerOf(stream).store)),
-    ].map(
-      (store) =>
-        new ClockStoreGauge(store, resources.use(this.#store.version(store))),
-    );
+    ].map((store) => resources.use(this.#store.version(store)));
     const watcher = new ChangeWatcher(gauges, {
       interval: 1000,
       // The reads are local, data_version and file stamps: a check that

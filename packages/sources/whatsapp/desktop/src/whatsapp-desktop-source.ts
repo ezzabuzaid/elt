@@ -1,4 +1,4 @@
-import { ChangeWatcher, Gauge } from '@zukhruf/async';
+import { ChangeWatcher } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -14,7 +14,6 @@ import {
   StoreUnavailableError,
   WhatsApp,
   type WhatsAppStore,
-  type WhatsAppVersion,
   whatsappRunning,
 } from '@workspace/sdk-whatsapp-desktop';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -104,22 +103,6 @@ function readerOf(stream: Stream): WhatsAppReader {
 
 // How often a watch checks the stores for commits.
 const pollIntervalMs = 1000;
-
-// The version of one WhatsApp store.
-class WhatsAppStoreGauge extends Gauge<string> {
-  readonly store: WhatsAppStore;
-  readonly #version: WhatsAppVersion;
-
-  constructor(store: WhatsAppStore, version: WhatsAppVersion) {
-    super();
-    this.store = store;
-    this.#version = version;
-  }
-
-  protected async read(): Promise<string> {
-    return this.#version.current;
-  }
-}
 
 // Reads what WhatsApp for Mac keeps on this Mac, from its own stores, without
 // WhatsApp's servers, a session or the network.
@@ -226,13 +209,7 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
     using versions = new DisposableStack();
     const gauges = [
       ...new Set(streams.map((stream) => readerOf(stream).store)),
-    ].map(
-      (store) =>
-        new WhatsAppStoreGauge(
-          store,
-          versions.use(this.#whatsapp.version(store)),
-        ),
-    );
+    ].map((store) => versions.use(this.#whatsapp.version(store)));
     const watcher = new ChangeWatcher(gauges, {
       interval: pollIntervalMs,
       // A data_version read is local: a check that takes the whole interval

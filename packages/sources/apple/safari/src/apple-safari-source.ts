@@ -1,4 +1,4 @@
-import { ChangeWatcher, Gauge } from '@zukhruf/async';
+import { ChangeWatcher } from '@zukhruf/async';
 import {
   ClosedWorld,
   type DeletionPolicy,
@@ -18,7 +18,6 @@ import {
   Safari,
   type SafariLocation,
   type SafariStore,
-  type SafariVersion,
   StoreUnavailableError,
   safariRunning,
 } from '@workspace/sdk-apple-safari';
@@ -92,22 +91,6 @@ function readerOf(stream: Stream): SafariReader {
 
 // How often a watch checks the stores for changes.
 const pollIntervalMs = 1000;
-
-// The version of one Safari store.
-class SafariStoreGauge extends Gauge<string> {
-  readonly store: SafariStore;
-  readonly #version: SafariVersion;
-
-  constructor(store: SafariStore, version: SafariVersion) {
-    super();
-    this.store = store;
-    this.#version = version;
-  }
-
-  protected read(): Promise<string> {
-    return this.#version.current();
-  }
-}
 
 // Reads Safari's own stores, so Safari need not run to export. Only Safari
 // fetches history and tabs from the user's other devices, so what they
@@ -206,10 +189,7 @@ export class AppleSafariSource extends Source<SafariScan> {
     using versions = new DisposableStack();
     const gauges = [
       ...new Set(streams.map((stream) => readerOf(stream).store)),
-    ].map(
-      (store) =>
-        new SafariStoreGauge(store, versions.use(this.#safari.version(store))),
-    );
+    ].map((store) => versions.use(this.#safari.version(store)));
     const watcher = new ChangeWatcher(gauges, {
       interval: pollIntervalMs,
       // The reads are local, data_version, a profile listing and file

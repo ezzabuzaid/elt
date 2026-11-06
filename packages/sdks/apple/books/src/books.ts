@@ -64,6 +64,7 @@ export class Books {
     return store === 'preferences'
       ? new BooksPreferencesVersion(this.location)
       : new BooksDatabaseVersion(
+          store,
           appDatabase.version(storeFiles(this.location)[store]),
         );
   }

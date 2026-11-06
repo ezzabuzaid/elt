@@ -1,4 +1,4 @@
-import { ChangeWatcher, Gauge } from '@zukhruf/async';
+import { ChangeWatcher } from '@zukhruf/async';
 
 import type {
   CopyConfiguration,
@@ -116,21 +116,6 @@ const accountStreams: ReadonlySet<string> = new Set([
 ]);
 // How often a watch checks the store for changes.
 const pollIntervalMs = 1000;
-
-// Mail's version: it changes with each commit to the index and each file
-// change in the store.
-class MailGauge extends Gauge<string> {
-  readonly #version: Awaited<ReturnType<MailStore['version']>>;
-
-  constructor(version: Awaited<ReturnType<MailStore['version']>>) {
-    super();
-    this.#version = version;
-  }
-
-  protected async read(): Promise<string> {
-    return this.#version.current;
-  }
-}
 
 // These native records have no proven account/message ownership. A restricted
 // import omits them rather than copying unrelated settings or guessing joins.
@@ -271,13 +256,12 @@ export class AppleMailSource extends Source<MailScan> {
     clock,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
-    using version = await this.#store.version();
+    using mail = await this.#store.version();
     const accountsSelected = selected.filter(({ name }) =>
       accountStreams.has(name),
     );
     using accounts =
       accountsSelected.length === 0 ? null : this.#accountsVersion();
-    const mail = new MailGauge(version);
     const watcher = new ChangeWatcher(
       accounts === null ? [mail] : [mail, accounts],
       {

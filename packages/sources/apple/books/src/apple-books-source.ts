@@ -2,7 +2,7 @@ import { mkdtempDisposable, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ChangeWatcher, Gauge } from '@zukhruf/async';
+import { ChangeWatcher } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import type {
@@ -17,7 +17,6 @@ import {
   Books,
   type BooksLocation,
   type BooksStore,
-  type BooksVersion,
   StoreUnavailableError,
 } from '@workspace/sdk-apple-books';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -71,22 +70,6 @@ const readerOf = (stream: Stream): BooksReader => {
 
 // How often a watch checks the stores for changes.
 const pollIntervalMs = 1000;
-
-// The version of one Books store.
-class BooksStoreGauge extends Gauge<string> {
-  readonly store: BooksStore;
-  readonly #version: BooksVersion;
-
-  constructor(store: BooksStore, version: BooksVersion) {
-    super();
-    this.store = store;
-    this.#version = version;
-  }
-
-  protected read(): Promise<string> {
-    return this.#version.current();
-  }
-}
 
 // Reads Books' own stores, so Books need not run to export. What Books syncs
 // from the user's other devices is what bookdatastored last fetched.
@@ -146,10 +129,7 @@ export class AppleBooksSource extends Source<BooksScan> {
     using versions = new DisposableStack();
     const gauges = [
       ...new Set(streams.map((stream) => readerOf(stream).store)),
-    ].map(
-      (store) =>
-        new BooksStoreGauge(store, versions.use(this.#books.version(store))),
-    );
+    ].map((store) => versions.use(this.#books.version(store)));
     const watcher = new ChangeWatcher(gauges, {
       interval: pollIntervalMs,
       // The reads are local, data_version and file stamps: a check that

@@ -2,7 +2,7 @@ import { mkdtempDisposable, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ChangeWatcher, Gauge } from '@zukhruf/async';
+import { ChangeWatcher } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import type {
@@ -14,7 +14,6 @@ import type {
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
-  type AddressBookVersion,
   ContactsStore,
   StoreUnavailableError,
   macRegion,
@@ -84,21 +83,6 @@ const readersByName = new Map<string, ContactsReader>(
 
 // How often a watch checks the stores for commits.
 const pollIntervalMs = 1000;
-
-// The address book's version: it changes with each commit to a store and
-// with each store added or removed.
-class AddressBookGauge extends Gauge<string> {
-  readonly #version: AddressBookVersion;
-
-  constructor(version: AddressBookVersion) {
-    super();
-    this.#version = version;
-  }
-
-  protected async read(): Promise<string> {
-    return this.#version.current;
-  }
-}
 
 // Reads Contacts' own Core Data stores, one per account, so Contacts.app
 // need not run and no Contacts.framework entitlement is needed for notes.
@@ -179,7 +163,7 @@ export class AppleContactsSource extends Source<ContactsScan> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using version = this.#store.version();
-    const watcher = new ChangeWatcher([new AddressBookGauge(version)], {
+    const watcher = new ChangeWatcher([version], {
       interval: pollIntervalMs,
       // A data_version read is local: a check that takes the whole interval
       // is stuck.

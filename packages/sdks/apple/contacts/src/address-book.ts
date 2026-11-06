@@ -1,6 +1,8 @@
 import { type Dirent, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { Gauge } from '@zukhruf/async';
+
 import {
   type AppDatabaseVersion,
   StoreUnavailableError,
@@ -68,16 +70,17 @@ export class AddressBook implements AsyncDisposable {
 
 // contactsd commits through WALs it keeps open; each store's probe changes
 // with each commit to it, and an added or removed account changes the store
-// set.
-export class AddressBookVersion implements Disposable {
+// set. A change watcher reads it as a gauge.
+export class AddressBookVersion extends Gauge<string> implements Disposable {
   readonly #stores = new Map<string, AppDatabaseVersion>();
   readonly directory: string;
 
   constructor(directory: string) {
+    super();
     this.directory = directory;
   }
 
-  get current(): string {
+  protected async read(): Promise<string> {
     const paths = storeDirectories(this.directory).map(({ directory }) =>
       join(directory, storeFile),
     );
