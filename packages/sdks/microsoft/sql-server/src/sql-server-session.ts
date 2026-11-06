@@ -48,6 +48,26 @@ LEFT JOIN sys.change_tracking_tables AS ctt ON ctt.object_id = t.object_id
 WHERE t.is_ms_shipped = 0 AND t.is_external = 0 AND s.name <> 'cdc'
 ORDER BY s.name, t.name`;
 
+// For each table: how many statistics it has, the rows changed in their
+// columns since each was last refreshed, and the last refresh.
+const statisticsQuery = `
+SELECT QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name),
+  CONCAT(COUNT(p.stats_id), ' ', SUM(p.modification_counter), ' ', CONVERT(varchar(27), MAX(p.last_updated), 126))
+FROM sys.tables AS t
+LEFT JOIN sys.stats AS st ON st.object_id = t.object_id
+OUTER APPLY sys.dm_db_stats_properties(st.object_id, st.stats_id) AS p
+GROUP BY t.schema_id, t.name`;
+
+// For each table: the writes counted on its indexes since the engine
+// started, and the last.
+const lastWritesQuery = `
+SELECT QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name),
+  CONCAT(SUM(u.user_updates), ' ', CONVERT(varchar(23), MAX(u.last_user_update), 126))
+FROM sys.tables AS t
+LEFT JOIN sys.dm_db_index_usage_stats AS u
+  ON u.object_id = t.object_id AND u.database_id = DB_ID()
+GROUP BY t.schema_id, t.name`;
+
 // TYPE_NAME(system_type_id) is the system type an alias type is built on; a
 // login that cannot see an alias type would otherwise lose its columns. CLR
 // types share one system type, so they keep their own name.
@@ -192,6 +212,47 @@ export class SqlServerSession implements AsyncDisposable {
       ),
       rowversion: cellText(rowversion, '@@DBTS'),
     });
+  }
+
+  // Where the statistics of each table stand, by its quoted name: SQL Server
+  // counts the rows changed in each column that has statistics, and keeps the
+  // count through a restart. A refresh of statistics sets their count back to
+  // 0, so the value carries the time of the last refresh too. A table with no
+  // statistics has no count, so its value never moves. A login that can read
+  // a table can read its counts.
+  async statistics(): Promise<ReadonlyMap<string, string>> {
+    const rows = await query(this.#pool.request(), statisticsQuery);
+    return new Map(
+      rows.map(([table, counts]) => [
+        cellText(table, 'table'),
+        cellText(counts, 'statistics'),
+      ]),
+    );
+  }
+
+  // When SQL Server last wrote to each table, by its quoted name, and how
+  // many writes it counted: any insert, update or delete moves it, also of a
+  // column with no statistics, but not a TRUNCATE. A restart forgets both,
+  // so the value of each table is then empty. A login needs VIEW SERVER
+  // STATE to read them (VIEW DATABASE STATE on Azure SQL Database).
+  async lastWrites(): Promise<ReadonlyMap<string, string>> {
+    const rows = await query(this.#pool.request(), lastWritesQuery).catch(
+      (error: unknown) => {
+        // 297: the login may not read the state of the server or database.
+        if (error instanceof sql.RequestError && error.number === 297)
+          throw new SqlServerPermissionError(
+            'VIEW SERVER STATE (VIEW DATABASE STATE on Azure SQL Database)',
+            error,
+          );
+        throw error;
+      },
+    );
+    return new Map(
+      rows.map(([table, writes]) => [
+        cellText(table, 'table'),
+        cellText(writes, 'last write'),
+      ]),
+    );
   }
 
   // Where a full read of the table starts in its change history: read it

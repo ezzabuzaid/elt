@@ -49,15 +49,17 @@ await new Pipeline({
 
 `sqlServerCopies` makes each stream a copy:
 
-- A stream that reads changes gets an incremental `append_dedup` copy.
-- A stream that reads every row gets a full-refresh `overwrite` copy.
+- A stream with a key gets an incremental `append_dedup` copy: Change Tracking, rowversion and snapshot streams.
+- A stream with no key gets a full-refresh `overwrite` copy.
 - The ID of each copy is `<source identity>/<schema>.<table>`, for example `sql-server:shop/dbo.orders`. The source identity is `sql-server:<database>`. Copy IDs must be different across a pipeline. Thus two databases that each have a table with the same name can be in one pipeline. See [ADR 0004](./docs/adr/0004-a-copy-id-carries-the-source-identity.md).
 
 A table whose columns changed gets to the pipeline as a stream whose fields changed. The copy keeps its rows and its checkpoint, and the destination changes its table in place (see shape changes in [elt](../../../elt/README.md#shape-changes)). The source fills in a field that the table gained. See the sync strategies.
 
 ## Access
 
-A read-only login is sufficient: `db_datareader`, and `VIEW CHANGE TRACKING` on each tracked table whose changes and deletions it must read. You do not have to enable a feature on the server. The source uses Change Tracking and snapshot isolation where an administrator turned them on. It reads every other table fully or by its rowversion.
+A read-only login is sufficient: `db_datareader`, and `VIEW CHANGE TRACKING` on each tracked table whose changes and deletions it must read. You do not have to enable a feature on the server. The source uses Change Tracking and snapshot isolation where an administrator turned them on. It reads every other table by its rowversion, by snapshot or fully.
+
+`VIEW SERVER STATE` (`VIEW DATABASE STATE` on Azure SQL Database) is optional. With it, a watch sees each write to a table that the source reads by snapshot or fully, also to a column with no statistics. See [Watching](#watching).
 
 - A connection string that names no `Database` is refused. Thus a read never goes to the default database of the login.
 - A server that cannot be reached fails with `SqlServerUnavailableError`. It is down, it restarts or fails over, its address is wrong, or the network dropped the connection. This is a `system` failure, so a later attempt or a watch that watches again can succeed.
@@ -107,7 +109,8 @@ Discovery selects how each table reads. Each table reads with the first strategy
 | --------------- | ---------------------------------------------------------------------- | ----------------------------- |
 | Change Tracking | the table has a key, tracks changes, and the login can see its changes | `incremental`, `append_dedup` |
 | Rowversion      | the table has a key and a `rowversion` column                          | `incremental`, `append_dedup` |
-| Full refresh    | all other tables                                                       | `full_refresh`, `overwrite`   |
+| Snapshot        | all other tables that have a key                                       | `incremental`, `append_dedup` |
+| Full refresh    | the table has no key                                                   | `full_refresh`, `overwrite`   |
 
 **Change Tracking** is for a keyed table that tracks changes, when the login has `VIEW CHANGE TRACKING`.
 
@@ -121,7 +124,13 @@ Discovery selects how each table reads. Each table reads with the first strategy
 - The source does not see deletions. A deleted row stays loaded.
 - Its state records the columns that it read. A column that the table gained changes no rowversion. Thus the next read starts again from the first row, and keeps what is loaded.
 
-**Full refresh** is for all other tables. Each read takes every row, and the copy replaces its target.
+**Snapshot** is for a keyed table with no Change Tracking that the login can read and no `rowversion` column. It is a snapshot stream of [elt](../../../elt/CONTEXT.md):
+
+- Each read takes every row. The copy compares the rows with the snapshot in its checkpoint, writes each row that is new or changed, and deletes each row whose key the read did not give. The read gives every row, so a key that it does not give was deleted (the `ClosedWorld` deletion policy).
+- A read that fails deletes nothing.
+- A full-refresh copy of the stream replaces its target with every row.
+
+**Full refresh** is for a table with no key, or with a key that the login cannot read in full. Each read takes every row, and the copy replaces its target.
 
 A position in a table's change history is a Change Tracking version and the table's tracking generation. The generation is the table's `begin_version`, which a `TRUNCATE` moves to the current version, and the creation time of its change table, which enabling tracking again makes new. See [ADR 0001](./docs/adr/0001-a-change-tracking-position-carries-the-tracking-generation.md).
 
@@ -133,17 +142,27 @@ Pages compare the full primary key as a tuple. Each part is cast to the declared
 
 ## Watching
 
-`observe()` polls every 30 seconds:
+`observe()` checks every 30 seconds. Each sync strategy names its change signals. On each check, each signal reads one value for each table, in one query. A check wakes a stream when the value of one of its signals is not the value of the last check.
 
-- A changed Change Tracking version (`CHANGE_TRACKING_CURRENT_VERSION()`) wakes the Change Tracking streams.
-- A changed last rowversion (`@@DBTS`) wakes the rowversion streams.
-- Full-refresh streams have no change signal that a read-only login can see. They refresh at the first poll, and then one time each hour.
+| Sync strategy             | Change signals                                    |
+| ------------------------- | ------------------------------------------------- |
+| Change Tracking           | the Change Tracking version                       |
+| Rowversion                | the last rowversion                               |
+| Snapshot and full refresh | the statistics, the last write (optional), hourly |
+
+- **The Change Tracking version** (`CHANGE_TRACKING_CURRENT_VERSION()`) of the database. A change to a tracked table moves it, in the transaction of the change.
+- **The last rowversion** (`@@DBTS`) of the database. An insert or an update of a row with a `rowversion` column moves it.
+- **The statistics** of the table (`sys.dm_db_stats_properties`): their count, the rows changed in their columns, and the time of their last refresh. An insert, a delete, a `TRUNCATE` or an update of a column with statistics moves it. A restart keeps it. A refresh of statistics sets the count to 0 and changes the time. `db_datareader` can read it.
+- **The last write** of the table (`sys.dm_db_index_usage_stats`): the writes and the time of the last write. Each insert, update or delete moves it, also of a column with no statistics. A `TRUNCATE` does not move it. A restart clears it, which also wakes the stream. Discovery reads it one time. When the login cannot read it, the streams do not use it, and their description names the grant.
+- **Hourly**: the number of whole hours since the watch started. Each hour, it wakes the streams again, and the read finds a change that the other signals did not see.
 
 The database is current whenever the source reads it, so the source gives no `currentAsOf`.
 
 ## Limitations
 
 - Rowversion tables do not see deletions. A deleted row stays.
+- Without the last write, an update of a column with no statistics loads only at the next hour. A table with no statistics at all, such as a table with no key and no index, also waits for the hour.
+- SQL Server builds the statistics of a table when a query first needs them. Until then, they count nothing. A table that no query has read by a column since it was created empty thus wakes only by its last write or by the hour.
 - The source does not read CDC (backlog #2315).
 - The source discovers tables only, not views (backlog #3253).
 - In one case, the source does not see a truncate, or tracking that was turned off and on again: when the table's tracking began at the version that the last sync read, and nothing that is tracked changed in the database since. No metadata that a read-only login can see changes then.
@@ -162,6 +181,20 @@ Run on 2026-10-06 against SQL Server 2022 CU27 (16.0.4295.3) Developer, in the c
 - tedious 20.0.0 refused to connect to an IP address over TLS. 20.3.3 connects.
 - `sql_variant` text under style 126 keeps times exact. Floating point needs style 3 for 17 digits.
 - An end-to-end check of the source and the pipeline loaded a seeded database, read by a `db_datareader` login. On a second run, it wrote nothing to the Change Tracking and rowversion tables. On a third run, it applied an update, a deletion, a truncate and an added column.
+
+Run on 2026-11-04 against three Azure SQL databases (General Purpose, Gen5), read only:
+
+- `sys.dm_db_index_usage_stats` gave the time of the last write to a table to the second of its `updatedAt` column. It also gave a write on 2026-10-29 to a table whose `DateUpdated` column the write did not change. It was empty for writes before the last restart of the engine, and the three engines restarted within 9 days.
+- `sys.dm_db_log_stats` moved its last log position in 15 seconds with no write by a user, so it is no signal of a table.
+
+Run on 2026-11-06 against SQL Server 2022 in a container, through a `db_datareader` login and a login with more grants:
+
+- A restart cleared the last writes and the row counts of `sys.dm_db_index_operational_stats`, and kept the count of `sys.dm_db_stats_properties`.
+- A `TRUNCATE` moved neither the last write nor the row counts. It moved the count of the statistics.
+- An update of 100 rows in a column with no statistics did not move the count of the statistics. `UPDATE STATISTICS` set the count to 0 and changed the time of the refresh.
+- An `UPDATE` of no row and an `UPDATE` that was rolled back moved the last write.
+- `db_datareader` could read the count of the statistics, and got error 297 for the last writes and the row counts.
+- `CHECKSUM_AGG(BINARY_CHECKSUM(*))` read every page of the table. It did not change for a value changed from `' !'` to `''Q'`, for two rows that swapped a value, or for two equal rows added to a table with no key. A SHA-256 hash of each row found all three.
 
 ## Decisions
 

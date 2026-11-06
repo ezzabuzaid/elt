@@ -8,6 +8,7 @@ import type {
   SqlServerTable,
 } from '@workspace/sdk-microsoft-sql-server';
 
+import { lastRowversion } from './signals/last-rowversion.ts';
 import { SqlServerStream, pageSize } from './sql-server-stream.ts';
 
 // Where a read stands: the last rowversion it read, and the fields it read.
@@ -41,6 +42,7 @@ export class RowversionStream extends SqlServerStream {
       supportedSyncModes: ['full_refresh', 'incremental'],
       sourceDefinedCursor: true,
       strategy: `Read by its rowversion column ${table.rowversion?.name}: inserts and updates apply; deletions are not seen.`,
+      signals: [lastRowversion],
     });
   }
 

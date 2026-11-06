@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { test } from 'node:test';
+import { type TestContext, test } from 'node:test';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { Postgres } from '@zukhruf/testing/postgres';
 import {
   type Database,
@@ -110,6 +111,42 @@ function syncer(
       ],
     });
     return { source, results: await pipeline.run() };
+  };
+}
+
+// A watch on a fake clock, because a check waits 30 s and the hourly
+// refresh an hour: each check runs when the test moves the clock past the
+// wait. A change that wakes nothing makes no yield, so each check a test
+// reads must wake a stream.
+function watcher(t: TestContext, source: SqlServerSource) {
+  // A start in the middle of an hour, so a wake on the hour of the clock
+  // differs from a wake an hour after the watch started.
+  const clock = createClock(Date.UTC(2026, 10, 6, 7, 12));
+  const controller = new AbortController();
+  const watch = source.watch({
+    clock,
+    streams: source.streams,
+    signal: controller.signal,
+  });
+  const names = (result: IteratorResult<readonly { name: string }[]>) =>
+    result.done ? [] : result.value.map(({ name }) => name).sort();
+  return {
+    clock,
+    // The first check, which wakes every stream.
+    first: async () => names(await watch.next()),
+    // The streams the next check wakes.
+    woken: async () => {
+      const next = watch.next();
+      await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+        timeout: 30_000,
+      });
+      await clock.tickAsync(30_000);
+      return names(await next);
+    },
+    [Symbol.asyncDispose]: async () => {
+      controller.abort();
+      await watch.return(undefined);
+    },
   };
 }
 
@@ -539,7 +576,7 @@ test('a rowversion table loads inserts and updates, a row still being written ar
   }
 });
 
-test('a table with no change signal is read in full each sync, so a deleted row disappears', async () => {
+test('a keyed table with no change feed writes only the rows that are new or changed and deletes the rows that are gone, and a table with no key is read in full', async () => {
   await using server = await sqlServer.database();
   await using warehouse = await postgresServer.database();
   await using clients = new AsyncDisposableStack();
@@ -557,7 +594,7 @@ test('a table with no change signal is read in full each sync, so a deleted row 
     CREATE TABLE dbo.log (message nvarchar(20) NOT NULL);
     CREATE TABLE dbo.codes (code char(2) PRIMARY KEY, label nvarchar(20) NOT NULL);
     INSERT dbo.log VALUES (N'started'), (N'stopped');
-    INSERT dbo.codes VALUES ('EU', N'Europe'), ('AS', N'Asia');`);
+    INSERT dbo.codes VALUES ('EU', N'Europe'), ('AS', N'Asia'), ('NA', N'North America');`);
   await using reader = await readOnlyLogin(server, admin, '');
   const sync = syncer(
     reader.connectionString,
@@ -569,21 +606,39 @@ test('a table with no change signal is read in full each sync, so a deleted row 
       await warehouseSql`SELECT message FROM raw.dbo_log ORDER BY message`
     ).map(({ message }) => message),
     codes: (
-      await warehouseSql`SELECT code FROM raw.dbo_codes ORDER BY code`
-    ).map(({ code }) => code),
+      await warehouseSql`SELECT code, label FROM raw.dbo_codes ORDER BY code`
+    ).map(({ code, label }) => `${code} ${label}`),
   });
+  const written = ({ results }: Awaited<ReturnType<typeof sync>>) =>
+    results.map(({ copy, count }) => [copy.from.name, count]);
   await sync();
 
-  await admin
-    .request()
-    .batch(
-      "DELETE dbo.log WHERE message = N'started'; DELETE dbo.codes WHERE code = 'AS';",
-    );
-  await sync();
+  await admin.request().batch(`
+    DELETE dbo.log WHERE message = N'started';
+    DELETE dbo.codes WHERE code = 'AS';
+    UPDATE dbo.codes SET label = N'Europa' WHERE code = 'EU';
+    INSERT dbo.codes VALUES ('AF', N'Africa');`);
+  const changed = await sync();
 
-  assert.deepEqual(await loaded(), { log: ['stopped'], codes: ['EU'] });
-  await sync();
-  assert.deepEqual(await loaded(), { log: ['stopped'], codes: ['EU'] });
+  // The table with no key loads every row again; the keyed one only the
+  // new and the changed row.
+  assert.deepEqual(written(changed), [
+    ['dbo.codes', 2],
+    ['dbo.log', 1],
+  ]);
+  assert.deepEqual(await loaded(), {
+    log: ['stopped'],
+    codes: ['AF Africa', 'EU Europa', 'NA North America'],
+  });
+  const unchanged = await sync();
+  assert.deepEqual(written(unchanged), [
+    ['dbo.codes', 0],
+    ['dbo.log', 1],
+  ]);
+  assert.deepEqual(await loaded(), {
+    log: ['stopped'],
+    codes: ['AF Africa', 'EU Europa', 'NA North America'],
+  });
 });
 
 test(
@@ -700,7 +755,7 @@ test('a login the server refuses after discovery fails the copy as config, for t
   assert.deepEqual(failureTypes(error), ['config']);
 });
 
-test('a tracked table the login cannot track falls back to its rowversion or to full reads, says which grant would help, and a read refused later fails only its own table', async () => {
+test('a tracked table the login cannot track falls back to its rowversion or to a snapshot, says which grant would help, and a read refused later fails only its own table and deletes none of its rows', async () => {
   await using server = await sqlServer.database();
   await using warehouse = await postgresServer.database();
   await using clients = new AsyncDisposableStack();
@@ -733,7 +788,8 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
 
   const plain = source.streams.find(({ name }) => name === 'dbo.plain');
   const stamped = source.streams.find(({ name }) => name === 'dbo.stamped');
-  assert.deepEqual(plain?.supportedSyncModes, ['full_refresh']);
+  assert.deepEqual(plain?.supportedSyncModes, ['full_refresh', 'incremental']);
+  assert.equal(plain?.emitsDeletes, true);
   assert.match(
     String(plain?.jsonSchema.description),
     /Granting the login VIEW CHANGE TRACKING ON \[dbo\]\.\[plain\] would read only changes and deletions/,
@@ -753,11 +809,12 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
     .request()
     .batch("UPDATE dbo.stamped SET name = N'c' WHERE id = 1;");
   const { results } = await sync();
-  // The full read loads its row again; the rowversion read only the update.
+  // The snapshot writes nothing for its unchanged row; the rowversion read
+  // only the update.
   assert.deepEqual(
     results.map(({ copy, count }) => [copy.from.name, count]),
     [
-      ['dbo.plain', 1],
+      ['dbo.plain', 0],
       ['dbo.stamped', 1],
     ],
   );
@@ -804,6 +861,9 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
     ],
   );
   assert.deepEqual(failureTypes(error), ['config']);
+  // A read that failed is no complete scan, so no row it did not list is
+  // deleted.
+  assert.deepEqual(await names(), { plain: ['a'], stamped: ['c'] });
   // The next sync no longer finds a table the login cannot read.
   const { source: rediscovered } = await sync();
   assert.deepEqual(
@@ -1164,5 +1224,179 @@ test(
       controller.abort();
       await watch.return(undefined);
     }
+  },
+);
+
+test(
+  'a watch wakes a keyed table with no change feed within one check of an insert, an update of a column with statistics, a statistics refresh, or a truncate, with a login that reads nothing more',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    // The index gives title statistics, which SQL Server counts changes in.
+    // It builds the statistics of a table created empty when a query first
+    // needs them, as the queries of a real database have; here the refresh
+    // builds them.
+    await admin.request().batch(`
+    CREATE TABLE dbo.notes (id int PRIMARY KEY, title nvarchar(20) NOT NULL);
+    CREATE INDEX notes_title ON dbo.notes (title);
+    CREATE TABLE dbo.other (id int PRIMARY KEY);
+    INSERT dbo.notes VALUES (1, N'a');
+    INSERT dbo.other VALUES (1);
+    UPDATE STATISTICS dbo.notes;
+    UPDATE STATISTICS dbo.other;`);
+    await using reader = await readOnlyLogin(server, admin, '');
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(reader.connectionString),
+    );
+    // The login cannot read when each table was last written.
+    assert.match(
+      String(
+        source.streams.find(({ name }) => name === 'dbo.notes')?.jsonSchema
+          .description,
+      ),
+      /Granting the login VIEW SERVER STATE \(VIEW DATABASE STATE on Azure SQL Database\) would wake a watch on any write, also to a column with no statistics\./,
+    );
+    await using watch = watcher(t, source);
+    assert.deepEqual(await watch.first(), ['dbo.notes', 'dbo.other']);
+
+    await admin.request().batch("INSERT dbo.notes VALUES (2, N'b');");
+    assert.deepEqual(await watch.woken(), ['dbo.notes']);
+    await admin
+      .request()
+      .batch("UPDATE dbo.notes SET title = N'c' WHERE id = 1;");
+    assert.deepEqual(await watch.woken(), ['dbo.notes']);
+    await admin.request().batch('UPDATE STATISTICS dbo.notes;');
+    assert.deepEqual(await watch.woken(), ['dbo.notes']);
+    // The refresh sets the count back to 0, the count the last check read.
+    await admin
+      .request()
+      .batch("INSERT dbo.notes VALUES (3, N'd'); UPDATE STATISTICS dbo.notes;");
+    assert.deepEqual(await watch.woken(), ['dbo.notes']);
+    await admin.request().batch('TRUNCATE TABLE dbo.notes;');
+    assert.deepEqual(await watch.woken(), ['dbo.notes']);
+  },
+);
+
+test(
+  'an update of a column with no statistics waits for the hour, which wakes the tables read in full or by snapshot and not those read by Change Tracking or rowversion',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin.request().batch(`
+    ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
+    CREATE TABLE dbo.tracked (id int PRIMARY KEY);
+    ALTER TABLE dbo.tracked ENABLE CHANGE_TRACKING;
+    CREATE TABLE dbo.stamped (id int PRIMARY KEY, stamp rowversion);
+    CREATE TABLE dbo.tracked_stamped (id int PRIMARY KEY, stamp rowversion);
+    ALTER TABLE dbo.tracked_stamped ENABLE CHANGE_TRACKING;
+    CREATE TABLE dbo.notes (id int PRIMARY KEY, body nvarchar(50) NOT NULL);
+    CREATE TABLE dbo.log (message nvarchar(20) NOT NULL);
+    CREATE TABLE dbo.other (id int PRIMARY KEY);
+    INSERT dbo.notes VALUES (1, N'x');
+    INSERT dbo.other VALUES (1);
+    UPDATE STATISTICS dbo.notes;
+    UPDATE STATISTICS dbo.other;`);
+    await using reader = await readOnlyLogin(
+      server,
+      admin,
+      'GRANT VIEW CHANGE TRACKING ON dbo.tracked TO {user}; GRANT VIEW CHANGE TRACKING ON dbo.tracked_stamped TO {user};',
+    );
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(reader.connectionString),
+    );
+    const described = (name: string) =>
+      String(
+        source.streams.find((stream) => stream.name === name)?.jsonSchema
+          .description,
+      );
+    // Change Tracking comes before the rowversion.
+    assert.match(described('dbo.tracked_stamped'), /Change Tracking/);
+    assert.match(described('dbo.log'), /Granting the login VIEW SERVER STATE/);
+    await using watch = watcher(t, source);
+    assert.deepEqual(await watch.first(), [
+      'dbo.log',
+      'dbo.notes',
+      'dbo.other',
+      'dbo.stamped',
+      'dbo.tracked',
+      'dbo.tracked_stamped',
+    ]);
+
+    // Only the insert into dbo.other moves a count.
+    await admin
+      .request()
+      .batch(
+        "UPDATE dbo.notes SET body = N'y' WHERE id = 1; INSERT dbo.other VALUES (2);",
+      );
+    assert.deepEqual(await watch.woken(), ['dbo.other']);
+    // The rowversion moves, which a table read by Change Tracking ignores.
+    await admin.request().batch('INSERT dbo.stamped (id) VALUES (1);');
+    assert.deepEqual(await watch.woken(), ['dbo.stamped']);
+    // 51 minutes after the start, past 08:00 on the clock.
+    watch.clock.setSystemTime(watch.clock.now + 50 * 60_000);
+    await admin.request().batch('INSERT dbo.other VALUES (3);');
+    assert.deepEqual(await watch.woken(), ['dbo.other']);
+    watch.clock.setSystemTime(watch.clock.now + 10 * 60_000);
+    assert.deepEqual(await watch.woken(), [
+      'dbo.log',
+      'dbo.notes',
+      'dbo.other',
+    ]);
+  },
+);
+
+test(
+  'a login that may read when each table was last written wakes a table within one check of an update of a column with no statistics, and a table with no key or statistics after an insert',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin.request().batch(`
+    CREATE TABLE dbo.notes (id int PRIMARY KEY, body nvarchar(50) NOT NULL);
+    CREATE TABLE dbo.log (message nvarchar(20) NOT NULL);
+    INSERT dbo.notes VALUES (1, N'x');
+    UPDATE STATISTICS dbo.notes;`);
+    // A server permission, so it is granted in master.
+    await using reader = await readOnlyLogin(
+      server,
+      admin,
+      "EXEC master.sys.sp_executesql N'GRANT VIEW SERVER STATE TO {user}';",
+    );
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(reader.connectionString),
+    );
+    assert.doesNotMatch(
+      String(
+        source.streams.find(({ name }) => name === 'dbo.notes')?.jsonSchema
+          .description,
+      ),
+      /VIEW SERVER STATE/,
+    );
+    await using watch = watcher(t, source);
+    assert.deepEqual(await watch.first(), ['dbo.log', 'dbo.notes']);
+
+    await admin
+      .request()
+      .batch("UPDATE dbo.notes SET body = N'y' WHERE id = 1;");
+    assert.deepEqual(await watch.woken(), ['dbo.notes']);
+    await admin.request().batch("INSERT dbo.log VALUES (N'started');");
+    assert.deepEqual(await watch.woken(), ['dbo.log']);
   },
 );

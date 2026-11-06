@@ -12,18 +12,21 @@ import type {
   SqlServerTable,
 } from '@workspace/sdk-microsoft-sql-server';
 
+import type { ChangeSignal } from './signals/change-signal.ts';
 import { TableFields, sentence } from './sql-server-fields.ts';
 
 // Rows per page of a resumable read: each page ends in a checkpoint, so a
 // read that fails resumes after the last page it committed.
 export const pageSize = 10_000;
 
-// How a subclass syncs its table, and says so in the stream's description.
+// How a subclass syncs its table, and says so in the stream's description,
+// and the signals that wake it in a watch.
 type SyncTraits = {
   readonly supportedSyncModes: readonly SyncMode[];
   readonly sourceDefinedCursor?: true;
   readonly emitsDeletes?: true;
   readonly strategy: string;
+  readonly signals: readonly ChangeSignal[];
 };
 
 // One table as a stream. Each way of reading a table is its own subclass:
@@ -33,9 +36,11 @@ export abstract class SqlServerStream {
   readonly table: SqlServerTable;
   readonly fields: TableFields;
   readonly stream: Stream;
+  readonly signals: readonly ChangeSignal[];
 
   constructor(table: SqlServerTable, traits: SyncTraits) {
     this.table = table;
+    this.signals = traits.signals;
     this.fields = new TableFields(table);
     const { properties } = this.fields;
     this.stream = new Stream({
@@ -82,6 +87,7 @@ export abstract class SqlServerStream {
     configuration: CopyConfiguration,
     state: unknown,
     session: SqlServerSession,
+    signal: AbortSignal | undefined,
   ): AsyncIterable<SourceMessage>;
 
   protected message(row: SqlServerRow): SourceMessage {
@@ -94,9 +100,21 @@ export abstract class SqlServerStream {
   }
 
   // Every row as it is now, in one read.
+  protected async *records(
+    session: SqlServerSession,
+  ): AsyncGenerator<Record<string, unknown>> {
+    for await (const row of session.rows(this.table))
+      yield* validateRecords(
+        this.stream,
+        [this.fields.record(row)],
+        'SQL Server',
+      );
+  }
+
   protected async *everyRow(
     session: SqlServerSession,
   ): AsyncGenerator<SourceMessage> {
-    for await (const row of session.rows(this.table)) yield this.message(row);
+    for await (const data of this.records(session))
+      yield { stream: this.stream.name, data };
   }
 }

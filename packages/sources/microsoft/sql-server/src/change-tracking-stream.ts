@@ -10,6 +10,7 @@ import {
   type SqlServerTable,
 } from '@workspace/sdk-microsoft-sql-server';
 
+import { changeTrackingVersion } from './signals/change-tracking-version.ts';
 import { SqlServerStream, pageSize } from './sql-server-stream.ts';
 
 // Where a read stands: loading every row from a position in the table's
@@ -85,6 +86,7 @@ export class ChangeTrackingStream extends SqlServerStream {
       emitsDeletes: true,
       strategy:
         'Read through SQL Server Change Tracking: inserts, updates and deletions apply.',
+      signals: [changeTrackingVersion],
     });
   }
 

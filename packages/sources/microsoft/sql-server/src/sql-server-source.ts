@@ -23,21 +23,25 @@ import {
 import { ChangeTrackingStream } from './change-tracking-stream.ts';
 import { FullRefreshStream } from './full-refresh-stream.ts';
 import { RowversionStream } from './rowversion-stream.ts';
+import type { ChangeSignal } from './signals/change-signal.ts';
+import { WholeTableSignals } from './signals/whole-table-signals.ts';
+import { SnapshotStream } from './snapshot-stream.ts';
 import type { SqlServerStream } from './sql-server-stream.ts';
 
 // How often a watch asks the database whether anything changed.
 const pollIntervalMs = 30_000;
-// A table with no change signal refreshes once an hour instead.
-const fullRefreshIntervalMs = 60 * 60_000;
 
-// Change Tracking when the login can read it, else the rowversion, else the
-// whole table. The first two need a key to apply changes by.
-function streamFor(table: SqlServerTable): SqlServerStream {
-  if (table.primaryKey.length > 0 && table.changeTracking === 'readable')
+// Change Tracking when the login can read it, else the rowversion, else a
+// snapshot of the whole table, all by key; a table with no key in full.
+function streamFor(
+  table: SqlServerTable,
+  watch: WholeTableSignals,
+): SqlServerStream {
+  if (table.primaryKey.length === 0) return new FullRefreshStream(table, watch);
+  if (table.changeTracking === 'readable')
     return new ChangeTrackingStream(table);
-  if (table.primaryKey.length > 0 && table.rowversion !== undefined)
-    return new RowversionStream(table);
-  return new FullRefreshStream(table);
+  if (table.rowversion !== undefined) return new RowversionStream(table);
+  return new SnapshotStream(table, watch);
 }
 
 // Every table one SQL Server database holds that the login can read, one
@@ -69,7 +73,11 @@ export class SqlServerSource extends Source<SqlServerSession> {
         throw new TypeError(
           `The schemas to keep name ${schema}, which holds no table this login can read in ${database.location}`,
         );
-    return new SqlServerSource(database, tables.map(streamFor));
+    const watch = await WholeTableSignals.discover(session);
+    return new SqlServerSource(
+      database,
+      tables.map((table) => streamFor(table, watch)),
+    );
   }
 
   private constructor(
@@ -110,9 +118,9 @@ export class SqlServerSource extends Source<SqlServerSession> {
     return null;
   }
 
-  // Polls the database's change counters: a moved Change Tracking version
-  // wakes the streams read through it, a moved rowversion the streams read
-  // by theirs; streams with neither refresh on an interval.
+  // Checks the signals of the streams every 30 s: each signal reads once for
+  // every table, and a stream wakes when the value of any signal it names
+  // moved since the last check.
   protected override async *observe({
     streams,
     signal,
@@ -120,35 +128,41 @@ export class SqlServerSource extends Source<SqlServerSession> {
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     await using session = await this.#database.open();
-    // pollChanges reads in the order of the map, so the rowversion read
-    // takes the counters the Change Tracking read just queried.
-    let version: Awaited<ReturnType<SqlServerSession['version']>>;
-    const reads = new Map<
-      abstract new (...args: never[]) => SqlServerStream,
-      () => Promise<unknown>
-    >([
-      [
-        ChangeTrackingStream,
-        async () => (version = await session.version()).changeTracking,
-      ],
-      [RowversionStream, async () => version.rowversion],
-    ]);
-    let refreshed = -Infinity;
-    for await (const changed of pollChanges(reads, {
+    const started = clock.Date.now();
+    // The reads of one check, by signal. pollChanges reads in the order of
+    // the map, so the first stream's read starts a new check, and each
+    // stream after it takes the reads of the signals it shares.
+    let check = new Map<ChangeSignal, ReturnType<ChangeSignal['read']>>();
+    const read = (changeSignal: ChangeSignal) => {
+      const known = check.get(changeSignal);
+      if (known !== undefined) return known;
+      const values = changeSignal.read({
+        session,
+        started,
+        now: clock.Date.now(),
+      });
+      check.set(changeSignal, values);
+      return values;
+    };
+    const probes = new Map(
+      streams.map((stream, index) => {
+        const reader = this.#reader(stream);
+        return [
+          stream,
+          async () => {
+            if (index === 0) check = new Map();
+            const values = await Promise.all(reader.signals.map(read));
+            return JSON.stringify(values.map((value) => value(reader.table)));
+          },
+        ];
+      }),
+    );
+    for await (const changed of pollChanges(probes, {
       interval: pollIntervalMs,
       signal,
       clock,
-    })) {
-      const kinds = [...changed];
-      if (clock.Date.now() - refreshed >= fullRefreshIntervalMs) {
-        kinds.push(FullRefreshStream);
-        refreshed = clock.Date.now();
-      }
-      const woken = streams.filter((stream) =>
-        kinds.some((kind) => this.#reader(stream) instanceof kind),
-      );
-      if (woken.length > 0) yield woken;
-    }
+    }))
+      if (changed.size > 0) yield [...changed];
   }
 
   protected override extract(
@@ -156,11 +170,13 @@ export class SqlServerSource extends Source<SqlServerSession> {
     state: unknown,
     _partition: Partition | null,
     session: SqlServerSession,
+    signal: AbortSignal | undefined,
   ): AsyncIterable<SourceMessage> {
     return this.#reader(configuration.stream).extract(
       configuration,
       state,
       session,
+      signal,
     );
   }
 

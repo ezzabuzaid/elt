@@ -8,19 +8,17 @@ import type {
   SqlServerTable,
 } from '@workspace/sdk-microsoft-sql-server';
 
+import type { WholeTableSignals } from './signals/whole-table-signals.ts';
 import { SqlServerStream } from './sql-server-stream.ts';
 
-// A table with no change signal the login can read: every read takes every
-// row, and a copy replaces what it loaded before.
+// A table with no key the login can read in full, so no change can apply by
+// key: every read takes every row, and a copy replaces what it loaded before.
 export class FullRefreshStream extends SqlServerStream {
-  constructor(table: SqlServerTable) {
-    const hint =
-      table.changeTracking === 'denied' && table.primaryKey.length > 0
-        ? ` Granting the login VIEW CHANGE TRACKING ON ${table.quoted} would read only changes and deletions.`
-        : '';
+  constructor(table: SqlServerTable, watch: WholeTableSignals) {
     super(table, {
       supportedSyncModes: ['full_refresh'],
-      strategy: `Read in full on every sync.${hint}`,
+      strategy: `Read in full on every sync.${watch.hint}`,
+      signals: watch.signals,
     });
   }
 

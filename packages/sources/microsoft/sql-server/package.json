@@ -16,9 +16,11 @@
   "dependencies": {
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-microsoft-sql-server": "0.0.1",
-    "@zukhruf/async": "^0.6.15"
+    "@zukhruf/async": "^0.6.15",
+    "@zukhruf/snapshot-differential": "^0.6.15"
   },
   "devDependencies": {
+    "@sinonjs/fake-timers": "15.4.0",
     "@types/mssql": "^12.3.0",
     "@workspace/elt-postgresql": "0.0.1",
     "@zukhruf/testing": "^0.6.15",
