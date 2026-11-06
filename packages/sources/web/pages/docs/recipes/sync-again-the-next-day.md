@@ -1,12 +1,12 @@
 # Recipe: Sync again the next day
 
-**Use case.** You load the posts of a blog today. Tomorrow you sync again. The second pipeline run must not download and extract every post again. It must load the posts that changed, and keep the rows of the others.
+**Use case.** You load the posts of a blog today. Tomorrow you sync again. The second pipeline run must not extract every post again. It must load the posts that changed, and keep the rows of the others.
 
 **What you need.** A `WebSource` in a pipeline with a checkpoint store. The state of the source keeps the crawl memento, so the next pipeline run knows each URL that the last crawl visited. The default revisit policy is `AdaptiveRevisit`.
 
 ## What the second pipeline run does
 
-1. **The input is always due.** The crawl downloads the sitemap or the feed again, and its readers find the pages.
+1. **The input is due as each other URL is.** With `AdaptiveRevisit`, the input is due one day after its last visit. Then the crawl downloads the sitemap or the feed again, and its readers find the pages.
 2. **A page that is not due is a deferred page.** The crawl does not request it, and its rows stay. With `AdaptiveRevisit`, a page is due one day after its first visit. The interval then grows while the page does not change, up to 14 days. It moves toward one hour while the page changes.
 3. **A sitemap can make a page due at once.** When the sitemap gives a page another `lastmod`, the crawl requests the page in this crawl.
 4. **A due page uses the HTTP cache.** When the server gave an ETag or a `Last-Modified` date, the client asks the server whether the page changed. When the answer is 304, or the fingerprint is the same, the extractor does not extract the records again.
@@ -14,7 +14,7 @@
 
 ## The program
 
-A blog has two posts, and its sitemap gives the date when each post last changed. On day 2, post 1 has a new version and a new `lastmod`.
+A blog has two posts, and its sitemap gives the date when each post last changed. On day 2, post 1 has a new version and a new `lastmod`. The pipeline reads the time on its clock, so the program gives a clock that is one day later on day 2.
 
 ```ts title="sync-again.ts"
 import { once } from 'node:events';
@@ -88,6 +88,14 @@ const source = new WebSource({
   cachePath: join(directory, 'web-http.sqlite'),
   userAgent: 'ExampleReader/1.0 (+https://example.com/contact)',
 });
+// The pipeline's clock. Day 2 is one day after day 1.
+let days = 0;
+const clock = {
+  setTimeout,
+  clearTimeout,
+  performance,
+  Date: { now: () => Date.now() + days * 86_400_000 },
+};
 const pipeline = new Pipeline({
   history: new SQLiteSyncHistory(),
   connections: [
@@ -111,7 +119,7 @@ const pipeline = new Pipeline({
       ],
     }),
   ],
-  clock: globalThis,
+  clock,
 });
 
 async function sync(name: string) {
@@ -130,6 +138,7 @@ async function sync(name: string) {
 }
 
 await sync('day 1');
+days = 1;
 posts.set('/posts/1', {
   lastmod: '2026-10-28',
   text: 'The second version of post 1.',
@@ -151,7 +160,7 @@ day 1 {
   ]
 }
 day 2 {
-  requested: [ '/robots.txt', '/sitemap.xml', '/posts/1' ],
+  requested: [ '/robots.txt', '/sitemap.xml', '/posts/1', '/posts/2' ],
   loaded: 1,
   rows: [
     '/posts/1: The second version of post 1',
@@ -162,7 +171,7 @@ day 2 {
 
 ## Why it works
 
-On day 2, the crawl knew both posts from the crawl memento in the state. Post 1 had a new `lastmod`, so it was due at once, and the extractor read its new version. Post 2 was not due, so the crawl did not request it. It was a deferred page, and its row stayed.
+On day 2, the crawl knew both posts from the crawl memento in the state. One day had gone by, so the sitemap and both posts were due, and `robots.txt` was 24 hours old. Post 1 had changed, so the extractor read its new version. Post 2 had the same fingerprint, so the extractor did not extract its records again, and its row stayed. This blog gives no ETag and no `Last-Modified` date, so the crawl downloaded post 2 again. A page that is not due yet, for example one hour after its visit, is a deferred page: the crawl does not request it.
 
 ## Things to know
 
