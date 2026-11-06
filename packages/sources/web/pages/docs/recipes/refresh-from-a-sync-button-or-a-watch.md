@@ -16,7 +16,7 @@ The revisit policy only gives each URL the time when it is due. A crawl requests
 
 ## The program
 
-A blog has two posts. Post 1 changes at each visit, and post 2 never changes. The web stream uses `FixedRevisit({ every: 3_000 })`, so each URL is due three seconds after its visit. The program does one pipeline run, as a Sync button does. Then it watches for two passes, and stops the watch.
+A blog has two posts. Post 1 changes at each visit, and post 2 never changes. The web stream uses `FixedRevisit({ every: 10_000 })`, so each URL is due ten seconds after its visit. The crawl waits one second between two requests to the blog, so one crawl of the blog takes about three seconds. The program does one pipeline run, as a Sync button does. Then it watches for two passes, and stops the watch.
 
 ```ts title="sync-or-watch.ts"
 import { once } from 'node:events';
@@ -76,7 +76,7 @@ const source = new WebSource({
         name: 'articles',
         primaryKey: ['articleUrl'],
         readers: [new ListingReader()],
-        revisit: new FixedRevisit({ every: 3_000 }),
+        revisit: new FixedRevisit({ every: 10_000 }),
         extractor: new ArticleExtractor(),
       }),
       inputs: [`${origin}/feed.json`],
@@ -95,16 +95,20 @@ const pipeline = new Pipeline({
       checkpoints: new SQLiteCheckpointStore({
         path: join(directory, 'checkpoints.sqlite'),
       }),
-      steps: (await source.discover()).streams.map(
-        (stream) =>
-          new Copy(stream, destination.table(stream.name), {
+      steps: [
+        new Copy(
+          (await source.discover()).get('articles'),
+          destination.table('articles'),
+          {
             id: 'web:articles',
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
-          }),
-      ),
+          },
+        ),
+      ],
     }),
   ],
+  clock: globalThis,
 });
 
 const started = performance.now();
@@ -131,9 +135,9 @@ await rm(directory, { recursive: true, force: true });
 Output (the times change from run to run):
 
 ```
-sync button, at 1 s: 2 records
-watch pass 1, at 1 s: 0 records
-watch pass 2, at 4 s: 1 records
+sync button, at 3 s: 2 records
+watch pass 1, at 3 s: 0 records
+watch pass 2, at 12 s: 1 records
 ```
 
 ## Why it works
@@ -142,7 +146,7 @@ watch pass 2, at 4 s: 1 records
 
 `pipeline.watch()` asks the source when to start each pass. `WebSource` starts with one pass for all its inputs. After each crawl, it reads `crawl.nextDue()`, and it waits until the earliest due time of all its inputs. That wait is the only timer. When the source has more than one web stream, each stream has its own due time, and a pass reads only the streams that are due.
 
-The first watch pass started at once, just after the pass of the Sync button. Only the feed was due, because a starting URL is always due, so the pass loaded no records. The second watch pass started when the posts were due, three seconds after their last visit. Post 1 had changed, so the pass loaded its new record. Post 2 had not changed, so the extractor did not extract its records again.
+The first watch pass started at once, just after the pass of the Sync button. No URL was due, so the pass requested nothing and loaded no records. The second watch pass started when the feed was due, ten seconds after its last visit. Post 1 had changed, so the pass loaded its new record. Post 2 had not changed, so the extractor did not extract its records again.
 
 ## Things to know
 
@@ -150,4 +154,4 @@ The first watch pass started at once, just after the pass of the Sync button. On
 - **Do not watch with `AlwaysRevisit`.** Every URL is then due at once, so the watch crawls again as soon as each crawl ends.
 - **A watch also waits out a block.** After a 429, `crawl.nextDue()` gives the end of the block. See [Crawl a website that rate-limits you](../../../../../sdks/web/crawler/docs/recipes/crawl-a-website-that-rate-limits-you.md).
 - **A watch needs a process that stays alive.** If the process stops, the state still has each due time. The next `run()` or `watch()` reads them.
-- **A pass that a scheduler starts too early does little.** It requests only the input and the URLs that are due. The other pages are deferred pages, and their rows stay.
+- **A pass that a scheduler starts too early does little.** It requests only the URLs that are due, and the input is a URL as the others are. The other pages are deferred pages, and their rows stay.

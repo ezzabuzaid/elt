@@ -42,6 +42,7 @@ const pipeline = new Pipeline({
       ),
     }),
   ],
+  clock: globalThis,
 });
 
 for (const pass of ['first', 'second'])

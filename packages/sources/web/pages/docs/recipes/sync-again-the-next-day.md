@@ -98,16 +98,20 @@ const pipeline = new Pipeline({
       checkpoints: new SQLiteCheckpointStore({
         path: join(directory, 'checkpoints.sqlite'),
       }),
-      steps: (await source.discover()).streams.map(
-        (stream) =>
-          new Copy(stream, destination.table(stream.name), {
+      steps: [
+        new Copy(
+          (await source.discover()).get('articles'),
+          destination.table('articles'),
+          {
             id: 'web:articles',
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
-          }),
-      ),
+          },
+        ),
+      ],
     }),
   ],
+  clock: globalThis,
 });
 
 async function sync(name: string) {

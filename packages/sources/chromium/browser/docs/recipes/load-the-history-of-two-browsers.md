@@ -53,6 +53,7 @@ const connections = [dia, chrome].map((browser) => {
 const pipeline = new Pipeline({
   history: new SQLiteSyncHistory(),
   connections,
+  clock: globalThis,
 });
 
 for (const pass of ['first', 'second']) {

@@ -138,6 +138,7 @@ const pipeline = new Pipeline({
       }),
     }),
   ],
+  clock: globalThis,
 });
 
 await pipeline.run();
