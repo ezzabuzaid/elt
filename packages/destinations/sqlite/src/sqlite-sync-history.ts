@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 
 import { transaction } from '@zukhruf/sqlite-transaction';
 
@@ -17,6 +17,7 @@ import {
   recordedFailure,
 } from '@workspace/elt';
 
+import { openDestination } from './open-destination.ts';
 import { installSQLiteCatalog } from './sqlite-catalog.ts';
 import { SQLiteDestination } from './sqlite-destination.ts';
 import {
@@ -28,9 +29,6 @@ import {
 } from './sqlite-sync-history-schema.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { publishSQLiteViews } from './sqlite-views.ts';
-
-// How long a history write waits for a load or reader to finish committing.
-const busyTimeout = 30_000;
 
 // Records every pass in the file its connection loads, beside the data, and
 // shows readers that history, and the catalog, through views there.
@@ -227,7 +225,7 @@ function write<T>(
   path: string,
   work: (database: DatabaseSync) => T extends PromiseLike<unknown> ? never : T,
 ): T {
-  using database = new DatabaseSync(path, { timeout: busyTimeout });
+  using database = openDestination(path);
   return transaction(database, () => work(database), { mode: 'immediate' });
 }
 

@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import type { SQLInputValue } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
+import { open } from '@zukhruf/sqlite-open';
 import { transaction } from '@zukhruf/sqlite-transaction';
 
 import {
@@ -11,13 +12,11 @@ import {
   type Rule,
 } from '@workspace/elt';
 
+import { busyTimeout, openDestination } from './open-destination.ts';
 import { SQLiteDestination } from './sqlite-destination.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { publishSQLiteViews } from './sqlite-views.ts';
 import { View } from './view.ts';
-
-// How long a refresh waits for a load or reader to finish committing.
-const busyTimeout = 30_000;
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
@@ -138,9 +137,7 @@ export class ComputedDataset<
     readonly trigger: RefreshTrigger;
   }): Promise<void> {
     const inputs = this.#inputs(connections);
-    using database = new DatabaseSync(this.#into.path, {
-      timeout: busyTimeout,
-    });
+    using database = openDestination(this.#into.path);
     const key = this.#rule.key.name;
     const stored = transaction(
       database,
@@ -297,10 +294,7 @@ export class ComputedDataset<
           ? target.into.path
           : this.#source(connections, target);
       if (path === undefined) continue;
-      using database = new DatabaseSync(path, {
-        readOnly: true,
-        timeout: busyTimeout,
-      });
+      using database = open(path, { readOnly: true, timeout: busyTimeout });
       const relation =
         target instanceof View
           ? target.name

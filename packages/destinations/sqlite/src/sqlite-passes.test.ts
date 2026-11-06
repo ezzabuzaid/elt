@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 
@@ -29,7 +29,6 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
   readPassStatus,
-  readSQLite,
 } from './index.ts';
 
 // A source whose upstream is current whenever it is read.
@@ -134,45 +133,82 @@ test('a pass and each of its streams read running while it runs and cancelled on
   );
 });
 
-test('a read rolls back the hot journal a pass killed mid-commit left, so the sqlite3 shell can open the file again', async () => {
+test('a pass killed in the middle of a commit leaves a file that the sqlite3 shell and readPassStatus read at once, with only the committed rows', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-passes-');
-  const database = join(scratch.path, 'data.sqlite');
-  {
-    using data = new DatabaseSync(database);
-    data.exec("CREATE TABLE notes(id TEXT); INSERT INTO notes VALUES('kept');");
+  class Notes extends LiveSource {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    readonly identity = 'notes';
+    readonly notes = stream('notes');
+    protected readonly catalog = new Catalog([this.notes]);
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+
+    protected override async *extract() {
+      yield { stream: 'notes', data: { id: 'kept' } };
+    }
   }
-  // A pass that dies inside its transaction, after SQLite spilled the change
-  // to the file, leaves the rollback journal behind.
-  spawnSync(
+  const source = new Notes();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  await new Pipeline({
+    clock: globalThis,
+    connections: [
+      new Connection({
+        name: 'notes',
+        source,
+        destination,
+        steps: [new Copy(source.notes, destination.table('notes'))],
+      }),
+    ],
+    history: new SQLiteSyncHistory(),
+  }).run();
+  // The connection of a load dies inside its commit, after SQLite spilled
+  // the change to the write-ahead log.
+  const killed = spawnSync(
     process.execPath,
     [
       '--input-type=module',
       '-e',
-      `import { DatabaseSync } from 'node:sqlite';
-       const data = new DatabaseSync(${JSON.stringify(database)});
-       data.exec('PRAGMA cache_size = 1; BEGIN');
-       data.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000) INSERT INTO notes SELECT 'lost-' || i FROM n");
+      `import { openDestination } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'index.ts')).href)};
+       const data = openDestination(process.env.DATABASE);
+       data.exec('PRAGMA cache_size = 1; BEGIN IMMEDIATE');
+       data.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000) INSERT INTO notes (id, loaded_at) SELECT 'lost-' || i, loaded_at FROM n, notes");
        process.kill(process.pid, 'SIGKILL');`,
     ],
-    { encoding: 'utf8' },
+    {
+      cwd: import.meta.dirname,
+      env: { ...process.env, DATABASE: destination.path },
+      encoding: 'utf8',
+    },
   );
-  assert.equal(existsSync(`${database}-journal`), true);
-  assert.match(
-    shell(database, 'SELECT count(*) AS n FROM notes').stderr,
-    /readonly/,
-  );
+  assert.equal(killed.signal, 'SIGKILL', killed.stderr);
 
-  {
-    using data = readSQLite(database);
-    assert.deepEqual(
-      { ...data.prepare('SELECT count(*) AS n FROM notes').get() },
-      { n: 1 },
-    );
-  }
+  assert.deepEqual(shell(destination.path, 'SELECT id FROM notes'), {
+    rows: [{ id: 'kept' }],
+    stderr: '',
+  });
+  assert.equal(readPassStatus(destination.path).pass?.state, 'succeeded');
+  // The killed connection had spilled its change, which the reads skipped.
+  assert.ok(statSync(`${destination.path}-wal`).size > 0);
+});
 
-  assert.deepEqual(shell(database, 'SELECT count(*) AS n FROM notes').rows, [
-    { n: 1 },
-  ]);
+test('readPassStatus of a path with no file reads no pass and no streams', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-passes-');
+
+  assert.deepEqual(readPassStatus(join(scratch.path, 'data.sqlite')), {
+    pass: null,
+    streams: [],
+  });
 });
 
 test("a pass that did not load says whether its failures are the user's to fix, as the source classifies them", async () => {
@@ -426,7 +462,7 @@ test('a pass a killed process left running stays running, until a history that i
     steps: [new Copy(source.notes, destination.table('notes'))],
   });
   const attempts = () => {
-    using database = new DatabaseSync(path, { readOnly: true });
+    using database = open(path, { readOnly: true });
     return database
       .prepare(
         'SELECT status, error, failure_type FROM sync_attempts ORDER BY attempt_id',

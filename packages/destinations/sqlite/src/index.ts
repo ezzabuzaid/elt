@@ -1,4 +1,5 @@
 export { ComputedDataset } from './computed-dataset.ts';
+export { openDestination } from './open-destination.ts';
 export { installSQLiteCatalog } from './sqlite-catalog.ts';
 export { SQLiteCheckpointStore } from './sqlite-checkpoint-store.ts';
 export { SQLiteColumn } from './sqlite-column.ts';
@@ -8,7 +9,6 @@ export {
   type PassState,
   type PassStatus,
   readPassStatus,
-  readSQLite,
   type StreamPassStatus,
 } from './sqlite-passes.ts';
 export { SQLiteSyncHistory } from './sqlite-sync-history.ts';

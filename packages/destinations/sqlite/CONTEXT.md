@@ -8,6 +8,10 @@ A host wants the data that elt copies in one SQLite file, which a reader can que
 The file that one `SQLiteDestination` writes.
 _Avoid_: Database (a database can be many files), store, import (Context Compiler keeps one SQLite file for each import)
 
+**Persistent WAL**:
+The journal of the SQLite file. SQLite adds each commit to the `-wal` file, and these `-wal` and `-shm` files stay after the last connection closes. Thus a reader that cannot write the folder of the file can read it. Readers never wait for a commit, and a commit never waits for readers.
+_Avoid_: WAL mode, journal mode
+
 **Raw table**:
 The table that a copy loads, for example `raw_documents`.
 _Avoid_: Staging table, source table

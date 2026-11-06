@@ -1,13 +1,15 @@
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+
+import { openDestination } from '@workspace/elt-sqlite';
 
 import directory from './directory.ts';
 
 export const articlesPath = join(directory, 'articles.sqlite');
 
 // Opened read-write so a first start creates the file, which readOnly cannot;
-// query_only then refuses every write on this connection.
-const db = new DatabaseSync(articlesPath, { timeout: 5_000 });
+// query_only then refuses every write on this connection. It opens as the
+// loads do, so that its close also keeps the -wal and -shm files.
+const db = openDestination(articlesPath);
 db.exec('PRAGMA query_only = ON');
 
 export default db;

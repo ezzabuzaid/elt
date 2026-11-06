@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -118,7 +118,7 @@ function importIn(directory: string) {
 }
 
 function edit(path: string, sql: string): void {
-  using database = new DatabaseSync(path);
+  using database = open(path);
   database.exec(sql);
 }
 
@@ -152,7 +152,7 @@ test('a sync history view another version installed reads as no status, and the 
 
   assert.deepEqual(older, { pass: null, streams: [] });
   assert.equal(current.pass?.state, 'succeeded');
-  using data = new DatabaseSync(imported.path, { readOnly: true });
+  using data = open(imported.path, { readOnly: true });
   assert.equal(
     data.prepare('SELECT count(*) AS n FROM sync_attempts').get()?.n,
     2,
@@ -173,7 +173,7 @@ test('a sync history table another version declared otherwise is replaced with i
   await imported.pass();
 
   assert.equal(readPassStatus(imported.path).pass?.state, 'succeeded');
-  using data = new DatabaseSync(imported.path, { readOnly: true });
+  using data = open(imported.path, { readOnly: true });
   assert.equal(
     data.prepare('SELECT count(*) AS n FROM sync_attempts').get()?.n,
     1,

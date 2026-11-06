@@ -2,10 +2,9 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { EventEmitter, on, once } from 'node:events';
-import { rmSync } from 'node:fs';
+import { rmSync, statSync } from 'node:fs';
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -15,6 +14,7 @@ import {
   Coverage,
   Retention,
 } from '@zukhruf/snapshot-differential';
+import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -114,7 +114,7 @@ test('the public ELT API copies source records into SQLite', async () => {
   }).run();
 
   assert.deepEqual(results, [{ copy, count: 1, deleted: 0 }]);
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   const row = database.prepare('SELECT id, name FROM records').get();
   assert.ok(row);
   assert.deepEqual({ ...row }, { id: 'record-1', name: 'Test record' });
@@ -338,7 +338,7 @@ test('every name is sanitized as Airbyte does, around the names SQLite takes as 
     }).run();
   };
   const view = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT * FROM odd')
       .all()
@@ -357,7 +357,7 @@ test('every name is sanitized as Airbyte does, around the names SQLite takes as 
     before.map(([field]) => `a:${field}`),
   );
   {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     const ids = (table: string) =>
       database
         .prepare(`SELECT id FROM "${table}"`)
@@ -469,7 +469,7 @@ test('array fields load as JSON arrays that SQLite checks and reads element by e
 
   assert.deepEqual(results, [{ copy, count: 2, deleted: 0 }]);
   {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     assert.deepEqual(
       database
         .prepare(
@@ -489,7 +489,7 @@ test('array fields load as JSON arrays that SQLite checks and reads element by e
       ],
     );
   }
-  using writable = new DatabaseSync(destination.path);
+  using writable = open(destination.path);
   assert.throws(
     () => writable.exec("UPDATE lists SET counts = '{}' WHERE id = 'a'"),
     /CHECK constraint failed/,
@@ -664,7 +664,7 @@ test('an array of objects loads as a JSON array of objects, which SQLite reads f
 
   assert.deepEqual(results, [{ copy, count: 2, deleted: 0 }]);
   {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     assert.deepEqual(
       database
         .prepare(
@@ -681,7 +681,7 @@ test('an array of objects loads as a JSON array of objects, which SQLite reads f
       ],
     );
   }
-  using writable = new DatabaseSync(destination.path);
+  using writable = open(destination.path);
   assert.throws(
     () => writable.exec("UPDATE pages SET copies = '{}' WHERE id = 'a'"),
     /CHECK constraint failed/,
@@ -927,8 +927,8 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     { copy, count: 1, deleted: 0, failures: [], cancelled: false },
     { copy: other, count: 1, deleted: 0, failures: [], cancelled: false },
   ]);
-  using database = new DatabaseSync(destination.path, { readOnly: true });
-  using state = new DatabaseSync(checkpoints.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
+  using state = open(checkpoints.path, { readOnly: true });
   const loadedVersion = () =>
     database.prepare('SELECT version FROM records').get()?.version;
   const savedVersion = () =>
@@ -1059,7 +1059,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   assert.equal(loadedVersion(), 4);
   assert.deepEqual(savedVersion(), { version: 4 });
   {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     assert.deepEqual(
       database
         .prepare('SELECT version FROM other')
@@ -1308,7 +1308,7 @@ test('replace loads a restated fact that cursor_newer discards', async () => {
     [{ copy: guarding, count: 1, deleted: 0 }],
   ]);
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   const rows = (table: string) =>
     database
       .prepare(`SELECT date, query, clicks FROM ${table}`)
@@ -1391,7 +1391,7 @@ test('deletions remove keyed rows from a deduplicating SQLite table', async () =
     ],
   });
   const names = () => {
-    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    using database = open(sqlite.path, { readOnly: true });
     return database
       .prepare('SELECT name FROM items ORDER BY id')
       .all()
@@ -1615,14 +1615,14 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     ],
   });
   const table = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT id, name, loaded_at FROM items ORDER BY id')
       .all()
       .map((row) => ({ ...row }));
   };
   const savedState = () => {
-    using database = new DatabaseSync(statePath, { readOnly: true });
+    using database = open(statePath, { readOnly: true });
     return JSON.parse(
       String(database.prepare('SELECT state FROM checkpoints').get()?.state),
     );
@@ -1658,7 +1658,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
   // A checkpoint save that failed after commit replays the older state: the
   // diff re-applies the same upserts and deletions and lands on the same rows.
   {
-    using state = new DatabaseSync(statePath);
+    using state = open(statePath);
     state
       .prepare('UPDATE checkpoints SET state = ?')
       .run(JSON.stringify(firstState));
@@ -1760,7 +1760,7 @@ test('a snapshot stream that emits no deletions keeps the rows of keys its upstr
     ],
   });
   const names = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT id, name FROM items ORDER BY id')
       .all()
@@ -1862,7 +1862,7 @@ test('a grouped snapshot stream that emits no deletions keeps the rows of a grou
     ],
   });
   const names = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT id, name FROM items ORDER BY id')
       .all()
@@ -1965,7 +1965,7 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
     ],
   });
   const names = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT id, name FROM items ORDER BY id')
       .all()
@@ -2157,7 +2157,7 @@ test('a snapshot pass over an unchanged scan that the host stops partway ends lo
     ],
   });
   const lastStatus = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare(
         'SELECT status FROM sync_attempts ORDER BY attempt_id DESC LIMIT 1',
@@ -2278,7 +2278,7 @@ test('a grouped pass whose groups are all unchanged, stopped by the host partway
     listed.length < 10_000,
     `the stopped scan listed ${listed.length} of 20,000 files`,
   );
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   assert.equal(
     database
       .prepare(
@@ -2375,14 +2375,14 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
     ],
   });
   const loaded = (table: string) => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare(`SELECT id FROM ${table} ORDER BY id`)
       .all()
       .map(({ id }) => id);
   };
   const remembered = () => {
-    using database = new DatabaseSync(statePath, { readOnly: true });
+    using database = open(statePath, { readOnly: true });
     const states = database
       .prepare('SELECT id, state FROM checkpoints ORDER BY id')
       .all()
@@ -2583,7 +2583,7 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
     ],
   });
   const loaded = (table: string) => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare(`SELECT channel || ts AS id FROM ${table} ORDER BY id`)
       .all()
@@ -2728,7 +2728,7 @@ test('a diff whose next read repeats only a lookback window deletes none of the 
     ],
   });
   const loaded = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT day || item AS id FROM days ORDER BY id')
       .all()
@@ -2871,7 +2871,7 @@ test('a target has one writer, even when another loads only its own partitions',
       () => destination.table('records'),
       new SQLiteCheckpointStore({ path: join(scratch.path, 'state.sqlite') }),
       async () => {
-        using database = new DatabaseSync(destination.path, { readOnly: true });
+        using database = open(destination.path, { readOnly: true });
         return database.prepare('SELECT id FROM records').all().length;
       },
     );
@@ -2959,12 +2959,12 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
     /Target Records is written by \{"source":"first","stream":"records"\}; \{"source":"second","stream":"records"\} cannot write it/,
   );
   {
-    using database = new DatabaseSync(destination.path);
+    using database = open(destination.path);
     database.exec('DROP TABLE records');
   }
   await overwrite(second);
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   assert.deepEqual(
     database
       .prepare('SELECT id FROM records')
@@ -3091,7 +3091,7 @@ test('explicit int64 and local timestamp columns keep what the stream spells, wi
     ],
   }).run();
 
-  using database = new DatabaseSync(destination.path, { readBigInts: true });
+  using database = open(destination.path, { readBigInts: true });
   assert.deepEqual(
     database
       .prepare('SELECT id, start FROM bookings ORDER BY id')
@@ -3245,7 +3245,7 @@ test('a partitioned stream resumes each partition from its own state', async () 
     ],
   });
   const rows = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT site, path, views FROM pages ORDER BY site, path')
       .all()
@@ -3271,7 +3271,7 @@ test('a partitioned stream resumes each partition from its own state', async () 
   );
   // b left the partition list: its checkpoint is gone, its rows stay.
   assert.deepEqual(rows(), ['a/1=5', 'b/1=1', 'c/1=1']);
-  using state = new DatabaseSync(checkpoints.path, { readOnly: true });
+  using state = open(checkpoints.path, { readOnly: true });
   const saved = state.prepare('SELECT state FROM checkpoints').get();
   assert.deepEqual(
     JSON.parse(String(saved?.state)).partitions.map(
@@ -3318,14 +3318,14 @@ test('a failing partition loads nothing and keeps its checkpoint, while the othe
     ],
   });
   const rows = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT site, path, views FROM pages ORDER BY site, path')
       .all()
       .map((row) => `${row.site}${row.path}=${row.views}`);
   };
   const saved = () => {
-    using state = new DatabaseSync(checkpoints.path, { readOnly: true });
+    using state = open(checkpoints.path, { readOnly: true });
     const { partitions } = JSON.parse(
       String(state.prepare('SELECT state FROM checkpoints').get()?.state),
     );
@@ -3414,14 +3414,14 @@ test('clear drops a target with its checkpoint, and a target dropped by hand rel
     ],
   });
   const saved = () => {
-    using state = new DatabaseSync(checkpoints.path, { readOnly: true });
+    using state = open(checkpoints.path, { readOnly: true });
     return state.prepare('SELECT id FROM checkpoints').all().length;
   };
   await pipeline.run();
 
   // Resuming from the checkpoint would load only what changed since it.
   {
-    using database = new DatabaseSync(destination.path);
+    using database = open(destination.path);
     database.exec('DROP TABLE pages');
   }
   source.received.length = 0;
@@ -3449,7 +3449,7 @@ test('clear drops a target with its checkpoint, and a target dropped by hand rel
   await pipeline.run();
 
   assert.deepEqual(source.received, [['a', null]]);
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   assert.equal(database.prepare('SELECT * FROM pages').all().length, 1);
 });
 
@@ -3475,7 +3475,7 @@ test('a full refresh whose partition fails keeps the previous table', async () =
     ],
   });
   const rows = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT site, views FROM pages ORDER BY site')
       .all()
@@ -3644,7 +3644,7 @@ const chunkTable = (table: string, column: string) =>
 
 // Each loaded file's chunk sizes and reassembled hash, plus chunks no row references.
 const storedFiles = (path: string) => {
-  using database = new DatabaseSync(path, { readOnly: true });
+  using database = open(path, { readOnly: true });
   const chunks = database
     .prepare(
       `SELECT f.id, c.bytes FROM files f JOIN ${chunkTable('files', 'bytes')} c ON c.file = f.bytes ORDER BY f.id, c.n`,
@@ -3835,7 +3835,7 @@ test('a checkpoint store keeps each acknowledged state, durable at once, and hol
       if (fail) throw new Error('source broke');
     });
   const saved = () => {
-    using database = new DatabaseSync(path, { readOnly: true });
+    using database = open(path, { readOnly: true });
     return database
       .prepare('SELECT state FROM checkpoints WHERE id = ?')
       .get('copy')?.state;
@@ -4065,7 +4065,7 @@ test('two loads into one SQLite file commit side by side across their commits, a
     writer: 'notes',
     reloading: false,
   });
-  using reader = new DatabaseSync(destination.path, { readOnly: true });
+  using reader = open(destination.path, { readOnly: true });
   const count = (table: string) =>
     reader.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n;
 
@@ -4121,7 +4121,7 @@ test('a commit waits for a reader in another process instead of failing', async 
 
     await stage.commit();
 
-    using after = new DatabaseSync(destination.path, { readOnly: true });
+    using after = open(destination.path, { readOnly: true });
     assert.equal(after.prepare('SELECT count(*) AS n FROM docs').get()?.n, 1);
   } finally {
     await stage[Symbol.asyncDispose]();
@@ -4149,7 +4149,7 @@ test('a clear waits for a reader in another process instead of failing', async (
 
   await destination.clear(copy.configuration, copy.to, 'writer');
 
-  using after = new DatabaseSync(destination.path, { readOnly: true });
+  using after = open(destination.path, { readOnly: true });
   assert.equal(after.prepare('SELECT count(*) AS n FROM docs').get()?.n, 0);
 });
 
@@ -4200,13 +4200,13 @@ test('file flush failure or cancellation leaves SQLite rows and checkpoints at t
       ],
     });
   const loaded = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT id, version, ref FROM docs ORDER BY id')
       .all();
   };
   const saved = () => {
-    using database = new DatabaseSync(checkpoints.path, { readOnly: true });
+    using database = open(checkpoints.path, { readOnly: true });
     return database
       .prepare('SELECT state FROM checkpoints WHERE id = ?')
       .get('docs')?.state;
@@ -4347,14 +4347,14 @@ test('stored file references follow committed SQLite rows, including rejected up
       ],
     });
     const loaded = () => {
-      using db = new DatabaseSync(destination.path, { readOnly: true });
+      using db = open(destination.path, { readOnly: true });
       return db
         .prepare('SELECT id, version, ref FROM docs ORDER BY id')
         .all()
         .map((row) => ({ ...row }));
     };
     const saved = () => {
-      using db = new DatabaseSync(statePath, { readOnly: true });
+      using db = open(statePath, { readOnly: true });
       return db
         .prepare('SELECT state FROM checkpoints WHERE id = ?')
         .get('docs')?.state;
@@ -4458,7 +4458,7 @@ test('a file whose own name ends in an extension too long to keep is stored unde
     ],
   }).run();
 
-  using db = new DatabaseSync(destination.path, { readOnly: true });
+  using db = open(destination.path, { readOnly: true });
   const reference = String(db.prepare('SELECT ref FROM docs').get()?.ref);
   assert.equal(
     basename(reference),
@@ -4527,11 +4527,11 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
       ],
     });
     const loaded = (table: string) => {
-      using db = new DatabaseSync(destination.path, { readOnly: true });
+      using db = open(destination.path, { readOnly: true });
       return db.prepare(`SELECT ref FROM "${table}"`).get()?.ref;
     };
     const saved = () => {
-      using db = new DatabaseSync(statePath, { readOnly: true });
+      using db = open(statePath, { readOnly: true });
       return db
         .prepare('SELECT state FROM checkpoints WHERE id = ?')
         .get('docs')?.state;
@@ -4646,14 +4646,14 @@ test('a stream that fails publishes none of its staged rows while its sibling co
     ],
   });
   const rows = (table: string) => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare(`SELECT id, version FROM ${table} ORDER BY id`)
       .all()
       .map(({ id, version }) => `${id}:${version}`);
   };
   const saved = () => {
-    using database = new DatabaseSync(statePath, { readOnly: true });
+    using database = open(statePath, { readOnly: true });
     return database
       .prepare('SELECT id, state FROM checkpoints ORDER BY id')
       .all()
@@ -4749,7 +4749,7 @@ test('a staged unit merges like its operations applied one at a time, under repl
     ],
   }).run();
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   const rows = (table: string) =>
     database
       .prepare(`SELECT id, version FROM ${table} ORDER BY id`)
@@ -4837,7 +4837,7 @@ test('a key named last merges like its operations applied one at a time', async 
     ],
   }).run();
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   const rows = (table: string) =>
     database
       .prepare(`SELECT "last", version FROM ${table} ORDER BY "last"`)
@@ -4927,7 +4927,7 @@ test('a key and cursor that sanitizing renames merge under their renamed columns
     ],
   }).run();
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   const rows = (table: string) =>
     database
       .prepare(
@@ -5025,7 +5025,7 @@ test('renamed file columns keep their original bytes and stored files through la
   messages = [{ stream: 'docs', data: { id: 'b', version: 1 }, file: null }];
   await pipeline.run();
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   // A view name the rule changes keeps a hash of the name asked for.
   const view = `Docs_View_${createHash('sha256').update('Docs View').digest('hex').slice(0, 8)}`;
   // Original bytes are read as the column's catalog entry tells a reader to.
@@ -5059,7 +5059,7 @@ test('a load holds no write transaction while the source reads, and a stream tha
   const failing = scripted('failing');
   // Another writer, between this load's commits, as a second connection.
   const write = () => {
-    using other = new DatabaseSync(destination.path, { timeout: 0 });
+    using other = open(destination.path, { timeout: 0 });
     other.exec('BEGIN IMMEDIATE');
     other.exec('COMMIT');
   };
@@ -5126,7 +5126,7 @@ test('a load holds no write transaction while the source reads, and a stream tha
 
   assert.ok(error instanceof PipelineError, String(error));
   assert.equal(wroteWhileReading, true);
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   const tables = database
     .prepare(
       `SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('kept', 'failing') ORDER BY name`,
@@ -5292,7 +5292,7 @@ test('two file columns whose table and column names join alike keep their own ch
   messages = { left: [{ stream: 'left', data: { id: 'l2' }, file: null }] };
   await pipeline.run();
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   // Each file is read as its column's catalog entry tells a reader to.
   const original = (view: string, column: string, id: string) => {
     const entry = database
@@ -5400,7 +5400,7 @@ test('a reset of a partition named by a renamed field replaces only that partiti
   };
   await pipeline.run();
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   assert.deepEqual(
     database
       .prepare('SELECT Account_Id AS account, id FROM items ORDER BY 1, 2')
@@ -5432,7 +5432,7 @@ test('a native transaction rollback retains the original merge error and committ
     ],
   });
   await pipeline.run();
-  using database = new DatabaseSync(destination.path);
+  using database = open(destination.path);
   // Like SQLITE_FULL, RAISE(ROLLBACK) removes every savepoint itself.
   database.exec(`CREATE TRIGGER fail_merge BEFORE INSERT ON items BEGIN
     SELECT RAISE(ROLLBACK, 'synthetic native rollback'); END`);
@@ -5497,7 +5497,7 @@ test('an overwrite_dedup whose key narrows builds its index after the old rows a
   source.scripts = { items: [record('items', 'a', 3)] };
   await run(['id']);
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   assert.deepEqual(
     database
       .prepare('SELECT id, version FROM items')
@@ -5603,7 +5603,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
     ],
   });
   const loaded = (table: string) => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare(
         `SELECT t.id, (SELECT group_concat(CAST(c.bytes AS TEXT), '') FROM ${chunkTable(table, 'bytes')} c WHERE c.file = t.bytes) AS bytes FROM ${table} t ORDER BY t.id`,
@@ -5612,7 +5612,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
       .map(({ id, bytes }) => `${id}=${bytes}`);
   };
   const orphans = (table: string) => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare(
         `SELECT count(*) AS n FROM ${chunkTable(table, 'bytes')} WHERE file NOT IN (SELECT bytes FROM ${table} WHERE bytes IS NOT NULL)`,
@@ -5620,7 +5620,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
       .get()?.n;
   };
   const saved = () => {
-    using database = new DatabaseSync(statePath, { readOnly: true });
+    using database = open(statePath, { readOnly: true });
     return database
       .prepare('SELECT id FROM checkpoints ORDER BY id')
       .all()
@@ -5632,7 +5632,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
     (error: unknown) => error,
   );
   const exists = (table: string) => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return (
       database
         .prepare(
@@ -5785,7 +5785,7 @@ for (const { outcome, next, expected } of leftBehind)
       ],
     });
     const stored = () => {
-      using database = new DatabaseSync(destination.path, { readOnly: true });
+      using database = open(destination.path, { readOnly: true });
       const loaded = database
         .prepare(
           `SELECT d.id, (SELECT group_concat(CAST(c.bytes AS TEXT), '') FROM ${chunkTable('docs', 'bytes')} c WHERE c.file = d.bytes) AS bytes FROM docs d ORDER BY d.id`,
@@ -5880,7 +5880,7 @@ test('clearing a table whose file column was declared after its first load empti
 
   await pipeline.clear();
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   assert.equal(database.prepare('SELECT count(*) AS n FROM docs').get()?.n, 0);
 });
 
@@ -5935,7 +5935,7 @@ test('text with a lone surrogate fails its stream instead of loading as a replac
       ['good', 1, []],
     ],
   );
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   // The failed stream never committed, so it left no table at all.
   assert.equal(
     database
@@ -6059,7 +6059,7 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
     ],
   });
   const read = (sql: string) => {
-    using database = new DatabaseSync(destination.path, {
+    using database = open(destination.path, {
       readOnly: true,
       readBigInts: true,
     });
@@ -6118,7 +6118,7 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
     },
   );
   {
-    using database = new DatabaseSync(destination.path);
+    using database = open(destination.path);
     for (const [column, value] of [
       ['at', '2025-01-02T03:04:05.123Z'],
       ['at', '2025-02-30T03:04:05.1234567Z'],
@@ -6198,7 +6198,7 @@ test('a reset replaces only its partition at the next commit, and one a failure 
   });
   const into = destination.table('items');
   const loaded = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT account, id FROM items ORDER BY account, id')
       .all()
@@ -6293,7 +6293,7 @@ test('a full refresh ignores resets, so an appending copy keeps its history', as
     ],
   });
   const ids = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT id FROM items ORDER BY rowid')
       .all()
@@ -6415,14 +6415,14 @@ async function shapeChanges(
       deleted,
     }));
   const loaded = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT * FROM items ORDER BY id')
       .all()
       .map(({ loaded_at: _, ...row }) => ({ ...row }));
   };
   const tables = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare(
         `SELECT "name" FROM sqlite_schema WHERE "type" = 'table' ORDER BY "name"`,
@@ -6431,7 +6431,7 @@ async function shapeChanges(
       .map(({ name }) => String(name));
   };
   const columns = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare(`SELECT "name" FROM pragma_table_info('raw_items')`)
       .all()
@@ -6439,7 +6439,7 @@ async function shapeChanges(
   };
   // What the copy's checkpoint holds, as the store saved it.
   const saved = () => {
-    using database = new DatabaseSync(join(directory, 'state.sqlite'), {
+    using database = open(join(directory, 'state.sqlite'), {
       readOnly: true,
     });
     const row = database
@@ -6618,7 +6618,7 @@ test('a stale table whose reader view was replaced by another is refused before 
   await run({ id: shape.id }, [{ id: 'a' }]);
   // Someone else's view takes the reader view's name.
   {
-    using database = new DatabaseSync(join(scratch.path, 'items.sqlite'));
+    using database = open(join(scratch.path, 'items.sqlite'));
     database.exec('DROP VIEW items; CREATE VIEW items AS SELECT 1 AS one');
   }
 
@@ -6632,7 +6632,7 @@ test('a stale table whose reader view was replaced by another is refused before 
   );
 
   assert.deepEqual(columns(), ['id', 'loaded_at']);
-  using database = new DatabaseSync(join(scratch.path, 'items.sqlite'), {
+  using database = open(join(scratch.path, 'items.sqlite'), {
     readOnly: true,
   });
   assert.deepEqual(
@@ -6806,7 +6806,7 @@ test('an overwrite whose stored table no longer fits reloads it rather than evol
   const [reloaded] = await run({ size: { type: 'integer' } }, [{ size: 3 }]);
 
   assert.equal(reloaded?.count, 1);
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   assert.deepEqual(
     database
       .prepare('SELECT size FROM items')
@@ -6894,7 +6894,7 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
     ],
   });
   const visible = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT id FROM items ORDER BY id')
       .all()
@@ -6972,14 +6972,14 @@ test('a stored table that no longer fits evolves without a reload, keeping every
   // A column added by hand makes the stored table stale; the next run brings
   // it back to the stream's shape with its rows and their files.
   {
-    using database = new DatabaseSync(destination.path);
+    using database = open(destination.path);
     database.exec('ALTER TABLE files ADD COLUMN extra TEXT');
   }
 
   const evolved = (await pipeline.run()).map(({ count }) => count);
   const reloaded = storedFiles(destination.path);
   {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     assert.equal(
       database
         .prepare(
@@ -7042,7 +7042,7 @@ test('a file column the target drops takes its stored chunks with it, whether it
         ],
       }).run();
     const chunkTables = () => {
-      using database = new DatabaseSync(destination.path, { readOnly: true });
+      using database = open(destination.path, { readOnly: true });
       return database
         .prepare(
           `SELECT "name" FROM sqlite_schema WHERE "type" = 'table' AND "name" LIKE '\\_elt\\_files\\_%' ESCAPE '\\'`,
@@ -7061,7 +7061,7 @@ test('a file column the target drops takes its stored chunks with it, whether it
 
     assert.equal(before.length, 1, modes.destinationSyncMode);
     assert.deepEqual(chunkTables(), [], modes.destinationSyncMode);
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     assert.deepEqual(
       database
         .prepare('SELECT id, version FROM files')
@@ -7165,14 +7165,14 @@ test('a copy that declares its columns from the stream and stores its files keep
     return results.map(({ count, deleted }) => ({ count, deleted }));
   };
   const loaded = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT * FROM docs ORDER BY id')
       .all()
       .map(({ loaded_at: _, ...row }) => ({ ...row }));
   };
   const saved = () => {
-    using database = new DatabaseSync(join(scratch.path, 'state.sqlite'), {
+    using database = open(join(scratch.path, 'state.sqlite'), {
       readOnly: true,
     });
     const row = database.prepare('SELECT state FROM checkpoints').get();
@@ -7302,7 +7302,7 @@ async function checkedPipeline(directory: string) {
     ],
   });
   const read = (sql: string) => {
-    using database = new DatabaseSync(path, { readOnly: true });
+    using database = open(path, { readOnly: true });
     return database
       .prepare(sql)
       .all()
@@ -7576,7 +7576,7 @@ test('one sync history records each connectionâ€™s first unchanged check at once
     ],
   });
   const current = () => {
-    using database = new DatabaseSync(path, { readOnly: true });
+    using database = open(path, { readOnly: true });
     return Object.fromEntries(
       database
         .prepare('SELECT connector, stream, current_as_of FROM stream_status')
@@ -7695,7 +7695,7 @@ test('a watcher failure the sync history cannot record rejects with a Suppressed
     await watching.next();
     // No operation makes the history fail; a table dropped under it does.
     {
-      using database = new DatabaseSync(path);
+      using database = open(path);
       database.exec('DROP TABLE "_elt_extraction_coverage"');
     }
 
@@ -7752,7 +7752,7 @@ test('a watch whose sync history cannot record a pass rejects with the historyâ€
     await watching.next();
     // No operation makes the history fail; a table dropped under it does.
     {
-      using database = new DatabaseSync(path);
+      using database = open(path);
       database.exec('DROP TABLE "_elt_extraction_coverage"');
     }
 
@@ -7785,7 +7785,7 @@ test('a watch whose sync history cannot record a check rejects with the historyâ
     await watching.next();
     // No operation makes the history fail; a table dropped under it does.
     {
-      using database = new DatabaseSync(path);
+      using database = open(path);
       database.exec('DROP TABLE "_elt_stream_checks"');
     }
 
@@ -7813,7 +7813,7 @@ test('a run whose sync history cannot record a pass rejects with the historyâ€™s
   // table dropped under it; a trigger the history does not declare refuses
   // its next record.
   {
-    using database = new DatabaseSync(path);
+    using database = open(path);
     database.exec(
       `CREATE TRIGGER "refuse" BEFORE INSERT ON "_elt_sync_attempts" BEGIN SELECT RAISE(ABORT, 'the history refuses this pass'); END`,
     );
@@ -7984,5 +7984,28 @@ test(
       controller.abort();
       await watching.return(undefined);
     }
+  },
+);
+
+test(
+  'the checkpoint file and its -wal and -shm files are owner-only',
+  { skip: process.platform === 'win32' ? 'Windows has no file modes' : false },
+  async () => {
+    await using scratch = await new TemporaryFiles().directory('elt-state-');
+    const checkpoints = new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    });
+
+    const modes = await checkpoints.run(
+      new Map([['copy', { copy: {}, shape: {} }]]),
+      async (run) => {
+        await run.save('copy', '{}', false);
+        return ['', '-wal', '-shm'].map(
+          (suffix) => statSync(`${checkpoints.path}${suffix}`).mode & 0o777,
+        );
+      },
+    );
+
+    assert.deepEqual(modes, [0o600, 0o600, 0o600]);
   },
 );

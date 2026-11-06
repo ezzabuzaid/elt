@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
+import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -211,7 +211,7 @@ test('a full refresh of a snapshot stream loads every record of each scan as sca
     ],
   });
   const loaded = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT id, name FROM items ORDER BY id')
       .all()
@@ -299,7 +299,7 @@ test('a full refresh of a grouped snapshot stream reads every group, also one wh
     ],
   });
   const loaded = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT id, name FROM items ORDER BY id')
       .all()

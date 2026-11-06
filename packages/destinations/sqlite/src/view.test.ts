@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { chmodSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -14,12 +15,20 @@ import {
   type CopyConfiguration,
   Pipeline,
   PipelineError,
+  type RecordedPass,
   Source,
   type SourceWatchOptions,
   Stream,
+  SyncHistory,
 } from '@workspace/elt';
 
-import { SQLiteDestination, SQLiteSyncHistory, View } from './index.ts';
+import {
+  SQLiteDestination,
+  SQLiteSyncHistory,
+  type SQLiteTable,
+  View,
+  installSQLiteCatalog,
+} from './index.ts';
 
 // Records with ids, loaded into raw_records and read through records; it
 // fails every read while failing is set.
@@ -109,7 +118,7 @@ function shell(database: string, sql: string) {
 }
 
 const views = (path: string) => {
-  using database = new DatabaseSync(path, { readOnly: true });
+  using database = open(path, { readOnly: true });
   return database
     .prepare("SELECT name FROM sqlite_schema WHERE type = 'view' ORDER BY name")
     .all()
@@ -117,7 +126,7 @@ const views = (path: string) => {
 };
 
 const schemaVersion = (path: string) => {
-  using database = new DatabaseSync(path, { readOnly: true });
+  using database = open(path, { readOnly: true });
   return database.prepare('PRAGMA schema_version').get()?.schema_version;
 };
 
@@ -155,6 +164,82 @@ test('a view a pipeline declares appears once the tables it reads have loaded, w
   );
   assert.equal(schemaVersion(path), version);
 });
+
+// A sync history that a host keeps in a different store, so that the load
+// is the last connection that writes the SQLite file in a pass. No host has
+// one, but nothing in the destination prevents it.
+class ElsewhereHistory extends SyncHistory<SQLiteTable> {
+  protected override async recordChecks(): Promise<void> {}
+
+  override async install(): Promise<void> {}
+
+  override async begin(): Promise<RecordedPass<SQLiteTable>> {
+    return { finish: async () => {}, fail: async () => {} };
+  }
+}
+
+test(
+  'a reader that cannot write the folder reads the file after each writer of it closed last: the load, the catalog, the sync history and a view',
+  {
+    skip:
+      process.platform === 'win32' || process.getuid?.() === 0
+        ? 'the folder mode must deny writes to this process'
+        : false,
+  },
+  async () => {
+    await using scratch = await new TemporaryFiles().directory('elt-view-');
+    const path = join(scratch.path, 'data.sqlite');
+    const source = new Records(['r1', 'r2']);
+    const destination = new SQLiteDestination({ path });
+    const connection = new Connection({
+      name: 'records',
+      source,
+      destination,
+      steps: [
+        new Copy(
+          source.records,
+          destination.table('raw_records').withReaderView('records'),
+        ),
+      ],
+    });
+    // What a reader in a sandbox reads, with the folder closed to writes.
+    const read = (sql: string) => {
+      chmodSync(scratch.path, 0o555);
+      try {
+        using database = open(path, { readOnly: true });
+        return { ...database.prepare(sql).get() };
+      } finally {
+        chmodSync(scratch.path, 0o755);
+      }
+    };
+
+    await new Pipeline({
+      clock: globalThis,
+      connections: [connection],
+      history: new ElsewhereHistory(),
+    }).run();
+    const afterLoad = read('SELECT count(*) AS n FROM records');
+    installSQLiteCatalog({ path });
+    const afterCatalog = read('SELECT count(*) AS n FROM catalog');
+    await new Pipeline({
+      clock: globalThis,
+      connections: [connection],
+      history: new SQLiteSyncHistory(),
+    }).run();
+    const afterHistory = read('SELECT status FROM sync_status');
+    await recordsPipeline(
+      path,
+      source,
+      'SELECT count(*) AS n FROM records',
+    ).run();
+    const afterView = read('SELECT n FROM record_count');
+
+    assert.deepEqual(afterLoad, { n: 2 });
+    assert.ok(Number(afterCatalog.n) > 0);
+    assert.deepEqual(afterHistory, { status: 'succeeded' });
+    assert.deepEqual(afterView, { n: 2 });
+  },
+);
 
 test('a view that reads a table no copy of the pipeline makes fails the run with the error of SQLite, after the copies loaded', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-view-');

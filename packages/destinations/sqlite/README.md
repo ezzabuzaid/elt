@@ -73,6 +73,11 @@ Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as
 
 ## Locks and commits
 
+- The SQLite file has a [persistent WAL](./CONTEXT.md). Each connection that writes the file opens it with `openDestination(path)`, which gives the journal `PersistentWriteAheadLog` of `@zukhruf/sqlite-open`. The last connection that writes the file and closes decides if the `-wal` and `-shm` files stay, so all of these connections use it. Use `openDestination` also in a host that opens the file to write.
+- Readers never wait for a commit, and a commit never waits for readers.
+- The `-wal` and `-shm` files stay after the last connection closes. Thus `sqlite3 -readonly` reads the file also from a folder that it cannot write, for example the folder of an agent in a sandbox.
+- A connection that stops during a commit leaves only the committed rows. The next reader reads them at once, with no recovery step.
+- A connection waits up to 30 seconds for the commit of a different connection.
 - SQLite takes no lock other than its transactions. Loads into one file run side by side. A [checkpoint store](#checkpoints) keeps two runs of one copy apart.
 - No transaction stays open between commits, as in Postgres.
 - `prepare` only refuses and stages. It refuses the target of a different writer, a reader view that is not its own, and stored rows that a deduplicating load cannot keep.
@@ -88,7 +93,7 @@ Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as
 
 `SQLiteCheckpointStore({ path })` keeps the checkpoints of incremental copies in a table `checkpoints` (`id`, `binding`, `reloading`, `state`) in its own file. Use it with SQLite destinations.
 
-- The file is owner-only (`0600`).
+- The checkpoint file and its `-wal` and `-shm` files are owner-only (`0600`). The checkpoint file has a write-ahead log, and SQLite deletes its `-wal` and `-shm` files when the last connection closes.
 - Use a file that is not a SQLite destination file. Its parent folder must exist. `:memory:` is refused.
 - The store holds one lock for each copy `id` through `SqliteStore` of `@zukhruf/mutex/sqlite`, in a `<path>.locks` folder beside the file. Different IDs run in parallel. A run that finds one ID in use releases the IDs that it took and fails with `Checkpoint <id> is in use by another run`. The kernel releases a lock when its process stops. See [ADR 0005](./docs/adr/0005-each-checkpointed-copy-has-its-own-lock.md).
 - Each save commits by itself, so no checkpoint transaction stays open while the load runs.
@@ -103,7 +108,7 @@ Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as
 - `install()` makes those tables and publishes the views `sync_attempts`, `extraction_coverage`, `sync_status` and `stream_status`, and the [catalog](#the-catalog), in each file. The pipeline calls it before each run and watch. Tables that a different version declared in a different way are replaced, with their history.
 - `new SQLiteSyncHistory({ soleWriter: true })` is for a host that knows that no other process runs a pass of its connections, such as the leader of the flight of a connection. Its install records as `failed` each pass of those connections that started and never ended, because the process that ran it ended first. Airbyte also fails the unfinished jobs of a connection before it starts the next. With no `soleWriter`, such a pass stays `running`, because a different process can still run it. See [ADR 0006](./docs/adr/0006-a-sole-writer-fails-the-passes-it-finds-unfinished.md).
 - `target_schema` is `main` in SQLite.
-- `readPassStatus(path)` gives the latest pass of a SQLite file and the latest outcome of each stream. When several connections load the file, their latest passes show as one pass. It is `running` when one connection runs. Else it is `cancelled` when one pass stopped, `succeeded` when all passes succeeded, `failed` when all passes failed, and `partial` in all other cases. It starts with the first pass and completes with the last. Its error has the error of each pass that did not succeed, one on each line. Its failure type is `config` when one pass has a `config` failure. Its last success and its `current_as_of` are the earliest of the passes, or null when one pass has no value. See [ADR 0008](./docs/adr/0008-a-file-that-several-connections-load-shows-one-pass.md).
+- `readPassStatus(path)` gives the latest pass of a SQLite file and the latest outcome of each stream. When several connections load the file, their latest passes show as one pass. It is `running` when one connection runs. Else it is `cancelled` when one pass stopped, `succeeded` when all passes succeeded, `failed` when all passes failed, and `partial` in all other cases. It starts with the first pass and completes with the last. Its error has the error of each pass that did not succeed, one on each line. Its failure type is `config` when one pass has a `config` failure. Its last success and its `current_as_of` are the earliest of the passes, or null when one pass has no value. When no file is at the path, it gives no pass and no streams. See [ADR 0008](./docs/adr/0008-a-file-that-several-connections-load-shows-one-pass.md).
 
 ## The catalog
 
@@ -215,6 +220,7 @@ The files of the destination:
 ```
 src/
   sqlite-destination.ts      SQLiteDestination: tables and the load
+  open-destination.ts        openDestination: the open of each connection that writes the file
   sqlite-writer.ts           the stage, the commit, evolve and reload of a table
   sqlite-checkpoint-store.ts SQLiteCheckpointStore
   sqlite-sync-history.ts     SQLiteSyncHistory

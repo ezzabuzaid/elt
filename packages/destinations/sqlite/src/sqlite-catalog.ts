@@ -1,9 +1,8 @@
-import { DatabaseSync } from 'node:sqlite';
-
 import { transaction } from '@zukhruf/sqlite-transaction';
 
 import { readerCatalog } from '@workspace/elt';
 
+import { openDestination } from './open-destination.ts';
 import { createDescriptions, descriptions } from './sqlite-descriptions.ts';
 import { publishSQLiteViews } from './sqlite-views.ts';
 
@@ -14,7 +13,7 @@ import { publishSQLiteViews } from './sqlite-views.ts';
 export function installSQLiteCatalog({ path }: { path: string }): void {
   if (path === ':memory:')
     throw new TypeError('A SQLite catalog requires a database file');
-  using database = new DatabaseSync(path, { timeout: 30_000 });
+  using database = openDestination(path);
   transaction(
     database,
     () => {

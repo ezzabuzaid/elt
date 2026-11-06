@@ -1,24 +1,11 @@
-import { existsSync } from 'node:fs';
-import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
+import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
+
+import { UnavailableError, open } from '@zukhruf/sqlite-open';
 
 import type { FailureType, SyncStatus } from '@workspace/elt';
 
+import { busyTimeout } from './open-destination.ts';
 import { syncHistory } from './sqlite-sync-history-schema.ts';
-
-// How long a reader waits out a pass committing to the file.
-const busyTimeout = 30_000;
-
-// Opens a destination file for reading only, waiting while a pass commits. A
-// pass killed mid-commit leaves a hot journal that only a writable connection
-// rolls back, and until then every read-only open fails, so one writable read
-// recovers it first.
-export function readSQLite(path: string): DatabaseSync {
-  if (existsSync(path)) {
-    using recovery = new DatabaseSync(path, { timeout: busyTimeout });
-    recovery.prepare('SELECT count(*) FROM sqlite_schema').get();
-  }
-  return new DatabaseSync(path, { readOnly: true, timeout: busyTimeout });
-}
 
 // running: begun and not yet ended, or left so by a process that was killed.
 export type PassState = SyncStatus | 'running';
@@ -70,15 +57,16 @@ export type StreamPassStatus = {
 // The latest pass of a SQLite destination file and each stream's latest
 // outcome, as its sync history records them; null and empty until the history
 // recorded a pass, and while the history in the file is one another version
-// installed. A file that several connections load reads as one pass, made of
-// the latest pass of each connection.
+// installed, and while no file is at the path. A file that several
+// connections load reads as one pass, made of the latest pass of each
+// connection.
 export function readPassStatus(path: string): {
   readonly pass: PassStatus | null;
   readonly streams: readonly StreamPassStatus[];
 } {
-  if (!existsSync(path)) return { pass: null, streams: [] };
-  using data = readSQLite(path);
-  if (syncHistory.drift(data) !== 'fits') return { pass: null, streams: [] };
+  using data = reader(path);
+  if (data === null || syncHistory.drift(data) !== 'fits')
+    return { pass: null, streams: [] };
   const [first, ...others] = data
     .prepare(
       'SELECT status, started_at, completed_at, error, failure_type, last_successful_sync_at, current_as_of FROM sync_status',
@@ -99,6 +87,16 @@ export function readPassStatus(path: string): {
         currentAsOf: text(row.current_as_of),
       })),
   };
+}
+
+// A reader of the file, or null while no file is at the path.
+function reader(path: string): DatabaseSync | null {
+  try {
+    return open(path, { readOnly: true, timeout: busyTimeout });
+  } catch (error) {
+    if (error instanceof UnavailableError) return null;
+    throw error;
+  }
 }
 
 // A sync_status row as the pass it records: the history completes every pass

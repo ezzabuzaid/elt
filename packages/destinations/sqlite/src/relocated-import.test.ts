@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
+import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -169,7 +169,7 @@ test("a moved import's stored files still resolve, and the next load keeps them"
     results.map(({ count, deleted }) => ({ count, deleted })),
     [{ count: 1, deleted: 0 }],
   );
-  using database = new DatabaseSync(join(after, 'data.sqlite'), {
+  using database = open(join(after, 'data.sqlite'), {
     readOnly: true,
   });
   const stored = database

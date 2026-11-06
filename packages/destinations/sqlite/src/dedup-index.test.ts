@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -101,7 +101,7 @@ test('a deduplicating load that finds nothing new leaves the database schema as 
     history,
   });
   const schemaVersion = () => {
-    using data = new DatabaseSync(destination.path, { readOnly: true });
+    using data = open(destination.path, { readOnly: true });
     return data.prepare('PRAGMA schema_version').get()?.schema_version;
   };
   await pipeline.run();

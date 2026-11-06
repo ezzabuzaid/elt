@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
+import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 // Two passes of STREAMS snapshot streams of KEYS records each, shaped like
@@ -120,7 +120,7 @@ function runPasses(
     0,
     `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
   );
-  using data = new DatabaseSync(join(out, 'data.sqlite'), { readOnly: true });
+  using data = open(join(out, 'data.sqlite'), { readOnly: true });
   return data
     .prepare(
       'SELECT stream, status, written_count FROM extraction_coverage WHERE attempt_id = (SELECT max(attempt_id) FROM sync_attempts) ORDER BY stream',

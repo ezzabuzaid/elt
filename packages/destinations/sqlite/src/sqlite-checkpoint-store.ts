@@ -1,12 +1,14 @@
 import { chmodSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 
 import { Modes, Mutex } from '@zukhruf/mutex';
 import { SqliteStore } from '@zukhruf/mutex/sqlite';
 import { Declaration } from '@zukhruf/sqlite-drift';
+import { open } from '@zukhruf/sqlite-open';
 
 import { type CheckpointSession, CheckpointStore } from '@workspace/elt';
+
+import { busyTimeout } from './open-destination.ts';
 
 const checkpoints = new Declaration(
   [
@@ -56,7 +58,9 @@ export class SQLiteCheckpointStore extends CheckpointStore {
     work: (session: CheckpointSession) => Promise<T>,
   ): Promise<T> {
     // Runs of other replications write the same file.
-    using database = new DatabaseSync(this.path, { timeout: 30_000 });
+    using database = open(this.path, { timeout: busyTimeout });
+    // SQLite gives the -wal and -shm files the mode of the file when it makes
+    // them, at the first read after the open.
     chmodSync(this.path, 0o600);
     // A table another version declared otherwise is replaced with its
     // checkpoints, so every replication starts over.

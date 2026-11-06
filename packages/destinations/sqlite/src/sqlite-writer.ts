@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { transaction } from '@zukhruf/sqlite-transaction';
@@ -21,6 +21,7 @@ import {
   reloadMode,
 } from '@workspace/elt';
 
+import { openDestination } from './open-destination.ts';
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { describe } from './sqlite-descriptions.ts';
 import { SQLiteFileStore } from './sqlite-file-store.ts';
@@ -234,8 +235,7 @@ export abstract class SQLiteWriter extends Writer {
     writer: string,
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
-    // Waits for readers to finish, as a load's commit does.
-    using database = new DatabaseSync(this.path, { timeout: 30_000 });
+    using database = openDestination(this.path);
     database.exec('BEGIN IMMEDIATE');
     try {
       this.writers(database);

@@ -835,7 +835,7 @@ Live check on 2026-09-26 (macOS 26.6.2): the Apple exporter ran two times agains
 
 - The first run loaded each stream (Messages 12,573 messages, Calendar 10,941 events) in 203 s.
 - The second run took 168 s. It wrote nothing for Notes, Messages, Contacts and Reminders. For Calendar it wrote only 2 events (with 1 alarm and 2 recurrence rules) that had just come into its window of one year, and 1 account that EventKit listed for the first time.
-- A run that was killed while it wrote left a hot journal, and SQLite rolled it back at the next open. Nothing that it staged was published.
+- A run that was killed while it wrote published nothing that it staged.
 - The Search Console exporter loaded each stream into the Postgres warehouse on the same day.
 
 ## Sync history

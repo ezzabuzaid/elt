@@ -1,9 +1,9 @@
 import { resolve } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 
 import type { CopyConfiguration, Load, PipelineClock } from '@workspace/elt';
 import { Destination } from '@workspace/elt';
 
+import { openDestination } from './open-destination.ts';
 import { SQLiteAppendWriter } from './sqlite-append-writer.ts';
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
@@ -39,9 +39,7 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
   }: {
     clock: PipelineClock;
   }): Promise<Load<SQLiteTable>> {
-    // A commit waits for readers, such as an agent's sqlite3 -readonly
-    // query, to finish.
-    const database = new DatabaseSync(this.path, { timeout: 30_000 });
+    const database = openDestination(this.path);
     const loadedAt = new Date(clock.Date.now()).toISOString();
     return {
       prepare: async (configuration, target, binding) =>

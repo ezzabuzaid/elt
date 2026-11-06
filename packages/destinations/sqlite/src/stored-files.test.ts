@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -87,7 +87,7 @@ test('stored file scopes flush when empty and remain usable across empty, null a
     ],
   });
   const loaded = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
+    using database = open(destination.path, { readOnly: true });
     return database
       .prepare('SELECT id, ref FROM files ORDER BY id')
       .all()

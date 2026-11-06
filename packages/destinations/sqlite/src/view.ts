@@ -1,13 +1,9 @@
-import { DatabaseSync } from 'node:sqlite';
-
 import { type Connection, DerivedDataset } from '@workspace/elt';
 
+import { openDestination } from './open-destination.ts';
 import { SQLiteDestination } from './sqlite-destination.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { type SQLiteView, publishSQLiteViews } from './sqlite-views.ts';
-
-// How long a refresh waits for a load or reader to finish committing.
-const busyTimeout = 30_000;
 
 // A view over what the pipeline loads into one SQLite file: derived data
 // that SQLite computes on each read, as a dbt model materialized as a view
@@ -58,9 +54,7 @@ export class View extends DerivedDataset<SQLiteTable> {
     readonly connections: readonly Connection<SQLiteTable>[];
     readonly earlier: readonly DerivedDataset<SQLiteTable>[];
   }): Promise<void> {
-    using database = new DatabaseSync(this.into.path, {
-      timeout: busyTimeout,
-    });
+    using database = openDestination(this.into.path);
     try {
       database.prepare(this.#view.query);
     } catch (error) {
