@@ -1,3 +1,4 @@
+export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 export {
   type ChromiumHistory,
   type HistoryDownload,
@@ -9,7 +10,6 @@ export {
   chromiumHistoryVersion,
   openChromiumHistory,
 } from './chromium-history.ts';
-export { ChromiumHistoryUnavailableError } from './errors.ts';
 export {
   type TransitionQualifier,
   type TransitionType,

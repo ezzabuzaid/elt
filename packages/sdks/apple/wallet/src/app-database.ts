@@ -1,7 +1,3 @@
-import { AppDatabase } from '@workspace/sdk-macos-app-database';
+import { AppDatabase, Store } from '@workspace/sdk-macos-app-database';
 
-import { WalletUnavailableError } from './errors.ts';
-
-export const appDatabase = new AppDatabase({
-  unavailable: WalletUnavailableError,
-});
+export const appDatabase = new AppDatabase(new Store('The Wallet store', ''));

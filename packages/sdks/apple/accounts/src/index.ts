@@ -1,3 +1,4 @@
+export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 export { Account, type MailServer, mailDataclass } from './account.ts';
 export {
   type AccessOptionKey,
@@ -8,4 +9,4 @@ export {
   type Dataclass,
 } from './accounts-snapshot.ts';
 export { AccountsStore, accountsStorePath } from './accounts-store.ts';
-export { AccountsSchemaError, AccountsUnavailableError } from './errors.ts';
+export { AccountsSchemaError } from './errors.ts';

@@ -1,3 +1,4 @@
+export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 export type { BiomeSegment } from './biome-segment.ts';
 export {
   BiomeStore,
@@ -6,7 +7,6 @@ export {
 } from './biome-store.ts';
 export { BiomeStream } from './biome-stream.ts';
 export { type BiomeDevice, type BiomeSync } from './biome-sync.ts';
-export { BiomeUnavailableError } from './errors.ts';
 export {
   AppDocumentInteraction,
   type AppDocumentInteractionEvent,

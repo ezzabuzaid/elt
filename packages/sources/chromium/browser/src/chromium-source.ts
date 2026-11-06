@@ -19,7 +19,7 @@ import {
 } from '@workspace/sdk-chromium-bookmarks';
 import type { ChromiumBrowser } from '@workspace/sdk-chromium-browser';
 import {
-  ChromiumHistoryUnavailableError,
+  StoreUnavailableError,
   chromiumHistoryLastWrite,
   chromiumHistoryVersion,
 } from '@workspace/sdk-chromium-history';
@@ -140,7 +140,7 @@ export class ChromiumSource extends Source<ChromiumScan> {
   }
 
   protected override readonly configErrors = [
-    ChromiumHistoryUnavailableError,
+    StoreUnavailableError,
     BookmarksUnavailableError,
   ];
 

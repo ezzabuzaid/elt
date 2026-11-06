@@ -1,3 +1,4 @@
+export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 export {
   AddressBook,
   AddressBookVersion,
@@ -51,5 +52,5 @@ export {
   type ContactsValues,
   type StoredData,
 } from './contacts-values.ts';
-export { ContactsSchemaError, ContactsUnavailableError } from './errors.ts';
+export { ContactsSchemaError } from './errors.ts';
 export { globalPreferences, macRegion } from './region.ts';

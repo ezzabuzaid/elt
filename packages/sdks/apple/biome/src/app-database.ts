@@ -1,7 +1,8 @@
-import { AppDatabase } from '@workspace/sdk-macos-app-database';
+import { AppDatabase, Store } from '@workspace/sdk-macos-app-database';
 
-import { BiomeUnavailableError } from './errors.ts';
+export const biomeStore = new Store(
+  "Biome's store",
+  'Allow the process that reads it Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it.',
+);
 
-export const appDatabase = new AppDatabase({
-  unavailable: BiomeUnavailableError,
-});
+export const appDatabase = new AppDatabase(biomeStore);

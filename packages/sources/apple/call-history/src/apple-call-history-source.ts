@@ -11,7 +11,7 @@ import type {
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   CallHistoryStore,
-  CallHistoryUnavailableError,
+  StoreUnavailableError,
 } from '@workspace/sdk-apple-call-history';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -67,7 +67,7 @@ export class AppleCallHistorySource extends Source<CallHistoryScan> {
     return new CallHistoryScan(this.#store.open(), this.scope);
   }
 
-  protected override readonly configErrors = [CallHistoryUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

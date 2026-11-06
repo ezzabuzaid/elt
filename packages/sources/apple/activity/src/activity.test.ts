@@ -3,7 +3,7 @@ import { execFile, spawnSync } from 'node:child_process';
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 import { crc32 } from 'node:zlib';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -84,7 +85,7 @@ async function appleImport(source: Source, directory: string) {
         ]),
       ),
     read: (sql: string) => {
-      using database = new DatabaseSync(path, { readOnly: true });
+      using database = open(path, { readOnly: true });
       return database
         .prepare(sql)
         .all()
@@ -300,13 +301,11 @@ async function activityFixture(root: string) {
   await mkdir(join(root, 'Biome/streams/restricted'), { recursive: true });
   await mkdir(join(root, 'Biome/sync'), { recursive: true });
   {
-    using knowledge = new DatabaseSync(join(root, 'knowledgeC.db'));
-    knowledge.exec('PRAGMA journal_mode = WAL');
+    using knowledge = open(join(root, 'knowledgeC.db'));
     knowledge.exec(knowledgeSchema);
   }
   {
-    using devices = new DatabaseSync(join(root, 'Biome/sync/sync.db'));
-    devices.exec('PRAGMA journal_mode = WAL');
+    using devices = open(join(root, 'Biome/sync/sync.db'));
     devices.exec(devicesSchema);
     devices
       .prepare('INSERT INTO DevicePeer VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
@@ -542,7 +541,7 @@ test('Activity reads every Biome stream, knowledgeC and the device list as docum
     '<dict><key>count</key><integer>3</integer></dict>',
   );
   {
-    using knowledge = new DatabaseSync(location.knowledge);
+    using knowledge = open(location.knowledge);
     insertEvent(knowledge, {
       id: 'INTENT-1',
       stream: '/app/intents',
@@ -956,7 +955,7 @@ test('Activity keeps the rows of records macOS expired, deletes what was removed
   ]);
   await deliveries(['written', 'written']);
   {
-    using knowledge = new DatabaseSync(location.knowledge);
+    using knowledge = open(location.knowledge);
     for (const [id, days] of [
       ['OLD', 30],
       ['NEW', 2],
@@ -994,7 +993,7 @@ test('Activity keeps the rows of records macOS expired, deletes what was removed
     recursive: true,
   });
   {
-    using knowledge = new DatabaseSync(location.knowledge);
+    using knowledge = open(location.knowledge);
     knowledge.exec(
       "DELETE FROM ZOBJECT WHERE ZSTREAMNAME = '/display/isBacklit'",
     );
@@ -1057,7 +1056,7 @@ test('Activity names Full Disk Access for unreadable Biome folders, refuses an u
   await activity.load();
   const restricted = join(scratch.path, 'Biome/streams/restricted');
   {
-    using knowledge = new DatabaseSync(location.knowledge);
+    using knowledge = open(location.knowledge);
     knowledge.exec('ALTER TABLE ZOBJECT DROP COLUMN ZSECONDSFROMGMT');
   }
   await chmod(restricted, 0o000);
@@ -1145,7 +1144,7 @@ test('Activity rounds payload and knowledgeC times to the millisecond, and trunc
   );
   await writeFile(path, bytes);
   {
-    using knowledge = new DatabaseSync(location.knowledge);
+    using knowledge = open(location.knowledge);
     insertEvent(knowledge, {
       id: 'BACKLIGHT-1',
       stream: '/display/isBacklit',
@@ -1413,7 +1412,7 @@ test('an Activity watch wakes only the streams whose segments or database change
   ]);
   const source = new AppleActivitySource({ ...location, pollIntervalMs: 50 });
   // knowledgeC keeps its connection, and so its WAL, open the whole time.
-  using knowledge = new DatabaseSync(location.knowledge);
+  using knowledge = open(location.knowledge);
   const controller = new AbortController();
   const woken: string[][] = [];
 
@@ -1569,7 +1568,7 @@ test('an Activity watch keeps every stream current while its stores hold still',
   });
   try {
     await watching.next();
-    using out = new DatabaseSync(data, { readOnly: true });
+    using out = open(data, { readOnly: true });
     const status = out.prepare(
       'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
     );
@@ -1630,7 +1629,7 @@ test('an Activity pass over a large knowledgeC holds one event at a time, so it 
   // not.
   const at = appleSeconds(daysAgo(1));
   {
-    using knowledge = new DatabaseSync(location.knowledge);
+    using knowledge = open(location.knowledge);
     knowledge.exec(
       `WITH RECURSIVE event(n) AS (
          SELECT 1 UNION ALL SELECT n + 1 FROM event WHERE n < 120000
@@ -1699,7 +1698,7 @@ test('an Activity pass over a large knowledgeC holds one event at a time, so it 
     0,
     `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
   );
-  using imported = new DatabaseSync(join(scratch.path, 'data.sqlite'), {
+  using imported = open(join(scratch.path, 'data.sqlite'), {
     readOnly: true,
   });
   assert.deepEqual(

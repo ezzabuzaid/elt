@@ -1,3 +1,4 @@
+export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 export type { Call } from './call.ts';
 export {
   type CallTimers,
@@ -10,7 +11,4 @@ export {
   CallHistoryStore,
   callHistoryStorePath,
 } from './call-history-store.ts';
-export {
-  CallHistorySchemaError,
-  CallHistoryUnavailableError,
-} from './errors.ts';
+export { CallHistorySchemaError } from './errors.ts';

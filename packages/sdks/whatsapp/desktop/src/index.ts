@@ -1,3 +1,4 @@
+export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 export {
   type BusinessBotPrompt,
   type BusinessCategory,
@@ -28,7 +29,7 @@ export {
 } from './chat-storage.ts';
 export type { AddressBookContact } from './contacts.ts';
 export { ContactsSnapshot } from './contacts.ts';
-export { WhatsAppSchemaError, WhatsAppUnavailableError } from './errors.ts';
+export { WhatsAppSchemaError } from './errors.ts';
 export {
   BackedUpKeyValueSnapshot,
   type ChangedNumber,

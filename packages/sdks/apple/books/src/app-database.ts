@@ -1,7 +1,8 @@
-import { AppDatabase } from '@workspace/sdk-macos-app-database';
+import { AppDatabase, Store } from '@workspace/sdk-macos-app-database';
 
-import { BooksUnavailableError } from './errors.ts';
+export const booksStore = new Store(
+  'Books data',
+  'Open Books once so it creates its stores; if they exist, allow the process that runs the export Full Disk Access in System Settings > Privacy & Security. Books does not need to be open.',
+);
 
-export const appDatabase = new AppDatabase({
-  unavailable: BooksUnavailableError,
-});
+export const appDatabase = new AppDatabase(booksStore);

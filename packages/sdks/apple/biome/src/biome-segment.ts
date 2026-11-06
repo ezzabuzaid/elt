@@ -3,9 +3,10 @@ import { join } from 'node:path';
 
 import { ProtobufMessage } from '@workspace/codec-protobuf';
 import { readSegb, segbFingerprint } from '@workspace/codec-segb';
+import { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 
+import { biomeStore } from './app-database.ts';
 import type { BiomeStream } from './biome-stream.ts';
-import { BiomeUnavailableError } from './errors.ts';
 
 // Bumped whenever a stream's decoding changes, so every segment fingerprints
 // anew and a reader that skips unchanged segments reads them again.
@@ -107,6 +108,6 @@ async function entries(directory: string) {
   } catch (cause) {
     if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT')
       return [];
-    throw new BiomeUnavailableError(directory, cause);
+    throw new StoreUnavailableError(biomeStore, directory, cause);
   }
 }

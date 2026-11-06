@@ -1,11 +1,13 @@
 import { type Dirent, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
+import {
+  type AppDatabaseVersion,
+  StoreUnavailableError,
+} from '@workspace/sdk-macos-app-database';
 
 import { AddressBookStore, storeFile } from './address-book-store.ts';
-import { appDatabase } from './app-database.ts';
-import { ContactsUnavailableError } from './errors.ts';
+import { appDatabase, contactsStore } from './app-database.ts';
 
 // The Contacts folder in the home folder `home`.
 export const addressBookDirectory = (home: string): string =>
@@ -22,7 +24,7 @@ function storeDirectories(
   try {
     entries = readdirSync(sources, { withFileTypes: true });
   } catch (cause) {
-    throw new ContactsUnavailableError(sources, cause);
+    throw new StoreUnavailableError(contactsStore, sources, cause);
   }
   return [
     { source: null, directory },

@@ -12,8 +12,8 @@ import {
   diffSnapshot,
 } from '@workspace/elt';
 import {
+  StoreUnavailableError,
   WalletStore,
-  WalletUnavailableError,
 } from '@workspace/sdk-apple-wallet';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -73,7 +73,7 @@ export class AppleWalletSource extends Source<WalletScan> {
     return new WalletScan(await this.#store.passes());
   }
 
-  protected override readonly configErrors = [WalletUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return localAppleStoreCoverage;

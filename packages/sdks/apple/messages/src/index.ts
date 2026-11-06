@@ -1,3 +1,4 @@
+export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 export {
   ChatDatabase,
   type ChatHandleRow,
@@ -5,7 +6,6 @@ export {
   type ChatPartRow,
   type ChatRow,
   MessagesStore,
-  MessagesUnavailableError,
   type MessageAttachmentRow,
   type RecoverablePartRow,
   chatDatabasePath,

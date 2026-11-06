@@ -15,7 +15,7 @@ import {
   type ClockSnapshot,
   ClockStore,
   type ClockStoreKind,
-  ClockUnavailableError,
+  StoreUnavailableError,
 } from '@workspace/sdk-apple-clock/clock-store';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -83,7 +83,7 @@ export class AppleClockSource extends Source<ClockSnapshot> {
       new Set(streams.map((stream) => readerOf(stream).store)),
     );
   }
-  protected override readonly configErrors = [ClockUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
   override coverage() {
     return localAppleStoreCoverage;
   }

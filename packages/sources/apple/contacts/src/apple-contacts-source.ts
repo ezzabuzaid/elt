@@ -15,7 +15,7 @@ import type {
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   ContactsStore,
-  ContactsUnavailableError,
+  StoreUnavailableError,
   macRegion,
 } from '@workspace/sdk-apple-contacts';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -146,7 +146,7 @@ export class AppleContactsSource extends Source<ContactsScan> {
     return new ContactsScan(await this.#store.open(), this.scope, region);
   }
 
-  protected override readonly configErrors = [ContactsUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

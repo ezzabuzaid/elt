@@ -11,7 +11,7 @@ import type {
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   MessagesStore,
-  MessagesUnavailableError,
+  StoreUnavailableError,
 } from '@workspace/sdk-apple-messages';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -101,7 +101,7 @@ export class AppleMessagesSource extends Source<MessagesScan> {
     return new MessagesScan(this.#store.open(), this.scope);
   }
 
-  protected override readonly configErrors = [MessagesUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

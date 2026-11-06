@@ -3,12 +3,13 @@ import { spawnSync } from 'node:child_process';
 import { chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -28,7 +29,7 @@ import {
 } from '@workspace/elt-sqlite';
 import {
   CallHistorySchemaError,
-  CallHistoryUnavailableError,
+  StoreUnavailableError,
   callHistoryStorePath,
 } from '@workspace/sdk-apple-call-history';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -42,9 +43,8 @@ class ScratchCallHistory implements Disposable {
   readonly #database: DatabaseSync;
 
   constructor(path: string) {
-    this.#database = new DatabaseSync(path);
+    this.#database = open(path);
     this.#database.exec(`
-      PRAGMA journal_mode = WAL;
       CREATE TABLE ZCALLDBPROPERTIES ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZTIMER_ALL FLOAT, ZTIMER_INCOMING FLOAT, ZTIMER_LAST FLOAT, ZTIMER_LIFETIME FLOAT, ZTIMER_OUTGOING FLOAT );
       CREATE TABLE ZCALLRECORD ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZANSWERED INTEGER, ZAUTOANSWEREDREASON INTEGER, ZCALLDIRECTORYIDENTITYTYPE INTEGER, ZCALL_CATEGORY INTEGER, ZCALLTYPE INTEGER, ZDISCONNECTED_CAUSE INTEGER, ZFACE_TIME_DATA INTEGER, ZFILTERED_OUT_REASON INTEGER, ZHANDLE_TYPE INTEGER, ZHASMESSAGE INTEGER, ZJUNKCONFIDENCE INTEGER, ZNUMBER_AVAILABILITY INTEGER, ZORIGINATED INTEGER, ZREAD INTEGER, ZSCREENSHARINGTYPE INTEGER, ZUSEDEMERGENCYVIDEOSTREAMING INTEGER, ZVERIFICATIONSTATUS INTEGER, ZWASEMERGENCYCALL INTEGER, ZDATE TIMESTAMP, ZDURATION FLOAT, ZADDRESS VARCHAR, ZBLOCKEDBYEXTENSION VARCHAR, ZIDENTITYEXTENSION VARCHAR, ZISO_COUNTRY_CODE VARCHAR, ZJUNKIDENTIFICATIONCATEGORY VARCHAR, ZLOCATION VARCHAR, ZNAME VARCHAR, ZSERVICE_PROVIDER VARCHAR, ZUNIQUE_ID VARCHAR, ZCONVERSATIONID BLOB, ZIMAGEURL VARCHAR, ZLOCALPARTICIPANTUUID BLOB, ZOUTGOINGLOCALPARTICIPANTUUID BLOB, ZPARTICIPANTGROUPUUID BLOB , ZINITIATOR INTEGER, ZBLOCKEDBYEXTENSIONNAME VARCHAR, ZREMINDERUUID BLOB, ZNEEDEDSCANNOUNCEMENT INTEGER, ZCOMMUNICATIONTRUSTSCORE INTEGER, ZORIGINATINGUITYPE INTEGER, ZORIGINATINGDEVICENAME VARCHAR, ZDIDENABLETRANSLATION INTEGER, ZSAINT_DAVIDS_1 INTEGER, ZSAINT_DAVIDS_2 VARCHAR);
       CREATE TABLE ZEMERGENCYMEDIAITEM ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZEMERGENCYMEDIATYPE INTEGER, ZUPLOADEDFORCALL INTEGER, ZASSETID VARCHAR );
@@ -257,7 +257,7 @@ function callHistoryFixture(path: string): void {
 }
 
 function rows(path: string, sql: string) {
-  using db = new DatabaseSync(path, { readOnly: true });
+  using db = open(path, { readOnly: true });
   return db
     .prepare(sql)
     .all()
@@ -595,7 +595,7 @@ test('a call linked twice to the same handle loads one participant, and the next
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   {
-    using store = new DatabaseSync(path);
+    using store = open(path);
     store.exec(`
       INSERT INTO ZHANDLE (Z_PK, Z_ENT, ZTYPE, ZVALUE, ZNORMALIZEDVALUE) VALUES (6, 4, 2, '+1 (555) 010-0100', '+15550100100');
       INSERT INTO Z_2REMOTEPARTICIPANTHANDLES VALUES (1, 6);
@@ -635,7 +635,7 @@ test('a call deleted as Core Data deletes it removes its rows, and edited record
   {
     // CallRecord cascades to its participant handles and emergency media and
     // nullifies its initiator, whose handle row stays.
-    using store = new DatabaseSync(path);
+    using store = open(path);
     store.exec(`
       DELETE FROM ZHANDLE WHERE Z_PK IN (SELECT Z_4REMOTEPARTICIPANTHANDLES FROM Z_2REMOTEPARTICIPANTHANDLES WHERE Z_2REMOTEPARTICIPANTCALLS = 2);
       DELETE FROM Z_2REMOTEPARTICIPANTHANDLES WHERE Z_2REMOTEPARTICIPANTCALLS = 2;
@@ -735,7 +735,7 @@ test('participants load whatever entity numbers this macOS gives the join table'
   {
     // Core Data names the join table after entity numbers that change
     // between model versions.
-    using store = new DatabaseSync(path);
+    using store = open(path);
     store.exec(`
       ALTER TABLE Z_2REMOTEPARTICIPANTHANDLES RENAME TO Z_7REMOTEPARTICIPANTHANDLES;
       ALTER TABLE Z_7REMOTEPARTICIPANTHANDLES RENAME COLUMN Z_2REMOTEPARTICIPANTCALLS TO Z_7REMOTEPARTICIPANTCALLS;
@@ -767,7 +767,7 @@ test('a store without the participant join table fails the participants stream b
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
   {
-    using store = new DatabaseSync(path);
+    using store = open(path);
     store.exec('DROP TABLE Z_2REMOTEPARTICIPANTHANDLES');
   }
   const out = join(dir.path, 'out.sqlite');
@@ -801,7 +801,7 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   // chmod stands in for macOS withdrawing Full Disk Access: SQLite reports
-  // CANTOPEN here and AUTH under a privacy denial, and both are unavailable.
+  // CANTOPEN (14) for chmod and for a privacy denial alike.
   await chmod(path, 0o000);
 
   try {
@@ -809,7 +809,7 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
       assert.ok(error instanceof PipelineError);
       assert.equal(error.errors.length, 5);
       for (const cause of error.errors) {
-        assert.ok(cause instanceof CallHistoryUnavailableError);
+        assert.ok(cause instanceof StoreUnavailableError);
         assert.match(cause.message, /Full Disk Access/);
         assert.ok(cause.message.includes(path));
       }
@@ -836,7 +836,7 @@ test('a store missing a column this reader reads fails every stream by name and 
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   {
-    using store = new DatabaseSync(path);
+    using store = open(path);
     store.exec('ALTER TABLE ZCALLRECORD DROP COLUMN ZDURATION');
   }
 
@@ -872,7 +872,7 @@ test(
       clock,
     );
     // callhistoryd holds its connection, and so its WAL, open the whole time.
-    using callhistoryd = new DatabaseSync(path);
+    using callhistoryd = open(path);
     const controller = new AbortController();
     const passes = run.watch({
       // A batch that never comes ends the watch, so the assertion fails.
@@ -948,9 +948,7 @@ test('this Mac’s call history loads every stream, one row per stored record', 
   } catch (error) {
     if (
       error instanceof PipelineError &&
-      error.errors.every(
-        (cause) => cause instanceof CallHistoryUnavailableError,
-      )
+      error.errors.every((cause) => cause instanceof StoreUnavailableError)
     )
       return t.skip('no Full Disk Access to the call history store');
     throw error;
@@ -1025,7 +1023,7 @@ test('a Call History watch keeps every stream current while callhistoryd changes
   });
   try {
     await watching.next();
-    using out = new DatabaseSync(data, { readOnly: true });
+    using out = open(data, { readOnly: true });
     const status = out.prepare(
       'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
     );

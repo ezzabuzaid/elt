@@ -4,10 +4,11 @@ import { mkdirSync } from 'node:fs';
 import { chmod, mkdir, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
+import { RollbackJournal, UnchangedJournal, open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -73,7 +74,7 @@ async function chromiumImport(source: Source, directory: string) {
         connections: [connection],
       }).run(),
     read: (sql: string) => {
-      using database = new DatabaseSync(path, { readOnly: true });
+      using database = open(path, { readOnly: true });
       const statement = database.prepare(sql);
       // An int64 column holds integers past what a JavaScript number holds;
       // such a value reads as its decimal text, as the stream declares it.
@@ -145,7 +146,7 @@ CREATE TABLE downloads_url_chains (id INTEGER NOT NULL,chain_index INTEGER NOT N
 
 // A History as Chromium writes it: a rollback journal.
 function createHistory(path: string): DatabaseSync {
-  const database = new DatabaseSync(path);
+  const database = open(path, { journal: new RollbackJournal() });
   database.exec(historySchema);
   return database;
 }
@@ -417,7 +418,9 @@ async function browserFixture(home: string, browser: ChromiumBrowser) {
     addVisit(database, 1, 1, t1);
   }
   await writeJson(join(profile('Profile 2'), 'Bookmarks'), bookmarksFile([]));
-  new DatabaseSync(join(profile('Profile 3'), 'History')).close();
+  open(join(profile('Profile 3'), 'History'), {
+    journal: new RollbackJournal(),
+  }).close();
   return { root, profile };
 }
 
@@ -426,15 +429,19 @@ test('a Chromium History that the browser holds in exclusive locking mode loads 
   const { profile } = await browserFixture(scratch.path, dia);
   // A running browser keeps History open in exclusive locking mode, so no
   // other connection can read it, and has a transaction open.
-  using browser = new DatabaseSync(join(profile('Default'), 'History'));
+  using browser = open(join(profile('Default'), 'History'), {
+    journal: new UnchangedJournal(),
+  });
   browser.exec('PRAGMA locking_mode = EXCLUSIVE');
   browser.exec("UPDATE urls SET title = 'Committed' WHERE id = 1");
   browser.exec('BEGIN');
   browser.exec("UPDATE urls SET title = 'Pending' WHERE id = 1");
   addVisit(browser, 12, 1, t2);
   {
-    using reader = new DatabaseSync(join(profile('Default'), 'History'), {
+    // timeout 0 fails at once, where open() waits 5 s for the lock.
+    using reader = open(join(profile('Default'), 'History'), {
       readOnly: true,
+      timeout: 0,
     });
     assert.throws(
       () => reader.prepare('SELECT count(*) FROM urls').get(),
@@ -777,7 +784,9 @@ test('a Chromium rerun writes nothing, and edits and deletions in each store lan
   const first = written(await chromium.load());
   const unchanged = written(await chromium.load());
   {
-    using database = new DatabaseSync(join(profile('Default'), 'History'));
+    using database = open(join(profile('Default'), 'History'), {
+      journal: new RollbackJournal(),
+    });
     database.exec(`DELETE FROM visits WHERE id = 11;
       UPDATE urls SET title = 'Renamed' WHERE id = 1;
       DELETE FROM downloads; DELETE FROM downloads_url_chains;
@@ -897,7 +906,7 @@ test('a Chromium browser that removes old history keeps what it expired after 90
     'SELECT visitedAt, expiresAt FROM history_visits WHERE id = 22',
   );
   {
-    using database = new DatabaseSync(path);
+    using database = open(path, { journal: new RollbackJournal() });
     database.exec(
       'DELETE FROM visits; DELETE FROM urls; DELETE FROM keyword_search_terms; DELETE FROM downloads',
     );
@@ -947,7 +956,7 @@ test('a Chromium browser that keeps its history deletes an old visit that is gon
   const chromium = await chromiumImport(source, join(scratch.path, 'import'));
   await chromium.load();
   {
-    using database = new DatabaseSync(path);
+    using database = open(path, { journal: new RollbackJournal() });
     database.exec(
       'DELETE FROM visits WHERE id = 20; DELETE FROM urls WHERE id = 20; DELETE FROM keyword_search_terms WHERE url_id = 20',
     );
@@ -974,7 +983,9 @@ test('a Chromium import scope selects profiles for every stream, and dates for v
   const { profile } = await browserFixture(scratch.path, dia);
   {
     // A download long before the dates, which select visits only.
-    using database = new DatabaseSync(join(profile('Default'), 'History'));
+    using database = open(join(profile('Default'), 'History'), {
+      journal: new RollbackJournal(),
+    });
     database.exec(
       `INSERT INTO downloads SELECT 2, 'OLD', current_path, target_path, ${daysAgo(400)}, received_bytes, total_bytes, state,
          danger_type, interrupt_reason, hash, ${daysAgo(400)}, opened, last_access_time, transient, referrer, site_url,
@@ -1047,7 +1058,9 @@ test('a Chromium store that cannot be read fails only its streams, as config whe
     for (const path of denied) await chmod(path, 0o644);
     await writeFile(join(profile('Default'), 'Bookmarks'), '{');
     {
-      using database = new DatabaseSync(join(profile('Profile 1'), 'History'));
+      using database = open(join(profile('Profile 1'), 'History'), {
+        journal: new RollbackJournal(),
+      });
       database.exec('ALTER TABLE visits DROP COLUMN app_id');
     }
     const broken = await failure();
@@ -1070,7 +1083,9 @@ test('a Chromium watch wakes only the streams of the store that changed, while t
   const source = new ChromiumSource({ browser: dia, home: scratch.path });
   const { streams } = await source.discover();
   // The browser holds History in exclusive locking mode while it runs.
-  using browser = new DatabaseSync(join(profile('Default'), 'History'));
+  using browser = open(join(profile('Default'), 'History'), {
+    journal: new UnchangedJournal(),
+  });
   browser.exec('PRAGMA locking_mode = EXCLUSIVE');
   browser.exec('SELECT count(*) FROM urls');
   const controller = new AbortController();
@@ -1297,7 +1312,7 @@ test('a Chromium pass over a large History holds one visit at a time, so it load
     0,
     `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
   );
-  using imported = new DatabaseSync(join(scratch.path, 'data.sqlite'), {
+  using imported = open(join(scratch.path, 'data.sqlite'), {
     readOnly: true,
   });
   assert.deepEqual(

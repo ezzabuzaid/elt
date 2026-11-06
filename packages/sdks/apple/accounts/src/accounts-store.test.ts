@@ -3,15 +3,16 @@ import { execFileSync } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   AccountsStore,
-  AccountsUnavailableError,
+  StoreUnavailableError,
   accountsStorePath,
   mailDataclass,
 } from './index.ts';
@@ -34,7 +35,7 @@ class ScratchAccountsStore implements AsyncDisposable {
   private constructor(directory: AsyncDisposable & { readonly path: string }) {
     this.#directory = directory;
     this.path = join(directory.path, 'Accounts4.sqlite');
-    this.#database = new DatabaseSync(this.path);
+    this.#database = open(this.path, { journal: new RollbackJournal() });
     this.#database.exec(`
       CREATE TABLE ZACCESSOPTIONSKEY ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZNAME VARCHAR , ZENUMVALUE INTEGER);
       CREATE TABLE Z_1OWNINGACCOUNTTYPES ( Z_1ACCESSKEYS INTEGER, Z_4OWNINGACCOUNTTYPES INTEGER, PRIMARY KEY (Z_1ACCESSKEYS, Z_4OWNINGACCOUNTTYPES) );
@@ -402,23 +403,21 @@ test('an account answers its name, user, addresses and mail servers, through its
   assert.equal(exchange.sendingAccountIdentifier, 'EXCHANGE');
 });
 
-test('a store that cannot be opened fails with AccountsUnavailableError', async () => {
+test('a store that cannot be opened fails with StoreUnavailableError', async () => {
   await using scratch = await new TemporaryFiles().directory('accounts-');
   const path = join(scratch.path, 'missing', 'Accounts4.sqlite');
 
   assert.throws(
     () => new AccountsStore(path).open(),
     (error: unknown) => {
-      assert.ok(error instanceof AccountsUnavailableError);
+      assert.ok(error instanceof StoreUnavailableError);
+      assert.equal(error.path, path);
       assert.match(error.message, /Full Disk Access/);
       assert.ok(error.message.includes(path));
       return true;
     },
   );
-  assert.throws(
-    () => new AccountsStore(path).version(),
-    AccountsUnavailableError,
-  );
+  assert.throws(() => new AccountsStore(path).version(), StoreUnavailableError);
 });
 
 test('the store version changes when another connection commits', async () => {
@@ -443,7 +442,7 @@ test('a table in a layout this reader does not know fails only its own reads, an
     type: 'com.apple.account.Google',
   });
   {
-    using app = new DatabaseSync(scratch.path);
+    using app = open(scratch.path, { journal: new RollbackJournal() });
     app.exec('ALTER TABLE ZAUTHORIZATION DROP COLUMN ZOPTIONS');
   }
   using snapshot = new AccountsStore(scratch.path).open();
@@ -478,7 +477,7 @@ test('this Mac’s Accounts store reads as one consistent snapshot: accounts, th
       credentialItems: [...snapshot.credentialItems()],
     };
   } catch (error) {
-    if (error instanceof AccountsUnavailableError)
+    if (error instanceof StoreUnavailableError)
       return t.skip('no access to the Accounts store');
     throw error;
   }

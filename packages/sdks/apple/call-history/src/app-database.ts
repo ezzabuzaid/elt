@@ -1,7 +1,8 @@
-import { AppDatabase } from '@workspace/sdk-macos-app-database';
+import { AppDatabase, Store } from '@workspace/sdk-macos-app-database';
 
-import { CallHistoryUnavailableError } from './errors.ts';
-
-export const appDatabase = new AppDatabase({
-  unavailable: CallHistoryUnavailableError,
-});
+export const appDatabase = new AppDatabase(
+  new Store(
+    'The call history store',
+    'Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security.',
+  ),
+);

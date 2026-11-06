@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -13,7 +13,7 @@ test('a chat.db without a column the reader needs fails with MissingColumnsError
   const path = join(dir.path, 'chat.db');
   // A store from a macOS whose message table lacks a column this reader loads
   // and whose other tables are missing entirely.
-  using app = new DatabaseSync(path);
+  using app = open(path, { journal: new RollbackJournal() });
   app.exec(
     'CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT)',
   );

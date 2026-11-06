@@ -1,7 +1,8 @@
-import { AppDatabase } from '@workspace/sdk-macos-app-database';
+import { AppDatabase, Store } from '@workspace/sdk-macos-app-database';
 
-import { ClockUnavailableError } from './errors.ts';
+export const clockStore = new Store(
+  'The Clock store',
+  'Open Clock once. If macOS denies access, allow the process running the import Full Disk Access in System Settings > Privacy & Security.',
+);
 
-export const appDatabase = new AppDatabase({
-  unavailable: ClockUnavailableError,
-});
+export const appDatabase = new AppDatabase(clockStore);

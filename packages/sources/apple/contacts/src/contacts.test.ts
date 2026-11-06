@@ -4,12 +4,13 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import type { SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -93,7 +94,7 @@ async function appleImport(source: Source, directory: string) {
         connections: [connection],
       }).run(),
     read: (sql: string) => {
-      using database = new DatabaseSync(path, { readOnly: true });
+      using database = open(path, { readOnly: true });
       return database.prepare(sql).all();
     },
   };
@@ -119,8 +120,7 @@ const readFirst = async (source: AppleContactsSource) => {
 
 // AddressBook-v22.abcddb's tables as macOS 26.6.2 creates them (schema only,
 // no data), in WAL mode like the real stores.
-const addressBookSchema = `PRAGMA journal_mode = WAL;
-CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER PRIMARY KEY, Z_NAME VARCHAR, Z_SUPER INTEGER, Z_MAX INTEGER);
+const addressBookSchema = `CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER PRIMARY KEY, Z_NAME VARCHAR, Z_SUPER INTEGER, Z_MAX INTEGER);
 CREATE TABLE ZABCDRECORD (Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZCREATIONDATEYEAR INTEGER, ZDISPLAYFLAGS INTEGER, ZIOSLEGACYIDENTIFIER INTEGER, ZMODIFICATIONDATEYEAR INTEGER, ZSYNCSTATUS INTEGER, ZCONTAINER INTEGER, ZEXTERNALGROUPBEHAVIOR INTEGER, ZBIRTHDAYYEAR INTEGER, ZPREFERREDFORLINKNAME INTEGER, ZPREFERREDFORLINKPHOTO INTEGER, ZPRIVACYFLAGS INTEGER, ZCONTACTINDEX INTEGER, ZCONTAINER1 INTEGER, ZCONTAINERWHERECONTACTISME INTEGER, ZLUNARBIRTHDAYCOMPONENTS INTEGER, ZNOTE INTEGER, ZASSISTANTSYNCANCHOR INTEGER, ZSHARECOUNT INTEGER, ZSYNCCOUNT INTEGER, ZVERSION INTEGER, ZCONTAINER2 INTEGER, ZGUARDIANFLAGS INTEGER, ZISALL INTEGER, ZTYPE INTEGER, ZINFO INTEGER, ZME INTEGER, Z22_ME INTEGER, ZPROVIDERMETADATA INTEGER, ZCREATIONDATE TIMESTAMP, ZCREATIONDATEYEARLESS FLOAT, ZMODIFICATIONDATE TIMESTAMP, ZMODIFICATIONDATEYEARLESS FLOAT, ZBIRTHDAY TIMESTAMP, ZBIRTHDAYYEARLESS FLOAT, ZIMAGESYNCFAILEDTIME TIMESTAMP, ZWALLPAPERSYNCFAILEDTIME TIMESTAMP, ZLASTSYNCDATE TIMESTAMP, ZEXTERNALCOLLECTIONPATH VARCHAR, ZEXTERNALFILENAME VARCHAR, ZEXTERNALHASH VARCHAR, ZEXTERNALIMAGEURI VARCHAR, ZEXTERNALMODIFICATIONTAG VARCHAR, ZEXTERNALURI VARCHAR, ZEXTERNALUUID VARCHAR, ZUNIQUEID VARCHAR, ZNAME VARCHAR, ZNAMENORMALIZED VARCHAR, ZTMPREMOTELOCATION VARCHAR, ZCROPRECT VARCHAR, ZCROPRECTID VARCHAR, ZDEPARTMENT VARCHAR, ZDOWNTIMEWHITELIST VARCHAR, ZFIRSTNAME VARCHAR, ZIDENTITYUNIQUEID VARCHAR, ZIMAGEREFERENCE VARCHAR, ZIMAGETYPE VARCHAR, ZJOBTITLE VARCHAR, ZLASTNAME VARCHAR, ZLINKID VARCHAR, ZMAIDENNAME VARCHAR, ZMIDDLENAME VARCHAR, ZNICKNAME VARCHAR, ZORGANIZATION VARCHAR, ZPHONEMEDATA VARCHAR, ZPHONETICFIRSTNAME VARCHAR, ZPHONETICLASTNAME VARCHAR, ZPHONETICMIDDLENAME VARCHAR, ZPHONETICORGANIZATION VARCHAR, ZPREFERREDAPPLEPERSONAIDENTIFIER VARCHAR, ZPREFERREDLIKENESSSOURCE VARCHAR, ZSORTINGFIRSTNAME VARCHAR, ZSORTINGLASTNAME VARCHAR, ZSUFFIX VARCHAR, ZTITLE VARCHAR, ZTMPHOMEPAGE VARCHAR, ZWALLPAPERURI VARCHAR, ZASSISTANTVALIDITY VARCHAR, ZCREATEDVERSION VARCHAR, ZLASTDOTMACACCOUNT VARCHAR, ZLASTSAVEDVERSION VARCHAR, ZSYNCANCHOR VARCHAR, ZEXTERNALIDENTIFIER VARCHAR, ZNAME1 VARCHAR, ZPROVIDERIDENTIFIER VARCHAR, ZREMOTELOCATION VARCHAR, ZSERIALNUMBER VARCHAR, ZEXTERNALREPRESENTATION BLOB, ZMODIFIEDUNIQUEIDSDATA BLOB, ZSEARCHELEMENTDATA BLOB, ZAVATARRECIPEDATA BLOB, ZCROPRECTHASH BLOB, ZIMAGEDATA BLOB, ZIMAGEHASH BLOB, ZMEMOJIMETADATA BLOB, ZSENSITIVECONTENTCONFIGURATION BLOB, ZTHUMBNAILIMAGEDATA BLOB, ZWALLPAPER BLOB );
 CREATE TABLE Z_22PARENTGROUPS (Z_22CONTACTS INTEGER, Z_19PARENTGROUPS1 INTEGER, PRIMARY KEY (Z_22CONTACTS, Z_19PARENTGROUPS1) );
 CREATE TABLE Z_18PARENTGROUPS (Z_18CHILDGROUPS INTEGER, Z_19PARENTGROUPS INTEGER, PRIMARY KEY (Z_18CHILDGROUPS, Z_19PARENTGROUPS) );
@@ -227,7 +227,7 @@ function createStore(
   mkdirSync(externalData, { recursive: true });
   for (const [id, bytes] of Object.entries(files))
     writeFileSync(join(externalData, id), bytes);
-  using database = new DatabaseSync(join(directory, 'AddressBook-v22.abcddb'));
+  using database = open(join(directory, 'AddressBook-v22.abcddb'));
   database.exec(addressBookSchema);
   const entity = database.prepare(
     'INSERT INTO Z_PRIMARYKEY (Z_ENT, Z_NAME, Z_SUPER, Z_MAX) VALUES (?, ?, ?, 0)',
@@ -540,7 +540,7 @@ function addressBookFixture(directory: string): string {
 }
 
 function rows(path: string, sql: string): Record<string, unknown>[] {
-  using database = new DatabaseSync(path, { readOnly: true });
+  using database = open(path, { readOnly: true });
   return database
     .prepare(sql)
     .all()
@@ -840,7 +840,7 @@ test('Contacts exports every stream of every account store by identifier', async
   // Grace keeps a photo beside her thumbnail: one row with two images.
   const photo = Buffer.from('a larger photo');
   {
-    using store = new DatabaseSync(
+    using store = open(
       join(directory, 'Sources/ACCOUNT-A/AddressBook-v22.abcddb'),
     );
     store
@@ -1265,7 +1265,7 @@ test('Contacts loads edits incrementally, deletes removed rows and writes nothin
   await pipeline.run();
   const unchanged = await pipeline.run();
   {
-    using store = new DatabaseSync(
+    using store = open(
       join(directory, 'Sources/ACCOUNT-A/AddressBook-v22.abcddb'),
     );
     store.exec(`
@@ -1347,7 +1347,7 @@ test('Contacts refuses a store it cannot read instead of reading its account as 
   await assert.rejects(pipeline.run(), (error: Error) => {
     assert.ok(error instanceof PipelineError, String(error));
     assert.ok(error.cause instanceof Error);
-    assert.equal(error.cause.name, 'ContactsUnavailableError');
+    assert.equal(error.cause.name, 'StoreUnavailableError');
     assert.match(
       error.cause.message,
       /ACCOUNT-B.*Contacts access or Full Disk Access/,
@@ -1366,7 +1366,7 @@ test('Contacts refuses a store it cannot read instead of reading its account as 
         preferences: preferencesFixture(scratch.path),
       }),
     ),
-    { name: 'ContactsUnavailableError', message: /Full Disk Access/ },
+    { name: 'StoreUnavailableError', message: /Full Disk Access/ },
   );
 });
 
@@ -1374,7 +1374,7 @@ test('Contacts names the columns it needs when a store has another layout', asyn
   await using scratch = await new TemporaryFiles().directory('elt-contacts-');
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
   {
-    using store = new DatabaseSync(
+    using store = open(
       join(directory, 'Sources/ACCOUNT-A/AddressBook-v22.abcddb'),
     );
     store.exec('ALTER TABLE ZABCDPHONENUMBER DROP COLUMN ZFULLNUMBER');
@@ -1399,7 +1399,7 @@ test('Contacts refuses a store whose entities it does not know instead of readin
   await using scratch = await new TemporaryFiles().directory('elt-contacts-');
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
   {
-    using store = new DatabaseSync(
+    using store = open(
       join(directory, 'Sources/ACCOUNT-B/AddressBook-v22.abcddb'),
     );
     store.exec(
@@ -1426,7 +1426,7 @@ test('Contacts rejects image data in an encoding it does not know', async () => 
   await using scratch = await new TemporaryFiles().directory('elt-contacts-');
   const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
   {
-    using store = new DatabaseSync(
+    using store = open(
       join(directory, 'Sources/ACCOUNT-B/AddressBook-v22.abcddb'),
     );
     store
@@ -1503,7 +1503,7 @@ test(
       ],
     });
     // contactsd holds its connections, and so the WALs, open the whole time.
-    using contactsd = new DatabaseSync(
+    using contactsd = open(
       join(directory, 'Sources/ACCOUNT-A/AddressBook-v22.abcddb'),
     );
     const controller = new AbortController();
@@ -1702,7 +1702,7 @@ test('a Contacts watch keeps every stream current while contactsd changes nothin
   });
   try {
     await watching.next();
-    using out = new DatabaseSync(data, { readOnly: true });
+    using out = open(data, { readOnly: true });
     const status = out.prepare(
       'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
     );
@@ -1833,7 +1833,7 @@ test('a Contacts pass over a large store holds one contact at a time, so it load
   });
   mkdirSync(join(directory, 'Sources'));
   {
-    using store = new DatabaseSync(join(directory, 'AddressBook-v22.abcddb'));
+    using store = open(join(directory, 'AddressBook-v22.abcddb'));
     store.exec(`
       WITH RECURSIVE person(n) AS (
         SELECT 2 UNION ALL SELECT n + 1 FROM person WHERE n < 60001

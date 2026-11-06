@@ -13,7 +13,7 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +21,7 @@ import { crc32, deflateSync } from 'node:zlib';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -44,11 +45,10 @@ import {
 } from '@workspace/elt-sqlite';
 import {
   AccountsStore,
-  AccountsUnavailableError,
   accountsStorePath,
 } from '@workspace/sdk-apple-accounts';
 import {
-  MailUnavailableError,
+  StoreUnavailableError,
   mailDirectory,
   mailVersionDirectory,
 } from '@workspace/sdk-apple-mail';
@@ -120,7 +120,7 @@ async function appleImport(source: Source, directory: string) {
         connections: [connection],
       }).run(),
     read: (sql: string) => {
-      using database = new DatabaseSync(path, { readOnly: true });
+      using database = open(path, { readOnly: true });
       return database.prepare(sql).all();
     },
   };
@@ -140,7 +140,7 @@ class ScratchAccountsStore implements Disposable {
   readonly #database: DatabaseSync;
 
   constructor(path: string) {
-    this.#database = new DatabaseSync(path);
+    this.#database = open(path, { journal: new RollbackJournal() });
     this.#database.exec(`
       CREATE TABLE ZACCOUNT ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZACTIVE INTEGER, ZAUTHENTICATED INTEGER, ZSUPPORTSAUTHENTICATION INTEGER, ZVISIBLE INTEGER, ZWARMINGUP INTEGER, ZACCOUNTTYPE INTEGER, ZPARENTACCOUNT INTEGER, ZDATE TIMESTAMP, ZLASTCREDENTIALRENEWALREJECTIONDATE TIMESTAMP, ZACCOUNTDESCRIPTION VARCHAR, ZAUTHENTICATIONTYPE VARCHAR, ZCREDENTIALTYPE VARCHAR, ZIDENTIFIER VARCHAR, ZMODIFICATIONID VARCHAR, ZOWNINGBUNDLEID VARCHAR, ZUSERNAME VARCHAR, ZDATACLASSPROPERTIES BLOB );
       CREATE TABLE Z_2ENABLEDDATACLASSES ( Z_2ENABLEDACCOUNTS INTEGER, Z_7ENABLEDDATACLASSES INTEGER, PRIMARY KEY (Z_2ENABLEDACCOUNTS, Z_7ENABLEDDATACLASSES) );
@@ -412,8 +412,7 @@ function parsedProperties(found: Record<string, unknown>[]) {
 }
 
 // Mail 16.0 on macOS 26.6.2: schema only, with no personal records or triggers.
-const schema = `PRAGMA journal_mode = WAL;
-CREATE TABLE messages (ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
+const schema = `CREATE TABLE messages (ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
 message_id INTEGER NOT NULL DEFAULT 0,
 global_message_id INTEGER NOT NULL,
 remote_id INTEGER,
@@ -692,7 +691,7 @@ async function fixture(root: string) {
     join(root, 'V10/MailData/Signatures/example.mailsignature'),
     'Content-Type: text/html\r\n\r\n<b>Signature</b>',
   );
-  using db = new DatabaseSync(join(root, 'V10/MailData/Envelope Index'));
+  using db = open(join(root, 'V10/MailData/Envelope Index'));
   db.exec(schema);
   db.exec(`
     INSERT INTO mailboxes(ROWID,url) VALUES(1,'imap://ACCOUNT/INBOX'),(2,'local://LOCAL/Archive');
@@ -735,7 +734,7 @@ async function fixture(root: string) {
 }
 
 function rows(path: string, sql: string) {
-  using db = new DatabaseSync(path, { readOnly: true });
+  using db = open(path, { readOnly: true });
   return db
     .prepare(sql)
     .all()
@@ -900,7 +899,7 @@ function values(
 }
 
 function exec(path: string, sql: string) {
-  using database = new DatabaseSync(path);
+  using database = open(path);
   database.exec(sql);
 }
 
@@ -926,7 +925,7 @@ test('Mail yields server labels and sender addresses in the numeric order of the
   await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   {
-    using index = new DatabaseSync(store.index);
+    using index = open(store.index);
     index.exec(`
       INSERT INTO mailboxes(ROWID,url) VALUES(10,'imap://ACCOUNT/Ten');
       INSERT INTO server_labels VALUES(1,10),(1,2);
@@ -1545,8 +1544,8 @@ test('Mail’s store fails to open as unavailable only when its version file or 
       ),
     );
   const unavailable = {
-    name: 'MailUnavailableError',
-    message: /Full Disk Access/,
+    name: 'StoreUnavailableError',
+    message: /^Mail's store at .*Full Disk Access/,
   };
 
   await assert.rejects(
@@ -1572,7 +1571,7 @@ test('Mail’s store fails to open as unavailable only when its version file or 
     ),
     (error) =>
       error instanceof Error &&
-      error.name !== 'MailUnavailableError' &&
+      error.name !== 'StoreUnavailableError' &&
       /unexpected EOF/.test(error.message),
   );
   // plutil reads a bare word as an old-style property list string.
@@ -1596,7 +1595,7 @@ test('Mail’s store fails to open as unavailable only when its version file or 
     ),
     (error) =>
       error instanceof Error &&
-      error.name !== 'MailUnavailableError' &&
+      error.name !== 'StoreUnavailableError' &&
       /not a database/.test(error.message),
   );
 });
@@ -1748,7 +1747,7 @@ test('Mail scope filters dates, message ownership and MIME before copying files 
     rows(join(scratch.path, 'state.sqlite'), 'SELECT state FROM checkpoints'),
   );
   assert.ok(!saved.includes('not-downloaded.txt'));
-  using native = new DatabaseSync(input.index);
+  using native = open(input.index);
   native.exec('UPDATE messages SET date_received=0,date_sent=0 WHERE ROWID=1');
   await run.run();
   assert.deepEqual(rows(output, 'SELECT id FROM messages'), []);
@@ -1860,7 +1859,7 @@ test('Mail exports the native store, MIME, detached files and unavailable metada
     ),
   );
 
-  using upstream = new DatabaseSync(store.index);
+  using upstream = open(store.index);
   upstream.exec(
     'UPDATE messages SET read=1 WHERE ROWID=1; DELETE FROM labels WHERE mailbox_id=2',
   );
@@ -2027,7 +2026,7 @@ test('Mail message streams re-read only messages whose files or index attachment
 
   // An index-only attachment renamed in the index reloads that row alone,
   // beside the index table's own row.
-  using upstream = new DatabaseSync(store.index);
+  using upstream = open(store.index);
   upstream.exec("UPDATE attachments SET name='renamed.txt' WHERE message=2");
   assert.deepEqual(await changed(), {
     indexedAttachments: { count: 1, deleted: 0 },
@@ -2123,7 +2122,7 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
     ),
     before,
   );
-  using upstream = new DatabaseSync(store.index);
+  using upstream = open(store.index);
   upstream.exec(
     'ALTER TABLE messages RENAME COLUMN flags TO unrecognized_flags',
   );
@@ -2154,8 +2153,8 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
     (error) =>
       error instanceof PipelineError &&
       error.cause instanceof Error &&
-      error.cause.name === 'MailUnavailableError' &&
-      /Full Disk Access/.test(error.cause.message) &&
+      error.cause.name === 'StoreUnavailableError' &&
+      /^Mail's store at .*Full Disk Access/.test(error.cause.message) &&
       failureTypes(error).join() === 'config',
   );
 });
@@ -2176,8 +2175,11 @@ test('An unreadable Accounts store fails only accounts and smtpServers, naming F
       ['accounts', 'smtpServers'],
     );
     for (const { error: cause } of failed.flatMap(({ failures }) => failures)) {
-      assert.ok(cause instanceof AccountsUnavailableError);
-      assert.match(cause.message, /Full Disk Access/);
+      assert.ok(cause instanceof StoreUnavailableError);
+      assert.match(
+        cause.message,
+        /^The system Accounts store at .*Full Disk Access/,
+      );
     }
     assert.deepEqual(failureTypes(error), ['config']);
     const loaded = error.results.filter(
@@ -2209,7 +2211,7 @@ test('An unreadable Accounts store leaves Mail’s watch running', async () => {
     source.messages,
   ]);
 
-  using upstream = new DatabaseSync(store.index);
+  using upstream = open(store.index);
   upstream.exec('UPDATE messages SET flagged=1 WHERE ROWID=1');
 
   assert.deepEqual((await watch.next()).value, [
@@ -2241,8 +2243,8 @@ test('Mail’s watch fails as unavailable when its version file or index cannot 
       .next();
   };
   const unavailable = {
-    name: 'MailUnavailableError',
-    message: /Full Disk Access/,
+    name: 'StoreUnavailableError',
+    message: /^Mail's store at .*Full Disk Access/,
   };
 
   await assert.rejects(
@@ -2261,7 +2263,7 @@ test('Mail’s watch fails as unavailable when its version file or index cannot 
     ),
     (error) =>
       error instanceof Error &&
-      error.name !== 'MailUnavailableError' &&
+      error.name !== 'StoreUnavailableError' &&
       /not a database/.test(error.message),
   );
 });
@@ -2293,7 +2295,7 @@ test('Mail’s watch refreshes only accounts and smtpServers when only the Accou
   // A Mail change can add a mailbox host, so it refreshes the account streams
   // too. It also absorbs the fixture's last writes, which FSEvents can report
   // just after the watch starts.
-  using upstream = new DatabaseSync(store.index);
+  using upstream = open(store.index);
   upstream.exec('UPDATE messages SET flagged=1 WHERE ROWID=1');
   assert.deepEqual((await watch.next()).value, [
     source.accounts,
@@ -2301,7 +2303,7 @@ test('Mail’s watch refreshes only accounts and smtpServers when only the Accou
     source.messages,
   ]);
 
-  using accounts = new DatabaseSync(accountsPath);
+  using accounts = open(accountsPath, { journal: new RollbackJournal() });
   accounts.exec(
     "UPDATE ZACCOUNT SET ZACCOUNTDESCRIPTION = 'Renamed' WHERE ZIDENTIFIER = 'ICLOUD'",
   );
@@ -2334,7 +2336,7 @@ test('Mail watches index commits and file-only downloads, and cancels', async ()
   ]);
   // A first commit absorbs the fixture's last writes, which FSEvents can
   // report just after the watch starts, so each change below is seen alone.
-  using upstream = new DatabaseSync(store.index);
+  using upstream = open(store.index);
   upstream.exec('UPDATE messages SET flagged=0 WHERE ROWID=1');
   assert.deepEqual((await watch.next()).value, [
     source.messages,
@@ -2424,7 +2426,7 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
     join(store.data, 'Messages/1.partial.emlx'),
     `${Buffer.byteLength(raw)}\n${raw}`,
   );
-  using upstream = new DatabaseSync(store.index);
+  using upstream = open(store.index);
   upstream.exec('DELETE FROM attachments');
   const source = new AppleMailSource({
     path: store.root,
@@ -2501,7 +2503,7 @@ test('A MIME attachment whose extension alone passes the 255-byte file name limi
     '',
   ].join('\r\n');
   await writeFile(join(store.data, 'Messages/1.partial.emlx'), emlxOf(raw));
-  using upstream = new DatabaseSync(store.index);
+  using upstream = open(store.index);
   upstream.exec('DELETE FROM attachments');
   const source = new AppleMailSource({
     path: store.root,
@@ -2773,9 +2775,7 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
     if (
       error instanceof PipelineError &&
       error.errors.every(
-        (cause: unknown) =>
-          cause instanceof MailUnavailableError ||
-          cause instanceof AccountsUnavailableError,
+        (cause: unknown) => cause instanceof StoreUnavailableError,
       )
     )
       return t.skip('no access to Mail or the Accounts store');
@@ -2783,7 +2783,7 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
   }
 
   // Checked without printing a value: these are the user's own accounts.
-  using index = new DatabaseSync(
+  using index = open(
     join(
       await mailVersionDirectory(mailDirectory(homedir())),
       'MailData/Envelope Index',
@@ -2845,7 +2845,7 @@ test('a Mail watch makes no pass while Mail and the Accounts store hold still, a
   // Mail holds its index, and so its WAL, open the whole time; a first reader
   // would otherwise create those files under the Mail root, which the watch
   // counts as a change.
-  using mail = new DatabaseSync(store.index);
+  using mail = open(store.index);
   mail.prepare('SELECT count(*) FROM messages').get();
   // Mail last wrote its index then; a reader read it later.
   const written = new Date('2026-10-21T01:16:44.000Z');
@@ -2888,7 +2888,7 @@ test('a Mail watch makes no pass while Mail and the Accounts store hold still, a
   });
   try {
     await watching.next();
-    using out = new DatabaseSync(data, { readOnly: true });
+    using out = open(data, { readOnly: true });
     // A pass that a check starts would come here.
     const after = watching.next();
     // The check is due once the watch waits for its next poll.

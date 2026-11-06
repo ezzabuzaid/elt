@@ -57,7 +57,7 @@ The SDK owns the locations, the read-only transactions, the decoding of property
 - A run reads only the stores of the selected streams.
 - All database streams read in one SQLite transaction, which includes the WAL commits. The two preference files are separate snapshots.
 - A store that fails fails only its own streams. The other streams continue.
-- A missing database or a file that the process cannot read gives `ClockUnavailableError`, which is a configuration failure.
+- A missing database or a file that the process cannot read gives `StoreUnavailableError`, which is a configuration failure.
 - A database without a column that the source reads gives `MissingColumnsError`.
 - A property-list value that is not correct stays an error. It never becomes an empty snapshot.
 - A preference file with no saved cities, or with no stopwatch collection, has no saved objects. A missing file is an error, not an empty store.

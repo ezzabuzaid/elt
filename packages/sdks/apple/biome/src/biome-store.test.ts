@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { BiomeStore, BiomeUnavailableError } from './index.ts';
+import { BiomeStore, StoreUnavailableError } from './index.ts';
 
-test('a Biome whose streams folder is missing or denied fails with BiomeUnavailableError naming Full Disk Access', async () => {
+test('a Biome whose streams folder is missing or denied fails with StoreUnavailableError naming Full Disk Access', async () => {
   await using scratch = await new TemporaryFiles().directory('biome-');
   const restricted = join(scratch.path, 'Biome/streams/restricted');
   await mkdir(restricted, { recursive: true });
@@ -28,12 +28,12 @@ test('a Biome whose streams folder is missing or denied fails with BiomeUnavaila
         (error: unknown) => error,
       );
 
-    assert.ok(missing instanceof BiomeUnavailableError);
+    assert.ok(missing instanceof StoreUnavailableError);
     assert.match(
       missing.message,
       /none\/streams\/restricted cannot be read\. .*Full Disk Access/,
     );
-    assert.ok(denied instanceof BiomeUnavailableError);
+    assert.ok(denied instanceof StoreUnavailableError);
     assert.match(denied.message, /Biome\/streams\/restricted cannot be read/);
   } finally {
     await chmod(restricted, 0o755);
@@ -44,7 +44,9 @@ test('a device list without a column the reader needs fails with MissingColumnsE
   await using scratch = await new TemporaryFiles().directory('biome-');
   await mkdir(join(scratch.path, 'sync'));
   {
-    using sync = new DatabaseSync(join(scratch.path, 'sync/sync.db'));
+    using sync = open(join(scratch.path, 'sync/sync.db'), {
+      journal: new RollbackJournal(),
+    });
     sync.exec(
       'CREATE TABLE DevicePeer (device_identifier STRING NOT NULL, me BOOLEAN, name STRING, model STRING)',
     );

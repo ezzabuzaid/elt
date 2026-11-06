@@ -4,11 +4,12 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir, readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -29,7 +30,7 @@ import {
 } from '@workspace/elt-sqlite';
 import {
   PassBundleError,
-  WalletUnavailableError,
+  StoreUnavailableError,
   walletStorePath,
 } from '@workspace/sdk-apple-wallet';
 
@@ -64,7 +65,8 @@ class ScratchWallet implements Disposable {
     this.directory = directory;
     mkdirSync(join(directory, 'Cards'), { recursive: true });
     // passd's keys are rowids past 2^53, which only a bigint holds.
-    this.#database = new DatabaseSync(join(directory, 'passes23.sqlite'), {
+    this.#database = open(join(directory, 'passes23.sqlite'), {
+      journal: new RollbackJournal(),
       readBigInts: true,
     });
     if (existing) return;
@@ -367,7 +369,7 @@ function walletFixture(directory: string): void {
 }
 
 function rows(path: string, sql: string) {
-  using db = new DatabaseSync(path, { readOnly: true });
+  using db = open(path, { readOnly: true });
   return db
     .prepare(sql)
     .all()
@@ -529,7 +531,7 @@ test('a store that cannot be opened fails every stream as the user’s to fix, a
       assert.ok(error instanceof PipelineError);
       assert.equal(error.errors.length, streamNames.length);
       for (const cause of error.errors) {
-        assert.ok(cause instanceof WalletUnavailableError);
+        assert.ok(cause instanceof StoreUnavailableError);
         assert.ok(cause.message.includes(database));
       }
       assert.deepEqual(failureTypes(error), ['config']);
@@ -1481,7 +1483,7 @@ test('this Mac’s Wallet loads every pass passd lists, as passd records it, and
   } catch (error) {
     if (
       error instanceof PipelineError &&
-      error.errors.every((cause) => cause instanceof WalletUnavailableError)
+      error.errors.every((cause) => cause instanceof StoreUnavailableError)
     )
       return t.skip('this Mac has no Wallet store');
     throw error;
@@ -1660,7 +1662,7 @@ test('a Wallet watch keeps every stream current while passd changes nothing', as
   });
   try {
     await watching.next();
-    using out = new DatabaseSync(data, { readOnly: true });
+    using out = open(data, { readOnly: true });
     const status = out.prepare(
       'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
     );

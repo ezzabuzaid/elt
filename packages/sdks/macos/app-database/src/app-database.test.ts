@@ -2,35 +2,27 @@ import assert from 'node:assert/strict';
 import { renameSync } from 'node:fs';
 import { chmod } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { UnavailableError as VersionUnavailableError } from '@zukhruf/sqlite-data-version';
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import {
   MissingColumnsError,
   UnavailableError as SnapshotUnavailableError,
 } from '@zukhruf/sqlite-snapshot';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { AppDatabase } from './index.ts';
+import { AppDatabase, Store, StoreUnavailableError } from './index.ts';
 
-class StoreUnavailableError extends Error {
-  readonly path: string;
-
-  constructor(path: string, cause: unknown) {
-    super(`The store at ${path} cannot be read.`, { cause });
-    this.path = path;
-  }
-}
+const store = new Store('The store', 'Grant access.');
 
 function database(): AppDatabase {
-  return new AppDatabase({ unavailable: StoreUnavailableError });
+  return new AppDatabase(store);
 }
 
 function created(path: string): void {
-  const db = new DatabaseSync(path);
+  using db = open(path, { journal: new RollbackJournal() });
   db.exec('CREATE TABLE item (id INTEGER PRIMARY KEY, title TEXT)');
-  db.close();
 }
 
 test('a snapshot of a store that is not there is the SDK unavailable error, caused by the package one', async () => {
@@ -41,6 +33,7 @@ test('a snapshot of a store that is not there is the SDK unavailable error, caus
     () => database().snapshot(path),
     (error: unknown) => {
       assert.ok(error instanceof StoreUnavailableError);
+      assert.equal(error.store, store);
       assert.equal(error.path, path);
       assert.ok(error.cause instanceof SnapshotUnavailableError);
       return true;
@@ -115,6 +108,7 @@ test('the last write of a store that is not there is the SDK unavailable error',
     () => database().lastWrite(path),
     (error: unknown) => {
       assert.ok(error instanceof StoreUnavailableError);
+      assert.equal(error.store, store);
       assert.equal(error.path, path);
       assert.ok(error.cause instanceof VersionUnavailableError);
       return true;

@@ -72,7 +72,7 @@ Media, profile picture thumbnails and stickers are files in the container:
 
 The group container needs Full Disk Access (see [Full Disk Access](../../apple/messages/README.md#full-disk-access)), or the consent of macOS to read the data of another app. Each store opens separately.
 
-- A store that is missing, or that macOS refuses, fails with `WhatsAppUnavailableError`, which names the store and the grant. Only the streams that read that store fail.
+- A store that is missing, or that macOS refuses, fails with `StoreUnavailableError`, which names the store and the grant. Only the streams that read that store fail.
 - A store that is not an SQLite database fails its streams as a system failure.
 - The SDK checks each column that a store's reader reads when the snapshot of that store opens. When a column is missing, the streams of that store fail with `MissingColumnsError`, which names each missing column. The other stores load.
 - A value that the reader cannot decode fails the streams that decode it. An example is a receipt that names a recipient of a kind that the reader does not know.

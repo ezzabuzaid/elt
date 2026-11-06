@@ -80,7 +80,7 @@ A run opens only the stores that its selected streams read. It pins each databas
 
 The stores are different files. Thus streams of different stores can show different times. A store that the source cannot open fails only its own streams:
 
-- A missing or unreadable file fails with `BooksUnavailableError`. The message names Full Disk Access.
+- A missing or unreadable file fails with `StoreUnavailableError`. The message names Full Disk Access.
 - A database that does not have a column that the reader reads fails with `MissingColumnsError`.
 - A reading history in a different format version fails with `BooksSchemaError`. Two live reading history documents, or a document that is not bytes, also fail with `BooksSchemaError` ([ADR 0002](./docs/adr/0002-a-reading-history-that-cannot-be-read-fails-and-keeps-its-rows.md)).
 

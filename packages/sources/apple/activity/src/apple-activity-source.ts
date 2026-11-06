@@ -9,11 +9,8 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source } from '@workspace/elt';
-import { BiomeStore, BiomeUnavailableError } from '@workspace/sdk-apple-biome';
-import {
-  KnowledgeStore,
-  KnowledgeUnavailableError,
-} from '@workspace/sdk-apple-knowledge';
+import { BiomeStore, StoreUnavailableError } from '@workspace/sdk-apple-biome';
+import { KnowledgeStore } from '@workspace/sdk-apple-knowledge';
 
 import type { ActivityReader } from './activity-reader.ts';
 import { type ActivityLocation, ActivityScan } from './activity-scan.ts';
@@ -141,10 +138,7 @@ export class AppleActivitySource extends Source<ActivityScan> {
     );
   }
 
-  protected override readonly configErrors = [
-    BiomeUnavailableError,
-    KnowledgeUnavailableError,
-  ];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(stream: Stream): ExtractionCoverage {
     const { retentionDays } = readerOf(stream);

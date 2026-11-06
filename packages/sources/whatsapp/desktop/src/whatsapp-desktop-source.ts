@@ -11,9 +11,9 @@ import {
   type Stream,
 } from '@workspace/elt';
 import {
+  StoreUnavailableError,
   WhatsApp,
   type WhatsAppStore,
-  WhatsAppUnavailableError,
   whatsappRunning,
 } from '@workspace/sdk-whatsapp-desktop';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -181,7 +181,7 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
     );
   }
 
-  protected override readonly configErrors = [WhatsAppUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return {

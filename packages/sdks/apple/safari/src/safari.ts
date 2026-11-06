@@ -8,12 +8,12 @@ import {
   parseBinaryPlist,
   readPlist,
 } from '@workspace/codec-plist';
+import { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 
-import { appDatabase } from './app-database.ts';
+import { appDatabase, safariStore } from './app-database.ts';
 import { Bookmarks } from './bookmarks.ts';
 import { CloudTabs } from './cloud-tabs.ts';
 import { Downloads } from './downloads.ts';
-import { SafariUnavailableError } from './errors.ts';
 import { RecentlyClosed } from './recently-closed.ts';
 import { ProfileHistory } from './safari-history.ts';
 import {
@@ -38,7 +38,7 @@ async function readSafariPlist(path: string): Promise<PlistValue> {
   try {
     bytes = await readFile(path);
   } catch (cause) {
-    throw new SafariUnavailableError(path, cause);
+    throw new StoreUnavailableError(safariStore, path, cause);
   }
   return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readPlist(path);
 }
@@ -50,7 +50,7 @@ async function readSafariPreferences(path: string): Promise<PlistValue | null> {
     return await readSafariPlist(path);
   } catch (error) {
     if (
-      error instanceof SafariUnavailableError &&
+      error instanceof StoreUnavailableError &&
       error.cause instanceof Error &&
       'code' in error.cause &&
       error.cause.code === 'ENOENT'

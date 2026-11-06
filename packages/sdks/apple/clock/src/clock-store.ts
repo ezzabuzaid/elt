@@ -2,14 +2,16 @@ import { join } from 'node:path';
 
 import { FileStamp } from '@zukhruf/fs';
 
-import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
+import {
+  type AppDatabaseVersion,
+  StoreUnavailableError,
+} from '@workspace/sdk-macos-app-database';
 
-import { appDatabase } from './app-database.ts';
+import { appDatabase, clockStore } from './app-database.ts';
 import { ClockDatabase } from './clock-database.ts';
 import { stopwatches, worldClocks } from './clock-preferences.ts';
-import { ClockUnavailableError } from './errors.ts';
 
-export { ClockUnavailableError } from './errors.ts';
+export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 
 export type ClockLocation = {
   readonly database: string;
@@ -130,7 +132,7 @@ class ClockPreferencesVersion implements ClockVersion {
     try {
       return String(await FileStamp.read(this.#path));
     } catch (cause) {
-      throw new ClockUnavailableError(this.#path, cause);
+      throw new StoreUnavailableError(clockStore, this.#path, cause);
     }
   }
   // A stat holds nothing open.

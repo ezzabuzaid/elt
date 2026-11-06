@@ -96,7 +96,7 @@ A Context Compiler import loads every stream incrementally into its `data.sqlite
 
 Messages keeps its history only in `~/Library/Messages/chat.db`. Messages has no public API that reads messages. macOS guards that folder with **Full Disk Access**. macOS checks the grant of the _responsible_ process: the app that runs the pipeline, for example the terminal. Give that app Full Disk Access.
 
-If `chat.db` is missing or the process has no access, the read fails with `MessagesUnavailableError` before a copy starts. The SQLite error is its `cause`. If `chat.db` does not have a column that the reader uses, for example after a macOS release changes the layout, the read fails with `MissingColumnsError`. This error names each missing `table.column`, and no stream of that read loads.
+If `chat.db` is missing or the process has no access, the read fails with `StoreUnavailableError` before a copy starts. The SQLite error is its `cause`. If `chat.db` does not have a column that the reader uses, for example after a macOS release changes the layout, the read fails with `MissingColumnsError`. This error names each missing `table.column`, and no stream of that read loads.
 
 ## Streams
 

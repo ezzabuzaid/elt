@@ -5,10 +5,11 @@ import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { chmod, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -32,7 +33,7 @@ import {
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import {
-  WhatsAppUnavailableError,
+  StoreUnavailableError,
   whatsappContainer,
 } from '@workspace/sdk-whatsapp-desktop';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -190,8 +191,8 @@ class ScratchWhatsApp {
 
   create(store: Store): void {
     mkdirSync(dirname(this.path(store)), { recursive: true });
-    using database = new DatabaseSync(this.path(store));
-    database.exec(`PRAGMA journal_mode = WAL; ${stores[store].schema}`);
+    using database = open(this.path(store));
+    database.exec(stores[store].schema);
     if (store === 'chatStorage')
       database
         .prepare('INSERT INTO Z_METADATA (Z_VERSION, Z_UUID) VALUES (1, ?)')
@@ -203,7 +204,7 @@ class ScratchWhatsApp {
     table: string,
     row: Record<string, SQLInputValue>,
   ): void {
-    using database = new DatabaseSync(this.path(store));
+    using database = open(this.path(store));
     const columns = Object.keys(row);
     database
       .prepare(
@@ -213,7 +214,7 @@ class ScratchWhatsApp {
   }
 
   exec(store: Store, sql: string): void {
-    using database = new DatabaseSync(this.path(store));
+    using database = open(this.path(store));
     database.exec(sql);
   }
 
@@ -1081,7 +1082,7 @@ async function pipeline(
 }
 
 function rows(path: string, sql: string) {
-  using db = new DatabaseSync(path, { readOnly: true });
+  using db = open(path, { readOnly: true });
   return db
     .prepare(sql)
     .all()
@@ -1572,7 +1573,7 @@ test('outgoing reactions follow this account’s add, replacement and withdrawal
       ];
       if (emoji !== null) outgoing.push([2, emoji]);
       {
-        using database = new DatabaseSync(whatsapp.path('chatStorage'));
+        using database = open(whatsapp.path('chatStorage'));
         database
           .prepare(
             'UPDATE ZWAMESSAGEINFO SET ZRECEIPTINFO = ?, Z_OPT = Z_OPT + 1 WHERE Z_PK = 1',
@@ -2236,7 +2237,7 @@ test('a store WhatsApp has not created, or macOS denies, fails only the streams 
   assert.deepEqual(missing.streams, streamsOf.businesses);
   assert.deepEqual(missing.types, ['config']);
   for (const error of missing.errors) {
-    assert.ok(error instanceof WhatsAppUnavailableError);
+    assert.ok(error instanceof StoreUnavailableError);
     assert.match(error.message, /Biz\.sqlite.*Full Disk Access/s);
   }
   assert.equal(missing.messages, 7);
@@ -2420,7 +2421,7 @@ test('a blob this reader cannot decode fails the streams decoded from it and kee
     for (const [name, count] of Object.entries(loaded))
       assert.ok(Number(count) > 0, `${what}: ${name} loaded nothing to keep`);
     {
-      using database = new DatabaseSync(whatsapp.path(store));
+      using database = open(whatsapp.path(store));
       database.prepare(sql).run(...Object.values(values));
     }
 
@@ -2515,27 +2516,27 @@ test('compact message scans reread a replaced Core Data store even when row IDs 
     UPDATE Z_METADATA SET Z_UUID = 'first-store';
   `,
   );
-  const open = () =>
+  const importer = () =>
     pipeline(
       new WhatsAppDesktopSource({ container: whatsapp.container }),
       dir.path,
       ({ name }) => name === 'messages',
     );
-  await (await open()).run();
+  await (await importer()).run();
   const replacement = join(dir.path, 'replacement.sqlite');
   {
-    using database = new DatabaseSync(whatsapp.path('chatStorage'));
+    using database = open(whatsapp.path('chatStorage'));
     database.prepare('VACUUM INTO ?').run(replacement);
   }
   {
-    using database = new DatabaseSync(replacement);
+    using database = open(replacement, { journal: new RollbackJournal() });
     database.exec(
       "UPDATE ZWAMESSAGE SET ZTEXT = 'From the replacement store' WHERE Z_PK = 1",
     );
   }
   renameSync(replacement, whatsapp.path('chatStorage'));
 
-  assert.deepEqual(counts(await (await open()).run()), {
+  assert.deepEqual(counts(await (await importer()).run()), {
     messages: { count: 1, deleted: 0 },
   });
   assert.deepEqual(
@@ -2571,7 +2572,7 @@ test('compact message scans catch independent receipt and channel-count changes 
   ] as const) {
     recipient.push([field, offset]);
     {
-      using database = new DatabaseSync(whatsapp.path('chatStorage'));
+      using database = open(whatsapp.path('chatStorage'));
       database
         .prepare(
           'UPDATE ZWAMESSAGEINFO SET Z_OPT = Z_OPT + 1, ZRECEIPTINFO = ? WHERE Z_PK = 1',
@@ -2609,7 +2610,7 @@ test('compact message scans catch independent receipt and channel-count changes 
     );
   }
   {
-    using database = new DatabaseSync(whatsapp.path('chatStorage'));
+    using database = open(whatsapp.path('chatStorage'));
     database
       .prepare(
         'UPDATE ZWAMESSAGEINFO SET Z_OPT = Z_OPT + 1, ZRECEIPTINFO = ? WHERE Z_PK = 2',
@@ -3063,7 +3064,7 @@ test('a full refresh loads every stream as an incremental first pass does, its f
   // Every table as table() reads it, with integers as bigints: a certificate
   // serial is past 2^53.
   const loaded = (path: string) => {
-    using db = new DatabaseSync(path, { readOnly: true, readBigInts: true });
+    using db = open(path, { readOnly: true, readBigInts: true });
     return Object.fromEntries(
       streams.map(({ name, primaryKey }) => [
         name,
@@ -3142,8 +3143,8 @@ test(
       source.privacySettings,
     ];
     // WhatsApp holds its connections, and so its WALs, open while it runs.
-    using chats = new DatabaseSync(whatsapp.path('chatStorage'));
-    using contacts = new DatabaseSync(whatsapp.path('contacts'));
+    using chats = open(whatsapp.path('chatStorage'));
+    using contacts = open(whatsapp.path('contacts'));
     const controller = new AbortController();
     const woken: string[][] = [];
 
@@ -3268,7 +3269,7 @@ test('this Mac’s WhatsApp loads every stream of each store it holds', async (t
       // one connection held open, so this one stays open across the read.
       let commits: DatabaseSync | undefined;
       try {
-        commits = new DatabaseSync(path, { readOnly: true });
+        commits = open(path, { readOnly: true });
       } catch {
         commits = undefined;
       }
@@ -3285,7 +3286,7 @@ test('this Mac’s WhatsApp loads every stream of each store it holds', async (t
         const { errors } = failures(error);
         if (
           errors.length > 0 &&
-          errors.every((cause) => cause instanceof WhatsAppUnavailableError)
+          errors.every((cause) => cause instanceof StoreUnavailableError)
         )
           return s.skip(`no access to ${stores[store].file}`);
         throw error;
@@ -3534,7 +3535,7 @@ test('large WhatsApp passes stream payloads and reuse compact metadata within a 
     0,
     `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
   );
-  using imported = new DatabaseSync(join(directory.path, 'data.sqlite'), {
+  using imported = open(join(directory.path, 'data.sqlite'), {
     readOnly: true,
   });
   assert.deepEqual(
@@ -3731,7 +3732,7 @@ test('cancelling a metadata build or replay publishes no partial checkpoint and 
     })) {
       if (!(message instanceof StreamStatus) && !('type' in message)) break;
     }
-    using database = new DatabaseSync(whatsapp.path('chatStorage'));
+    using database = open(whatsapp.path('chatStorage'));
     assert.equal(
       database.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get()?.busy,
       0,

@@ -11,13 +11,14 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -39,7 +40,7 @@ import {
 } from '@workspace/elt-sqlite';
 import {
   BooksSchemaError,
-  BooksUnavailableError,
+  StoreUnavailableError,
   booksLocation,
 } from '@workspace/sdk-apple-books';
 
@@ -98,7 +99,7 @@ async function appleImport(source: Source, directory: string) {
         connections: [connection],
       }).run(),
     read: (sql: string) => {
-      using database = new DatabaseSync(path, { readOnly: true });
+      using database = open(path, { readOnly: true });
       return database.prepare(sql).all();
     },
   };
@@ -376,9 +377,8 @@ type BooksFixture = AppleBooksSource['location'] & {
 };
 
 function database(path: string, schema: string): DatabaseSync {
-  const store = new DatabaseSync(path);
-  // Core Data keeps a persistent WAL; read-only readers must see it.
-  store.exec('PRAGMA journal_mode = WAL');
+  // Core Data keeps its stores in WAL mode, the default journal of open().
+  const store = open(path);
   store.exec(schema);
   return store;
 }
@@ -765,7 +765,7 @@ async function failedAfter(
 // Rebuilds a table the way a later Books might lay it out: the same columns
 // and rows, without its Z_PK.
 function withoutPrimaryKey(path: string, table: string): void {
-  using store = new DatabaseSync(path);
+  using store = open(path);
   const columns = store
     .prepare('SELECT name FROM pragma_table_info(?)')
     .all(table)
@@ -1139,14 +1139,14 @@ test('Books follows each store on its own: a rerun writes nothing, and edits, de
 
   const unchanged = written(await books.load());
   {
-    using store = new DatabaseSync(location.files.annotations);
+    using store = open(location.files.annotations);
     store.exec("DELETE FROM ZAEANNOTATION WHERE ZANNOTATIONUUID = 'U-2'");
     store.exec(
       "UPDATE ZAEANNOTATION SET ZANNOTATIONNOTE = 'Rhythm first' WHERE ZANNOTATIONUUID = 'H-1'",
     );
   }
   {
-    using store = new DatabaseSync(location.files.readingHistory);
+    using store = open(location.files.readingHistory);
     store.prepare('UPDATE ZCRDTMODELSYNCENTITY SET ZPROTODATA = ?').run(
       readingHistoryDocument(
         [
@@ -1223,11 +1223,11 @@ test('Books names Full Disk Access for an unreadable store, refuses an unknown l
   await books.load();
   await rm(location.files.appPreferences);
   {
-    using store = new DatabaseSync(location.files.assetData);
+    using store = open(location.files.assetData);
     store.exec('ALTER TABLE ZBCASSETDETAIL DROP COLUMN ZREADINGPROGRESS');
   }
   {
-    using store = new DatabaseSync(location.files.readingHistory);
+    using store = open(location.files.readingHistory);
     store
       .prepare('UPDATE ZCRDTMODELSYNCENTITY SET ZPROTODATA = ?')
       .run(
@@ -1311,7 +1311,7 @@ test('Books names Full Disk Access for an unreadable store, refuses an unknown l
     (message) => message instanceof StreamStatus && message.status === 'FAILED',
   );
   assert.ok(status instanceof StreamStatus);
-  assert.ok(status.error instanceof BooksUnavailableError);
+  assert.ok(status.error instanceof StoreUnavailableError);
   const history = await Array.fromAsync(
     source.read(
       [
@@ -1344,8 +1344,8 @@ test('a Books watch wakes only the streams of the store that changed, while Book
     source.readingGoal,
   ];
   // Books and bookdatastored hold their connections, and so their WALs, open.
-  using annotations = new DatabaseSync(location.files.annotations);
-  using assetData = new DatabaseSync(location.files.assetData);
+  using annotations = open(location.files.annotations);
+  using assetData = open(location.files.assetData);
   const controller = new AbortController();
   const woken: string[][] = [];
 
@@ -1394,7 +1394,7 @@ test('Books imports library assets with oversized integers in unused columns and
   assert.equal(expected.length, 4);
 
   {
-    using library = new DatabaseSync(location.files.library);
+    using library = open(location.files.library);
     // None of these internal columns is an exported asset field. A new
     // Books column must not silently become another input to the reader.
     library.exec(`
@@ -1428,7 +1428,7 @@ test('a malformed or missing Books store, column or value fails only the streams
     sql: string,
   ) =>
     failedAfter(join(scratch.path, name), async ({ files }) => {
-      using database = new DatabaseSync(files[store]);
+      using database = open(files[store]);
       database.exec(sql);
     });
   const withoutKey = (
@@ -1506,7 +1506,7 @@ test('a malformed or missing Books store, column or value fails only the streams
   const badMonth = await failedAfter(
     join(scratch.path, 'bad-month'),
     async ({ files }) => {
-      using database = new DatabaseSync(files.readingHistory);
+      using database = open(files.readingHistory);
       database
         .prepare('UPDATE ZCRDTMODELSYNCENTITY SET ZPROTODATA = ?')
         .run(
@@ -1569,7 +1569,7 @@ test('a malformed or missing Books store, column or value fails only the streams
     'streakRecords',
   ]);
   for (const error of Object.values(noGroup)) {
-    assert.match(error, /^BooksUnavailableError: /);
+    assert.match(error, /^StoreUnavailableError: /);
     assert.match(error, /Full Disk Access/);
   }
   assert.match(noGroup.assetDetails ?? '', /BCAssetData cannot be read/);
@@ -1634,7 +1634,7 @@ test('Books names the preference file it cannot read, and only readingGoal fails
   );
 
   assert.deepEqual(Object.keys(sharedMissing), ['readingGoal']);
-  assert.match(sharedMissing.readingGoal ?? '', /^BooksUnavailableError: /);
+  assert.match(sharedMissing.readingGoal ?? '', /^StoreUnavailableError: /);
   assert.match(
     sharedMissing.readingGoal ?? '',
     /group\.com\.apple\.iBooks\.plist cannot be read\..*Full Disk Access/,
@@ -1669,10 +1669,10 @@ test('a Books watch fails before its first batch when a watched database is miss
     source.readingGoal,
   ];
   // Books and bookdatastored hold their connections, and so their WALs, open.
-  using library = new DatabaseSync(location.files.library);
-  using history = new DatabaseSync(location.files.readingHistory);
-  using purchases = new DatabaseSync(location.files.purchases);
-  using themes = new DatabaseSync(location.files.themes);
+  using library = open(location.files.library);
+  using history = open(location.files.readingHistory);
+  using purchases = open(location.files.purchases);
+  using themes = open(location.files.themes);
   const controller = new AbortController();
   const before: string[][] = [];
   const woken: string[][] = [];
@@ -1726,7 +1726,7 @@ test('a Books watch fails before its first batch when a watched database is miss
 
   assert.deepEqual(before, []);
   assert.ok(failure instanceof Error);
-  assert.equal(failure.name, 'BooksUnavailableError');
+  assert.equal(failure.name, 'StoreUnavailableError');
   assert.match(failure.message, /BookTheme\.sqlite cannot be read/);
   assert.deepEqual(woken, [
     streams.map((stream) => stream.name),
@@ -1759,7 +1759,7 @@ test('Books reads no reading history when Books holds no live document, and load
       ),
     );
   // bookdatastored holds its connection open.
-  using history = new DatabaseSync(location.files.readingHistory);
+  using history = open(location.files.readingHistory);
 
   const live = await readHistory();
   history.exec('UPDATE ZCRDTMODELSYNCENTITY SET ZDELETEDFLAG = 1');
@@ -1800,7 +1800,7 @@ async function reloadedHistory(
   await books.load();
   const before = exported();
   {
-    using history = new DatabaseSync(location.files.readingHistory);
+    using history = open(location.files.readingHistory);
     change(history);
   }
   const failure = await books.load().then(
@@ -1896,32 +1896,32 @@ test('Books writes every stream with its fields in schema order and its rows in 
   await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   {
-    using library = new DatabaseSync(location.files.library);
+    using library = open(location.files.library);
     library.exec(
       "INSERT INTO ZBKCOLLECTIONMEMBER (Z_PK, Z_ENT, Z_OPT, ZCOLLECTION, ZASSET, ZASSETID, ZSORTKEY) VALUES (3, 3, 1, 1, 1, 'A1', 2)",
     );
   }
   {
-    using assetData = new DatabaseSync(location.files.assetData);
+    using assetData = open(location.files.assetData);
     assetData.exec(`
       INSERT INTO ZBCASSETDETAIL (Z_PK, Z_ENT, Z_OPT, ZASSETID, ZDELETEDFLAG) VALUES (3, 2, 1, '0-ELSEWHERE', 0);
       INSERT INTO ZBCASSETREVIEW (Z_PK, Z_ENT, Z_OPT, ZASSETREVIEWID, ZDELETEDFLAG) VALUES (2, 3, 1, 'REVIEW-1', 0)`);
   }
   {
-    using purchases = new DatabaseSync(location.files.purchases);
+    using purchases = open(location.files.purchases);
     purchases.exec(
       "INSERT INTO ZBLJALISCOSERVERITEM (Z_PK, Z_ENT, Z_OPT, ZSTOREID, ZTITLE) VALUES (2, 4, 1, '1000000001', 'Bought earlier')",
     );
   }
   {
-    using themes = new DatabaseSync(location.files.themes);
+    using themes = open(location.files.themes);
     themes.exec(
       "INSERT INTO ZBOOKTHEME (Z_PK, Z_ENT, Z_OPT, ZIDENTIFIER) VALUES (2, 1, 1, 'Calm')",
     );
   }
   {
     // A document whose months, days and streaks are not in key order.
-    using history = new DatabaseSync(location.files.readingHistory);
+    using history = open(location.files.readingHistory);
     history
       .prepare('UPDATE ZCRDTMODELSYNCENTITY SET ZPROTODATA = ?')
       .run(
@@ -1968,7 +1968,7 @@ test('Books keeps each stored value as Books means it', async () => {
   const location = await booksFixture(scratch.path);
   const lastRead = at('2026-09-14T11:38:00.000Z');
   {
-    using library = new DatabaseSync(location.files.library);
+    using library = open(location.files.library);
     // A supplement of P2 with empty text, an unverified content type, a
     // fractional rating, archived names, every flag value, and times at the
     // edges of what Core Data means by none.
@@ -1991,7 +1991,7 @@ test('Books keeps each stored value as Books means it', async () => {
     );
   }
   {
-    using themes = new DatabaseSync(location.files.themes);
+    using themes = open(location.files.themes);
     themes.exec(
       "INSERT INTO ZBOOKTHEME (Z_PK, Z_ENT, Z_OPT, ZIDENTIFIER, ZHASCUSTOMLAYOUT, ZISFONTBOLDED, ZJUSTIFY, ZMULTIPLECOLUMNMODE, ZLETTERSPACING, ZLINEHEIGHT, ZMARGINADJUSTMENT, ZWORDSPACING) VALUES (2, 1, 1, 'Calm', 1, 0, 2, 1, 0.05, 2, -1, 0)",
     );
@@ -2230,7 +2230,7 @@ test('Books classifies each book file by what is on disk', async () => {
     assetId: string,
     path: string,
   ) => {
-    using library = new DatabaseSync(location.files.library);
+    using library = open(location.files.library);
     library
       .prepare(
         "INSERT INTO ZBKLIBRARYASSET (Z_PK, Z_ENT, Z_OPT, ZASSETID, ZTITLE, ZCONTENTTYPE, ZPATH, ZISFINISHED, ZISHIDDEN, ZISSAMPLE, ZDATASOURCEIDENTIFIER) VALUES (?, 5, 1, ?, ?, 1, ?, 0, 0, 0, 'com.apple.ibooks.datasource.ubiquity')",
@@ -2458,7 +2458,7 @@ test('Books reads this Mac’s stores into SQLite without opening iCloud placeho
   if (
     outcome instanceof PipelineError &&
     JSON.stringify(outcome, Object.getOwnPropertyNames(outcome)).includes(
-      BooksUnavailableError.name,
+      StoreUnavailableError.name,
     )
   )
     return t.skip(
@@ -2466,7 +2466,7 @@ test('Books reads this Mac’s stores into SQLite without opening iCloud placeho
     );
   assert.ok(Array.isArray(outcome), String(outcome));
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   const count = (sql: string) => Number(database.prepare(sql).get()?.n);
   // Every stored book has its bytes on this Mac; a placeholder has none.
   assert.equal(
@@ -2513,7 +2513,7 @@ test('a Books watch keeps every stream current while its stores hold still', asy
   });
   try {
     await watching.next();
-    using out = new DatabaseSync(data, { readOnly: true });
+    using out = open(data, { readOnly: true });
     const status = out.prepare(
       'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
     );
@@ -2567,7 +2567,7 @@ test('a Books pass over a large annotation store holds one annotation at a time,
   await using scratch = await new TemporaryFiles().directory('books-large-');
   const location = await booksFixture(scratch.path);
   {
-    using store = new DatabaseSync(location.files.annotations);
+    using store = open(location.files.annotations);
     store.exec(`
       WITH RECURSIVE annotation(n) AS (
         SELECT 1 UNION ALL SELECT n + 1 FROM annotation WHERE n < 60000
@@ -2637,7 +2637,7 @@ test('a Books pass over a large annotation store holds one annotation at a time,
     0,
     `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
   );
-  using imported = new DatabaseSync(join(scratch.path, 'data.sqlite'), {
+  using imported = open(join(scratch.path, 'data.sqlite'), {
     readOnly: true,
   });
   assert.deepEqual(

@@ -11,7 +11,7 @@ import type {
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   AccountsStore,
-  AccountsUnavailableError,
+  StoreUnavailableError,
 } from '@workspace/sdk-apple-accounts';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -73,7 +73,7 @@ export class AppleAccountsSource extends Source<AccountsScan> {
     return new AccountsScan(this.#store.open());
   }
 
-  protected override readonly configErrors = [AccountsUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return localAppleStoreCoverage;

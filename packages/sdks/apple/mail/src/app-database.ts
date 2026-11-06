@@ -1,7 +1,8 @@
-import { AppDatabase } from '@workspace/sdk-macos-app-database';
+import { AppDatabase, Store } from '@workspace/sdk-macos-app-database';
 
-import { MailUnavailableError } from './errors.ts';
+export const mailStore = new Store(
+  "Mail's store",
+  'Grant the exporting process Full Disk Access in System Settings > Privacy & Security.',
+);
 
-export const appDatabase = new AppDatabase({
-  unavailable: MailUnavailableError,
-});
+export const appDatabase = new AppDatabase(mailStore);

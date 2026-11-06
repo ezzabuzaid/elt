@@ -48,7 +48,7 @@ A Context Compiler import loads every stream incrementally into its `data.sqlite
 
 ## Access
 
-The source needs no grant. On 2026-10-10, a launchd job without Full Disk Access read `passes23.sqlite` and a `pass.json`. The same job got `authorization denied` from the Notification Center store. When the store does not open, for example on a Mac where Wallet was never used, every stream fails with `WalletUnavailableError`, a `config` failure.
+The source needs no grant. On 2026-10-10, a launchd job without Full Disk Access read `passes23.sqlite` and a `pass.json`. The same job got `authorization denied` from the Notification Center store. When the store does not open, for example on a Mac where Wallet was never used, every stream fails with `StoreUnavailableError`, a `config` failure.
 
 ## Streams
 

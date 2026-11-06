@@ -54,7 +54,7 @@ A Context Compiler import loads every stream incrementally into its `data.sqlite
 
 ## Access
 
-The store needs [Full Disk Access](../messages/README.md#full-disk-access) for the app that runs the pipeline, such as the terminal. On 2026-10-06, a terminal with the grant read the store. A launchd job without the grant got the SQLite error AUTH (23, `authorization denied`). The Accounts store gave CANTOPEN in the same case. The source turns both errors into `CallHistoryUnavailableError`, which names the grant, and every stream fails.
+The store needs [Full Disk Access](../messages/README.md#full-disk-access) for the app that runs the pipeline, such as the terminal. On 2026-10-06, a terminal with the grant read the store. On 2026-11-06, a node process without the grant opened Mail's store, and SQLite gave CANTOPEN (14) for a read-only open and for a writable open. SQLite reports CANTOPEN (14) for chmod and for a privacy denial alike. The SDK turns the error into `StoreUnavailableError`, which names the grant, and every stream fails.
 
 ## Streams
 

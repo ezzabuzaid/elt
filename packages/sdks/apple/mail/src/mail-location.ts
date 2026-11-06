@@ -6,8 +6,10 @@ import {
   parseBinaryPlist,
   readPlist,
 } from '@workspace/codec-plist';
+import { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 
-import { MailSchemaError, MailUnavailableError } from './errors.ts';
+import { mailStore } from './app-database.ts';
+import { MailSchemaError } from './errors.ts';
 import { plistObject } from './mail-plists.ts';
 
 // Mail's store in the home folder `home`.
@@ -30,7 +32,7 @@ export async function mailVersionDirectory(root: string): Promise<string> {
       'code' in cause &&
       unreadable.has(String(cause.code))
     )
-      throw new MailUnavailableError(root, cause);
+      throw new StoreUnavailableError(mailStore, root, cause);
     throw cause;
   });
   const info = plistObject(

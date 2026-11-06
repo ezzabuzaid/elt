@@ -5,13 +5,13 @@ import { mkdirSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
+import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -97,7 +97,7 @@ async function appleImport(source: Source, directory: string) {
   });
   const history = new SQLiteSyncHistory();
   const read = (sql: string) => {
-    using database = new DatabaseSync(path, { readOnly: true });
+    using database = open(path, { readOnly: true });
     return database.prepare(sql).all();
   };
   return {
@@ -231,7 +231,6 @@ const renderedText = (path: string, text: string | null) =>
 // A chat.db with Messages' own table definitions, captured from macOS 27.0
 // (schema only, no data), in WAL mode like the real file.
 const chatSchema = `
-  PRAGMA journal_mode = WAL;
   CREATE TABLE chat (ROWID INTEGER PRIMARY KEY AUTOINCREMENT, guid TEXT UNIQUE NOT NULL, style INTEGER, state INTEGER, account_id TEXT, properties BLOB, chat_identifier TEXT, service_name TEXT, room_name TEXT, account_login TEXT, is_archived INTEGER DEFAULT 0, last_addressed_handle TEXT, display_name TEXT, group_id TEXT, is_filtered INTEGER DEFAULT 0, successful_query INTEGER, engram_id TEXT, server_change_token TEXT, ck_sync_state INTEGER DEFAULT 0, original_group_id TEXT, last_read_message_timestamp INTEGER DEFAULT 0, cloudkit_record_id TEXT, last_addressed_sim_id TEXT, is_blackholed INTEGER DEFAULT 0, syndication_date INTEGER DEFAULT 0, syndication_type INTEGER DEFAULT 0, is_recovered INTEGER DEFAULT 0, is_deleting_incoming_messages INTEGER DEFAULT 0, is_pending_review INTEGER DEFAULT 0);
   CREATE TABLE handle (ROWID INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE, id TEXT NOT NULL, country TEXT, service TEXT NOT NULL, uncanonicalized_id TEXT, person_centric_id TEXT, UNIQUE (id, service) );
   CREATE TABLE message (ROWID INTEGER PRIMARY KEY AUTOINCREMENT, guid TEXT UNIQUE NOT NULL, text TEXT, replace INTEGER DEFAULT 0, service_center TEXT, handle_id INTEGER DEFAULT 0, subject TEXT, country TEXT, attributedBody BLOB, version INTEGER DEFAULT 0, type INTEGER DEFAULT 0, service TEXT, account TEXT, account_guid TEXT, error INTEGER DEFAULT 0, date INTEGER, date_read INTEGER, date_delivered INTEGER, is_delivered INTEGER DEFAULT 0, is_finished INTEGER DEFAULT 0, is_emote INTEGER DEFAULT 0, is_from_me INTEGER DEFAULT 0, is_empty INTEGER DEFAULT 0, is_delayed INTEGER DEFAULT 0, is_auto_reply INTEGER DEFAULT 0, is_prepared INTEGER DEFAULT 0, is_read INTEGER DEFAULT 0, is_system_message INTEGER DEFAULT 0, is_sent INTEGER DEFAULT 0, has_dd_results INTEGER DEFAULT 0, is_service_message INTEGER DEFAULT 0, is_forward INTEGER DEFAULT 0, was_downgraded INTEGER DEFAULT 0, is_archive INTEGER DEFAULT 0, cache_has_attachments INTEGER DEFAULT 0, cache_roomnames TEXT, was_data_detected INTEGER DEFAULT 0, was_deduplicated INTEGER DEFAULT 0, is_audio_message INTEGER DEFAULT 0, is_played INTEGER DEFAULT 0, date_played INTEGER, item_type INTEGER DEFAULT 0, other_handle INTEGER DEFAULT 0, group_title TEXT, group_action_type INTEGER DEFAULT 0, share_status INTEGER DEFAULT 0, share_direction INTEGER DEFAULT 0, is_expirable INTEGER DEFAULT 0, expire_state INTEGER DEFAULT 0, message_action_type INTEGER DEFAULT 0, message_source INTEGER DEFAULT 0, associated_message_guid TEXT, associated_message_type INTEGER DEFAULT 0, balloon_bundle_id TEXT, payload_data BLOB, expressive_send_style_id TEXT, associated_message_range_location INTEGER DEFAULT 0, associated_message_range_length INTEGER DEFAULT 0, time_expressive_send_played INTEGER, message_summary_info BLOB, ck_sync_state INTEGER DEFAULT 0, ck_record_id TEXT, ck_record_change_tag TEXT, destination_caller_id TEXT, is_corrupt INTEGER DEFAULT 0, reply_to_guid TEXT, sort_id INTEGER, is_spam INTEGER DEFAULT 0, has_unseen_mention INTEGER DEFAULT 0, thread_originator_guid TEXT, thread_originator_part TEXT, syndication_ranges TEXT, synced_syndication_ranges TEXT, was_delivered_quietly INTEGER DEFAULT 0, did_notify_recipient INTEGER DEFAULT 0, date_retracted INTEGER, date_edited INTEGER, was_detonated INTEGER DEFAULT 0, part_count INTEGER, is_stewie INTEGER DEFAULT 0, is_sos INTEGER DEFAULT 0, is_critical INTEGER DEFAULT 0, bia_reference_id TEXT, is_kt_verified INTEGER DEFAULT 0, fallback_hash TEXT, associated_message_emoji TEXT, is_pending_satellite_send INTEGER DEFAULT 0, needs_relay INTEGER DEFAULT 0, schedule_type INTEGER DEFAULT 0, schedule_state INTEGER DEFAULT 0, sent_or_received_off_grid INTEGER DEFAULT 0, date_recovered INTEGER DEFAULT 0, is_time_sensitive INTEGER DEFAULT 0, ck_chat_id TEXT, index_state INTEGER DEFAULT 0, filter_action INTEGER DEFAULT 0, filter_sub_action INTEGER DEFAULT 0, is_preview_sent INTEGER DEFAULT 0, is_preview_delivered INTEGER DEFAULT 0, date_preview_sent INTEGER, date_preview_delivered INTEGER, date_updated INTEGER, retry_count INTEGER);
@@ -302,7 +301,7 @@ const chatFixture = async (directory: string) => {
   const path = join(directory, 'chat.db');
   const attachment = join(directory, 'note.txt');
   await writeFile(attachment, 'attached words');
-  using database = new DatabaseSync(path);
+  using database = open(path);
   database.exec(chatSchema);
   database.exec(`
     INSERT INTO chat (ROWID, guid, chat_identifier, service_name, display_name, group_id, style) VALUES (1, 'iMessage;-;+15550100', '+15550100', 'iMessage', '', 'group-1', 45);
@@ -405,7 +404,7 @@ const chatFixture = async (directory: string) => {
 };
 
 const messagesRows = (path: string, sql: string) => {
-  using database = new DatabaseSync(path, { readOnly: true });
+  using database = open(path, { readOnly: true });
   return database
     .prepare(sql)
     .all()
@@ -452,7 +451,7 @@ test('the document parser reads every attachment kind and throws only on unreada
   renderedText(blank, null);
   const card =
     'BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nTEL:+15550100\nEND:VCARD\n';
-  using chat = new DatabaseSync(path);
+  using chat = open(path);
   // Each file as Messages records an attachment: a row naming its path.
   const attach = (guid: string, filename: string) =>
     chat
@@ -570,7 +569,7 @@ test('the document parser reads every attachment kind and throws only on unreada
 test('Messages scope filters chat and native dates before decoding attachments and saving checkpoints', async () => {
   await using scratch = await new TemporaryFiles().directory('messages-scope-');
   const path = await chatFixture(scratch.path);
-  using native = new DatabaseSync(path);
+  using native = open(path);
   // Invalid archived content on an excluded message must never be decoded.
   native.exec(
     "UPDATE message SET attributedBody=X'010203' WHERE guid='m-archived'",
@@ -894,7 +893,7 @@ test('Messages loads edits and unsends incrementally and deletes removed message
   await pipeline.run();
   const unchanged = await pipeline.run();
   {
-    using chat = new DatabaseSync(path);
+    using chat = open(path);
     chat
       .prepare(
         "UPDATE message SET text = 'hello again', date_edited = ? WHERE guid = 'm-plain'",
@@ -958,7 +957,7 @@ test('one Messages read sees one moment of chat.db while Messages keeps writing'
     source,
     [source.handles, source.messages],
     () => {
-      using chat = new DatabaseSync(path);
+      using chat = open(path);
       chat.exec("INSERT INTO message (guid, text) VALUES ('m-new', 'arrived')");
     },
     'guid',
@@ -982,7 +981,7 @@ test('Messages names Full Disk Access when chat.db cannot be opened', async () =
 
   await assert.rejects(opening, (error) => {
     assert.ok(error instanceof Error);
-    assert.equal(error.name, 'MessagesUnavailableError');
+    assert.equal(error.name, 'StoreUnavailableError');
     assert.match(error.message, /Full Disk Access/);
     assert.ok(error.cause instanceof Error);
     assert.equal(source.failureType(error), 'config');
@@ -1023,7 +1022,7 @@ test('property lists decode as Foundation wrote them', async () => {
     'base64',
   );
   {
-    using chat = new DatabaseSync(path);
+    using chat = open(path);
     chat
       .prepare(
         "UPDATE message SET message_summary_info = ? WHERE guid = 'm-old'",
@@ -1112,7 +1111,7 @@ test(
       ],
     });
     // Messages holds its connection, and so its WAL, open the whole time.
-    using messages = new DatabaseSync(path);
+    using messages = open(path);
     const controller = new AbortController();
     const batches: number[] = [];
 
@@ -1162,7 +1161,7 @@ test('Messages reads as documented views joined on both handle keys and counted 
   const path = await chatFixture(scratch.path);
   {
     // The same address on SMS is another handle; one message is in two chats.
-    using database = new DatabaseSync(path);
+    using database = open(path);
     database.exec(`
       INSERT INTO handle VALUES (2, '+15550100', 'US', 'SMS', '5550100', 'person-1');
       UPDATE message SET handle_id = 2 WHERE guid = 'm-old';
@@ -1256,7 +1255,7 @@ test('Messages reads as documented views joined on both handle keys and counted 
 // archived as Messages archives one, a minute apart from 2025-01-01.
 const largeChatFixture = (directory: string, count: number) => {
   const path = join(directory, 'chat.db');
-  using database = new DatabaseSync(path);
+  using database = open(path);
   database.exec(chatSchema);
   database.exec(`
     INSERT INTO chat (ROWID, guid, chat_identifier, service_name) VALUES (1, 'iMessage;-;+15550100', '+15550100', 'iMessage');
@@ -1348,7 +1347,7 @@ test('a Messages pass over a large chat.db holds one message at a time, so it lo
     0,
     `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
   );
-  using imported = new DatabaseSync(join(directory.path, 'data.sqlite'), {
+  using imported = open(join(directory.path, 'data.sqlite'), {
     readOnly: true,
   });
   assert.deepEqual(
@@ -1391,7 +1390,7 @@ test('a Messages watch keeps every stream current while chat.db holds still', as
   });
   try {
     await watching.next();
-    using out = new DatabaseSync(data, { readOnly: true });
+    using out = open(data, { readOnly: true });
     const status = out.prepare(
       'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
     );

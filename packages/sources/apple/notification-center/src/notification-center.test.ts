@@ -3,12 +3,13 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -27,7 +28,7 @@ import {
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import {
-  NotificationCenterUnavailableError,
+  StoreUnavailableError,
   notificationCenterStorePath,
 } from '@workspace/sdk-apple-notification-center';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -42,10 +43,9 @@ class ScratchNotificationCenter implements Disposable {
 
   // existing opens a store already made, as usernoted does when it delivers.
   constructor(path: string, { existing = false } = {}) {
-    this.#database = new DatabaseSync(path);
+    this.#database = open(path);
     if (existing) return;
     this.#database.exec(`
-      PRAGMA journal_mode = WAL;
       CREATE TABLE dbinfo (key VARCHAR, value VARCHAR);
       CREATE TABLE app (app_id INTEGER PRIMARY KEY, identifier VARCHAR, badge INTEGER NULL);
       CREATE TABLE record (rec_id INTEGER PRIMARY KEY, app_id INTEGER, uuid BLOB, data BLOB, request_date REAL, request_last_date REAL, delivered_date REAL, presented Bool, style INTEGER, snooze_fire_date REAL);
@@ -300,7 +300,7 @@ function notificationCenterFixture(path: string): void {
 }
 
 function rows(path: string, sql: string) {
-  using db = new DatabaseSync(path, { readOnly: true });
+  using db = open(path, { readOnly: true });
   return db
     .prepare(sql)
     .all()
@@ -758,7 +758,7 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   // chmod stands in for macOS withholding Full Disk Access: SQLite reports
-  // CANTOPEN here and AUTH under a privacy denial, and both are unavailable.
+  // CANTOPEN (14) for chmod and for a privacy denial alike.
   await chmod(path, 0o000);
 
   try {
@@ -766,7 +766,7 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
       assert.ok(error instanceof PipelineError);
       assert.equal(error.errors.length, 4);
       for (const cause of error.errors) {
-        assert.ok(cause instanceof NotificationCenterUnavailableError);
+        assert.ok(cause instanceof StoreUnavailableError);
         assert.match(cause.message, /Full Disk Access/);
         assert.ok(cause.message.includes(path));
       }
@@ -793,7 +793,7 @@ test('a store missing a column this reader reads fails every stream by name and 
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   {
-    using store = new DatabaseSync(path);
+    using store = open(path);
     store.exec('ALTER TABLE record DROP COLUMN style');
   }
 
@@ -903,9 +903,7 @@ test('this Mac’s Notification Center loads every notification and app it holds
   } catch (error) {
     if (
       error instanceof PipelineError &&
-      error.errors.every(
-        (cause) => cause instanceof NotificationCenterUnavailableError,
-      )
+      error.errors.every((cause) => cause instanceof StoreUnavailableError)
     )
       return t.skip('no Full Disk Access to the Notification Center store');
     throw error;
@@ -981,7 +979,7 @@ test('a Notification Center watch keeps every stream current while usernoted cha
   });
   try {
     await watching.next();
-    using out = new DatabaseSync(data, { readOnly: true });
+    using out = open(data, { readOnly: true });
     const status = out.prepare(
       'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
     );

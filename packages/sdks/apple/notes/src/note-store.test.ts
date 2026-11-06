@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
 import { utimes } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { NotesStore, NotesUnavailableError } from './index.ts';
+import { NotesStore, StoreUnavailableError } from './index.ts';
 
 test('the store was last written when Notes last wrote NoteStore.sqlite', async () => {
   await using dir = await new TemporaryFiles().directory('notes-');
   const path = join(dir.path, 'NoteStore.sqlite');
-  new DatabaseSync(path).close();
+  open(path, { journal: new RollbackJournal() }).close();
   // Notes writes the store; a reader only reads it later.
   await utimes(path, 1_800_100_000, 1_800_000_000);
 
@@ -25,6 +25,6 @@ test('a store that is not there is unavailable, not a time', async () => {
 
   assert.throws(
     () => new NotesStore(join(dir.path, 'NoteStore.sqlite')).lastWrite(),
-    NotesUnavailableError,
+    StoreUnavailableError,
   );
 });

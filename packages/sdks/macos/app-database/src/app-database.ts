@@ -6,24 +6,19 @@ import {
 } from '@zukhruf/sqlite-snapshot';
 
 import { AppDatabaseVersion } from './app-database-version.ts';
-import {
-  type UnavailableErrorClass,
-  readOrUnavailable,
-} from './unavailable.ts';
-
-export interface AppDatabaseErrors {
-  unavailable: UnavailableErrorClass;
-}
+import type { Store } from './store.ts';
+import { StoreUnavailableError, readOrUnavailable } from './unavailable.ts';
 
 // One app's SQLite stores, read through the zukhruf packages. A store the
-// process cannot open fails with the SDK's own error, whose message tells the
-// user what to grant; a store without a column the reader reads fails with the
-// package's MissingColumnsError, since no grant fixes an out-of-date reader.
+// process cannot open fails with StoreUnavailableError, whose message names
+// the store and tells the user what to grant; a store without a column the
+// reader reads fails with the package's MissingColumnsError, since no grant
+// fixes an out-of-date reader.
 export class AppDatabase {
-  readonly #errors: AppDatabaseErrors;
+  readonly #store: Store;
 
-  constructor(errors: AppDatabaseErrors) {
-    this.#errors = errors;
+  constructor(store: Store) {
+    this.#store = store;
   }
 
   snapshot(path: string, columns?: SnapshotColumns): Snapshot {
@@ -33,7 +28,7 @@ export class AppDatabase {
       return snapshot;
     } catch (error) {
       if (error instanceof UnavailableError)
-        throw new this.#errors.unavailable(path, error);
+        throw new StoreUnavailableError(this.#store, path, error);
       throw error;
     }
   }
@@ -51,7 +46,7 @@ export class AppDatabase {
       return snapshot;
     } catch (error) {
       if (error instanceof UnavailableError)
-        throw new this.#errors.unavailable(path, error);
+        throw new StoreUnavailableError(this.#store, path, error);
       throw error;
     }
   }
@@ -59,20 +54,18 @@ export class AppDatabase {
   version(path: string): AppDatabaseVersion {
     return new AppDatabaseVersion(
       path,
-      this.#errors.unavailable,
+      this.#store,
       () => new DataVersion(path),
     );
   }
 
   versionOfExclusiveOwner(path: string): AppDatabaseVersion {
-    return new AppDatabaseVersion(path, this.#errors.unavailable, () =>
+    return new AppDatabaseVersion(path, this.#store, () =>
       DataVersion.ofExclusiveOwner(path),
     );
   }
 
   lastWrite(path: string): Date {
-    return readOrUnavailable(path, this.#errors.unavailable, () =>
-      lastWrite(path),
-    );
+    return readOrUnavailable(path, this.#store, () => lastWrite(path));
   }
 }

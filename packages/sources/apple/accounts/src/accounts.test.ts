@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -18,7 +19,7 @@ import {
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import {
-  AccountsUnavailableError,
+  StoreUnavailableError,
   accountsStorePath,
 } from '@workspace/sdk-apple-accounts';
 
@@ -38,7 +39,7 @@ class ScratchAccountsStore implements Disposable {
   readonly #database: DatabaseSync;
 
   constructor(path: string) {
-    this.#database = new DatabaseSync(path);
+    this.#database = open(path, { journal: new RollbackJournal() });
     this.#database.exec(`
       CREATE TABLE ZACCESSOPTIONSKEY ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZNAME VARCHAR , ZENUMVALUE INTEGER);
       CREATE TABLE Z_1OWNINGACCOUNTTYPES ( Z_1ACCESSKEYS INTEGER, Z_4OWNINGACCOUNTTYPES INTEGER, PRIMARY KEY (Z_1ACCESSKEYS, Z_4OWNINGACCOUNTTYPES) );
@@ -364,7 +365,7 @@ function accountsFixture(path: string): void {
 }
 
 function rows(path: string, sql: string) {
-  using db = new DatabaseSync(path, { readOnly: true });
+  using db = open(path, { readOnly: true });
   return db
     .prepare(sql)
     .all()
@@ -598,7 +599,7 @@ test('an account changed in the store updates its rows, and a removed one delete
   const out = join(dir.path, 'out.sqlite');
   await run.run();
   {
-    using store = new DatabaseSync(path);
+    using store = open(path, { journal: new RollbackJournal() });
     store.exec(`
       UPDATE ZACCOUNT SET ZACCOUNTDESCRIPTION = 'Personal' WHERE ZIDENTIFIER = 'ICLOUD';
       DELETE FROM ZACCOUNTPROPERTY WHERE ZOWNER = 3;
@@ -630,7 +631,7 @@ test('an unreadable Accounts store fails every stream, naming Full Disk Access',
     assert.ok(error instanceof PipelineError);
     assert.ok(error.errors.length > 0);
     for (const cause of error.errors) {
-      assert.ok(cause instanceof AccountsUnavailableError);
+      assert.ok(cause instanceof StoreUnavailableError);
       assert.match(cause.message, /Full Disk Access/);
     }
     assert.deepEqual(failureTypes(error), ['config']);
@@ -643,7 +644,7 @@ test('a table in a layout this reader does not know fails only the stream that r
   const path = join(dir.path, 'Accounts4.sqlite');
   accountsFixture(path);
   {
-    using store = new DatabaseSync(path);
+    using store = open(path, { journal: new RollbackJournal() });
     store.exec('ALTER TABLE ZAUTHORIZATION DROP COLUMN ZOPTIONS');
   }
   const out = join(dir.path, 'out.sqlite');
@@ -693,7 +694,7 @@ test('watching the Accounts store reports each commit to it', async () => {
   ]);
 
   {
-    using store = new DatabaseSync(path);
+    using store = open(path, { journal: new RollbackJournal() });
     store.exec(
       "UPDATE ZACCOUNT SET ZACCOUNTDESCRIPTION = 'Personal' WHERE ZIDENTIFIER = 'ICLOUD'",
     );
@@ -720,7 +721,7 @@ test('this Mac’s Accounts store loads every stream, one row per stored record,
   } catch (error) {
     if (
       error instanceof PipelineError &&
-      error.errors.every((cause) => cause instanceof AccountsUnavailableError)
+      error.errors.every((cause) => cause instanceof StoreUnavailableError)
     )
       return t.skip('no access to the Accounts store');
     throw error;
@@ -812,7 +813,7 @@ test('an Accounts watch keeps every stream current while the Accounts store hold
   });
   try {
     await watching.next();
-    using out = new DatabaseSync(data, { readOnly: true });
+    using out = open(data, { readOnly: true });
     const status = out.prepare(
       'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
     );
@@ -871,7 +872,7 @@ test('an Accounts pass over a large store holds one authorization at a time, so 
     // its own app, so the store is large without an archive written for each.
     // A real Mac holds a few at most; the count stands for any table that
     // grows past memory.
-    using store = new DatabaseSync(path);
+    using store = open(path, { journal: new RollbackJournal() });
     store.exec(`
       WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i + 1 FROM n WHERE i < 60000)
       INSERT INTO ZAUTHORIZATION (ZACCOUNTTYPE, ZBUNDLEID, ZGRANTEDPERMISSIONS, ZOPTIONS)

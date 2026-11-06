@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
 
 import { PlistDate, parseBinaryPlist } from '@workspace/codec-plist';
+import { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 
-import { ClockUnavailableError } from './errors.ts';
+import { clockStore } from './app-database.ts';
 import {
   array,
   dictionary,
@@ -18,7 +19,7 @@ async function preferences(path: string) {
   try {
     bytes = await readFile(path);
   } catch (cause) {
-    throw new ClockUnavailableError(path, cause);
+    throw new StoreUnavailableError(clockStore, path, cause);
   }
   return dictionary(parseBinaryPlist(bytes));
 }

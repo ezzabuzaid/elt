@@ -13,7 +13,7 @@ import {
 } from '@workspace/elt';
 import {
   NotificationCenterStore,
-  NotificationCenterUnavailableError,
+  StoreUnavailableError,
 } from '@workspace/sdk-apple-notification-center';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -66,9 +66,7 @@ export class AppleNotificationCenterSource extends Source<NotificationCenterScan
     return new NotificationCenterScan(this.#store.open(), this.scope);
   }
 
-  protected override readonly configErrors = [
-    NotificationCenterUnavailableError,
-  ];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

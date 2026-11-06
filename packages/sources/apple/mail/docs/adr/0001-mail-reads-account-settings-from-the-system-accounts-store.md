@@ -18,7 +18,7 @@ The Accounts store commits apart from Mail. While `accounts` or `smtpServers` is
 ## Consequences
 
 - Mail needs only Full Disk Access, and it does not have to run.
-- A store that the process cannot read fails only `accounts` and `smtpServers`, with `AccountsUnavailableError`. A watch does not watch that store, and it continues over the rest of Mail.
+- A store that the process cannot read fails only `accounts` and `smtpServers`, with `StoreUnavailableError`. A watch does not watch that store, and it continues over the rest of Mail.
 - A comparison with scripting on macOS 27 (Exchange, iCloud and Google) matched each account and SMTP field, except the server, port and SSL of an Exchange account, which scripting gives as none, 0 and false.
 - A read-only connection to the store of the examined Mac saw five commits of `accountsd` in five minutes with no edit of an account. Thus the account streams refresh about one time each minute. A refresh with no changes writes no rows.
 - The tests write a synthetic `Accounts4.sqlite`. No test mocks `osascript`.

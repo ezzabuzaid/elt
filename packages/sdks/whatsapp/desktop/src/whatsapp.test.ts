@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict';
 import { chmod, mkdir, rename, utimes } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { WhatsApp, WhatsAppUnavailableError } from './index.ts';
+import { StoreUnavailableError, WhatsApp } from './index.ts';
 
 // A store as WhatsApp leaves it, last written at a time in seconds since the
 // epoch; a reader reads it later.
 async function writtenAt(path: string, time: number) {
   await mkdir(dirname(path), { recursive: true });
-  new DatabaseSync(path).close();
+  open(path, { journal: new RollbackJournal() }).close();
   await utimes(path, time + 100_000, time);
 }
 
@@ -45,7 +45,7 @@ test('a store WhatsApp has not created is unavailable, not a time', async () => 
 
   assert.throws(
     () => new WhatsApp(container.path).lastWrite('chatStorage'),
-    WhatsAppUnavailableError,
+    StoreUnavailableError,
   );
 });
 

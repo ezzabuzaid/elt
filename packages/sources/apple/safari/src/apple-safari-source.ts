@@ -18,7 +18,7 @@ import {
   Safari,
   type SafariLocation,
   type SafariStore,
-  SafariUnavailableError,
+  StoreUnavailableError,
   safariRunning,
 } from '@workspace/sdk-apple-safari';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -163,7 +163,7 @@ export class AppleSafariSource extends Source<SafariScan> {
     );
   }
 
-  protected override readonly configErrors = [SafariUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

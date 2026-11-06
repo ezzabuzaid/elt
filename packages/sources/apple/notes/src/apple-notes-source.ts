@@ -11,7 +11,7 @@ import type {
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   NotesStore,
-  NotesUnavailableError,
+  StoreUnavailableError,
   launchNotesHidden,
   notesRunning,
 } from '@workspace/sdk-apple-notes';
@@ -73,7 +73,7 @@ export class AppleNotesSource extends Source<NotesScan> {
     return new NotesScan(this.#store.open(), this.scope);
   }
 
-  protected override readonly configErrors = [NotesUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };

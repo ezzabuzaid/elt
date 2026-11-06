@@ -1,7 +1,8 @@
-import { AppDatabase } from '@workspace/sdk-macos-app-database';
+import { AppDatabase, Store } from '@workspace/sdk-macos-app-database';
 
-import { AccountsUnavailableError } from './errors.ts';
-
-export const appDatabase = new AppDatabase({
-  unavailable: AccountsUnavailableError,
-});
+export const appDatabase = new AppDatabase(
+  new Store(
+    'The system Accounts store',
+    'Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security.',
+  ),
+);

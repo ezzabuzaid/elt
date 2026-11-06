@@ -1,13 +1,15 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
+import {
+  type AppDatabaseVersion,
+  StoreUnavailableError,
+} from '@workspace/sdk-macos-app-database';
 
-import { appDatabase } from './app-database.ts';
+import { appDatabase, biomeStore } from './app-database.ts';
 import { type BiomeSegment, segments } from './biome-segment.ts';
 import type { BiomeStream } from './biome-stream.ts';
 import { BiomeSync } from './biome-sync.ts';
-import { BiomeUnavailableError } from './errors.ts';
 
 // The user's Biome in the home folder `home`, where macOS keeps activity
 // for this Mac and the devices it syncs with. The system Biome under
@@ -42,7 +44,7 @@ export class BiomeStore {
     try {
       await readdir(this.#streams);
     } catch (cause) {
-      throw new BiomeUnavailableError(this.#streams, cause);
+      throw new StoreUnavailableError(biomeStore, this.#streams, cause);
     }
     return new BiomeStreams(this.#streams);
   }

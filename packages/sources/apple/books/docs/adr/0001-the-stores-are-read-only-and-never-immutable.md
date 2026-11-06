@@ -13,6 +13,6 @@ Thus the source opens each store read-only, and never as `immutable`. A run open
 
 - A run reads the rows that Books committed to the WAL.
 - Each store is a different file. Thus streams of different stores can show different times.
-- A store that the source cannot open fails only its own streams, with `BooksUnavailableError`.
+- A store that the source cannot open fails only its own streams, with `StoreUnavailableError`.
 
 Sources: commit 5dcd0609 (the Books source), commit 65c7e39c (the SDK `sdk-apple-books`).

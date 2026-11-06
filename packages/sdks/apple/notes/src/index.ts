@@ -1,4 +1,4 @@
-export { NotesUnavailableError } from './errors.ts';
+export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 export {
   type NoteAttachmentReference,
   NoteDocument,

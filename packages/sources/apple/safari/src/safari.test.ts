@@ -4,7 +4,6 @@ import { mkdirSync } from 'node:fs';
 import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
@@ -12,6 +11,7 @@ import { promisify } from 'node:util';
 import { deflateSync } from 'node:zlib';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -91,7 +91,7 @@ async function appleImport(source: Source, directory: string) {
         connections: [connection],
       }).run(),
     read: (sql: string) => {
-      using database = new DatabaseSync(path, { readOnly: true });
+      using database = open(path, { readOnly: true });
       return database.prepare(sql).all();
     },
   };
@@ -371,8 +371,7 @@ async function safariFixture(root: string) {
   await mkdir(container, { recursive: true });
   const triggers = await binaryPlist(root, ['exa', 'examp']);
   {
-    using history = new DatabaseSync(join(directory, 'History.db'));
-    history.exec('PRAGMA journal_mode = WAL');
+    using history = open(join(directory, 'History.db'));
     history.exec(historySchema);
     const item = history.prepare(
       'INSERT INTO history_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -493,8 +492,7 @@ async function safariFixture(root: string) {
       .run(1, 1, appleSeconds('2026-01-11T00:00:00Z'));
   }
   {
-    using cloud = new DatabaseSync(join(container, 'CloudTabs.db'));
-    cloud.exec('PRAGMA journal_mode = WAL');
+    using cloud = open(join(container, 'CloudTabs.db'));
     cloud.exec(cloudTabsSchema);
     const fields = new Uint8Array([0]);
     cloud
@@ -541,8 +539,9 @@ async function safariFixture(root: string) {
     await mkdir(join(container, 'Profiles', 'SERVER-WORK'), {
       recursive: true,
     });
-    using work = new DatabaseSync(
+    using work = open(
       join(container, 'Profiles', 'SERVER-WORK', 'History.db'),
+      { journal: new RollbackJournal() },
     );
     work.exec(historySchema);
     work
@@ -690,8 +689,7 @@ async function tabsFixture(root: string, path: string) {
       alphaComponent: 1,
     }),
   );
-  using tabs = new DatabaseSync(path);
-  tabs.exec('PRAGMA journal_mode = WAL');
+  using tabs = open(path);
   tabs.exec(tabsSchema);
   const row = tabs.prepare(
     'INSERT INTO bookmarks (id, parent, type, subtype, special_id, hidden, title, url, order_index, external_uuid, server_id, last_modified, last_selected_child, extra_attributes, local_attributes, topic_title) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -1796,12 +1794,12 @@ test('Safari follows each store on its own: a rerun writes nothing, and edits an
 
   const unchanged = written(await safari.load());
   {
-    using history = new DatabaseSync(join(location.directory, 'History.db'));
+    using history = open(join(location.directory, 'History.db'));
     history.exec('DELETE FROM history_visits WHERE id = 10');
     history.exec('UPDATE history_items SET visit_count = 3 WHERE id = 2');
   }
   {
-    using cloud = new DatabaseSync(join(location.container, 'CloudTabs.db'));
+    using cloud = open(join(location.container, 'CloudTabs.db'));
     cloud.exec('DELETE FROM cloud_tab_devices');
   }
   await writePlist(join(location.directory, 'Bookmarks.plist'), {
@@ -1876,7 +1874,7 @@ test('Safari history keeps the visits and URLs Safari expires under its history 
   const daysAgo = (days: number) =>
     appleSeconds(new Date(Date.now() - days * 86_400_000).toISOString());
   {
-    using history = new DatabaseSync(join(location.directory, 'History.db'));
+    using history = open(join(location.directory, 'History.db'));
     history.exec(`INSERT INTO history_items (id, url, visit_count, daily_visit_counts, should_recompute_derived_visit_counts, visit_count_score)
       VALUES (3, 'https://expired.example/', 1, x'', 0, 0), (4, 'https://removed.example/', 1, x'', 0, 0)`);
     history
@@ -1902,7 +1900,7 @@ test('Safari history keeps the visits and URLs Safari expires under its history 
   // Safari expires the month-old visit with its URL, past its week; the
   // two-day-old visit was removed within it.
   {
-    using database = new DatabaseSync(join(location.directory, 'History.db'));
+    using database = open(join(location.directory, 'History.db'));
     database.exec(
       'DELETE FROM history_visits WHERE id IN (30, 31); DELETE FROM history_items WHERE id IN (3, 4)',
     );
@@ -1929,7 +1927,7 @@ test('Safari history keeps the visits and URLs Safari expires under its history 
     { HistoryAgeInDaysLimit: 0 },
   );
   {
-    using database = new DatabaseSync(join(location.directory, 'History.db'));
+    using database = open(join(location.directory, 'History.db'));
     database.exec(`INSERT INTO history_items (id, url, visit_count, daily_visit_counts, should_recompute_derived_visit_counts, visit_count_score)
       VALUES (5, 'https://yesterday.example/', 1, x'', 0, 0)`);
     database
@@ -1940,7 +1938,7 @@ test('Safari history keeps the visits and URLs Safari expires under its history 
   }
   await safari.load();
   {
-    using database = new DatabaseSync(join(location.directory, 'History.db'));
+    using database = open(join(location.directory, 'History.db'));
     database.exec(
       'DELETE FROM history_visits WHERE id = 32; DELETE FROM history_items WHERE id = 5',
     );
@@ -2057,7 +2055,7 @@ test('Safari names Full Disk Access for an unreadable store, refuses an unknown 
   await safari.load();
   await rm(join(location.directory, 'Bookmarks.plist'));
   {
-    using history = new DatabaseSync(join(location.directory, 'History.db'));
+    using history = open(join(location.directory, 'History.db'));
     history.exec('ALTER TABLE history_visits DROP COLUMN score');
   }
 
@@ -2144,11 +2142,12 @@ test('a Safari watch wakes only the streams of the store that changed, while Saf
     source.bookmarks,
   ];
   // Safari holds its connections, and so its WALs, open the whole time.
-  using history = new DatabaseSync(join(location.directory, 'History.db'));
-  using work = new DatabaseSync(
+  using history = open(join(location.directory, 'History.db'));
+  using work = open(
     join(location.container, 'Profiles', 'SERVER-WORK', 'History.db'),
+    { journal: new RollbackJournal() },
   );
-  using tabs = new DatabaseSync(join(location.container, 'SafariTabs.db'));
+  using tabs = open(join(location.container, 'SafariTabs.db'));
   const controller = new AbortController();
   const woken: string[][] = [];
 
@@ -2196,7 +2195,7 @@ test('Safari reads a value it keeps in two places from either, and a blank one a
   const plist = (value: unknown) => binaryPlist(scratch.path, value);
   const closedHere = new Date('2026-03-04T05:06:07Z');
   {
-    using tabs = new DatabaseSync(join(location.container, 'SafariTabs.db'));
+    using tabs = open(join(location.container, 'SafariTabs.db'));
     const tab = tabs.prepare(
       'INSERT INTO bookmarks (id, parent, type, title, url, order_index, external_uuid, extra_attributes, local_attributes, topic_title, date_closed) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)',
     );
@@ -2344,7 +2343,7 @@ test('Safari keeps each time as stored: database times round to the millisecond,
   await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   {
-    using history = new DatabaseSync(join(location.directory, 'History.db'));
+    using history = open(join(location.directory, 'History.db'));
     // Safari writes REAL seconds, here 0.6 ms past a whole second.
     history
       .prepare(
@@ -2366,7 +2365,7 @@ test('Safari keeps each time as stored: database times round to the millisecond,
     history.exec('UPDATE history_items SET status_code = 404 WHERE id = 2');
   }
   {
-    using cloud = new DatabaseSync(join(location.container, 'CloudTabs.db'));
+    using cloud = open(join(location.container, 'CloudTabs.db'));
     cloud
       .prepare('UPDATE cloud_tabs SET last_viewed_time = ? WHERE tab_uuid = ?')
       .run(appleSeconds('2026-03-03T10:00:00Z'), 'TAB-1');
@@ -2435,7 +2434,7 @@ test('Safari reads its folders, window groups, tag links and closed tabs as it s
   await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   {
-    using tabs = new DatabaseSync(join(location.container, 'SafariTabs.db'));
+    using tabs = open(join(location.container, 'SafariTabs.db'));
     // A window's group that is also one of its unnamed groups.
     tabs
       .prepare(
@@ -2453,7 +2452,7 @@ test('Safari reads its folders, window groups, tag links and closed tabs as it s
   {
     // A tag link whose history item is gone, which a connection without
     // foreign keys, as Safari's can be, leaves behind.
-    using history = new DatabaseSync(join(location.directory, 'History.db'), {
+    using history = open(join(location.directory, 'History.db'), {
       enableForeignKeyConstraints: false,
     });
     history
@@ -2640,13 +2639,13 @@ test('a malformed or missing Safari value fails only the streams that read it', 
   ];
 
   const counts = await failedAfter('counts', async ({ directory }) => {
-    using database = new DatabaseSync(join(directory, 'History.db'));
+    using database = open(join(directory, 'History.db'));
     database.exec(
       "UPDATE history_items SET daily_visit_counts = x'010203' WHERE id = 1",
     );
   });
   const position = await failedAfter('position', async ({ container }) => {
-    using database = new DatabaseSync(join(container, 'CloudTabs.db'));
+    using database = open(join(container, 'CloudTabs.db'));
     database.exec("UPDATE cloud_tabs SET position = x'00'");
   });
   const session = await failedAfter('session', async ({ container }) => {
@@ -2655,13 +2654,13 @@ test('a malformed or missing Safari value fails only the streams that read it', 
       SessionState: new Uint8Array([0, 0, 0, 2, 1, 2, 3]),
       TabPageContextIDKey: { profileIdentifier: 'DefaultProfile' },
     });
-    using database = new DatabaseSync(join(container, 'SafariTabs.db'));
+    using database = open(join(container, 'SafariTabs.db'));
     database
       .prepare('UPDATE bookmarks SET local_attributes = ? WHERE id = 32')
       .run(local);
   });
   const layout = await failedAfter('layout', async ({ container }) => {
-    using database = new DatabaseSync(join(container, 'SafariTabs.db'));
+    using database = open(join(container, 'SafariTabs.db'));
     database.exec('ALTER TABLE windows DROP COLUMN scene_id');
   });
   const profile = await failedAfter('profile', async ({ container }) => {
@@ -2690,7 +2689,7 @@ test('Safari keeps a year of history when it has written no preferences', async 
   const daysAgo = (days: number) =>
     appleSeconds(new Date(Date.now() - days * 86_400_000).toISOString());
   {
-    using history = new DatabaseSync(join(location.directory, 'History.db'));
+    using history = open(join(location.directory, 'History.db'));
     history.exec(`INSERT INTO history_items (id, url, visit_count, daily_visit_counts, should_recompute_derived_visit_counts, visit_count_score)
       VALUES (3, 'https://older.example/', 1, x'', 0, 0), (4, 'https://newer.example/', 1, x'', 0, 0)`);
     history
@@ -2705,7 +2704,7 @@ test('Safari keeps a year of history when it has written no preferences', async 
   );
   await safari.load();
   {
-    using database = new DatabaseSync(join(location.directory, 'History.db'));
+    using database = open(join(location.directory, 'History.db'));
     database.exec(
       'DELETE FROM history_visits WHERE id IN (30, 31); DELETE FROM history_items WHERE id IN (3, 4)',
     );
@@ -2747,7 +2746,9 @@ test('a Safari watch wakes history when a profile History.db appears, and a prop
     if (woken.length === 1) {
       const profile = join(location.container, 'Profiles', 'SERVER-NEW');
       await mkdir(profile);
-      using created = new DatabaseSync(join(profile, 'History.db'));
+      using created = open(join(profile, 'History.db'), {
+        journal: new RollbackJournal(),
+      });
       created.exec(historySchema);
     } else if (woken.length === 2) await rm(bookmarks);
     else if (woken.length === 3) await writePlist(bookmarks, bookmarksPlist);
@@ -2805,18 +2806,18 @@ test('Safari reads this Mac’s stores into SQLite', async (t) => {
   if (
     outcome instanceof PipelineError &&
     JSON.stringify(outcome, Object.getOwnPropertyNames(outcome)).includes(
-      'SafariUnavailableError',
+      'StoreUnavailableError',
     )
   )
     return t.skip('no Full Disk Access to Safari');
   assert.ok(Array.isArray(outcome), String(outcome));
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  using database = open(destination.path, { readOnly: true });
   const count = (table: string) =>
     Number(database.prepare(`SELECT count(*) AS n FROM "${table}"`).get()?.n);
   // History comes from this Mac's own History.db: when it holds items, so
   // does the import.
-  using history = new DatabaseSync(join(safariDirectory(home), 'History.db'), {
+  using history = open(join(safariDirectory(home), 'History.db'), {
     readOnly: true,
   });
   const native = history
@@ -2873,7 +2874,7 @@ test('while Safari is closed, a Safari watch makes no pass while its stores hold
   });
   try {
     await watching.next();
-    using out = new DatabaseSync(data, { readOnly: true });
+    using out = open(data, { readOnly: true });
     // A pass that a check starts would come here.
     const after = watching.next();
     // The check is due once the watch waits for its next poll.
@@ -2932,7 +2933,7 @@ test('a Safari pass over a large History.db holds one visit at a time, so it loa
   await using scratch = await new TemporaryFiles().directory('safari-large-');
   const location = await safariFixture(scratch.path);
   {
-    using history = new DatabaseSync(join(location.directory, 'History.db'));
+    using history = open(join(location.directory, 'History.db'));
     history.exec(
       `WITH RECURSIVE visit(n) AS (
          SELECT 1 UNION ALL SELECT n + 1 FROM visit WHERE n < 60000
@@ -3004,7 +3005,7 @@ test('a Safari pass over a large History.db holds one visit at a time, so it loa
     0,
     `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
   );
-  using imported = new DatabaseSync(join(scratch.path, 'data.sqlite'), {
+  using imported = open(join(scratch.path, 'data.sqlite'), {
     readOnly: true,
   });
   assert.deepEqual(

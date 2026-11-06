@@ -5,9 +5,11 @@ import {
   isBinaryPlist,
   parseBinaryPlist,
 } from '@workspace/codec-plist';
+import { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 
+import { booksStore } from './app-database.ts';
 import { dictionary, integer, plistTime } from './books-values.ts';
-import { BooksSchemaError, BooksUnavailableError } from './errors.ts';
+import { BooksSchemaError } from './errors.ts';
 
 // The daily reading goal and streak Books shows in Reading Goals.
 export type ReadingGoal = {
@@ -25,7 +27,7 @@ async function readBooksPlist(path: string): Promise<PlistValue> {
   try {
     bytes = await readFile(path);
   } catch (cause) {
-    throw new BooksUnavailableError(path, cause);
+    throw new StoreUnavailableError(booksStore, path, cause);
   }
   if (!isBinaryPlist(bytes))
     throw new BooksSchemaError(path, ['binary property list']);

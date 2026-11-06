@@ -50,7 +50,7 @@ A Context Compiler import loads every stream incrementally into its `data.sqlite
 
 ## Access
 
-The store needs [Full Disk Access](../messages/README.md#full-disk-access) for the app that runs the pipeline, such as the terminal. On 2026-10-05, a terminal with the grant read the store. A launchd job without the grant got the SQLite error CANTOPEN (14). The same job got CANTOPEN for `~/Library/Messages/chat.db`, and `EPERM` when it listed `~/Library/Mail`. When the process cannot open the store, every stream fails with `AccountsUnavailableError`, which names the grant.
+The store needs [Full Disk Access](../messages/README.md#full-disk-access) for the app that runs the pipeline, such as the terminal. On 2026-10-05, a terminal with the grant read the store. A launchd job without the grant got the SQLite error CANTOPEN (14). The same job got CANTOPEN for `~/Library/Messages/chat.db`, and `EPERM` when it listed `~/Library/Mail`. When the process cannot open the store, every stream fails with `StoreUnavailableError`, which names the grant.
 
 ## Streams
 

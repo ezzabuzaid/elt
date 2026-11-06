@@ -59,7 +59,7 @@ The source does not use Contacts.framework. That framework needs the Contacts gr
 
 Each error below names what is missing, and each comes before a copy starts:
 
-- A store or the `Sources` folder that the source cannot open (missing, or no permission) fails the run with `ContactsUnavailableError`.
+- A store or the `Sources` folder that the source cannot open (missing, or no permission) fails the run with `StoreUnavailableError`.
 - A store without a column that the source reads fails with `MissingColumnsError`.
 - A store without a Core Data entity that the source reads fails with `ContactsSchemaError`.
 

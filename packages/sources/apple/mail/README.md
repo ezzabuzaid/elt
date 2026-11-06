@@ -137,9 +137,9 @@ A watch sees only the local activity of Mail. To get remote changes, keep Mail o
 
 Give **Full Disk Access** to the process that runs the pipeline. Mail's store needs it, and so does the system Accounts store (`~/Library/Accounts/Accounts4.sqlite`). Mail does not need Automation access.
 
-- If the process cannot read the Mail store, or `PersistenceInfo.plist` or `Envelope Index` is missing, a read and a watch fail with `MailUnavailableError`.
+- If the process cannot read the Mail store, or `PersistenceInfo.plist` or `Envelope Index` is missing, a read and a watch fail with `StoreUnavailableError`.
 - If `PersistenceInfo.plist` does not parse, or the index is not a database, the read fails with that error.
-- If the process cannot read the Accounts store, only `accounts` and `smtpServers` fail, with `AccountsUnavailableError`.
+- If the process cannot read the Accounts store, only `accounts` and `smtpServers` fail, with `StoreUnavailableError`, which names the Accounts store.
 - If `Envelope Index` does not have a column that the source reads, for example after a Mail release changes the layout, the read fails with `MissingColumnsError`, and no stream of that read loads. The error names each missing `table.column`: `The database at "<path>" lacks the columns …: its owner changed its layout. Update the reader to the new layout.`
 - If Mail changes a file during a read, the stream fails with `MailChangingError`. The next run tries again.
 

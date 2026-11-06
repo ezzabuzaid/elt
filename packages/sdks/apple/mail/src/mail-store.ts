@@ -1,6 +1,7 @@
-import { appDatabase } from './app-database.ts';
+import { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
+
+import { appDatabase, mailStore } from './app-database.ts';
 import { EnvelopeIndex } from './envelope-index.ts';
-import { MailUnavailableError } from './errors.ts';
 import { MailFiles } from './mail-files.ts';
 import { envelopeIndexPath, mailVersionDirectory } from './mail-location.ts';
 import { MailVersion } from './mail-version.ts';
@@ -69,8 +70,8 @@ export class MailStore {
     try {
       return open();
     } catch (error) {
-      if (error instanceof MailUnavailableError)
-        throw new MailUnavailableError(this.root, error.cause);
+      if (error instanceof StoreUnavailableError)
+        throw new StoreUnavailableError(mailStore, this.root, error.cause);
       throw error;
     }
   }

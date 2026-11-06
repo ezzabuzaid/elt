@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -10,17 +10,18 @@ import {
   AppIntents,
   DisplayIsBacklit,
   KnowledgeStore,
-  KnowledgeUnavailableError,
+  StoreUnavailableError,
 } from './index.ts';
 
-test('a knowledgeC that is missing fails with KnowledgeUnavailableError naming its path', async () => {
+test('a knowledgeC that is missing fails with StoreUnavailableError naming its path', async () => {
   await using scratch = await new TemporaryFiles().directory('knowledge-');
   const path = join(scratch.path, 'knowledgeC.db');
 
   assert.throws(
     () => new KnowledgeStore(path).open(),
     (error: unknown) =>
-      error instanceof KnowledgeUnavailableError &&
+      error instanceof StoreUnavailableError &&
+      error.path === path &&
       error.message.includes(`${path} cannot be read`),
   );
 });
@@ -31,7 +32,7 @@ test('a layout without a column fails only the reads that need it, and the other
   {
     // knowledgeC without ZOBJECT.ZVALUEINTEGER, which only the backlight
     // stream reads.
-    using knowledge = new DatabaseSync(path);
+    using knowledge = open(path, { journal: new RollbackJournal() });
     knowledge.exec(`
       CREATE TABLE ZOBJECT (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZSTREAMNAME VARCHAR, ZSTARTDATE TIMESTAMP, ZENDDATE TIMESTAMP, ZCREATIONDATE TIMESTAMP, ZSECONDSFROMGMT INTEGER, ZVALUESTRING VARCHAR, ZSTRUCTUREDMETADATA INTEGER, ZSOURCE INTEGER);
       CREATE TABLE ZSTRUCTUREDMETADATA (Z_PK INTEGER PRIMARY KEY, Z_DKINTENTMETADATAKEY__DIRECTION INTEGER, Z_DKINTENTMETADATAKEY__DONATEDBYSIRI INTEGER, Z_DKINTENTMETADATAKEY__INTENTHANDLINGSTATUS INTEGER, Z_DKINTENTMETADATAKEY__INTENTTYPE INTEGER, Z_DKINTENTMETADATAKEY__DERIVEDINTENTIDENTIFIER VARCHAR, Z_DKINTENTMETADATAKEY__INTENTCLASS VARCHAR, Z_DKINTENTMETADATAKEY__INTENTVERB VARCHAR, Z_DKINTENTMETADATAKEY__INTERACTIONIDENTIFIER VARCHAR, Z_DKINTENTMETADATAKEY__RELATEDCONTACTIDENTIFIERS VARCHAR, Z_DKINTENTMETADATAKEY__SERIALIZEDINTERACTION BLOB);

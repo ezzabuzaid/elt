@@ -121,7 +121,7 @@ Notes gives the original file from its store, never a staged copy: `<NoteStore.s
 
 ## Access
 
-Give **Full Disk Access** to the process that runs the pipeline. If the store is missing or the process has no access, the read fails with `NotesUnavailableError`. This is a `config` failure.
+Give **Full Disk Access** to the process that runs the pipeline. If the store is missing or the process has no access, the read fails with `StoreUnavailableError`. This is a `config` failure.
 
 The layout of the store changes between macOS releases. The SDK reads the layout of macOS 26, and it checks each column that it uses when it opens the store. If the store does not have a column, the read fails with `MissingColumnsError`, which names the missing columns. The source does not load fields from the wrong place.
 

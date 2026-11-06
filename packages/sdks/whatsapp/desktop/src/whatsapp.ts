@@ -1,13 +1,15 @@
 import { join } from 'node:path';
 
-import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
+import {
+  type AppDatabaseVersion,
+  StoreUnavailableError,
+} from '@workspace/sdk-macos-app-database';
 
 import { appDatabase } from './app-database.ts';
 import { BusinessesSnapshot } from './businesses.ts';
 import { CallsSnapshot } from './calls.ts';
 import { ChatStorageSnapshot } from './chat-storage.ts';
 import { ContactsSnapshot } from './contacts.ts';
-import { WhatsAppUnavailableError } from './errors.ts';
 import {
   BackedUpKeyValueSnapshot,
   LocalKeyValueSnapshot,
@@ -145,7 +147,7 @@ class MissingStore implements StoreState {
     try {
       version = appDatabase.version(this.#path);
     } catch (error) {
-      if (error instanceof WhatsAppUnavailableError)
+      if (error instanceof StoreUnavailableError)
         return { value: 'missing', state: this };
       throw error;
     }
@@ -171,7 +173,7 @@ class OpenStore implements StoreState {
     try {
       return { value: String(this.#version.current), state: this };
     } catch (error) {
-      if (!(error instanceof WhatsAppUnavailableError)) throw error;
+      if (!(error instanceof StoreUnavailableError)) throw error;
       this.#version[Symbol.dispose]();
       return { value: 'missing', state: new MissingStore(this.#path) };
     }

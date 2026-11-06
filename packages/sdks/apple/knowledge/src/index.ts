@@ -1,4 +1,4 @@
-export { KnowledgeUnavailableError } from './errors.ts';
+export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 export {
   type KnowledgeEvent,
   type KnowledgeSnapshot,

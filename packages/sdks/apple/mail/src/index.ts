@@ -1,13 +1,10 @@
+export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 export {
   EnvelopeIndex,
   type IndexedAttachment,
   type MailStoredValue,
 } from './envelope-index.ts';
-export {
-  MailChangingError,
-  MailSchemaError,
-  MailUnavailableError,
-} from './errors.ts';
+export { MailChangingError, MailSchemaError } from './errors.ts';
 export { MailFile } from './mail-files.ts';
 export { mailDirectory, mailVersionDirectory } from './mail-location.ts';
 export { type MimePart, readMailMime } from './mail-mime.ts';

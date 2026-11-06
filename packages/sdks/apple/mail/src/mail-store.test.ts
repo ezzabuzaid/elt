@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { mkdir, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { MailStore, MailUnavailableError } from './index.ts';
+import { MailStore, StoreUnavailableError } from './index.ts';
 
 test('the store was last written when the index of its current version folder was, not an older folder', async () => {
   await using dir = await new TemporaryFiles().directory('mail-store-');
@@ -21,7 +21,7 @@ test('the store was last written when the index of its current version folder wa
   ] as const) {
     await mkdir(join(dir.path, version, 'MailData'), { recursive: true });
     const index = join(dir.path, version, 'MailData/Envelope Index');
-    new DatabaseSync(index).close();
+    open(index, { journal: new RollbackJournal() }).close();
     // Mail and its daemon write the index; a reader only reads it later.
     await utimes(index, written + 100_000, written);
   }
@@ -40,7 +40,7 @@ test('a store whose index is missing is unavailable, not a time', async () => {
 
   await assert.rejects(
     new MailStore(dir.path).lastWrite(),
-    MailUnavailableError,
+    StoreUnavailableError,
   );
 });
 
@@ -54,7 +54,7 @@ test('an index without a column the reader needs fails with MissingColumnsError 
   const index = join(dir.path, 'V10/MailData/Envelope Index');
   // An index from a Mail whose messages table lacks columns this reader
   // loads and whose other tables are missing entirely.
-  using app = new DatabaseSync(index);
+  using app = open(index, { journal: new RollbackJournal() });
   app.exec(
     'CREATE TABLE messages (ROWID INTEGER PRIMARY KEY, message_id INTEGER, subject INTEGER)',
   );

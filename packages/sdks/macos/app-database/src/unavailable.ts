@@ -1,18 +1,34 @@
 import { UnavailableError } from '@zukhruf/sqlite-data-version';
 
-export type UnavailableErrorClass = new (path: string, cause: unknown) => Error;
+import type { Store } from './store.ts';
 
-// The SDK's own class names the grant the user must give; the package's error
-// stays reachable as its cause.
+// The message names the store and the grant the user must give; the
+// package's error stays reachable as its cause.
+export class StoreUnavailableError extends Error {
+  override name = 'StoreUnavailableError';
+  readonly store: Store;
+  readonly path: string;
+
+  constructor(store: Store, path: string, cause: unknown) {
+    super(
+      `${store.name} at ${path} cannot be read.${store.remedy ? ` ${store.remedy}` : ''}`,
+      { cause },
+    );
+    this.store = store;
+    this.path = path;
+  }
+}
+
 export function readOrUnavailable<T>(
   path: string,
-  unavailable: UnavailableErrorClass,
+  store: Store,
   read: () => T,
 ): T {
   try {
     return read();
   } catch (error) {
-    if (error instanceof UnavailableError) throw new unavailable(path, error);
+    if (error instanceof UnavailableError)
+      throw new StoreUnavailableError(store, path, error);
     throw error;
   }
 }

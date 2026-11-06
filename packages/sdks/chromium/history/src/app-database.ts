@@ -1,7 +1,8 @@
-import { AppDatabase } from '@workspace/sdk-macos-app-database';
+import { AppDatabase, Store } from '@workspace/sdk-macos-app-database';
 
-import { ChromiumHistoryUnavailableError } from './errors.ts';
-
-export const appDatabase = new AppDatabase({
-  unavailable: ChromiumHistoryUnavailableError,
-});
+export const appDatabase = new AppDatabase(
+  new Store(
+    'The history',
+    'The file is missing, or this process has no access to it.',
+  ),
+);

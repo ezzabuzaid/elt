@@ -1,7 +1,8 @@
-import { AppDatabase } from '@workspace/sdk-macos-app-database';
+import { AppDatabase, Store } from '@workspace/sdk-macos-app-database';
 
-import { ContactsUnavailableError } from './errors.ts';
+export const contactsStore = new Store(
+  'The Contacts store',
+  'Allow the process that runs the export Contacts access or Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Contacts.app does not need to be open.',
+);
 
-export const appDatabase = new AppDatabase({
-  unavailable: ContactsUnavailableError,
-});
+export const appDatabase = new AppDatabase(contactsStore);

@@ -3,11 +3,11 @@ import { execFileSync } from 'node:child_process';
 import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -26,7 +26,7 @@ import {
 } from '@workspace/elt-sqlite';
 import {
   type ClockLocation,
-  ClockUnavailableError,
+  StoreUnavailableError,
   clockLocation,
 } from '@workspace/sdk-apple-clock/clock-store';
 
@@ -70,9 +70,8 @@ async function fixture(directory: string): Promise<ClockLocation> {
     cities: join(directory, 'cities.plist'),
     stopwatches: join(directory, 'daemon.plist'),
   };
-  using db = new DatabaseSync(location.database);
-  db.exec(`PRAGMA journal_mode=WAL;
-CREATE TABLE ZMTCDALARM (Z_PK INTEGER PRIMARY KEY, ZMTID BLOB, ZTITLE TEXT, ZENABLED INTEGER, ZHOUR REAL, ZMINUTE REAL, ZDAY REAL, ZMONTH REAL, ZYEAR REAL, ZREPEATSCHEDULE REAL, ZALLOWSSNOOZE INTEGER, ZSNOOZEDURATION REAL, ZSLEEPALARM INTEGER, ZSLEEPSCHEDULE INTEGER, ZSILENTMODEOPTIONS REAL, ZCOORDINATIONPOLICY REAL, ZDISMISSEDACTION REAL, ZDISMISSEDDATE REAL, ZFIREDDATE REAL, ZKEEPOFFUNTILDATE REAL, ZLASTMODIFIEDDATE REAL, ZSNOOZEFIREDATE REAL, ZSOUND INTEGER, ZSIRICONTEXT BLOB);
+  using db = open(location.database);
+  db.exec(`CREATE TABLE ZMTCDALARM (Z_PK INTEGER PRIMARY KEY, ZMTID BLOB, ZTITLE TEXT, ZENABLED INTEGER, ZHOUR REAL, ZMINUTE REAL, ZDAY REAL, ZMONTH REAL, ZYEAR REAL, ZREPEATSCHEDULE REAL, ZALLOWSSNOOZE INTEGER, ZSNOOZEDURATION REAL, ZSLEEPALARM INTEGER, ZSLEEPSCHEDULE INTEGER, ZSILENTMODEOPTIONS REAL, ZCOORDINATIONPOLICY REAL, ZDISMISSEDACTION REAL, ZDISMISSEDDATE REAL, ZFIREDDATE REAL, ZKEEPOFFUNTILDATE REAL, ZLASTMODIFIEDDATE REAL, ZSNOOZEFIREDATE REAL, ZSOUND INTEGER, ZSIRICONTEXT BLOB);
 CREATE TABLE ZMTCDTIMER (Z_PK INTEGER PRIMARY KEY, ZMTID BLOB, ZTITLE TEXT, ZSTATE REAL, ZDURATION REAL, ZSOUND INTEGER, ZDISMISSEDDATE REAL, ZFIREDDATE REAL, ZLASTMODIFIEDDATE REAL, ZTIMERURL TEXT, ZSIRICONTEXT BLOB, ZTIMERCONTEXT BLOB, ZFIRETIME BLOB);
 CREATE TABLE ZMTCDTIMERDURATION (Z_PK INTEGER PRIMARY KEY, ZTITLE TEXT, ZDURATION REAL, ZISFAVORITE INTEGER, ZLATEST INTEGER, ZVALIDRECENT INTEGER, ZLASTMODIFIED REAL, ZSOUND INTEGER);
 CREATE TABLE ZMTCDSOUND (Z_PK INTEGER PRIMARY KEY, ZSOUNDTYPE REAL, ZVOLUMELEVEL REAL, ZTONEIDENTIFIER TEXT, ZVIBRATIONIDENTIFIER TEXT, ZMEDIAITEMIDENTIFIER INTEGER);
@@ -141,7 +140,7 @@ async function pipeline(
   });
 }
 function rows(directory: string, sql: string) {
-  using db = new DatabaseSync(join(directory, 'out.sqlite'), {
+  using db = open(join(directory, 'out.sqlite'), {
     readOnly: true,
   });
   return db
@@ -188,7 +187,7 @@ test('failed Clock stores preserve rows and checkpoints while independent stores
       assert.ok(error instanceof PipelineError);
       assert.equal(error.errors.length, 7);
       assert.ok(
-        error.errors.every((cause) => cause instanceof ClockUnavailableError),
+        error.errors.every((cause) => cause instanceof StoreUnavailableError),
       );
       assert.ok(
         error.results
@@ -206,7 +205,7 @@ test('failed Clock stores preserve rows and checkpoints while independent stores
       ({ count, deleted }) => count === 0 && deleted === 0,
     ),
   );
-  using upstream = new DatabaseSync(location.database);
+  using upstream = open(location.database);
   upstream.exec('ALTER TABLE ZMTCDALARM DROP COLUMN ZHOUR');
   await assert.rejects(run.run(), (error) => {
     assert.ok(error instanceof PipelineError);
@@ -241,7 +240,7 @@ test('Clock streams retain complete stored facts and diff unchanged, changed and
   await using dir = await new TemporaryFiles().directory('clock-snapshot-');
   const location = await fixture(dir.path);
   await writeFile(location.stopwatches, runningStopwatch);
-  using upstream = new DatabaseSync(location.database);
+  using upstream = open(location.database);
   upstream.prepare('UPDATE ZMTCDTIMER SET ZFIRETIME = ?').run(runningTimer);
   const run = await pipeline(new AppleClockSource(location), dir.path);
   const first = await run.run();
@@ -444,7 +443,7 @@ test('a Clock watch follows selected database and preference changes and cancels
     source.worldClocks,
     source.stopwatchLaps,
   ]);
-  using upstream = new DatabaseSync(location.database);
+  using upstream = open(location.database);
   const controller = new AbortController();
   const batches: { streams: string[]; count: number; deleted: number }[] = [];
   try {
@@ -501,7 +500,7 @@ test('a Clock watch goes on when a preference file is removed, and loads it agai
     source.worldClocks,
     source.stopwatchLaps,
   ]);
-  using upstream = new DatabaseSync(location.database);
+  using upstream = open(location.database);
   const controller = new AbortController();
   const errors: unknown[] = [];
   const batches: {
@@ -555,7 +554,7 @@ test('a Clock watch goes on when a preference file is removed, and loads it agai
     { streams: ['worldClocks'], count: 1, failures: [], cities: ['Osaka'] },
     { streams: ['alarms'], count: 1, failures: [], cities: ['Osaka'] },
   ]);
-  assert.ok(errors.every((error) => error instanceof ClockUnavailableError));
+  assert.ok(errors.every((error) => error instanceof StoreUnavailableError));
   assert.equal(
     rows(dir.path, 'select title from alarms')[0]?.title,
     'After the return',
@@ -572,12 +571,12 @@ test('this Mac Clock stores load read-only through the real pipeline', async (t)
   } catch (error) {
     if (
       error instanceof PipelineError &&
-      error.errors.every((cause) => cause instanceof ClockUnavailableError)
+      error.errors.every((cause) => cause instanceof StoreUnavailableError)
     )
       return t.skip('Clock stores are unavailable to this process');
     throw error;
   }
-  using db = new DatabaseSync(location.database, { readOnly: true });
+  using db = open(location.database, { readOnly: true });
   for (const [table, stream] of [
     ['ZMTCDALARM', 'alarms'],
     ['ZMTCDTIMER', 'timers'],
@@ -643,7 +642,7 @@ test('a Clock watch keeps every stream current while its stores hold still', asy
   });
   try {
     await watching.next();
-    using out = new DatabaseSync(data, { readOnly: true });
+    using out = open(data, { readOnly: true });
     const status = out.prepare(
       'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
     );

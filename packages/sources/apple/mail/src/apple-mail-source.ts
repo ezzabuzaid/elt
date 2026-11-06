@@ -8,11 +8,8 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source } from '@workspace/elt';
-import {
-  type AccountsStore,
-  AccountsUnavailableError,
-} from '@workspace/sdk-apple-accounts';
-import { MailStore, MailUnavailableError } from '@workspace/sdk-apple-mail';
+import type { AccountsStore } from '@workspace/sdk-apple-accounts';
+import { MailStore, StoreUnavailableError } from '@workspace/sdk-apple-mail';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -238,10 +235,7 @@ export class AppleMailSource extends Source<MailScan> {
 
   // Full Disk Access opens both stores Mail reads: its own and the system's
   // Accounts store, which holds account settings.
-  protected override readonly configErrors = [
-    MailUnavailableError,
-    AccountsUnavailableError,
-  ];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return { ...localAppleStoreCoverage, selection: this.scope };
@@ -289,7 +283,7 @@ export class AppleMailSource extends Source<MailScan> {
     try {
       return this.#accounts.version();
     } catch (error) {
-      if (error instanceof AccountsUnavailableError) return null;
+      if (error instanceof StoreUnavailableError) return null;
       throw error;
     }
   }

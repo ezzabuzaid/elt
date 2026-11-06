@@ -17,7 +17,7 @@ import {
   Books,
   type BooksLocation,
   type BooksStore,
-  BooksUnavailableError,
+  StoreUnavailableError,
 } from '@workspace/sdk-apple-books';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -107,7 +107,7 @@ export class AppleBooksSource extends Source<BooksScan> {
     );
   }
 
-  protected override readonly configErrors = [BooksUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return localAppleStoreCoverage;

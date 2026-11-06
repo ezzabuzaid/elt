@@ -1,4 +1,4 @@
-export { NotificationCenterUnavailableError } from './errors.ts';
+export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
 export { NotificationCenterSnapshot } from './notification-center-snapshot.ts';
 export {
   NotificationCenterStore,
