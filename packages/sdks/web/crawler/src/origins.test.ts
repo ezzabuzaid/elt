@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 
+import { type TimerId, createClock } from '@sinonjs/fake-timers';
 import { Msw } from '@zukhruf/testing/msw';
 import got from 'got';
 import { HttpResponse, http } from 'msw';
@@ -30,17 +32,62 @@ function sitemap(urls: readonly string[]) {
   );
 }
 
-// One crawl to its end: its pages and its failures.
-async function crawled(crawl: Crawl) {
+// The clock of the reads, which the test moves: waits of seconds take no real
+// time, and the clock moves by the length of each wait, also on a busy
+// machine. A real timer waits whole milliseconds and at least one, so a wait
+// here lasts its length rounded up; a fake timer shorter than a millisecond
+// would end at once, and the crawl would wait for the rest again and again.
+function clock(now: number) {
+  const fake = createClock(now);
+  const timers = new Map<object, TimerId>();
+  return {
+    fake,
+    Date: fake.Date,
+    performance: fake.performance,
+    setTimeout: (callback: () => void, ms: number) => {
+      const timer = {};
+      timers.set(
+        timer,
+        fake.setTimeout(() => {
+          timers.delete(timer);
+          callback();
+        }, Math.ceil(ms)),
+      );
+      return timer;
+    },
+    clearTimeout: (timer: unknown) => {
+      if (!(timer instanceof Object)) return;
+      fake.clearTimeout(timers.get(timer));
+      timers.delete(timer);
+    },
+  };
+}
+
+type Clock = ReturnType<typeof clock>;
+
+// Whether the promise settled in one turn of the event loop; a rejection throws.
+function settled(promise: Promise<unknown>) {
+  return Promise.race([promise.then(() => true), setImmediate(false)]);
+}
+
+// One crawl to its end: its pages and its failures. The crawl waits only on
+// its clock, so a pending timer is the wait of the crawl, which ends at once
+// with the clock moved by its length.
+async function crawled(crawl: Crawl, time: Clock) {
   const pages: string[] = [];
   const failures: string[] = [];
-  for await (const entry of crawl)
-    if ('response' in entry) pages.push(entry.url);
-    else if ('error' in entry) failures.push(entry.error.message);
+  const consumed = (async () => {
+    for await (const entry of crawl)
+      if ('response' in entry) pages.push(entry.url);
+      else if ('error' in entry) failures.push(entry.error.message);
+  })();
+  while (!(await settled(consumed)))
+    if (time.fake.countTimers() > 0) time.fake.next();
   return { pages, failures };
 }
 
 test('a redirect to another origin whose robots.txt disallows the target is not requested', async () => {
+  const time = clock(0);
   const requests: string[] = [];
   using server = new Msw().intercept(
     http.get('https://*.test/*', ({ request }) => {
@@ -62,9 +109,10 @@ test('a redirect to another origin whose robots.txt disallows the target is not 
   );
 
   const { pages, failures } = await crawled(
-    new Origins(noRetries, null, globalThis)
+    new Origins(noRetries, null, time)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/sitemap.xml'], null, options()),
+    time,
   );
 
   assert.deepEqual(requests, [
@@ -78,10 +126,11 @@ test('a redirect to another origin whose robots.txt disallows the target is not 
 });
 
 test('a redirect target waits the delay of its own origin, not of the origin that redirected', async () => {
+  const time = clock(0);
   const started = new Map<string, number>();
   using server = new Msw().intercept(
     http.get('https://*.test/*', ({ request }) => {
-      started.set(request.url, performance.now());
+      started.set(request.url, time.performance.now());
       const { host, pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
         return new HttpResponse(null, { status: 404 });
@@ -102,9 +151,10 @@ test('a redirect target waits the delay of its own origin, not of the origin tha
   );
 
   const { pages } = await crawled(
-    new Origins(noRetries, null, globalThis)
+    new Origins(noRetries, null, time)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/sitemap.xml'], null, options()),
+    time,
   );
 
   const at = (url: string) => started.get(url) ?? Number.NaN;
@@ -113,15 +163,19 @@ test('a redirect target waits the delay of its own origin, not of the origin tha
     'https://site.test/there',
   ]);
   // other.test was never asked, so its first request waits only for its robots.txt.
-  const across =
-    at('https://other.test/away') - at('https://other.test/robots.txt');
-  assert.ok(across >= 990 && across < 1500, `other.test waited ${across} ms`);
+  assert.equal(
+    at('https://other.test/away') - at('https://other.test/robots.txt'),
+    1000,
+  );
   // A redirect within site.test is a request of site.test, one delay after the last one.
-  const within = at('https://site.test/there') - at('https://site.test/here');
-  assert.ok(within >= 990, `site.test/there waited ${within} ms`);
+  assert.equal(
+    at('https://site.test/there') - at('https://site.test/here'),
+    1000,
+  );
 });
 
 test('without a Crawl-delay, two requests to one origin start one second apart', async () => {
+  const time = clock(0);
   const started: number[] = [];
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
@@ -130,23 +184,24 @@ test('without a Crawl-delay, two requests to one origin start one second apart',
         return new HttpResponse(null, { status: 404 });
       if (pathname === '/sitemap.xml')
         return sitemap(['https://site.test/a', 'https://site.test/b']);
-      started.push(performance.now());
+      started.push(time.performance.now());
       return HttpResponse.html(`<p>${pathname}</p>`);
     }),
   );
 
   await crawled(
-    new Origins(noRetries, null, globalThis)
+    new Origins(noRetries, null, time)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/sitemap.xml'], null, options()),
+    time,
   );
 
   const [a = 0, b = 0] = started;
-  assert.ok(b - a >= 990 && b - a < 1500, `/b started ${b - a} ms after /a`);
+  assert.equal(b - a, 1000);
 });
 
-test('the rules of robots.txt are read again 24 hours after they were read, and not before', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'], now: 10 * day });
+test('the rules of robots.txt are read again 24 hours after they were read, and not before', async () => {
+  const time = clock(10 * day);
   const robots: string[] = [];
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
@@ -170,10 +225,11 @@ test('the rules of robots.txt are read again 24 hours after they were read, and 
             slowdown: 0,
           },
         },
-        globalThis,
+        time,
       )
         .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
         .crawl(['https://site.test/sitemap.xml'], null, options()),
+      time,
     );
 
   await read(10 * day - 23 * hour);
@@ -182,8 +238,8 @@ test('the rules of robots.txt are read again 24 hours after they were read, and 
   assert.deepEqual(robots, ['/robots.txt']);
 });
 
-test('a 503 with Retry-After holds its origin until then, as a 429 does', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'], now: 0 });
+test('a 503 with Retry-After holds its origin until then, as a 429 does', async () => {
+  const time = clock(0);
   const requests: string[] = [];
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
@@ -199,16 +255,17 @@ test('a 503 with Retry-After holds its origin until then, as a 429 does', async 
       });
     }),
   );
-  const crawl = new Origins(noRetries, null, globalThis)
+  const crawl = new Origins(noRetries, null, time)
     .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
     .crawl(['https://site.test/sitemap.xml'], null, options());
 
-  const { failures } = await crawled(crawl);
+  const { failures } = await crawled(crawl, time);
 
   assert.deepEqual(requests, ['/robots.txt', '/sitemap.xml', '/a']);
   assert.equal(failures.length, 1);
-  assert.match(failures[0] ?? '', /answered 503.*1970-01-01T00:10:00\.000Z/);
-  assert.equal(crawl.nextDue(), 600_000);
+  // /a answered 2 s in, after the delays of the sitemap and of /a.
+  assert.match(failures[0] ?? '', /answered 503.*1970-01-01T00:10:02\.000Z/);
+  assert.equal(crawl.nextDue(), 602_000);
   assert.deepEqual(
     crawl
       .snapshot()
@@ -219,6 +276,7 @@ test('a 503 with Retry-After holds its origin until then, as a 429 does', async 
 });
 
 test('two crawls of one read share the expansion budget of each origin', async () => {
+  const time = clock(0);
   const requests: string[] = [];
   using server = new Msw().intercept(
     http.get('https://*.test/*', ({ request }) => {
@@ -243,7 +301,7 @@ test('two crawls of one read share the expansion budget of each origin', async (
     }),
   );
   // Two inputs of one source, each its own crawl, in one read.
-  const origins = new Origins(noRetries, null, globalThis);
+  const origins = new Origins(noRetries, null, time);
   const programs = () =>
     origins.crawler(
       noRetries,
@@ -267,7 +325,7 @@ test('two crawls of one read share the expansion budget of each origin', async (
     null,
     crawlOptions,
   );
-  await crawled(first);
+  await crawled(first, time);
   const firstSitemaps = sitemaps().length;
   requests.length = 0;
   const second = programs().crawl(
@@ -275,7 +333,7 @@ test('two crawls of one read share the expansion budget of each origin', async (
     null,
     crawlOptions,
   );
-  await crawled(second);
+  await crawled(second, time);
 
   // The first crawl spent the budget of 8: robots.txt and 7 sitemaps.
   assert.equal(firstSitemaps, 7);
@@ -289,8 +347,8 @@ test('two crawls of one read share the expansion budget of each origin', async (
   assert.notEqual(second.snapshot().crawl, null);
 });
 
-test('a redirect whose target stays is scheduled as unchanged, and one whose target moves as changed', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'], now: 0 });
+test('a redirect whose target stays is scheduled as unchanged, and one whose target moves as changed', async () => {
+  const time = clock(0);
   let target = '/b';
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
@@ -311,10 +369,10 @@ test('a redirect whose target stays is scheduled as unchanged, and one whose tar
   // an hour.
   let memento: unknown = null;
   const run = async () => {
-    const crawl = new Origins(noRetries, null, globalThis)
+    const crawl = new Origins(noRetries, null, time)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/sitemap.xml'], memento, options());
-    await crawled(crawl);
+    await crawled(crawl, time);
     const snapshot = crawl.snapshot();
     memento = snapshot;
     return snapshot.urls['https://site.test/a']?.due;
@@ -322,10 +380,10 @@ test('a redirect whose target stays is scheduled as unchanged, and one whose tar
 
   // The first visit has nothing to compare: one day.
   assert.equal(await run(), day);
-  t.mock.timers.setTime(day);
+  time.fake.setSystemTime(day);
   // The same target: unchanged, so 1.5 days after this visit.
   assert.equal(await run(), day + 1.5 * day);
-  t.mock.timers.setTime(2.5 * day);
+  time.fake.setSystemTime(2.5 * day);
   target = '/c';
   // Another target: changed, so halfway from 1.5 days to an hour.
   assert.equal(await run(), 2.5 * day + (1.5 * day + hour) / 2);
