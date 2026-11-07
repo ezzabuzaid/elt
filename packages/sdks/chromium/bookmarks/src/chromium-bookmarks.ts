@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { FileStamp } from '@zukhruf/fs';
 
 import { chromiumInstant } from '@workspace/codec-chromium-time';
+import { AppFilesVersion } from '@workspace/sdk-macos-app-database';
 
 import { BookmarksFormatError, BookmarksUnavailableError } from './errors.ts';
 
@@ -77,6 +78,11 @@ export class ChromiumBookmarks {
   // Changes with each write: Chromium replaces the file whole.
   static stamp(path: string): Promise<FileStamp> {
     return FileStamp.read(path);
+  }
+
+  // The change signal of the Bookmarks files that files lists at each read.
+  static version(files: () => readonly string[]): AppFilesVersion {
+    return new AppFilesVersion(files);
   }
 }
 

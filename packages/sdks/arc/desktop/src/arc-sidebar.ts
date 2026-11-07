@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { FileStamp } from '@zukhruf/fs';
 
 import { referenceDateInstant } from '@workspace/codec-apple-reference-date';
+import { AppFilesVersion } from '@workspace/sdk-macos-app-database';
 
 import { ArcSidebarFormatError, ArcSidebarUnavailableError } from './errors.ts';
 
@@ -139,14 +140,14 @@ export class ArcSidebar {
 
   // The change signal: the file's stat data. Arc replaces the file on each
   // save, so a save changes the stamp.
-  stamp(): Promise<FileStamp> {
-    return FileStamp.read(this.path);
+  version(): AppFilesVersion {
+    return new AppFilesVersion(() => [this.path]);
   }
 
   // Arc writes the file only while it runs, so the sidebar is current as of
   // its last write.
   async lastWrite(): Promise<Date> {
-    const { modifiedAt } = await this.stamp();
+    const { modifiedAt } = await FileStamp.read(this.path);
     if (modifiedAt === undefined)
       throw new ArcSidebarUnavailableError(this.path);
     return modifiedAt;

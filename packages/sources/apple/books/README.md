@@ -134,7 +134,7 @@ An EPUB package loads as one OCF `.epub` file: `mimetype` is the first entry and
 
 Every stream is a [snapshot stream](../../../elt/README.md#snapshot-streams): each run diffs a full read of its store with the previous read. A record that is no longer in the store is deleted from the destination.
 
-A watch polls each store every second. For a database, it reads `data_version`, which changes on each commit by a different connection, also while Books and `bookdatastored` keep their WALs open. For the two preference files, it reads their `stat`. A watch wakes only the streams of the stores that changed.
+A watch polls each store every second. For a database, it reads `data_version`, which changes on each commit by a different connection, also while Books and `bookdatastored` keep their WALs open. For the two preference files, it reads their `stat`. A preference file that the process may not read is a value too, so a grant of Full Disk Access during the watch starts a pass of `readingGoal`. A watch wakes only the streams of the stores that changed.
 
 A book that macOS downloads from iCloud does not change a Books store. Thus a watch does not see it. The next change of the library, or the next run, loads the book.
 

@@ -49,7 +49,7 @@ The SDK owns the location, the decoding of the file into typed spaces and items,
 
 - A missing file, or a file that the process cannot read, gives `ArcSidebarUnavailableError`. The source lists it in `configErrors`, so a host sees a configuration failure.
 - A file that is not the JSON that Arc writes gives `ArcSidebarFormatError`. The message names the part that is wrong, for example `the item <id> is of the kind easel, which is unknown`.
-- `ArcSidebar.stamp()` gives the `FileStamp` of the file. `ArcSidebar.lastWrite()` gives the time of its last write.
+- `ArcSidebar.version()` gives the change signal, which the source gives to the pipeline. `ArcSidebar.lastWrite()` gives the time of its last write.
 
 ## Streams
 

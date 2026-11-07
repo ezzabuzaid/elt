@@ -8,6 +8,7 @@ import {
   IndexedDBFormatError,
   readIndexedDB,
 } from '@workspace/codec-chromium-indexeddb';
+import { AppFilesVersion } from '@workspace/sdk-macos-app-database';
 
 import { TeamsFormatError, TeamsUnavailableError } from './errors.ts';
 import { Fields } from './fields.ts';
@@ -54,9 +55,9 @@ export class TeamsStore {
     );
   }
 
-  // A value that changes whenever the web client writes its caches.
-  version(): string {
-    return String(this.#saved());
+  // The change signal: it changes whenever the web client writes its caches.
+  version(): AppFilesVersion {
+    return new AppFilesVersion(() => this.#files());
   }
 
   // When the web client last wrote its caches. It writes them only while
@@ -71,20 +72,22 @@ export class TeamsStore {
     return written;
   }
 
-  // The files of the web client's database. A file LevelDB removed after the
-  // folder was listed is missing. CURRENT never is: LevelDB replaces it by a
-  // rename, never removes it.
   #saved(): FileStamps {
-    const directory = join(this.#directory, indexedDB);
     try {
-      return FileStamps.readSync(
-        readdirSync(directory)
-          .sort()
-          .map((name) => join(directory, name)),
-      );
+      return FileStamps.readSync(this.#files());
     } catch (error) {
       throw new TeamsUnavailableError(this.#directory, error);
     }
+  }
+
+  // The files of the web client's database. A file LevelDB removed after the
+  // folder was listed is missing. CURRENT never is: LevelDB replaces it by a
+  // rename, never removes it.
+  #files(): string[] {
+    const directory = join(this.#directory, indexedDB);
+    return readdirSync(directory)
+      .sort()
+      .map((name) => join(directory, name));
   }
 
   async #read(): Promise<IndexedDBDatabase[]> {

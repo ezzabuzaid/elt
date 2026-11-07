@@ -2331,9 +2331,9 @@ test('this Mac’s Slack app loads every workspace it keeps, and a second read w
   // keeps changes between two reads without a save. The app saves every few
   // minutes; a save between the reads may carry real changes.
   const store = new SlackDesktopStore(directory);
-  const before = store.version();
+  const before = store.lastWrite().getTime();
   const second = counts(await run.run());
-  if (store.version() !== before)
+  if (store.lastWrite().getTime() !== before)
     return t.skip('the Slack app saved between the two reads');
   assert.deepEqual(second, unchanged);
 });

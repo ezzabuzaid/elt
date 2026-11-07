@@ -12,8 +12,7 @@
   "dependencies": {
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-dia-desktop": "0.0.1",
-    "@workspace/source-apple-macos": "0.0.1",
-    "@zukhruf/async": "^0.8.0"
+    "@workspace/source-apple-macos": "0.0.1"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",

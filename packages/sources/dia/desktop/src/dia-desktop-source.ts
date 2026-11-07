@@ -1,5 +1,3 @@
-import { Gauge } from '@zukhruf/async';
-
 import {
   Catalog,
   type CopyConfiguration,
@@ -86,20 +84,6 @@ const catalog = new Catalog([archivedTabs]);
 // How often a watch checks the file for a write.
 const pollIntervalMs = 1000;
 
-// The stamp of the archive file: it changes whenever Dia writes the file.
-class ArchiveStamp extends Gauge<string> {
-  readonly #archive: DiaArchive;
-
-  constructor(archive: DiaArchive) {
-    super();
-    this.#archive = archive;
-  }
-
-  protected async read() {
-    return (await this.#archive.stamp()).toString();
-  }
-}
-
 // An archive date cut to the millisecond, the precision of an import's dates,
 // so it compares with them as text.
 const toMilliseconds = (instant: string) => `${instant.slice(0, 23)}Z`;
@@ -146,7 +130,7 @@ export class DiaDesktopSource extends Source<AsyncDisposableStack> {
   override changeSignals(streams: readonly Stream[]) {
     return [
       {
-        gauge: new ArchiveStamp(this.#archive),
+        gauge: this.#archive.version(),
         streams,
         interval: pollIntervalMs,
         // A local read: a check that takes the whole interval is stuck.

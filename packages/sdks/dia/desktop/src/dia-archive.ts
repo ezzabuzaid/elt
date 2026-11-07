@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { FileStamp, isErrno } from '@zukhruf/fs';
 
 import { referenceDateInstant } from '@workspace/codec-apple-reference-date';
+import { AppFilesVersion } from '@workspace/sdk-macos-app-database';
 
 import { DiaArchiveFormatError, DiaArchiveMissingError } from './errors.ts';
 
@@ -73,13 +74,13 @@ export class DiaArchive {
 
   // The change signal: the stat data of the file. Dia writes the file only
   // while it runs, so a closed Dia leaves it as it was.
-  stamp(): Promise<FileStamp> {
-    return FileStamp.read(this.#path);
+  version(): AppFilesVersion {
+    return new AppFilesVersion(() => [this.#path]);
   }
 
   // When Dia last wrote the file.
   async lastWrite(): Promise<Date> {
-    const { modifiedAt } = await this.stamp();
+    const { modifiedAt } = await FileStamp.read(this.#path);
     if (modifiedAt === undefined)
       throw new DiaArchiveMissingError(this.#path, undefined);
     return modifiedAt;

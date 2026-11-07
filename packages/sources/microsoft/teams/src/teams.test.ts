@@ -2557,9 +2557,9 @@ test('this Mac’s Teams app loads every account it keeps, and a second read wit
   // keeps changes between two reads without a write. Teams writes its store
   // as it works; a write between the reads may carry real changes.
   const store = new TeamsStore(directory);
-  const before = store.version();
+  const before = store.lastWrite().getTime();
   const second = counts(await run.run());
-  if (store.version() !== before)
+  if (store.lastWrite().getTime() !== before)
     return t.skip('the Teams app wrote its store between the two reads');
   assert.deepEqual(second, await unchanged(source));
 });

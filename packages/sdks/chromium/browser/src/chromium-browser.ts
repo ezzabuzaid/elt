@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 
-import { FileStamp } from '@zukhruf/fs';
+import { AppFilesVersion } from '@workspace/sdk-macos-app-database';
 
 import { LocalStateFormatError } from './errors.ts';
 
@@ -84,8 +84,8 @@ export class ChromiumBrowser {
   }
 
   // Changes when the browser writes Local State, which it replaces whole.
-  localStateStamp(home: string): Promise<FileStamp> {
-    return FileStamp.read(this.#localState(home));
+  localStateVersion(home: string): AppFilesVersion {
+    return new AppFilesVersion(() => [this.#localState(home)]);
   }
 
   // Whether the browser runs now. A running browser links SingletonLock in

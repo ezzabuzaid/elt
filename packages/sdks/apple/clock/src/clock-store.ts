@@ -1,14 +1,11 @@
 import { join } from 'node:path';
 
-import { Gauge } from '@zukhruf/async';
-import { FileStamp } from '@zukhruf/fs';
-
 import {
   type AppDatabaseVersion,
-  StoreUnavailableError,
+  AppFilesVersion,
 } from '@workspace/sdk-macos-app-database';
 
-import { appDatabase, clockStore } from './app-database.ts';
+import { appDatabase } from './app-database.ts';
 import { ClockDatabase } from './clock-database.ts';
 import { stopwatches, worldClocks } from './clock-preferences.ts';
 
@@ -46,7 +43,7 @@ export class ClockStore {
     const path = this.#location[store];
     return store === 'database'
       ? appDatabase.version(path)
-      : new ClockPreferencesVersion(path);
+      : new AppFilesVersion(() => [path]);
   }
 }
 
@@ -107,20 +104,4 @@ export class ClockSnapshot implements AsyncDisposable {
 
 // SQLite sees WAL commits; preferences are atomically rewritten, so a changed
 // file stamp marks a new one. A version never loads records.
-export type ClockVersion = AppDatabaseVersion | ClockPreferencesVersion;
-
-// A missing preference file is a value too, so its return is a change.
-class ClockPreferencesVersion extends Gauge<string> {
-  readonly #path: string;
-  constructor(path: string) {
-    super();
-    this.#path = path;
-  }
-  protected async read(): Promise<string> {
-    try {
-      return String(await FileStamp.read(this.#path));
-    } catch (cause) {
-      throw new StoreUnavailableError(clockStore, this.#path, cause);
-    }
-  }
-}
+export type ClockVersion = AppDatabaseVersion | AppFilesVersion;

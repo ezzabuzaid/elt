@@ -122,7 +122,7 @@ Thus `historyVisits` and `historyItems` expire by `visitedAt` and by `lastVisite
 - Safari also keeps no more than 100,000 URLs. Its daily maintenance drops the URLs with the oldest last visit. Past that limit, the rows of dropped URLs and visits after the horizon would be deleted (#2247). The probed Mac had 8,300.
 - Tags and tombstones do not expire with the history setting (the tags of the probed Mac date from 2025-03). Their rows are deleted when they disappear.
 
-A watch reads the `data_version` of each database, also of a `History.db` of a profile that is made during the watch. It also reads the inode, size and modification time of each property list. It does this each second, and it wakes only the streams of the store that changed. A watch never starts Safari. History from other devices and iCloud Tabs arrive only while Safari runs.
+A watch reads the `data_version` of each database, also of a `History.db` of a profile that is made during the watch. It also reads the inode, size and modification time of each property list. A property list that the process may not read is a value too, so a grant of Full Disk Access during the watch starts a pass of its streams. It does this each second, and it wakes only the streams of the store that changed. A watch never starts Safari. History from other devices and iCloud Tabs arrive only while Safari runs.
 
 ## How current the streams are
 

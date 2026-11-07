@@ -28,7 +28,7 @@ import {
   storeFiles,
 } from './chromium-scan.ts';
 import type { ChromiumReader } from './chromium-stream.ts';
-import { BookmarksGauge, HistoryGauge, ProfilesGauge } from './store-gauges.ts';
+import { HistoryGauge, ProfilesGauge } from './store-gauges.ts';
 import { BookmarksStream } from './streams/bookmarks-stream.ts';
 import { DownloadsStream } from './streams/downloads-stream.ts';
 import { HistoryItemsStream } from './streams/history-items-stream.ts';
@@ -172,9 +172,10 @@ export class ChromiumSource extends Source<ChromiumScan> {
   override changeSignals(streams: readonly Stream[]) {
     const gauges = {
       history: () => new HistoryGauge(() => this.#files('history')),
-      bookmarks: () => new BookmarksGauge(() => this.#files('bookmarks')),
+      bookmarks: () =>
+        ChromiumBookmarks.version(() => this.#files('bookmarks')),
       profiles: () =>
-        new ProfilesGauge(this.browser, this.home, () => [
+        new ProfilesGauge(this.browser.localStateVersion(this.home), () => [
           ...this.#files('history'),
           ...this.#files('bookmarks'),
         ]),

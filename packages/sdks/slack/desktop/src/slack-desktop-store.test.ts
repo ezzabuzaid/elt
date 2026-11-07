@@ -38,7 +38,6 @@ async function read(home: string, directory?: string) {
   return {
     clients: await store.clients(),
     downloads: await store.downloads(),
-    version: store.version(),
   };
 }
 
@@ -52,7 +51,6 @@ for (const [build, location] of Object.entries(locations)) {
 
     assert.deepEqual(result.clients, []);
     assert.equal(result.downloads[0]?.fileId, 'F1');
-    assert.ok(result.version.includes(directory));
   });
 }
 
@@ -98,7 +96,7 @@ test('a missing store asks for saved Slack data without requiring the App Store'
   });
 });
 
-for (const location of Object.values(locations)) {
+for (const [saved, location] of Object.entries(locations)) {
   test(`when both stores exist, the most recently saved database wins: ${location}`, async () => {
     await using home = await new TemporaryFiles().directory('slack-location-');
     for (const [build, path] of Object.entries(locations)) {
@@ -112,7 +110,7 @@ for (const location of Object.values(locations)) {
     await writeFile(join(directory, indexedDB, '000002.log'), '');
     await utimes(join(directory, indexedDB), 1, 1);
 
-    assert.ok((await read(home.path)).version.includes(directory));
+    assert.equal((await read(home.path)).downloads[0]?.fileId, saved);
   });
 }
 

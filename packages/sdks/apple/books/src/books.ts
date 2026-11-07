@@ -1,3 +1,5 @@
+import { AppFilesVersion } from '@workspace/sdk-macos-app-database';
+
 import { appDatabase } from './app-database.ts';
 import { BookAssetData } from './book-asset-data.ts';
 import { BooksAnnotations } from './books-annotations.ts';
@@ -10,7 +12,7 @@ import {
 } from './books-location.ts';
 import { BooksPurchases } from './books-purchases.ts';
 import { BooksThemes } from './books-themes.ts';
-import { BooksPreferencesVersion, type BooksVersion } from './books-version.ts';
+import type { BooksVersion } from './books-version.ts';
 import { type ReadingGoal, readingGoal } from './reading-goal.ts';
 import { type ReadingHistory, readingHistory } from './reading-history.ts';
 
@@ -58,7 +60,10 @@ export class Books {
   // A probe whose current value changes when the store does.
   version(store: BooksStore): BooksVersion {
     return store === 'preferences'
-      ? new BooksPreferencesVersion(this.location)
+      ? new AppFilesVersion(() => [
+          storeFiles(this.location).preferences,
+          sharedPreferences(this.location),
+        ])
       : appDatabase.version(storeFiles(this.location)[store]);
   }
 }

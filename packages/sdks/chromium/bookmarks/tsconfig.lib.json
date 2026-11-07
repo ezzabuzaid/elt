@@ -9,6 +9,9 @@
   "exclude": ["src/**/*.test.ts"],
   "references": [
     {
+      "path": "../../macos/app-database/tsconfig.lib.json"
+    },
+    {
       "path": "../../../codecs/chromium-time/tsconfig.lib.json"
     }
   ]

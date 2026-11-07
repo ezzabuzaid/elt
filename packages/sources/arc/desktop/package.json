@@ -11,10 +11,9 @@
   },
   "dependencies": {
     "@workspace/elt": "0.0.1",
+    "@workspace/sdk-arc-desktop": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
-    "@zukhruf/async": "^0.8.0",
-    "@zukhruf/snapshot-differential": "^0.6.15",
-    "@workspace/sdk-arc-desktop": "0.0.1"
+    "@zukhruf/snapshot-differential": "^0.6.15"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",

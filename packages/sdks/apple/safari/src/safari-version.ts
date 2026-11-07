@@ -2,9 +2,11 @@ import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { Gauge } from '@zukhruf/async';
-import { FileStamp } from '@zukhruf/fs';
 
-import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
+import type {
+  AppDatabaseVersion,
+  AppFilesVersion,
+} from '@workspace/sdk-macos-app-database';
 
 import { appDatabase } from './app-database.ts';
 import { type SafariLocation, storeFiles } from './safari-location.ts';
@@ -38,7 +40,7 @@ async function historyFiles(location: SafariLocation): Promise<string[]> {
 // reports a write only when the file closes; Safari rewrites each property
 // list whole, so a changed file stamp marks a new one.
 export type SafariVersion =
-  AppDatabaseVersion | SafariHistoryVersion | SafariPropertyListVersion;
+  AppDatabaseVersion | SafariHistoryVersion | AppFilesVersion;
 
 // The data_version of every History.db, so a profile created while watching
 // is a change of history.
@@ -73,18 +75,5 @@ export class SafariHistoryVersion extends Gauge<string> implements Disposable {
       this.#databases.set(path, version);
     }
     return version.current;
-  }
-}
-
-export class SafariPropertyListVersion extends Gauge<string> {
-  readonly #path: string;
-
-  constructor(path: string) {
-    super();
-    this.#path = path;
-  }
-
-  protected async read(): Promise<string> {
-    return String(await FileStamp.read(this.#path));
   }
 }

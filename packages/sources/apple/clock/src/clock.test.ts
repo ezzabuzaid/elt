@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -220,6 +227,75 @@ test('failed Clock stores preserve rows and checkpoints while independent stores
   });
   assert.equal(rows(dir.path, 'select count(*) n from alarms')[0]?.n, 1);
 });
+
+test(
+  'a Clock watch loads the world clocks once this process may read their file, without a new watch',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using dir = await new TemporaryFiles().directory('clock-grant-');
+    const location = await fixture(dir.path);
+    // macOS keeps Clock's container from a process without Full Disk Access:
+    // a folder this process may not search stands in for it.
+    const container = join(dir.path, 'Container');
+    await mkdir(container);
+    const cities = join(container, 'cities.plist');
+    await rename(location.cities, cities);
+    await chmod(container, 0o000);
+    try {
+      const source = new AppleClockSource({ ...location, cities });
+      const { streams } = await source.discover();
+      const run = await pipeline(
+        source,
+        dir.path,
+        streams.filter(({ name }) =>
+          ['worldClocks', 'stopwatches'].includes(name),
+        ),
+      );
+      const controller = new AbortController();
+      const passes: { stream: string; count: number; failures: unknown[] }[][] =
+        [];
+
+      for await (const { outcomes } of run.watch({
+        // A pass that never comes ends the watch, so the assertion fails.
+        signal: AbortSignal.any([
+          controller.signal,
+          AbortSignal.timeout(10_000),
+        ]),
+      })) {
+        // The copies of one pass finish in any order.
+        passes.push(
+          outcomes
+            .toSorted((a, b) =>
+              a.copy.from.name.localeCompare(b.copy.from.name),
+            )
+            .map(({ copy, count, failures }) => ({
+              stream: copy.from.name,
+              count,
+              failures: failures.map(({ error, failureType }) => [
+                error instanceof StoreUnavailableError,
+                failureType,
+              ]),
+            })),
+        );
+        if (passes.length === 1) await chmod(container, 0o700);
+        else controller.abort();
+      }
+
+      assert.deepEqual(passes, [
+        [
+          { stream: 'stopwatches', count: 1, failures: [] },
+          { stream: 'worldClocks', count: 0, failures: [[true, 'config']] },
+        ],
+        [{ stream: 'worldClocks', count: 1, failures: [] }],
+      ]);
+    } finally {
+      await chmod(container, 0o700);
+    }
+  },
+);
 
 // Synthetic binary plists matching MTStorageWriter/NSKeyedArchiver, including
 // a native plist date and an archived NSDate with sub-millisecond seconds.

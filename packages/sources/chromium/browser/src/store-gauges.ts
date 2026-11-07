@@ -1,7 +1,5 @@
-import { Gauge } from '@zukhruf/async';
+import { type Check, Gauge } from '@zukhruf/async';
 
-import { ChromiumBookmarks } from '@workspace/sdk-chromium-bookmarks';
-import type { ChromiumBrowser } from '@workspace/sdk-chromium-browser';
 import { chromiumHistoryVersion } from '@workspace/sdk-chromium-history';
 
 // The History of each selected profile and its version: a commit to one, and
@@ -39,45 +37,19 @@ export class HistoryGauge extends Gauge<string> implements Disposable {
   }
 }
 
-// The file stamp of each selected profile's Bookmarks, which the browser
-// replaces whole.
-export class BookmarksGauge extends Gauge<string> {
-  readonly #files: () => string[];
-
-  constructor(files: () => string[]) {
-    super();
-    this.#files = files;
-  }
-
-  protected async read(): Promise<string> {
-    return (
-      await Promise.all(
-        this.#files().map(async (path) =>
-          String(await ChromiumBookmarks.stamp(path)),
-        ),
-      )
-    ).join();
-  }
-}
-
 // The file stamp of Local State, which names the profiles, and the History
 // and Bookmarks files the profiles have.
-export class ProfilesGauge extends Gauge<string> {
-  readonly #browser: ChromiumBrowser;
-  readonly #home: string;
+export class ProfilesGauge extends Gauge<readonly string[]> {
+  readonly #localState: Gauge<string>;
   readonly #files: () => string[];
 
-  constructor(browser: ChromiumBrowser, home: string, files: () => string[]) {
+  constructor(localState: Gauge<string>, files: () => string[]) {
     super();
-    this.#browser = browser;
-    this.#home = home;
+    this.#localState = localState;
     this.#files = files;
   }
 
-  protected async read(): Promise<string> {
-    return [
-      String(await this.#browser.localStateStamp(this.#home)),
-      ...this.#files(),
-    ].join();
+  protected async read(check: Check): Promise<readonly string[]> {
+    return [await this.#localState.value(check), ...this.#files()];
   }
 }

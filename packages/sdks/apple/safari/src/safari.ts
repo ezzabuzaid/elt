@@ -8,7 +8,10 @@ import {
   parseBinaryPlist,
   readPlist,
 } from '@workspace/codec-plist';
-import { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
+import {
+  AppFilesVersion,
+  StoreUnavailableError,
+} from '@workspace/sdk-macos-app-database';
 
 import { appDatabase, safariStore } from './app-database.ts';
 import { Bookmarks } from './bookmarks.ts';
@@ -23,11 +26,7 @@ import {
   storeFiles,
 } from './safari-location.ts';
 import { SafariTabs, profileListings, tabsDatabase } from './safari-tabs.ts';
-import {
-  SafariHistoryVersion,
-  SafariPropertyListVersion,
-  type SafariVersion,
-} from './safari-version.ts';
+import { SafariHistoryVersion, type SafariVersion } from './safari-version.ts';
 
 // Safari's own preferences, beside its container's Safari folder.
 const preferences = ({ container }: SafariLocation) =>
@@ -172,6 +171,6 @@ export class Safari {
     if (store === 'history') return new SafariHistoryVersion(this.location);
     if (store === 'tabs' || store === 'cloudTabs')
       return appDatabase.version(files[store]);
-    return new SafariPropertyListVersion(files[store]);
+    return new AppFilesVersion(() => [files[store]]);
   }
 }

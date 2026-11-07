@@ -9,6 +9,7 @@ import {
   IndexedDBFormatError,
   readIndexedDB,
 } from '@workspace/codec-chromium-indexeddb';
+import { AppFilesVersion } from '@workspace/sdk-macos-app-database';
 
 import {
   SlackDesktopFormatError,
@@ -107,10 +108,10 @@ export class SlackDesktopStore {
     return readSlackDownloads(state, rootState);
   }
 
-  // A value that changes whenever the app saves its state, a client's or its
-  // own.
-  version(): string {
-    return String(this.#saved());
+  // The change signal: it changes whenever the app saves its state, a
+  // client's or its own.
+  version(): AppFilesVersion {
+    return new AppFilesVersion(() => this.#files());
   }
 
   // When the app last saved its state, a client's or its own. It saves every
@@ -126,21 +127,25 @@ export class SlackDesktopStore {
     return written;
   }
 
-  // The files the app saves its state to. A file LevelDB removed after the
-  // folder was listed, or a state the app has not saved yet, is missing.
-  // CURRENT never is: LevelDB replaces it by a rename, never removes it.
   #saved(): FileStamps {
-    const directory = join(this.#directory, indexedDB);
     try {
-      return FileStamps.readSync([
-        ...readdirSync(directory)
-          .sort()
-          .map((name) => join(directory, name)),
-        join(this.#directory, rootState),
-      ]);
+      return FileStamps.readSync(this.#files());
     } catch (error) {
       throw new SlackDesktopUnavailableError(this.#directory, error);
     }
+  }
+
+  // The files the app saves its state to. A file LevelDB removed after the
+  // folder was listed, or a state the app has not saved yet, is missing.
+  // CURRENT never is: LevelDB replaces it by a rename, never removes it.
+  #files(): string[] {
+    const directory = join(this.#directory, indexedDB);
+    return [
+      ...readdirSync(directory)
+        .sort()
+        .map((name) => join(directory, name)),
+      join(this.#directory, rootState),
+    ];
   }
 
   async #rootState(): Promise<string | null> {

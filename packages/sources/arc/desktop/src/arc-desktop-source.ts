@@ -1,4 +1,3 @@
-import { Gauge } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import {
@@ -34,20 +33,6 @@ function readerOf(stream: Stream) {
 
 // How often a watch checks the file for a write.
 const pollIntervalMs = 1000;
-
-// The stamp of the sidebar file: it changes whenever Arc writes the file.
-class SidebarStamp extends Gauge<string> {
-  readonly #sidebar: ArcSidebar;
-
-  constructor(sidebar: ArcSidebar) {
-    super();
-    this.#sidebar = sidebar;
-  }
-
-  protected async read() {
-    return (await this.#sidebar.stamp()).toString();
-  }
-}
 
 // One read of the sidebar file for a run, so items and the spaces they name
 // come from one version of it.
@@ -108,7 +93,7 @@ export class ArcDesktopSource extends Source<SidebarRead> {
   override changeSignals(streams: readonly Stream[]) {
     return [
       {
-        gauge: new SidebarStamp(this.#sidebar),
+        gauge: this.#sidebar.version(),
         streams,
         interval: pollIntervalMs,
         // A local read: a check that takes the whole interval is stuck.

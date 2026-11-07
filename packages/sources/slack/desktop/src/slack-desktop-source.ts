@@ -1,4 +1,3 @@
-import { Gauge } from '@zukhruf/async';
 import { Coverage } from '@zukhruf/snapshot-differential';
 
 import {
@@ -71,21 +70,6 @@ const readersByName = new Map<string, SlackDesktopReader>(
 );
 // How often a watch checks whether the app saved its state.
 const pollIntervalMs = 1000;
-
-// The version of the store: it changes whenever the app saves its state, a
-// client's or its own.
-class StoreVersion extends Gauge<string> {
-  readonly #store: SlackDesktopStore;
-
-  constructor(store: SlackDesktopStore) {
-    super();
-    this.#store = store;
-  }
-
-  protected async read() {
-    return this.#store.version();
-  }
-}
 
 // Reads what the Slack app keeps on this Mac, from its own store, without
 // Slack's API, a token or the network.
@@ -166,7 +150,7 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
   override changeSignals(streams: readonly Stream[]) {
     return [
       {
-        gauge: new StoreVersion(this.#store),
+        gauge: this.#store.version(),
         streams,
         interval: pollIntervalMs,
         // A local read: a check that takes the whole interval is stuck.

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@workspace/codec-chromium-indexeddb": "0.0.1",
+    "@workspace/sdk-macos-app-database": "0.0.1",
     "@zukhruf/fs": "^0.6.15"
   },
   "devDependencies": {

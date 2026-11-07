@@ -108,7 +108,7 @@ Clock keeps mostly the current state:
 - The `analytics.sqlite` beside the database had the same model, but each entity was empty, and each `Z_PRIMARYKEY.Z_MAX` was zero. The source does not use it as a history source.
 - The `ZAKCD*` entities hold the AlarmKit alarms of other apps, not the objects of Clock. The source does not read them.
 
-Each version probe opens what it reads at its first read, and the first check names each selected stream. Each second, the database probe checks `PRAGMA data_version`, and the preference probes compare the inode, the size and the modification time in nanoseconds, to see a file that is replaced in one step. A missing preference file is a version too. The watch gives only the selected streams of the stores that changed, and the pipeline reads those streams again. When the watch stops, the pipeline disposes the probes, and the database probe closes its SQLite connection. No subscription to a private daemon is necessary.
+Each version probe opens what it reads at its first read, and the first check names each selected stream. Each second, the database probe checks `PRAGMA data_version`, and the preference probes compare the inode, the size and the modification time in nanoseconds, to see a file that is replaced in one step. A missing preference file is a version too, and so is a preference file that the process may not read: a grant of Full Disk Access during the watch starts a pass of its streams. The watch gives only the selected streams of the stores that changed, and the pipeline reads those streams again. When the watch stops, the pipeline disposes the probes, and the database probe closes its SQLite connection. No subscription to a private daemon is necessary.
 
 ## Limitations
 

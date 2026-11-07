@@ -1,4 +1,3 @@
-import { Gauge } from '@zukhruf/async';
 import { Coverage } from '@zukhruf/snapshot-differential';
 
 import {
@@ -72,21 +71,6 @@ const readersByName = new Map<string, TeamsReader>(
 // How often a watch checks whether the web client wrote its caches.
 const pollIntervalMs = 1000;
 
-// The version of the store: it changes whenever the web client writes its
-// caches.
-class StoreVersion extends Gauge<string> {
-  readonly #store: TeamsStore;
-
-  constructor(store: TeamsStore) {
-    super();
-    this.#store = store;
-  }
-
-  protected async read() {
-    return this.#store.version();
-  }
-}
-
 // Reads what the Microsoft Teams app keeps on this Mac, from its own store,
 // without Microsoft Graph, a token or the network.
 export class TeamsSource extends Source<TeamsScan> {
@@ -158,7 +142,7 @@ export class TeamsSource extends Source<TeamsScan> {
   override changeSignals(streams: readonly Stream[]) {
     return [
       {
-        gauge: new StoreVersion(this.#store),
+        gauge: this.#store.version(),
         streams,
         interval: pollIntervalMs,
         // A local read: a check that takes the whole interval is stuck.
