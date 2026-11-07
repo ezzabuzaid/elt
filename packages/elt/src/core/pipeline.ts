@@ -445,7 +445,11 @@ export class Pipeline<Target extends DestinationTarget> {
             if (at <= this.#clock.Date.now()) pending.add(name);
         if (pending.size === 0) {
           if (finished) break;
-          const woken = wake;
+          // Each wait has its own wake. Each thing that wakes the loop also
+          // shows in the checks above, so a wake from before this wait has
+          // nothing to tell, and a retry timer that ends before the Date of
+          // its retry makes the loop wait again, not spin.
+          const woken = (wake = Promise.withResolvers<void>());
           const due = Math.min(...[...retries.values()].map(({ at }) => at));
           const retrying = Number.isFinite(due)
             ? this.#clock.setTimeout(
@@ -462,7 +466,6 @@ export class Pipeline<Target extends DestinationTarget> {
         );
         pending.clear();
         for (const copy of steps) loading.add(copy.from.name);
-        wake = Promise.withResolvers<void>();
         // Like a schedule after a failed sync, watching goes on: each pass
         // reports what did not load, and a retry or the source's next change
         // loads it again. A stopping watch stops the pass it is running, as

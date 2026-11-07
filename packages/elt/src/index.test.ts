@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 
 import { type Check, Gauge, Latch, untilAborted } from '@zukhruf/async';
 import { settleWithin } from '@zukhruf/testing/async';
@@ -2212,6 +2215,121 @@ test('a change signal that fails for a system reason is recorded one time for ea
       'begin books left:test',
     ],
   );
+});
+
+// A watch on a clock whose timers run a hundred times faster than its Date,
+// as a timer runs after the wall clock was set back. It reports the failure
+// types of its failed pass and of its retry, and whether the retry came
+// before the Date of the retry. It waits for the retry only after a timer of
+// the process fired. A watch that spins on its retry starves every timer of
+// the process, node:test's own timeout too, so the scenario runs in a child
+// process that the test kills.
+const lateDateWatch = `
+const { Catalog, Connection, Copy, Destination, Gauge, Pipeline, Source, Stream, SyncHistory, Target, Writer } = await import(process.env.ELT);
+const start = Date.now();
+let now = start;
+const clock = {
+  Date: { now: () => now },
+  performance,
+  setTimeout: (callback, ms) => setTimeout(callback, ms / 100),
+  clearTimeout: (timer) => clearTimeout(timer),
+};
+class Unchanged extends Gauge {
+  async read() { return 0; }
+}
+class Notes extends Source {
+  identity = 'notes';
+  stream = new Stream({ name: 'notes', jsonSchema: { type: 'object', properties: { id: { type: 'string' } } }, supportedSyncModes: ['full_refresh'] });
+  catalog = new Catalog([this.stream]);
+  failing = true;
+  coverage() { return { description: 'test', selection: {} }; }
+  async currentAsOf() { return null; }
+  async open() { return new AsyncDisposableStack(); }
+  changeSignals(streams) {
+    return [{ gauge: new Unchanged(), streams, interval: 1000, timeout: 1000 }];
+  }
+  async *extract() {
+    if (this.failing) throw new Error('notes store is busy');
+    yield { stream: 'notes', data: { id: '1' } };
+  }
+}
+class Named extends Target {}
+class Dropping extends Writer {
+  async clear() {}
+}
+class Discarding extends Destination {
+  supportedDestinationSyncModes = ['overwrite'];
+  location() { return 'notes'; }
+  createWriter(configuration) { return new Dropping(configuration.stream); }
+  async load() {
+    return {
+      prepare: async () => ({
+        fresh: false,
+        reloading: false,
+        values: async function* () {},
+        apply: async () => {},
+        complete: async () => {},
+        commit: async () => {},
+        discard: async () => {},
+        [Symbol.asyncDispose]: async () => {},
+      }),
+      [Symbol.asyncDispose]: async () => {},
+    };
+  }
+}
+class Forgetful extends SyncHistory {
+  async install() {}
+  async recordChecks() {}
+  async begin() { return { finish: async () => {}, fail: async () => {} }; }
+}
+const source = new Notes();
+const pipeline = new Pipeline({
+  clock,
+  history: new Forgetful(),
+  connections: [new Connection({ name: 'notes', source, destination: new Discarding(), steps: [new Copy(source.stream, new Named())] })],
+});
+const controller = new AbortController();
+const watching = pipeline.watch({ signal: controller.signal });
+const failures = (pass) => pass.value.outcomes.map(({ failures }) => failures.map(({ failureType }) => failureType));
+const failed = await watching.next();
+source.failing = false;
+const retried = watching.next();
+let early = false;
+retried.then(() => { early = now === start; });
+// A timer of the process, after five rounds of the retry timer, all before
+// the Date of the retry.
+await new Promise((resolve) => setTimeout(resolve, 500));
+now += 10_000;
+const loaded = await retried;
+controller.abort();
+await watching.return(undefined);
+console.log(JSON.stringify({ failed: failures(failed), early, loaded: failures(loaded) }));
+`;
+
+test('a watch whose stream failed for a system reason keeps yielding to the process while its timers fire before its Date reaches the retry, and loads the stream again once the Date does', () => {
+  const run = spawnSync(
+    process.execPath,
+    ['--input-type=module', '-e', lateDateWatch],
+    {
+      env: {
+        ...process.env,
+        ELT: pathToFileURL(join(import.meta.dirname, 'index.ts')).href,
+      },
+      encoding: 'utf8',
+      timeout: 10_000,
+    },
+  );
+
+  assert.equal(
+    run.status,
+    0,
+    `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
+  );
+  assert.deepEqual(JSON.parse(run.stdout), {
+    failed: [['system']],
+    early: false,
+    loaded: [[]],
+  });
 });
 
 test('a change signal that fails for a config reason is not read again in that watch, while the streams of the other change signals keep loading', async () => {

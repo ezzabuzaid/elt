@@ -709,6 +709,7 @@ Retries:
 - A stream whose copy failed only for `config` reasons does not load again until its source reports a change, because only the user can fix it.
 - A change that the source reports loads its stream at once, also while the stream waits for a retry. A change to a different stream does not bring a retry earlier.
 - Retries stop when the watch stops. While a stream waits, its `current_as_of` does not move.
+- A retry is due when the `Date` of the pipeline's clock reaches its time. When the wall clock is set back, a timer can end before that time: the watch then waits again and does not use the processor.
 - See [ADR 0011](./docs/adr/0011-a-watch-loads-a-stream-again-after-a-system-failure.md).
 
 When a change signal fails:
