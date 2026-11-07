@@ -909,8 +909,8 @@ test(
   },
 );
 
-// Each check of a watch over the changes of a store, as the pipeline of elt
-// makes it: one each second, and a read can take one second.
+// Each check of a watch over the changes of a store, one each second. A check
+// ends after one second, so a test of a helper that never subscribes ends.
 const checksOf = (
   changes: ReturnType<CalendarStore['changes']>,
   signal: AbortSignal,

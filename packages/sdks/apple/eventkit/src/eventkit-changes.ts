@@ -8,6 +8,12 @@ import { Gauge, Latch } from '@zukhruf/async';
 // next read starts a new helper. A dispose stops the helper and waits for it
 // to end.
 export class EventKitChanges extends Gauge<number> implements AsyncDisposable {
+  // The longest a read takes. A read that starts a helper waits for its
+  // subscription: 8 helpers that started at one time under a load of 55
+  // subscribed in at most 1.3 s (measured on 2026-11-07). When macOS has not
+  // yet asked for access, the helper first waits up to 30 s for the user's
+  // answer (Access.swift). Every other read is of memory.
+  readonly timeout = 35_000;
   readonly #watch: (signal: AbortSignal) => AsyncIterable<void>;
   // Each confirmed subscription counts as a change too: the store could have
   // changed while no helper subscribed.

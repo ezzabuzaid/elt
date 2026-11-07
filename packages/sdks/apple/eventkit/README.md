@@ -32,6 +32,17 @@ EventKit has no read transaction. Thus the Calendar and Reminders sources read w
 
 - The helper writes `changed` for each change of the store. Its first line confirms the subscription.
 - `changes()` gives a gauge of `@zukhruf/async` whose value is the count of the changes that the helper reported. Its first read starts the helper and waits until the helper confirms its subscription. EventKit posts each change while the helper subscribes, so a read with the same count is a check that found the store unchanged. A read after the helper failed gives that failure, and the next read starts a new helper. A dispose stops the helper and waits for it to end.
+- The `timeout` of the gauge is the longest that a read takes, 35 s. Give it as the `timeout` of the change signal. A read that starts a helper waits for the subscription. When macOS did not ask for access yet, the helper first waits up to 30 s for the answer of the user. Every other read is of memory.
+- Measured on 2026-11-07 (Apple M4 Pro, 14 cores, macOS 27), from the start of `eventkit watch` to its first line:
+
+  | Start                                          | Median     | Maximum  |
+  | ---------------------------------------------- | ---------- | -------- |
+  | Warm (the same binary again), load 10 to 43    | 67–98 ms   | 228 ms   |
+  | Cold (a new copy of the binary), load 10 to 43 | 311–393 ms | 756 ms   |
+  | Cold, 8 helpers at one time, load 55 to 60     | 399–875 ms | 1,322 ms |
+
+  Thus a timeout of one interval (1 s) failed the first check of a watch under load.
+
 - A change notice marks all selected streams as changed, because EventKit does not identify each change.
 - The notice covers the full event store. Thus a Calendar edit also makes a Reminders watch extract again, and a Reminders edit also makes a Calendar watch extract again.
 - The EventKit permissions that a read needs also apply to a watch.

@@ -1430,6 +1430,67 @@ test(
 );
 
 test(
+  'a Reminders watch whose helper is slow to start records no failed pass, through the native helper',
+  { timeout: 120_000 },
+  async (t) => {
+    if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+    const store = new RemindersStore(helper, { env: process.env });
+    const access = await store
+      .collections({}, undefined)
+      .catch((error: unknown) => {
+        if (
+          error instanceof Error &&
+          error.name === 'RemindersUnavailableError'
+        )
+          return null;
+        throw error;
+      });
+    if (access === null) return t.skip('no Reminders access');
+    await using dir = await new TemporaryFiles().directory('reminders-slow-');
+    // The real helper, started 2 s late: a test cannot make the Mac slow on
+    // demand, and 8 helpers that started at one time under load took up to
+    // 1.3 s to subscribe (measured on 2026-11-07).
+    const slow = join(dir.path, 'eventkit-helper');
+    await writeFile(
+      slow,
+      `#!/bin/sh\n[ "$1" = watch ] && sleep 2\nexec '${helper}' "$@"\n`,
+      { mode: 0o755 },
+    );
+    const source = new AppleRemindersSource({
+      store: new RemindersStore(slow, { env: process.env }),
+    });
+    const data = join(dir.path, 'out.sqlite');
+    const destination = new SQLiteDestination({ path: data });
+    const watching = new Pipeline({
+      clock: globalThis,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [new Copy(source.lists, destination.table('lists'))],
+        }),
+      ],
+    }).watch({ signal: AbortSignal.timeout(60_000) });
+    try {
+      await watching.next();
+
+      using out = open(data, { readOnly: true });
+      assert.deepEqual(
+        out
+          .prepare('SELECT status FROM sync_attempts ORDER BY attempt_id')
+          .all()
+          .map(({ status }) => status),
+        ['succeeded'],
+      );
+    } finally {
+      await watching.return(undefined);
+    }
+  },
+);
+
+test(
   'Reminders reads this Mac’s reminders store into SQLite through the native helper',
   { timeout: 300_000 },
   async (t) => {

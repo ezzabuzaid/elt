@@ -93,14 +93,13 @@ export class AppleRemindersSource extends Source<RemindersScan> {
   // EventKit posts each change of the whole store, so each change reads
   // every selected stream again.
   override changeSignals(streams: readonly Stream[]) {
+    const changes = this.#store.changes();
     return [
       {
-        gauge: this.#store.changes(),
+        gauge: changes,
         streams,
         interval: checkIntervalMs,
-        // The helper confirms its subscription in less than 150 ms (measured
-        // on 2026-11-06), and a later read is of memory.
-        timeout: checkIntervalMs,
+        timeout: changes.timeout,
       },
     ];
   }
