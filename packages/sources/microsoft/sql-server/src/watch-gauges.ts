@@ -59,13 +59,15 @@ export class WatchGauges implements AsyncDisposable {
   readonly statistics: Collector<string>;
   // How many rows each table holds: an insert, a delete or a TRUNCATE moves
   // it, also in a table whose statistics SQL Server has not built yet, which
-  // count nothing. An update moves nothing.
+  // count nothing, and in a tracked table, whose Change Tracking version a
+  // TRUNCATE does not move. An update moves nothing.
   readonly rowCounts: Collector<string>;
   // When SQL Server last wrote to each table: any insert, update or delete
   // moves it, also of a column with no statistics.
   readonly lastWrites: Collector<string>;
   // The database's last committed Change Tracking version: each change to a
-  // tracked table moves it, in the transaction of the change.
+  // tracked table moves it, in the transaction of the change. A TRUNCATE
+  // does not.
   readonly changeTracking: Gauge;
   // The database's last rowversion (@@DBTS): each insert or update of a row
   // with a rowversion column moves it.

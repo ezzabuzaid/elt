@@ -89,8 +89,10 @@ export class ChangeTrackingStream extends SqlServerStream {
     });
   }
 
+  // A TRUNCATE moves no Change Tracking version, but it moves the row count
+  // of a table that held rows.
   gauges(watch: WatchGauges) {
-    return [watch.changeTracking];
+    return [watch.changeTracking, watch.rowCounts.gauge(this.table.quoted)];
   }
 
   coverage(): ExtractionCoverage {

@@ -334,6 +334,7 @@ test(
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.numbers (id int PRIMARY KEY);
     ALTER TABLE dbo.numbers ENABLE CHANGE_TRACKING;
+    INSERT dbo.numbers VALUES (0);
     INSERT dbo.numbers SELECT TOP (20000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;`);
     await using reader = await readOnlyLogin(
       scratch,
@@ -351,10 +352,11 @@ test(
       const rows = session.rows(numbers);
       await rows.next();
       await rows.return(undefined);
-      // From before the 20000 inserts, so the set is still streaming.
+      // From the first insert, before the 20000 inserts, so the set is still
+      // streaming. Version 0, where the tracking began, has expired.
       await using set = await session.changes(numbers, {
         ...(await session.changeTrackingPosition(numbers)),
-        version: '0',
+        version: '1',
       });
       await set[Symbol.asyncIterator]().next();
     }

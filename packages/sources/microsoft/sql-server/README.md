@@ -134,9 +134,10 @@ Discovery selects how each table reads. Each table reads with the first strategy
 
 A position in a table's change history is a Change Tracking version and the table's tracking generation. The generation is the table's `begin_version`, which a `TRUNCATE` moves to the current version, and the creation time of its change table, which enabling tracking again makes new. See [ADR 0001](./docs/adr/0001-a-change-tracking-position-carries-the-tracking-generation.md).
 
-- The history no longer covers a saved position when the position is below the table's minimum valid version, ahead of the database's current version, or of a different generation. The stream then sends `RESET` and loads every row again into a hidden target, which replaces the table when the stream ends (see resets in [elt](../../../elt/README.md#resets)).
+- The history no longer covers a saved position when the position is below the table's minimum valid version, ahead of the database's current version, of a different generation, or at the version where its generation began. The stream then sends `RESET` and loads every row again into a hidden target, which replaces the table when the stream ends (see resets in [elt](../../../elt/README.md#resets)).
 - The stream does the same for a column that the table gained since the state was saved, because Change Tracking reports no change for the rows to which it was added.
 - The generation finds the case that the minimum valid version cannot find: a truncate just after a sync, with no change between them, leaves the minimum valid version equal to the saved one.
+- A truncate moves the generation to the current version. When the generation began at the saved version, a truncate leaves it as it was. Thus such a position can show no truncate, and the stream loads every row again.
 
 Pages compare the full primary key as a tuple. Each part is cast to the declared type and collation of its column. Thus a page does not skip or repeat rows that have the same leading key value, and a `varchar` key under a SQL collation orders as the column sorts.
 
@@ -146,14 +147,14 @@ The source gives elt's pipeline one change signal for each stream, checked every
 
 | Sync strategy             | Gauges                                                             |
 | ------------------------- | ------------------------------------------------------------------ |
-| Change Tracking           | the Change Tracking version                                        |
+| Change Tracking           | the Change Tracking version, the row count                         |
 | Rowversion                | the last rowversion                                                |
 | Snapshot and full refresh | the statistics, the row count, the last write (optional), the hour |
 
-- **The Change Tracking version** (`CHANGE_TRACKING_CURRENT_VERSION()`) of the database, one gauge for all streams. A change to a tracked table moves it, in the transaction of the change.
+- **The Change Tracking version** (`CHANGE_TRACKING_CURRENT_VERSION()`) of the database, one gauge for all streams. A change to a tracked table moves it, in the transaction of the change. A `TRUNCATE` does not move it.
 - **The last rowversion** (`@@DBTS`) of the database, one gauge for all streams. An insert or an update of a row with a `rowversion` column moves it.
 - **The statistics** of the table (`sys.dm_db_stats_properties`): their count, the rows changed in their columns, and the time of their last refresh. An insert, a delete, a `TRUNCATE` or an update of a column with statistics moves it. A restart keeps it. A refresh of statistics sets the count to 0 and changes the time. `db_datareader` can read it.
-- **The row count** of the table (`sys.partitions`). An insert, a delete or a `TRUNCATE` moves it, also when SQL Server has not built the statistics of the table. An update does not move it. `db_datareader` can read it.
+- **The row count** of the table (`sys.partitions`). An insert, a delete or a `TRUNCATE` moves it, also when SQL Server has not built the statistics of the table. An update does not move it. `db_datareader` can read it. A Change Tracking stream watches it for a `TRUNCATE`. A `TRUNCATE` of an empty table moves nothing, and it removes nothing.
 - **The last write** of the table (`sys.dm_db_index_usage_stats`): the writes and the time of the last write. Each insert, update or delete moves it, also of a column with no statistics. A `TRUNCATE` does not move it. Discovery reads it one time. When the login cannot read it, the streams do not use it, and their description names the grant.
 - **The hour**: a period of one hour, the number of whole hours since the watch started. Each hour, it wakes the streams again, and the read finds a change that the other gauges did not see.
 
@@ -170,7 +171,7 @@ The database is current whenever the source reads it, so the source gives no `cu
 - SQL Server builds the statistics of a table when a query first needs them. Until then, they count nothing. In a table that no query has read by a column since it was created empty, an insert or a delete moves the row count, and an update waits for the last write or the hour. A table with no key and no index has no statistics at all, so the same is true for it.
 - The source does not read CDC (backlog #2315).
 - The source discovers tables only, not views (backlog #3253).
-- In one case, the source does not see a truncate, or tracking that was turned off and on again: when the table's tracking began at the version that the last sync read, and nothing that is tracked changed in the database since. No metadata that a read-only login can see changes then.
+- A Change Tracking stream whose position is at the version where its generation began loads every row again at each read, until a tracked change in the database moves the version. Tracking turned on after the last tracked change, and a truncate with no tracked change after it, give such a position. The count of the statistics moves on a truncate, but each tracked change and each refresh of statistics also move it. Thus it cannot show that the table was truncated.
 - A single value longer than the longest JavaScript string (about 512 million characters) fails its stream.
 
 ## Live checks
@@ -201,6 +202,12 @@ Run on 2026-11-06 against SQL Server 2022 in a container, through a `db_dataread
 - `db_datareader` could read the count of the statistics and the row counts of `sys.partitions`, and got error 297 for the last writes and the row counts of `sys.dm_db_index_operational_stats`.
 - Statistics that an index created on an empty table made had no count and no time of refresh until `UPDATE STATISTICS` built them. Rows inserted before then moved only the row count.
 - `CHECKSUM_AGG(BINARY_CHECKSUM(*))` read every page of the table. It did not change for a value changed from `' !'` to `''Q'`, for two rows that swapped a value, or for two equal rows added to a table with no key. A SHA-256 hash of each row found all three.
+
+Run on 2026-11-07 against SQL Server 2022 in a container:
+
+- A `TRUNCATE` of a tracked table with rows did not move `CHANGE_TRACKING_CURRENT_VERSION()`. It moved the row count to 0, and `begin_version` and the minimum valid version to the current version. It did not change the `partition_id` of the table.
+- A `SELECT` with no `WHERE` did not build the statistics of a table created empty. A `SELECT` with a `WHERE` on the key built them: the count went from none to 0, with a time of refresh. A `TRUNCATE` did not move statistics that were not built.
+- A disabled login and a login to a database that is `OFFLINE` both failed with `ELOGIN` that tedious did not mark as transient. The error log had one `Login failed` line for each attempt.
 
 ## Decisions
 

@@ -374,11 +374,12 @@ export class SqlServerSession implements AsyncDisposable {
 
   // What changed in the table since a position in its change history: each
   // changed key once, with its row as it is now, or as a deletion. A position
-  // from another generation, or outside the history kept, has expired. With
-  // snapshot isolation the version, the check and the changes come from one
-  // snapshot. Without it the version is read first, so a change made during
-  // the read is read again next time, and the check runs again after the
-  // read in case cleanup removed history meanwhile.
+  // from another generation, at the start of its generation, or outside the
+  // history kept, has expired. With snapshot isolation the version, the check
+  // and the changes come from one snapshot. Without it the version is read
+  // first, so a change made during the read is read again next time, and the
+  // check runs again after the read in case cleanup removed history
+  // meanwhile.
   async changes(
     table: SqlServerTable,
     since: ChangePosition,
@@ -402,11 +403,12 @@ export class SqlServerSession implements AsyncDisposable {
         ? this.#pool.request()
         : new sql.Request(transaction);
     const check = async () => {
-      const [[current, minimum, viewable, generation] = []] = await query(
-        request(),
-        `SELECT CONVERT(varchar(20), CHANGE_TRACKING_CURRENT_VERSION()), CONVERT(varchar(20), CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(@p0))), HAS_PERMS_BY_NAME(@p0, 'OBJECT', 'VIEW CHANGE TRACKING'), ${generationQuery}`,
-        [table.quoted],
-      );
+      const [[current, minimum, viewable, generation, begin] = []] =
+        await query(
+          request(),
+          `SELECT CONVERT(varchar(20), CHANGE_TRACKING_CURRENT_VERSION()), CONVERT(varchar(20), CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(@p0))), HAS_PERMS_BY_NAME(@p0, 'OBJECT', 'VIEW CHANGE TRACKING'), ${generationQuery}, (SELECT CONVERT(varchar(20), begin_version) FROM sys.change_tracking_tables WHERE object_id = OBJECT_ID(@p0))`,
+          [table.quoted],
+        );
       // Without the grant SQL Server still reports a minimum valid version
       // (0), so the grant itself is checked first.
       if (viewable !== 1)
@@ -416,8 +418,12 @@ export class SqlServerSession implements AsyncDisposable {
       if (minimum === null || generation === null)
         throw new TypeError(`Change Tracking is off for ${table.quoted}`);
       const version = cellText(current, 'change tracking version');
+      // A TRUNCATE moves begin_version to the current version. When the
+      // generation began at the saved version, a truncate since moves it
+      // nowhere, so such a position cannot show one.
       if (
         generation !== since.generation ||
+        BigInt(since.version) <= BigInt(cellText(begin, 'begin version')) ||
         BigInt(since.version) <
           BigInt(cellText(minimum, 'minimum valid version')) ||
         BigInt(since.version) > BigInt(version)

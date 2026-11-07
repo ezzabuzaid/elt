@@ -12,7 +12,7 @@ Thus a position is a Change Tracking version and the table's tracking generation
 ## Consequences
 
 - A truncate just after a sync, and tracking turned off and on, are seen, and the table loads again.
-- One case is left: a table whose tracking began at the version that the last sync read, with no tracked change in the database since. No metadata that a read-only login can see changes then. The README lists it as a limitation.
+- One case is left: a table whose tracking began at the version that the last sync read. A truncate then leaves the generation as it was, and no metadata that a read-only login can see tells the truncate from the tracked changes. Since 2026-11-07 (backlog #3831), such a position has expired, so the stream loads every row again. Before, the README listed it as a limitation.
 - `VIEW CHANGE TRACKING` makes the change table's `create_date` visible, so the login needs no more grants.
 
 ## Sources

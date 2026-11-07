@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
+import { type Socket, connect, createServer } from 'node:net';
 import { type TestContext, test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { Postgres } from '@zukhruf/testing/postgres';
@@ -14,9 +16,11 @@ import postgres from 'postgres';
 
 import {
   Connection,
+  PassFailed,
   Pipeline,
   type PipelineClock,
   PipelineError,
+  passChannels,
 } from '@workspace/elt';
 import {
   PostgresCheckpointStore,
@@ -27,6 +31,7 @@ import {
   SqlServerDatabase,
   SqlServerLoginError,
   SqlServerPermissionError,
+  SqlServerUnavailableError,
 } from '@workspace/sdk-microsoft-sql-server';
 
 import { sqlServerCopies } from './sql-server-copies.ts';
@@ -73,6 +78,7 @@ async function readOnlyLogin(
     );
   const owned = resources.move();
   return {
+    login: user,
     user: `[${user}]`,
     connectionString: `Server=${database.host},${database.port};Database=${database.database};User Id=${user};Password=${password};Encrypt=true;TrustServerCertificate=true`,
     [Symbol.asyncDispose]: () => owned.disposeAsync(),
@@ -166,17 +172,25 @@ function watcher(t: TestContext, source: SqlServerSource, url: string) {
   const clock = createClock(Date.UTC(2026, 10, 6, 7, 12));
   const controller = new AbortController();
   const watch = watchSqlServer(source, url, clock, controller.signal);
+  const check = async () => {
+    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      timeout: 30_000,
+    });
+    await clock.tickAsync(30_000);
+  };
   return {
     clock,
+    // The next pass, or the end of the watch: an async generator starts on
+    // its first next().
+    next: () => watch.next(),
     // The first check, which wakes every stream.
     first: async () => loadedBy(await watch.next()),
+    // Runs the next check.
+    check,
     // The streams the next check wakes.
     woken: async () => {
       const next = watch.next();
-      await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
-        timeout: 30_000,
-      });
-      await clock.tickAsync(30_000);
+      await check();
       return loadedBy(await next);
     },
     [Symbol.asyncDispose]: async () => {
@@ -184,6 +198,71 @@ function watcher(t: TestContext, source: SqlServerSource, url: string) {
       await watch.return(undefined);
     },
   };
+}
+
+// The change signals of a source that failed, as the pipeline publishes
+// each: one for each stream whose signal starts to fail.
+function signalFailures(source: SqlServerSource) {
+  const failures: PassFailed[] = [];
+  const failed = (message: unknown) => {
+    if (message instanceof PassFailed && message.connection.source === source)
+      failures.push(message);
+  };
+  passChannels.failure.subscribe(failed);
+  return {
+    failures,
+    [Symbol.dispose]: () => passChannels.failure.unsubscribe(failed),
+  };
+}
+
+// The sessions SQL Server has open for a login.
+async function sessionsOf(admin: sql.ConnectionPool, login: string) {
+  const { recordset } = await admin
+    .request()
+    .input('login', login)
+    .query<{ sessions: number }>(
+      'SELECT COUNT(*) AS sessions FROM sys.dm_exec_sessions WHERE login_name = @login',
+    );
+  return recordset[0]?.sessions;
+}
+
+// A TCP hop to the server that can refuse every connection, as a server
+// that is down or fails over does. It is a stand-in because the test cannot
+// take the shared server down.
+async function relay(database: Database) {
+  const sockets = new Set<Socket>();
+  const hop = { reachable: true };
+  const server = createServer((client) => {
+    if (!hop.reachable) {
+      client.destroy();
+      return;
+    }
+    const upstream = connect(database.port, database.host);
+    for (const [socket, other] of [
+      [client, upstream],
+      [upstream, client],
+    ] as const) {
+      sockets.add(socket);
+      socket.pipe(other);
+      socket.on('error', () => other.destroy());
+      socket.on('close', () => {
+        sockets.delete(socket);
+        other.destroy();
+      });
+    }
+  });
+  await new Promise<void>((resolve) =>
+    server.listen(0, '127.0.0.1', () => resolve()),
+  );
+  const address = server.address();
+  assert.ok(address !== null && typeof address === 'object');
+  return Object.assign(hop, {
+    server: `127.0.0.1,${address.port}`,
+    [Symbol.asyncDispose]: async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  });
 }
 
 // A run expected to fail, with its outcome per copy.
@@ -415,6 +494,53 @@ test('a truncated Change Tracking table, whose history no longer reaches the las
     CREATE TABLE dbo.items (id int PRIMARY KEY, name nvarchar(10) NOT NULL);
     ALTER TABLE dbo.items ENABLE CHANGE_TRACKING;
     INSERT dbo.items VALUES (1, N'one'), (2, N'two');`);
+  await using reader = await readOnlyLogin(
+    server,
+    admin,
+    'GRANT VIEW CHANGE TRACKING ON dbo.items TO {user};',
+  );
+  const sync = syncer(
+    reader.connectionString,
+    warehouse.connectionString,
+    history,
+  );
+  await sync();
+
+  await admin
+    .request()
+    .batch("TRUNCATE TABLE dbo.items; INSERT dbo.items VALUES (3, N'three');");
+  await sync();
+
+  assert.deepEqual(
+    [
+      ...(await warehouseSql`SELECT id::int AS id, name FROM raw.dbo_items ORDER BY id`),
+    ],
+    [{ id: 3, name: 'three' }],
+  );
+});
+
+test('a Change Tracking table truncated after a sync that read the version its tracking began at is loaded again in full', async () => {
+  await using server = await sqlServer.database();
+  await using warehouse = await postgresServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  const warehouseSql = clients.adopt(
+    postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+    (client) => client.end(),
+  );
+  const history = new PostgresSyncHistory({ url: warehouse.connectionString });
+  // Tracking begins at the current version, after the rows were written, so
+  // the first sync reads the version that the tracking began at, and the
+  // truncate leaves the tracking generation as it was.
+  await admin.request().batch(`
+    ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
+    CREATE TABLE dbo.items (id int PRIMARY KEY, name nvarchar(10) NOT NULL);
+    INSERT dbo.items VALUES (1, N'one'), (2, N'two');
+    ALTER TABLE dbo.items ENABLE CHANGE_TRACKING;`);
   await using reader = await readOnlyLogin(
     server,
     admin,
@@ -1470,5 +1596,210 @@ test(
     assert.deepEqual(await watch.woken(), ['dbo.notes']);
     await admin.request().batch('DELETE dbo.notes WHERE id = 1;');
     assert.deepEqual(await watch.woken(), ['dbo.notes']);
+  },
+);
+
+test(
+  'a login the server refuses during a watch fails every stream as config after one login attempt, and no later check tries it again',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    // Three sync strategies, so the first check reads the database version,
+    // the statistics and the row counts.
+    await admin.request().batch(`
+    ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
+    CREATE TABLE dbo.tracked (id int PRIMARY KEY);
+    ALTER TABLE dbo.tracked ENABLE CHANGE_TRACKING;
+    CREATE TABLE dbo.stamped (id int PRIMARY KEY, stamp rowversion);
+    CREATE TABLE dbo.plain (id int PRIMARY KEY);`);
+    await using reader = await readOnlyLogin(
+      server,
+      admin,
+      'GRANT VIEW CHANGE TRACKING ON dbo.tracked TO {user};',
+    );
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(reader.connectionString),
+    );
+    await admin.request().batch(`ALTER LOGIN ${reader.user} DISABLE;`);
+    const failedLogins = async () =>
+      (
+        await admin
+          .request()
+          .input('login', reader.login)
+          .query("EXEC sp_readerrorlog 0, 1, N'Login failed', @login")
+      ).recordset.length;
+    await using warehouse = await postgresServer.database();
+    using signals = signalFailures(source);
+    const watch = watcher(t, source, warehouse.connectionString);
+    const pass = watch.next();
+    try {
+      await t.waitFor(() => assert.equal(signals.failures.length, 3), {
+        timeout: 30_000,
+      });
+      assert.deepEqual(
+        signals.failures.map(({ error, failureType }) => [
+          error instanceof SqlServerLoginError,
+          failureType,
+        ]),
+        [
+          [true, 'config'],
+          [true, 'config'],
+          [true, 'config'],
+        ],
+      );
+      for (let check = 0; check < 3; check += 1) await watch.check();
+      // A login that a check tried would be refused in milliseconds.
+      await sleep(2000);
+      assert.equal(await failedLogins(), 1);
+      assert.equal(signals.failures.length, 3);
+    } finally {
+      await watch[Symbol.asyncDispose]();
+    }
+    // No stream loaded.
+    assert.deepEqual(await pass, { done: true, value: undefined });
+  },
+);
+
+test(
+  'a server that cannot be reached at the first check of a watch fails every stream as system, and the next check opens it again and wakes every stream',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin.request().batch(`
+    ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
+    CREATE TABLE dbo.tracked (id int PRIMARY KEY);
+    ALTER TABLE dbo.tracked ENABLE CHANGE_TRACKING;
+    CREATE TABLE dbo.plain (id int PRIMARY KEY);
+    INSERT dbo.tracked VALUES (1);
+    INSERT dbo.plain VALUES (1);`);
+    await using reader = await readOnlyLogin(
+      server,
+      admin,
+      'GRANT VIEW CHANGE TRACKING ON dbo.tracked TO {user};',
+    );
+    await using hop = await relay(server);
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(
+        reader.connectionString.replace(
+          `Server=${server.host},${server.port}`,
+          `Server=${hop.server}`,
+        ),
+      ),
+    );
+    hop.reachable = false;
+    await using warehouse = await postgresServer.database();
+    using signals = signalFailures(source);
+    await using watch = watcher(t, source, warehouse.connectionString);
+    const pass = watch.next();
+
+    await t.waitFor(() => assert.equal(signals.failures.length, 2), {
+      timeout: 30_000,
+    });
+    assert.deepEqual(
+      signals.failures.map(({ error, failureType }) => [
+        error instanceof SqlServerUnavailableError,
+        failureType,
+      ]),
+      [
+        [true, 'system'],
+        [true, 'system'],
+      ],
+    );
+    hop.reachable = true;
+    await watch.check();
+    assert.deepEqual(loadedBy(await pass), ['dbo.plain', 'dbo.tracked']);
+  },
+);
+
+test(
+  'a watch that stops closes the session its checks opened',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin
+      .request()
+      .batch(
+        'CREATE TABLE dbo.plain (id int PRIMARY KEY); INSERT dbo.plain VALUES (1);',
+      );
+    await using reader = await readOnlyLogin(server, admin, '');
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(reader.connectionString),
+    );
+    await using warehouse = await postgresServer.database();
+    const watch = watcher(t, source, warehouse.connectionString);
+    try {
+      assert.deepEqual(await watch.first(), ['dbo.plain']);
+      // The pass closed its own session, so this one is the watch's.
+      assert.ok(Number(await sessionsOf(admin, reader.login)) > 0);
+    } finally {
+      await watch[Symbol.asyncDispose]();
+    }
+
+    // An idle connection that nothing closed stays 30 s.
+    await t.waitFor(
+      async () => assert.equal(await sessionsOf(admin, reader.login), 0),
+      { timeout: 5000 },
+    );
+  },
+);
+
+test(
+  'a watch wakes a Change Tracking table within one check of a truncate, which moves no Change Tracking version, and the read empties it',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin.request().batch(`
+    ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
+    CREATE TABLE dbo.items (id int PRIMARY KEY);
+    ALTER TABLE dbo.items ENABLE CHANGE_TRACKING;
+    CREATE TABLE dbo.other (id int PRIMARY KEY);
+    ALTER TABLE dbo.other ENABLE CHANGE_TRACKING;
+    INSERT dbo.items VALUES (1), (2);`);
+    await using reader = await readOnlyLogin(
+      server,
+      admin,
+      'GRANT VIEW CHANGE TRACKING ON dbo.items TO {user}; GRANT VIEW CHANGE TRACKING ON dbo.other TO {user};',
+    );
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(reader.connectionString),
+    );
+    await using warehouse = await postgresServer.database();
+    const warehouseSql = clients.adopt(
+      postgres(warehouse.connectionString, { max: 1, onnotice: () => {} }),
+      (client) => client.end(),
+    );
+    await using watch = watcher(t, source, warehouse.connectionString);
+    assert.deepEqual(await watch.first(), ['dbo.items', 'dbo.other']);
+
+    await admin.request().batch('TRUNCATE TABLE dbo.items;');
+    assert.deepEqual(await watch.woken(), ['dbo.items']);
+    assert.deepEqual(
+      [...(await warehouseSql`SELECT id FROM raw.dbo_items`)],
+      [],
+    );
   },
 );
