@@ -19,6 +19,7 @@ import {
   PassFailed,
   PassFinished,
   PassStarted,
+  errorMessage,
   passChannels,
 } from '@workspace/elt';
 import {
@@ -414,8 +415,4 @@ function errorType(error: unknown) {
   return 'code' in error && typeof error.code === 'string'
     ? error.code
     : error.name;
-}
-
-function errorMessage(error: unknown) {
-  return Error.isError(error) ? error.message : String(error);
 }

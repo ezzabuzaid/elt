@@ -11,6 +11,7 @@ import {
   type StreamCheck,
   SyncHistory,
   copyStatus,
+  errorMessage,
   passError,
   passFailureType,
   passStatus,
@@ -212,7 +213,7 @@ function fail(
     .prepare(
       `UPDATE ${attempts} SET "status" = 'failed', "completed_at" = ?, "error" = ?, "failure_type" = ? WHERE "id" = ?`,
     )
-    .run(at.toISOString(), message(error), failureType, id);
+    .run(at.toISOString(), errorMessage(error), failureType, id);
 }
 
 function persistent({ path }: SQLiteDestination): string {
@@ -227,8 +228,4 @@ function write<T>(
 ): T {
   using database = openDestination(path);
   return transaction(database, () => work(database), { mode: 'immediate' });
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

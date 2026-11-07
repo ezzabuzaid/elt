@@ -1,6 +1,10 @@
 import { type Gauge, delay } from '@zukhruf/async';
 
-import type { StreamCheck, SyncHistory } from '../state/sync-history.ts';
+import {
+  type StreamCheck,
+  type SyncHistory,
+  errorMessage,
+} from '../state/sync-history.ts';
 import type { ChangeSignal } from './change-signal.ts';
 import type { PipelineClock } from './clock.ts';
 import { Connection } from './connection.ts';
@@ -253,7 +257,7 @@ export class Pipeline<Target extends DestinationTarget> {
     }
     if (refreshes.failure !== undefined) throw refreshes.failure.error;
     if (stopped.length > 0)
-      throw new WatchError(stopped, stopped.map(message).join('; '));
+      throw new WatchError(stopped, stopped.map(errorMessage).join('; '));
   }
 
   async *#watch(
@@ -628,7 +632,7 @@ export class Pipeline<Target extends DestinationTarget> {
       throw new SuppressedError(
         error,
         failure,
-        `Connection ${connection.name} stopped (${message(failure)}), and its sync history could not record why: ${message(error)}`,
+        `Connection ${connection.name} stopped (${errorMessage(failure)}), and its sync history could not record why: ${errorMessage(error)}`,
       );
     }
     passChannels.failure.publish(
@@ -682,7 +686,7 @@ function connectionError(
   connection: Connection<DestinationTarget>,
   cause: unknown,
 ): Error {
-  return new Error(`Connection ${connection.name}: ${message(cause)}`, {
+  return new Error(`Connection ${connection.name}: ${errorMessage(cause)}`, {
     cause,
   });
 }
@@ -713,8 +717,4 @@ async function checked(
 
 function isDisposable(value: object): value is Disposable | AsyncDisposable {
   return Symbol.dispose in value || Symbol.asyncDispose in value;
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

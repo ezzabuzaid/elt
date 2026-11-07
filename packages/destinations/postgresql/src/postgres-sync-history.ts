@@ -8,6 +8,7 @@ import {
   type StreamCheck,
   SyncHistory,
   copyStatus,
+  errorMessage,
   passError,
   passFailureType,
   passStatus,
@@ -106,7 +107,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
             WHERE attempt_id = ${id}`;
           await transaction`
             UPDATE _warehouse.sync_attempts SET status = 'failed',
-              completed_at = ${ended}, error = ${message(error)},
+              completed_at = ${ended}, error = ${errorMessage(error)},
               failure_type = ${failureType}
             WHERE id = ${id}`;
         }),
@@ -173,8 +174,4 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
       await sql.end();
     }
   }
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

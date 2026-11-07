@@ -112,6 +112,7 @@ export {
 export {
   copyStatus,
   type DeclaredCopy,
+  errorMessage,
   passError,
   passFailureType,
   passStatus,

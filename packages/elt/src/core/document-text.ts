@@ -2,6 +2,7 @@ import { lstat } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
 import { join } from 'node:path';
 
+import { errorMessage } from '../state/sync-history.ts';
 import type { DocumentParser } from './document-parser.ts';
 import { type LoadedRow, Rule, type RuleResult } from './rule.ts';
 
@@ -81,10 +82,7 @@ export class DocumentText extends Rule<string, string> {
             // A commit removed the copy after the refresh listed it; its rows
             // are gone too, so the file is not a failure.
             if (await removed(file)) return { gone: true };
-            return {
-              error:
-                failure instanceof Error ? failure.message : String(failure),
-            };
+            return { error: errorMessage(failure) };
           }
         },
       ),

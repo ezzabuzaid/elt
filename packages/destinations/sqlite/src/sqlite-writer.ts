@@ -18,6 +18,7 @@ import {
   TargetOwnedError,
   Writer,
   describeTarget,
+  errorMessage,
   reloadMode,
 } from '@workspace/elt';
 
@@ -423,7 +424,7 @@ export abstract class SQLiteWriter extends Writer {
       this.#declaration(this.table.name).apply(database);
     } catch (cause) {
       throw new TypeError(
-        `The rows stored in ${this.table.quotedName} do not fit the new shape of stream ${this.stream.name}: ${cause instanceof Error ? cause.message : String(cause)}. Clear the copy to load it again, or change the stream so they fit.`,
+        `The rows stored in ${this.table.quotedName} do not fit the new shape of stream ${this.stream.name}: ${errorMessage(cause)}. Clear the copy to load it again, or change the stream so they fit.`,
         { cause },
       );
     }

@@ -1,6 +1,11 @@
 import { type EmbeddingModel, embedMany } from 'ai';
 
-import { type LoadedRow, Rule, type RuleResult } from '@workspace/elt';
+import {
+  type LoadedRow,
+  Rule,
+  type RuleResult,
+  errorMessage,
+} from '@workspace/elt';
 
 // The vector of each loaded row's text, made by an embedding model, so a
 // vector search finds rows by meaning, as pgai's vectorizer and LanceDB's
@@ -86,8 +91,7 @@ export class Embedding extends Rule<string, Uint8Array> {
       if (signal?.aborted) return texts.map(() => ({ gone: true }));
       // A model that refuses a call fails each row of it; the next refresh
       // asks again.
-      const error =
-        failure instanceof Error ? failure.message : String(failure);
+      const error = errorMessage(failure);
       return texts.map(() => ({ error }));
     }
   }

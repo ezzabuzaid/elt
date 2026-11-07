@@ -853,7 +853,7 @@ The contract:
 - A pass ends `succeeded`, `partial`, `failed` or, when the signal of its run stopped it, `cancelled`.
 - A history does not read a clock. `at` is the time of the event, which the pipeline reads from its clock: the start of a pass, its end, or the install. A history records `at`, not the time of its database, so the times of a pass and of a check come from one clock. See [ADR 0019](./docs/adr/0019-a-pipeline-waits-and-reads-the-time-on-the-clock-that-its-caller-gives.md).
 - A subclass implements `recordChecks(connection, checks)`, which is durable when it resolves. Each check is a `StreamCheck`, `{ stream, at }`. `checked()` calls it for the first check of a connection at once, and then at most one time each minute, because each record is a write.
-- The helpers `copyStatus`, `passStatus`, `passError` and `passFailureType` get from the outcomes the status (`SyncStatus`), the error text and the failure type of a copy or a pass. `recordedFailure` makes the failure entry that the two histories store. `DeclaredCopy` and `RecordedPass` type the contract.
+- The helpers `copyStatus`, `passStatus`, `passError` and `passFailureType` get from the outcomes the status (`SyncStatus`), the error text and the failure type of a copy or a pass. `recordedFailure` makes the failure entry that the two histories store. `errorMessage` gives the message of a thrown value: the message of an `Error`, or the value as a string. `DeclaredCopy` and `RecordedPass` type the contract.
 
 ```ts
 import {

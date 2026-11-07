@@ -1,4 +1,5 @@
 import type { CheckpointStore } from '../state/checkpoint-store.ts';
+import { errorMessage } from '../state/sync-history.ts';
 import { CopyConfiguration } from './copy-configuration.ts';
 import type { Destination } from './destination.ts';
 import { FileTransfer } from './file-transfer.ts';
@@ -28,7 +29,7 @@ export function describeFailures<Target extends DestinationTarget>({
   return failures
     .map(
       ({ partition, error }: LoadFailure) =>
-        `${copy.id ?? copy.from.name}${partition === null ? '' : ` ${JSON.stringify(partition)}`}: ${error instanceof Error ? error.message : String(error)}`,
+        `${copy.id ?? copy.from.name}${partition === null ? '' : ` ${JSON.stringify(partition)}`}: ${errorMessage(error)}`,
     )
     .join('; ');
 }

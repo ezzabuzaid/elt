@@ -99,10 +99,17 @@ export function recordedFailure({
 }: LoadFailure) {
   return {
     partition,
-    error: error instanceof Error ? error.message : String(error),
+    error: errorMessage(error),
     failure_type: failureType,
     stacktrace: inspect(error),
   };
+}
+
+// The message of a thrown value: an Error's message, or the value as a string,
+// since JavaScript can throw a value that is not an Error. Error.isError also
+// knows an Error from another realm, which instanceof Error does not.
+export function errorMessage(error: unknown): string {
+  return Error.isError(error) ? error.message : String(error);
 }
 
 export function copyStatus({
