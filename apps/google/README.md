@@ -20,3 +20,14 @@ npx nx run google:start   # build, then run src/main.ts
 - The app catches no error. A missing variable, a refused grant or a `PipelineError` stops the app, and Node writes the error and exits with status 1.
 
 The coverage of each source is in its `coverage(stream)`. See [Search Console](../../packages/sources/google/search-console/README.md) and [Google Health](../../packages/sources/google/health/README.md).
+
+## Test
+
+```sh
+npx nx run google:test
+```
+
+The end-to-end test runs the built app once against the real Google APIs and the warehouse.
+
+- It needs the warehouse. If no warehouse is on `127.0.0.1:55432`, the test skips and tells you to run `npx nx run infra:up`.
+- It needs a usable grant in `$XDG_CONFIG_HOME/elt` or `~/.config/elt`. The test cannot give consent. If the app must ask for consent, the test skips and tells you to run `npx nx run google:start` one time and give consent in the browser.
