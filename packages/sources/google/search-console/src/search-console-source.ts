@@ -60,11 +60,6 @@ export type SearchConsoleOptions = {
   readonly pollIntervalMs?: number;
 };
 
-// The longest delay a Node timer holds, about 24.8 days; a longer one fires at
-// once. Thus a poll interval above it is cut to it, and the watch probes each
-// 24.8 days (backlog #3922).
-const TIMER_MAX = 2 ** 31 - 1;
-
 // How often a watch checks whether an inspection is due. A due inspection is
 // made at most one interval late.
 const INSPECTION_CHECK_MS = 1000;
@@ -326,18 +321,17 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
     const listings = streams.filter(
       (stream) => !inspections.includes(stream) && !analytics.includes(stream),
     );
-    const poll = Math.min(this.pollIntervalMs, TIMER_MAX);
     return [
       {
         gauge: new Probe((check) => this.#totals(check, clock)),
         streams: analytics,
-        interval: poll,
+        interval: this.pollIntervalMs,
         timeout: PROBE_TIMEOUT_MS,
       },
       {
         gauge: new Probe((check) => this.#listings(check, clock)),
         streams: listings,
-        interval: poll,
+        interval: this.pollIntervalMs,
         timeout: PROBE_TIMEOUT_MS,
       },
       {
