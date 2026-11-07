@@ -2079,6 +2079,98 @@ test(
   },
 );
 
+// A BodyExtractor whose first run does not open, as one whose model is not
+// there yet.
+class OpensOnSecondTry extends BodyExtractor {
+  #tries = 0;
+  override open() {
+    this.#tries++;
+    if (this.#tries === 1) throw new Error('The extractor did not open');
+    return super.open();
+  }
+}
+
+test(
+  'a watched input whose read failed before its crawl began, such as an extractor that did not open, is read again when its starting URL is due as a failed one',
+  { timeout: 20_000 },
+  async (t) => {
+    // The test sets the time, so the due time is known.
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    const start = Date.now();
+    await using cache = await new TemporaryFiles().directory('web-cache-');
+    await using upstream = await new HttpServer().start((request, response) => {
+      const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+      if (url.pathname === '/feed.xml')
+        response
+          .writeHead(200, { 'content-type': 'application/rss+xml' })
+          .end(
+            `<rss><channel><item><link>${url.origin}/page</link></item></channel></rss>`,
+          );
+      else if (url.pathname === '/page')
+        response.writeHead(200, { 'content-type': 'text/html' }).end('fixed');
+      else response.writeHead(404).end();
+    });
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const ingestion = await pipeline(
+      new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
+        streams: [
+          {
+            stream: new WebStream({
+              name: 'pages',
+              primaryKey: ['id'],
+              readers: [new ListingReader()],
+              revisit: new FailedWait({ every: day, retryAfter: 5_000 }),
+              extractor: new OpensOnSecondTry(),
+            }),
+            inputs: [`${upstream.origin}/feed.xml`],
+          },
+        ],
+      }),
+      database.path,
+      checkpoints.path,
+    );
+    const controller = new AbortController();
+    const watch = ingestion.watch({ signal: controller.signal });
+    try {
+      const failed = await watch.next();
+      assert.ok(
+        !failed.done &&
+          failed.value.outcomes.some(({ failures }) => failures.length > 0),
+      );
+
+      // The starting URL is due 5 s after the failure, and the watch's own
+      // retry 10 s after it. The clock stays at 6 s, so a pass then comes
+      // from the source.
+      const next = watch.next();
+      const early = await Promise.race([
+        next.then(() => 'a pass'),
+        setTimeout(2_500, 'no pass'),
+      ]);
+      t.mock.timers.setTime(start + 6_000);
+      const due = await Promise.race([
+        next.then(() => 'a pass'),
+        setTimeout(6_000, 'no pass'),
+      ]);
+
+      assert.equal(early, 'no pass');
+      assert.equal(due, 'a pass');
+      assert.deepEqual(
+        database.connection
+          .prepare('SELECT id, heading FROM pages')
+          .all()
+          .map((row) => ({ ...row })),
+        [{ id: '/page', heading: 'fixed' }],
+      );
+    } finally {
+      controller.abort();
+      await watch.return(undefined);
+    }
+  },
+);
+
 test("an article's row keeps the language copies that the page declares, as localizedVersions, and those that its listing declares, as listedVersions, which a listing that declares other copies rewrites while the page stays the same", async () => {
   await using cache = await new TemporaryFiles().directory('web-cache-');
   // The languages that the sitemap declares copies in.

@@ -658,6 +658,16 @@ export class WebSource extends Source<WebRead> {
           errors.map((error) => error.message).join('; '),
         );
     } catch (error) {
+      // A read that failed before its crawl began, such as one whose
+      // extractor did not open or whose saved state no longer parses, is due
+      // again as a crawl that failed: a crawl that knows no URL is abandoned.
+      if (ended === null) {
+        const abandoned = client
+          .crawler(stream.readers, stream.revisit, null)
+          .crawl([inputUrl], null, { signal: requestSignal });
+        abandoned.abandon();
+        due = abandoned.nextDue();
+      }
       stopping = configuration.syncMode === 'full_refresh';
       throw error;
     } finally {
