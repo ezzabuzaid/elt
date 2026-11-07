@@ -151,11 +151,14 @@ export class WebSource extends Source<WebRead> {
     string,
     { readonly stream: WebStream; readonly inputs: readonly string[] }
   >;
-  // Where the HTTP cache lives is the host's decision, like a destination's path.
-  readonly #cachePath: string;
-  // An optional crawler name selected by the host. Without one, requests
-  // omit User-Agent and the crawler follows the default robots.txt group.
-  readonly #userAgent: string | undefined;
+  // The HTTP of each read: a client of the host's, which every read shares
+  // with the host's own requests, or where the source opens a client of its
+  // own for each read. Where the HTTP cache lives is the host's decision,
+  // like a destination's path; without a userAgent, requests omit
+  // User-Agent and the crawler follows the default robots.txt group.
+  readonly #http:
+    | WebClient
+    | { readonly cachePath: string; readonly userAgent: string | undefined };
   protected override readonly configErrors = [InputError];
   // A routes stream reads beside its web stream, so it loads the routes of
   // each checkpoint while the crawl goes on. Two web streams can crawl at
@@ -165,19 +168,31 @@ export class WebSource extends Source<WebRead> {
   // its starting URL's as a failed one after a read that failed; null when
   // nothing is ever due, or when the read stopped or failed before its crawl.
   readonly #due = new Map<string, Map<string, number | null>>();
-  constructor(options: {
-    // Each web stream with the inputs that it crawls, as an Airbyte
-    // declarative source has many streams, each with its own requests.
-    streams: readonly {
-      readonly stream: WebStream;
-      readonly inputs: readonly string[];
-    }[];
-    cachePath: string;
-    userAgent?: string;
-  }) {
+  constructor(
+    options: {
+      // Each web stream with the inputs that it crawls, as an Airbyte
+      // declarative source has many streams, each with its own requests.
+      streams: readonly {
+        readonly stream: WebStream;
+        readonly inputs: readonly string[];
+      }[];
+    } & (
+      | { cachePath: string; userAgent?: string }
+      // A client that the host opened, so that its own requests, such as a
+      // page that it reads on demand, and every read of the source pass one
+      // record of each origin: its robots.txt, its delay and its block. The
+      // host closes it.
+      | { client: WebClient }
+    ),
+  ) {
     super();
-    this.#cachePath = z.string().min(1).parse(options.cachePath);
-    this.#userAgent = z.string().min(1).optional().parse(options.userAgent);
+    this.#http =
+      'client' in options
+        ? options.client
+        : {
+            cachePath: z.string().min(1).parse(options.cachePath),
+            userAgent: z.string().min(1).optional().parse(options.userAgent),
+          };
     const streams = z
       .array(z.object({ stream: z.instanceof(WebStream), inputs: z.unknown() }))
       .min(1)
@@ -304,11 +319,15 @@ export class WebSource extends Source<WebRead> {
             state.undelivered,
           );
     }
-    return new WebRead(
-      new WebScan(crawled, routed, undelivered),
-      await WebClient.open(this.#cachePath, this.#userAgent, signal, clock),
-      clock,
-    );
+    const scan = new WebScan(crawled, routed, undelivered);
+    const http = this.#http;
+    return http instanceof WebClient
+      ? WebRead.borrowing(scan, http, signal, clock)
+      : WebRead.owning(
+          scan,
+          await WebClient.open(http.cachePath, http.userAgent, signal, clock),
+          clock,
+        );
   }
   // A routes stream takes what the crawls of its web stream find in the same
   // read, and a crawls or failures stream how each crawl ended, and a read
@@ -371,7 +390,7 @@ export class WebSource extends Source<WebRead> {
     configuration: CopyConfiguration,
     state: unknown,
     partition: Partition | null,
-    { scan, client, clock }: WebRead,
+    { scan, client, clock, signal: requestSignal }: WebRead,
     signal: AbortSignal | undefined,
   ): AsyncGenerator<SourceMessage> {
     const inputUrl = z.string().parse(partition?.inputUrl);
@@ -454,7 +473,6 @@ export class WebSource extends Source<WebRead> {
       // Each group the web stream committed goes to the routes stream once
       // the commit ended, when its checkpoint's yield returns.
       give();
-      const requestSignal = client.signal;
       const run = stream.extractor.open(client.http);
       const crawler = client.crawler(
         stream.readers,

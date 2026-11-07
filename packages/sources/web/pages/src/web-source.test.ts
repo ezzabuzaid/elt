@@ -24,7 +24,11 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
-import { ArticleError } from '@workspace/sdk-web-article';
+import {
+  ArticleError,
+  HTMLExtraction,
+  WebArticle,
+} from '@workspace/sdk-web-article';
 import {
   AlwaysRevisit,
   ArchiveReader,
@@ -33,11 +37,13 @@ import {
   LinkReader,
   ListingReader,
   PaginationReader,
+  StartReader,
   day,
   hour,
 } from '@workspace/sdk-web-crawler';
 
 import { ArticleExtractor } from './article-extractor.ts';
+import { WebClient } from './http/web-http.ts';
 import { RecordExtractor } from './record-extractor.ts';
 import { WebSource } from './web-source.ts';
 import { WebStream } from './web-stream.ts';
@@ -2780,3 +2786,67 @@ test('a web stream without an input is refused as the user’s to fix', () => {
     },
   );
 });
+
+test("a host's client is shared: an article read through it and a crawl of its origin ask the origin's robots.txt once, and the crawl leaves the client open", async () => {
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  // The user agent of each robots.txt request.
+  const robots: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (request.url === '/robots.txt') {
+      robots.push(request.headers['user-agent'] ?? '');
+      response
+        .writeHead(200, { 'content-type': 'text/plain' })
+        .end('User-agent: *\nAllow: /');
+    } else if (request.url === '/programs/credits')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<title>Startup credits</title><article><h1>Startup credits</h1><p>Startups get up to $25,000 in credits for their first year.</p></article>',
+        );
+    else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  await using client = await WebClient.open(
+    join(cache.path, 'web-http.sqlite'),
+    'elt-test/1.0',
+    undefined,
+    globalThis,
+  );
+  const page = `${upstream.origin}/programs/credits`;
+  const reader = new WebArticle([new HTMLExtraction()], client.http);
+
+  const before = await reader.fetch(page, AbortSignal.timeout(10_000));
+  await (
+    await pipeline(
+      new WebSource({ client, streams: [{ stream: pages(), inputs: [page] }] }),
+      database.path,
+      checkpoints.path,
+    )
+  ).run();
+  const after = await reader.fetch(page, AbortSignal.timeout(10_000));
+
+  assert.deepEqual(robots, ['elt-test/1.0']);
+  assert.deepEqual(
+    [before?.title, after?.title],
+    ['Startup credits', 'Startup credits'],
+  );
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT articleUrl, title FROM pages')
+      .all()
+      .map((row) => ({ ...row })),
+    [{ articleUrl: page, title: 'Startup credits' }],
+  );
+});
+
+// Each starting URL is one page; the crawl follows none of its links.
+function pages() {
+  return new WebStream({
+    name: 'pages',
+    primaryKey: ['articleUrl'],
+    readers: [new StartReader()],
+    revisit: new AlwaysRevisit(),
+    extractor: new ArticleExtractor(),
+  });
+}

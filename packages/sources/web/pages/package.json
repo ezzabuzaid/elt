@@ -16,6 +16,10 @@
       "types": "./dist/record-extractor.d.ts",
       "default": "./dist/record-extractor.js"
     },
+    "./web-client": {
+      "types": "./dist/http/web-http.d.ts",
+      "default": "./dist/http/web-http.js"
+    },
     "./web-source": {
       "types": "./dist/web-source.d.ts",
       "default": "./dist/web-source.js"
