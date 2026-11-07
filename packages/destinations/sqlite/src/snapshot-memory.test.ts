@@ -14,7 +14,7 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 // one record of each stream, so an incremental pass diffs every scan against
 // the snapshot the first saved.
 const passes = `
-  const { Catalog, Connection, Copy, Pipeline, Source, Stream, diffGroupedSnapshot, diffSnapshot } = await import('@workspace/elt');
+  const { Catalog, Connection, Copy, Gauge, Pipeline, Source, Stream, diffGroupedSnapshot, diffSnapshot } = await import('@workspace/elt');
   const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import(process.env.DESTINATION);
   const { ClosedWorld } = await import('@zukhruf/snapshot-differential');
   const keys = Number(process.env.KEYS);
@@ -36,7 +36,7 @@ const passes = `
     coverage() { return { description: 'synthetic', selection: {} }; }
     async currentAsOf() { return null; }
     async open() { return new AsyncDisposableStack(); }
-    async *observe({ streams }) { yield streams; }
+    changeSignals(streams) { return [{ gauge: new (class extends Gauge { async read() { return 0; } })(), streams, interval: 1000, timeout: 1000 }]; }
     async *extract(configuration, state) {
       const pass = this.pass;
       function* records(from, to) {

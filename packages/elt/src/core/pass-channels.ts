@@ -70,8 +70,8 @@ export class PassFinished {
 }
 
 /**
- * A connection produced no pass, such as an invalid connection or a watcher
- * that stopped, once its sync history recorded why.
+ * A connection produced no pass, such as an invalid connection or a failed
+ * change signal, once its sync history recorded why.
  */
 export class PassFailed {
   readonly connection: Connection<DestinationTarget>;

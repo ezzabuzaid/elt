@@ -131,7 +131,7 @@ The source does not read the iCloud sync and task bookkeeping: `deleted_messages
 - **Edits:** `date_edited` does not show edits reliably. In the verified history, Messages left it empty on edited messages. `messageEdits` reads the edit history itself.
 - **Times:** `chat.db` counts time from 2001-01-01 UTC. Message dates are in nanoseconds. Attachment dates, edit entries and older histories are in seconds. Both kinds become UTC timestamps, and `0` becomes null.
 - **Attachments:** the source reads a file from its original path. `chat.db` keeps many paths relative to the home folder, as `~/Library/Messages/Attachments/…`. The source puts the `home` that you give in place of `~`. It does not copy the file to staging. A file that iCloud offloaded has `availableLocally: false` and null file fields. No public API downloads it. When Messages downloads it, the flag changes, and the next run loads its bytes.
-- **Watching:** Messages writes through a WAL that it keeps open, and FSEvents reports such a file only when it closes. Thus `observe()` reads `PRAGMA data_version` on its own read-only connection each second. Each commit changes it, also the commit when an attachment download ends ([ADR 0002](./docs/adr/0002-a-watch-polls-the-data-version-of-chat-db.md)).
+- **Watching:** Messages writes through a WAL that it keeps open, and FSEvents reports such a file only when it closes. Thus the change signal of the source reads `PRAGMA data_version` on its own read-only connection each second. Each commit changes it, also the commit when an attachment download ends ([ADR 0002](./docs/adr/0002-a-watch-polls-the-data-version-of-chat-db.md)).
 
 ## Scope
 

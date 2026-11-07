@@ -1,6 +1,5 @@
 import { hash } from 'node:crypto';
 
-import { delay } from '@zukhruf/async';
 import { z } from 'zod';
 
 import {
@@ -12,7 +11,6 @@ import {
   Source,
   type SourceMessage,
   type SourceReadOptions,
-  type SourceWatchOptions,
   Stream,
   diffGroupedSnapshot,
   validateRecords,
@@ -20,6 +18,7 @@ import {
 import { AlwaysRevisit } from '@workspace/sdk-web-crawler';
 
 import { crawlRecords, crawlsStream } from './crawls-stream.ts';
+import { DueTime } from './due-time.ts';
 import { failureRecords, failuresStream } from './failures-stream.ts';
 import { WebClient } from './http/web-http.ts';
 import { PageExtracted, pageChannels } from './page-channels.ts';
@@ -120,6 +119,10 @@ function failuresName(stream: WebStream) {
   return `${stream.name}_failures`;
 }
 
+// How often a watch checks whether a stream is due. A due stream is read at
+// most one interval late.
+const checkIntervalMs = 1000;
+
 const inputUrls = z.array(z.url({ protocol: /^https?$/ })).min(1);
 
 /** A web stream without a usable input: none, or a URL that is not http or https. The user chooses the inputs, so only the user can fix it. */
@@ -162,9 +165,6 @@ export class WebSource extends Source<WebRead> {
   // its starting URL's as a failed one after a read that failed; null when
   // nothing is ever due, or when the read stopped or failed before its crawl.
   readonly #due = new Map<string, Map<string, number | null>>();
-  // Wakes a waiting observe() whenever an extraction ends, which can make a
-  // stream due sooner than the time it waits for.
-  readonly #extracted = new EventTarget();
   constructor(options: {
     // Each web stream with the inputs that it crawls, as an Airbyte
     // declarative source has many streams, each with its own requests.
@@ -285,6 +285,10 @@ export class WebSource extends Source<WebRead> {
         return entry === undefined ? [] : [[name, entry.inputs] as const];
       }),
     );
+    // A web stream that this read crawls is not due until each of its
+    // inputs' crawls ended. Else a check between the ends of two crawls
+    // reads a due time that the read already met, and wakes the stream again.
+    for (const name of crawled.keys()) this.#due.delete(name);
     const routed: string[] = [];
     const undelivered = new Map<string, number>();
     for (const { name } of streams) {
@@ -343,48 +347,25 @@ export class WebSource extends Source<WebRead> {
   protected override partitions(stream: Stream) {
     return this.#entry(stream).inputs.map((inputUrl) => ({ inputUrl }));
   }
-  // Each stream checks again when its earliest known URL is due, as its
+  // Each web stream checks again when its earliest known URL is due, as its
   // inputs' last crawls left it, and only the streams that are due are read.
-  // The watch runs a crawl beside this loop, so a stream waits until each of
-  // its inputs' crawls since its last check has ended.
-  protected async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    yield streams;
-    // A routes stream is due with its web stream.
-    const dueAt = (stream: Stream) => {
-      const due = this.#due.get(this.#entry(stream).stream.name);
-      return due === undefined || due.size < this.#entry(stream).inputs.length
-        ? Infinity
-        : Math.min(...[...due.values()].map((at) => at ?? Infinity));
-    };
-    for (;;) {
-      const due = streams.filter((stream) => dueAt(stream) <= clock.Date.now());
-      if (due.length === 0) {
-        const next = Math.min(...streams.map(dueAt));
-        const extracted = new AbortController();
-        this.#extracted.addEventListener('extracted', () => extracted.abort(), {
-          signal: extracted.signal,
-        });
-        try {
-          await delay(Math.min(next - clock.Date.now(), 2 ** 31 - 1), {
-            clock,
-            signal: AbortSignal.any([signal, extracted.signal]),
-          });
-        } catch (error) {
-          if (signal.aborted || !extracted.signal.aborted) throw error;
-        } finally {
-          extracted.abort();
-        }
-        signal.throwIfAborted();
-        continue;
-      }
-      for (const stream of due)
-        this.#due.delete(this.#entry(stream).stream.name);
-      yield due;
-    }
+  // A routes, crawls or failures stream is due with its web stream.
+  override changeSignals(streams: readonly Stream[]) {
+    return Map.groupBy(streams, (stream) => this.#entry(stream))
+      .entries()
+      .map(([{ stream, inputs }, watched]) => ({
+        gauge: new DueTime(() => {
+          const due = this.#due.get(stream.name);
+          return due === undefined || due.size < inputs.length
+            ? Infinity
+            : Math.min(...[...due.values()].map((at) => at ?? Infinity));
+        }),
+        streams: watched,
+        interval: checkIntervalMs,
+        // The read is of memory: a check that takes the whole interval is
+        // stuck.
+        timeout: checkIntervalMs,
+      }));
   }
   protected async *extract(
     configuration: CopyConfiguration,
@@ -673,7 +654,6 @@ export class WebSource extends Source<WebRead> {
       const streamDue = this.#due.get(name) ?? new Map<string, number | null>();
       streamDue.set(inputUrl, due);
       this.#due.set(name, streamDue);
-      this.#extracted.dispatchEvent(new Event('extracted'));
     }
   }
 }

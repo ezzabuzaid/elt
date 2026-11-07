@@ -6,6 +6,7 @@ import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { setTimeout } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 import { RollbackJournal, UnchangedJournal, open } from '@zukhruf/sqlite-open';
@@ -66,13 +67,11 @@ async function chromiumImport(source: Source, directory: string) {
     ),
   });
   const history = new SQLiteSyncHistory();
+  const pipeline = () =>
+    new Pipeline({ clock: globalThis, history, connections: [connection] });
   return {
-    load: () =>
-      new Pipeline({
-        clock: globalThis,
-        history,
-        connections: [connection],
-      }).run(),
+    load: () => pipeline().run(),
+    watch: (signal: AbortSignal) => pipeline().watch({ signal }),
     read: (sql: string) => {
       using database = open(path, { readOnly: true });
       const statement = database.prepare(sql);
@@ -1077,11 +1076,12 @@ test('a Chromium store that cannot be read fails only its streams, as config whe
   }
 });
 
-test('a Chromium watch wakes only the streams of the store that changed, while the browser holds its History', async () => {
+test('a Chromium watch loads only the streams of the store that changed, while the browser holds its History', async (t) => {
   await using scratch = await new TemporaryFiles().directory('chromium-');
   const { root, profile } = await browserFixture(scratch.path, dia);
   const source = new ChromiumSource({ browser: dia, home: scratch.path });
   const { streams } = await source.discover();
+  const chromium = await chromiumImport(source, join(scratch.path, 'import'));
   // The browser holds History in exclusive locking mode while it runs.
   using browser = open(join(profile('Default'), 'History'), {
     journal: new UnchangedJournal(),
@@ -1090,34 +1090,51 @@ test('a Chromium watch wakes only the streams of the store that changed, while t
   browser.exec('SELECT count(*) FROM urls');
   const controller = new AbortController();
   const woken: string[][] = [];
+  // The visit comes after two checks found History unchanged, while the
+  // watch goes on: a change that the first pass's own read made is a pass of
+  // its own, before the visit. The history records the first such check at
+  // once; the watch checks again each second.
+  const visit = async () => {
+    await t.waitFor(
+      () =>
+        assert.equal(
+          chromium.read(
+            `SELECT stream FROM _elt_stream_checks WHERE stream = 'historyVisits'`,
+          ).length,
+          1,
+        ),
+      { interval: 5, timeout: 10_000 },
+    );
+    await setTimeout(1_500);
+    addVisit(browser, 12, 1, t2);
+  };
+  const visiting: Promise<void>[] = [];
 
-  for await (const batch of source.watch({
-    clock: globalThis,
-    streams,
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
-  })) {
-    woken.push(batch.map((stream) => stream.name));
-    // The first check after the first changes nothing.
-    if (woken.length === 2) addVisit(browser, 12, 1, t2);
-    else if (woken.length === 3)
+  for await (const { outcomes } of chromium.watch(
+    // A pass that never comes ends the watch, so the assertion fails.
+    AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
+  )) {
+    woken.push(outcomes.map(({ copy }) => copy.from.name));
+    // A check that changes nothing makes no pass.
+    if (woken.length === 1) visiting.push(visit());
+    else if (woken.length === 2)
       await writeJson(
         join(profile('Default'), 'Bookmarks'),
         bookmarksFile([work]),
       );
-    else if (woken.length === 4)
+    else if (woken.length === 3)
       await writeJson(join(root, 'Local State'), {
         profile: { info_cache: { Default: { name: 'Home' } } },
       });
-    else if (woken.length === 5) {
+    else if (woken.length === 4) {
       await mkdir(profile('Profile 4'));
       using database = createHistory(join(profile('Profile 4'), 'History'));
-    } else if (woken.length === 6) controller.abort();
+    } else if (woken.length === 5) controller.abort();
   }
+  await Promise.all(visiting);
 
   assert.deepEqual(woken, [
     streams.map((stream) => stream.name),
-    [],
     ['historyItems', 'historyVisits', 'downloads', 'searchTerms'],
     ['bookmarks'],
     ['profiles'],

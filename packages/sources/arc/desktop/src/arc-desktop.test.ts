@@ -640,14 +640,10 @@ test('an import of one profile holds its spaces, their items and its favorites o
   });
 });
 
-test('a watch loads each write of the sidebar, fails as config when it goes away, and stops when cancelled', async () => {
+test('a watch loads each write of the sidebar, and fails as config when it goes away', async () => {
   await using dir = await new TemporaryFiles().directory('arc-watch-');
   const file = await writeSidebar(dir.path, sidebar());
-  const { source, pipeline, read } = await arcImport(
-    dir.path,
-    dir.path,
-    globalThis,
-  );
+  const { pipeline, read } = await arcImport(dir.path, dir.path, globalThis);
   const renamed = sidebar();
   const space = renamed.spaces[1];
   assert.ok(space);
@@ -691,12 +687,6 @@ test('a watch loads each write of the sidebar, fails as config when it goes away
     { title: 'Side renamed' },
   ]);
   assert.equal(read('select count(*) n from sidebarItems')[0]?.n, 11);
-  const stopped = source.watch({
-    clock: globalThis,
-    streams: [source.spaces],
-    signal: AbortSignal.abort(),
-  });
-  assert.equal((await stopped.next()).done, true);
 });
 
 test('a watch over a sidebar that holds still runs no pass and records it current as of its last write', async (t) => {

@@ -202,8 +202,8 @@ await sql.begin(async (transaction) => {
 - It records into `_warehouse.sync_attempts`, `_warehouse.extraction_coverage` and `_warehouse.stream_checks`. The last one holds the latest check of each stream by a watch that found it unchanged.
 - `install()` makes those tables and publishes the `marts` views `sync_attempts`, `extraction_coverage`, `sync_status`, `stream_status` and `catalog`, in one transaction. The pipeline calls it before each run and watch, and it is safe to repeat. It grants nothing. See [ADR 0005](./docs/adr/0005-the-history-install-publishes-the-catalog.md).
 - Before a pass reads, the history inserts one `sync_attempts` row, with the connection name as `connector` and the source identity as `source`. It inserts one `extraction_coverage` row for each selected stream, with the declared `coverage(stream)` of the source and the schema of the destination as `target_schema`. The outcomes close them.
-- A run declares each stream that a connection selected. A watch pass reads only the streams that its source reported changed, so an attempt vouches only for its own `extraction_coverage` rows.
-- A connection that is not valid, or a connection whose watcher stopped, records a failed attempt with no outcomes.
+- A run declares each stream that a connection selected. A watch pass reads only the streams whose change signals changed, so an attempt vouches only for its own `extraction_coverage` rows.
+- A connection that is not valid or that stopped, a failed change signal and a failed upkeep each record a failed attempt with no outcomes.
 - `_warehouse` tables are made only when they are missing.
 
 The relations in `marts`:

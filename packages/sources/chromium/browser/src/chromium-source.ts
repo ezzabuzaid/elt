@@ -1,7 +1,5 @@
 import { join } from 'node:path';
 
-import { ChangeWatcher } from '@zukhruf/async';
-
 import {
   Catalog,
   type CopyConfiguration,
@@ -9,7 +7,6 @@ import {
   type PipelineClock,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   type Stream,
   diffSnapshot,
 } from '@workspace/elt';
@@ -172,16 +169,9 @@ export class ChromiumSource extends Source<ChromiumScan> {
   // Each store the streams read reports its own changes: a commit to any
   // History, a rewrite of any Bookmarks or of Local State, and a profile
   // that gains or loses one of them.
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    if (signal.aborted) return;
-    using versions = new DisposableStack();
+  override changeSignals(streams: readonly Stream[]) {
     const gauges = {
-      history: () =>
-        versions.use(new HistoryGauge(() => this.#files('history'))),
+      history: () => new HistoryGauge(() => this.#files('history')),
       bookmarks: () => new BookmarksGauge(() => this.#files('bookmarks')),
       profiles: () =>
         new ProfilesGauge(this.browser, this.home, () => [
@@ -189,26 +179,19 @@ export class ChromiumSource extends Source<ChromiumScan> {
           ...this.#files('bookmarks'),
         ]),
     };
-    const watcher = new ChangeWatcher(
-      [...this.#stores(streams)].map((store) => gauges[store]()),
-      {
+    return Map.groupBy(
+      streams,
+      (stream) => this.#streams.readerOf(stream).store,
+    )
+      .entries()
+      .map(([store, watched]) => ({
+        gauge: gauges[store](),
+        streams: watched,
         interval: pollIntervalMs,
         // The reads are local, data_version and file stamps: a check that
         // takes the whole interval is stuck.
         timeout: pollIntervalMs,
-        clock,
-      },
-    );
-    for await (const outcomes of watcher.watch(signal)) {
-      const changed = new Set<ChromiumStore>();
-      for (const [gauge, outcome] of outcomes) {
-        if (outcome.state === 'failed') throw outcome.error;
-        if (outcome.state === 'changed') changed.add(gauge.store);
-      }
-      yield streams.filter((stream) =>
-        changed.has(this.#streams.readerOf(stream).store),
-      );
-    }
+      }));
   }
 
   protected override async *extract(

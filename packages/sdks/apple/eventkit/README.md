@@ -28,11 +28,10 @@ EventKit has no read transaction. Thus the Calendar and Reminders sources read w
 
 ## Watch
 
-`checks(signal)` of a store watches EventKit for the sources. A persistent helper process (`eventkit watch events|reminders`) subscribes to the native `EKEventStoreChangedNotification`.
+`changes()` of a store watches EventKit for the sources. A persistent helper process (`eventkit watch events|reminders`) subscribes to the native `EKEventStoreChangedNotification`.
 
 - The helper writes `changed` for each change of the store. Its first line confirms the subscription.
-- `checks(signal)` yields `changed` when the helper confirms its subscription and at each change, and `unchanged` for each quiet second between them. EventKit posts each change while the helper subscribes, so a quiet second is a check that found the store unchanged.
-- A consumer that stops reading stops the helper, as an abort does.
+- `changes()` gives a gauge of `@zukhruf/async` whose value is the count of the changes that the helper reported. Its first read starts the helper and waits until the helper confirms its subscription. EventKit posts each change while the helper subscribes, so a read with the same count is a check that found the store unchanged. A read after the helper failed gives that failure, and the next read starts a new helper. A dispose stops the helper and waits for it to end.
 - A change notice marks all selected streams as changed, because EventKit does not identify each change.
 - The notice covers the full event store. Thus a Calendar edit also makes a Reminders watch extract again, and a Reminders edit also makes a Calendar watch extract again.
 - The EventKit permissions that a read needs also apply to a watch.
@@ -49,7 +48,7 @@ On 2026-09-22, with macOS 26.6.2 and Node.js 26.8.1, the Calendar and Reminders 
 
 - The watchers were closed after the check. The test event of Calendar, the temporary list of Reminders and the temporary databases were removed. New native reads confirmed the EventKit cleanup. No existing record of the user changed.
 - This check covered the primary streams and SQLite. Edits in the apps of Calendar and Reminders, and the other streams, were not checked live.
-- The tests cover the watch subscription of the helper and its stop on abort.
+- The tests cover the watch subscription of the helper and its stop when the gauge is disposed.
 
 ## Development
 

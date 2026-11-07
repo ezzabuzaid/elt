@@ -8,19 +8,33 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
+  type ChangeSignal,
   Connection,
   Copy,
   type CopyConfiguration,
+  Gauge,
   Pipeline,
   PipelineError,
   Source,
-  type SourceWatchOptions,
   Stream,
   diffGroupedSnapshot,
   diffSnapshot,
 } from '@workspace/elt';
 
 import { SQLiteDestination, SQLiteSyncHistory } from './index.ts';
+
+// The upstream of a test source, which the test fills before it reads: a
+// watch finds it changed at its first check and unchanged after.
+class Filled extends Gauge<number> {
+  protected async read(): Promise<number> {
+    return 0;
+  }
+}
+
+// The change signal of streams whose upstream the test filled.
+const filled = (streams: readonly Stream[]): ChangeSignal[] => [
+  { gauge: new Filled(), streams, interval: 1000, timeout: 1000 },
+];
 
 // A source whose upstream is current whenever it is read.
 abstract class LiveSource<
@@ -69,8 +83,8 @@ test('a full refresh checks a snapshot stream’s declaration as an incremental 
       forgetting,
       uncursored,
     ]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,
@@ -177,8 +191,8 @@ test('a full refresh of a snapshot stream loads every record of each scan as sca
 
     readonly identity = 'full-refresh-snapshot-test';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,
@@ -259,8 +273,8 @@ test('a full refresh of a grouped snapshot stream reads every group, also one wh
 
     readonly identity = 'full-refresh-grouped-snapshot-test';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,

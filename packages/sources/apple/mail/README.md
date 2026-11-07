@@ -129,7 +129,7 @@ A message whose fingerprint did not change keeps its saved rows, and the run doe
 
 A watch keeps one recursive file watch on the Mail store, and it checks the `PRAGMA data_version` of the index each second. A commit or a file change refreshes the selected streams. A file change includes an attachment download that does not change the index. When the watch stops, it closes the file watch and the database handle.
 
-A watch sees only the local activity of Mail. To get remote changes, keep Mail open and syncing. The account and server settings come from the system Accounts store, so Mail does not have to run for them. While `accounts` or `smtpServers` is selected, the watch also checks the `data_version` of that store each second. A commit there refreshes only those two streams. A Mail change also refreshes them, because it can add a mailbox host. If the process cannot open the Accounts store, the watch does not watch it, and each run reports the failure of those two streams. If the version folder of Mail changes, start the watch again.
+A watch sees only the local activity of Mail. To get remote changes, keep Mail open and syncing. The account and server settings come from the system Accounts store, so Mail does not have to run for them. While `accounts` or `smtpServers` is selected, the watch also checks the `data_version` of that store each second. A commit there refreshes only those two streams. A Mail change also refreshes them, because it can add a mailbox host. If the process cannot open the Accounts store, the watch reads its version as unavailable, and each run reports the failure of those two streams. When the process can open the store again, the version changes, and the watch refreshes the two streams. If the version folder of Mail changes, start the watch again.
 
 `currentAsOf` is always the last write of the index of Mail, because the daemon of Mail writes it also while Mail.app is closed. See [how current a stream is](../../../elt/README.md#how-current-a-stream-is).
 
@@ -137,7 +137,7 @@ A watch sees only the local activity of Mail. To get remote changes, keep Mail o
 
 Give **Full Disk Access** to the process that runs the pipeline. Mail's store needs it, and so does the system Accounts store (`~/Library/Accounts/Accounts4.sqlite`). Mail does not need Automation access.
 
-- If the process cannot read the Mail store, or `PersistenceInfo.plist` or `Envelope Index` is missing, a read and a watch fail with `StoreUnavailableError`.
+- If the process cannot read the Mail store, or `PersistenceInfo.plist` or `Envelope Index` is missing, a read fails with `StoreUnavailableError`. In a watch, the selected streams fail with it, and the sync history records the failure. The watch does not stop.
 - If `PersistenceInfo.plist` does not parse, or the index is not a database, the read fails with that error.
 - If the process cannot read the Accounts store, only `accounts` and `smtpServers` fail, with `StoreUnavailableError`, which names the Accounts store.
 - If `Envelope Index` does not have a column that the source reads, for example after a Mail release changes the layout, the read fails with `MissingColumnsError`, and no stream of that read loads. The error names each missing `table.column`: `The database at "<path>" lacks the columns …: its owner changed its layout. Update the reader to the new layout.`

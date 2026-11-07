@@ -1599,6 +1599,149 @@ test(
   },
 );
 
+test(
+  'a watched web stream with two inputs gets one pass for each due time, also when a check falls between the ends of its two crawls',
+  { timeout: 10_000 },
+  async (t) => {
+    // The test sets the time of each visit, so the due times are known.
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    const start = Date.now();
+    // A clock on which each wait takes a thousandth of its time, so a check
+    // comes about each millisecond, also while a pass runs.
+    const timers = new Map<object, NodeJS.Timeout>();
+    const fast = {
+      Date: globalThis.Date,
+      performance: globalThis.performance,
+      setTimeout: (callback: () => void, ms: number) => {
+        const timer = {};
+        timers.set(
+          timer,
+          globalThis.setTimeout(() => {
+            timers.delete(timer);
+            callback();
+          }, ms / 1000),
+        );
+        return timer;
+      },
+      clearTimeout: (timer: unknown) => {
+        if (!(timer instanceof Object)) return;
+        globalThis.clearTimeout(timers.get(timer));
+        timers.delete(timer);
+      },
+    };
+    await using cache = await new TemporaryFiles().directory('web-cache-');
+    const requests: string[] = [];
+    // The first crawl of b starts 2 s after the crawl of a, so b is due 2 s
+    // later.
+    let visit = async (path: string) => {
+      if (path === '/a/post') t.mock.timers.setTime(start + 2_000);
+    };
+    await using upstream = await new HttpServer().start(
+      async (request, response) => {
+        // The site asks for 10 ms between requests, where the default is a
+        // second on the clock of the process.
+        if (request.url === '/robots.txt') {
+          response.end('User-agent: *\nCrawl-delay: 0.01\n');
+          return;
+        }
+        const url = new URL(
+          request.url ?? '/',
+          `http://${request.headers.host}`,
+        );
+        requests.push(url.pathname);
+        await visit(url.pathname);
+        if (url.pathname.endsWith('/feed.xml'))
+          response
+            .writeHead(200, { 'content-type': 'application/rss+xml' })
+            .end(
+              `<rss><channel><item><link>${url.href.replace('feed.xml', 'post')}</link></item></channel></rss>`,
+            );
+        else
+          response
+            .writeHead(200, { 'content-type': 'text/html' })
+            .end(`<article><p>${observation}</p></article>`);
+      },
+    );
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const source = new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [
+        {
+          stream: feedStream('feeds', new FixedRevisit({ every: 10_000 })),
+          inputs: [
+            `${upstream.origin}/a/feed.xml`,
+            `${upstream.origin}/b/feed.xml`,
+          ],
+        },
+      ],
+    });
+    const destination = new SQLiteDestination({ path: database.path });
+    const controller = new AbortController();
+    const watch = new Pipeline({
+      clock: fast,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'web',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: checkpoints.path }),
+          steps: (await source.discover()).streams.map(
+            (stream) =>
+              new Copy(stream, destination.table(stream.name), {
+                id: `web:${stream.name}`,
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+              }),
+          ),
+        }),
+      ],
+    }).watch({ signal: controller.signal });
+    try {
+      assert.equal((await watch.next()).done, false);
+      // a is due at 10 s and b at 12 s; a check at 13 s finds both due.
+      t.mock.timers.setTime(start + 13_000);
+      // The feed of b answers 100 ms later, so many checks come after the
+      // crawl of a ended and before the crawl of b ends.
+      visit = async (path) => {
+        if (path === '/b/feed.xml') await setTimeout(100);
+      };
+      requests.splice(0);
+      assert.equal((await watch.next()).done, false);
+      assert.deepEqual(requests, [
+        '/a/feed.xml',
+        '/a/post',
+        '/b/feed.xml',
+        '/b/post',
+      ]);
+      requests.splice(0);
+      visit = async () => {};
+
+      // Both feeds are due at 23 s, so no pass comes at 13 s.
+      const next = watch.next();
+      const early = await Promise.race([
+        next.then(() => 'a pass'),
+        setTimeout(300, 'no pass'),
+      ]);
+      t.mock.timers.setTime(start + 24_000);
+      await next;
+
+      assert.equal(early, 'no pass');
+      assert.deepEqual(requests, [
+        '/a/feed.xml',
+        '/a/post',
+        '/b/feed.xml',
+        '/b/post',
+      ]);
+    } finally {
+      controller.abort();
+      await watch.return(undefined);
+    }
+  },
+);
+
 // A host's policy whose failed URLs wait the given time, where the crawler's
 // default waits two hours.
 class FailedWait extends FixedRevisit {
@@ -2576,8 +2719,15 @@ test(
       post =
         'An updated observation that now includes a newly verified finding.';
 
-      assert.equal((await watch.next()).done, false);
+      const again = await watch.next();
 
+      assert.ok(!again.done);
+      assert.deepEqual(
+        again.value.outcomes
+          .map(({ copy }) => copy.from.name)
+          .filter((name) => name.startsWith('blog')),
+        [],
+      );
       assert.equal(
         database.connection.prepare('SELECT textContent FROM news').get()
           ?.textContent,

@@ -2164,34 +2164,39 @@ test(
   'a watch wakes every selected stream at once, then waits instead of asking Instagram again',
   { timeout: 30_000 },
   async () => {
-    // A source given its profiles signs in only when it reads, which a
-    // watch does not.
+    await using mac = await signedInMac();
+    await using dir = await new TemporaryFiles().directory('instagram-load-');
+    using wire = instagram({ profiles: [hive([])], following: [] });
     const source = await InstagramWebSource.connect(
       {
-        home: tmpdir(),
+        home: mac.path,
         profileIds: ['44555906095'],
       },
       globalThis,
     );
     const { streams } = await source.discover();
     const watching = new AbortController();
-    const watch = source.watch({
-      clock: globalThis,
-      streams,
+    const watch = (await pipeline(source, dir.path)).watch({
       signal: watching.signal,
     });
-    const checks = watch[Symbol.asyncIterator]();
     try {
-      const first = await checks.next();
+      const first = await watch.next();
+      wire.calls.length = 0;
       const again = await Promise.race([
-        checks.next().then(() => true),
+        watch.next().then(() => true),
         new Promise((resolve) => setTimeout(() => resolve(false), 300)),
       ]);
 
-      assert.deepEqual(first.value, streams);
+      assert.ok(!first.done);
+      assert.deepEqual(
+        first.value.outcomes.map(({ copy }) => copy.from.name),
+        streams.map(({ name }) => name),
+      );
       assert.equal(again, false);
+      assert.deepEqual(wire.calls, []);
     } finally {
       watching.abort();
+      await watch.return(undefined);
     }
   },
 );

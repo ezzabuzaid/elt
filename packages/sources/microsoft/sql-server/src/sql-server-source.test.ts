@@ -12,7 +12,12 @@ import {
 import sql from 'mssql';
 import postgres from 'postgres';
 
-import { Connection, Pipeline, PipelineError } from '@workspace/elt';
+import {
+  Connection,
+  Pipeline,
+  type PipelineClock,
+  PipelineError,
+} from '@workspace/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
@@ -114,26 +119,57 @@ function syncer(
   };
 }
 
+// Watches the database into the warehouse's raw schema, as a host does.
+function watchSqlServer(
+  source: SqlServerSource,
+  url: string,
+  clock: PipelineClock,
+  signal: AbortSignal,
+) {
+  const destination = new PostgresDestination({ url, schema: 'raw' });
+  return new Pipeline({
+    clock,
+    history: new PostgresSyncHistory({ url }),
+    connections: [
+      new Connection({
+        name: 'sql-server',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({ url, schema: 'raw' }),
+        steps: sqlServerCopies(source, (stream) =>
+          destination.table(stream.replace('.', '_')),
+        ),
+      }),
+    ],
+  }).watch({ signal });
+}
+
+// The streams of the next pass of a watch, by name.
+function loadedBy(
+  result: IteratorResult<{
+    readonly outcomes: readonly {
+      readonly copy: { readonly from: { readonly name: string } };
+    }[];
+  }>,
+): string[] {
+  assert.ok(!result.done, 'the watch ended before its pass');
+  return result.value.outcomes.map(({ copy }) => copy.from.name).sort();
+}
+
 // A watch on a fake clock, because a check waits 30 s and the hourly
 // refresh an hour: each check runs when the test moves the clock past the
-// wait. A change that wakes nothing makes no yield, so each check a test
+// wait. A change that wakes nothing makes no pass, so each check a test
 // reads must wake a stream.
-function watcher(t: TestContext, source: SqlServerSource) {
+function watcher(t: TestContext, source: SqlServerSource, url: string) {
   // A start in the middle of an hour, so a wake on the hour of the clock
   // differs from a wake an hour after the watch started.
   const clock = createClock(Date.UTC(2026, 10, 6, 7, 12));
   const controller = new AbortController();
-  const watch = source.watch({
-    clock,
-    streams: source.streams,
-    signal: controller.signal,
-  });
-  const names = (result: IteratorResult<readonly { name: string }[]>) =>
-    result.done ? [] : result.value.map(({ name }) => name).sort();
+  const watch = watchSqlServer(source, url, clock, controller.signal);
   return {
     clock,
     // The first check, which wakes every stream.
-    first: async () => names(await watch.next()),
+    first: async () => loadedBy(await watch.next()),
     // The streams the next check wakes.
     woken: async () => {
       const next = watch.next();
@@ -141,7 +177,7 @@ function watcher(t: TestContext, source: SqlServerSource) {
         timeout: 30_000,
       });
       await clock.tickAsync(30_000);
-      return names(await next);
+      return loadedBy(await next);
     },
     [Symbol.asyncDispose]: async () => {
       controller.abort();
@@ -1199,16 +1235,15 @@ test(
     const source = await SqlServerSource.discover(
       new SqlServerDatabase(reader.connectionString),
     );
+    await using warehouse = await postgresServer.database();
     const controller = new AbortController();
-    const watch = source.watch({
-      clock: globalThis,
-      streams: source.streams,
-      signal: controller.signal,
-    });
-    const woken = async () => {
-      const next = await watch.next();
-      return next.done ? [] : next.value.map(({ name }) => name).sort();
-    };
+    const watch = watchSqlServer(
+      source,
+      warehouse.connectionString,
+      globalThis,
+      controller.signal,
+    );
+    const woken = async () => loadedBy(await watch.next());
     try {
       assert.deepEqual(await woken(), [
         'dbo.plain',
@@ -1262,7 +1297,8 @@ test(
       ),
       /Granting the login VIEW SERVER STATE \(VIEW DATABASE STATE on Azure SQL Database\) would wake a watch on any write, also to a column with no statistics\./,
     );
-    await using watch = watcher(t, source);
+    await using warehouse = await postgresServer.database();
+    await using watch = watcher(t, source, warehouse.connectionString);
     assert.deepEqual(await watch.first(), ['dbo.notes', 'dbo.other']);
 
     await admin.request().batch("INSERT dbo.notes VALUES (2, N'b');");
@@ -1327,7 +1363,8 @@ test(
     // Change Tracking comes before the rowversion.
     assert.match(described('dbo.tracked_stamped'), /Change Tracking/);
     assert.match(described('dbo.log'), /Granting the login VIEW SERVER STATE/);
-    await using watch = watcher(t, source);
+    await using warehouse = await postgresServer.database();
+    await using watch = watcher(t, source, warehouse.connectionString);
     assert.deepEqual(await watch.first(), [
       'dbo.log',
       'dbo.notes',
@@ -1392,7 +1429,8 @@ test(
       ),
       /VIEW SERVER STATE/,
     );
-    await using watch = watcher(t, source);
+    await using warehouse = await postgresServer.database();
+    await using watch = watcher(t, source, warehouse.connectionString);
     assert.deepEqual(await watch.first(), ['dbo.log', 'dbo.notes']);
 
     await admin
@@ -1424,7 +1462,8 @@ test(
     const source = await SqlServerSource.discover(
       new SqlServerDatabase(reader.connectionString),
     );
-    await using watch = watcher(t, source);
+    await using warehouse = await postgresServer.database();
+    await using watch = watcher(t, source, warehouse.connectionString);
     assert.deepEqual(await watch.first(), ['dbo.notes', 'dbo.other']);
 
     await admin.request().batch("INSERT dbo.notes VALUES (1, N'a');");

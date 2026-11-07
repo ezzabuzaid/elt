@@ -1,4 +1,4 @@
-import { ChangeWatcher, type Gauge, Group } from '@zukhruf/async';
+import { type Gauge, Group } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -7,7 +7,6 @@ import {
   type Partition,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   type Stream,
 } from '@workspace/elt';
 import type {
@@ -34,17 +33,23 @@ const pollIntervalMs = 30_000;
 // How long the queries of one check can take. Each query took 160 to 300 ms
 // on Azure SQL Database, and a check runs at most four at once, one on each
 // connection of the session. A check that takes a third of the interval is
-// stuck: its gauges fail, and the watch fails with them, as a system failure
-// that the pipeline watches again after.
+// stuck: its gauges fail, as a system failure, and the next check reads them
+// again.
 const checkTimeoutMs = 10_000;
 
-// The gauges of one stream: a check wakes the stream when one changed.
-class StreamGroup extends Group {
-  readonly stream: Stream;
+// The gauges of one stream: a check wakes the stream when one changed. The
+// streams of a watch share its session, which the first group that the
+// pipeline disposes closes.
+class StreamGroup extends Group implements AsyncDisposable {
+  readonly #gauges: WatchGauges;
 
-  constructor(stream: Stream, members: readonly Gauge[]) {
+  constructor(members: readonly Gauge[], gauges: WatchGauges) {
     super(members);
-    this.stream = stream;
+    this.#gauges = gauges;
+  }
+
+  [Symbol.asyncDispose](): Promise<void> {
+    return this.#gauges[Symbol.asyncDispose]();
   }
 }
 
@@ -121,7 +126,7 @@ export class SqlServerSource extends Source<SqlServerSession> {
   }
 
   // A server that cannot be reached now is a system failure: a later
-  // attempt, or a watch that watches again, can succeed.
+  // attempt, or the next check of a watch, can succeed.
   protected override readonly configErrors = [
     SqlServerLoginError,
     SqlServerPermissionError,
@@ -135,32 +140,17 @@ export class SqlServerSource extends Source<SqlServerSession> {
     return null;
   }
 
-  // Checks the gauges of the streams every 30 s, and yields the streams
-  // whose gauges changed. The first check wakes every stream; a check that
-  // wakes none yields nothing; a gauge that fails fails the watch.
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    if (signal.aborted) return;
-    await using session = await this.#database.open();
-    const gauges = new WatchGauges(session);
-    const watcher = new ChangeWatcher(
-      streams.map(
-        (stream) =>
-          new StreamGroup(stream, this.#reader(stream).gauges(gauges)),
-      ),
-      { interval: pollIntervalMs, timeout: checkTimeoutMs, clock },
-    );
-    for await (const outcomes of watcher.watch(signal)) {
-      const woken: Stream[] = [];
-      for (const [group, outcome] of outcomes) {
-        if (outcome.state === 'failed') throw outcome.error;
-        if (outcome.state === 'changed') woken.push(group.stream);
-      }
-      if (woken.length > 0) yield woken;
-    }
+  // Checks the gauges of the streams every 30 s. A refused login fails
+  // every stream as config, and the pipeline reads its gauges no more in
+  // this watch.
+  override changeSignals(streams: readonly Stream[]) {
+    const gauges = new WatchGauges(this.#database);
+    return streams.map((stream) => ({
+      gauge: new StreamGroup(this.#reader(stream).gauges(gauges), gauges),
+      streams: [stream],
+      interval: pollIntervalMs,
+      timeout: checkTimeoutMs,
+    }));
   }
 
   protected override extract(

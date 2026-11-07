@@ -3,8 +3,10 @@ import { execFile, spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import {
   chmod,
+  copyFile,
   mkdir,
   readFile,
+  rename,
   rm,
   utimes,
   writeFile,
@@ -25,6 +27,7 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import {
   Connection,
   Copy,
+  type CopyOutcome,
   LocalFiles,
   Pipeline,
   PipelineError,
@@ -37,6 +40,7 @@ import {
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
+  type SQLiteTable,
 } from '@workspace/elt-sqlite';
 import {
   BooksSchemaError,
@@ -1333,7 +1337,37 @@ test('Books names Full Disk Access for an unreadable store, refuses an unknown l
   assert.ok(historyStatus.error instanceof BooksSchemaError);
 });
 
-test('a Books watch wakes only the streams of the store that changed, while Books keeps its databases open', async () => {
+// Watches the streams into a new SQLite import, as a host watches Books.
+function watchBooks(
+  source: AppleBooksSource,
+  streams: readonly Stream[],
+  directory: string,
+  signal: AbortSignal,
+) {
+  mkdirSync(directory, { recursive: true });
+  const destination = new SQLiteDestination({
+    path: join(directory, 'data.sqlite'),
+  });
+  return new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'books',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(directory, 'checkpoints.sqlite'),
+        }),
+        steps: streams.map(
+          (stream) => new Copy(stream, destination.table(stream.name)),
+        ),
+      }),
+    ],
+  }).watch({ signal });
+}
+
+test('a Books watch loads only the streams of the store that changed, while Books keeps its databases open', async () => {
   await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const source = new AppleBooksSource(location);
@@ -1349,13 +1383,14 @@ test('a Books watch wakes only the streams of the store that changed, while Book
   const controller = new AbortController();
   const woken: string[][] = [];
 
-  for await (const batch of source.watch({
-    clock: globalThis,
+  for await (const { outcomes } of watchBooks(
+    source,
     streams,
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-  })) {
-    woken.push(batch.map((stream) => stream.name));
+    join(scratch.path, 'import'),
+    // A pass that never comes ends the watch, so the assertion fails.
+    AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  )) {
+    woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1)
       annotations.exec(
         "UPDATE ZAEANNOTATION SET ZANNOTATIONNOTE = 'Watched' WHERE ZANNOTATIONUUID = 'H-1'",
@@ -1379,6 +1414,61 @@ test('a Books watch wakes only the streams of the store that changed, while Book
     ['assetDetails'],
   ]);
 });
+
+test(
+  'a Books watch keeps loading the streams of its other stores after one store becomes unreadable, and the read of that store says why',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using scratch = await new TemporaryFiles().directory('books-');
+    const location = await booksFixture(scratch.path);
+    const source = new AppleBooksSource(location);
+    // bookdatastored holds its connection, and so its WAL, open.
+    using assetData = open(location.files.assetData);
+    // macOS denies the store, as when Full Disk Access is taken back: a
+    // database this process may not open takes the place of the annotations.
+    const denied = join(scratch.path, 'denied.sqlite');
+    await copyFile(location.files.annotations, denied);
+    await chmod(denied, 0o000);
+    const controller = new AbortController();
+    const passes: CopyOutcome<SQLiteTable>[][] = [];
+
+    for await (const { outcomes } of watchBooks(
+      source,
+      [source.annotations, source.assetDetails],
+      join(scratch.path, 'import'),
+      // A pass that never comes ends the watch, so the assertion fails.
+      AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    )) {
+      passes.push([...outcomes]);
+      if (passes.length === 1) {
+        await rename(denied, location.files.annotations);
+        assetData.exec(
+          "UPDATE ZBCASSETDETAIL SET ZREADINGPROGRESS = 0.6 WHERE ZASSETID = 'A1'",
+        );
+      } else if (
+        passes.at(-1)?.some(({ copy }) => copy.from.name === 'assetDetails')
+      )
+        controller.abort();
+    }
+
+    const later = passes.slice(1).flat();
+    assert.ok(
+      later.some(
+        ({ copy, failures }) =>
+          copy.from.name === 'assetDetails' && failures.length === 0,
+      ),
+      `the asset data commit loaded nothing: ${JSON.stringify(later.map(({ copy }) => copy.from.name))}`,
+    );
+    const [failure] =
+      later.find(({ copy }) => copy.from.name === 'annotations')?.failures ??
+      [];
+    assert.ok(failure?.error instanceof StoreUnavailableError);
+    assert.equal(failure.failureType, 'config');
+  },
+);
 
 test('Books imports library assets with oversized integers in unused columns and internal relationship keys', async () => {
   await using scratch = await new TemporaryFiles().directory('books-');
@@ -1649,12 +1739,36 @@ test('Books names the preference file it cannot read, and only readingGoal fails
   }
 });
 
-test('a Books watch fails before its first batch when a watched database is missing, and wakes the streams of each store and preference file that changes', async () => {
+test('a Books watch with a missing database loads the other streams, and the read of the missing store says why, as the user’s to fix', async () => {
   await using scratch = await new TemporaryFiles().directory('books-');
-  const missing = await booksFixture(join(scratch.path, 'missing'));
-  await rm(missing.files.themes);
-  const withoutThemes = new AppleBooksSource(missing);
-  const location = await booksFixture(join(scratch.path, 'watched'));
+  const location = await booksFixture(scratch.path);
+  await rm(location.files.themes);
+  const source = new AppleBooksSource(location);
+  const controller = new AbortController();
+  const passes: CopyOutcome<SQLiteTable>[][] = [];
+
+  for await (const { outcomes } of watchBooks(
+    source,
+    [source.libraryAssets, source.themes],
+    join(scratch.path, 'import'),
+    AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  )) {
+    passes.push([...outcomes]);
+    controller.abort();
+  }
+
+  const failures = (name: string) =>
+    passes[0]?.find(({ copy }) => copy.from.name === name)?.failures ?? [];
+  assert.deepEqual(failures('libraryAssets'), []);
+  const [failure] = failures('themes');
+  assert.ok(failure?.error instanceof StoreUnavailableError);
+  assert.match(failure.error.message, /BookTheme\.sqlite cannot be read/);
+  assert.equal(failure.failureType, 'config');
+});
+
+test('a Books watch loads the streams of each store and preference file that changes', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+  const location = await booksFixture(scratch.path);
   const source = new AppleBooksSource(location);
   const streams = [
     source.libraryAssets,
@@ -1674,27 +1788,16 @@ test('a Books watch fails before its first batch when a watched database is miss
   using purchases = open(location.files.purchases);
   using themes = open(location.files.themes);
   const controller = new AbortController();
-  const before: string[][] = [];
   const woken: string[][] = [];
 
-  const failure = await (async () => {
-    for await (const batch of withoutThemes.watch({
-      clock: globalThis,
-      streams: [withoutThemes.libraryAssets, withoutThemes.themes],
-      signal: AbortSignal.timeout(10_000),
-    }))
-      before.push(batch.map((stream) => stream.name));
-  })().then(
-    () => null,
-    (error: unknown) => error,
-  );
-  for await (const batch of source.watch({
-    clock: globalThis,
+  for await (const { outcomes } of watchBooks(
+    source,
     streams,
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
-  })) {
-    woken.push(batch.map((stream) => stream.name));
+    join(scratch.path, 'import'),
+    // A pass that never comes ends the watch, so the assertion fails.
+    AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+  )) {
+    woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1)
       await writePlist(location.files.sharedPreferences, {
         BKReadingGoalsUserDefaultsKey: false,
@@ -1724,10 +1827,6 @@ test('a Books watch fails before its first batch when a watched database is miss
     else controller.abort();
   }
 
-  assert.deepEqual(before, []);
-  assert.ok(failure instanceof Error);
-  assert.equal(failure.name, 'StoreUnavailableError');
-  assert.match(failure.message, /BookTheme\.sqlite cannot be read/);
   assert.deepEqual(woken, [
     streams.map((stream) => stream.name),
     // The shared preference file is rewritten, then the app's goes and

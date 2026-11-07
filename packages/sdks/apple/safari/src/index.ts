@@ -43,7 +43,7 @@ export {
   type WindowTabGroup,
   tabGroupKinds,
 } from './safari-tabs.ts';
-export { SafariVersion } from './safari-version.ts';
+export { type SafariVersion } from './safari-version.ts';
 export {
   type SafariLocation,
   type SafariStore,

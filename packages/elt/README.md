@@ -683,7 +683,7 @@ for await (const { connection, outcomes } of pipeline.watch({
 // Call controller.abort() from your app's stop/shutdown handler.
 ```
 
-- The watch checks the declarations of each connection first. Then each connection watches its own source. It subscribes before its first pass, and it runs a pass over the copies whose streams changed.
+- The watch checks the declarations of each connection first. Then each connection reads the change signals of its own source, and it runs a pass over the copies whose streams changed.
 - The copies keep their modes. Incremental copies of Notes and Calendar stay incremental, and full refresh copies stay full refresh. A change notice does not give records, and it does not make a full refresh copy incremental.
 - `run()` stays one execution. The hosts of [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) call the two.
 
@@ -693,8 +693,8 @@ Passes and checks:
 
 - The passes of one connection run one after the other. The passes of different connections run side by side, and each waits only for the consumer. Thus a slow source never holds back a different source.
 - Changes that come while a pass extracts, or while the caller handles a result, go into the set of pending streams of that connection. They cause one next pass, not a queue with no limit.
-- The first check of a connection must cover each stream that it selected.
-- Each yield of the source is one check of the upstream. A check that names no stream tells that the upstream did not change.
+- The first check of a connection reads each gauge at once. Thus each selected stream is changed or failed. The first pass starts only when each interval had its first check, or its first read failed or timed out. Thus the first pass loads each stream that changed, as one pass.
+- Each interval and timeout of the change signals has its own checks. At a check, a stream is changed when one of its gauges changed, else failed when one of them failed, else unchanged.
 - At each check, a stream is current as of that check when it has no pending change, no pass reads it, and its last copy loaded completely. When its source tells that its upstream was last current at an earlier time, the stream is current as of that earlier time.
 - The pipeline gives each check to `checked()` of its sync history. `checked()` records the first check of a connection at once, and after that at most one time each minute. Only then does it ask the source. Thus `current_as_of` keeps moving while nothing changes, and it stops where the upstream stopped.
 - A stream whose change failed to load stays current only as of the time before that change. Thus a failed refresh shows as a `current_as_of` that gets older. A Debezium heartbeat and a Beam watermark on an idle partition show in the same way that a source is caught up.
@@ -711,49 +711,51 @@ Retries:
 - Retries stop when the watch stops. While a stream waits, its `current_as_of` does not move.
 - See [ADR 0011](./docs/adr/0011-a-watch-loads-a-stream-again-after-a-system-failure.md).
 
-When a watcher fails:
+When a change signal fails:
 
-- A watcher that fails for a `system` reason, such as a connection that its upstream dropped, watches again. The pipeline waits 10, 30, 90, 270 and 810 seconds after each failure in a row, then 30 minutes after each next failure, with the back-off of Airbyte. It does not stop for a `system` failure, as the schedule of Airbyte continues after a failed sync and Debezium restarts its task.
-- The sync history records each failure as a failed attempt. A check that the new watcher yields starts the count again. Its first check covers each selected stream, so each stream loads again.
-- A connection whose watcher fails for a `config` reason stops alone, because only the user can fix it. The sync history records it as a failed attempt. The other connections continue.
-- A watcher that breaks its contract stops its connection: it yields a stream that the connection did not select, or its first check does not cover each selected stream, or it ends before that check.
-- See [ADR 0016](./docs/adr/0016-a-watch-watches-again-after-its-watcher-fails-for-a-system-reason.md).
+- A failed change signal fails only its streams. The other streams of the connection continue to load. A failed stream is not current as of the check.
+- The sync history records the failure one time, when the change signal starts to fail, as a failed pass of its streams with the failure type of the error.
+- After a `system` failure, such as a connection that its upstream dropped, the next check reads the gauge again, as Prometheus scrapes a failed target again at its next interval. A check that reads a new value loads the stream again.
+- After a `config` failure, the watch reads that gauge no more, and its streams stay failed, because only the user can fix it. A new watch reads the gauge again.
+- An upkeep that fails is recorded in the same way, as a failed pass of the streams of the connection. After a `system` failure it runs again at its next interval. After a `config` failure it runs no more in this watch.
+- Change signals that break the contract stop their connection: a change signal names a stream that the connection did not select, a selected stream is in no change signal, the change signals of one stream have two intervals or two timeouts, or an interval or a timeout is not a positive number of milliseconds. A `changeSignals()` that throws also stops its connection. The sync history records it as a failed attempt. The other connections continue.
+- See [ADR 0020](./docs/adr/0020-a-source-gives-its-change-signals-and-a-failed-signal-fails-only-its-streams.md) and [ADR 0021](./docs/adr/0021-a-source-keeps-its-upstream-producing-through-an-upkeep.md).
 
 When a watch stops:
 
-- When each connection stopped, or the signal aborts, the watch throws the errors of the stopped connections together as a `WatchError`. A `WatchError` is an `AggregateError`. Its message joins entries `Connection <name>: <message>`, and each error has the error of the watcher as its `cause`.
+- When each connection stopped, or the signal aborts, the watch throws the errors of the stopped connections together as a `WatchError`. A `WatchError` is an `AggregateError`. Its message joins entries `Connection <name>: <message>`, and each error has the error that stopped the connection as its `cause`.
 - A `WatchError` holds only failures that the sync history recorded. An error that the sync history throws itself, such as a write that fails or an error of the host code in a history wrapper, is recorded nowhere. It stops each connection at once, and the watch rejects with that error itself.
-- When the history cannot record why a watcher stopped, the watch rejects with a `SuppressedError`. Its `error` is the error of the history, and its `suppressed` is the error of the watcher.
+- When the history cannot record a failure, the watch rejects with a `SuppressedError`. Its `error` is the error of the history, and its `suppressed` is the failure.
 - The pipeline does not reconcile on a schedule, and it does not disable a connection.
 
 Stop:
 
-- An abort stops the observation of the upstream. It stops each pass that runs, as `run({ signal })` does: the history records the pass as `cancelled`, and the watch yields it with that outcome. No other pass starts.
-- Each connection then waits for the watcher of its source to stop, for example for the end of a helper process, for at most one second. A watcher that ignores the signal stays behind, so one source cannot hang the stop of its host.
-- A `break` out of the loop also closes the watchers and stops the pass of each connection. The history records that pass as `cancelled`.
-- A new watch subscribes again and makes a first pass again, from the saved checkpoints.
+- An abort stops the checks and the upkeeps of each connection. It stops each pass that runs, as `run({ signal })` does: the history records the pass as `cancelled`, and the watch yields it with that outcome. No other pass starts.
+- Each connection then disposes its gauges and waits for its upkeeps to end, for example for the end of a helper process, for at most one second. A gauge or an upkeep that ignores the signal stays behind, so one source cannot hang the stop of its host.
+- A `break` out of the loop also stops the checks and the pass of each connection. The history records that pass as `cancelled`.
+- A new watch reads the change signals of each source again and makes a first pass again, from the saved checkpoints.
 - Change notices are not durable. The limits of the snapshot or the cursor of the source still apply.
 
 A custom source:
 
 - It declares a `catalog`.
-- It implements `observe({ streams, signal }): AsyncIterable<readonly Stream[]>`. On each check, it yields the streams that changed since the earlier check, or an empty list when none changed. A source that checks only some streams at a time, such as Search Console and SQL Server, yields only what changed.
+- It implements `changeSignals(streams, clock)`: the change signals of the selected streams. Each one is a gauge of `@zukhruf/async`, the streams that it tells about, and the interval and timeout of its checks ([ADR 0020](./docs/adr/0020-a-source-gives-its-change-signals-and-a-failed-signal-fails-only-its-streams.md)). It is a declaration: it does no I/O, and each gauge opens what it reads in its first read. The pipeline reads the gauges, and a gauge that fails fails only its streams.
 - It implements `coverage(stream): ExtractionCoverage`, what a pass over the stream asks the upstream for (see [coverage](#coverage)).
-- The base `Source` owns `discover()`, `validate()` and `watch()`. Before it extracts or observes, it refuses each stream that is not the same object as the stream of that name in its catalog. The schema of a stream shapes the destination, so it refuses a different stream with the same name.
+- A source that must keep doing an action while a watch runs, such as keeping an app running when only that app syncs its store, declares `upkeep(clock)` ([ADR 0021](./docs/adr/0021-a-source-keeps-its-upstream-producing-through-an-upkeep.md)).
+- The base `Source` owns `discover()` and `validate()`. Before it extracts, it refuses each stream that is not the same object as the stream of that name in its catalog. The schema of a stream shapes the destination, so it refuses a different stream with the same name.
 - Add rules of the source, such as a cursor field that it requires, in `validateExtraction()`.
-- In `observe()`, start the observation, then yield all selected streams one time. Then emit the selected streams that changed, until the signal aborts. The connection continues to read these changes while it loads records.
-- Close native resources when the signal aborts or when the iterator closes. Errors must propagate.
+- A gauge that holds a native resource, such as a connection or a helper process, is `Disposable` or `AsyncDisposable`. The pipeline disposes it when the watch stops. A read that throws fails that gauge for that check.
 - `Stream` stays immutable metadata. The load goes through `Source.read`, `Copy` and the writers of the destination.
 
 The tests cover real file system events in temporary storage, the watch subscription of the EventKit helper and its stop on abort, and that the destination and the checkpoints show the data before the watch yields the results. The native file system test needs an environment that permits file system notices. The command sandbox of this host reports `EMFILE` also for one watcher of a temporary folder, and the same probe works outside the sandbox.
 
 ## Run a pipeline on a clock
 
-A pipeline waits and reads the time: a watch waits before it watches again, and a source polls for changes. All of these use the `clock` that you give to the pipeline. The pipeline gives its clock to each source and to the destination on each call, so one pipeline runs on one clock. See [ADR 0019](./docs/adr/0019-a-pipeline-waits-and-reads-the-time-on-the-clock-that-its-caller-gives.md).
+A pipeline waits and reads the time: a watch waits between its checks, before it loads a failed stream again, and between the runs of an upkeep, and a gauge can wait or read the time. All of these use the `clock` that you give to the pipeline. The pipeline gives its clock to each source and to the destination on each call, so one pipeline runs on one clock. See [ADR 0019](./docs/adr/0019-a-pipeline-waits-and-reads-the-time-on-the-clock-that-its-caller-gives.md).
 
 - An app gives `globalThis`.
 - A test gives `createClock()` of `@sinonjs/fake-timers` and moves it with `await clock.tickAsync(ms)`. A test that does not wait gives `globalThis`.
-- A source that reads the time reads it from the clock of the call: `observe({ streams, signal, clock })`, and `open(streams, signal, states, clock)` for a read. A source that reads the time in `extract` keeps the clock in its context.
+- A source that reads the time reads it from the clock of the call: `changeSignals(streams, clock)` and `upkeep(clock)` for a watch, and `open(streams, signal, states, clock)` for a read. A source that reads the time in `extract` keeps the clock in its context.
 - A destination reads the time of a load from `load({ clock })`.
 - A sync history records the time that the pipeline gives with each event. See [Sync history](#sync-history).
 
@@ -847,7 +849,7 @@ The contract:
 - `validate(connection)` refuses, with no I/O, a connection that the history cannot record. The pipeline calls it when it validates.
 - `install(connections, at)` brings the storage of the history to its declaration. The pipeline calls it when it validates, after `validate` and before a read, on each run and watch. Thus no host calls it, and it is safe to repeat. See [ADR 0013](./docs/adr/0013-the-pipeline-installs-its-sync-history-before-each-run-and-watch.md).
 - `begin(connection, copies, at)` gets each selected copy with its `coverage`. It is durable when it resolves, before the read starts. Thus a pass that never ends stays visible as unfinished, not missing.
-- `begin` returns a `RecordedPass`. `finish(outcomes, upstream, at)` closes it with what each copy loaded and, for each stream, when its source told that its upstream was last current. `fail(error, failureType, at)` closes a pass that gave no outcomes, such as a connection that is not valid or a watcher that stopped.
+- `begin` returns a `RecordedPass`. `finish(outcomes, upstream, at)` closes it with what each copy loaded and, for each stream, when its source told that its upstream was last current. `fail(error, failureType, at)` closes a pass that gave no outcomes, such as a connection that is not valid or a failed change signal.
 - A pass ends `succeeded`, `partial`, `failed` or, when the signal of its run stopped it, `cancelled`.
 - A history does not read a clock. `at` is the time of the event, which the pipeline reads from its clock: the start of a pass, its end, or the install. A history records `at`, not the time of its database, so the times of a pass and of a check come from one clock. See [ADR 0019](./docs/adr/0019-a-pipeline-waits-and-reads-the-time-on-the-clock-that-its-caller-gives.md).
 - A subclass implements `recordChecks(connection, checks)`, which is durable when it resolves. Each check is a `StreamCheck`, `{ stream, at }`. `checked()` calls it for the first check of a connection at once, and then at most one time each minute, because each record is a write.
@@ -974,7 +976,7 @@ Four clocks have different meanings:
 
 What the history does not prove:
 
-- Table timestamps and the end of a pass do not tell that a watcher is healthy.
+- Table timestamps and the end of a pass do not tell that a watch still checks its upstream.
 - An attempt that stays `running` means only that its end was not recorded, also after a process stopped or could not keep its outcomes.
 - The metadata and the commits of the destination are separate. Metadata that did not end never tells of success.
 - The set up of credentials or of a source before the pipeline is made is not part of the recorded attempt.
@@ -1096,7 +1098,12 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0013](./docs/adr/0013-the-pipeline-installs-its-sync-history-before-each-run-and-watch.md): the pipeline installs its sync history before each run and watch.
 - [ADR 0014](./docs/adr/0014-a-source-says-how-current-each-stream-s-upstream-is.md): a source says how current the upstream of each stream is.
 - [ADR 0015](./docs/adr/0015-a-stored-file-s-ref-is-relative-to-its-folder.md): a stored file's ref is relative to its folder.
-- [ADR 0016](./docs/adr/0016-a-watch-watches-again-after-its-watcher-fails-for-a-system-reason.md): a watch watches again after its watcher fails for a system reason.
+- [ADR 0016](./docs/adr/0016-a-watch-watches-again-after-its-watcher-fails-for-a-system-reason.md): a watch watches again after its watcher fails for a system reason. [ADR 0020](./docs/adr/0020-a-source-gives-its-change-signals-and-a-failed-signal-fails-only-its-streams.md) supersedes it in part.
+- [ADR 0017](./docs/adr/0017-each-commit-asks-for-a-refresh.md): each commit asks for a refresh.
+- [ADR 0018](./docs/adr/0018-the-streams-of-a-read-are-one-task-group.md): the streams of a read are one task group.
+- [ADR 0019](./docs/adr/0019-a-pipeline-waits-and-reads-the-time-on-the-clock-that-its-caller-gives.md): a pipeline waits and reads the time on the clock that its caller gives.
+- [ADR 0020](./docs/adr/0020-a-source-gives-its-change-signals-and-a-failed-signal-fails-only-its-streams.md): a source gives its change signals, and a failed signal fails only its streams.
+- [ADR 0021](./docs/adr/0021-a-source-keeps-its-upstream-producing-through-an-upkeep.md): a source keeps its upstream producing through an upkeep.
 
 ## Development
 

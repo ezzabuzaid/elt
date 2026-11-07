@@ -4,20 +4,22 @@ import { chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
+  type ChangeSignal,
   Connection,
   Copy,
   type CopyConfiguration,
+  Gauge,
   Pipeline,
   PipelineError,
   type RecordedPass,
   Source,
-  type SourceWatchOptions,
   Stream,
   SyncHistory,
 } from '@workspace/elt';
@@ -29,6 +31,14 @@ import {
   View,
   installSQLiteCatalog,
 } from './index.ts';
+
+// The upstream of a test source, which the test fills before it reads: a
+// watch finds it changed at its first check and unchanged after.
+class Filled extends Gauge<number> {
+  protected async read(): Promise<number> {
+    return 0;
+  }
+}
 
 // Records with ids, loaded into raw_records and read through records; it
 // fails every read while failing is set.
@@ -66,8 +76,8 @@ class Records extends Source {
     return new AsyncDisposableStack();
   }
 
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
+  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+    return [{ gauge: new Filled(), streams, interval: 1000, timeout: 1000 }];
   }
 
   protected override async *extract(configuration: CopyConfiguration) {
@@ -394,13 +404,30 @@ test('a view that reads a view declared after it fails the run with the error of
   assert.equal(views(path).includes('record_load'), false);
 });
 
-test('under a watch, a view that reads a view still waiting for its copy waits too, and the watch goes on to its end', async () => {
+test('under a watch, a view that reads a view still waiting for its copy waits too, and the later checks of the watch do not reject it', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-view-');
   const path = join(scratch.path, 'data.sqlite');
-  const source = new Records(['r1']);
+  const clock = createClock(0);
+  // The pipeline asks for the next check only after it took in the last
+  // one, so the third read tells that the second check was taken in.
+  const third = Promise.withResolvers<void>();
+  let reads = 0;
+  class Counted extends Gauge<number> {
+    protected async read(): Promise<number> {
+      reads += 1;
+      if (reads === 3) third.resolve();
+      return 0;
+    }
+  }
+  class Checked extends Records {
+    override changeSignals(streams: readonly Stream[]) {
+      return [{ gauge: new Counted(), streams, interval: 1000, timeout: 1000 }];
+    }
+  }
+  const source = new Checked(['r1']);
   const destination = new SQLiteDestination({ path });
   const pipeline = new Pipeline({
-    clock: globalThis,
+    clock,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -437,10 +464,15 @@ test('under a watch, a view that reads a view still waiting for its copy waits t
 
   const watching = pipeline.watch({ signal: controller.signal });
   const pass = await watching.next();
-  // The source watches once, so the watch ends after that pass's refresh.
-  const end = await watching.next();
+  const later = watching.next();
+  // Two later checks, before the first retry of the failed copy is due.
+  await clock.tickAsync(2000);
+  await Promise.race([third.promise, later]);
+  controller.abort();
+  const end = await later;
 
   assert.equal(pass.done, false);
+  assert.equal(reads, 3);
   assert.equal(end.done, true);
   assert.deepEqual(
     views(path).filter((name) => name.startsWith('record_')),

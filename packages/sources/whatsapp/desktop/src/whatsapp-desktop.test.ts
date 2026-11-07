@@ -3148,13 +3148,16 @@ test(
     const controller = new AbortController();
     const woken: string[][] = [];
 
-    for await (const batch of source.watch({
-      clock: globalThis,
-      streams,
-      // A batch that never comes ends the watch, so the assertion fails.
+    const run = await pipeline(source, dir.path, (stream) =>
+      streams.includes(stream),
+    );
+
+    for await (const { outcomes } of run.watch({
+      // A pass that never comes ends the watch, so the assertion fails.
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
     })) {
-      woken.push(batch.map((stream) => stream.name));
+      // The copies of a pass end in any order.
+      woken.push(outcomes.map(({ copy }) => copy.from.name).sort());
       if (woken.length === 1)
         contacts.exec(
           "UPDATE ZWAADDRESSBOOKCONTACT SET ZABOUTTEXT = 'Free' WHERE Z_PK = 1",
@@ -3168,7 +3171,7 @@ test(
     }
 
     assert.deepEqual(woken, [
-      ['messages', 'contacts', 'businessProfiles', 'privacySettings'],
+      ['businessProfiles', 'contacts', 'messages', 'privacySettings'],
       ['contacts'],
       ['messages'],
       ['businessProfiles'],

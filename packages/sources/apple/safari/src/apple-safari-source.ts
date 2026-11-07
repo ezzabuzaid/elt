@@ -1,4 +1,3 @@
-import { ChangeWatcher } from '@zukhruf/async';
 import {
   ClosedWorld,
   type DeletionPolicy,
@@ -10,14 +9,12 @@ import type {
   ExtractionCoverage,
   PipelineClock,
   SourceMessage,
-  SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   Safari,
   type SafariLocation,
-  type SafariStore,
   StoreUnavailableError,
   safariRunning,
 } from '@workspace/sdk-apple-safari';
@@ -180,31 +177,17 @@ export class AppleSafariSource extends Source<SafariScan> {
   }
 
   // Each store the streams read reports its own changes.
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    if (signal.aborted) return;
-    using versions = new DisposableStack();
-    const gauges = [
-      ...new Set(streams.map((stream) => readerOf(stream).store)),
-    ].map((store) => versions.use(this.#safari.version(store)));
-    const watcher = new ChangeWatcher(gauges, {
-      interval: pollIntervalMs,
-      // The reads are local, data_version, a profile listing and file
-      // stamps: a check that takes the whole interval is stuck.
-      timeout: pollIntervalMs,
-      clock,
-    });
-    for await (const outcomes of watcher.watch(signal)) {
-      const changed = new Set<SafariStore>();
-      for (const [gauge, outcome] of outcomes) {
-        if (outcome.state === 'failed') throw outcome.error;
-        if (outcome.state === 'changed') changed.add(gauge.store);
-      }
-      yield streams.filter((stream) => changed.has(readerOf(stream).store));
-    }
+  override changeSignals(streams: readonly Stream[]) {
+    return Map.groupBy(streams, (stream) => readerOf(stream).store)
+      .entries()
+      .map(([store, watched]) => ({
+        gauge: this.#safari.version(store),
+        streams: watched,
+        interval: pollIntervalMs,
+        // The reads are local, data_version, a profile listing and file
+        // stamps: a check that takes the whole interval is stuck.
+        timeout: pollIntervalMs,
+      }));
   }
 
   protected override async *extract(

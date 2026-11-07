@@ -7,11 +7,7 @@ import { FileStamp } from '@zukhruf/fs';
 import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 
 import { appDatabase } from './app-database.ts';
-import {
-  type SafariLocation,
-  type SafariStore,
-  storeFiles,
-} from './safari-location.ts';
+import { type SafariLocation, storeFiles } from './safari-location.ts';
 
 // Every History.db: the default profile's, and each other profile's, so a
 // profile created while watching is picked up.
@@ -40,33 +36,29 @@ async function historyFiles(location: SafariLocation): Promise<string[]> {
 // What changes when one Safari store does. Databases report commits through
 // data_version, since Safari commits through WALs it keeps open and FSEvents
 // reports a write only when the file closes; Safari rewrites each property
-// list whole, so a changed file stamp marks a new one. A change watcher reads
-// it as a gauge.
-export class SafariVersion extends Gauge<string> implements Disposable {
+// list whole, so a changed file stamp marks a new one.
+export type SafariVersion =
+  AppDatabaseVersion | SafariHistoryVersion | SafariPropertyListVersion;
+
+// The data_version of every History.db, so a profile created while watching
+// is a change of history.
+export class SafariHistoryVersion extends Gauge<string> implements Disposable {
   readonly #location: SafariLocation;
-  readonly store: SafariStore;
   readonly #databases = new Map<string, AppDatabaseVersion>();
 
-  constructor(location: SafariLocation, store: SafariStore) {
+  constructor(location: SafariLocation) {
     super();
     this.#location = location;
-    this.store = store;
   }
 
   protected async read(): Promise<string> {
-    const files = storeFiles(this.#location);
-    if (this.store === 'history') {
-      const paths = await historyFiles(this.#location);
-      for (const [path, version] of this.#databases)
-        if (!paths.includes(path)) {
-          version[Symbol.dispose]();
-          this.#databases.delete(path);
-        }
-      return paths.map((path) => this.#version(path)).join(',');
-    }
-    if (this.store === 'tabs' || this.store === 'cloudTabs')
-      return String(this.#version(files[this.store]));
-    return String(await FileStamp.read(files[this.store]));
+    const paths = await historyFiles(this.#location);
+    for (const [path, version] of this.#databases)
+      if (!paths.includes(path)) {
+        version[Symbol.dispose]();
+        this.#databases.delete(path);
+      }
+    return paths.map((path) => this.#version(path)).join(',');
   }
 
   [Symbol.dispose](): void {
@@ -74,12 +66,25 @@ export class SafariVersion extends Gauge<string> implements Disposable {
     this.#databases.clear();
   }
 
-  #version(path: string): number {
+  #version(path: string): number | 'unavailable' {
     let version = this.#databases.get(path);
     if (version === undefined) {
       version = appDatabase.version(path);
       this.#databases.set(path, version);
     }
     return version.current;
+  }
+}
+
+export class SafariPropertyListVersion extends Gauge<string> {
+  readonly #path: string;
+
+  constructor(path: string) {
+    super();
+    this.#path = path;
+  }
+
+  protected async read(): Promise<string> {
+    return String(await FileStamp.read(this.#path));
   }
 }

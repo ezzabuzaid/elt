@@ -67,7 +67,8 @@ function google({
   reply,
   files = {},
 }: {
-  reply: (call: Call) => unknown;
+  // The signal is the request's: it aborts when the caller cancels the call.
+  reply: (call: Call, signal: AbortSignal) => unknown;
   files?: Readonly<Record<string, string | Uint8Array<ArrayBuffer> | number>>;
 }) {
   const calls: Call[] = [];
@@ -101,7 +102,7 @@ function google({
             waiting.delete(waiter);
             waiter.resolve();
           }
-        const answer = await reply(call);
+        const answer = await reply(call, request.signal);
         return answer instanceof Response ? answer : Response.json(answer);
       },
     ),
@@ -1711,15 +1712,126 @@ test(
 );
 
 test(
-  'aborting a watcher cancels its in-flight probe as an AbortError',
+  'a probe waits for the Retry-After of Google on the clock of the pipeline',
+  { timeout: 10_000 },
+  async () => {
+    let clicks = 1;
+    let probes = 0;
+    using searchConsole = google({
+      // The second probe is asked to come back in 45 seconds.
+      reply: (call) =>
+        isProbe(call) && ++probes === 2
+          ? refusal(429, 'rateLimitExceeded', 'Rate Limit Exceeded', {
+              'retry-after': '45',
+            })
+          : {
+              metadata: { firstIncompleteDate: day(0) },
+              rows: [
+                {
+                  clicks,
+                  ctr: 0.1,
+                  impressions: 9,
+                  keys: [day(-1)],
+                  position: 2,
+                },
+              ],
+            },
+    });
+    // A clock on which each wait takes a thousandth of its time, so the
+    // 45 s wait ends in 45 ms. On the clock of the process, the test times
+    // out.
+    const timers = new Map<object, NodeJS.Timeout>();
+    const fast = {
+      Date: globalThis.Date,
+      performance: globalThis.performance,
+      setTimeout: (callback: () => void, ms: number) => {
+        const timer = {};
+        timers.set(
+          timer,
+          globalThis.setTimeout(() => {
+            timers.delete(timer);
+            callback();
+          }, ms / 1000),
+        );
+        return timer;
+      },
+      clearTimeout: (timer: unknown) => {
+        if (!(timer instanceof Object)) return;
+        globalThis.clearTimeout(timers.get(timer));
+        timers.delete(timer);
+      },
+    };
+    await using database = await databases.database();
+    await using clients = new AsyncDisposableStack();
+    const warehouse = {
+      sql: clients.adopt(
+        postgres(database.connectionString, {
+          max: 1,
+          onnotice: () => {},
+          connection: { search_path: RAW },
+        }),
+        (sql) => sql.end(),
+      ),
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    const { destination, sql } = warehouse;
+    const source = new SearchConsoleSource({
+      pollIntervalMs: 60_000,
+      requester: searchConsole.requester,
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    const copy = new Copy(
+      source.searchAnalyticsDaily,
+      destination.table('rows'),
+    );
+    const controller = new AbortController();
+    const watching = new Pipeline({
+      clock: fast,
+      history: warehouse.history,
+      connections: [
+        new Connection({ name: 'test', source, destination, steps: [copy] }),
+      ],
+    }).watch({ signal: controller.signal });
+
+    try {
+      await watching.next();
+      clicks = 7;
+      await watching.next();
+
+      assert.ok(probes >= 3, `probed ${probes} times`);
+      const [row] = await sql`SELECT clicks::int FROM rows`;
+      assert.equal(row?.clicks, 7);
+      // A probe that waited on another clock fails its check at the timeout.
+      assert.deepEqual(
+        (
+          await sql`SELECT error FROM _warehouse.sync_attempts WHERE status IN ('failed', 'partial')`
+        ).map(({ error }) => error),
+        [],
+      );
+    } finally {
+      controller.abort();
+      await watching.return(undefined);
+    }
+  },
+);
+
+test(
+  'aborting a watcher cancels its in-flight probe',
   { timeout: 5000 },
   async () => {
-    let served = 0;
+    let probes = 0;
+    const hung: AbortSignal[] = [];
     using searchConsole = google({
-      // The first probe is answered; the next one never is.
-      reply: () =>
-        served++ === 0
-          ? {
+      // The first probe and the read are answered; the next probe never is.
+      reply: (call, signal) =>
+        isProbe(call) && probes++ > 0
+          ? (hung.push(signal), new Promise(() => {}))
+          : {
               rows: [
                 {
                   clicks: 1,
@@ -1729,32 +1841,53 @@ test(
                   position: 2,
                 },
               ],
-            }
-          : new Promise(() => {}),
+            },
     });
+    await using database = await databases.database();
+    const warehouse = {
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    const { destination } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 1,
       requester: searchConsole.requester,
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
+    const copy = new Copy(
+      source.searchAnalyticsDaily,
+      destination.table('rows'),
+    );
     const controller = new AbortController();
-    const watching = source.watch({
+    const watching = new Pipeline({
       clock: globalThis,
-      signal: controller.signal,
-      streams: [source.searchAnalyticsDaily],
-    });
+      history: warehouse.history,
+      connections: [
+        new Connection({ name: 'test', source, destination, steps: [copy] }),
+      ],
+    }).watch({ signal: controller.signal });
 
     try {
-      assert.deepEqual((await watching.next()).value, [
-        source.searchAnalyticsDaily,
+      assert.deepEqual((await watching.next()).value?.outcomes, [
+        { copy, count: 1, deleted: 0, failures: [], cancelled: false },
       ]);
       const polling = watching.next();
-      await searchConsole.until((calls) => calls.length === 2);
+      await searchConsole.until((calls) => calls.filter(isProbe).length === 2);
       controller.abort();
 
-      await assert.rejects(polling, { name: 'AbortError' });
-      assert.deepEqual(searchConsole.calls.map(isProbe), [true, true]);
+      assert.deepEqual(await polling, { done: true, value: undefined });
+      assert.deepEqual(
+        hung.map(({ aborted }) => aborted),
+        [true],
+      );
+      assert.equal(searchConsole.calls.filter(isProbe).length, 2);
+      assert.deepEqual(reads(searchConsole), [
+        query(SITE, 'date', monthsBack(16)),
+      ]);
     } finally {
       controller.abort();
       await watching.return(undefined);
@@ -1767,17 +1900,35 @@ test(
   { timeout: 5000 },
   async () => {
     using searchConsole = google({ reply: () => ({ rows: [] }) });
+    await using database = await databases.database();
+    const warehouse = {
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    const { destination } = warehouse;
     const source = new SearchConsoleSource({
       requester: searchConsole.requester,
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
     const controller = new AbortController();
-    const watching = source.watch({
+    const watching = new Pipeline({
       clock: globalThis,
-      signal: controller.signal,
-      streams: [source.searchAnalyticsDaily],
-    });
+      history: warehouse.history,
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [
+            new Copy(source.searchAnalyticsDaily, destination.table('rows')),
+          ],
+        }),
+      ],
+    }).watch({ signal: controller.signal });
 
     try {
       await watching.next();
@@ -1785,14 +1936,14 @@ test(
       const waiting = watching.next();
       controller.abort();
 
-      await assert.rejects(
-        Promise.race([
+      assert.deepEqual(
+        await Promise.race([
           waiting,
           sleep(1_000).then(() => assert.fail('still waiting a second later')),
         ]),
-        { name: 'AbortError' },
+        { done: true, value: undefined },
       );
-      assert.equal(searchConsole.calls.length, 1);
+      assert.deepEqual(searchConsole.calls.map(isProbe), [true, false]);
     } finally {
       controller.abort();
       await watching.return(undefined);
@@ -3401,7 +3552,10 @@ test(
     ];
 
     try {
-      // The first check wakes every stream; the URL is still fresh.
+      // The first pass waits for the first check of each interval, so it
+      // reads every stream: the due time of the inspection streams answers at
+      // once, and the probe of the analytics streams asks Google first. The
+      // URL is still fresh.
       assert.deepEqual(await pass(), {
         streams: ['urlInspection', 'searchAnalyticsDaily'],
         reads: [query(SITE, 'date', day(0)), ...discovery].toSorted(),

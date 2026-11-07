@@ -210,18 +210,18 @@ The transport of google-auth-library, gaxios, has its own retry. But that retry 
 
 ## Watching
 
-Search Console sends no change notifications. Thus `observe()` polls. A host that calls `Pipeline.watch()` uses it. The Google app runs one pass and stops, so no host watches Search Console now.
+Search Console sends no change notifications. Thus its change signals poll. A host that calls `Pipeline.watch()` uses them. The Google app runs one pass and stops, so no host watches Search Console now.
 
-Each `pollIntervalMs`, the watch reads two probes. Each probe wakes only the streams of its data:
+Each `pollIntervalMs`, the watch reads two probes. A probe can take five minutes. Each probe wakes only the streams of its data:
 
 - The daily `WEB` totals of each property for the last 28 days, grouped by `date`, wake the analytics streams. They wake when `firstIncompleteDate` moved or when the clicks or impressions of a day changed. When Google restates the breakdown by query and the daily totals stay the same, this probe does not see the change.
 - The list of properties and the sitemap list of each property wake `sites`, `sitemaps` and `sitemapContents` when one of them changed.
 
-Inspections do not follow traffic. The source sets when they are due. It learns the last inspection of each URL from the checkpoints that its extractions get. It wakes only the inspection streams when the next URL becomes due, or at the quota reset at midnight in Pacific Time. When an extraction learns a due time, it wakes the watcher. Thus the watch keeps a due time that is sooner than the next poll. When no extraction moved past a due time since the last wake, because the extraction failed or did not end, the watch checks that due time again at the next poll. A due time that no extraction learned is due. Thus the watch tries a failed inspection pass again at each poll, for example the pass of a property whose permission was removed and then given again. When you select only the inspection streams, the watch never probes the analytics. An app that calls `run()` and stops has no watcher. Start it with the scheduler of the operating system (cron, launchd), and each run inspects the URLs that are due.
+Inspections do not follow traffic. The source sets when they are due. It learns the last inspection of each URL from the checkpoints that its extractions get. Each second, the watch checks the due time. It wakes only the inspection streams at the first check after the next URL becomes due, or after the quota reset at midnight in Pacific Time. Thus the watch keeps a due time that is sooner than the next poll. When a pass of the inspection streams starts, their due time is the next poll, until the extraction learns the real due time. Thus the watch tries a failed inspection pass again at each poll, for example the pass of a property whose permission was removed and then given again. When you select only the inspection streams, the watch never probes the analytics. An app that calls `run()` and stops has no watcher. Start it with the scheduler of the operating system (cron, launchd), and each run inspects the URLs that are due.
 
 When the probe of a property fails, for example after its permission was revoked, the watch continues. The failure becomes part of the fingerprint of that property. When the probe starts or stops failing, the watch wakes the streams, and the extraction reports the failure or loads the data. The watch continues for the other properties.
 
-When the watch signal aborts, the probe request and each `Retry-After` wait stop immediately. Thus a close never waits for a rate-limit delay. The cancellation shows as the `AbortError` of the signal, not as the wrapped error of the transport.
+When the watch signal aborts, the probe request and each `Retry-After` wait stop immediately. Thus a close never waits for a rate-limit delay.
 
 `currentAsOf` is null for each stream. The source reads the days that Google can still restate and marks each row `settled` or not. Thus the rows agree with Google each time the source reads. See [ADR 0004](./docs/adr/0004-the-rows-are-current-each-time-the-source-reads.md).
 

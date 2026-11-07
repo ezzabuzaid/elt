@@ -682,16 +682,35 @@ test('watching the Accounts store reports each commit to it', async () => {
   const path = join(dir.path, 'Accounts4.sqlite');
   accountsFixture(path);
   const source = new AppleAccountsSource({ path });
+  const destination = new SQLiteDestination({
+    path: join(dir.path, 'out.sqlite'),
+  });
   const abort = new AbortController();
-  const watch = source.watch({
+  const watch = new Pipeline({
     clock: globalThis,
-    streams: [source.accounts, source.accountProperties],
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(dir.path, 'state.sqlite'),
+        }),
+        steps: [source.accounts, source.accountProperties].map(
+          (stream) => new Copy(stream, destination.table(stream.name)),
+        ),
+      }),
+    ],
+  }).watch({
     signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
   });
-  assert.deepEqual((await watch.next()).value, [
-    source.accounts,
-    source.accountProperties,
-  ]);
+  const woken = async () => {
+    const pass = await watch.next();
+    assert.ok(!pass.done, 'the watch ended before its pass');
+    return pass.value.outcomes.map(({ copy }) => copy.from.name);
+  };
+  assert.deepEqual(await woken(), ['accounts', 'accountProperties']);
 
   {
     using store = open(path, { journal: new RollbackJournal() });
@@ -700,10 +719,7 @@ test('watching the Accounts store reports each commit to it', async () => {
     );
   }
 
-  assert.deepEqual((await watch.next()).value, [
-    source.accounts,
-    source.accountProperties,
-  ]);
+  assert.deepEqual(await woken(), ['accounts', 'accountProperties']);
   abort.abort();
   assert.equal((await watch.next()).done, true);
 });

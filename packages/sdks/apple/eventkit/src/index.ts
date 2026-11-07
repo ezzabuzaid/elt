@@ -21,4 +21,5 @@ export {
   IcsExportUnavailableError,
   RemindersUnavailableError,
 } from './errors.ts';
+export type { EventKitChanges } from './eventkit-changes.ts';
 export { type RemindersContents, RemindersStore } from './reminders-store.ts';

@@ -13,7 +13,6 @@ import { gzipSync } from 'node:zlib';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
@@ -768,9 +767,8 @@ test(
     await using scratch = await new TemporaryFiles().directory('elt-notes-');
     const path = await noteStoreFixture(scratch.path);
     const source = new AppleNotesSource({ path });
-    const destination = new SQLiteDestination({
-      path: join(scratch.path, 'out.sqlite'),
-    });
+    const data = join(scratch.path, 'out.sqlite');
+    const destination = new SQLiteDestination({ path: data });
     const pipeline = new Pipeline({
       clock,
       history: new SQLiteSyncHistory(),
@@ -810,26 +808,37 @@ test(
       next = passes.next();
       // After the stop, the watch ends: a pass it still gave is counted above.
       if (controller.signal.aborted) continue;
-      // The poll is due once the watch waits for it.
-      await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
-        interval: 1,
-        timeout: 10_000,
-      });
+      using out = open(data, { readOnly: true });
       if (batches.length === 1) {
         notes.exec(
           "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7) VALUES (12, 'NOTE-NEW', 'New', 2, 1)",
         );
-        // The next one-second poll sees it.
-        await clock.tickAsync(1000);
+        // A one-second poll sees the commit and starts a pass.
+        await t.waitFor(
+          async () => {
+            await clock.tickAsync(1000);
+            assert.equal(
+              out.prepare('SELECT count(*) AS n FROM sync_attempts').get()?.n,
+              2,
+            );
+          },
+          { interval: 10, timeout: 10_000 },
+        );
       }
-      // Past the next one-second poll, so a spurious batch would show.
+      // A later poll finds no change, so a spurious batch would show first.
       else {
-        await clock.tickAsync(1500);
-        // The window's poll was read: the watch waits for the next one.
-        await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
-          interval: 1,
-          timeout: 10_000,
-        });
+        await t.waitFor(
+          async () => {
+            await clock.tickAsync(1000);
+            const current = out
+              .prepare(
+                "SELECT current_as_of > (SELECT max(started_at) FROM sync_attempts) AS later FROM stream_status WHERE stream = 'notes'",
+              )
+              .get();
+            assert.equal(current?.later, 1);
+          },
+          { interval: 10, timeout: 10_000 },
+        );
         controller.abort();
       }
     }
@@ -907,14 +916,9 @@ test('a Notes watch keeps every stream current while Notes runs and the note sto
     // A pass that a check starts would come here.
     const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
-    // The check is due once the watch waits for its next poll.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
-      interval: 1,
-      timeout: 10_000,
-    });
-    await clock.tickAsync(1000);
-    await timebox(
-      () => {
+    await t.waitFor(
+      async () => {
+        await clock.tickAsync(1000);
         const rows = status.all();
         assert.ok(
           !rows.some(
@@ -924,11 +928,7 @@ test('a Notes watch keeps every stream current while Notes runs and the note sto
           `not current: ${JSON.stringify(rows)}`,
         );
       },
-      {
-        minTimeout: 100,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { interval: 10, timeout: 10_000 },
     );
 
     assert.equal(

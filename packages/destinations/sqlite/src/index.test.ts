@@ -20,12 +20,14 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
+  type ChangeSignal,
   Connection,
   Copy,
   CopyConfiguration,
   type Destination,
   type FailureType,
   type FileContent,
+  Gauge,
   LocalFiles,
   type Partition,
   type Pass,
@@ -34,14 +36,12 @@ import {
   type Properties,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   Stream,
   StreamChangeError,
   StreamStatus,
   type SyncHistory,
   type Target,
   TargetOwnedError,
-  WatchError,
   diffGroupedSnapshot,
   diffSnapshot,
 } from '@workspace/elt';
@@ -53,6 +53,19 @@ import {
   SQLiteSyncHistory,
   type SQLiteTable,
 } from './index.ts';
+
+// The upstream of a test source, which the test fills before it reads: a
+// watch finds it changed at its first check and unchanged after.
+class Filled extends Gauge<number> {
+  protected async read(): Promise<number> {
+    return 0;
+  }
+}
+
+// The change signal of streams whose upstream the test filled.
+const filled = (streams: readonly Stream[]): ChangeSignal[] => [
+  { gauge: new Filled(), streams, interval: 1000, timeout: 1000 },
+];
 
 // A source whose upstream is current whenever it is read.
 abstract class LiveSource<
@@ -87,8 +100,8 @@ test('the public ELT API copies source records into SQLite', async () => {
 
     protected readonly catalog = new Catalog([this.records]);
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract(configuration: CopyConfiguration) {
@@ -148,8 +161,8 @@ test('the macOS sqlite3 shell reads the catalog of a loaded file: every describe
 
     protected readonly catalog = new Catalog([this.records]);
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract(configuration: CopyConfiguration) {
@@ -436,8 +449,8 @@ test('array fields load as JSON arrays that SQLite checks and reads element by e
 
     protected readonly catalog = new Catalog([this.lists]);
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract(configuration: CopyConfiguration) {
@@ -548,8 +561,8 @@ test('an array element of the wrong type fails its copy for each item type a str
     readonly identity = 'lists';
     protected readonly catalog = new Catalog(streams);
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract(configuration: CopyConfiguration) {
@@ -625,8 +638,8 @@ test('an array of objects loads as a JSON array of objects, which SQLite reads f
 
     protected readonly catalog = new Catalog([this.pages]);
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract(configuration: CopyConfiguration) {
@@ -725,8 +738,8 @@ test('an array item whose field is not a scalar fails its copy', async () => {
     });
     protected readonly catalog = new Catalog([this.pages]);
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract(configuration: CopyConfiguration) {
@@ -784,8 +797,8 @@ test('a source accepts only the stream objects from its own catalog', async () =
       supportedSyncModes: ['full_refresh'],
     });
     protected readonly catalog = new Catalog([this.records]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract() {}
   }
@@ -795,7 +808,6 @@ test('a source accepts only the stream objects from its own catalog', async () =
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'owned.sqlite'),
   });
-  const signal = new AbortController().signal;
 
   assert.deepEqual((await source.discover()).streams, [source.records]);
   for (const stream of [
@@ -810,20 +822,10 @@ test('a source accepts only the stream objects from its own catalog', async () =
         ),
       /not from this source's discovered catalog/,
     );
-    await assert.rejects(
-      source.watch({ clock: globalThis, streams: [stream], signal }).next(),
-      /not from this source's discovered catalog/,
-    );
   }
   new Copy(source.records, destination.table('records')).validate(
     source,
     destination,
-  );
-  assert.deepEqual(
-    await source
-      .watch({ clock: globalThis, streams: [source.records], signal })
-      .next(),
-    { value: [source.records], done: false },
   );
 });
 
@@ -854,13 +856,18 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     readonly other = new Stream({ ...this.records, name: 'other' });
 
     protected readonly catalog = new Catalog([this.records, this.other]);
-    // A watcher that fails for a config reason ends its connection.
-    protected override readonly configErrors = [DeniedError];
 
-    protected override async *observe({ streams, signal }: SourceWatchOptions) {
-      await using events = on(changes, 'change', { signal });
-      yield streams;
-      for await (const [affected] of events) yield affected;
+    // One store for each stream: each check event of changes is one check
+    // of every store.
+    override changeSignals(streams: readonly Stream[]) {
+      return streams.map((stream) => ({
+        gauge: new CheckedStore(stream, changes),
+        streams: [stream],
+        // Short, so both checks of the two edits come while the load runs.
+        interval: 1,
+        // A read waits for the test's next check event.
+        timeout: 60_000,
+      }));
     }
 
     protected override async *extract(
@@ -914,14 +921,15 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   const controller = new AbortController();
   const watching = pipeline.watch({ signal: controller.signal });
   reads.once('read', () => {
+    // One subscription for each store: records and other.
     assert.equal(
-      changes.listenerCount('change'),
-      1,
+      changes.listenerCount('check'),
+      2,
       'subscribed before extraction',
     );
     version = 2;
-    changes.emit('change', [source.records]);
-    changes.emit('change', [source.records]);
+    changes.emit('check', [source.records]);
+    changes.emit('check', [source.records]);
   });
   assert.deepEqual((await watching.next()).value?.outcomes, [
     { copy, count: 1, deleted: 0, failures: [], cancelled: false },
@@ -950,7 +958,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
 
   // Changes received while the consumer is handling a result remain pending.
   version = 3;
-  changes.emit('change', [source.records]);
+  changes.emit('check', [source.records]);
   for await (const { outcomes } of watching) {
     assert.deepEqual(outcomes, [
       { copy, count: 1, deleted: 0, failures: [], cancelled: false },
@@ -959,17 +967,17 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     assert.deepEqual(savedVersion(), { version: 3 });
     break;
   }
-  assert.equal(changes.listenerCount('change'), 0);
+  assert.equal(changes.listenerCount('check'), 0);
   assert.equal(changes.listenerCount('error'), 0);
 
   const restarted = pipeline.watch({ signal: controller.signal });
   await restarted.next();
   assert.deepEqual(previousStates.at(-2), { version: 3 });
   const idle = restarted.next();
-  changes.emit('change', []);
+  changes.emit('check', []);
   controller.abort();
   assert.deepEqual(await idle, { value: undefined, done: true });
-  assert.equal(changes.listenerCount('change'), 0);
+  assert.equal(changes.listenerCount('check'), 0);
 
   // A batch that does not load is reported, and watching goes on, as a
   // schedule does after a failed sync.
@@ -977,7 +985,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   const failed = pipeline.watch({ signal: failing.signal });
   await failed.next();
   version = Number.NaN;
-  changes.emit('change', [source.records]);
+  changes.emit('check', [source.records]);
   const incomplete = await failed.next();
   if (incomplete.done) assert.fail('watching ended on a failed batch');
   assert.ok(
@@ -986,9 +994,10 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   );
   assert.equal(loadedVersion(), 3);
   assert.deepEqual(savedVersion(), { version: 3 });
-  assert.equal(changes.listenerCount('change'), 1);
+  // The stores of records and other still listen.
+  assert.equal(changes.listenerCount('check'), 2);
   version = 4;
-  changes.emit('change', [source.records]);
+  changes.emit('check', [source.records]);
   const recovered = await failed.next();
   if (recovered.done) assert.fail('watching ended before the retry');
   assert.deepEqual(
@@ -998,27 +1007,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   assert.equal(loadedVersion(), 4);
   failing.abort();
   assert.deepEqual(await failed.next(), { value: undefined, done: true });
-  assert.equal(changes.listenerCount('change'), 0);
-
-  version = 4;
-  const broken = pipeline.watch({ signal: new AbortController().signal });
-  await broken.next();
-  const gone = new DeniedError('The store is no longer readable');
-  changes.emit('error', gone);
-  await assert.rejects(
-    broken.next(),
-    (error) =>
-      error instanceof AggregateError &&
-      error.errors.length === 1 &&
-      error.errors[0].cause === gone,
-  );
-  assert.equal(changes.listenerCount('change'), 0);
-
-  const unselected = pipeline.watch({ signal: new AbortController().signal });
-  await unselected.next();
-  changes.emit('change', [new Stream({ ...source.records, name: 'unknown' })]);
-  await assert.rejects(unselected.next(), /unselected stream/);
-  assert.equal(changes.listenerCount('change'), 0);
+  assert.equal(changes.listenerCount('check'), 0);
 
   // A stopping watch stops the pass it is running, as run({ signal }) does:
   // the pass loads nothing more and is yielded cancelled, and the target
@@ -1060,16 +1049,17 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   assert.deepEqual(savedVersion(), { version: 4 });
   {
     using database = open(destination.path, { readOnly: true });
+    // The last whole pass of other was the first pass of the failing watch.
     assert.deepEqual(
       database
         .prepare('SELECT version FROM other')
         .all()
         .map(({ version }) => version),
-      [4],
+      [3],
     );
   }
   assert.deepEqual(await inFlight.next(), { value: undefined, done: true });
-  assert.equal(changes.listenerCount('change'), 0);
+  assert.equal(changes.listenerCount('check'), 0);
 
   assert.deepEqual(
     await pipeline.watch({ signal: AbortSignal.abort() }).next(),
@@ -1092,7 +1082,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     invalid.watch({ signal: new AbortController().signal }).next(),
     /IDs must be distinct/,
   );
-  assert.equal(changes.listenerCount('change'), 0);
+  assert.equal(changes.listenerCount('check'), 0);
 });
 
 test('a cursor inside the primary key is rejected unless the policy replaces', async () => {
@@ -1121,8 +1111,8 @@ test('a cursor inside the primary key is rejected unless the policy replaces', a
     });
 
     protected readonly catalog = new Catalog([this.metrics]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(configuration: CopyConfiguration) {
       yield {
@@ -1234,8 +1224,8 @@ test('replace loads a restated fact that cursor_newer discards', async () => {
     });
 
     protected readonly catalog = new Catalog([this.metrics]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(configuration: CopyConfiguration) {
       // The same fact, re-extracted after the upstream restated its metrics.
@@ -1346,8 +1336,8 @@ test('deletions remove keyed rows from a deduplicating SQLite table', async () =
 
     readonly identity = 'deleting-test';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract() {
       yield* messages;
@@ -1444,8 +1434,8 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
 
     readonly identity = 'deleting-rules-test';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract() {
       yield* messages;
@@ -1576,8 +1566,8 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
 
     readonly identity = 'snapshot-test';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,
@@ -1724,8 +1714,8 @@ test('a snapshot stream that emits no deletions keeps the rows of keys its upstr
 
     readonly identity = 'forgetful-snapshot-test';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,
@@ -1817,8 +1807,8 @@ test('a grouped snapshot stream that emits no deletions keeps the rows of a grou
 
     readonly identity = 'forgetful-grouped-test';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,
@@ -1916,8 +1906,8 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
 
     readonly identity = 'grouped-snapshot-test';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,
@@ -2104,8 +2094,8 @@ test('a snapshot pass over an unchanged scan that the host stops partway ends lo
 
     readonly identity = 'scanning-test';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,
@@ -2209,8 +2199,8 @@ test('a grouped pass whose groups are all unchanged, stopped by the host partway
 
     readonly identity = 'files-test';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,
@@ -2320,8 +2310,8 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
 
     readonly identity = 'expiring-test';
     protected readonly catalog = new Catalog([events, grouped]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,
@@ -2528,8 +2518,8 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
 
     readonly identity = 'cached-test';
     protected readonly catalog = new Catalog([messages, grouped]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,
@@ -2686,8 +2676,8 @@ test('a diff whose next read repeats only a lookback window deletes none of the 
 
     readonly identity = 'window-test';
     protected readonly catalog = new Catalog([days]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,
@@ -2792,8 +2782,8 @@ test('a target has one writer, even when another loads only its own partitions',
     protected override partitions() {
       return [{ owner: this.owner }];
     }
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(configuration: CopyConfiguration) {
       this.extracted++;
@@ -2904,8 +2894,8 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
       super();
       this.identity = identity;
     }
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(configuration: CopyConfiguration) {
       yield {
@@ -3189,8 +3179,8 @@ class Sites extends LiveSource {
   protected override partitions() {
     return this.sites.map((site) => ({ site }));
   }
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
+  override changeSignals(streams: readonly Stream[]) {
+    return filled(streams);
   }
   protected override async *extract(
     configuration: CopyConfiguration,
@@ -3600,8 +3590,8 @@ class FileSource extends LiveSource {
     this.catalog = new Catalog([this.files]);
   }
 
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
+  override changeSignals(streams: readonly Stream[]) {
+    return filled(streams);
   }
 
   protected override async *extract(
@@ -4018,8 +4008,8 @@ class ScriptedSource extends LiveSource {
     return new AsyncDisposableStack();
   }
 
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
+  override changeSignals(streams: readonly Stream[]) {
+    return filled(streams);
   }
 
   protected override async *extract(configuration: CopyConfiguration) {
@@ -4974,8 +4964,8 @@ test('renamed file columns keep their original bytes and stored files through la
 
     readonly identity = 'documents';
     protected readonly catalog = new Catalog([docs]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract() {
       yield* messages;
@@ -5075,8 +5065,8 @@ test('a load holds no write transaction while the source reads, and a stream tha
 
     readonly identity = 'interleaved';
     protected readonly catalog = new Catalog([kept, failing]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(configuration: CopyConfiguration) {
       const { name } = configuration.stream;
@@ -5234,8 +5224,8 @@ test('two file columns whose table and column names join alike keep their own ch
 
     readonly identity = 'files';
     protected readonly catalog = new Catalog([left, right]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(configuration: CopyConfiguration) {
       const { name } = configuration.stream;
@@ -5345,8 +5335,8 @@ test('a reset of a partition named by a renamed field replaces only that partiti
     protected override partitions() {
       return [{ 'Account Id': 'a' }, { 'Account Id': 'b' }];
     }
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       _configuration: CopyConfiguration,
@@ -5536,8 +5526,8 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
       return new AsyncDisposableStack();
     }
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract(configuration: CopyConfiguration) {
@@ -5720,8 +5710,8 @@ for (const { outcome, next, expected } of leftBehind)
         return new AsyncDisposableStack();
       }
 
-      protected override async *observe({ streams }: SourceWatchOptions) {
-        yield streams;
+      override changeSignals(streams: readonly Stream[]) {
+        return filled(streams);
       }
 
       protected override async *extract(configuration: CopyConfiguration) {
@@ -6007,8 +5997,8 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
 
     readonly identity = 'ledger';
     protected readonly catalog = new Catalog([ledger]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract() {
       yield* messages;
@@ -6172,8 +6162,8 @@ test('a reset replaces only its partition at the next commit, and one a failure 
     protected override partitions() {
       return [{ account: 'a' }, { account: 'b' }];
     }
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       _configuration: CopyConfiguration,
@@ -6264,8 +6254,8 @@ test('a full refresh ignores resets, so an appending copy keeps its history', as
 
     readonly identity = 'resetting';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract() {
       yield* messages;
@@ -6367,8 +6357,8 @@ async function shapeChanges(
 
       readonly identity = 'discovered';
       protected readonly catalog = new Catalog([stream]);
-      protected override async *observe({ streams }: SourceWatchOptions) {
-        yield streams;
+      override changeSignals(streams: readonly Stream[]) {
+        return filled(streams);
       }
       protected override async *extract(
         configuration: CopyConfiguration,
@@ -6773,8 +6763,8 @@ test('an overwrite whose stored table no longer fits reloads it rather than evol
 
       readonly identity = 'snapshot';
       protected readonly catalog = new Catalog([items]);
-      protected override async *observe({ streams }: SourceWatchOptions) {
-        yield streams;
+      override changeSignals(streams: readonly Stream[]) {
+        return filled(streams);
       }
       protected override async *extract() {
         for (const data of rows) yield { stream: 'items', data };
@@ -6843,8 +6833,8 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
 
     readonly identity = 'scripted';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       _configuration: CopyConfiguration,
@@ -7113,8 +7103,8 @@ test('a copy that declares its columns from the stream and stores its files keep
 
       readonly identity = 'attachments';
       protected readonly catalog = new Catalog([stream]);
-      protected override async *observe({ streams }: SourceWatchOptions) {
-        yield streams;
+      override changeSignals(streams: readonly Stream[]) {
+        return filled(streams);
       }
       protected override async *extract(
         configuration: CopyConfiguration,
@@ -7217,8 +7207,9 @@ test('a copy that declares its columns from the stream and stores its files keep
 class DeniedError extends Error {}
 
 // Two streams of one record each, a read the test can make fail or deny, and
-// a watcher the test drives: each check event is one check of the upstream,
-// naming the streams that changed since the previous check, possibly none.
+// one store for each stream that the test checks: each check event is one
+// check of every store, naming the streams that changed since the previous
+// check, possibly none.
 class CheckedSource extends Source {
   readonly identity = 'checked';
   readonly checks = new EventEmitter();
@@ -7262,10 +7253,15 @@ class CheckedSource extends Source {
     return new AsyncDisposableStack();
   }
 
-  protected override async *observe({ streams, signal }: SourceWatchOptions) {
-    await using checks = on(this.checks, 'check', { signal });
-    yield streams;
-    for await (const [changed] of checks) yield changed;
+  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+    return streams.map((stream) => ({
+      gauge: new CheckedStore(stream, this.checks),
+      streams: [stream],
+      interval: 5,
+      // A read waits for the test's next check event, which can come many
+      // seconds later.
+      timeout: 60_000,
+    }));
   }
 
   protected override async *extract(configuration: CopyConfiguration) {
@@ -7273,6 +7269,45 @@ class CheckedSource extends Source {
     if (this.failing.has(name)) throw new Error(`${name} cannot be read`);
     if (this.denied.has(name)) throw new DeniedError(`${name} is denied`);
     yield { stream: name, data: { id: 'one' } };
+  }
+}
+
+// The store of one stream of the checked source. A watch starts with a
+// check of every stream, so the first read gives a version at once. Each
+// later read waits for the next check event, and the version moves when that
+// check names the stream.
+class CheckedStore extends Gauge<number> implements AsyncDisposable {
+  readonly #stream: Stream;
+  readonly #checks: ReturnType<typeof on>;
+  // The checks that this store has not read yet.
+  readonly #unread: (readonly Stream[])[];
+  #version = 0;
+
+  constructor(stream: Stream, checks: EventEmitter) {
+    super();
+    this.#stream = stream;
+    this.#unread = [[stream]];
+    // Subscribed now, so a check event before the read waits for it.
+    this.#checks = on(checks, 'check');
+  }
+
+  protected async read(): Promise<number> {
+    const changed = this.#unread.shift() ?? (await this.#nextCheck());
+    if (changed.includes(this.#stream)) this.#version += 1;
+    return this.#version;
+  }
+
+  // The streams that the next check event names, or none when the watch
+  // stopped and disposed this store while the read waited.
+  async #nextCheck(): Promise<readonly Stream[]> {
+    const next = await this.#checks.next();
+    if (next.done) return [];
+    // A check event carries the streams that changed.
+    return next.value[0];
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.#checks[Symbol.asyncDispose]();
   }
 }
 
@@ -7648,45 +7683,7 @@ test('a run makes each stream it loaded current as of when its pass began, and t
   assert.equal(connector(), startedAt());
 });
 
-test('a watcher that fails for a config reason ends the watch with a WatchError naming the connection', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-stops-');
-  const { source, pipeline, read } = await checkedPipeline(scratch.path);
-  const watching = pipeline.watch({ signal: new AbortController().signal });
-  const revoked = new DeniedError('The store is no longer readable');
-  try {
-    await watching.next();
-
-    source.checks.emit('error', revoked);
-
-    await assert.rejects(watching.next(), (error: unknown) => {
-      assert.ok(error instanceof WatchError, String(error));
-      assert.equal(error.errors.length, 1);
-      assert.equal(error.errors[0].cause, revoked);
-      assert.equal(
-        error.message,
-        'Connection checked: The store is no longer readable',
-      );
-      return true;
-    });
-    assert.deepEqual(
-      read(
-        'SELECT status, error, failure_type FROM sync_attempts ORDER BY attempt_id DESC LIMIT 1',
-      ),
-      [
-        {
-          status: 'failed',
-          error: 'The store is no longer readable',
-          failure_type: 'config',
-        },
-      ],
-    );
-    assert.equal(source.checks.listenerCount('check'), 0);
-  } finally {
-    await watching.return(undefined);
-  }
-});
-
-test('a watcher failure the sync history cannot record rejects with a SuppressedError holding the history’s error and the watcher’s', async () => {
+test('a failed change signal that the sync history cannot record rejects with a SuppressedError holding the history’s error and the change signal’s', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-stops-');
   const { source, pipeline, path } = await checkedPipeline(scratch.path);
   const watching = pipeline.watch({ signal: new AbortController().signal });
@@ -7777,7 +7774,7 @@ test('a watch whose sync history cannot record a pass rejects with the history�
   }
 });
 
-test('a watch whose sync history cannot record a check rejects with the history’s own error, not as a failed watcher', async () => {
+test('a watch whose sync history cannot record a check rejects with the history’s own error, records no failed attempt and disposes its gauges', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-stops-');
   const { source, pipeline, path, read } = await checkedPipeline(scratch.path);
   const watching = pipeline.watch({ signal: new AbortController().signal });
@@ -7836,65 +7833,6 @@ const outcomes = (pass: IteratorResult<Pass<SQLiteTable>, undefined>) =>
     copy.from.name,
     failures[0]?.failureType ?? null,
   ]);
-
-test(
-  'a watcher that fails for a system reason is recorded as a failed attempt and watches again about ten seconds later, from a check of every stream',
-  { timeout: 30_000 },
-  async () => {
-    await using scratch = await new TemporaryFiles().directory('elt-rewatch-');
-    const { source, pipeline, read } = await checkedPipeline(scratch.path);
-    const controller = new AbortController();
-    const watching = pipeline.watch({ signal: controller.signal });
-    // Ends a watch that never watches again, so the test fails, not hangs.
-    const deadline = setTimeout(() => controller.abort(), 20_000);
-    // What fs.watch raises when the process runs out of file handles.
-    const lost = new Error('Native watcher failed', {
-      cause: Object.assign(new Error('EMFILE: too many open files, watch'), {
-        code: 'EMFILE',
-      }),
-    });
-    try {
-      await watching.next();
-
-      source.checks.emit('error', lost);
-      const failedAt = Date.now();
-      const rewatched = await watching.next();
-      const waited = Date.now() - failedAt;
-      source.checks.emit('check', [source.a]);
-      const changed = await watching.next();
-
-      assert.deepEqual(outcomes(rewatched), [
-        ['a', null],
-        ['b', null],
-      ]);
-      assert.ok(
-        waited >= 9_000 && waited < 20_000,
-        `watched again after ${waited} ms`,
-      );
-      assert.deepEqual(outcomes(changed), [['a', null]]);
-      // The new subscription is the only one: the failed one let go.
-      assert.equal(source.checks.listenerCount('check'), 1);
-      assert.deepEqual(
-        read(
-          "SELECT error, failure_type FROM sync_attempts WHERE status = 'failed'",
-        ),
-        [{ error: 'Native watcher failed', failure_type: 'system' }],
-      );
-      const [failure] = read(
-        "SELECT json_extract(f.value, '$.stacktrace') AS stacktrace FROM extraction_coverage c, json_each(c.failures) f WHERE c.attempt_id = (SELECT attempt_id FROM sync_attempts WHERE status = 'failed')",
-      );
-      assert.match(
-        String(failure?.stacktrace),
-        /\[cause\]: Error: EMFILE: too many open files, watch/,
-      );
-      assert.match(String(failure?.stacktrace), /code: 'EMFILE'/);
-    } finally {
-      clearTimeout(deadline);
-      controller.abort();
-      await watching.return(undefined);
-    }
-  },
-);
 
 test(
   'under a watch, a stream whose load failed for a system reason loads again about ten seconds later with no change, and a sibling’s change does not pull it in sooner',

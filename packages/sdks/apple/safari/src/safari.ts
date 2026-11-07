@@ -23,7 +23,11 @@ import {
   storeFiles,
 } from './safari-location.ts';
 import { SafariTabs, profileListings, tabsDatabase } from './safari-tabs.ts';
-import { SafariVersion } from './safari-version.ts';
+import {
+  SafariHistoryVersion,
+  SafariPropertyListVersion,
+  type SafariVersion,
+} from './safari-version.ts';
 
 // Safari's own preferences, beside its container's Safari folder.
 const preferences = ({ container }: SafariLocation) =>
@@ -164,6 +168,10 @@ export class Safari {
 
   // A probe whose current value changes when the store does.
   version(store: SafariStore): SafariVersion {
-    return new SafariVersion(this.location, store);
+    const files = storeFiles(this.location);
+    if (store === 'history') return new SafariHistoryVersion(this.location);
+    if (store === 'tabs' || store === 'cloudTabs')
+      return appDatabase.version(files[store]);
+    return new SafariPropertyListVersion(files[store]);
   }
 }

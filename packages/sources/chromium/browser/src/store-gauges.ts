@@ -7,7 +7,6 @@ import { chromiumHistoryVersion } from '@workspace/sdk-chromium-history';
 // The History of each selected profile and its version: a commit to one, and
 // a profile that gains or loses one, change it.
 export class HistoryGauge extends Gauge<string> implements Disposable {
-  readonly store = 'history';
   readonly #files: () => string[];
   readonly #versions = new DisposableStack();
   readonly #histories = new Map<
@@ -43,7 +42,6 @@ export class HistoryGauge extends Gauge<string> implements Disposable {
 // The file stamp of each selected profile's Bookmarks, which the browser
 // replaces whole.
 export class BookmarksGauge extends Gauge<string> {
-  readonly store = 'bookmarks';
   readonly #files: () => string[];
 
   constructor(files: () => string[]) {
@@ -65,7 +63,6 @@ export class BookmarksGauge extends Gauge<string> {
 // The file stamp of Local State, which names the profiles, and the History
 // and Bookmarks files the profiles have.
 export class ProfilesGauge extends Gauge<string> {
-  readonly store = 'profiles';
   readonly #browser: ChromiumBrowser;
   readonly #home: string;
   readonly #files: () => string[];

@@ -417,7 +417,6 @@ test('a store that cannot be opened fails with StoreUnavailableError', async () 
       return true;
     },
   );
-  assert.throws(() => new AccountsStore(path).version(), StoreUnavailableError);
 });
 
 test('the store version changes when another connection commits', async () => {

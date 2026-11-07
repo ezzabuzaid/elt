@@ -15,9 +15,9 @@ import {
   Connection,
   Copy,
   type CopyConfiguration,
+  Gauge,
   Pipeline,
   Source,
-  type SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 import {
@@ -27,6 +27,14 @@ import {
 } from '@workspace/elt-sqlite';
 
 import { Embedding } from './embedding.ts';
+
+// The upstream of a test source, which the test fills before it reads: a
+// watch finds it changed at its first check and unchanged after.
+class Filled extends Gauge<number> {
+  protected async read(): Promise<number> {
+    return 0;
+  }
+}
 
 // A model server cannot run in a test, so this stands in for one: a real
 // EmbeddingModelV4 whose vector of a text counts each letter a to z. It
@@ -102,8 +110,8 @@ class Listings extends Source {
     return new AsyncDisposableStack();
   }
 
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
+  override changeSignals(streams: readonly Stream[]) {
+    return [{ gauge: new Filled(), streams, interval: 1000, timeout: 1000 }];
   }
 
   protected override async *extract(configuration: CopyConfiguration) {

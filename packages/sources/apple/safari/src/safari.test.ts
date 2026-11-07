@@ -2131,6 +2131,36 @@ test('Safari names Full Disk Access for an unreadable store, refuses an unknown 
   assert.equal(status.error.name, 'MissingColumnsError');
 });
 
+// A watch as the hosts run it: a pipeline over a SQLite import.
+function watchSafari(
+  source: AppleSafariSource,
+  streams: readonly Stream[],
+  directory: string,
+  signal: AbortSignal,
+) {
+  mkdirSync(directory, { recursive: true });
+  const destination = new SQLiteDestination({
+    path: join(directory, 'data.sqlite'),
+  });
+  return new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'safari',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(directory, 'checkpoints.sqlite'),
+        }),
+        steps: streams.map(
+          (stream) => new Copy(stream, destination.table(stream.name)),
+        ),
+      }),
+    ],
+  }).watch({ signal });
+}
+
 test('a Safari watch wakes only the streams of the store that changed, while Safari keeps its databases open', async () => {
   await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
@@ -2151,13 +2181,14 @@ test('a Safari watch wakes only the streams of the store that changed, while Saf
   const controller = new AbortController();
   const woken: string[][] = [];
 
-  for await (const batch of source.watch({
-    clock: globalThis,
+  for await (const { outcomes } of watchSafari(
+    source,
     streams,
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-  })) {
-    woken.push(batch.map((stream) => stream.name));
+    join(scratch.path, 'import'),
+    // A pass that never comes ends the watch, so the assertion fails.
+    AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  )) {
+    woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1)
       history
         .prepare(
@@ -2736,13 +2767,14 @@ test('a Safari watch wakes history when a profile History.db appears, and a prop
   const controller = new AbortController();
   const woken: string[][] = [];
 
-  for await (const batch of source.watch({
-    clock: globalThis,
-    streams: [source.historyVisits, source.bookmarks],
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-  })) {
-    woken.push(batch.map((stream) => stream.name));
+  for await (const { outcomes } of watchSafari(
+    source,
+    [source.historyVisits, source.bookmarks],
+    join(scratch.path, 'import'),
+    // A pass that never comes ends the watch, so the assertion fails.
+    AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  )) {
+    woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1) {
       const profile = join(location.container, 'Profiles', 'SERVER-NEW');
       await mkdir(profile);

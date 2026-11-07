@@ -28,10 +28,10 @@ import {
   Copy,
   type CopyConfiguration,
   DocumentText,
+  Gauge,
   LocalFiles,
   Pipeline,
   Source,
-  type SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 import {
@@ -76,8 +76,14 @@ class DocumentsFolder extends Source {
     return new AsyncDisposableStack();
   }
 
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
+  // This program only runs and never watches, so no watch reads this gauge.
+  override changeSignals(streams: readonly Stream[]) {
+    const gauge = new (class extends Gauge<number> {
+      protected async read() {
+        return 0;
+      }
+    })();
+    return [{ gauge, streams, interval: 1000, timeout: 1000 }];
   }
 
   protected override async *extract(configuration: CopyConfiguration) {

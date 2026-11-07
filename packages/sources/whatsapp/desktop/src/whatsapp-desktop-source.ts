@@ -1,5 +1,3 @@
-import { ChangeWatcher } from '@zukhruf/async';
-
 import {
   Catalog,
   type CopyConfiguration,
@@ -7,13 +5,11 @@ import {
   type PipelineClock,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   type Stream,
 } from '@workspace/elt';
 import {
   StoreUnavailableError,
   WhatsApp,
-  type WhatsAppStore,
   whatsappRunning,
 } from '@workspace/sdk-whatsapp-desktop';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -200,31 +196,17 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
   }
 
   // Each store the streams read reports its own commits.
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    if (signal.aborted) return;
-    using versions = new DisposableStack();
-    const gauges = [
-      ...new Set(streams.map((stream) => readerOf(stream).store)),
-    ].map((store) => versions.use(this.#whatsapp.version(store)));
-    const watcher = new ChangeWatcher(gauges, {
-      interval: pollIntervalMs,
-      // A data_version read is local: a check that takes the whole interval
-      // is stuck.
-      timeout: pollIntervalMs,
-      clock,
-    });
-    for await (const outcomes of watcher.watch(signal)) {
-      const changed = new Set<WhatsAppStore>();
-      for (const [gauge, outcome] of outcomes) {
-        if (outcome.state === 'failed') throw outcome.error;
-        if (outcome.state === 'changed') changed.add(gauge.store);
-      }
-      yield streams.filter((stream) => changed.has(readerOf(stream).store));
-    }
+  override changeSignals(streams: readonly Stream[]) {
+    return Map.groupBy(streams, (stream) => readerOf(stream).store)
+      .entries()
+      .map(([store, watched]) => ({
+        gauge: this.#whatsapp.version(store),
+        streams: watched,
+        interval: pollIntervalMs,
+        // A data_version read is local: a check that takes the whole interval
+        // is stuck.
+        timeout: pollIntervalMs,
+      }));
   }
 
   protected override async *extract(

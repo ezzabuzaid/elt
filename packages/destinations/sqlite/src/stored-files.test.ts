@@ -10,15 +10,23 @@ import {
   Catalog,
   Connection,
   Copy,
+  Gauge,
   LocalFiles,
   Pipeline,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 
 import { SQLiteDestination, SQLiteSyncHistory } from './index.ts';
+
+// The upstream of a test source, which the test fills before it reads: a
+// watch finds it changed at its first check and unchanged after.
+class Filled extends Gauge<number> {
+  protected async read(): Promise<number> {
+    return 0;
+  }
+}
 
 test('stored file scopes flush when empty and remain usable across empty, null and populated loads', async () => {
   const stream = new Stream({
@@ -42,8 +50,8 @@ test('stored file scopes flush when empty and remain usable across empty, null a
     protected override async open() {
       return new AsyncDisposableStack();
     }
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return [{ gauge: new Filled(), streams, interval: 1000, timeout: 1000 }];
     }
     protected override async *extract() {
       yield* this.messages;

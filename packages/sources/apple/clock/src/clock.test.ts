@@ -483,11 +483,7 @@ test('a Clock watch follows selected database and preference changes and cancels
     rows(dir.path, 'select title from alarms')[0]?.title,
     'Watch update',
   );
-  const stopped = source.watch({
-    clock: globalThis,
-    streams: [source.alarms],
-    signal: AbortSignal.abort(),
-  });
+  const stopped = run.watch({ signal: AbortSignal.abort() });
   assert.equal((await stopped.next()).done, true);
 });
 

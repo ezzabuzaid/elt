@@ -13,14 +13,15 @@ import { HttpServer } from '@zukhruf/testing/http';
 
 import {
   Catalog,
+  type ChangeSignal,
   Connection,
   Copy,
   type CopyConfiguration,
+  Gauge,
   PassFailed,
   PassFinished,
   Pipeline,
   Source,
-  type SourceWatchOptions,
   Stream,
   passChannels,
 } from '@workspace/elt';
@@ -30,6 +31,19 @@ import {
   SQLiteSyncHistory,
   readPassStatus,
 } from './index.ts';
+
+// The upstream of a test source, which the test fills before it reads: a
+// watch finds it changed at its first check and unchanged after.
+class Filled extends Gauge<number> {
+  protected async read(): Promise<number> {
+    return 0;
+  }
+}
+
+// The change signal of streams whose upstream the test filled.
+const filled = (streams: readonly Stream[]): ChangeSignal[] => [
+  { gauge: new Filled(), streams, interval: 1000, timeout: 1000 },
+];
 
 // A source whose upstream is current whenever it is read.
 abstract class LiveSource<
@@ -71,8 +85,8 @@ test('a pass and each of its streams read running while it runs and cancelled on
       return new AsyncDisposableStack();
     }
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract(
@@ -148,8 +162,8 @@ test('a pass killed in the middle of a commit leaves a file that the sqlite3 she
       return new AsyncDisposableStack();
     }
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract() {
@@ -236,8 +250,8 @@ test("a pass that did not load says whether its failures are the user's to fix, 
       return new AsyncDisposableStack();
     }
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract(configuration: CopyConfiguration) {
@@ -345,8 +359,8 @@ test('each recorded failure keeps the causes its error chains, such as why a con
       return new AsyncDisposableStack();
     }
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract(configuration: CopyConfiguration) {
@@ -414,7 +428,7 @@ test('a pass a killed process left running stays running, until a history that i
   const path = join(scratch.path, 'data.sqlite');
   // A process that begins a pass of notes, then is killed while it reads.
   const pass = `
-    import { Catalog, Connection, Copy, Pipeline, Source, Stream } from '@workspace/elt';
+    import { Catalog, Connection, Copy, Gauge, Pipeline, Source, Stream } from '@workspace/elt';
     import { SQLiteDestination, SQLiteSyncHistory } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'index.ts')).href)};
     class Hanging extends Source {
       identity = 'hanging';
@@ -427,7 +441,7 @@ test('a pass a killed process left running stays running, until a history that i
       coverage() { return { description: 'test', selection: {} }; }
       async currentAsOf() { return null; }
       async open() { return new AsyncDisposableStack(); }
-      async *observe({ streams }) { yield streams; }
+      changeSignals(streams) { return [{ gauge: new (class extends Gauge { async read() { return 0; } })(), streams, interval: 1000, timeout: 1000 }]; }
       async *extract() {
         yield { stream: 'notes', data: { id: 'n1' } };
         process.stdout.write('reading\\n');
@@ -518,8 +532,8 @@ class Finishing extends LiveSource {
     return new AsyncDisposableStack();
   }
 
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
+  override changeSignals(streams: readonly Stream[]) {
+    return filled(streams);
   }
 
   protected override async *extract(configuration: CopyConfiguration) {
@@ -663,8 +677,8 @@ test('a file that several connections load reads as one pass, which is only as g
       return new AsyncDisposableStack();
     }
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract(configuration: CopyConfiguration) {
@@ -823,8 +837,8 @@ test('a connection that copies one stream twice is recorded as a failed pass and
       return new AsyncDisposableStack();
     }
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
 
     protected override async *extract() {

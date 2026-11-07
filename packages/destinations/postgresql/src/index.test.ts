@@ -15,10 +15,12 @@ import postgres from 'postgres';
 
 import {
   Catalog,
+  type ChangeSignal,
   Connection,
   Copy,
   type CopyConfiguration,
   DocumentParser,
+  Gauge,
   LocalFiles,
   type Partition,
   Pipeline,
@@ -26,7 +28,6 @@ import {
   type Properties,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   Stream,
   type StreamSchema,
   diffSnapshot,
@@ -40,6 +41,31 @@ import {
   publishPostgresViews,
 } from './index.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
+
+// The upstream of a test source, which the test fills before a watch and
+// writes again at each of the next checks, as many times as writes says: a
+// watch finds it changed at its first check and at each write, and unchanged
+// after.
+class Upstream extends Gauge<number> {
+  readonly #writes: number;
+  #reads = 0;
+
+  constructor(writes: number) {
+    super();
+    this.#writes = writes;
+  }
+
+  protected async read(): Promise<number> {
+    const read = this.#reads;
+    this.#reads += 1;
+    return Math.min(read, this.#writes);
+  }
+}
+
+// The change signal of streams whose upstream the test filled.
+const filled = (streams: readonly Stream[]): ChangeSignal[] => [
+  { gauge: new Upstream(0), streams, interval: 1000, timeout: 1000 },
+];
 
 // A source whose upstream is current whenever it is read.
 abstract class LiveSource<
@@ -75,8 +101,8 @@ class Messages extends LiveSource {
     this.identity = identity;
     this.catalog = new Catalog([stream]);
   }
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
+  override changeSignals(streams: readonly Stream[]) {
+    return filled(streams);
   }
   protected override async *extract(configuration: CopyConfiguration) {
     this.extracted++;
@@ -2399,8 +2425,8 @@ class ScriptedSource extends LiveSource {
     return new AsyncDisposableStack();
   }
 
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
+  override changeSignals(streams: readonly Stream[]) {
+    return filled(streams);
   }
 
   protected override async *extract(
@@ -3935,17 +3961,25 @@ test('a watch whose poll fails records the failure with the causes its error cha
     (error: unknown) =>
       error instanceof Error ? error : assert.fail('fetch threw no Error'),
   );
-  class Polling extends ScriptedSource {
-    polling: Error | null = null;
+  // An upstream whose second check is refused, and whose third finds a
+  // change.
+  class RefusedOnce extends Gauge<number> {
+    #reads = 0;
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
-      if (this.polling !== null) throw this.polling;
+    protected async read(): Promise<number> {
+      const read = this.#reads;
+      this.#reads += 1;
+      if (read === 1) throw refused;
+      return read;
+    }
+  }
+  class Polling extends ScriptedSource {
+    override changeSignals(streams: readonly Stream[]) {
+      return [{ gauge: new RefusedOnce(), streams, interval: 5, timeout: 5 }];
     }
   }
   const files = scripted('files');
   const source = new Polling([files], { files: [checkpoint('files', {})] });
-  source.polling = refused;
   const destination = new PostgresDestination({
     url: database.connectionString,
     schema: 'raw',
@@ -3974,10 +4008,11 @@ test('a watch whose poll fails records the failure with the causes its error cha
   try {
     await watching.next();
 
-    // A refused poll is a system failure: recorded, then watched again.
-    const rewatched = await watching.next();
+    // A refused poll is a system failure: recorded, then read again at the
+    // next check.
+    const afterRefusal = await watching.next();
 
-    assert.equal(rewatched.done, false);
+    assert.equal(afterRefusal.done, false);
     const [copy] = await sql`SELECT failures FROM marts.extraction_coverage
       WHERE attempt_id = (SELECT min(attempt_id) FROM marts.sync_attempts
         WHERE status = 'failed')`;
@@ -4379,9 +4414,8 @@ test('each watch pass is recorded under its own connection when it completes', a
     (sql) => sql.end(),
   );
   class Twice extends ScriptedSource {
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return [{ gauge: new Upstream(1), streams, interval: 50, timeout: 50 }];
     }
   }
   const connection = (schema: string) => {
@@ -4416,10 +4450,14 @@ test('each watch pass is recorded under its own connection when it completes', a
     connections: [connection('notes'), connection('mail')],
   });
 
-  const passes = await Array.fromAsync(
-    pipeline.watch({ signal: AbortSignal.timeout(10_000) }),
-    ({ connection }) => connection.name,
-  );
+  const controller = new AbortController();
+  const passes: string[] = [];
+  for await (const { connection } of pipeline.watch({
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  })) {
+    passes.push(connection.name);
+    if (passes.length === 4) controller.abort();
+  }
 
   assert.deepEqual(passes.toSorted(), ['mail', 'mail', 'notes', 'notes']);
   const attempts = await sql`SELECT connector, status FROM marts.sync_attempts`;
@@ -4450,9 +4488,11 @@ test('stream_status keeps each stream own latest outcome when a watch pass reads
   const a = scripted('a');
   const b = scripted('b');
   class Changes extends ScriptedSource {
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
-      yield [a];
+    override changeSignals() {
+      return [
+        { gauge: new Upstream(1), streams: [a], interval: 50, timeout: 50 },
+        { gauge: new Upstream(0), streams: [b], interval: 50, timeout: 50 },
+      ];
     }
   }
   const source = new Changes([a, b], {
@@ -4488,9 +4528,12 @@ test('stream_status keeps each stream own latest outcome when a watch pass reads
     ],
   });
 
+  const controller = new AbortController();
+  let passes = 0;
   for await (const _pass of pipeline.watch({
-    signal: AbortSignal.timeout(10_000),
-  }));
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  }))
+    if (++passes === 2) controller.abort();
 
   assert.deepEqual(
     [...(await sql`SELECT connector, status FROM marts.sync_status`)],
@@ -5056,8 +5099,8 @@ test('a reset of a partition named by a renamed field replaces only that partiti
     protected override partitions() {
       return [{ 'Account Id': 'a' }, { 'Account Id': 'b' }];
     }
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       _configuration: CopyConfiguration,
@@ -5166,8 +5209,8 @@ test('a reset replaces its partition, or the whole table, at the next commit; a 
     protected override partitions() {
       return [{ account: 'a' }, { account: 'b' }];
     }
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       configuration: CopyConfiguration,
@@ -5471,8 +5514,8 @@ test('a load holds no transaction while the source reads, so a run over many tab
 
     readonly identity = 'many';
     protected readonly catalog = new Catalog(streams);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(configuration: CopyConfiguration) {
       // A lock table shared by the whole server runs out past a few
@@ -5562,8 +5605,8 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
 
     readonly identity = 'scripted';
     protected readonly catalog = new Catalog([items]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract(
       _configuration: CopyConfiguration,
@@ -5686,8 +5729,8 @@ test('rows past one JSON string stage in batches by size, and a record too large
 
     readonly identity = 'documents';
     protected readonly catalog = new Catalog([docs]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
     }
     protected override async *extract() {
       for (const data of records) yield { stream: 'docs', data };
@@ -5745,9 +5788,49 @@ test('rows past one JSON string stage in batches by size, and a record too large
   assert.deepEqual({ ...(await stored()) }, { rows: 600, shortest: 2 ** 20 });
 });
 
-// Two streams of one record each, a read the test can make fail, and a
-// watcher the test drives: each check event is one check of the upstream,
-// naming the streams that changed since the previous check, possibly none.
+// The store of one stream of the checked source. A watch starts with a
+// check of every stream, so the first read gives a version at once. Each
+// later read waits for the next check event, and the version moves when that
+// check names the stream.
+class CheckedStore extends Gauge<number> implements AsyncDisposable {
+  readonly #stream: Stream;
+  readonly #checks: ReturnType<typeof on>;
+  // The checks that this store has not read yet.
+  readonly #unread: (readonly Stream[])[];
+  #version = 0;
+
+  constructor(stream: Stream, checks: EventEmitter) {
+    super();
+    this.#stream = stream;
+    this.#unread = [[stream]];
+    // Subscribed now, so a check event before the read waits for it.
+    this.#checks = on(checks, 'check');
+  }
+
+  protected async read(): Promise<number> {
+    const changed = this.#unread.shift() ?? (await this.#nextCheck());
+    if (changed.includes(this.#stream)) this.#version += 1;
+    return this.#version;
+  }
+
+  // The streams that the next check event names, or none when the watch
+  // stopped and disposed this store while the read waited.
+  async #nextCheck(): Promise<readonly Stream[]> {
+    const next = await this.#checks.next();
+    if (next.done) return [];
+    // A check event carries the streams that changed.
+    return next.value[0];
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.#checks[Symbol.asyncDispose]();
+  }
+}
+
+// Two streams of one record each, a read the test can make fail, and one
+// store for each stream that the test checks: each check event is one check
+// of every store, naming the streams that changed since the previous check,
+// possibly none.
 class CheckedSource extends Source {
   readonly identity = 'checked';
   readonly checks = new EventEmitter();
@@ -5779,10 +5862,14 @@ class CheckedSource extends Source {
     return new AsyncDisposableStack();
   }
 
-  protected override async *observe({ streams, signal }: SourceWatchOptions) {
-    await using checks = on(this.checks, 'check', { signal });
-    yield streams;
-    for await (const [changed] of checks) yield changed;
+  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+    return streams.map((stream) => ({
+      gauge: new CheckedStore(stream, this.checks),
+      streams: [stream],
+      interval: 5,
+      // A read waits for the test's next check event.
+      timeout: 60_000,
+    }));
   }
 
   protected override async *extract(configuration: CopyConfiguration) {

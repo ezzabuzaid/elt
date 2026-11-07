@@ -1,11 +1,6 @@
 import { join } from 'node:path';
 
-import { Gauge } from '@zukhruf/async';
-
-import {
-  type AppDatabaseVersion,
-  StoreUnavailableError,
-} from '@workspace/sdk-macos-app-database';
+import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
 
 import { appDatabase } from './app-database.ts';
 import { BusinessesSnapshot } from './businesses.ts';
@@ -92,9 +87,11 @@ export class WhatsApp {
     return new BackedUpKeyValueSnapshot(this.#file('backedUpKeyValue'));
   }
 
-  // A probe whose current value changes with each commit to the store.
-  version(store: WhatsAppStore): WhatsAppVersion {
-    return new WhatsAppVersion(store, this.#file(store));
+  // What changes when a store does: SQLite's data_version, which changes with
+  // every commit WhatsApp makes. A store that cannot be opened reads as
+  // unavailable, so its appearance is a change; reading it reports why.
+  version(store: WhatsAppStore): AppDatabaseVersion {
+    return appDatabase.version(this.#file(store));
   }
 
   // When WhatsApp last wrote this store. While the app is closed it writes
@@ -106,86 +103,5 @@ export class WhatsApp {
 
   #file(store: WhatsAppStore): string {
     return join(this.container, storeFiles[store]);
-  }
-}
-
-// What changes when a store does: SQLite's data_version, which changes with
-// every commit WhatsApp makes. A store that cannot be opened reads as missing,
-// so its appearance is a change; reading it reports why. A change watcher
-// reads it as a gauge.
-export class WhatsAppVersion extends Gauge<string> implements Disposable {
-  readonly store: WhatsAppStore;
-  #state: StoreState;
-
-  constructor(store: WhatsAppStore, path: string) {
-    super();
-    this.store = store;
-    this.#state = new MissingStore(path);
-  }
-
-  protected async read(): Promise<string> {
-    const reading = this.#state.read();
-    this.#state = reading.state;
-    return reading.value;
-  }
-
-  [Symbol.dispose](): void {
-    this.#state[Symbol.dispose]();
-  }
-}
-
-type Reading = { readonly value: string; readonly state: StoreState };
-
-interface StoreState extends Disposable {
-  read(): Reading;
-}
-
-// Each read tries to open the store; the first that succeeds reads it open.
-class MissingStore implements StoreState {
-  readonly #path: string;
-
-  constructor(path: string) {
-    this.#path = path;
-  }
-
-  read(): Reading {
-    let version: AppDatabaseVersion;
-    try {
-      version = appDatabase.version(this.#path);
-    } catch (error) {
-      if (error instanceof StoreUnavailableError)
-        return { value: 'missing', state: this };
-      throw error;
-    }
-    return new OpenStore(this.#path, version).read();
-  }
-
-  // Nothing is open.
-  [Symbol.dispose](): void {}
-}
-
-// A store WhatsApp replaced with one this process cannot open is missing
-// again, until a readable one is back.
-class OpenStore implements StoreState {
-  readonly #path: string;
-  readonly #version: AppDatabaseVersion;
-
-  constructor(path: string, version: AppDatabaseVersion) {
-    this.#path = path;
-    this.#version = version;
-  }
-
-  read(): Reading {
-    try {
-      return { value: String(this.#version.current), state: this };
-    } catch (error) {
-      if (!(error instanceof StoreUnavailableError)) throw error;
-      this.#version[Symbol.dispose]();
-      return { value: 'missing', state: new MissingStore(this.#path) };
-    }
-  }
-
-  [Symbol.dispose](): void {
-    this.#version[Symbol.dispose]();
   }
 }

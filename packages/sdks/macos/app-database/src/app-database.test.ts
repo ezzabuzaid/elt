@@ -4,7 +4,10 @@ import { chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { UnavailableError as VersionUnavailableError } from '@zukhruf/sqlite-data-version';
+import {
+  DataVersion,
+  UnavailableError as VersionUnavailableError,
+} from '@zukhruf/sqlite-data-version';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import {
   MissingColumnsError,
@@ -12,7 +15,12 @@ import {
 } from '@zukhruf/sqlite-snapshot';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { AppDatabase, Store, StoreUnavailableError } from './index.ts';
+import {
+  AppDatabase,
+  AppDatabaseVersion,
+  Store,
+  StoreUnavailableError,
+} from './index.ts';
 
 const store = new Store('The store', 'Grant access.');
 
@@ -57,22 +65,21 @@ test('a store that lacks a column the reader reads is the package missing-column
   );
 });
 
-test('the version of a store that is not there is the SDK unavailable error', async () => {
+test('the version of a store that is not there reads as unavailable, and as a version once the owner creates the store', async () => {
   await using dir = await new TemporaryFiles().directory('app-database-');
   const path = join(dir.path, 'store.sqlite');
+  using version = database().version(path);
 
-  assert.throws(
-    () => database().version(path),
-    (error: unknown) => {
-      assert.ok(error instanceof StoreUnavailableError);
-      assert.ok(error.cause instanceof VersionUnavailableError);
-      return true;
-    },
-  );
+  const before = version.current;
+  created(path);
+  const after = version.current;
+
+  assert.equal(before, 'unavailable');
+  assert.equal(typeof after, 'number');
 });
 
 test(
-  'the version of a store the owner replaced with a file this process cannot open is the SDK unavailable error',
+  'the version of a store the owner replaced with a file this process cannot open reads as unavailable, and as a version again once a readable store is back',
   {
     // chmod denies nothing on Windows, and nothing to root.
     skip: process.platform === 'win32' || process.getuid?.() === 0,
@@ -82,23 +89,56 @@ test(
     const path = join(dir.path, 'store.sqlite');
     created(path);
     using version = database().version(path);
-    const replacement = join(dir.path, 'replacement.sqlite');
-    created(replacement);
-    await chmod(replacement, 0o000);
+    const opened = version.current;
+    const denied = join(dir.path, 'denied.sqlite');
+    created(denied);
+    await chmod(denied, 0o000);
+    const readable = join(dir.path, 'readable.sqlite');
+    created(readable);
 
-    renameSync(replacement, path);
+    renameSync(denied, path);
+    const replaced = version.current;
+    renameSync(readable, path);
+    const back = version.current;
 
-    assert.throws(
-      () => version.current,
-      (error: unknown) => {
-        assert.ok(error instanceof StoreUnavailableError);
-        assert.equal(error.path, path);
-        assert.ok(error.cause instanceof VersionUnavailableError);
-        return true;
-      },
-    );
+    assert.equal(typeof opened, 'number');
+    assert.equal(replaced, 'unavailable');
+    assert.equal(typeof back, 'number');
   },
 );
+
+test('a version whose first read of an opened store fails closes that store, and the next read opens it again', () => {
+  // SQLite gives no way to fail data_version just after an open, so each open
+  // reads a database that DataVersion takes in place of a file. The first
+  // fails its second observation, the read of the version.
+  let opened = 0;
+  let closed = 0;
+  const open = () => {
+    opened += 1;
+    let observations = 0;
+    return new DataVersion('store.sqlite', {
+      observe: () => {
+        observations += 1;
+        if (opened === 1 && observations === 2)
+          throw new Error('disk I/O error');
+        return 'observed';
+      },
+      [Symbol.dispose]: () => {
+        closed += 1;
+      },
+    });
+  };
+  const version = new AppDatabaseVersion(open);
+
+  assert.throws(() => version.current, { message: 'disk I/O error' });
+  const closedAfterFailure = closed;
+  const next = version.current;
+  version[Symbol.dispose]();
+
+  assert.equal(closedAfterFailure, 1);
+  assert.equal(next, 0);
+  assert.deepEqual({ opened, closed }, { opened: 2, closed: 2 });
+});
 
 test('the last write of a store that is not there is the SDK unavailable error', async () => {
   await using dir = await new TemporaryFiles().directory('app-database-');

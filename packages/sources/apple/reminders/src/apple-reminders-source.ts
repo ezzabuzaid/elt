@@ -4,7 +4,6 @@ import type {
   CopyConfiguration,
   ExtractionCoverage,
   SourceMessage,
-  SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
@@ -47,6 +46,9 @@ const readerOf = (stream: Stream): RemindersReader => {
   return reader;
 };
 
+// How often a watch checks the helper's count of changes.
+const checkIntervalMs = 1000;
+
 // Adapter: native EventKit records enter the existing Source/Copy/Pipeline contract.
 export class AppleRemindersSource extends Source<RemindersScan> {
   readonly #store: RemindersStore;
@@ -88,13 +90,19 @@ export class AppleRemindersSource extends Source<RemindersScan> {
     return null;
   }
 
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    for await (const check of this.#store.checks(signal, clock))
-      yield check === 'changed' ? streams : [];
+  // EventKit posts each change of the whole store, so each change reads
+  // every selected stream again.
+  override changeSignals(streams: readonly Stream[]) {
+    return [
+      {
+        gauge: this.#store.changes(),
+        streams,
+        interval: checkIntervalMs,
+        // The helper confirms its subscription in less than 150 ms (measured
+        // on 2026-11-06), and a later read is of memory.
+        timeout: checkIntervalMs,
+      },
+    ];
   }
 
   // One change-free read for every selected stream, so reminders match their

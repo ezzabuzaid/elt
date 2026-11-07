@@ -66,7 +66,7 @@ Each stream loads into a hidden table. The hidden table replaces the old table w
 
 The source reads four streams at once through one SDK object. The SDK keeps the requests below 300 each minute for each user, the limit of Google. The daily rollups send about 150 small requests quickly. Without this pacing, they got `429` on 2026-10-15.
 
-`observe()` polls each 15 minutes. It reads the last sync times of the paired devices and the newest point of steps, heart rate, exercise, sleep and weight. When one of them moved, all streams wake. An edit to an old point alone moves none of them. When a probe call fails, the failure is part of the fingerprint. When the call starts or stops failing, the streams wake, and the extraction reports the failure or loads the data. The Search Console source has the same probe code. See the [ledger](./docs/copied-from-search-console.md).
+The change signal of the source is a probe that the pipeline reads each 15 minutes. It reads the last sync times of the paired devices and the newest point of steps, heart rate, exercise, sleep and weight. When one of them moved, all streams wake. An edit to an old point alone moves none of them. When a probe call fails, the failure is part of the fingerprint. When the call starts or stops failing, the streams wake, and the extraction reports the failure or loads the data. The Search Console source has the same probe code. See the [ledger](./docs/copied-from-search-console.md).
 
 ## Not read
 
@@ -80,7 +80,7 @@ The source reads four streams at once through one SDK object. The SDK keeps the 
 
 - A measured type has points from more than one device that overlap. Total the points of one device, not all points.
 - An edit or a deletion upstream shows after the next run.
-- `observe()` wakes on new data, but not on an edit to an old point alone.
+- The change signal wakes on new data, but not on an edit to an old point alone.
 - A value that Google could not compute (`NaN`) loads as `null`.
 - Each run reads each stream completely.
 

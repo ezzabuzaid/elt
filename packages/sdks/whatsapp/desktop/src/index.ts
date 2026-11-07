@@ -59,9 +59,4 @@ export {
 export type { User } from './users.ts';
 export { UsersSnapshot } from './users.ts';
 export { whatsappRunning } from './whatsapp-app.ts';
-export {
-  WhatsApp,
-  type WhatsAppStore,
-  WhatsAppVersion,
-  whatsappContainer,
-} from './whatsapp.ts';
+export { WhatsApp, type WhatsAppStore, whatsappContainer } from './whatsapp.ts';

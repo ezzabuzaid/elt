@@ -99,7 +99,7 @@ The source does not read:
 - **Photos:** Core Data keeps a photo inline (`0x01` and the bytes) or in its own file (`0x02` and a UUID) in `.AddressBook-v22_SUPPORT/_EXTERNAL_DATA`. The source stages an inline photo in a temporary file, and removes the file when the record is loaded. It reads an external file where it is. `sha256` makes a replaced photo a changed record. Other encodings fail the read. For iCloud contacts, the Mac keeps only the thumbnail. The full photo stays in iCloud (`imageReference`), and Contacts.framework also gives no image data for these contacts.
 - **Account names:** the stores do not name their accounts. Contacts.framework gets "iCloud" or "Google" from the Accounts framework, and this source does not read it. `containers.name` is null.
 - **Failures:** a store that the source cannot open stops the run. The source does not read it as empty, because that deletes the rows of its account from each target ([ADR 0002](./docs/adr/0002-a-store-that-cannot-be-read-stops-the-run.md)).
-- **Watching:** contactsd writes through WALs that it keeps open. Thus `observe()` reads `PRAGMA data_version` of each store, and the list of the `Sources` folder, each second. A commit, or an added or removed account, wakes each selected stream.
+- **Watching:** contactsd writes through WALs that it keeps open. Thus the change signal of the source reads `PRAGMA data_version` of each store, and the list of the `Sources` folder, each second. A commit, or an added or removed account, wakes each selected stream.
 
 ## Limitations
 

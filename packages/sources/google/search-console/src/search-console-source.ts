@@ -1,4 +1,4 @@
-import { delay } from '@zukhruf/async';
+import type { Check } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -9,7 +9,6 @@ import {
   type PipelineClock,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   type Stream,
 } from '@workspace/elt';
 import {
@@ -25,10 +24,12 @@ import {
 
 import { addDays } from './calendar-dates.ts';
 import { DatedAnalyticsStream } from './dated-analytics-stream.ts';
+import { DueTime } from './due-time.ts';
 import {
   type InspectionOptions,
   InspectionStream,
 } from './inspection-stream.ts';
+import { Probe } from './probe.ts';
 import { RETENTION_MONTHS } from './search-analytics.ts';
 import { SearchConsoleScan } from './search-console-scan.ts';
 import type { SearchConsoleStream } from './search-console-stream.ts';
@@ -59,9 +60,17 @@ export type SearchConsoleOptions = {
   readonly pollIntervalMs?: number;
 };
 
-// The longest delay a Node timer holds; a longer one fires at once, so a
-// longer sleep wakes early and the watch checks its due times again.
+// The longest delay a Node timer holds, about 24.8 days; a longer one fires at
+// once. Thus a poll interval above it is cut to it, and the watch probes each
+// 24.8 days (backlog #3922).
 const TIMER_MAX = 2 ** 31 - 1;
+
+// How often a watch checks whether an inspection is due. A due inspection is
+// made at most one interval late.
+const INSPECTION_CHECK_MS = 1000;
+
+// How long one probe can take, its Retry-After waits included.
+const PROBE_TIMEOUT_MS = 5 * 60 * 1000;
 
 // Days of daily totals the change probe compares.
 const PROBE_DAYS = 28;
@@ -101,11 +110,8 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
   // How each stream reads, by the stream it reads.
   readonly #readers: ReadonlyMap<Stream, SearchConsoleStream>;
   // When each inspection stream next has a URL due, per property, learned
-  // from the checkpoints its extractions received; observe() sleeps on it.
+  // from the checkpoints its extractions received.
   readonly #dueAt = new Map<string, number>();
-  // Wakes a sleeping observe() whenever an extraction learns a due time, which
-  // can be sooner than the one it went to sleep on.
-  readonly #dueLearned = new EventTarget();
 
   constructor(options: SearchConsoleOptions) {
     super();
@@ -174,7 +180,6 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
       concurrency: inspectionConcurrency,
       due: (stream, siteUrl, at) => {
         this.#dueAt.set(`${stream}\0${siteUrl}`, at);
-        this.#dueLearned.dispatchEvent(new Event('learned'));
       },
     };
     const readers = {
@@ -219,6 +224,16 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
     states: { get(stream: string): unknown },
     clock: PipelineClock,
   ): Promise<SearchConsoleScan> {
+    // An inspection stream is due again at the next poll until its
+    // extraction learns when its next URL is due, so a pass that fails is
+    // tried again then.
+    for (const stream of streams)
+      if (this.#reader(stream) instanceof InspectionStream)
+        for (const siteUrl of this.siteUrls)
+          this.#dueAt.set(
+            `${stream.name}\0${siteUrl}`,
+            clock.Date.now() + this.pollIntervalMs,
+          );
     return new SearchConsoleScan(this.#api, this.searchTypes, clock);
   }
 
@@ -288,8 +303,8 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
   }
 
   /**
-   * Search Console publishes no change notification, so observation polls. A
-   * tick reads two cheap probes, each waking only the streams whose data it
+   * Search Console publishes no change notification, so a watch polls. Each
+   * poll reads two cheap probes, each waking only the streams whose data it
    * covers: the daily web totals wake the analytics streams when the settled
    * boundary moved or a day's totals changed, and the property list with
    * each property's sitemap list wakes the listing streams when either
@@ -297,11 +312,7 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
    * their next URL falls due, a time this source learned from the
    * checkpoints its own extractions received.
    */
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
+  override changeSignals(streams: readonly Stream[], clock: PipelineClock) {
     const inspections = streams.filter(
       (stream) => this.#reader(stream) instanceof InspectionStream,
     );
@@ -315,80 +326,40 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
     const listings = streams.filter(
       (stream) => !inspections.includes(stream) && !analytics.includes(stream),
     );
-    const probes = [];
-    for (const [woken, fingerprint] of [
-      [analytics, () => this.#totals(signal, clock)],
-      [listings, () => this.#listings(signal, clock)],
-    ] as const)
-      if (woken.length > 0)
-        probes.push({ woken, fingerprint, seen: await fingerprint() });
-    // The first check wakes every stream, the inspection streams included.
-    let woke = clock.Date.now();
-    yield streams;
-    let probeAt = clock.Date.now() + this.pollIntervalMs;
-    while (!signal.aborted) {
-      // A due time that no extraction moved past the last wake, because that
-      // extraction failed or has not run, is checked again at the next poll.
-      const due = this.#nextDue(inspections);
-      const inspectAt = due > woke ? due : woke + this.pollIntervalMs;
-      const wake = Math.min(
-        probes.length > 0 ? probeAt : Number.POSITIVE_INFINITY,
-        inspections.length > 0 ? inspectAt : Number.POSITIVE_INFINITY,
-        clock.Date.now() + this.pollIntervalMs,
-      );
-      await this.#sleep(wake, signal, clock);
-      const changed: Stream[] = [];
-      if (probes.length > 0 && clock.Date.now() >= probeAt) {
-        probeAt = clock.Date.now() + this.pollIntervalMs;
-        for (const probe of probes) {
-          const current = await probe.fingerprint();
-          if (current !== probe.seen) {
-            probe.seen = current;
-            changed.push(...probe.woken);
-          }
-        }
-      }
-      if (inspections.length > 0 && clock.Date.now() >= inspectAt) {
-        woke = clock.Date.now();
-        changed.push(...inspections);
-      }
-      if (changed.length > 0) yield changed;
-    }
-  }
-
-  // Sleeps until wake, or until an extraction learns a due time.
-  async #sleep(
-    wake: number,
-    signal: AbortSignal,
-    clock: PipelineClock,
-  ): Promise<void> {
-    const learned = new AbortController();
-    this.#dueLearned.addEventListener('learned', () => learned.abort(), {
-      signal: learned.signal,
-    });
-    try {
-      await delay(Math.min(Math.max(0, wake - clock.Date.now()), TIMER_MAX), {
-        clock,
-        signal: AbortSignal.any([signal, learned.signal]),
-      });
-    } catch (error) {
-      if (signal.aborted || !learned.signal.aborted) throw error;
-    } finally {
-      learned.abort();
-    }
-  }
-
-  // A due time no extraction has learned yet counts as due.
-  #nextDue(streams: readonly Stream[]): number {
-    let due = Number.POSITIVE_INFINITY;
-    for (const stream of streams)
-      for (const siteUrl of this.siteUrls)
-        due = Math.min(
-          due,
-          this.#dueAt.get(`${stream.name}\0${siteUrl}`) ??
-            Number.NEGATIVE_INFINITY,
-        );
-    return due;
+    const poll = Math.min(this.pollIntervalMs, TIMER_MAX);
+    return [
+      {
+        gauge: new Probe((check) => this.#totals(check, clock)),
+        streams: analytics,
+        interval: poll,
+        timeout: PROBE_TIMEOUT_MS,
+      },
+      {
+        gauge: new Probe((check) => this.#listings(check, clock)),
+        streams: listings,
+        interval: poll,
+        timeout: PROBE_TIMEOUT_MS,
+      },
+      {
+        // The earliest due time that a read learned; none is due until a read
+        // learns one, and open() learns one for each inspection stream.
+        gauge: new DueTime(() =>
+          Math.min(
+            ...inspections.flatMap((stream) =>
+              this.siteUrls.flatMap((siteUrl) => {
+                const at = this.#dueAt.get(`${stream.name}\0${siteUrl}`);
+                return at === undefined ? [] : [at];
+              }),
+            ),
+          ),
+        ),
+        streams: inspections,
+        interval: INSPECTION_CHECK_MS,
+        // The read is of memory: a check that takes the whole interval is
+        // stuck.
+        timeout: INSPECTION_CHECK_MS,
+      },
+    ].filter((changeSignal) => changeSignal.streams.length > 0);
   }
 
   protected override extract(
@@ -416,12 +387,12 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
 
   // Each property's daily web totals; a change in any of them wakes the
   // analytics streams.
-  async #totals(signal: AbortSignal, clock: PipelineClock): Promise<string> {
+  async #totals({ signal, now }: Check, clock: PipelineClock): Promise<string> {
     const totals = [];
     for (const siteUrl of this.siteUrls)
       totals.push(
         await this.#probe(signal, async () => {
-          const endDate = today(new Date(clock.Date.now()));
+          const endDate = today(new Date(now));
           const page = await readSearchAnalytics(
             this.#api,
             siteUrl,
@@ -449,7 +420,7 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
 
   // The properties the grant lists and each property's sitemaps, as Google
   // returns them; a change in any of them wakes the listing streams.
-  async #listings(signal: AbortSignal, clock: PipelineClock): Promise<string> {
+  async #listings({ signal }: Check, clock: PipelineClock): Promise<string> {
     const lists = [
       await this.#probe(signal, () => this.#api.sites({ signal, clock })),
     ];

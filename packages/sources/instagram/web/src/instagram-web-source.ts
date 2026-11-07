@@ -1,4 +1,4 @@
-import { delay } from '@zukhruf/async';
+import { Period } from '@zukhruf/async';
 import { UnavailableError } from '@zukhruf/sqlite-open';
 
 import {
@@ -10,7 +10,6 @@ import {
   type PipelineClock,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   type Stream,
   isTimestamp,
 } from '@workspace/elt';
@@ -179,22 +178,17 @@ export class InstagramWebSource extends Source<InstagramRun> {
     return null;
   }
 
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    if (signal.aborted) return;
-    yield streams;
-    for (;;) {
-      try {
-        await delay(pollIntervalMs, { clock, signal });
-      } catch (error) {
-        if (signal.aborted) return;
-        throw error;
-      }
-      yield streams;
-    }
+  override changeSignals(streams: readonly Stream[]) {
+    return [
+      {
+        gauge: new Period(pollIntervalMs),
+        streams,
+        interval: pollIntervalMs,
+        // A read of the clock: a check that takes the whole interval is
+        // stuck.
+        timeout: pollIntervalMs,
+      },
+    ];
   }
 
   protected override async *extract(

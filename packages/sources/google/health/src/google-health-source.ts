@@ -1,4 +1,4 @@
-import { ChangeWatcher, type Check, Gauge } from '@zukhruf/async';
+import { type Check, Gauge } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -9,7 +9,6 @@ import {
   type PipelineClock,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   type Stream,
 } from '@workspace/elt';
 import {
@@ -51,15 +50,15 @@ const probeTimeoutMs = (1 + PROBED.length) * 4 * 60_000;
 // The fingerprint of what moves when a device or app syncs, read over the
 // network.
 class Fingerprint extends Gauge<string> {
-  readonly #read: (signal: AbortSignal) => Promise<string>;
+  readonly #read: (check: Check) => Promise<string>;
 
-  constructor(read: (signal: AbortSignal) => Promise<string>) {
+  constructor(read: (check: Check) => Promise<string>) {
     super();
     this.#read = read;
   }
 
   protected read(check: Check) {
-    return this.#read(check.signal);
+    return this.#read(check);
   }
 }
 
@@ -147,30 +146,21 @@ export class GoogleHealthSource extends Source<GoogleHealthScan> {
   }
 
   /**
-   * Google Health notifies changes only to a public webhook, so observation
-   * polls. A tick reads the paired devices and the newest point of a few
+   * Google Health notifies changes only to a public webhook, so a watch
+   * polls. Each check reads the paired devices and the newest point of a few
    * types; when any of them moved, a device or app synced, and every stream
-   * wakes, since each one reloads whole. An edit to an old point alone moves
-   * none of them, and shows with the next wake.
+   * changed, since each one reloads whole. An edit to an old point alone
+   * moves none of them, and loads with the next change.
    */
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    const fingerprint = new Fingerprint((probe) =>
-      this.#fingerprint(probe, clock),
-    );
-    const watcher = new ChangeWatcher([fingerprint], {
-      interval: this.pollIntervalMs,
-      timeout: probeTimeoutMs,
-      clock,
-    });
-    for await (const outcomes of watcher.watch(signal))
-      for (const outcome of outcomes.values()) {
-        if (outcome.state === 'failed') throw outcome.error;
-        yield outcome.state === 'changed' ? streams : [];
-      }
+  override changeSignals(streams: readonly Stream[], clock: PipelineClock) {
+    return [
+      {
+        gauge: new Fingerprint((check) => this.#fingerprint(check, clock)),
+        streams,
+        interval: this.pollIntervalMs,
+        timeout: probeTimeoutMs,
+      },
+    ];
   }
 
   protected override extract(
@@ -190,10 +180,7 @@ export class GoogleHealthSource extends Source<GoogleHealthScan> {
     return reader;
   }
 
-  async #fingerprint(
-    signal: AbortSignal,
-    clock: PipelineClock,
-  ): Promise<string> {
+  async #fingerprint({ signal }: Check, clock: PipelineClock): Promise<string> {
     const marks = [
       await this.#probe(signal, () =>
         Array.fromAsync(

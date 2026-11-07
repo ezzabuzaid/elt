@@ -11,7 +11,7 @@ const attempt = {
   completed_at:
     'Database time when the pass outcomes were recorded. NULL means no completion was recorded; this is not evidence that a process is alive.',
   status:
-    'running: no completion recorded; succeeded: all selected copies completed, including empty or unchanged reads; partial: failures with some successful copies or committed writes/deletes; failed: failures without that progress; cancelled: the run was stopped on request, and error says why; what it committed before stays. No watcher health is implied.',
+    'running: no completion recorded; succeeded: all selected copies completed, including empty or unchanged reads; partial: failures with some successful copies or committed writes/deletes; failed: failures without that progress; cancelled: the run was stopped on request, and error says why; what it committed before stays. No health of a watch is implied.',
   error:
     'Pipeline error message, or NULL after success or before completion. Per-copy failures and partitions are in extraction_coverage.',
   failure_type:
@@ -23,7 +23,7 @@ export const syncHistoryRelations = {
   sync_attempts: {
     name: 'sync_attempts',
     description:
-      'One row per pass of a connection. A run passes every stream the connection selected; a watch pass reads only the streams its source reported changed, so an attempt vouches only for its own extraction_coverage rows. History is retained, including failures and unfinished attempts. A successful pass may write zero rows. A connection whose watcher stopped records a failed attempt without outcomes. Setup/authentication before the pipeline is constructed is not observed. This records extraction/load outcomes, not subsequent mart publication.',
+      'One row per pass of a connection. A run passes every stream the connection selected; a watch pass reads only the streams whose change signals changed, so an attempt vouches only for its own extraction_coverage rows. History is retained, including failures and unfinished attempts. A successful pass may write zero rows. A connection that stopped, a failed change signal or a failed upkeep records a failed attempt without outcomes. Setup/authentication before the pipeline is constructed is not observed. This records extraction/load outcomes, not subsequent mart publication.',
     columns: attempt,
   },
   extraction_coverage: {

@@ -1,10 +1,8 @@
-import { ChangeWatcher } from '@zukhruf/async';
-
 import type {
+  ChangeSignal,
   CopyConfiguration,
   ExtractionCoverage,
   SourceMessage,
-  SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source } from '@workspace/elt';
@@ -250,46 +248,25 @@ export class AppleMailSource extends Source<MailScan> {
   // Polls the store's version, which reports index commits and file changes,
   // and, while an account stream is selected, the Accounts store's; a change
   // there refreshes only the account streams.
-  protected override async *observe({
-    streams: selected,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    if (signal.aborted) return;
-    using mail = await this.#store.version();
-    const accountsSelected = selected.filter(({ name }) =>
-      accountStreams.has(name),
-    );
-    using accounts =
-      accountsSelected.length === 0 ? null : this.#accountsVersion();
-    const watcher = new ChangeWatcher(
-      accounts === null ? [mail] : [mail, accounts],
+  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+    const mail = {
+      gauge: this.#store.version(),
+      streams,
+      interval: pollIntervalMs,
+      // The reads are local, data_version and a count of file events: a
+      // check that takes the whole interval is stuck.
+      timeout: pollIntervalMs,
+    };
+    const accounts = streams.filter(({ name }) => accountStreams.has(name));
+    if (accounts.length === 0) return [mail];
+    return [
+      mail,
       {
+        gauge: this.#accounts.version(),
+        streams: accounts,
         interval: pollIntervalMs,
-        // The reads are local, data_version and a count of file events: a
-        // check that takes the whole interval is stuck.
         timeout: pollIntervalMs,
-        clock,
       },
-    );
-    for await (const outcomes of watcher.watch(signal)) {
-      for (const outcome of outcomes.values())
-        if (outcome.state === 'failed') throw outcome.error;
-      if (outcomes.get(mail)?.state === 'changed') yield selected;
-      else if (accounts !== null && outcomes.get(accounts)?.state === 'changed')
-        yield accountsSelected;
-      else yield [];
-    }
-  }
-
-  // A store this process cannot open fails the account streams on every run;
-  // it does not end the watch over the rest of Mail.
-  #accountsVersion() {
-    try {
-      return this.#accounts.version();
-    } catch (error) {
-      if (error instanceof StoreUnavailableError) return null;
-      throw error;
-    }
+    ];
   }
 }

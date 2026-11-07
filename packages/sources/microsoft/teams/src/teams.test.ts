@@ -3,7 +3,6 @@ import { chmod, mkdir, readdir, rm, utimes } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { open } from '@zukhruf/sqlite-open';
@@ -2445,7 +2444,7 @@ test('an import scope keeps the selected accounts, conversations and dates, and 
 });
 
 test(
-  'a Teams watch wakes every stream once, again when the app writes its store, and stops when aborted',
+  'a Teams watch wakes every stream once, and again when the app writes its store',
   { timeout: 30_000 },
   async (t) => {
     const clock = createClock();
@@ -2511,24 +2510,6 @@ test(
     assert.deepEqual(Object.keys(batches[0] ?? {}).sort(), names);
     assert.deepEqual(Object.keys(batches[1] ?? {}).sort(), names);
     assert.deepEqual(batches[1]?.messages, { count: 1, deleted: 0 });
-
-    // The source's own watch ends as soon as its signal aborts, rather than
-    // polling the store every second for a host that stopped listening.
-    const stop = new AbortController();
-    const watch = source.watch({
-      clock: globalThis,
-      streams,
-      signal: stop.signal,
-    });
-    assert.deepEqual((await watch.next()).value, streams);
-    stop.abort();
-    assert.deepEqual(
-      await Promise.race([
-        watch.next(),
-        sleep(2500).then(() => 'still polling'),
-      ]),
-      { done: true, value: undefined },
-    );
   },
 );
 

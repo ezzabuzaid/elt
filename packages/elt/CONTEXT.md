@@ -108,6 +108,14 @@ _Avoid_: Session, snapshot (a snapshot is the state of a snapshot stream)
 One look of a watch at its upstream. A check that finds no change makes the unchanged streams current as of that check.
 _Avoid_: Poll, heartbeat
 
+**Change signal**:
+A gauge that a watch reads at each check, the streams that it tells about, and the interval and timeout of its checks. A source declares its change signals, and a failed change signal fails only its streams.
+_Avoid_: Probe, watcher, signal (a signal aborts a call)
+
+**Upkeep**:
+An action that a source keeps doing while a watch runs, beside its change signals, for example launching Notes hidden so that Notes syncs its store. A change signal only reads the upstream; an upkeep acts on it.
+_Avoid_: Heartbeat, keep-alive, task
+
 **Current as of**:
 When a stream last agreed with its upstream: the start of its last successful pass or a later check, and never later than when its source says the upstream was last current.
 _Avoid_: Freshness, last sync, updated at

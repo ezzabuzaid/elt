@@ -52,9 +52,8 @@ export class MailStore {
   }
 
   // A probe whose current value changes when the store does.
-  async version(): Promise<MailVersion> {
-    const directory = await mailVersionDirectory(this.root);
-    return this.#atRoot(() => new MailVersion(this.root, directory));
+  version(): MailVersion {
+    return new MailVersion(this.root);
   }
 
   // When Mail last wrote the index of its current version folder. Mail's

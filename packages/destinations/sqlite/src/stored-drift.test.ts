@@ -10,10 +10,10 @@ import {
   Connection,
   Copy,
   type CopyConfiguration,
+  Gauge,
   Pipeline,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 
@@ -23,6 +23,14 @@ import {
   SQLiteSyncHistory,
   readPassStatus,
 } from './index.ts';
+
+// The upstream of a test source, which the test fills before it reads: a
+// watch finds it changed at its first check and unchanged after.
+class Filled extends Gauge<number> {
+  protected async read(): Promise<number> {
+    return 0;
+  }
+}
 
 // A source whose upstream is current whenever it is read.
 abstract class LiveSource<
@@ -61,8 +69,8 @@ class Counting extends LiveSource {
     return new AsyncDisposableStack();
   }
 
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
+  override changeSignals(streams: readonly Stream[]) {
+    return [{ gauge: new Filled(), streams, interval: 1000, timeout: 1000 }];
   }
 
   protected override async *extract(

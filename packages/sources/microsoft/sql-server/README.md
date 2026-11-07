@@ -62,7 +62,7 @@ A read-only login is sufficient: `db_datareader`, and `VIEW CHANGE TRACKING` on 
 `VIEW SERVER STATE` (`VIEW DATABASE STATE` on Azure SQL Database) is optional. With it, a watch sees each write to a table that the source reads by snapshot or fully, also to a column with no statistics. See [Watching](#watching).
 
 - A connection string that names no `Database` is refused. Thus a read never goes to the default database of the login.
-- A server that cannot be reached fails with `SqlServerUnavailableError`. It is down, it restarts or fails over, its address is wrong, or the network dropped the connection. This is a `system` failure, so a later attempt or a watch that watches again can succeed.
+- A server that cannot be reached fails with `SqlServerUnavailableError`. It is down, it restarts or fails over, its address is wrong, or the network dropped the connection. This is a `system` failure, so a later attempt or the next check of a watch can succeed.
 - A login that the server refuses fails with `SqlServerLoginError`: the credentials are wrong, the login is disabled, or it cannot open the database. This is a `config` failure, which the user must fix. The login errors that SQL Server gives while it fails over or is busy (4060, 10928, 10929, 40197, 40501, 40613) are not refusals: tedious tries them again, and then they are `SqlServerUnavailableError`.
 - Both errors name the server and the database, but not the credentials.
 - A column that the login cannot read (a column-level `DENY`) is left out, and the table's description names it. A primary key with such a column identifies nothing, so its table reads fully.
@@ -142,7 +142,7 @@ Pages compare the full primary key as a tuple. Each part is cast to the declared
 
 ## Watching
 
-`observe()` checks every 30 seconds, with the `ChangeWatcher` of `@zukhruf/async`. It opens one session for the watch. Each sync strategy names the gauges of its stream, and the gauges of one stream are one group. On each check, each collector reads the values of all tables in one query, and the database version gives the Change Tracking version and the last rowversion in one query. A check wakes a stream when one gauge of its group changed. The first check wakes every stream. A check that wakes no stream yields nothing.
+The source gives elt's pipeline one change signal for each stream, checked every 30 seconds (elt ADR 0020). The first check opens one session for the watch, and the pipeline closes it when the watch stops. Each sync strategy names the gauges of its stream, and the gauges of one stream are one group. On each check, each collector reads the values of all tables in one query, and the database version gives the Change Tracking version and the last rowversion in one query. A check wakes a stream when one gauge of its group changed. The first check wakes every stream. A check that wakes no stream makes no pass.
 
 | Sync strategy             | Gauges                                                             |
 | ------------------------- | ------------------------------------------------------------------ |
@@ -159,7 +159,7 @@ Pages compare the full primary key as a tuple. Each part is cast to the declared
 
 The statistics, the row count and the last write are collectors: one key for each table, by its quoted name. A table that a collector does not give, for example a table dropped after discovery, changed, so its stream wakes and its read fails.
 
-The queries of one check have 10 seconds. When a gauge fails, for example because its query took longer, the watch fails with the error of the gauge. A restart of the SQL Server engine drops the connection of the watch, so the watch also fails. elt's pipeline watches again after a system failure, and the first check of the new watch wakes every stream.
+The queries of one check have 10 seconds. When a gauge fails, for example because its query took longer or a restart of the SQL Server engine dropped the connection, the streams of the gauge fail, as a `system` failure, and the next check reads the gauge again. The other streams keep loading. A server that cannot be reached at the first check leaves the session closed, and the next check opens it again. A login that the server refuses fails every stream as `config`, and the pipeline reads the gauges no more in this watch.
 
 The database is current whenever the source reads it, so the source gives no `currentAsOf`.
 

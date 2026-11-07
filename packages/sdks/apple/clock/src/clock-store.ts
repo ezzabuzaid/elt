@@ -45,8 +45,8 @@ export class ClockStore {
   version(store: ClockStoreKind): ClockVersion {
     const path = this.#location[store];
     return store === 'database'
-      ? new ClockDatabaseVersion(appDatabase.version(path))
-      : new ClockPreferencesVersion(store, path);
+      ? appDatabase.version(path)
+      : new ClockPreferencesVersion(path);
   }
 }
 
@@ -105,36 +105,15 @@ export class ClockSnapshot implements AsyncDisposable {
   }
 }
 
-// SQLite sees WAL commits; preferences are atomically rewritten. A version
-// probe never loads records. Missing preference files still change on return.
-// A change watcher reads it as a gauge.
-export abstract class ClockVersion extends Gauge<string> implements Disposable {
-  readonly store: ClockStoreKind;
-  constructor(store: ClockStoreKind) {
-    super();
-    this.store = store;
-  }
-  abstract [Symbol.dispose](): void;
-}
+// SQLite sees WAL commits; preferences are atomically rewritten, so a changed
+// file stamp marks a new one. A version never loads records.
+export type ClockVersion = AppDatabaseVersion | ClockPreferencesVersion;
 
-class ClockDatabaseVersion extends ClockVersion {
-  readonly #version: AppDatabaseVersion;
-  constructor(version: AppDatabaseVersion) {
-    super('database');
-    this.#version = version;
-  }
-  protected async read(): Promise<string> {
-    return String(this.#version.current);
-  }
-  [Symbol.dispose](): void {
-    this.#version[Symbol.dispose]();
-  }
-}
-
-class ClockPreferencesVersion extends ClockVersion {
+// A missing preference file is a value too, so its return is a change.
+class ClockPreferencesVersion extends Gauge<string> {
   readonly #path: string;
-  constructor(store: Exclude<ClockStoreKind, 'database'>, path: string) {
-    super(store);
+  constructor(path: string) {
+    super();
     this.#path = path;
   }
   protected async read(): Promise<string> {
@@ -144,6 +123,4 @@ class ClockPreferencesVersion extends ClockVersion {
       throw new StoreUnavailableError(clockStore, this.#path, cause);
     }
   }
-  // A stat holds nothing open.
-  [Symbol.dispose](): void {}
 }

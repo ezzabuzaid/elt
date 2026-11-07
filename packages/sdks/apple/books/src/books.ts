@@ -10,11 +10,7 @@ import {
 } from './books-location.ts';
 import { BooksPurchases } from './books-purchases.ts';
 import { BooksThemes } from './books-themes.ts';
-import {
-  BooksDatabaseVersion,
-  BooksPreferencesVersion,
-  type BooksVersion,
-} from './books-version.ts';
+import { BooksPreferencesVersion, type BooksVersion } from './books-version.ts';
 import { type ReadingGoal, readingGoal } from './reading-goal.ts';
 import { type ReadingHistory, readingHistory } from './reading-history.ts';
 
@@ -63,9 +59,6 @@ export class Books {
   version(store: BooksStore): BooksVersion {
     return store === 'preferences'
       ? new BooksPreferencesVersion(this.location)
-      : new BooksDatabaseVersion(
-          store,
-          appDatabase.version(storeFiles(this.location)[store]),
-        );
+      : appDatabase.version(storeFiles(this.location)[store]);
   }
 }

@@ -52,17 +52,11 @@ export class AppDatabase {
   }
 
   version(path: string): AppDatabaseVersion {
-    return new AppDatabaseVersion(
-      path,
-      this.#store,
-      () => new DataVersion(path),
-    );
+    return new AppDatabaseVersion(() => new DataVersion(path));
   }
 
   versionOfExclusiveOwner(path: string): AppDatabaseVersion {
-    return new AppDatabaseVersion(path, this.#store, () =>
-      DataVersion.ofExclusiveOwner(path),
-    );
+    return new AppDatabaseVersion(() => DataVersion.ofExclusiveOwner(path));
   }
 
   lastWrite(path: string): Date {

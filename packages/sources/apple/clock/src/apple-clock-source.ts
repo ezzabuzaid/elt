@@ -1,4 +1,3 @@
-import { ChangeWatcher } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import {
@@ -6,7 +5,6 @@ import {
   type CopyConfiguration,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   type Stream,
   diffSnapshot,
 } from '@workspace/elt';
@@ -14,7 +12,6 @@ import {
   type ClockLocation,
   type ClockSnapshot,
   ClockStore,
-  type ClockStoreKind,
   StoreUnavailableError,
 } from '@workspace/sdk-apple-clock/clock-store';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -107,30 +104,17 @@ export class AppleClockSource extends Source<ClockSnapshot> {
       signal,
     });
   }
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    if (signal.aborted) return;
-    using resources = new DisposableStack();
-    const gauges = [
-      ...new Set(streams.map((stream) => readerOf(stream).store)),
-    ].map((store) => resources.use(this.#store.version(store)));
-    const watcher = new ChangeWatcher(gauges, {
-      interval: 1000,
-      // The reads are local, data_version and file stamps: a check that
-      // takes the whole interval is stuck.
-      timeout: 1000,
-      clock,
-    });
-    for await (const outcomes of watcher.watch(signal)) {
-      const changed = new Set<ClockStoreKind>();
-      for (const [gauge, outcome] of outcomes) {
-        if (outcome.state === 'failed') throw outcome.error;
-        if (outcome.state === 'changed') changed.add(gauge.store);
-      }
-      yield streams.filter((stream) => changed.has(readerOf(stream).store));
-    }
+  // Each store the streams read reports its own changes.
+  override changeSignals(streams: readonly Stream[]) {
+    return Map.groupBy(streams, (stream) => readerOf(stream).store)
+      .entries()
+      .map(([store, watched]) => ({
+        gauge: this.#store.version(store),
+        streams: watched,
+        interval: 1000,
+        // The reads are local, data_version and file stamps: a check that
+        // takes the whole interval is stuck.
+        timeout: 1000,
+      }));
   }
 }

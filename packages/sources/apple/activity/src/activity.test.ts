@@ -1416,13 +1416,33 @@ test('an Activity watch wakes only the streams whose segments or database change
   const controller = new AbortController();
   const woken: string[][] = [];
 
-  for await (const batch of source.watch({
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const watch = new Pipeline({
     clock: globalThis,
-    streams: [source.appFocus, source.appMenuItems, source.displayBacklight],
-    // A batch that never comes ends the watch, so the assertion fails.
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          source.appFocus,
+          source.appMenuItems,
+          source.displayBacklight,
+        ].map((stream) => new Copy(stream, destination.table(stream.name))),
+      }),
+    ],
+  }).watch({
+    // A pass that never comes ends the watch, so the assertion fails.
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-  })) {
-    woken.push(batch.map((stream) => stream.name));
+  });
+  for await (const { outcomes } of watch) {
+    woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1)
       // Biome appends in place: the file keeps its size.
       await writeSegment(

@@ -1,4 +1,3 @@
-import { ChangeWatcher } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import {
@@ -7,7 +6,6 @@ import {
   type ExtractionCoverage,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   type Stream,
   diffSnapshot,
 } from '@workspace/elt';
@@ -90,28 +88,17 @@ export class AppleWalletSource extends Source<WalletScan> {
   // archived or removed, and data_version cannot say which table a commit
   // touched, so each commit wakes every selected stream; the snapshot diff
   // writes nothing for the ones that did not change.
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    if (signal.aborted) return;
-    using version = this.#store.version();
-    const watcher = new ChangeWatcher([version], {
-      interval: pollIntervalMs,
-      // A data_version read is local: a check that takes the whole interval
-      // is stuck.
-      timeout: pollIntervalMs,
-      clock,
-    });
-    for await (const outcomes of watcher.watch(signal)) {
-      let changed = false;
-      for (const outcome of outcomes.values()) {
-        if (outcome.state === 'failed') throw outcome.error;
-        if (outcome.state === 'changed') changed = true;
-      }
-      yield changed ? streams : [];
-    }
+  override changeSignals(streams: readonly Stream[]) {
+    return [
+      {
+        gauge: this.#store.version(),
+        streams,
+        interval: pollIntervalMs,
+        // A data_version read is local: a check that takes the whole interval
+        // is stuck.
+        timeout: pollIntervalMs,
+      },
+    ];
   }
 
   protected override async *extract(

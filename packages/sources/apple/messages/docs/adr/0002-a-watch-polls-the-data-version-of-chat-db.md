@@ -1,5 +1,7 @@
 # A watch polls the data version of chat.db
 
+Superseded in part on 2026-11-06 (#3897) by [elt ADR 0020](../../../../../elt/docs/adr/0020-a-source-gives-its-change-signals-and-a-failed-signal-fails-only-its-streams.md): the source no longer has `observe()` or its own `ChangeWatcher`. It gives the data version as a gauge in a change signal, and the pipeline polls it. The decision to poll `PRAGMA data_version` each second stays.
+
 A watch must find each commit that Messages makes to `chat.db`. Messages writes through a WAL that it keeps open. FSEvents reports a write to such a file only when the file closes. Thus FSEvents does not see most commits.
 
 SQLite changes `PRAGMA data_version` on a connection when another connection commits to the database. Thus `observe()` opens its own read-only connection and reads `data_version` each second. When the value changes, the watch gives all streams that it watches. Each commit changes the value, also the commit when an attachment download ends.

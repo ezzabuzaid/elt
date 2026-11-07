@@ -1,4 +1,5 @@
 import type { Catalog } from './catalog.ts';
+import type { ChangeSignal } from './change-signal.ts';
 import type { PipelineClock } from './clock.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { DocumentParser } from './document-parser.ts';
@@ -14,13 +15,7 @@ import {
   readPartitionStates,
 } from './partition.ts';
 import type { Stream } from './stream.ts';
-
-export type SourceWatchOptions = {
-  readonly streams: readonly Stream[];
-  readonly signal: AbortSignal;
-  // The clock of the pipeline: a source waits and reads the time on it.
-  readonly clock: PipelineClock;
-};
+import type { Upkeep } from './upkeep.ts';
 
 // What a read of a source gets besides its catalog and states.
 export type SourceReadOptions = {
@@ -151,11 +146,6 @@ export abstract class Source<
       assertPartitions(stream, this.partitions(stream));
   }
 
-  async *watch(options: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    for (const stream of options.streams) this.member(stream);
-    yield* this.observe(options);
-  }
-
   // One consistent view of the upstream for reading these streams: a read
   // transaction, or every stream read up front. A source whose streams need
   // not agree returns an empty AsyncDisposableStack. signal is the run's: an
@@ -209,17 +199,22 @@ export abstract class Source<
       : 'system';
   }
 
-  // Each yield is one check of the upstream: the streams that changed since
-  // the previous check, possibly none. Subscribe before the first check, which
-  // names every selected stream, and keep checking until signal aborts,
-  // including while extraction runs. A check that finds nothing changed still
-  // yields, so readers see the unchanged streams current as of it. A check
-  // vouches for every selected stream: a source that checks only some of them
-  // at a time, such as one that refreshes others on a schedule, yields only
-  // what changed.
-  protected abstract observe(
-    options: SourceWatchOptions,
-  ): AsyncIterable<readonly Stream[]>;
+  // What tells a watch that each selected stream changed. A declaration, as
+  // coverage is: it does no I/O, and each gauge opens what it reads in its
+  // first read. The pipeline owns the gauges that it gets, and disposes them
+  // when the watch stops (ADR 0020). clock is the pipeline's: a gauge that
+  // waits or reads the time does it on that clock (ADR 0019).
+  abstract changeSignals(
+    streams: readonly Stream[],
+    clock: PipelineClock,
+  ): Iterable<ChangeSignal>;
+
+  // What the source keeps doing while a watch runs, such as keeping an app
+  // running when only that app syncs its store (ADR 0021). Most sources keep
+  // nothing.
+  upkeep(_clock: PipelineClock): Iterable<Upkeep> {
+    return [];
+  }
 
   private member(stream: Stream): Stream {
     if (this.catalog.get(stream.name) !== stream)

@@ -1,4 +1,4 @@
-import { ChangeWatcher, Gauge } from '@zukhruf/async';
+import { Gauge } from '@zukhruf/async';
 import { Coverage } from '@zukhruf/snapshot-differential';
 
 import {
@@ -7,7 +7,6 @@ import {
   type ExtractionCoverage,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   type Stream,
   diffSnapshot,
 } from '@workspace/elt';
@@ -156,22 +155,16 @@ export class TeamsSource extends Source<TeamsScan> {
   // The web client writes its caches as it works, so a write wakes every
   // selected stream; the snapshot diff writes nothing for those that did not
   // change.
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    // A local read: a check that takes the whole interval is stuck.
-    const watcher = new ChangeWatcher([new StoreVersion(this.#store)], {
-      interval: pollIntervalMs,
-      timeout: pollIntervalMs,
-      clock,
-    });
-    for await (const outcomes of watcher.watch(signal))
-      for (const outcome of outcomes.values()) {
-        if (outcome.state === 'failed') throw outcome.error;
-        yield outcome.state === 'changed' ? streams : [];
-      }
+  override changeSignals(streams: readonly Stream[]) {
+    return [
+      {
+        gauge: new StoreVersion(this.#store),
+        streams,
+        interval: pollIntervalMs,
+        // A local read: a check that takes the whole interval is stuck.
+        timeout: pollIntervalMs,
+      },
+    ];
   }
 
   protected override async *extract(

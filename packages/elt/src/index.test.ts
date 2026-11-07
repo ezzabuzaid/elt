@@ -3,11 +3,12 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { Latch, untilAborted } from '@zukhruf/async';
+import { type Check, Gauge, Latch, untilAborted } from '@zukhruf/async';
 import { settleWithin } from '@zukhruf/testing/async';
 
 import {
   Catalog,
+  type ChangeSignal,
   type CheckpointSession,
   CheckpointStore,
   Connection,
@@ -34,13 +35,13 @@ import {
   Source,
   type SourceMessage,
   type SourceReadOptions,
-  type SourceWatchOptions,
   type Stage,
   type StoredCheckpoint,
   Stream,
   StreamStatus,
   SyncHistory,
   Target,
+  type Upkeep,
   type WriteOperation,
   Writer,
   isCalendarDate,
@@ -472,6 +473,29 @@ const checkpoint = (stream: string, at: number): SourceMessage => ({
   state: { at },
 });
 
+// A store of an upstream that a watch reads at each check: answer gives its
+// version, or throws as a store that cannot be read does. It counts its reads
+// and its disposals.
+class Upstream extends Gauge<number> implements Disposable {
+  readonly reads: number[] = [];
+  readonly disposals: number[] = [];
+  readonly #answer: () => number;
+
+  constructor(answer: () => number) {
+    super();
+    this.#answer = answer;
+  }
+
+  protected async read(): Promise<number> {
+    this.reads.push(this.reads.length);
+    return this.#answer();
+  }
+
+  [Symbol.dispose](): void {
+    this.disposals.push(this.disposals.length);
+  }
+}
+
 class ContextSource extends LiveSource<ReadContext> {
   override coverage() {
     return { description: 'test', selection: {} };
@@ -515,9 +539,19 @@ class ContextSource extends LiveSource<ReadContext> {
     };
   }
 
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
-    yield [this.right];
+  // left and middle never change; right changes one time, after the first
+  // check, as a store that one commit changes.
+  override changeSignals(streams: readonly Stream[]): Iterable<ChangeSignal> {
+    const unchanged = new Upstream(() => 0);
+    const right: Upstream = new Upstream(() =>
+      right.reads.length > 1 ? 1 : 0,
+    );
+    return streams.map((stream) => ({
+      gauge: stream === this.right ? right : unchanged,
+      streams: [stream],
+      interval: 5,
+      timeout: 5,
+    }));
   }
 
   protected override async *extract(
@@ -902,8 +936,9 @@ class Sites extends LiveSource {
     return ['a', 'b', 'c'].map((site) => ({ site }));
   }
 
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
+  // The sites never change after the first check.
+  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+    return [{ gauge: new Upstream(() => 0), streams, interval: 5, timeout: 5 }];
   }
 
   protected override async *extract(
@@ -1031,10 +1066,15 @@ test('a full refresh commits once, and a failing partition commits nothing', asy
 test('a watch opens one read context per batch and holds none while idle', async () => {
   const source = new ContextSource();
   const pipeline = contextPipeline(source);
+  const controller = new AbortController();
   const held: number[] = [];
 
-  for await (const _ of pipeline.watch({ signal: AbortSignal.timeout(5000) }))
+  for await (const _ of pipeline.watch({
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+  })) {
     held.push(source.opened.length - source.closed.length);
+    if (held.length === 2) controller.abort();
+  }
 
   assert.deepEqual(held, [0, 0]);
   assert.deepEqual(source.contextStreams, [['left', 'right'], ['right']]);
@@ -1576,23 +1616,24 @@ const leftOnly = (name: string, source: ContextSource) =>
     steps: [new Copy(source.left, new NamedTarget(`${name}-left`))],
   });
 
-// A source that keeps watching until the watch stops it.
+// A source whose streams never change after the first check, so it keeps
+// watching until the watch stops it.
 class Watching extends ContextSource {
-  protected override async *observe({ streams, signal }: SourceWatchOptions) {
-    yield streams;
-    await new Promise((resolve) =>
-      signal.addEventListener('abort', resolve, { once: true }),
-    );
+  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+    return [{ gauge: new Upstream(() => 0), streams, interval: 5, timeout: 5 }];
   }
 }
 
-// A watcher that fails once its first pass began, for a reason only the user
-// can fix, so its connection stops: one that fails for a system reason would
-// watch again. Not the default, so a test sees what the source decided.
+// A source whose change signal fails once its first pass began, for a reason
+// only the user can fix. Not the default, so a test sees what the source
+// decided.
 class Lost extends ContextSource {
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
-    throw new Error('watcher lost');
+  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+    const lost: Upstream = new Upstream(() => {
+      if (lost.reads.length > 1) throw new Error('left store lost');
+      return 0;
+    });
+    return [{ gauge: lost, streams, interval: 5, timeout: 5 }];
   }
 
   override failureType(): FailureType {
@@ -1886,18 +1927,21 @@ test('a copy that fails before reading still reports how it ended', async () => 
   );
 });
 
-test('a pass publishes its end once its history recorded it, and a stopped watcher as a failed pass with whose failure it is', async () => {
+test('a pass publishes its end once its history recorded it, and a failed change signal as a failed pass with whose failure it is', async () => {
   const history = new MemoryHistory();
+  const controller = new AbortController();
   // Logged as the message arrives, so the log shows it after what the history recorded.
   const hear = (message: unknown) => {
     if (message instanceof PassFinished)
       history.log.push(
         `observed finish ${message.connection.name} ${passStatus(message.outcomes)}`,
       );
-    if (message instanceof PassFailed)
+    if (message instanceof PassFailed) {
       history.log.push(
         `observed fail ${message.connection.name} ${message.error instanceof Error ? message.error.message : String(message.error)} ${message.failureType}`,
       );
+      controller.abort();
+    }
   };
   passChannels.finish.subscribe(hear);
   passChannels.failure.subscribe(hear);
@@ -1908,11 +1952,9 @@ test('a pass publishes its end once its history recorded it, and a stopped watch
   });
 
   try {
-    await assert.rejects(async () => {
-      for await (const _ of pipeline.watch({
-        signal: AbortSignal.timeout(5000),
-      }));
-    }, /Connection lost: watcher lost/);
+    for await (const _ of pipeline.watch({
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+    }));
   } finally {
     passChannels.finish.unsubscribe(hear);
     passChannels.failure.unsubscribe(hear);
@@ -1923,16 +1965,16 @@ test('a pass publishes its end once its history recorded it, and a stopped watch
     'finish lost succeeded',
     'observed finish lost succeeded',
     'begin lost left:test',
-    'fail lost watcher lost',
-    'observed fail lost watcher lost config',
+    'fail lost left store lost',
+    'observed fail lost left store lost config',
   ]);
 });
 
-test('a failure is config when the source lists its class in configErrors, and system when it does not', async () => {
-  class WatcherDeniedError extends Error {}
-  // Each watcher loads one pass, then fails with its own error.
+test('a failure is config when the source lists its class in configErrors, and system when it does not', async (t) => {
+  class StoreDeniedError extends Error {}
+  // Each change signal reads once, then fails with its own error.
   class Failing extends ContextSource {
-    protected override readonly configErrors = [WatcherDeniedError];
+    protected override readonly configErrors = [StoreDeniedError];
     readonly #error: Error;
 
     constructor(error: Error) {
@@ -1940,34 +1982,50 @@ test('a failure is config when the source lists its class in configErrors, and s
       this.#error = error;
     }
 
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
-      throw this.#error;
+    override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+      const failing: Upstream = new Upstream(() => {
+        if (failing.reads.length > 1) throw this.#error;
+        return 0;
+      });
+      return [{ gauge: failing, streams, interval: 5, timeout: 5 }];
     }
   }
   using denied = listen('denied');
   using lost = listen('lost');
-  const watch = (name: string, source: ContextSource, signal: AbortSignal) =>
-    new Pipeline({
-      clock: globalThis,
-      history: new MemoryHistory(),
-      connections: [leftOnly(name, source)],
-    }).watch({ signal });
+  // Watches until the failed pass that records the failure is published.
+  const watchUntilFailed = async (
+    name: string,
+    source: ContextSource,
+    heard: readonly unknown[],
+  ) => {
+    const controller = new AbortController();
+    const watching = (async () => {
+      for await (const _ of new Pipeline({
+        clock: globalThis,
+        history: new MemoryHistory(),
+        connections: [leftOnly(name, source)],
+      }).watch({
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+      }));
+    })();
+    await t.waitFor(
+      () => assert.ok(heard.some((message) => message instanceof PassFailed)),
+      { interval: 1, timeout: 5000 },
+    );
+    controller.abort();
+    await watching;
+  };
 
-  await assert.rejects(async () => {
-    for await (const _ of watch(
-      'denied',
-      new Failing(new WatcherDeniedError('watcher denied')),
-      AbortSignal.timeout(5000),
-    ));
-  }, /Connection denied: watcher denied/);
-  // A system failure does not stop the watch: it waits to watch again until
-  // its signal ends it.
-  for await (const _ of watch(
+  await watchUntilFailed(
+    'denied',
+    new Failing(new StoreDeniedError('store denied')),
+    denied.heard,
+  );
+  await watchUntilFailed(
     'lost',
-    new Failing(new Error('watcher lost')),
-    AbortSignal.timeout(2000),
-  ));
+    new Failing(new Error('store lost')),
+    lost.heard,
+  );
 
   assert.deepEqual(
     [...denied.heard, ...lost.heard].flatMap((message) =>
@@ -1979,7 +2037,7 @@ test('a failure is config when the source lists its class in configErrors, and s
   );
 });
 
-test('a connection whose watcher fails for a config reason stops alone and is recorded; the others keep watching', async () => {
+test('a connection whose change signals break the contract stops alone and is recorded; the others keep watching', async () => {
   const history = new MemoryHistory();
   const steady = new ContextSource();
   const pipeline = new Pipeline({
@@ -1995,48 +2053,655 @@ test('a connection whose watcher fails for a config reason stops alone and is re
           new Copy(steady.right, new NamedTarget('steady-right')),
         ],
       }),
-      leftOnly('lost', new Lost()),
+      // Declares no change signal, so nothing tells about its stream.
+      leftOnly('broken', new Signalled(() => [])),
     ],
   });
+  const controller = new AbortController();
   const passes: string[] = [];
 
   const error = await (async () => {
     for await (const { connection, outcomes } of pipeline.watch({
-      signal: AbortSignal.timeout(5000),
-    }))
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+    })) {
       passes.push(
         `${connection.name}:${outcomes.map(({ copy }) => copy.from.name).join(',')}`,
       );
+      if (passes.length === 2) controller.abort();
+    }
   })().then(
-    () => assert.fail('the lost watcher must be reported'),
+    () => assert.fail('the broken connection must be reported'),
     (error: unknown) => error,
   );
 
   assert.ok(error instanceof AggregateError);
-  assert.equal(error.message, 'Connection lost: watcher lost');
-  assert.deepEqual(passes.toSorted(), [
-    'lost:left',
-    'steady:left,right',
-    'steady:right',
-  ]);
-  assert.ok(history.log.includes('fail lost watcher lost'));
+  assert.equal(
+    error.message,
+    'Connection broken: No change signal tells about stream left',
+  );
+  assert.deepEqual(passes, ['steady:left,right', 'steady:right']);
+  assert.ok(
+    history.log.includes(
+      'fail broken No change signal tells about stream left',
+    ),
+  );
   assert.equal(
     history.log.filter((entry) => entry === 'finish steady succeeded').length,
     2,
   );
 });
 
+// Watches its streams through the change signals that the test gives.
+class Signalled extends ContextSource {
+  readonly #signals: (source: Signalled) => ChangeSignal[];
+
+  constructor(signals: (source: Signalled) => ChangeSignal[]) {
+    super();
+    this.#signals = signals;
+  }
+
+  override changeSignals(): ChangeSignal[] {
+    return this.#signals(this);
+  }
+}
+
+const leftAndRight = (name: string, source: ContextSource) =>
+  new Connection({
+    name,
+    source,
+    destination: new DrainingDestination(),
+    steps: [
+      new Copy(source.left, new NamedTarget(`${name}-left`)),
+      new Copy(source.right, new NamedTarget(`${name}-right`)),
+    ],
+  });
+
+test('a watch keeps loading the streams of its other change signals after one change signal fails', async () => {
+  let leftFails = false;
+  let rightVersion = 0;
+  const left = new Upstream(() => {
+    if (leftFails) throw new Error('left store cannot be read');
+    return 0;
+  });
+  const right = new Upstream(() => rightVersion);
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new MemoryHistory(),
+    connections: [
+      leftAndRight(
+        'books',
+        new Signalled((source) => [
+          { gauge: left, streams: [source.left], interval: 5, timeout: 5 },
+          { gauge: right, streams: [source.right], interval: 5, timeout: 5 },
+        ]),
+      ),
+    ],
+  });
+  const controller = new AbortController();
+  const passes: string[][] = [];
+
+  for await (const { outcomes } of pipeline.watch({
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+  })) {
+    passes.push(outcomes.map(({ copy }) => copy.from.name));
+    if (passes.length === 1) {
+      leftFails = true;
+      rightVersion = 1;
+    } else controller.abort();
+  }
+
+  assert.deepEqual(passes, [['left', 'right'], ['right']]);
+});
+
+test('a change signal that fails for a system reason is recorded one time for each run of failures, as a failed pass of its stream, and its stream loads again once a check reads a new value', async () => {
+  const history = new MemoryHistory();
+  let failure: Error | undefined;
+  let leftVersion = 0;
+  const failedReads: number[] = [];
+  let failedThrice = new Latch();
+  const left = new Upstream(() => {
+    if (failure === undefined) return leftVersion;
+    failedReads.push(failedReads.length);
+    if (failedReads.length === 3) failedThrice.open();
+    throw failure;
+  });
+  const right = new Upstream(() => 0);
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history,
+    connections: [
+      leftAndRight(
+        'books',
+        new Signalled((source) => [
+          { gauge: left, streams: [source.left], interval: 5, timeout: 5 },
+          { gauge: right, streams: [source.right], interval: 5, timeout: 5 },
+        ]),
+      ),
+    ],
+  });
+  const controller = new AbortController();
+  // A wait that never ends fails the test at this deadline.
+  const deadline = AbortSignal.timeout(5000);
+  const passes: string[][] = [];
+
+  for await (const { outcomes } of pipeline.watch({
+    signal: AbortSignal.any([controller.signal, deadline]),
+  })) {
+    passes.push(outcomes.map(({ copy }) => copy.from.name));
+    // Two runs of failures, each ended by a new version of the store.
+    if (passes.length < 3) {
+      failedReads.length = 0;
+      failedThrice = new Latch();
+      failure = new Error('left store cannot be read');
+      await untilAborted(failedThrice.wait(), deadline);
+      failure = undefined;
+      leftVersion = passes.length;
+    } else controller.abort();
+  }
+
+  assert.deepEqual(passes, [['left', 'right'], ['left'], ['left']]);
+  assert.deepEqual(
+    history.log.filter((entry) => !entry.startsWith('finish')),
+    [
+      'begin books left:test,right:test',
+      'begin books left:test',
+      'fail books left store cannot be read',
+      'begin books left:test',
+      'begin books left:test',
+      'fail books left store cannot be read',
+      'begin books left:test',
+    ],
+  );
+});
+
+test('a change signal that fails for a config reason is not read again in that watch, while the streams of the other change signals keep loading', async () => {
+  class StoreLockedError extends Error {}
+  class Locking extends Signalled {
+    protected override readonly configErrors = [StoreLockedError];
+  }
+  let locked = false;
+  // The count of reads of right when left locked.
+  let lockedAt = Number.POSITIVE_INFINITY;
+  let rightVersion = 0;
+  const lockedReads: number[] = [];
+  const checkedOn = new Latch();
+  const left = new Upstream(() => {
+    if (!locked) return 0;
+    lockedReads.push(lockedReads.length);
+    throw new StoreLockedError('left store refused the login');
+  });
+  // Ten more checks after left locked.
+  const right = new Upstream(() => {
+    if (right.reads.length >= lockedAt + 10) checkedOn.open();
+    return rightVersion;
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new MemoryHistory(),
+    connections: [
+      leftAndRight(
+        'warehouse',
+        new Locking((source) => [
+          { gauge: left, streams: [source.left], interval: 5, timeout: 5 },
+          { gauge: right, streams: [source.right], interval: 5, timeout: 5 },
+        ]),
+      ),
+    ],
+  });
+  const controller = new AbortController();
+  // A wait that never ends fails the test at this deadline.
+  const deadline = AbortSignal.timeout(5000);
+  const passes: string[][] = [];
+
+  for await (const { outcomes } of pipeline.watch({
+    signal: AbortSignal.any([controller.signal, deadline]),
+  })) {
+    passes.push(outcomes.map(({ copy }) => copy.from.name));
+    if (passes.length === 1) {
+      locked = true;
+      lockedAt = right.reads.length;
+      await untilAborted(checkedOn.wait(), deadline);
+      rightVersion = 1;
+    } else controller.abort();
+  }
+
+  assert.deepEqual(passes, [['left', 'right'], ['right']]);
+  assert.deepEqual(lockedReads, [0]);
+});
+
+test('each interval has its own checks: a change signal with a long interval is not read at each check of one with a short interval', async () => {
+  const quickChecks = new Latch();
+  const quick = new Upstream(() => {
+    if (quick.reads.length >= 6) quickChecks.open();
+    return 0;
+  });
+  const slow = new Upstream(() => 0);
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new MemoryHistory(),
+    connections: [
+      leftAndRight(
+        'search',
+        new Signalled((source) => [
+          { gauge: quick, streams: [source.left], interval: 5, timeout: 5 },
+          {
+            gauge: slow,
+            streams: [source.right],
+            interval: 60_000,
+            timeout: 60_000,
+          },
+        ]),
+      ),
+    ],
+  });
+  const controller = new AbortController();
+  // A wait that never ends fails the test at this deadline.
+  const deadline = AbortSignal.timeout(5000);
+
+  for await (const _ of pipeline.watch({
+    signal: AbortSignal.any([controller.signal, deadline]),
+  })) {
+    await untilAborted(quickChecks.wait(), deadline);
+    controller.abort();
+  }
+
+  assert.equal(slow.reads.length, 1);
+});
+
+test('the first pass of a watch waits for the first check of every change signal, so it reads every stream, also when one interval answers first', async () => {
+  const quickChecked = new Latch();
+  const quick = new Upstream(() => {
+    if (quick.reads.length >= 2) quickChecked.open();
+    return 0;
+  });
+  // Its first read ends only after the quick change signal was checked two
+  // times, as a network probe answers after a memory read.
+  class Slow extends Gauge<number> {
+    protected async read({ signal }: Check): Promise<number> {
+      await untilAborted(quickChecked.wait(), signal);
+      return 0;
+    }
+  }
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new MemoryHistory(),
+    connections: [
+      leftAndRight(
+        'search',
+        new Signalled((source) => [
+          { gauge: quick, streams: [source.left], interval: 5, timeout: 5 },
+          {
+            gauge: new Slow(),
+            streams: [source.right],
+            interval: 60_000,
+            timeout: 5000,
+          },
+        ]),
+      ),
+    ],
+  });
+  const passes: string[][] = [];
+
+  for await (const { outcomes } of pipeline.watch({
+    signal: AbortSignal.timeout(5000),
+  })) {
+    passes.push(outcomes.map(({ copy }) => copy.from.name));
+    break;
+  }
+
+  assert.deepEqual(passes, [['left', 'right']]);
+});
+
+test('the pipeline disposes each gauge of the change signals one time when the watch stops', async () => {
+  const shared = new Upstream(() => 0);
+  const own = new Upstream(() => 0);
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new MemoryHistory(),
+    connections: [
+      leftAndRight(
+        'books',
+        new Signalled((source) => [
+          { gauge: shared, streams: [source.left], interval: 5, timeout: 5 },
+          { gauge: shared, streams: [source.right], interval: 5, timeout: 5 },
+          { gauge: own, streams: [source.right], interval: 5, timeout: 5 },
+        ]),
+      ),
+    ],
+  });
+  const controller = new AbortController();
+
+  for await (const _ of pipeline.watch({
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+  }))
+    controller.abort();
+
+  assert.deepEqual(
+    { shared: shared.disposals, own: own.disposals },
+    { shared: [0], own: [0] },
+  );
+});
+
+test('a source whose change signals throw after it gave a gauge stops its connection, records the failure and leaves that gauge disposed', async () => {
+  const given = new Upstream(() => 0);
+  class Breaking extends ContextSource {
+    override *changeSignals(
+      streams: readonly Stream[],
+    ): Generator<ChangeSignal> {
+      yield { gauge: given, streams, interval: 5, timeout: 5 };
+      throw new Error('the second store has no path');
+    }
+  }
+  const history = new MemoryHistory();
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history,
+    connections: [leftOnly('broken', new Breaking())],
+  });
+
+  const error = await (async () => {
+    for await (const _ of pipeline.watch({
+      signal: AbortSignal.timeout(5000),
+    }));
+  })().then(
+    () => assert.fail('the broken connection must be reported'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof AggregateError);
+  assert.equal(
+    error.message,
+    'Connection broken: the second store has no path',
+  );
+  assert.deepEqual(given.disposals, [0]);
+  assert.ok(history.log.includes('fail broken the second store has no path'));
+});
+
+test('change signals that name an unselected stream, miss a selected stream or give one stream two intervals stop their connection before any pass, as a broken contract', async () => {
+  const constant = () => new Upstream(() => 0);
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new MemoryHistory(),
+    connections: [
+      leftOnly(
+        'unselected',
+        new Signalled((source) => [
+          {
+            gauge: constant(),
+            streams: [source.left, source.right],
+            interval: 5,
+            timeout: 5,
+          },
+        ]),
+      ),
+      leftAndRight(
+        'missing',
+        new Signalled((source) => [
+          {
+            gauge: constant(),
+            streams: [source.left],
+            interval: 5,
+            timeout: 5,
+          },
+        ]),
+      ),
+      leftOnly(
+        'intervals',
+        new Signalled((source) => [
+          {
+            gauge: constant(),
+            streams: [source.left],
+            interval: 5,
+            timeout: 5,
+          },
+          {
+            gauge: constant(),
+            streams: [source.left],
+            interval: 6,
+            timeout: 5,
+          },
+        ]),
+      ),
+    ],
+  });
+  const passes: string[] = [];
+
+  const error = await (async () => {
+    for await (const { connection } of pipeline.watch({
+      signal: AbortSignal.timeout(5000),
+    }))
+      passes.push(connection.name);
+  })().then(
+    () => assert.fail('the broken declarations must be reported'),
+    (error: unknown) => error,
+  );
+
+  assert.deepEqual(passes, []);
+  assert.ok(error instanceof AggregateError);
+  assert.deepEqual(error.message.split('; ').toSorted(), [
+    'Connection intervals: The change signals of stream left have two intervals',
+    'Connection missing: No change signal tells about stream right',
+    'Connection unselected: A change signal names an unselected stream: right',
+  ]);
+});
+
+// A source that keeps an upkeep while its streams hold still.
+class Kept extends Watching {
+  readonly #upkeep: Upkeep;
+
+  constructor(upkeep: Upkeep) {
+    super();
+    this.#upkeep = upkeep;
+  }
+
+  override upkeep(): Upkeep[] {
+    return [this.#upkeep];
+  }
+}
+
+test('an upkeep runs when the watch starts and then at each interval, and runs no more once the watch stops', async () => {
+  const interval = 20;
+  // The time from the start of each run to the start of the next, on the
+  // clock of the pipeline.
+  const gaps: number[] = [];
+  let previous = performance.now();
+  const thrice = new Latch();
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new MemoryHistory(),
+    connections: [
+      leftOnly(
+        'notes',
+        new Kept({
+          interval,
+          run: async () => {
+            const now = performance.now();
+            gaps.push(now - previous);
+            previous = now;
+            if (gaps.length === 3) thrice.open();
+          },
+        }),
+      ),
+    ],
+  });
+  const controller = new AbortController();
+  // A wait that never ends fails the test at this deadline.
+  const deadline = AbortSignal.timeout(5000);
+
+  for await (const _ of pipeline.watch({
+    signal: AbortSignal.any([controller.signal, deadline]),
+  })) {
+    await untilAborted(thrice.wait(), deadline);
+    controller.abort();
+  }
+  const stopped = gaps.length;
+  // Five intervals later.
+  await sleep(5 * interval);
+
+  assert.ok(stopped >= 3, `runs: ${stopped}`);
+  assert.equal(gaps.length, stopped);
+  // The first gap is from before the watch. A timer can end up to one
+  // millisecond before its time on this clock.
+  assert.ok(
+    gaps.slice(1).every((gap) => gap >= interval - 1),
+    `gaps: ${gaps.join(', ')}`,
+  );
+});
+
+test('an upkeep that fails for a system reason is recorded one time for each run of failures, and runs again at its next interval', async () => {
+  const history = new MemoryHistory();
+  let failure: Error | undefined;
+  const failedRuns: number[] = [];
+  let thrice = new Latch();
+  let recovered = new Latch();
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history,
+    connections: [
+      leftOnly(
+        'notes',
+        new Kept({
+          interval: 5,
+          run: async () => {
+            if (failure === undefined) {
+              recovered.open();
+              return;
+            }
+            failedRuns.push(failedRuns.length);
+            if (failedRuns.length === 3) thrice.open();
+            throw failure;
+          },
+        }),
+      ),
+    ],
+  });
+  const controller = new AbortController();
+  // A wait that never ends fails the test at this deadline.
+  const deadline = AbortSignal.timeout(5000);
+
+  for await (const _ of pipeline.watch({
+    signal: AbortSignal.any([controller.signal, deadline]),
+  })) {
+    // Two runs of failures, each ended by a run that succeeds.
+    for (const run of ['first', 'second']) {
+      failedRuns.length = 0;
+      thrice = new Latch();
+      failure = new Error(`Notes could not start, ${run} time`);
+      await untilAborted(thrice.wait(), deadline);
+      recovered = new Latch();
+      failure = undefined;
+      await untilAborted(recovered.wait(), deadline);
+    }
+    controller.abort();
+  }
+
+  assert.deepEqual(
+    history.log.filter((entry) => entry.startsWith('fail')),
+    [
+      'fail notes Notes could not start, first time',
+      'fail notes Notes could not start, second time',
+    ],
+  );
+});
+
+test('a watch whose sync history cannot record a check rejects with that error, also while an upkeep runs', async () => {
+  const refused = new Error('the history refused the check');
+  // Records passes, but no check.
+  class Refusing extends MemoryHistory {
+    protected override async recordChecks(): Promise<void> {
+      throw refused;
+    }
+  }
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new Refusing(),
+    connections: [
+      leftOnly('notes', new Kept({ interval: 5, run: async () => {} })),
+    ],
+  });
+
+  const outcome = await settleWithin(
+    (async () => {
+      // Stops a watch that hangs, after the deadline below failed the test.
+      for await (const _ of pipeline.watch({
+        signal: AbortSignal.timeout(10_000),
+      }));
+    })().then(
+      () => 'ended without the failure',
+      (error: unknown) => error,
+    ),
+    'the watch to reject with the failure of the history',
+  );
+
+  assert.equal(outcome, refused);
+});
+
+test('an upkeep that fails for a config reason runs no more in that watch, while its change signals are still read', async () => {
+  class LaunchDeniedError extends Error {}
+  class Denied extends Kept {
+    protected override readonly configErrors = [LaunchDeniedError];
+  }
+  const runs: number[] = [];
+  const checked = new Latch();
+  const store = new Upstream(() => {
+    if (store.reads.length >= 10) checked.open();
+    return 0;
+  });
+  class Watched extends Denied {
+    override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+      return [{ gauge: store, streams, interval: 5, timeout: 5 }];
+    }
+  }
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new MemoryHistory(),
+    connections: [
+      leftOnly(
+        'notes',
+        new Watched({
+          interval: 1,
+          run: async () => {
+            runs.push(runs.length);
+            throw new LaunchDeniedError('macOS refused to start Notes');
+          },
+        }),
+      ),
+    ],
+  });
+  const controller = new AbortController();
+  // A wait that never ends fails the test at this deadline.
+  const deadline = AbortSignal.timeout(5000);
+
+  for await (const _ of pipeline.watch({
+    signal: AbortSignal.any([controller.signal, deadline]),
+  })) {
+    await untilAborted(checked.wait(), deadline);
+    controller.abort();
+  }
+
+  assert.deepEqual(runs, [0]);
+});
+
 // The test's own timeout fails a watch that outlives its abort.
 test(
-  'a watch ends when its signal aborts, also while a source’s watcher ignores the signal',
+  'a watch ends when its signal aborts, also while the read of a gauge ignores the signal',
   { timeout: 5_000 },
   async () => {
-    // A watcher that never looks at its signal: after the initial invalidation
-    // it waits on a read that never settles, as a source can on a stuck store.
+    // A gauge that answers one time, then never settles and never looks at
+    // the signal of its check, as a read of a stuck store can.
+    class Stuck extends Gauge<number> {
+      readonly #reads: number[] = [];
+
+      protected read(): Promise<number> {
+        this.#reads.push(this.#reads.length);
+        return this.#reads.length === 1
+          ? Promise.resolve(0)
+          : new Promise<never>(() => {});
+      }
+    }
     class Deaf extends ContextSource {
-      protected override async *observe({ streams }: SourceWatchOptions) {
-        yield streams;
-        await new Promise<never>(() => {});
+      override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+        return [{ gauge: new Stuck(), streams, interval: 5, timeout: 60_000 }];
       }
     }
     const pipeline = new Pipeline({
@@ -2058,20 +2723,22 @@ test(
   },
 );
 
-test('a stopping watch waits for a source that heeds the abort to finish stopping', async () => {
+test('a stopping watch waits for the gauges of its change signals to finish stopping', async () => {
   let stopped = false;
+  // A gauge whose stop takes a moment, as ending a helper process does.
+  class Helper extends Gauge<number> implements AsyncDisposable {
+    protected async read(): Promise<number> {
+      return 0;
+    }
+
+    async [Symbol.asyncDispose](): Promise<void> {
+      await sleep(50);
+      stopped = true;
+    }
+  }
   class Slow extends ContextSource {
-    protected override async *observe({ streams, signal }: SourceWatchOptions) {
-      try {
-        yield streams;
-        await new Promise((resolve) =>
-          signal.addEventListener('abort', resolve, { once: true }),
-        );
-      } finally {
-        // Stopping takes a moment, as ending a helper process does.
-        await sleep(50);
-        stopped = true;
-      }
+    override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+      return [{ gauge: new Helper(), streams, interval: 5, timeout: 5 }];
     }
   }
   const pipeline = new Pipeline({
@@ -2146,14 +2813,7 @@ test('a stopped watch ends only once the derived refresh it started has ended', 
 test('a stopping watch ends the pass it is running, which the extract sees and the history records cancelled', async () => {
   const reading = Promise.withResolvers<void>();
   const seen: unknown[] = [];
-  class Reading extends ContextSource {
-    protected override async *observe({ streams, signal }: SourceWatchOptions) {
-      yield streams;
-      await new Promise((resolve) =>
-        signal.addEventListener('abort', resolve, { once: true }),
-      );
-    }
-
+  class Reading extends Watching {
     protected override async *extract(
       configuration: CopyConfiguration,
       _state: unknown,
@@ -2211,14 +2871,7 @@ test('a stopping watch ends the pass it is running, which the extract sees and t
 
 test("breaking a watch's loop ends the pass another connection is running, recorded cancelled", async () => {
   const reading = Promise.withResolvers<void>();
-  class Quick extends ContextSource {
-    protected override async *observe({ streams, signal }: SourceWatchOptions) {
-      yield streams;
-      await new Promise((resolve) =>
-        signal.addEventListener('abort', resolve, { once: true }),
-      );
-    }
-  }
+  class Quick extends Watching {}
   class Reading extends Quick {
     protected override async *extract(
       configuration: CopyConfiguration,

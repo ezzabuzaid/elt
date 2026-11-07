@@ -1,4 +1,4 @@
-import { ChangeWatcher, Gauge } from '@zukhruf/async';
+import { Gauge } from '@zukhruf/async';
 
 import {
   Catalog,
@@ -6,7 +6,6 @@ import {
   type ExtractionCoverage,
   Source,
   type SourceMessage,
-  type SourceWatchOptions,
   Stream,
   diffSnapshot,
   validateRecords,
@@ -144,22 +143,16 @@ export class DiaDesktopSource extends Source<AsyncDisposableStack> {
 
   // One file, so a write wakes the one stream; the snapshot diff writes
   // nothing when no tab changed.
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    // A local read: a check that takes the whole interval is stuck.
-    const watcher = new ChangeWatcher([new ArchiveStamp(this.#archive)], {
-      interval: pollIntervalMs,
-      timeout: pollIntervalMs,
-      clock,
-    });
-    for await (const outcomes of watcher.watch(signal))
-      for (const outcome of outcomes.values()) {
-        if (outcome.state === 'failed') throw outcome.error;
-        yield outcome.state === 'changed' ? streams : [];
-      }
+  override changeSignals(streams: readonly Stream[]) {
+    return [
+      {
+        gauge: new ArchiveStamp(this.#archive),
+        streams,
+        interval: pollIntervalMs,
+        // A local read: a check that takes the whole interval is stuck.
+        timeout: pollIntervalMs,
+      },
+    ];
   }
 
   // No policy: Dia records no reason for a removal, so the diff never

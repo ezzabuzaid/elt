@@ -2,14 +2,12 @@ import { mkdtempDisposable, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ChangeWatcher } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import type {
   CopyConfiguration,
   ExtractionCoverage,
   SourceMessage,
-  SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
@@ -156,28 +154,17 @@ export class AppleContactsSource extends Source<ContactsScan> {
     return null;
   }
 
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    if (signal.aborted) return;
-    using version = this.#store.version();
-    const watcher = new ChangeWatcher([version], {
-      interval: pollIntervalMs,
-      // A data_version read is local: a check that takes the whole interval
-      // is stuck.
-      timeout: pollIntervalMs,
-      clock,
-    });
-    for await (const outcomes of watcher.watch(signal)) {
-      let changed = false;
-      for (const outcome of outcomes.values()) {
-        if (outcome.state === 'failed') throw outcome.error;
-        if (outcome.state === 'changed') changed = true;
-      }
-      yield changed ? streams : [];
-    }
+  override changeSignals(streams: readonly Stream[]) {
+    return [
+      {
+        gauge: this.#store.version(),
+        streams,
+        interval: pollIntervalMs,
+        // A data_version read is local: a check that takes the whole interval
+        // is stuck.
+        timeout: pollIntervalMs,
+      },
+    ];
   }
 
   protected override async *extract(

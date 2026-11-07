@@ -1,11 +1,10 @@
-import { ChangeWatcher, Gauge } from '@zukhruf/async';
+import { Gauge } from '@zukhruf/async';
 
 import type {
   CopyConfiguration,
   ExtractionCoverage,
   PipelineClock,
   SourceMessage,
-  SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source } from '@workspace/elt';
@@ -178,48 +177,39 @@ export class AppleActivitySource extends Source<ActivityScan> {
   // Biome writes into preallocated segment files in place, so neither their
   // size, their modification time nor FSEvents report a new record; each
   // segment's fingerprint does. Databases report commits through data_version.
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    if (signal.aborted) return;
-    using versions = new DisposableStack();
+  override changeSignals(streams: readonly Stream[]) {
     const biome = new BiomeStore(this.location.biome);
     const databases = {
       knowledge: () => new KnowledgeStore(this.location.knowledge).version(),
       devices: () => biome.syncVersion(),
     };
-    // The streams of one database watch its one version.
-    const watched = new Map<Stream, Gauge>();
-    const opened = new Map<keyof typeof databases, Gauge>();
+    const signal = (gauge: Gauge, watched: readonly Stream[]) => ({
+      gauge,
+      streams: watched,
+      interval: this.pollIntervalMs,
+      // The reads are local, segment fingerprints and data_version: a
+      // check that takes the whole interval is stuck.
+      timeout: this.pollIntervalMs,
+    });
+    // Each Biome stream watches its own segments; the streams of one
+    // database watch its one version.
+    const databaseStreams = new Map<keyof typeof databases, Stream[]>();
+    const signals = [];
     for (const stream of streams) {
       const reader = readerOf(stream);
       if (reader.store === 'biome') {
-        watched.set(stream, new BiomeStreamGauge(biome, reader.biome));
+        signals.push(
+          signal(new BiomeStreamGauge(biome, reader.biome), [stream]),
+        );
         continue;
       }
-      let version = opened.get(reader.store);
-      if (version === undefined) {
-        version = versions.use(databases[reader.store]());
-        opened.set(reader.store, version);
-      }
-      watched.set(stream, version);
+      const watched = databaseStreams.get(reader.store) ?? [];
+      watched.push(stream);
+      databaseStreams.set(reader.store, watched);
     }
-    const watcher = new ChangeWatcher(new Set(watched.values()), {
-      interval: this.pollIntervalMs,
-      // The reads are local, segment fingerprints and data_version: a check
-      // that takes the whole interval is stuck.
-      timeout: this.pollIntervalMs,
-      clock,
-    });
-    for await (const outcomes of watcher.watch(signal)) {
-      for (const outcome of outcomes.values())
-        if (outcome.state === 'failed') throw outcome.error;
-      yield [...watched]
-        .filter(([, gauge]) => outcomes.get(gauge)?.state === 'changed')
-        .map(([stream]) => stream);
-    }
+    for (const [store, watched] of databaseStreams)
+      signals.push(signal(databases[store](), watched));
+    return signals;
   }
 
   protected override extract(

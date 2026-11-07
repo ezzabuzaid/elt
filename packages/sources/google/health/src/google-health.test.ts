@@ -832,39 +832,121 @@ test("each exercise's TCX export loads beside it, and an exercise Google keeps n
 
 test(
   'watching wakes every stream when a device syncs, and none while nothing moved',
-  { timeout: 10_000 },
-  async () => {
+  { timeout: 30_000 },
+  async (t) => {
+    await using database = await databases.database();
+    await using clients = new AsyncDisposableStack();
+    const sql = clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (client) => client.end(),
+    );
     const devices = [
       { lastSyncTime: '2026-10-15T08:00:00Z', name: 'users/1/pairedDevices/1' },
     ];
-    using _google = google({ devices, profile });
+    using wire = google({ devices, profile });
+    // A clock on which each wait takes a thousandth of its time, so a check
+    // comes each 300 ms. The API counts its quota of 300 calls a minute on
+    // the time of the process, and each check makes six calls, so the checks
+    // and the passes stay under it.
+    const timers = new Map<object, NodeJS.Timeout>();
+    const fast = {
+      Date: globalThis.Date,
+      performance: globalThis.performance,
+      setTimeout: (callback: () => void, ms: number) => {
+        const timer = {};
+        timers.set(
+          timer,
+          globalThis.setTimeout(() => {
+            timers.delete(timer);
+            callback();
+          }, ms / 1000),
+        );
+        return timer;
+      },
+      clearTimeout: (timer: unknown) => {
+        if (!(timer instanceof Object)) return;
+        globalThis.clearTimeout(timers.get(timer));
+        timers.delete(timer);
+      },
+    };
     const source = new GoogleHealthSource({
       requester: signedIn(),
-      pollIntervalMs: 1,
+      pollIntervalMs: 300_000,
     });
     const { streams } = await source.discover();
+    const destination = new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    });
     const controller = new AbortController();
+    const probes = () =>
+      wire.requests.filter(({ pathname }) =>
+        pathname.endsWith('/pairedDevices'),
+      ).length;
+    let synced = false;
+    // After the first pass, checks that find nothing moved run before the
+    // device syncs.
+    const sync = async (from: number) => {
+      await t.waitFor(() => assert.ok(probes() >= from + 3), {
+        interval: 5,
+        timeout: 20_000,
+      });
+      devices[0] = {
+        lastSyncTime: '2026-10-15T09:00:00Z',
+        name: 'users/1/pairedDevices/1',
+      };
+      synced = true;
+    };
 
-    const woken: number[] = [];
-    try {
-      for await (const wake of source.watch({
-        clock: globalThis,
-        signal: controller.signal,
-        streams,
-      })) {
-        woken.push(wake.length);
-        if (woken.length === 2)
-          devices[0] = {
-            lastSyncTime: '2026-10-15T09:00:00Z',
-            name: 'users/1/pairedDevices/1',
-          };
-        if (woken.length === 3) break;
-      }
-    } finally {
-      controller.abort();
+    const woken: { streams: number; synced: boolean }[] = [];
+    const syncing: Promise<void>[] = [];
+    for await (const { outcomes } of new Pipeline({
+      clock: fast,
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      connections: [
+        new Connection({
+          name: 'google-health',
+          source,
+          destination,
+          checkpoints: new PostgresCheckpointStore({
+            url: database.connectionString,
+            schema: RAW,
+          }),
+          steps: streams.map(
+            (stream) =>
+              new Copy(stream, destination.table(stream.name), {
+                id: stream.name,
+                syncMode: 'full_refresh',
+                destinationSyncMode: 'overwrite',
+              }),
+          ),
+        }),
+      ],
+    }).watch({
+      // A pass that never comes ends the watch, so the assertion fails.
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(25_000)]),
+    })) {
+      woken.push({ streams: outcomes.length, synced });
+      if (woken.length === 1) syncing.push(sync(probes()));
+      else controller.abort();
     }
+    await Promise.all(syncing);
 
-    assert.deepEqual(woken, [streams.length, 0, streams.length]);
+    assert.deepEqual(woken, [
+      { streams: streams.length, synced: false },
+      { streams: streams.length, synced: true },
+    ]);
+    // The second pass loaded the sync, not a pass a check made before it.
+    assert.deepEqual(
+      [...(await sql`SELECT "lastSyncTime" FROM "pairedDevices"`)].map(
+        ({ lastSyncTime }) => new Date(lastSyncTime).toISOString(),
+      ),
+      ['2026-10-15T09:00:00.000Z'],
+    );
   },
 );
 

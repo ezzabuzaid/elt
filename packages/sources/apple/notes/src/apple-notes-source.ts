@@ -1,11 +1,9 @@
-import { ChangeWatcher } from '@zukhruf/async';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import type {
   CopyConfiguration,
   ExtractionCoverage,
   SourceMessage,
-  SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
@@ -85,34 +83,29 @@ export class AppleNotesSource extends Source<NotesScan> {
     return (await notesRunning()) ? null : this.#store.lastWrite();
   }
 
-  protected override async *observe({
-    streams,
-    signal,
-    clock,
-  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    if (signal.aborted) return;
-    using version = this.#store.version();
-    const watcher = new ChangeWatcher([version], {
-      interval: pollIntervalMs,
-      // A data_version read is local: a check that takes the whole interval
-      // is stuck.
-      timeout: pollIntervalMs,
-      clock,
-    });
-    let nextLaunch = clock.Date.now();
-    for await (const outcomes of watcher.watch(signal)) {
-      // Launching Notes is work between checks, not a read of the store.
-      if (clock.Date.now() >= nextLaunch) {
-        await launchNotesHidden();
-        nextLaunch = clock.Date.now() + launchIntervalMs;
-      }
-      let changed = false;
-      for (const outcome of outcomes.values()) {
-        if (outcome.state === 'failed') throw outcome.error;
-        if (outcome.state === 'changed') changed = true;
-      }
-      yield changed ? streams : [];
-    }
+  override changeSignals(streams: readonly Stream[]) {
+    return [
+      {
+        gauge: this.#store.version(),
+        streams,
+        interval: pollIntervalMs,
+        // A data_version read is local: a check that takes the whole
+        // interval is stuck.
+        timeout: pollIntervalMs,
+      },
+    ];
+  }
+
+  // Launching Notes is work between checks, not a read of the store.
+  override upkeep() {
+    return [
+      {
+        interval: launchIntervalMs,
+        run: async () => {
+          await launchNotesHidden();
+        },
+      },
+    ];
   }
 
   protected override async *extract(

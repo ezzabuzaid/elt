@@ -12,6 +12,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { ChangeWatcher } from '@zukhruf/async';
 import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
@@ -908,14 +909,24 @@ test(
   },
 );
 
+// Each check of a watch over the changes of a store, as the pipeline of elt
+// makes it: one each second, and a read can take one second.
+const checksOf = (
+  changes: ReturnType<CalendarStore['changes']>,
+  signal: AbortSignal,
+) =>
+  new ChangeWatcher([changes], {
+    interval: 1000,
+    timeout: 1000,
+    clock: globalThis,
+  }).watch(signal);
+
 test('a quiet watch reports a check that found the store unchanged each second, once the helper confirms its subscription', async () => {
   await using stub = await StubEventKitHelper.create();
   stub.watch({ lines: ['changed'], then: 'wait' });
   const controller = new AbortController();
-  const checks = new CalendarStore(stub.path, { env: process.env }).checks(
-    controller.signal,
-    globalThis,
-  );
+  const changes = new CalendarStore(stub.path, { env: process.env }).changes();
+  const checks = checksOf(changes, controller.signal);
   const running = () =>
     execFile('pgrep', ['-P', String(process.pid), '-f', `${stub.path} watch`]);
 
@@ -923,22 +934,27 @@ test('a quiet watch reports a check that found the store unchanged each second, 
   const quiet = await checks.next();
   const pending = checks.next();
   controller.abort();
+  await changes[Symbol.asyncDispose]();
 
-  assert.deepEqual([subscribed.value, quiet.value], ['changed', 'unchanged']);
+  assert.deepEqual(
+    [subscribed.value?.get(changes), quiet.value?.get(changes)],
+    [{ state: 'changed' }, { state: 'unchanged' }],
+  );
   assert.deepEqual(await pending, { value: undefined, done: true });
   await assert.rejects(running(), { code: 1 });
 });
 
 test(
-  'a consumer that stops reading checks stops the helper process',
+  'a consumer that disposes the changes of a store stops the helper process',
   { timeout: 10_000 },
   async () => {
     await using stub = await StubEventKitHelper.create();
     stub.watch({ lines: ['changed'], then: 'wait' });
-    const checks = new CalendarStore(stub.path, { env: process.env }).checks(
-      new AbortController().signal,
-      globalThis,
-    );
+    const changes = new CalendarStore(stub.path, {
+      env: process.env,
+    }).changes();
+    const controller = new AbortController();
+    const checks = checksOf(changes, controller.signal);
     const running = () =>
       execFile('pgrep', [
         '-P',
@@ -947,13 +963,40 @@ test(
         `${stub.path} watch`,
       ]);
 
-    await checks.next();
-    assert.deepEqual(await checks.next(), { value: 'unchanged', done: false });
-    await running();
-    const stopped = await checks.return(undefined);
+    try {
+      await checks.next();
+      assert.deepEqual((await checks.next()).value?.get(changes), {
+        state: 'unchanged',
+      });
+      await running();
+      await changes[Symbol.asyncDispose]();
 
-    assert.deepEqual(stopped, { value: undefined, done: true });
-    await assert.rejects(running(), { code: 1 });
+      await assert.rejects(running(), { code: 1 });
+    } finally {
+      controller.abort();
+      await checks.return(undefined);
+    }
+  },
+);
+
+test(
+  'a check after the helper stopped fails, and the next check starts a new helper and finds a change',
+  { timeout: 10_000 },
+  async () => {
+    await using stub = await StubEventKitHelper.create();
+    stub.watch({ lines: ['changed'], then: 'exit' });
+    const controller = new AbortController();
+    await using changes = new RemindersStore(stub.path, {
+      env: process.env,
+    }).changes();
+    const checks = checksOf(changes, controller.signal);
+
+    const states = [];
+    for (let check = 0; check < 3; check++)
+      states.push((await checks.next()).value?.get(changes)?.state);
+    controller.abort();
+
+    assert.deepEqual(states, ['changed', 'failed', 'changed']);
   },
 );
 
@@ -961,16 +1004,14 @@ test('no check says the store held still before the helper confirms its subscrip
   await using stub = await StubEventKitHelper.create();
   stub.watch({ lines: [], then: 'wait' });
   const controller = new AbortController();
-  const checks = new CalendarStore(stub.path, { env: process.env }).checks(
-    controller.signal,
-    globalThis,
-  );
+  await using changes = new CalendarStore(stub.path, {
+    env: process.env,
+  }).changes();
+  const checks = checksOf(changes, controller.signal);
 
-  const first = checks.next();
-  // Longer than a check takes once subscribed.
-  const seen = await Promise.race([first, sleep(1500).then(() => 'nothing')]);
+  const first = await checks.next();
   controller.abort();
 
-  assert.equal(seen, 'nothing');
-  assert.deepEqual(await first, { value: undefined, done: true });
+  // The first read waits for the subscription until the check times out.
+  assert.equal(first.value?.get(changes)?.state, 'failed');
 });

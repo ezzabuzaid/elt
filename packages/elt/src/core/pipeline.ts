@@ -1,6 +1,7 @@
-import { delay } from '@zukhruf/async';
+import { type Gauge, delay } from '@zukhruf/async';
 
 import type { StreamCheck, SyncHistory } from '../state/sync-history.ts';
+import type { ChangeSignal } from './change-signal.ts';
 import type { PipelineClock } from './clock.ts';
 import { Connection } from './connection.ts';
 import {
@@ -19,9 +20,11 @@ import {
   passChannels,
 } from './pass-channels.ts';
 import { replicate } from './replication.ts';
+import { brokenSignals, watchSignals } from './signal-watch.ts';
 import type { Source } from './source.ts';
 import type { Stream } from './stream.ts';
 import type { Target as DestinationTarget } from './target.ts';
+import type { Upkeep } from './upkeep.ts';
 
 // How long a stopping watch waits for a source to finish stopping, such as
 // ending a helper process, before it leaves the source behind: a source that
@@ -83,8 +86,8 @@ export class PipelineError<
 }
 
 // A watch that ended, once every connection stopped or its signal aborted,
-// with failed watchers: each error names a connection whose watcher failed,
-// and the sync history recorded why.
+// with stopped connections: each error names a connection whose change
+// signals broke the contract, and the sync history recorded why.
 export class WatchError extends AggregateError {
   override name = 'WatchError';
 }
@@ -198,14 +201,14 @@ export class Pipeline<Target extends DestinationTarget> {
     return results.map(({ failures: _, cancelled: __, ...result }) => result);
   }
 
-  // Each connection watches its own source and runs a pass for what changed.
-  // A watcher that fails for a system reason is recorded and watches again
-  // after a back-off; a connection whose watcher fails for a config reason
-  // stops alone, and its failure is recorded; the rest keep watching. Once
-  // every connection stopped, or signal aborts, the recorded failures are
-  // thrown together as a WatchError. An error the sync history could not
-  // record, or a derived dataset's own failure, stops every connection and
-  // rejects as itself.
+  // Each connection reads the change signals of its own source and runs a
+  // pass for what changed. A failed change signal fails only its streams, and
+  // its failure is recorded (ADR 0020); a connection whose change signals
+  // break the contract stops alone, and its failure is recorded; the rest keep
+  // watching. Once every connection stopped, or signal aborts, the recorded
+  // failures are thrown together as a WatchError. An error the sync history
+  // could not record, or a derived dataset's own failure, stops every
+  // connection and rejects as itself.
   async *watch({
     signal,
   }: {
@@ -282,87 +285,146 @@ export class Pipeline<Target extends DestinationTarget> {
     // An abort wakes the loop below, whether or not the source heeds it.
     watching.addEventListener('abort', () => wake.resolve(), { once: true });
     let finished = false;
-    // The watcher's own failure, which the history records once it stopped,
-    // and a check the history could not record, which stops the whole watch.
+    // Change signals that cannot be read as declared, which the history
+    // records once the connection stopped, and a check the history could not
+    // record, which stops the whole watch.
     let failure: { readonly error: unknown } | undefined;
     let unrecorded: { readonly error: unknown } | undefined;
-    // A watcher that breaks its contract stops: watching it again would only
-    // break it again.
+    // Change signals that break the contract stop their connection: watching
+    // them again would only break it again.
     const broken = (message: string) => {
       failure = { error: new TypeError(message) };
     };
+    // Each stream whose change signal failed, from the check that saw it fail
+    // until a check reads it again: the history records it one time.
+    const failing = new Set<string>();
+    // When a check last found each stream unchanged, so each check that the
+    // history records vouches for each stream as of its own last check.
+    const unchangedAt = new Map<string, Date>();
+    // Each stream that a check has told about. As an informer lists before it
+    // watches, the first pass waits until every stream had its first check:
+    // the first pass reads all streams as one task group, and the first value
+    // of each gauge is the baseline for the next checks (ADR 0020).
+    const told = new Set<string>();
+    // Runs an upkeep when the watch starts and then each interval until the
+    // watch stops. A failure is recorded one time for each run of failures, as
+    // a failed pass of the streams that the watch keeps; after a config
+    // failure the upkeep runs no more in this watch, as a gauge does (ADR 0021).
+    const keep = async ({ interval, run }: Upkeep) => {
+      for (let failed = false; !watching.aborted;) {
+        try {
+          await run(watching);
+          failed = false;
+        } catch (error) {
+          if (watching.aborted) return;
+          if (!failed) {
+            try {
+              await this.#recordFailure(connection, error, [...streams.keys()]);
+            } catch (suppressed) {
+              unrecorded = { error: suppressed };
+              wake.resolve();
+              return;
+            }
+          }
+          failed = true;
+          if (connection.source.failureType(error) === 'config') return;
+        }
+        await delay(interval, { clock: this.#clock, signal: watching }).catch(
+          () => undefined,
+        );
+      }
+    };
+    // The pipeline reads the source's change signals and decides what each
+    // outcome means (ADR 0020).
     const receive = (async () => {
+      const keeping: Promise<void>[] = [];
       try {
-        // A schedule outlives a failed sync, so a system failure never stops
-        // the watch; the back-off grows until a check arrives and resets it.
-        for (let failures = 0; ;) {
-          let initial = true;
-          try {
-            for await (const changed of connection.source.watch({
-              streams: [...streams.values()],
-              signal: watching,
-              clock: this.#clock,
-            })) {
-              for (const stream of changed) {
-                if (!streams.has(stream.name)) {
-                  broken(
-                    `Watcher emitted an unselected stream: ${stream.name}`,
-                  );
-                  return;
-                }
-                pending.add(stream.name);
-              }
-              if (initial && pending.size !== streams.size) {
-                broken(
-                  'Watcher must initially invalidate every selected stream',
-                );
-                return;
-              }
-              initial = false;
-              failures = 0;
-              if (pending.size > 0) wake.resolve();
-              const current = [...streams.values()].filter(
-                ({ name }) =>
-                  loaded.has(name) && !pending.has(name) && !loading.has(name),
-              );
-              if (current.length > 0)
+        // A gauge is the pipeline's from the moment the source gives it, so a
+        // source that fails partway through its signals leaves none open. A
+        // gauge that stops a helper process can take a moment to stop: the
+        // watch waits for it, within the grace of a stopping watch.
+        await using gauges = new AsyncDisposableStack();
+        const owned = new Set<Gauge>();
+        const signals: ChangeSignal[] = [];
+        try {
+          for (const signal of connection.source.changeSignals(
+            [...streams.values()],
+            this.#clock,
+          )) {
+            signals.push(signal);
+            if (owned.has(signal.gauge)) continue;
+            owned.add(signal.gauge);
+            if (isDisposable(signal.gauge)) gauges.use(signal.gauge);
+          }
+        } catch (error) {
+          failure = { error };
+          return;
+        }
+        const contract = brokenSignals(signals, [...streams.values()]);
+        if (contract !== undefined) {
+          broken(contract);
+          return;
+        }
+        keeping.push(...[...connection.source.upkeep(this.#clock)].map(keep));
+        try {
+          for await (const outcomes of watchSignals(signals, {
+            signal: watching,
+            clock: this.#clock,
+            failureType: (error) => connection.source.failureType(error),
+          })) {
+            const at = this.#now();
+            for (const [name, outcome] of outcomes) {
+              told.add(name);
+              if (outcome.state === 'failed') {
+                unchangedAt.delete(name);
+                if (failing.has(name)) continue;
+                failing.add(name);
                 try {
-                  await this.history.checked(connection, this.#now(), (at) =>
-                    checked(connection.source, current, at),
-                  );
+                  await this.#recordFailure(connection, outcome.error, [name]);
                 } catch (error) {
                   unrecorded = { error };
                   return;
                 }
+                continue;
+              }
+              failing.delete(name);
+              if (outcome.state === 'changed') {
+                unchangedAt.delete(name);
+                pending.add(name);
+              } else unchangedAt.set(name, at);
             }
-            if (initial && !watching.aborted)
-              broken('Watcher ended before its initial invalidation');
-            return;
-          } catch (error) {
-            if (watching.aborted) {
-              if (!(error instanceof Error && error.name === 'AbortError'))
-                failure = { error };
-              return;
-            }
-            if (connection.source.failureType(error) === 'config') {
-              failure = { error };
-              return;
-            }
-            failures += 1;
-            try {
-              await this.#recordFailure(connection, error);
-            } catch (suppressed) {
-              unrecorded = { error: suppressed };
-              return;
-            }
-            await delay(retryDelayMs(failures), {
-              clock: this.#clock,
-              signal: watching,
-            }).catch(() => undefined);
-            if (watching.aborted) return;
+            if (pending.size > 0 && told.size === streams.size) wake.resolve();
+            const current = [...streams.values()].flatMap((stream) => {
+              const checkedAt = unchangedAt.get(stream.name);
+              return checkedAt !== undefined &&
+                loaded.has(stream.name) &&
+                !pending.has(stream.name) &&
+                !loading.has(stream.name)
+                ? [{ stream, at: checkedAt }]
+                : [];
+            });
+            if (current.length > 0)
+              try {
+                await this.history.checked(connection, at, () =>
+                  checked(connection.source, current),
+                );
+              } catch (error) {
+                unrecorded = { error };
+                return;
+              }
           }
+        } catch (error) {
+          // A change watcher refuses an interval or a timeout that is not a
+          // positive number of milliseconds: a declaration that breaks the
+          // contract.
+          if (!watching.aborted) failure = { error };
         }
       } finally {
+        // The checks ended, so the connection stops watching: its upkeeps
+        // stop too, after its gauges were disposed, so an upkeep that is slow
+        // to stop keeps no gauge open.
+        controller.abort();
+        await Promise.all(keeping);
         finished = true;
         wake.resolve();
       }
@@ -373,7 +435,7 @@ export class Pipeline<Target extends DestinationTarget> {
         failure === undefined &&
         unrecorded === undefined
       ) {
-        // Retries end with the watcher, as its changes do.
+        // Retries end with the change signals, as their changes do.
         if (!finished)
           for (const [name, { at }] of retries)
             if (at <= this.#clock.Date.now()) pending.add(name);
@@ -424,7 +486,9 @@ export class Pipeline<Target extends DestinationTarget> {
       }
       if (unrecorded !== undefined) throw unrecorded.error;
       if (failure !== undefined) {
-        await this.#recordFailure(connection, failure.error);
+        await this.#recordFailure(connection, failure.error, [
+          ...streams.keys(),
+        ]);
         stopped.push(connectionError(connection, failure.error));
       }
     } catch (error) {
@@ -532,12 +596,14 @@ export class Pipeline<Target extends DestinationTarget> {
     );
   }
 
-  // Records a watcher's failure as a failed attempt: why its connection
-  // stopped, or a failure it watches again after. When the history cannot,
-  // the SuppressedError holds both errors, as a failed dispose does.
+  // Records a failure as a failed attempt of the streams that it stopped: why
+  // a connection stopped, or why the change signal of one stream failed. When
+  // the history cannot, the SuppressedError holds both errors, as a failed
+  // dispose does.
   async #recordFailure(
     connection: Connection<Target>,
     failure: unknown,
+    stopped: readonly string[],
   ): Promise<void> {
     const failureType = connection.source.failureType(failure);
     // The attempt declares each stream once, as one read covers it once: a
@@ -545,6 +611,7 @@ export class Pipeline<Target extends DestinationTarget> {
     // and the history still records why.
     const streams = connection.steps.filter(
       (copy, index, steps) =>
+        stopped.includes(copy.from.name) &&
         steps.findIndex(({ from }) => from.name === copy.from.name) === index,
     );
     try {
@@ -581,7 +648,11 @@ export class Pipeline<Target extends DestinationTarget> {
       try {
         connection.validate();
       } catch (error) {
-        await this.#recordFailure(connection, error);
+        await this.#recordFailure(
+          connection,
+          error,
+          connection.steps.map(({ from }) => from.name),
+        );
         throw error;
       }
     for (const dataset of this.derived) dataset.validate(this.connections);
@@ -616,18 +687,18 @@ function connectionError(
   });
 }
 
-// The streams a check found unchanged, each current as of the check or as of
-// earlier when its source says its upstream was current only then. A stream
-// whose source cannot tell is left out: the check does not vouch for it.
+// The streams that checks found unchanged, each current as of its check or as
+// of earlier when its source says its upstream was current only then. A
+// stream whose source cannot tell is left out: the check does not vouch for
+// it.
 async function checked(
   source: Source,
-  streams: readonly Stream[],
-  at: Date,
+  checks: readonly { readonly stream: Stream; readonly at: Date }[],
 ): Promise<StreamCheck[]> {
   const answers = await Promise.allSettled(
-    streams.map((stream) => source.currentAsOf(stream)),
+    checks.map(({ stream }) => source.currentAsOf(stream)),
   );
-  return streams.flatMap((stream, index) => {
+  return checks.flatMap(({ stream, at }, index) => {
     const answer = answers[index];
     if (answer?.status !== 'fulfilled') return [];
     const upstream = answer.value;
@@ -638,6 +709,10 @@ async function checked(
       },
     ];
   });
+}
+
+function isDisposable(value: object): value is Disposable | AsyncDisposable {
+  return Symbol.dispose in value || Symbol.asyncDispose in value;
 }
 
 function message(error: unknown): string {

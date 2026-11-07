@@ -16,10 +16,10 @@ import {
   type CopyConfiguration,
   DocumentParser,
   DocumentText,
+  Gauge,
   Pipeline,
   PipelineError,
   Source,
-  type SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 
@@ -30,16 +30,25 @@ import {
   View,
 } from './index.ts';
 
+// The version of an upstream, which the test moves to make a change.
+class Version extends Gauge<number> {
+  current = 0;
+
+  protected async read(): Promise<number> {
+    return this.current;
+  }
+}
+
 // Rows that name stored files by ref, loaded into raw_files and read through
 // files; rows can change between runs. Its notes come from a second store,
 // which fails every read while notesGone is set, as an app's missing store
-// does. A watch sees every stream change at its start, and again as each
-// latch of changes opens.
+// does. A watch sees every stream change at its start, and again each time
+// the test moves the version of its upstream.
 class Files extends Source {
   readonly identity = 'files';
   rows: readonly { readonly id: string; readonly ref: string }[] = [];
   notesGone = false;
-  changes: readonly Latch[] = [];
+  readonly version = new Version();
   readonly files = new Stream({
     name: 'files',
     jsonSchema: {
@@ -79,12 +88,8 @@ class Files extends Source {
     return new AsyncDisposableStack();
   }
 
-  protected override async *observe({ streams }: SourceWatchOptions) {
-    yield streams;
-    for (const change of this.changes) {
-      await change.wait();
-      yield streams;
-    }
+  override changeSignals(streams: readonly Stream[]) {
+    return [{ gauge: this.version, streams, interval: 10, timeout: 10 }];
   }
 
   protected override async *extract(configuration: CopyConfiguration) {
@@ -454,8 +459,6 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
   await files.file('slow.txt', 'contract');
   await files.file('b.txt', 'receipt');
   files.source.rows = [{ id: '1', ref: 'slow.txt' }];
-  const changed = new Latch();
-  files.source.changes = [changed];
   const released = new Latch();
   files.parser().holding.set('slow.txt', released);
   const controller = new AbortController();
@@ -484,7 +487,7 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
       { id: '1', ref: 'slow.txt' },
       { id: '2', ref: 'b.txt' },
     ];
-    changed.open();
+    files.source.version.current += 1;
     const second = await pass();
     const whileHeld = files.read(text);
     released.open();

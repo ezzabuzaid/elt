@@ -3085,10 +3085,36 @@ test(
   { timeout: 120_000 },
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
-    const source = new AppleCalendarSource({
-      store: new CalendarStore(helper, { env: process.env }),
-      ...january,
+    const store = new CalendarStore(helper, { env: process.env });
+    // Asked before the watch: without access the watch only records its
+    // failed change signal in the sync history, so it has no failure to show.
+    const access = await store
+      .collections({}, undefined)
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'CalendarUnavailableError')
+          return null;
+        throw error;
+      });
+    if (access === null) return t.skip('no Calendar access');
+    const source = new AppleCalendarSource({ store, ...january });
+    await using dir = await new TemporaryFiles().directory('calendar-watch-');
+    const destination = new SQLiteDestination({
+      path: join(dir.path, 'out.sqlite'),
     });
+    const copy = new Copy(source.events, destination.table('events'));
+    const watch = (signal: AbortSignal) =>
+      new Pipeline({
+        clock: globalThis,
+        history: new SQLiteSyncHistory(),
+        connections: [
+          new Connection({
+            name: 'test',
+            source,
+            destination,
+            steps: [copy],
+          }),
+        ],
+      }).watch({ signal });
     const helperRunning = () =>
       execFile('pgrep', [
         '-P',
@@ -3097,34 +3123,28 @@ test(
         `${helper} watch events`,
       ]);
     const controller = new AbortController();
+    const watching = watch(controller.signal);
+    // A consumer that stops iterating also stops the helper.
+    const stopped = watch(new AbortController().signal);
     try {
-      const watching = source.watch({
-        clock: globalThis,
-        streams: [source.events],
-        signal: controller.signal,
-      });
-      const subscribed = await watching.next().catch((error: unknown) => {
-        if (error instanceof Error && error.name === 'CalendarUnavailableError')
-          return null;
-        throw error;
-      });
-      if (subscribed === null) return t.skip('no Calendar access');
-      assert.deepEqual(subscribed, { value: [source.events], done: false });
+      const subscribed = await watching.next();
+      assert.ok(!subscribed.done);
+      assert.deepEqual(
+        subscribed.value.outcomes.map(({ copy }) => copy.from.name),
+        ['events'],
+      );
+      await helperRunning();
       const pending = watching.next();
       controller.abort();
       assert.deepEqual(await pending, { value: undefined, done: true });
       await assert.rejects(helperRunning(), { code: 1 });
 
-      // A consumer that stops iterating also stops the helper.
-      const stopped = source.watch({
-        clock: globalThis,
-        streams: [source.events],
-        signal: new AbortController().signal,
-      });
-      assert.deepEqual(await stopped.next(), {
-        value: [source.events],
-        done: false,
-      });
+      const started = await stopped.next();
+      assert.ok(!started.done);
+      assert.deepEqual(
+        started.value.outcomes.map(({ copy }) => copy.from.name),
+        ['events'],
+      );
       await helperRunning();
       assert.deepEqual(await stopped.return(undefined), {
         value: undefined,
@@ -3133,6 +3153,8 @@ test(
       await assert.rejects(helperRunning(), { code: 1 });
     } finally {
       controller.abort();
+      await watching.return(undefined);
+      await stopped.return(undefined);
     }
   },
 );

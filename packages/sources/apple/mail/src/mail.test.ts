@@ -2191,6 +2191,43 @@ test('An unreadable Accounts store fails only accounts and smtpServers, naming F
   });
 });
 
+// Watches the streams into a new SQLite import, as a host watches Mail.
+function watchMail(
+  source: AppleMailSource,
+  streams: readonly Stream[],
+  directory: string,
+  signal: AbortSignal,
+) {
+  mkdirSync(directory, { recursive: true });
+  const destination = new SQLiteDestination({
+    path: join(directory, 'data.sqlite'),
+  });
+  return new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'mail',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(directory, 'checkpoints.sqlite'),
+        }),
+        steps: streams.map(
+          (stream) => new Copy(stream, destination.table(stream.name)),
+        ),
+      }),
+    ],
+  }).watch({ signal });
+}
+
+// The streams that the next pass of a watch loaded.
+async function nextPass(watch: ReturnType<typeof watchMail>) {
+  const pass = await watch.next();
+  assert.ok(!pass.done, 'the watch ended before its pass');
+  return pass.value.outcomes.map(({ copy }) => copy.from.name);
+}
+
 test('An unreadable Accounts store leaves Mail’s watch running', async () => {
   await using dir = await new TemporaryFiles().directory(
     'elt-mail-accounts-watch-',
@@ -2201,30 +2238,26 @@ test('An unreadable Accounts store leaves Mail’s watch running', async () => {
     accounts: new AccountsStore(join(dir.path, 'missing/Accounts4.sqlite')),
   });
   const abort = new AbortController();
-  const watch = source.watch({
-    clock: globalThis,
-    streams: [source.accounts, source.messages],
-    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
-  });
-  assert.deepEqual((await watch.next()).value, [
-    source.accounts,
-    source.messages,
-  ]);
+  const watch = watchMail(
+    source,
+    [source.accounts, source.messages],
+    join(dir.path, 'import'),
+    AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+  );
+  assert.deepEqual(await nextPass(watch), ['accounts', 'messages']);
 
   using upstream = open(store.index);
   upstream.exec('UPDATE messages SET flagged=1 WHERE ROWID=1');
 
-  assert.deepEqual((await watch.next()).value, [
-    source.accounts,
-    source.messages,
-  ]);
+  assert.deepEqual(await nextPass(watch), ['accounts', 'messages']);
   abort.abort();
   assert.equal((await watch.next()).done, true);
 });
 
-test('Mail’s watch fails as unavailable when its version file or index cannot be read, and as itself for an index that is not a database', async () => {
+test('Mail’s streams fail as config when its version file or index cannot be read, and as system for an index that is not a database, while the watch goes on', async (t) => {
   await using dir = await new TemporaryFiles().directory('elt-mail-watch-');
-  const watchAfter = async (
+  // The first failure that the watch's sync history records.
+  const failureAfter = async (
     root: string,
     change: (store: Awaited<ReturnType<typeof fixture>>) => Promise<void>,
   ) => {
@@ -2234,38 +2267,53 @@ test('Mail’s watch fails as unavailable when its version file or index cannot 
       path: store.root,
       accounts: store.accounts,
     });
-    return source
-      .watch({
-        clock: globalThis,
-        streams: [source.messages],
-        signal: AbortSignal.timeout(10000),
-      })
-      .next();
-  };
-  const unavailable = {
-    name: 'StoreUnavailableError',
-    message: /^Mail's store at .*Full Disk Access/,
+    const directory = `${root}-import`;
+    const controller = new AbortController();
+    const watching = (async () => {
+      for await (const _ of watchMail(
+        source,
+        [source.messages],
+        directory,
+        AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+      ));
+    })();
+    try {
+      let failure: Record<string, unknown> | undefined;
+      await t.waitFor(
+        () => {
+          using out = open(join(directory, 'data.sqlite'), { readOnly: true });
+          failure = out
+            .prepare(
+              "SELECT error, failure_type FROM sync_attempts WHERE status = 'failed'",
+            )
+            .get();
+          assert.ok(failure);
+        },
+        { interval: 10, timeout: 10000 },
+      );
+      assert.ok(failure);
+      return failure;
+    } finally {
+      controller.abort();
+      await watching;
+    }
   };
 
-  await assert.rejects(
-    watchAfter(join(dir.path, 'version'), ({ root }) =>
+  for (const failure of [
+    await failureAfter(join(dir.path, 'version'), ({ root }) =>
       rm(join(root, 'PersistenceInfo.plist')),
     ),
-    unavailable,
+    await failureAfter(join(dir.path, 'index'), ({ index }) => rm(index)),
+  ]) {
+    // A failed copy's error is in the attempt's list of copies that failed.
+    assert.match(String(failure.error), /Mail's store at .*Full Disk Access/);
+    assert.equal(failure.failure_type, 'config');
+  }
+  const text = await failureAfter(join(dir.path, 'text'), ({ index }) =>
+    writeFile(index, 'not a database'),
   );
-  await assert.rejects(
-    watchAfter(join(dir.path, 'index'), ({ index }) => rm(index)),
-    unavailable,
-  );
-  await assert.rejects(
-    watchAfter(join(dir.path, 'text'), ({ index }) =>
-      writeFile(index, 'not a database'),
-    ),
-    (error) =>
-      error instanceof Error &&
-      error.name !== 'StoreUnavailableError' &&
-      /not a database/.test(error.message),
-  );
+  assert.match(String(text.error), /not a database/);
+  assert.equal(text.failure_type, 'system');
 });
 
 test('Mail’s watch refreshes only accounts and smtpServers when only the Accounts store commits', async () => {
@@ -2281,15 +2329,16 @@ test('Mail’s watch refreshes only accounts and smtpServers when only the Accou
     accounts: scratchAccounts(accountsPath),
   });
   const abort = new AbortController();
-  const watch = source.watch({
-    clock: globalThis,
-    streams: [source.accounts, source.smtpServers, source.messages],
-    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
-  });
-  assert.deepEqual((await watch.next()).value, [
-    source.accounts,
-    source.smtpServers,
-    source.messages,
+  const watch = watchMail(
+    source,
+    [source.accounts, source.smtpServers, source.messages],
+    join(dir.path, 'import'),
+    AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+  );
+  assert.deepEqual(await nextPass(watch), [
+    'accounts',
+    'smtpServers',
+    'messages',
   ]);
 
   // A Mail change can add a mailbox host, so it refreshes the account streams
@@ -2297,10 +2346,10 @@ test('Mail’s watch refreshes only accounts and smtpServers when only the Accou
   // just after the watch starts.
   using upstream = open(store.index);
   upstream.exec('UPDATE messages SET flagged=1 WHERE ROWID=1');
-  assert.deepEqual((await watch.next()).value, [
-    source.accounts,
-    source.smtpServers,
-    source.messages,
+  assert.deepEqual(await nextPass(watch), [
+    'accounts',
+    'smtpServers',
+    'messages',
   ]);
 
   using accounts = open(accountsPath, { journal: new RollbackJournal() });
@@ -2308,10 +2357,7 @@ test('Mail’s watch refreshes only accounts and smtpServers when only the Accou
     "UPDATE ZACCOUNT SET ZACCOUNTDESCRIPTION = 'Renamed' WHERE ZIDENTIFIER = 'ICLOUD'",
   );
 
-  assert.deepEqual((await watch.next()).value, [
-    source.accounts,
-    source.smtpServers,
-  ]);
+  assert.deepEqual(await nextPass(watch), ['accounts', 'smtpServers']);
   abort.abort();
   assert.equal((await watch.next()).done, true);
 });
@@ -2325,36 +2371,25 @@ test('Mail watches index commits and file-only downloads, and cancels', async ()
     accounts: scratchAccounts(join(dir.path, 'Accounts4.sqlite')),
   });
   const abort = new AbortController();
-  const watch = source.watch({
-    clock: globalThis,
-    streams: [source.messages, source.attachments],
-    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
-  });
-  assert.deepEqual((await watch.next()).value, [
-    source.messages,
-    source.attachments,
-  ]);
+  const watch = watchMail(
+    source,
+    [source.messages, source.attachments],
+    join(dir.path, 'import'),
+    AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+  );
+  assert.deepEqual(await nextPass(watch), ['messages', 'attachments']);
   // A first commit absorbs the fixture's last writes, which FSEvents can
   // report just after the watch starts, so each change below is seen alone.
   using upstream = open(store.index);
   upstream.exec('UPDATE messages SET flagged=0 WHERE ROWID=1');
-  assert.deepEqual((await watch.next()).value, [
-    source.messages,
-    source.attachments,
-  ]);
+  assert.deepEqual(await nextPass(watch), ['messages', 'attachments']);
   upstream.exec('UPDATE messages SET flagged=1 WHERE ROWID=1');
-  assert.deepEqual((await watch.next()).value, [
-    source.messages,
-    source.attachments,
-  ]);
+  assert.deepEqual(await nextPass(watch), ['messages', 'attachments']);
   await writeFile(
     join(store.data, 'Attachments/1/2/detached.pdf'),
     '%PDF-changed',
   );
-  assert.deepEqual((await watch.next()).value, [
-    source.messages,
-    source.attachments,
-  ]);
+  assert.deepEqual(await nextPass(watch), ['messages', 'attachments']);
   abort.abort();
   assert.equal((await watch.next()).done, true);
 });
