@@ -15,6 +15,6 @@ The same change made errors that no history recorded show as themselves. `watch(
 ## Consequences
 
 - The limit of 10 failures in all of Airbyte does not apply, because a watch does not count progress, so the limit of 5 in a row comes first. The cap of 30 minutes does not apply either, because the last delay is 270 seconds.
-- No test waits for the longer delays, because the pipeline has no clock seam.
+- No test waits for the longer delays, because the pipeline has no clock seam. (Superseded in part, 2026-11-07: since ADR 0019 the pipeline waits on the clock its caller gives, so the watch tests drive retries on a fake clock, and #4001 made a retry whose timer ends before the Date of its retry wait again.)
 
 Sources: elt ab3c5c30; backlog #2050, #2566.
