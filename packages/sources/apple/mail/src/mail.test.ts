@@ -2380,10 +2380,12 @@ test('Mail watches index commits and file-only downloads, and cancels', async ()
   assert.deepEqual(await nextPass(watch), ['messages', 'attachments']);
   // A first commit absorbs the fixture's last writes, which FSEvents can
   // report just after the watch starts, so each change below is seen alone.
+  // Each commit changes the row: SQLite writes no page whose bytes stay the
+  // same, so a commit of the value already there leaves data_version as it is.
   using upstream = open(store.index);
-  upstream.exec('UPDATE messages SET flagged=0 WHERE ROWID=1');
-  assert.deepEqual(await nextPass(watch), ['messages', 'attachments']);
   upstream.exec('UPDATE messages SET flagged=1 WHERE ROWID=1');
+  assert.deepEqual(await nextPass(watch), ['messages', 'attachments']);
+  upstream.exec('UPDATE messages SET flagged=0 WHERE ROWID=1');
   assert.deepEqual(await nextPass(watch), ['messages', 'attachments']);
   await writeFile(
     join(store.data, 'Attachments/1/2/detached.pdf'),
