@@ -68,10 +68,11 @@ JOIN sys.partitions AS p ON p.object_id = t.object_id AND p.index_id IN (0, 1)
 GROUP BY t.schema_id, t.name`;
 
 // For each table: the writes counted on its indexes since the engine
-// started, and the last.
+// started, and the last. A table with no usage row yet counts 0 writes, as
+// it does after the first read makes its row, so a read moves nothing.
 const lastWritesQuery = `
 SELECT QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name),
-  CONCAT(SUM(u.user_updates), ' ', CONVERT(varchar(23), MAX(u.last_user_update), 126))
+  CONCAT(COALESCE(SUM(u.user_updates), 0), ' ', CONVERT(varchar(23), MAX(u.last_user_update), 126))
 FROM sys.tables AS t
 LEFT JOIN sys.dm_db_index_usage_stats AS u
   ON u.object_id = t.object_id AND u.database_id = DB_ID()
