@@ -5,6 +5,7 @@ import { transaction } from '@zukhruf/sqlite-transaction';
 
 import type { ReaderRelation } from '@workspace/elt';
 
+import { isReserved } from './reserved.ts';
 import { describe } from './sqlite-descriptions.ts';
 
 export type SQLiteView = ReaderRelation & { readonly query: string };
@@ -39,7 +40,7 @@ export function publishSQLiteViews(
   const names = new Set<string>();
   for (const view of views) {
     text(view.name, 'view name');
-    if (/^_elt_/i.test(view.name))
+    if (isReserved(view.name))
       throw new TypeError('View names starting with _elt_ are reserved');
     if (names.has(view.name.toLowerCase()))
       throw new TypeError('Duplicate view names');

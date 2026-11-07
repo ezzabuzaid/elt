@@ -13,5 +13,6 @@ export {
 } from './sqlite-passes.ts';
 export { SQLiteSyncHistory } from './sqlite-sync-history.ts';
 export { SQLiteTable } from './sqlite-table.ts';
+export { isReserved } from './reserved.ts';
 export { publishSQLiteViews, type SQLiteView } from './sqlite-views.ts';
 export { View } from './view.ts';

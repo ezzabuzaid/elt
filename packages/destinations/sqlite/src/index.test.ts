@@ -52,6 +52,7 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
   type SQLiteTable,
+  isReserved,
 } from './index.ts';
 
 // The upstream of a test source, which the test fills before it reads: a
@@ -3667,6 +3668,55 @@ const fileTable = (destination: SQLiteDestination, source: FileSource) =>
     c.integer('version'),
     c.blob('bytes').from(source.files.file),
   ]);
+
+test('every table of a loaded file that no copy names is reserved: the sync history, the descriptions, the writers and the chunks of a file column', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-reserved-');
+  const source = new FileSource(scratch.path, {
+    one: { version: 1, bytes: Buffer.from('one') },
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.files, fileTable(destination, source), {
+            id: 'files',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+
+  await pipeline.run();
+  using database = open(destination.path, { readOnly: true });
+  const tables = database
+    .prepare(
+      `SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'`,
+    )
+    .all()
+    .map(({ name }) => String(name));
+
+  assert.deepEqual(
+    tables.filter((name) => !isReserved(name)),
+    ['files'],
+  );
+  assert.ok(tables.includes(chunkTable('files', 'bytes').slice(1, -1)));
+  assert.ok(tables.includes('_elt_sync_attempts'));
+  assert.equal(isReserved('_ELT_writers'), true, 'SQLite names ignore case');
+  assert.equal(isReserved('elt_files'), false);
+});
 
 test('file bytes load as bounded chunks that leave with their row', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-files-');

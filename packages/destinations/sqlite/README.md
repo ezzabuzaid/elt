@@ -110,6 +110,16 @@ Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as
 - `target_schema` is `main` in SQLite.
 - `readPassStatus(path)` gives the latest pass of a SQLite file and the latest outcome of each stream. When several connections load the file, their latest passes show as one pass. It is `running` when one connection runs. Else it is `cancelled` when one pass stopped, `succeeded` when all passes succeeded, `failed` when all passes failed, and `partial` in all other cases. It starts with the first pass and completes with the last. Its error has the error of each pass that did not succeed, one on each line. Its failure type is `config` when one pass has a `config` failure. Its last success and its `current_as_of` are the earliest of the passes, or null when one pass has no value. When no file is at the path, it gives no pass and no streams. See [ADR 0008](./docs/adr/0008-a-file-that-several-connections-load-shows-one-pass.md).
 
+## Reserved names
+
+The destination and its sync history own each table, index and view whose name starts with `_elt_`, in any case. Examples are `_elt_writers`, `_elt_descriptions`, the chunk tables `_elt_files_<hash>` and the sync history's `_elt_sync_attempts`. A stream, a view or a computed dataset never has such a name, and `publishSQLiteViews` refuses one. A reader that follows the data of a file, such as a changefeed, skips these tables with `isReserved(name)`:
+
+```ts
+import { isReserved } from '@workspace/elt-sqlite';
+
+for (const event of batch) if (!isReserved(event.table)) await accept(event);
+```
+
 ## The catalog
 
 The view `catalog` lists each table, view and column of the SQLite file that readers query, with its description. The sync history publishes it in each file that its connections load. `installSQLiteCatalog({ path })` publishes it in a file that no pipeline loads.
