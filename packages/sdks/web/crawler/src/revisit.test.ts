@@ -544,7 +544,7 @@ test('CompositeRevisit routes a URL to the first matching policy or the fallback
     due: day,
     history: { route: 1, history: { interval: day } },
   });
-  assert.equal(feedFailure.due, 0);
+  assert.equal(feedFailure.due, 2 * hour);
   assert.deepEqual(moved.history, { route: 0, history: null });
   assert.equal(
     policy.due(

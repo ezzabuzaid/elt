@@ -23,7 +23,7 @@ Thus:
 ## Considered Options
 
 - **Keep the manners in each crawl, and copy them from one crawl to the next.** Two crawls of a read that run at the same time still disagree, and every new piece of state needs one more copy.
-- **One crawler for each read, with the revisit policy as a crawl option.** The revisit policy belongs to the copy (a full refresh uses `AlwaysRevisit`), so it would become an option of each crawl call, and the frontier and the manners would still be one object.
+- **One crawler for each read, with the revisit policy as a crawl option.** The revisit policy belongs to the copy (then a full refresh used `AlwaysRevisit`), so it would become an option of each crawl call, and the frontier and the manners would still be one object.
 - **Let Got follow redirects, and check the target in its `beforeRedirect` hook.** A target that two URLs reach would download twice, and a redirect would have no entry of its own in the memento.
 - **One record of each origin for each read, given to every crawler; each redirect a frontier entry.** This option was selected.
 

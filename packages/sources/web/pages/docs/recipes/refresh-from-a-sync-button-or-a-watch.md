@@ -151,7 +151,7 @@ The first watch pass started at once, just after the pass of the Sync button. No
 ## Things to know
 
 - **Every pass requests only the URLs that are due.** With the default `AdaptiveRevisit`, a watch does not crawl again soon after a crawl. Its first wait is one day.
-- **Do not watch with `AlwaysRevisit`.** Every URL is then due at once, so the watch crawls again as soon as each crawl ends.
+- **A watch does not wake for `AlwaysRevisit`.** Its URLs are due in every crawl, but they have no due time of their own. Only a failed or gone URL wakes the watch. Use `FixedRevisit` for a page that a watch must read on an interval.
 - **A watch also waits out a block.** After a 429, `crawl.nextDue()` gives the end of the block. See [Crawl a website that rate-limits you](../../../../../sdks/web/crawler/docs/recipes/crawl-a-website-that-rate-limits-you.md).
 - **A watch needs a process that stays alive.** If the process stops, the state still has each due time. The next `run()` or `watch()` reads them.
 - **A pass that a scheduler starts too early does little.** It requests only the URLs that are due, and the input is a URL as the others are. The other pages are deferred pages, and their rows stay.

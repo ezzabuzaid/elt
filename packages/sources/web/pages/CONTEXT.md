@@ -93,7 +93,7 @@ What the crawler gives back as plain data: the crawl snapshot, and every URL tha
 _Avoid_: Visited set, history alone (a revisit policy has its own history of each URL)
 
 **Revisit policy**:
-The rule that decides when a known URL is due again, across crawls. The web stream gives it; a full refresh uses `AlwaysRevisit`.
+The rule that decides when a known URL is due again, across crawls. The web stream gives it. A full refresh reads with no state, so its crawl knows no URL and requests every page; the policy still says when the stream is due again.
 _Avoid_: Schedule alone, poll interval (a watch checks again when the earliest known URL is due)
 
 **Deferred page**:

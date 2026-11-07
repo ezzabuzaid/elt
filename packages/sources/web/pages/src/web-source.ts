@@ -15,7 +15,6 @@ import {
   diffGroupedSnapshot,
   validateRecords,
 } from '@workspace/elt';
-import { AlwaysRevisit } from '@workspace/sdk-web-crawler';
 
 import { crawlRecords, crawlsStream } from './crawls-stream.ts';
 import { DueTime } from './due-time.ts';
@@ -474,12 +473,11 @@ export class WebSource extends Source<WebRead> {
       // the commit ended, when its checkpoint's yield returns.
       give();
       const run = stream.extractor.open(client.http);
+      // A full refresh reads with no state, so its crawl knows no URL and
+      // requests every page; the policy says when the stream is due again.
       const crawler = client.crawler(
         stream.readers,
-        // A full refresh replaces the collection, so it must see every page that still exists.
-        configuration.syncMode === 'full_refresh'
-          ? new AlwaysRevisit()
-          : stream.revisit,
+        stream.revisit,
         run.negotiation,
       );
       const crawl = crawler.crawl([inputUrl], previous.crawl, {

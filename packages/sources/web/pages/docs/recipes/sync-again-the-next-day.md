@@ -179,6 +179,6 @@ On day 2, the crawl knew both posts from the crawl memento in the state. One day
 - **An interrupted pipeline run continues.** The state keeps the crawl snapshot. The next pipeline run continues the same crawl, and it hands back the page that was in progress again. See [Resume an interrupted crawl](../../../../../sdks/web/crawler/docs/recipes/resume-an-interrupted-crawl.md).
 - **A failed page keeps its rows.** The revisit policy makes it due again two hours later.
 - **The state is in the checkpoint store.** If you delete the checkpoint store, the next pipeline run requests every page again, and each revisit interval starts again from one day.
-- **A full refresh requests every page.** With `syncMode: 'full_refresh'`, the source uses `AlwaysRevisit`.
+- **A full refresh requests every page.** With `syncMode: 'full_refresh'`, a read has no state, so its crawl knows no URL. The `revisit` policy of the web stream still says when the stream is due again.
 - **To change when pages are due, give `revisit` to the web stream.** See the policies in the [crawler README](../../../../../sdks/web/crawler/README.md#revisits) and [Check some pages every hour and the rest by change](../../../../../sdks/web/crawler/docs/recipes/check-some-pages-every-hour.md).
 - **The source does not sync by itself.** Your host starts each pipeline run. See [Refresh from a Sync button or a watch](./refresh-from-a-sync-button-or-a-watch.md).

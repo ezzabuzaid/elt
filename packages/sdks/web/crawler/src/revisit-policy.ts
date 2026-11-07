@@ -32,7 +32,7 @@ export type Revisit = {
   readonly at: number;
 };
 
-/** When a URL is due again (null: never), and the policy's plain-data history of it. */
+/** When a URL is due again (null: at no time of its own, so only the policy's due() can make it due), and the policy's plain-data history of it. */
 export type Schedule<History> = {
   readonly due: number | null;
   readonly history: History | null;

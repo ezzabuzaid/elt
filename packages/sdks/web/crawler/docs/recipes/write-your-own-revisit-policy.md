@@ -152,7 +152,7 @@ Do not use it for pages that change, such as the category pages of a marketplace
   }
   ```
 
-- **A full refresh ignores your policy.** `WebSource` uses `AlwaysRevisit` for a full refresh, because a full refresh must see every page.
+- **A full refresh requests every page.** A full refresh of `WebSource` reads with no state, so its crawl knows no URL. Your policy still schedules each visit, so it says when a watch reads the stream again.
 - **The crawl memento keeps every URL.** To remember that it loaded a page, the crawler keeps the URL forever. The crawl memento grows with the website.
 - **Keep the history small.** It goes into the crawl memento, and the crawl memento goes into each save.
 - **You can change the `histories` schema at any time.** A crawl memento with the old history then does not parse. Delete it and crawl again.

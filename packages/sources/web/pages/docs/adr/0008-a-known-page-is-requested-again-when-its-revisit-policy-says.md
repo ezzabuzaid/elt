@@ -9,7 +9,7 @@ An incremental crawler keeps every URL that it knows and requests each one again
 ## Decision
 
 - The crawler keeps a memento: the unfinished crawl, and every URL that a crawl visited, with the SHA-256 of its last body and when it is due again. The `crawl` part of the state holds the memento. The `retry` part is removed.
-- `WebStream` takes a `revisit` policy. The default is the crawler's `AdaptiveRevisit`. A full refresh uses `AlwaysRevisit`, because it replaces the collection and must see every page that still exists.
+- `WebStream` takes a `revisit` policy. The default is the crawler's `AdaptiveRevisit`. A full refresh reads with no state, as an Airbyte full refresh does, so its crawl knows no URL and requests every page that still exists. The stream's policy still schedules each visit, so a watch reads a full refresh again when that policy makes a page due, as Airbyte runs a full refresh at each scheduled sync.
 - A page that the extractor cannot read is failed back to the crawler through `crawl.fail(url)`, so the crawler makes it due again.
 - A page that is not due keeps its row. The crawl hands it out as deferred, and the source gives it to the diff as a kept group (`@zukhruf/snapshot-differential` ADR 0004), so the diff keeps its fingerprint and records unread. Once due, the page is extracted again only when it changed.
 

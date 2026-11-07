@@ -32,10 +32,12 @@ import {
 import {
   AlwaysRevisit,
   ArchiveReader,
+  CompositeRevisit,
   CrawlError,
   FixedRevisit,
   LinkReader,
   ListingReader,
+  OnceRevisit,
   PaginationReader,
   StartReader,
   day,
@@ -1741,6 +1743,154 @@ test(
         '/b/feed.xml',
         '/b/post',
       ]);
+    } finally {
+      controller.abort();
+      await watch.return(undefined);
+    }
+  },
+);
+
+test(
+  "a watched full refresh crawls again when its stream's revisit policy makes it due, not at each check",
+  { timeout: 20_000 },
+  async (t) => {
+    // The test sets the time, so the due time is known.
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    const start = Date.now();
+    await using cache = await new TemporaryFiles().directory('web-cache-');
+    const requests: string[] = [];
+    await using upstream = await new HttpServer().start((request, response) => {
+      // The site has no robots.txt.
+      if (request.url === '/robots.txt') {
+        response.writeHead(404).end();
+        return;
+      }
+      const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+      requests.push(url.pathname);
+      if (url.pathname === '/feed.xml')
+        response
+          .writeHead(200, { 'content-type': 'application/rss+xml' })
+          .end(
+            `<rss><channel><item><link>${url.origin}/post</link></item></channel></rss>`,
+          );
+      else
+        response
+          .writeHead(200, { 'content-type': 'text/html' })
+          .end(`<article><p>${observation}</p></article>`);
+    });
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const source = new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [
+        {
+          stream: new WebStream({
+            name: 'feeds',
+            primaryKey: ['articleUrl'],
+            readers: [new ListingReader()],
+            // The feed is due 10 s after each visit, and the post never again.
+            revisit: new CompositeRevisit(
+              [[new URLPattern({ pathname: '/post' }), new OnceRevisit()]],
+              new FixedRevisit({ every: 10_000 }),
+            ),
+            extractor: new ArticleExtractor(),
+          }),
+          inputs: [`${upstream.origin}/feed.xml`],
+        },
+      ],
+    });
+    const destination = new SQLiteDestination({ path: database.path });
+    const controller = new AbortController();
+    const watch = new Pipeline({
+      clock: globalThis,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'web',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: checkpoints.path }),
+          // A full refresh: the routes, crawls and failures streams read only
+          // incrementally.
+          steps: [
+            new Copy(
+              (await source.discover()).get('feeds'),
+              destination.table('feeds'),
+            ),
+          ],
+        }),
+      ],
+    }).watch({ signal: controller.signal });
+    try {
+      assert.equal((await watch.next()).done, false);
+      requests.splice(0);
+
+      // The checks come each second; the feed is due 10 s after the crawl.
+      const next = watch.next();
+      const early = await Promise.race([
+        next.then(() => 'a pass'),
+        setTimeout(2_500, 'no pass'),
+      ]);
+      t.mock.timers.setTime(start + 11_000);
+      await next;
+
+      assert.equal(early, 'no pass');
+      // A full refresh must see every page, so it requests the post too.
+      assert.deepEqual(requests, ['/feed.xml', '/post']);
+    } finally {
+      controller.abort();
+      await watch.return(undefined);
+    }
+  },
+);
+
+test(
+  'a watched stream whose pages AlwaysRevisit makes due in every crawl has no due time of its own, so the watch does not crawl it again at each check',
+  { timeout: 20_000 },
+  async () => {
+    await using cache = await new TemporaryFiles().directory('web-cache-');
+    const requests: string[] = [];
+    await using upstream = await twoBlogs(requests, () => observation);
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    const ingestion = await pipeline(
+      new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
+        streams: [
+          {
+            stream: new WebStream({
+              name: 'news',
+              primaryKey: ['articleUrl'],
+              readers: [new ListingReader()],
+              revisit: new AlwaysRevisit(),
+              extractor: new ArticleExtractor(),
+            }),
+            inputs: [`${upstream.origin}/news/feed.xml`],
+          },
+        ],
+      }),
+      database.path,
+      checkpoints.path,
+    );
+    const controller = new AbortController();
+    const watch = ingestion.watch({ signal: controller.signal });
+    try {
+      assert.equal((await watch.next()).done, false);
+      requests.splice(0);
+
+      // The checks come each second.
+      const next = watch.next();
+      const again = await Promise.race([
+        next.then(() => 'a pass'),
+        setTimeout(2_500, 'no pass'),
+      ]);
+      controller.abort();
+      await next;
+
+      assert.equal(again, 'no pass');
+      assert.deepEqual(requests, []);
     } finally {
       controller.abort();
       await watch.return(undefined);
