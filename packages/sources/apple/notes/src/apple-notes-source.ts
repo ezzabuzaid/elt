@@ -101,8 +101,8 @@ export class AppleNotesSource extends Source<NotesScan> {
     return [
       {
         interval: launchIntervalMs,
-        run: async () => {
-          await launchNotesHidden();
+        run: async (signal: AbortSignal) => {
+          await launchNotesHidden(signal);
         },
       },
     ];

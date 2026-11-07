@@ -135,7 +135,7 @@ Only Notes syncs iCloud notes on the Mac. While Notes is closed, the store holds
 
 - The watch opens its own read-only connection to `NoteStore.sqlite` and checks `PRAGMA data_version` every second. The value changes with each commit of a different connection, so each save that Notes commits marks each selected stream as changed. A check with no commit changes no stream.
 - The watch does not use file system notices. Notes keeps the store and its WAL open, and FSEvents reports a write only when the file closes. The live check showed that the event comes when Notes quits.
-- The watch launches Notes hidden and in the background (`open -g -j`) when it starts, and again every 30 seconds if Notes stopped. It cannot tell a quit by the user from macOS closing a hidden Notes. macOS does that when it frees disk space (seen two times on a disk that was 99% full, minutes after a hidden launch). Thus the watch launches Notes again in the two cases.
+- The watch launches Notes hidden and in the background (`open -g -j`) when it starts, and again every 30 seconds if Notes stopped. It cannot tell a quit by the user from macOS closing a hidden Notes. macOS does that when it frees disk space (seen two times on a disk that was 99% full, minutes after a hidden launch). Thus the watch launches Notes again in the two cases. When the watch stops, it stops a launch that is not complete.
 - A Notes that runs stays as it is, because `open -j` would hide a window that the user has open.
 - A watch needs the same Full Disk Access as a read.
 

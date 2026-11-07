@@ -9,10 +9,11 @@ const bundle = 'com.apple.Notes';
 // Only Notes.app syncs iCloud notes on the Mac; while it is closed the store
 // holds its last synced state. Launching it hidden and in the background
 // syncs without a window or taking focus. A running Notes is left as it is,
-// since `open -j` would hide a window the user has open.
-export async function launchNotesHidden(): Promise<boolean> {
+// since `open -j` would hide a window the user has open. An abort of signal
+// stops `open`, so a stopping caller does not wait for the launch.
+export async function launchNotesHidden(signal: AbortSignal): Promise<boolean> {
   if (await notesRunning()) return false;
-  await execFile('/usr/bin/open', ['-g', '-j', '-b', bundle]);
+  await execFile('/usr/bin/open', ['-g', '-j', '-b', bundle], { signal });
   return true;
 }
 

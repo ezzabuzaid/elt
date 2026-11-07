@@ -5,7 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { type TestContext, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
@@ -30,6 +30,7 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
+import { launchNotesHidden, notesRunning } from '@workspace/sdk-apple-notes';
 
 import { AppleNotesSource } from './apple-notes-source.ts';
 
@@ -760,7 +761,7 @@ test('Notes names Full Disk Access when its store cannot be opened and refuses a
 });
 
 test(
-  'a Notes watch keeps Notes running and loads each commit while Notes keeps its store open',
+  'a Notes watch loads each commit while Notes keeps its store open',
   { timeout: 30_000 },
   async (t) => {
     const clock = createClock();
@@ -844,18 +845,124 @@ test(
     }
 
     assert.deepEqual(batches, [3, 1]);
-    // The watch launched Notes hidden if it was closed; Notes stays open after.
-    const { stdout } = await execFile('/usr/bin/lsappinfo', [
-      'info',
-      '-only',
-      'pid',
-      '-app',
-      'com.apple.Notes',
-    ]);
-    // lsappinfo prints nothing for an app that is not running.
-    assert.match(stdout, /pid/);
   },
 );
+
+// What Launch Services lists for app under key: nothing while app does not
+// run, and "(hidden)" for the key hidden while it runs hidden.
+const appInfo = async (key: 'bundleid' | 'hidden', app: string) =>
+  (await execFile('/usr/bin/lsappinfo', ['info', '-only', key, '-app', app]))
+    .stdout;
+
+const notesInFront = async () => {
+  const { stdout: front } = await execFile('/usr/bin/lsappinfo', ['front']);
+  return (await appInfo('bundleid', front.trim())).includes('com.apple.Notes');
+};
+
+// Quits Notes, so that a test can see who launches it, or skips the test.
+// Notes is the user's app: a test never quits it while it is in front.
+const quitNotes = async (t: TestContext): Promise<boolean> => {
+  if (process.platform !== 'darwin') {
+    t.skip('Notes runs only on macOS');
+    return false;
+  }
+  if (await notesInFront()) {
+    t.skip('Notes is the frontmost app, so it is in use');
+    return false;
+  }
+  if (await notesRunning())
+    try {
+      await execFile('/usr/bin/osascript', [
+        '-e',
+        'tell application id "com.apple.Notes" to quit',
+      ]);
+    } catch (error) {
+      t.skip(
+        `Notes cannot be quit (is Automation of Notes granted?): ${String(error)}`,
+      );
+      return false;
+    }
+  await t.waitFor(async () => assert.equal(await notesRunning(), false), {
+    interval: 100,
+    timeout: 10_000,
+  });
+  return true;
+};
+
+test(
+  'a Notes watch launches a closed Notes, hidden and behind the app in front, when it starts',
+  { timeout: 30_000 },
+  async (t) => {
+    if (!(await quitNotes(t))) return;
+    await using scratch = await new TemporaryFiles().directory('elt-notes-');
+    const path = await noteStoreFixture(scratch.path);
+    const source = new AppleNotesSource({ path });
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'out.sqlite'),
+    });
+    const controller = new AbortController();
+    // The clock never moves, so only the upkeep's run at the start can launch
+    // Notes, well within its 30-second interval.
+    const watching = new Pipeline({
+      clock: createClock(),
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 'state.sqlite'),
+          }),
+          steps: [new Copy(source.notes, destination.table('notes'))],
+        }),
+      ],
+    }).watch({ signal: controller.signal });
+    try {
+      const passing = watching.next();
+
+      await t.waitFor(
+        async () => {
+          assert.equal(await notesRunning(), true);
+          assert.match(
+            await appInfo('hidden', 'com.apple.Notes'),
+            /\(hidden\)/,
+          );
+        },
+        { interval: 100, timeout: 10_000 },
+      );
+
+      assert.equal(await notesInFront(), false);
+      controller.abort();
+      await passing;
+    } finally {
+      controller.abort();
+      await watching.return(undefined);
+      // Leave Notes as a watch leaves it: running, hidden.
+      await launchNotesHidden(AbortSignal.timeout(10_000));
+    }
+  },
+);
+
+test('a Notes upkeep run whose watch stopped launches no Notes', async (t) => {
+  if (!(await quitNotes(t))) return;
+  const source = new AppleNotesSource({
+    path: join(tmpdir(), 'elt-notes-upkeep', 'NoteStore.sqlite'),
+  });
+  try {
+    const [upkeep] = source.upkeep();
+    assert.ok(upkeep);
+
+    const running = upkeep.run(AbortSignal.abort());
+
+    await assert.rejects(running, { name: 'AbortError' });
+    // A launch that went through lists Notes within a second.
+    await sleep(1000);
+    assert.equal(await notesRunning(), false);
+  } finally {
+    await launchNotesHidden(AbortSignal.timeout(10_000));
+  }
+});
 
 test('Notes declares the local Apple store as the coverage of every stream', async () => {
   const notes = new AppleNotesSource({
