@@ -15,7 +15,7 @@
     "./transcribe-local": "./dist/transcribe-local"
   },
   "dependencies": {
-    "@ai-sdk/provider": "4.0.31",
+    "@ai-sdk/provider": "^4.0.37",
     "@zukhruf/coprocess": "^0.8.10",
     "@zukhruf/pool": "^0.8.10",
     "zod": "^4.3.6"

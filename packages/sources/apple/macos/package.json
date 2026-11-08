@@ -51,7 +51,7 @@
     "@zukhruf/async": "^0.8.10",
     "@zukhruf/coprocess": "^0.8.10",
     "@zukhruf/pool": "^0.8.10",
-    "ai": "7.0.148",
+    "ai": "^7.0.165",
     "file-type": "22.2.0",
     "zod": "^4.3.6"
   },
