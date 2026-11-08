@@ -21,14 +21,12 @@
       }
     },
     "@zukhruf/nx/lint",
-    "@zukhruf/nx/test"
+    "@zukhruf/nx/test",
+    "@zukhruf/nx/format"
   ],
   "targetDefaults": {
-    "format": {
-      "command": "prettier --write {projectRoot}"
-    },
     "typecheck": {
-      "dependsOn": ["format", "lint", "..."]
+      "dependsOn": ["format:check", "lint", "..."]
     },
     "test": {
       "dependsOn": ["...", "build"]

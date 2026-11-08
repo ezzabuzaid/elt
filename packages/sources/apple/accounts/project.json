@@ -2,8 +2,5 @@
   "name": "source-apple-accounts",
   "sourceRoot": "packages/sources/apple/accounts/src",
   "projectType": "library",
-  "tags": ["layer:island"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island"]
 }

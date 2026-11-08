@@ -2,8 +2,5 @@
   "name": "sdk-chromium-bookmarks",
   "sourceRoot": "packages/sdks/chromium/bookmarks/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

@@ -4,7 +4,6 @@
   "projectType": "library",
   "tags": ["layer:island", "layer:sdk"],
   "targets": {
-    "format": {},
     "helper": {
       "command": "sh packages/sdks/apple/eventkit/src/helper/build.sh packages/sdks/apple/eventkit/dist/eventkit-helper",
       "cache": true,

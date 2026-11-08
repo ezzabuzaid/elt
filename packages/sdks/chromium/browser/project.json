@@ -2,8 +2,5 @@
   "name": "sdk-chromium-browser",
   "sourceRoot": "packages/sdks/chromium/browser/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

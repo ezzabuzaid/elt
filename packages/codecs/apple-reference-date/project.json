@@ -2,8 +2,5 @@
   "name": "codec-apple-reference-date",
   "sourceRoot": "packages/codecs/apple-reference-date/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:codec"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:codec"]
 }

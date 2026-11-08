@@ -4,7 +4,6 @@
   "projectType": "library",
   "tags": ["layer:island"],
   "targets": {
-    "format": {},
     "helper": {
       "command": "node packages/transcription-local/build.mjs",
       "cache": true,

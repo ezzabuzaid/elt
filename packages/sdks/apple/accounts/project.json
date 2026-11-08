@@ -2,8 +2,5 @@
   "name": "sdk-apple-accounts",
   "sourceRoot": "packages/sdks/apple/accounts/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

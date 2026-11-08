@@ -2,8 +2,5 @@
   "name": "sdk-dia-desktop",
   "sourceRoot": "packages/sdks/dia/desktop/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

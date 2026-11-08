@@ -2,8 +2,5 @@
   "name": "source-apple-clock",
   "sourceRoot": "packages/sources/apple/clock/src",
   "projectType": "library",
-  "targets": {
-    "format": {}
-  },
   "tags": ["layer:island"]
 }

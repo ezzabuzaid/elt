@@ -2,8 +2,5 @@
   "name": "sdk-microsoft-sql-server",
   "sourceRoot": "packages/sdks/microsoft/sql-server/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk", "test:docker"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk", "test:docker"]
 }

@@ -2,8 +2,5 @@
   "name": "codec-v8-serialization",
   "sourceRoot": "packages/codecs/v8-serialization/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:codec"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:codec"]
 }

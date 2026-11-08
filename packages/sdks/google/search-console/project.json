@@ -2,8 +2,5 @@
   "name": "sdk-google-search-console",
   "sourceRoot": "packages/sdks/google/search-console/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

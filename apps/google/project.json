@@ -3,7 +3,6 @@
   "sourceRoot": "apps/google/src",
   "projectType": "application",
   "targets": {
-    "format": {},
     "start": {
       "dependsOn": ["build"],
       "command": "node apps/google/dist/main.js"

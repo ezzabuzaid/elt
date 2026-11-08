@@ -2,8 +2,5 @@
   "name": "source-apple-calendar",
   "sourceRoot": "packages/sources/apple/calendar/src",
   "projectType": "library",
-  "tags": ["layer:island"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island"]
 }

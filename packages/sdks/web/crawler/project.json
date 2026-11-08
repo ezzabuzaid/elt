@@ -2,8 +2,5 @@
   "name": "sdk-web-crawler",
   "sourceRoot": "packages/sdks/web/crawler/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

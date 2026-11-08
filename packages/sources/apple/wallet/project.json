@@ -2,8 +2,5 @@
   "name": "source-apple-wallet",
   "sourceRoot": "packages/sources/apple/wallet/src",
   "projectType": "library",
-  "tags": ["layer:island"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island"]
 }

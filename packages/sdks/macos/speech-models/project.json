@@ -2,8 +2,5 @@
   "name": "sdk-macos-speech-models",
   "sourceRoot": "packages/sdks/macos/speech-models/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

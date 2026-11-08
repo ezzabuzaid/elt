@@ -2,8 +2,5 @@
   "name": "sdk-apple-contacts",
   "sourceRoot": "packages/sdks/apple/contacts/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

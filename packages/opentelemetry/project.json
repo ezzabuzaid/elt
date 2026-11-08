@@ -2,8 +2,5 @@
   "name": "elt-opentelemetry",
   "sourceRoot": "packages/opentelemetry/src",
   "projectType": "library",
-  "tags": ["layer:island"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island"]
 }

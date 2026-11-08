@@ -2,8 +2,5 @@
   "name": "source-google-search-console",
   "sourceRoot": "packages/sources/google/search-console/src",
   "projectType": "library",
-  "tags": ["layer:island", "test:docker"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "test:docker"]
 }

@@ -2,8 +2,5 @@
   "name": "sdk-apple-notification-center",
   "sourceRoot": "packages/sdks/apple/notification-center/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

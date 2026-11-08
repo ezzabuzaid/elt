@@ -2,8 +2,5 @@
   "name": "embedding",
   "sourceRoot": "packages/embedding/src",
   "projectType": "library",
-  "tags": ["layer:island"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island"]
 }

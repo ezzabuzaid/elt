@@ -2,8 +2,5 @@
   "name": "source-slack-desktop",
   "sourceRoot": "packages/sources/slack/desktop/src",
   "projectType": "library",
-  "tags": ["layer:island"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island"]
 }

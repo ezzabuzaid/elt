@@ -2,8 +2,5 @@
   "name": "source-apple-books",
   "sourceRoot": "packages/sources/apple/books/src",
   "projectType": "library",
-  "tags": ["layer:island"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island"]
 }

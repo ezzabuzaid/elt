@@ -2,8 +2,5 @@
   "name": "sdk-apple-messages",
   "sourceRoot": "packages/sdks/apple/messages/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

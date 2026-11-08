@@ -2,8 +2,5 @@
   "name": "sdk-apple-mail",
   "sourceRoot": "packages/sdks/apple/mail/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

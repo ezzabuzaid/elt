@@ -2,8 +2,5 @@
   "name": "sdk-apple-safari",
   "sourceRoot": "packages/sdks/apple/safari/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

@@ -2,8 +2,5 @@
   "name": "sdk-chromium-cookies",
   "sourceRoot": "packages/sdks/chromium/cookies/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

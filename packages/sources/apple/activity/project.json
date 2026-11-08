@@ -2,8 +2,5 @@
   "name": "source-apple-activity",
   "sourceRoot": "packages/sources/apple/activity/src",
   "projectType": "library",
-  "tags": ["layer:island"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island"]
 }

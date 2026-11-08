@@ -3,7 +3,6 @@
   "sourceRoot": "apps/web/src",
   "projectType": "application",
   "targets": {
-    "format": {},
     "build-client": {
       "command": "vite build --config apps/web/frontend/vite.config.mts",
       "dependsOn": ["^build"],

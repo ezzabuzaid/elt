@@ -2,8 +2,5 @@
   "name": "sdk-google-health",
   "sourceRoot": "packages/sdks/google/health/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

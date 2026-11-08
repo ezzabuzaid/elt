@@ -2,8 +2,5 @@
   "name": "sdk-apple-notes",
   "sourceRoot": "packages/sdks/apple/notes/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
+  "tags": ["layer:island", "layer:sdk"]
 }

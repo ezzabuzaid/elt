@@ -4,7 +4,6 @@
   "projectType": "application",
   "tags": ["test:docker"],
   "targets": {
-    "format": {},
     "start": {
       "dependsOn": ["build"],
       "command": "node apps/proactive/dist/main.js"
