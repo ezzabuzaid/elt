@@ -163,9 +163,11 @@ export abstract class Source<
   // Source-specific selection rules, checked without I/O.
   protected validateExtraction(_configuration: CopyConfiguration): void {}
 
-  // The partitions a partitioned stream is read as, derived from configuration
-  // without I/O. The list is not part of the identity: adding or removing a
-  // partition keeps every other partition's checkpoint.
+  // The partitions a partitioned stream is read as, asked at the start of
+  // each read and at the start of a watch, so a source whose host changes
+  // them, such as a web stream's inputs, gives the list as it is then; none
+  // is a stream that reads nothing. The list is not part of the identity:
+  // adding or removing a partition keeps every other partition's checkpoint.
   protected partitions(stream: Stream): readonly Partition[] {
     throw new TypeError(
       `Source must declare partitions for stream ${stream.name}`,

@@ -47,7 +47,7 @@ import {
 import { ArticleExtractor } from './article-extractor.ts';
 import { WebClient } from './http/web-http.ts';
 import { RecordExtractor } from './record-extractor.ts';
-import { WebSource } from './web-source.ts';
+import { type WebInput, WebSource, webInput } from './web-source.ts';
 import { WebStream } from './web-stream.ts';
 
 test('native articles persist clean text and refresh independently changing HTML metadata', async () => {
@@ -2997,7 +2997,29 @@ test(
   },
 );
 
-test('a web stream without an input is refused as the user’s to fix', () => {
+test('an input is a URL in the form that the URL standard gives it, so one website is one input however the host spells it, in a list as in webInput', async () => {
+  const spellings = [
+    'https://News.test',
+    'https://news.test/',
+    'HTTPS://news.test:443/',
+  ];
+  const source = new WebSource({
+    cachePath: join(tmpdir(), 'web-cache-unused', 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
+    streams: [{ stream: feedStream('news'), inputs: spellings }],
+  });
+  const news = (await source.discover()).get('news');
+
+  assert.deepEqual(
+    new Set(spellings.map(webInput)),
+    new Set(['https://news.test/']),
+  );
+  assert.deepEqual(source.coverage(news).selection.inputs, [
+    'https://news.test/',
+  ]);
+});
+
+test('an input that is not an http or https URL is refused as the user’s to fix, in a list when the source is made, and by webInput', () => {
   const options = {
     cachePath: join(tmpdir(), 'web-cache-unused', 'web-http.sqlite'),
     userAgent: 'elt-test/1.0',
@@ -3009,25 +3031,89 @@ test('a web stream without an input is refused as the user’s to fix', () => {
     ],
   });
 
-  assert.throws(
+  for (const make of [
     () =>
       new WebSource({
         ...options,
         streams: [
           {
-            stream: feedStream('news'),
-            inputs: ['https://news.test/feed.xml'],
+            stream: feedStream('listings'),
+            inputs: ['ftp://listings.test/feed.xml'],
           },
-          { stream: feedStream('listings'), inputs: [] },
         ],
       }),
-    (error) => {
+    () => webInput('ftp://listings.test/feed.xml'),
+  ])
+    assert.throws(make, (error) => {
       assert.equal(source.failureType(error), 'config');
-      assert.match(String(error), /listings/);
+      assert.match(String(error), /ftp:\/\/listings\.test\/feed\.xml/);
       return true;
-    },
-  );
+    });
 });
+
+test(
+  'a web stream whose host gives no inputs yet reads nothing, and a watch crawls the input that its host adds while it watches, with no new source',
+  { timeout: 15_000 },
+  async () => {
+    await using cache = await new TemporaryFiles().directory('web-cache-');
+    const requests: string[] = [];
+    await using upstream = await new HttpServer().start((request, response) => {
+      // The site has no robots.txt.
+      if (request.url === '/robots.txt') {
+        response.writeHead(404).end();
+        return;
+      }
+      const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+      requests.push(url.pathname);
+      if (url.pathname === '/feed.xml') {
+        response.setHeader('content-type', 'application/rss+xml');
+        response.end(
+          `<rss><channel><item><link>${url.origin}/article</link></item></channel></rss>`,
+        );
+      } else {
+        response.setHeader('content-type', 'text/html');
+        response.end(`<article><p>${observation}</p></article>`);
+      }
+    });
+    await using database = await new Sqlite().database();
+    await using checkpoints = await new Sqlite().database();
+    // The host's own list, which it changes while the source watches.
+    const inputs = new Set<WebInput>();
+    const ingestion = await pipeline(
+      new WebSource({
+        cachePath: join(cache.path, 'web-http.sqlite'),
+        userAgent: 'elt-test/1.0',
+        streams: [{ stream: feedStream('articles'), inputs: () => inputs }],
+      }),
+      database.path,
+      checkpoints.path,
+    );
+    const controller = new AbortController();
+    const watch = ingestion.watch({ signal: controller.signal });
+    try {
+      assert.equal((await watch.next()).done, false);
+      const empty = requests.splice(0);
+      inputs.add(webInput(`${upstream.origin}/feed.xml`));
+      assert.equal((await watch.next()).done, false);
+      const rows = database.connection
+        .prepare('SELECT inputUrl, articleUrl FROM articles')
+        .all()
+        .map((row) => ({ ...row }));
+
+      assert.deepEqual(empty, []);
+      assert.deepEqual(requests, ['/feed.xml', '/article']);
+      assert.deepEqual(rows, [
+        {
+          inputUrl: `${upstream.origin}/feed.xml`,
+          articleUrl: `${upstream.origin}/article`,
+        },
+      ]);
+    } finally {
+      controller.abort();
+      await watch.return(undefined);
+    }
+  },
+);
 
 test("a host's client is shared: an article read through it and a crawl of its origin ask the origin's robots.txt once, and the crawl leaves the client open", async () => {
   await using cache = await new TemporaryFiles().directory('web-cache-');

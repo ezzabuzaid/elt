@@ -20,11 +20,15 @@ import { crawlRecords, crawlsStream } from './crawls-stream.ts';
 import { DueTime } from './due-time.ts';
 import { failureRecords, failuresStream } from './failures-stream.ts';
 import { WebClient } from './http/web-http.ts';
+import { InputList } from './input-list.ts';
 import { PageExtracted, pageChannels } from './page-channels.ts';
 import { routeRecords, routesState, routesStream } from './routes-stream.ts';
+import { InputError, type WebInput, webInputs } from './web-input.ts';
 import { WebRead } from './web-read.ts';
 import { type CrawlEnd, type Outbox, WebScan, outbox } from './web-scan.ts';
 import { WebStream } from './web-stream.ts';
+
+export { InputError, type WebInput, webInput } from './web-input.ts';
 
 const provenance = {
   inputUrl: {
@@ -122,34 +126,23 @@ function failuresName(stream: WebStream) {
 // most one interval late.
 const checkIntervalMs = 1000;
 
-const inputUrls = z.array(z.url({ protocol: /^https?$/ })).min(1);
-
-/** A web stream without a usable input: none, or a URL that is not http or https. The user chooses the inputs, so only the user can fix it. */
-export class InputError extends Error {}
+// A web stream with the host's function that gives its inputs now.
+type Entry = {
+  readonly stream: WebStream;
+  readonly inputs: () => ReadonlySet<WebInput>;
+};
 
 export class WebSource extends Source<WebRead> {
   readonly identity = 'web-pages';
   protected readonly catalog: Catalog;
   // Each stream's web stream and the inputs that it crawls, by stream name.
-  readonly #streams: ReadonlyMap<
-    string,
-    { readonly stream: WebStream; readonly inputs: readonly string[] }
-  >;
+  readonly #streams: ReadonlyMap<string, Entry>;
   // Each routes stream's web stream and its inputs, by the routes stream's name.
-  readonly #routes: ReadonlyMap<
-    string,
-    { readonly stream: WebStream; readonly inputs: readonly string[] }
-  >;
+  readonly #routes: ReadonlyMap<string, Entry>;
   // Each crawls stream's web stream and its inputs, by the crawls stream's name.
-  readonly #crawls: ReadonlyMap<
-    string,
-    { readonly stream: WebStream; readonly inputs: readonly string[] }
-  >;
+  readonly #crawls: ReadonlyMap<string, Entry>;
   // Each failures stream's web stream and its inputs, by the failures stream's name.
-  readonly #failures: ReadonlyMap<
-    string,
-    { readonly stream: WebStream; readonly inputs: readonly string[] }
-  >;
+  readonly #failures: ReadonlyMap<string, Entry>;
   // The HTTP of each read: a client of the host's, which every read shares
   // with the host's own requests, or where the source opens a client of its
   // own for each read. Where the HTTP cache lives is the host's decision,
@@ -167,13 +160,22 @@ export class WebSource extends Source<WebRead> {
   // its starting URL's as a failed one after a read that failed; null when
   // nothing is ever due, or when the read stopped or failed before its crawl.
   readonly #due = new Map<string, Map<string, number | null>>();
+  // The inputs of each web stream's last read, as the host's function gave
+  // them when the read opened: the read crawls these, and its due times are
+  // complete once each of them has one.
+  readonly #read = new Map<string, ReadonlySet<WebInput>>();
   constructor(
     options: {
       // Each web stream with the inputs that it crawls, as an Airbyte
-      // declarative source has many streams, each with its own requests.
+      // declarative source has many streams, each with its own requests:
+      // the URLs of a list that does not change, which the source checks
+      // here, or a function that gives the inputs, which the source calls as
+      // each read opens and at each check of a watch, so a host adds or
+      // removes an input while the source watches, as Nutch injects URLs into
+      // its CrawlDb. A stream may have none yet, and then reads nothing.
       streams: readonly {
         readonly stream: WebStream;
-        readonly inputs: readonly string[];
+        readonly inputs: readonly string[] | Entry['inputs'];
       }[];
     } & (
       | { cachePath: string; userAgent?: string }
@@ -193,18 +195,21 @@ export class WebSource extends Source<WebRead> {
             userAgent: z.string().min(1).optional().parse(options.userAgent),
           };
     const streams = z
-      .array(z.object({ stream: z.instanceof(WebStream), inputs: z.unknown() }))
+      .array(
+        z.object({
+          stream: z.instanceof(WebStream),
+          inputs: z.union([
+            z.array(z.string()),
+            z.custom<Entry['inputs']>((inputs) => typeof inputs === 'function'),
+          ]),
+        }),
+      )
       .min(1)
       .parse(options.streams)
-      .map(({ stream, inputs }) => {
-        const parsed = inputUrls.safeParse(inputs);
-        if (!parsed.success)
-          throw new InputError(
-            `The web stream ${stream.name} needs at least one http or https input`,
-            { cause: parsed.error },
-          );
-        return { stream, inputs: parsed.data };
-      });
+      .map(({ stream, inputs }): Entry => ({
+        stream,
+        inputs: Array.isArray(inputs) ? webInputs(inputs) : inputs,
+      }));
     this.catalog = new Catalog([
       ...streams.map(({ stream }) => {
         const properties = { ...provenance, ...stream.extractor.properties };
@@ -248,11 +253,15 @@ export class WebSource extends Source<WebRead> {
       throw new TypeError(`Stream ${name} is not a stream of this source`);
     return entry;
   }
+  // The inputs of the web stream's read, or, outside a read, the inputs that
+  // the host's function gives now.
+  #inputs(entry: Entry): ReadonlySet<WebInput> {
+    return this.#read.get(entry.stream.name) ?? entry.inputs();
+  }
   coverage(stream: Stream) {
-    const {
-      stream: { include },
-      inputs,
-    } = this.#entry(stream);
+    const entry = this.#entry(stream);
+    const { include } = entry.stream;
+    const inputs = [...this.#inputs(entry)];
     return {
       description: this.#routes.has(stream.name)
         ? 'Each URL in the scope of the crawls of chosen websites and feeds that a listing named, as the listings read; a listing that is read again completely replaces its rows.'
@@ -293,10 +302,17 @@ export class WebSource extends Source<WebRead> {
     states: { get(stream: string): unknown },
     clock: PipelineClock,
   ) {
+    // The host's function gives the inputs of each web stream once for the
+    // read, so the stream and its routes, crawls and failures streams read
+    // the same inputs.
     const crawled = new Map(
       streams.flatMap(({ name }) => {
         const entry = this.#streams.get(name);
-        return entry === undefined ? [] : [[name, entry.inputs] as const];
+        if (entry === undefined) return [];
+        // A copy, so a host that changes its own set leaves the read's inputs.
+        const inputs: ReadonlySet<WebInput> = new Set(entry.inputs());
+        this.#read.set(name, inputs);
+        return [[name, [...inputs]] as const];
       }),
     );
     // A web stream that this read crawls is not due until each of its
@@ -363,27 +379,45 @@ export class WebSource extends Source<WebRead> {
     );
   }
   protected override partitions(stream: Stream) {
-    return this.#entry(stream).inputs.map((inputUrl) => ({ inputUrl }));
+    return [...this.#inputs(this.#entry(stream))].map((inputUrl) => ({
+      inputUrl,
+    }));
   }
   // Each web stream checks again when its earliest known URL is due, as its
-  // inputs' last crawls left it, and only the streams that are due are read.
-  // A routes, crawls or failures stream is due with its web stream.
+  // inputs' last crawls left it, and when the host's function gives other
+  // inputs, so an added input is crawled from its start in the pass that the
+  // next check asks for.
+  // Only the streams that are due are read. A routes, crawls or failures
+  // stream is due with its web stream.
   override changeSignals(streams: readonly Stream[]) {
     return Map.groupBy(streams, (stream) => this.#entry(stream))
       .entries()
-      .map(([{ stream, inputs }, watched]) => ({
-        gauge: new DueTime(() => {
-          const due = this.#due.get(stream.name);
-          return due === undefined || due.size < inputs.length
-            ? Infinity
-            : Math.min(...[...due.values()].map((at) => at ?? Infinity));
-        }),
-        streams: watched,
-        interval: checkIntervalMs,
-        // The read is of memory: a check that takes the whole interval is
-        // stuck.
-        timeout: checkIntervalMs,
-      }));
+      .flatMap(([entry, watched]) => [
+        {
+          gauge: new DueTime(() => {
+            const due = this.#due.get(entry.stream.name);
+            const read = this.#read.get(entry.stream.name);
+            return due === undefined ||
+              read === undefined ||
+              due.size < read.size
+              ? Infinity
+              : Math.min(...[...due.values()].map((at) => at ?? Infinity));
+          }),
+          streams: watched,
+          interval: checkIntervalMs,
+          // The read is of memory: a check that takes the whole interval is
+          // stuck.
+          timeout: checkIntervalMs,
+        },
+        {
+          gauge: new InputList(entry.inputs),
+          streams: watched,
+          interval: checkIntervalMs,
+          // The host's function reads its own store; a check that takes the
+          // whole interval is stuck.
+          timeout: checkIntervalMs,
+        },
+      ]);
   }
   protected async *extract(
     configuration: CopyConfiguration,

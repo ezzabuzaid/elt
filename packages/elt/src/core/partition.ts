@@ -22,10 +22,10 @@ export function assertPartitions(
   partitions: readonly Partition[],
 ): void {
   const identity = partitionIdentity(stream);
-  if (!Array.isArray(partitions) || partitions.length === 0)
-    throw new TypeError(
-      `Stream ${stream.name} requires at least one partition`,
-    );
+  // A stream with no partitions reads nothing, as an Airbyte partition
+  // router with no values gives no slices.
+  if (!Array.isArray(partitions))
+    throw new TypeError(`Stream ${stream.name} lists no partitions`);
   const keys = new Set<string>();
   for (const partition of partitions) {
     const { key } = readPartition(identity, partition);

@@ -33,7 +33,7 @@ const checkpoints = new SQLiteCheckpointStore({
 });
 
 // Built on each Sync or Clear from the settings as they are then, because a
-// WebSource's inputs cannot change after construction.
+// WebStream takes its include patterns when it is made.
 export default async function pipeline() {
   const { inputs, include } = await settings.read();
   // No saved pattern means every page.

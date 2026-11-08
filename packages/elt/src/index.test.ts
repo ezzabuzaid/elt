@@ -935,8 +935,11 @@ class Sites extends LiveSource {
     return new AsyncDisposableStack();
   }
 
+  // The sites that the source reads, as a host lists them.
+  readonly sites = ['a', 'b', 'c'];
+
   protected override partitions() {
-    return ['a', 'b', 'c'].map((site) => ({ site }));
+    return this.sites.map((site) => ({ site }));
   }
 
   // The sites never change after the first check.
@@ -3077,4 +3080,38 @@ test('an invalid connection stops the whole pipeline before any read, and is rec
     'begin invalid left:test',
     'fail invalid Incremental copies require a stable id and checkpoint store',
   ]);
+});
+
+test('a partitioned stream that lists no partitions reads nothing, and a later read reads a partition that its source lists by then from its start', async () => {
+  const source = new Sites();
+  source.sites.splice(0);
+  const destination = new DrainingDestination();
+  const checkpoints = new MemoryCheckpoints(destination.log);
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new MemoryHistory(),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [
+          new Copy(source.pages, new NamedTarget('pages'), {
+            id: 'pages',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append',
+          }),
+        ],
+      }),
+    ],
+  });
+
+  await pipeline.run();
+  const empty = source.received.splice(0);
+  source.sites.push('a');
+  await pipeline.run();
+
+  assert.deepEqual(empty, []);
+  assert.deepEqual(source.received, [['a', null]]);
 });

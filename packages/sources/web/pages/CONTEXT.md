@@ -5,7 +5,7 @@ A user wants the records that a website shows, for example the articles of a blo
 ## Language
 
 **Input**:
-A website, sitemap or feed URL that the host chooses. The source crawls each input separately. Each input is one partition, and `inputUrl` is the first column of the primary key.
+A website, sitemap or feed URL that the host chooses, as a `WebInput`: an http or https URL in the form that the URL standard gives it. The source crawls each input separately. Each input is one partition, and `inputUrl` is the first column of the primary key. The host gives a list that does not change, or a function that the source calls as each read opens and at each check of a watch.
 _Avoid_: Seed, site, source (the source is the `WebSource`)
 
 **Crawl**:

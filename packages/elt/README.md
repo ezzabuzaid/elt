@@ -483,7 +483,9 @@ protected override async *extract(configuration, state, partition) {
 - **Failures:** as in Airbyte, a partition that fails does not stop the others in an incremental read. The rows of that partition after its last checkpoint are discarded, and it keeps its saved state. Thus the next run tries it again from there. The other partitions commit and move forward. The copy then reports the failed partitions, and the run fails and names each one. elt never skips a failed partition without a report.
 - **Full refresh:** the partitions are read in the same way, with no state. An overwrite replaces the full target with all listed partitions. A partition that fails in a full refresh stops the read of the stream, because a full refresh commits nothing after a failure.
 
-The partitions are declared with no I/O. The `partitionKey` fields must be different scalar members of the primary key that are not null. The list must not be empty, and it must have no repeated partition.
+`Source.read` asks for the partitions at the start of each read, and a watch asks at its start. Thus a source whose host changes them, for example the inputs of a web stream, gives the list as it is then. The `partitionKey` fields must be different scalar members of the primary key that are not null. The list must have no repeated partition.
+
+- **No partition:** the stream reads nothing. Its checkpoint stays as it is. An Airbyte partition router with no values also gives no slices.
 
 ## Read context
 

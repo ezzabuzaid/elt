@@ -12,7 +12,7 @@ Thus `WebSource` takes a list of web streams, and the host gives each web stream
 
 ## Consequences
 
-- The constructor takes `streams: [{ stream, inputs }]`. Each web stream has at least one input, and two web streams cannot have the same name.
+- The constructor takes `streams: [{ stream, inputs }]`. Each web stream has at least one input, and two web streams cannot have the same name. Since [ADR 0018](./0018-a-web-stream-reads-its-inputs-from-its-host-at-each-check.md), a web stream may have no inputs, and its inputs can come from a function of the host.
 - The listings of the chosen categories are a child stream in the sense of the host: the connector gives the chosen category URLs as the inputs of the listings stream. `WebSource` does not read one stream's rows to make another stream's inputs.
 - All the crawls of a read share the HTTP cache, the user agent and the record of each origin. Each input of each web stream is still crawled separately, so each crawl has its own memento ([ADR 0014](./0014-the-crawls-of-a-read-share-the-record-of-each-origin.md)).
 - A watch reads again only the web streams that have a page due. A stream whose page is not due is not crawled, so its starting URLs are not requested again.
