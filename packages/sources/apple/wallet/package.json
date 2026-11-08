@@ -13,12 +13,12 @@
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-apple-wallet": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
-    "@zukhruf/snapshot-differential": "^0.8.9"
+    "@zukhruf/snapshot-differential": "^0.8.10"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
     "@workspace/elt-sqlite": "0.0.1",
-    "@zukhruf/sqlite-open": "^0.8.9",
-    "@zukhruf/testing": "^0.8.9"
+    "@zukhruf/sqlite-open": "^0.8.10",
+    "@zukhruf/testing": "^0.8.10"
   }
 }

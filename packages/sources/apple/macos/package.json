@@ -48,14 +48,14 @@
   },
   "dependencies": {
     "@workspace/elt": "0.0.1",
-    "@zukhruf/async": "^0.8.9",
-    "@zukhruf/coprocess": "^0.8.9",
-    "@zukhruf/pool": "^0.8.9",
+    "@zukhruf/async": "^0.8.10",
+    "@zukhruf/coprocess": "^0.8.10",
+    "@zukhruf/pool": "^0.8.10",
     "ai": "7.0.148",
     "file-type": "22.2.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.8.9"
+    "@zukhruf/testing": "^0.8.10"
   }
 }

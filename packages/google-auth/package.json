@@ -15,14 +15,14 @@
     }
   },
   "dependencies": {
-    "@zukhruf/async": "^0.8.9",
-    "@zukhruf/fs": "^0.8.9",
+    "@zukhruf/async": "^0.8.10",
+    "@zukhruf/fs": "^0.8.10",
     "gaxios": "7.3.1",
     "google-auth-library": "^11.1.0",
     "p-memoize": "^8.0.0"
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.8.9",
+    "@zukhruf/testing": "^0.8.10",
     "msw": "^3.0.3"
   }
 }
