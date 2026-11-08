@@ -13,14 +13,14 @@
     "@workspace/codec-plist": "0.0.1",
     "@workspace/sdk-macos-app-database": "0.0.1",
     "@zone-eu/mailsplit": "5.4.19",
-    "@zukhruf/async": "^0.8.0",
-    "@zukhruf/fs": "^0.6.15",
-    "@zukhruf/sqlite-snapshot": "^0.6.15",
+    "@zukhruf/async": "^0.8.9",
+    "@zukhruf/fs": "^0.8.9",
+    "@zukhruf/sqlite-snapshot": "^0.8.9",
     "libmime": "5.4.6"
   },
   "devDependencies": {
     "@types/libmime": "5.3.0",
-    "@zukhruf/sqlite-open": "^0.7.0",
-    "@zukhruf/testing": "^0.6.15"
+    "@zukhruf/sqlite-open": "^0.8.9",
+    "@zukhruf/testing": "^0.8.9"
   }
 }

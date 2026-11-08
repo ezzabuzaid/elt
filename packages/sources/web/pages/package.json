@@ -34,8 +34,8 @@
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-web-article": "0.0.1",
     "@workspace/sdk-web-crawler": "0.0.1",
-    "@zukhruf/async": "^0.8.0",
-    "@zukhruf/snapshot-differential": "^0.6.15",
+    "@zukhruf/async": "^0.8.9",
+    "@zukhruf/snapshot-differential": "^0.8.9",
     "got": "16.1.0",
     "keyv": "6.1.0",
     "zod": "4.6.5"
@@ -43,7 +43,7 @@
   "devDependencies": {
     "@mswjs/interceptors": "^0.45.9",
     "@workspace/elt-sqlite": "0.0.1",
-    "@zukhruf/sqlite-open": "^0.7.0",
-    "@zukhruf/testing": "^0.6.15"
+    "@zukhruf/sqlite-open": "^0.8.9",
+    "@zukhruf/testing": "^0.8.9"
   }
 }

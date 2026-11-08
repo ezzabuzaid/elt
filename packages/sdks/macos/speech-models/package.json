@@ -15,7 +15,7 @@
     "@workspace/transcription-local": "0.0.1"
   },
   "devDependencies": {
-    "@zukhruf/pool": "^0.6.15",
-    "@zukhruf/testing": "^0.6.15"
+    "@zukhruf/pool": "^0.8.9",
+    "@zukhruf/testing": "^0.8.9"
   }
 }

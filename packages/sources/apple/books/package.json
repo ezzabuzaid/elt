@@ -13,12 +13,12 @@
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-apple-books": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
-    "@zukhruf/snapshot-differential": "^0.6.15"
+    "@zukhruf/snapshot-differential": "^0.8.9"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
     "@workspace/elt-sqlite": "0.0.1",
-    "@zukhruf/sqlite-open": "^0.7.0",
-    "@zukhruf/testing": "^0.6.15"
+    "@zukhruf/sqlite-open": "^0.8.9",
+    "@zukhruf/testing": "^0.8.9"
   }
 }

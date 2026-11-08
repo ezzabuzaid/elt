@@ -11,11 +11,11 @@
   },
   "dependencies": {
     "@workspace/google-auth": "0.0.1",
-    "@zukhruf/async": "^0.8.0",
+    "@zukhruf/async": "^0.8.9",
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.6.15",
+    "@zukhruf/testing": "^0.8.9",
     "msw": "^3.0.3"
   }
 }

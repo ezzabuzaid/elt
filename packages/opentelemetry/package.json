@@ -21,6 +21,6 @@
     "@opentelemetry/sdk-metrics": "3.0.0",
     "@opentelemetry/sdk-trace": "3.0.0",
     "@workspace/elt-sqlite": "0.0.1",
-    "@zukhruf/testing": "^0.6.15"
+    "@zukhruf/testing": "^0.8.9"
   }
 }
