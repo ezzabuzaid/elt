@@ -15,6 +15,7 @@ import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
+import { referenceDate } from '@workspace/codec-apple-reference-date';
 import {
   Connection,
   Copy,
@@ -994,7 +995,7 @@ const fieldsOf = (
 // since 2001-01-01.
 async function addFraction(path: string, at: Date, fraction: number) {
   const bytes = await readFile(path);
-  const seconds = (at.getTime() - Date.UTC(2001, 0, 1)) / 1000;
+  const seconds = (at.getTime() - referenceDate(0).getTime()) / 1000;
   const date = (value: number) => {
     const encoded = Buffer.alloc(9);
     encoded[0] = 0x33;

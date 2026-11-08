@@ -24,6 +24,7 @@ import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
+import { referenceDate } from '@workspace/codec-apple-reference-date';
 import {
   Connection,
   Copy,
@@ -785,8 +786,7 @@ function withoutPrimaryKey(path: string, table: string): void {
 // Core Data and property lists store to mean "none".
 const distantPast = -63_114_076_800;
 const distantFuture = 63_113_904_000;
-const fromAppleSeconds = (seconds: number) =>
-  new Date(Date.UTC(2001, 0, 1) + seconds * 1000);
+const fromAppleSeconds = referenceDate;
 
 // The streams whose copies failed, sorted, under each kind of failure they
 // reported.

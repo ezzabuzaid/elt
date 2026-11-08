@@ -14,6 +14,7 @@ import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
+import { referenceDate } from '@workspace/codec-apple-reference-date';
 import {
   Connection,
   Copy,
@@ -184,7 +185,7 @@ const entities: readonly (readonly [number, string, number])[] = [
 ];
 
 const appleSeconds = (iso: string) =>
-  (Date.parse(iso) - Date.UTC(2001, 0, 1)) / 1000;
+  (Date.parse(iso) - referenceDate(0).getTime()) / 1000;
 // Contacts writes birthdays and dates at noon UTC, in 1604 without a year.
 const noon = (date: string) => appleSeconds(`${date}T12:00:00.000Z`);
 

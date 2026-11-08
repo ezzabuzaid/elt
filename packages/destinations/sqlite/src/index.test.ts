@@ -54,6 +54,7 @@ import {
   type SQLiteTable,
   isReserved,
 } from './index.ts';
+import { storedRows } from './testing/stored-rows.ts';
 
 // The upstream of a test source, which the test fills before it reads: a
 // watch finds it changed at its first check and unchanged after.
@@ -351,13 +352,7 @@ test('every name is sanitized as Airbyte does, around the names SQLite takes as 
       history,
     }).run();
   };
-  const view = () => {
-    using database = open(destination.path, { readOnly: true });
-    return database
-      .prepare('SELECT * FROM odd')
-      .all()
-      .map((row) => ({ ...row }));
-  };
+  const view = () => storedRows(destination.path, 'SELECT * FROM odd');
 
   await run(before, 1);
   const loaded = view();
@@ -1605,13 +1600,11 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
       }),
     ],
   });
-  const table = () => {
-    using database = open(destination.path, { readOnly: true });
-    return database
-      .prepare('SELECT id, name, loaded_at FROM items ORDER BY id')
-      .all()
-      .map((row) => ({ ...row }));
-  };
+  const table = () =>
+    storedRows(
+      destination.path,
+      'SELECT id, name, loaded_at FROM items ORDER BY id',
+    );
   const savedState = () => {
     using database = open(statePath, { readOnly: true });
     return JSON.parse(
@@ -4386,13 +4379,11 @@ test('stored file references follow committed SQLite rows, including rejected up
         }),
       ],
     });
-    const loaded = () => {
-      using db = open(destination.path, { readOnly: true });
-      return db
-        .prepare('SELECT id, version, ref FROM docs ORDER BY id')
-        .all()
-        .map((row) => ({ ...row }));
-    };
+    const loaded = () =>
+      storedRows(
+        destination.path,
+        'SELECT id, version, ref FROM docs ORDER BY id',
+      );
     const saved = () => {
       using db = open(statePath, { readOnly: true });
       return db
@@ -7386,13 +7377,7 @@ async function checkedPipeline(directory: string) {
       }),
     ],
   });
-  const read = (sql: string) => {
-    using database = open(path, { readOnly: true });
-    return database
-      .prepare(sql)
-      .all()
-      .map((row) => ({ ...row }));
-  };
+  const read = (sql: string) => storedRows(path, sql);
   const streams = () =>
     Object.fromEntries(
       read(

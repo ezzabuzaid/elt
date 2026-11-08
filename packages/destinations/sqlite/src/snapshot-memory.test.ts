@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
+
+import { storedRows } from './testing/stored-rows.ts';
 
 // Two passes of STREAMS snapshot streams of KEYS records each, shaped like
 // Calendar's icsParameters, into OUT, in a process whose heap the test caps.
@@ -120,13 +121,10 @@ function runPasses(
     0,
     `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
   );
-  using data = open(join(out, 'data.sqlite'), { readOnly: true });
-  return data
-    .prepare(
-      'SELECT stream, status, written_count FROM extraction_coverage WHERE attempt_id = (SELECT max(attempt_id) FROM sync_attempts) ORDER BY stream',
-    )
-    .all()
-    .map((row) => ({ ...row }));
+  return storedRows(
+    join(out, 'data.sqlite'),
+    'SELECT stream, status, written_count FROM extraction_coverage WHERE attempt_id = (SELECT max(attempt_id) FROM sync_attempts) ORDER BY stream',
+  );
 }
 
 test('a snapshot pass holds its saved state once, so a large snapshot diffs in a heap little larger than the diff needs', async () => {

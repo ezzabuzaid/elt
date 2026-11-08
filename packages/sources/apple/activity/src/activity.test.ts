@@ -15,6 +15,7 @@ import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
+import { referenceDate } from '@workspace/codec-apple-reference-date';
 import {
   Connection,
   Copy,
@@ -1532,7 +1533,8 @@ test('Activity reads this Mac’s activity into SQLite', async (t) => {
   const segments = (await streams.segments(new AppInFocus()))
     .filter(({ origin }) => origin === 'local')
     .sort((a, b) => Number(a.name) - Number(b.name));
-  const started = (name: string) => Date.UTC(2001, 0, 1) + Number(name) / 1000;
+  const started = (name: string) =>
+    referenceDate(0).getTime() + Number(name) / 1000;
   const wrong: string[] = [];
   let kept = 0;
   for (const [index, segment] of segments.entries()) {

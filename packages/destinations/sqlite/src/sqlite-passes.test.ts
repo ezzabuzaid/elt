@@ -7,7 +7,6 @@ import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
-import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 
@@ -31,6 +30,7 @@ import {
   SQLiteSyncHistory,
   readPassStatus,
 } from './index.ts';
+import { storedRows } from './testing/stored-rows.ts';
 
 // The upstream of a test source, which the test fills before it reads: a
 // watch finds it changed at its first check and unchanged after.
@@ -475,15 +475,11 @@ test('a pass a killed process left running stays running, until a history that i
     destination,
     steps: [new Copy(source.notes, destination.table('notes'))],
   });
-  const attempts = () => {
-    using database = open(path, { readOnly: true });
-    return database
-      .prepare(
-        'SELECT status, error, failure_type FROM sync_attempts ORDER BY attempt_id',
-      )
-      .all()
-      .map((row) => ({ ...row }));
-  };
+  const attempts = () =>
+    storedRows(
+      path,
+      'SELECT status, error, failure_type FROM sync_attempts ORDER BY attempt_id',
+    );
 
   await new Pipeline({
     clock: globalThis,

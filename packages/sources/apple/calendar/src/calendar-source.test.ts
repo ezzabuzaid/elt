@@ -58,6 +58,7 @@ import {
   CalendarIcsUnavailableError,
 } from './apple-calendar-source.ts';
 import { googleCalendarAttachments } from './google-calendar-attachments.ts';
+import { storedRows } from './testing/stored-rows.ts';
 
 // A file column's chunk table, by the documented rule: _elt_files_ and the
 // first 40 hex digits of SHA-256 over the JSON of [table, column], both in
@@ -121,10 +122,7 @@ async function appleImport(source: Source, directory: string) {
     ),
   });
   const history = new SQLiteSyncHistory();
-  const read = (sql: string) => {
-    using database = open(path, { readOnly: true });
-    return database.prepare(sql).all();
-  };
+  const read = (sql: string) => storedRows(path, sql);
   return {
     load: (options?: { readonly signal: AbortSignal }) =>
       new Pipeline({
@@ -1109,13 +1107,7 @@ test('Calendar rejects malformed records and preserves prior rows on native fail
         }),
       ],
     }).run();
-  const loaded = () => {
-    using database = open(sqlite.path, { readOnly: true });
-    return database
-      .prepare('SELECT id, name FROM events')
-      .all()
-      .map((row) => ({ ...row }));
-  };
+  const loaded = () => storedRows(sqlite.path, 'SELECT id, name FROM events');
 
   await run();
   const previous = [{ id: eventId('item-1'), name: 'Synthetic standup' }];
@@ -1228,13 +1220,8 @@ test(
     });
     const run = async () =>
       (await pipeline.run()).map(({ count, deleted }) => ({ count, deleted }));
-    const loaded = () => {
-      using database = open(sqlite.path, { readOnly: true });
-      return database
-        .prepare('SELECT id, name FROM events ORDER BY name')
-        .all()
-        .map((row) => ({ ...row }));
-    };
+    const loaded = () =>
+      storedRows(sqlite.path, 'SELECT id, name FROM events ORDER BY name');
 
     assert.deepEqual(await run(), [{ count: 2, deleted: 0 }]);
     // Standup is renamed, Review moves out of the window, Planning is new.

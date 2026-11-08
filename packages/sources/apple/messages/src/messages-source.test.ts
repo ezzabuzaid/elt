@@ -15,6 +15,7 @@ import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
+import { referenceDate } from '@workspace/codec-apple-reference-date';
 import {
   Connection,
   Copy,
@@ -295,7 +296,7 @@ const archivedText = (text: string) => {
 
 // Nanoseconds since 2001-01-01 UTC, Messages' modern time unit.
 const appleNanoseconds = (iso: string) =>
-  BigInt(Date.parse(iso) - Date.UTC(2001, 0, 1)) * 1_000_000n;
+  BigInt(Date.parse(iso) - referenceDate(0).getTime()) * 1_000_000n;
 
 const chatFixture = async (directory: string) => {
   const path = join(directory, 'chat.db');
