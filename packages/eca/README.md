@@ -1,4 +1,4 @@
-# @workspace/eca
+# @eltjs/eca
 
 A user wants to know when the data in a warehouse starts to match a condition. For example: "when my card purchases in the first 10 days of a month pass 200 JOD, tell me". An agent writes the condition as code with SQL in it. The host gives eca the warehouse, and it acts on what eca yields. eca evaluates every condition at each commit to the warehouse, and it yields each new match: a key that starts to match. The model is Event–Condition–Action (ECA), from active databases: a commit is the event, and the host does the action.
 
@@ -9,7 +9,7 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 The host makes one `Eca` with its warehouse, adds the rules, and watches the new matches:
 
 ```ts
-import { Eca } from '@workspace/eca';
+import { Eca } from '@eltjs/eca';
 
 const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
 const spend = { condition: new EarlyMonthSpend() };
@@ -37,7 +37,7 @@ import type { SQLTagStore } from 'node:sqlite';
 
 import { open } from '@zukhruf/sqlite-open';
 
-import type { Warehouse } from '@workspace/eca';
+import type { Warehouse } from '@eltjs/eca';
 
 class ImportWarehouse implements Warehouse<SQLTagStore> {
   readonly sql: SQLTagStore;
@@ -66,7 +66,7 @@ A condition has one method: `evaluate(sql)`. It gets the handle of the warehouse
 ```ts
 import type { SQLTagStore } from 'node:sqlite';
 
-import type { Condition } from '@workspace/eca';
+import type { Condition } from '@eltjs/eca';
 
 // Card purchases of Arab Bank in days 1 to 10 of each month, on the clock of
 // the user, by the time of the SMS.

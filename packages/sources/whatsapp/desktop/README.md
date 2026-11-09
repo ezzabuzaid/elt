@@ -1,20 +1,20 @@
-# @workspace/source-whatsapp-desktop
+# @eltjs/source-whatsapp-desktop
 
-An ELT source for the data that WhatsApp for Mac keeps on this Mac. It reads the app's own stores with the `@workspace/sdk-whatsapp-desktop` SDK. It uses no WhatsApp server, no session and no network. A Context Compiler import loads every stream into its `data.sqlite`, and readers query it through the `<snake_stream>` views. `apps/proactive` loads chats, messages, reactions, users, contacts and push names into the warehouse as `marts.whatsapp_<stream>`.
+An ELT source for the data that WhatsApp for Mac keeps on this Mac. It reads the app's own stores with the `@eltjs/sdk-whatsapp-desktop` SDK. It uses no WhatsApp server, no session and no network. A Context Compiler import loads every stream into its `data.sqlite`, and readers query it through the `<snake_stream>` views. `apps/proactive` loads chats, messages, reactions, users, contacts and push names into the warehouse as `marts.whatsapp_<stream>`.
 
 The words in this README have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { whatsappContainer } from '@workspace/sdk-whatsapp-desktop';
-import { WhatsAppDesktopSource } from '@workspace/source-whatsapp-desktop/whatsapp-desktop-source';
+} from '@eltjs/elt-sqlite';
+import { whatsappContainer } from '@eltjs/sdk-whatsapp-desktop';
+import { WhatsAppDesktopSource } from '@eltjs/source-whatsapp-desktop/whatsapp-desktop-source';
 
 // ~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared
 const source = new WhatsAppDesktopSource({

@@ -1,4 +1,4 @@
-import { appRunning } from '@workspace/sdk-apple-launch-services';
+import { appRunning } from '@eltjs/sdk-apple-launch-services';
 
 // WhatsApp writes its chats and messages only while the app runs. Its
 // notification extension, which runs while the app is closed, writes only

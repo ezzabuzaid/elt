@@ -1,4 +1,4 @@
-import { Identifiers } from '@workspace/elt';
+import { Identifiers } from '@eltjs/elt';
 
 // Postgres keeps 63 bytes of a name and silently drops the rest, and refuses
 // a column named like one of its system columns however it is quoted.

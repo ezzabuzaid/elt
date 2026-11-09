@@ -1,10 +1,10 @@
-# @workspace/sdk-google-health
+# @eltjs/sdk-google-health
 
 The Google Health API v4 (`health.googleapis.com`) for the signed-in user: each data type's points, the types Google answers only as daily rollups, an exercise's TCX export, and the account's identity, profile, settings, IRN profile and paired devices. Responses are parsed with zod schemas typed from Google's discovery document (revision 20261014) and checked against live responses.
 
 ```ts
-import { GOOGLE_HEALTH_SCOPES, googleSession } from '@workspace/google-auth';
-import { GoogleHealthApi } from '@workspace/sdk-google-health';
+import { GOOGLE_HEALTH_SCOPES, googleSession } from '@eltjs/google-auth';
+import { GoogleHealthApi } from '@eltjs/sdk-google-health';
 
 const api = new GoogleHealthApi(
   await googleSession({

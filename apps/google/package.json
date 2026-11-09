@@ -1,13 +1,13 @@
 {
-  "name": "@workspace/google",
+  "name": "@eltjs/google",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@workspace/elt": "0.0.1",
-    "@workspace/elt-postgresql": "0.0.1",
-    "@workspace/google-auth": "0.0.1",
-    "@workspace/source-google-health": "0.0.1",
-    "@workspace/source-google-search-console": "0.0.1"
+    "@eltjs/elt": "*",
+    "@eltjs/elt-postgresql": "0.0.1",
+    "@eltjs/google-auth": "0.0.1",
+    "@eltjs/source-google-health": "0.0.1",
+    "@eltjs/source-google-search-console": "0.0.1"
   },
   "devDependencies": {
     "postgres": "^3.4.9"

@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { Shutdown } from '@zukhruf/shutdown';
 import postgres from 'postgres';
 
-import type { Warehouse } from '@workspace/eca';
+import type { Warehouse } from '@eltjs/eca';
 
 import { Automations } from './automations.ts';
 import { CareemCalories } from './careem-calories.ts';

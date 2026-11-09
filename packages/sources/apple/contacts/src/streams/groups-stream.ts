@@ -4,8 +4,8 @@ import {
   type RecordRow,
   groupView,
   recordView,
-} from '@workspace/sdk-apple-contacts';
-import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
+} from '@eltjs/sdk-apple-contacts';
+import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 import { AppleContactsStream } from '../apple-contacts-stream.ts';
 import {

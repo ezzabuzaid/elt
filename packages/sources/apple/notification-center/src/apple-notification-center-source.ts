@@ -8,13 +8,13 @@ import {
   type SourceMessage,
   type Stream,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   NotificationCenterStore,
   StoreUnavailableError,
-} from '@workspace/sdk-apple-notification-center';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
+} from '@eltjs/sdk-apple-notification-center';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
+import { localAppleStoreCoverage } from '@eltjs/source-apple-macos/local-apple-store-coverage';
 
 import type { NotificationCenterReader } from './apple-notification-center-stream.ts';
 import { NotificationCenterScan } from './notification-center-scan.ts';

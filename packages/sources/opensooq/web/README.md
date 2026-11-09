@@ -1,11 +1,11 @@
 # OpenSooq
 
-`categories` and `listings` are two `WebStream`s for `WebSource` from `@workspace/source-web-pages`. `categories` reads the categories of the OpenSooq home pages that you give as inputs, such as `https://jo.opensooq.com/en`. `listings` reads the listings of the category pages that you give as inputs, such as `https://jo.opensooq.com/en/cars/motorcycles`. A host shows the categories as a choice and gives the URLs of the chosen categories to `listings`.
+`categories` and `listings` are two `WebStream`s for `WebSource` from `@eltjs/source-web-pages`. `categories` reads the categories of the OpenSooq home pages that you give as inputs, such as `https://jo.opensooq.com/en`. `listings` reads the listings of the category pages that you give as inputs, such as `https://jo.opensooq.com/en/cars/motorcycles`. A host shows the categories as a choice and gives the URLs of the chosen categories to `listings`.
 
 ```ts
-import { categories } from '@workspace/source-opensooq-web/categories';
-import { listings } from '@workspace/source-opensooq-web/listings';
-import { WebSource } from '@workspace/source-web-pages/web-source';
+import { categories } from '@eltjs/source-opensooq-web/categories';
+import { listings } from '@eltjs/source-opensooq-web/listings';
+import { WebSource } from '@eltjs/source-web-pages/web-source';
 
 const source = new WebSource({
   streams: [

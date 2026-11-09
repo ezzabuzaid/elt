@@ -5,16 +5,16 @@ import type {
   ExtractionCoverage,
   SourceMessage,
   Stream,
-} from '@workspace/elt';
-import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+} from '@eltjs/elt';
+import { Catalog, Source, diffSnapshot } from '@eltjs/elt';
 import {
   NotesStore,
   StoreUnavailableError,
   launchNotesHidden,
   notesRunning,
-} from '@workspace/sdk-apple-notes';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
+} from '@eltjs/sdk-apple-notes';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
+import { localAppleStoreCoverage } from '@eltjs/source-apple-macos/local-apple-store-coverage';
 
 import { AccountsStream } from './accounts-stream.ts';
 import type { NotesReader } from './apple-notes-stream.ts';

@@ -5,11 +5,11 @@ import type {
   EmergencyMediaItem,
   Participant,
   SaintDavidsCount,
-} from '@workspace/sdk-apple-call-history';
+} from '@eltjs/sdk-apple-call-history';
 import {
   type ImportScope,
   withinDates,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 // A start time cut to the millisecond, the precision of an import's dates, so
 // it compares with them as text: cutting keeps every call on the same side of

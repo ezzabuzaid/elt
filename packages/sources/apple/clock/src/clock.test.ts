@@ -18,24 +18,24 @@ import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { isDictionary, readPlist } from '@workspace/codec-plist';
+import { isDictionary, readPlist } from '@eltjs/codec-plist';
 import {
   Connection,
   Copy,
   Pipeline,
   PipelineError,
   type Stream,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   type ClockLocation,
   StoreUnavailableError,
   clockLocation,
-} from '@workspace/sdk-apple-clock/clock-store';
+} from '@eltjs/sdk-apple-clock/clock-store';
 
 import { AppleClockSource } from './apple-clock-source.ts';
 

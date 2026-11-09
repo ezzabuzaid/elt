@@ -4,14 +4,14 @@ import {
   PassFinished,
   passError,
   passStatus,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   type Crawl,
   CrawlEnded,
   CrawlRequested,
   OriginBlocked,
-} from '@workspace/sdk-web-crawler';
-import { PageExtracted } from '@workspace/source-web-pages/page-channels';
+} from '@eltjs/sdk-web-crawler';
+import { PageExtracted } from '@eltjs/source-web-pages/page-channels';
 
 import type { CrawlRequest, Run } from './contract.ts';
 

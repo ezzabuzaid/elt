@@ -7,8 +7,8 @@ import {
   type IndexedDBDatabase,
   IndexedDBFormatError,
   readIndexedDB,
-} from '@workspace/codec-chromium-indexeddb';
-import { AppFilesVersion } from '@workspace/sdk-macos-app-database';
+} from '@eltjs/codec-chromium-indexeddb';
+import { AppFilesVersion } from '@eltjs/sdk-macos-app-database';
 
 import { TeamsFormatError, TeamsUnavailableError } from './errors.ts';
 import { Fields } from './fields.ts';

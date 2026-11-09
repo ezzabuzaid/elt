@@ -2,8 +2,8 @@ import type { SQLOutputValue } from 'node:sqlite';
 
 import type { Snapshot } from '@zukhruf/sqlite-snapshot';
 
-import { chromiumInstant } from '@workspace/codec-chromium-time';
-import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
+import { chromiumInstant } from '@eltjs/codec-chromium-time';
+import type { AppDatabaseVersion } from '@eltjs/sdk-macos-app-database';
 
 import { appDatabase } from './app-database.ts';
 import { historyColumns } from './history-columns.ts';

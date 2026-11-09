@@ -23,18 +23,18 @@ import {
   type PipelineClock,
   PipelineError,
   type Target,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   DiaArchiveFormatError,
   DiaArchiveMissingError,
   diaArchivePath,
-} from '@workspace/sdk-dia-desktop';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/sdk-dia-desktop';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { DiaDesktopSource } from './dia-desktop-source.ts';
 

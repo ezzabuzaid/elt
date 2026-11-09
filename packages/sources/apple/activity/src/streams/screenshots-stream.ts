@@ -1,8 +1,8 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 import {
   ScreenshotsScreenshot,
   type ScreenshotsScreenshotEvent,
-} from '@workspace/sdk-apple-biome';
+} from '@eltjs/sdk-apple-biome';
 
 import { activityFields } from '../activity-values.ts';
 import {

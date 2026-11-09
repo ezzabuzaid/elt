@@ -1,6 +1,6 @@
-# @workspace/source-apple-notes
+# @eltjs/source-apple-notes
 
-An ELT source for Apple Notes. It reads the Core Data store of Notes, `~/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite`, in read-only mode through `@workspace/sdk-apple-notes`. It does not use the network, and Notes does not have to be open.
+An ELT source for Apple Notes. It reads the Core Data store of Notes, `~/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite`, in read-only mode through `@eltjs/sdk-apple-notes`. It does not use the network, and Notes does not have to be open.
 
 ```ts
 import { homedir } from 'node:os';
@@ -11,17 +11,17 @@ import {
   DocumentText,
   LocalFiles,
   Pipeline,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   ComputedDataset,
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { noteStorePath } from '@workspace/sdk-apple-notes';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
-import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
+} from '@eltjs/elt-sqlite';
+import { noteStorePath } from '@eltjs/sdk-apple-notes';
+import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
+import { AppleNotesSource } from '@eltjs/source-apple-notes/apple-notes-source';
 
 const source = new AppleNotesSource({ path: noteStorePath(homedir()) });
 const destination = new SQLiteDestination({ path: './outputs/notes.sqlite' });
@@ -86,7 +86,7 @@ The `attachments` copy stores each file in `files` and keeps its reference in `a
 
 ## Streams
 
-The source reads the store of Notes through its SDK, `@workspace/sdk-apple-notes`. Each run reads each selected stream in one SQLite read transaction, so notes, attachments and folders come from the same moment. Note bodies are gzipped protobuf documents, and tables are gzipped CRDT documents. The SDK decodes the two in the process.
+The source reads the store of Notes through its SDK, `@eltjs/sdk-apple-notes`. Each run reads each selected stream in one SQLite read transaction, so notes, attachments and folders come from the same moment. Note bodies are gzipped protobuf documents, and tables are gzipped CRDT documents. The SDK decodes the two in the process.
 
 | Stream              | Key    | Contents                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -127,7 +127,7 @@ The layout of the store changes between macOS releases. The SDK reads the layout
 
 ## Scope
 
-`new AppleNotesSource({ path, scope })` takes the path of the store and an optional scope. `path` has no default. `noteStorePath(home)` of `@workspace/sdk-apple-notes` gives the path of the store in the home folder `home`. The scope narrows the import. `accountIds` selects accounts, `collectionIds` selects folders, and `startAt` (inclusive) and `endAt` (exclusive) select notes by their modification time. If you omit a key, the source reads all. The coverage of each stream is `localAppleStoreCoverage` of `source-apple-macos`, with the scope as its selection.
+`new AppleNotesSource({ path, scope })` takes the path of the store and an optional scope. `path` has no default. `noteStorePath(home)` of `@eltjs/sdk-apple-notes` gives the path of the store in the home folder `home`. The scope narrows the import. `accountIds` selects accounts, `collectionIds` selects folders, and `startAt` (inclusive) and `endAt` (exclusive) select notes by their modification time. If you omit a key, the source reads all. The coverage of each stream is `localAppleStoreCoverage` of `source-apple-macos`, with the scope as its selection.
 
 ## Watch
 

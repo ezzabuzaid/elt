@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 
 import { FileStamp } from '@zukhruf/fs';
 
-import { chromiumInstant } from '@workspace/codec-chromium-time';
-import { AppFilesVersion } from '@workspace/sdk-macos-app-database';
+import { chromiumInstant } from '@eltjs/codec-chromium-time';
+import { AppFilesVersion } from '@eltjs/sdk-macos-app-database';
 
 import { BookmarksFormatError, BookmarksUnavailableError } from './errors.ts';
 

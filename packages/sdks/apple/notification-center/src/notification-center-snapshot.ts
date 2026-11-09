@@ -1,13 +1,13 @@
 import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
-import { referenceDateInstant } from '@workspace/codec-apple-reference-date';
+import { referenceDateInstant } from '@eltjs/codec-apple-reference-date';
 import {
   type PlistValue,
   decodeArchive,
   isBinaryPlist,
   isDictionary,
   parseBinaryPlist,
-} from '@workspace/codec-plist';
+} from '@eltjs/codec-plist';
 
 import { appDatabase } from './app-database.ts';
 import {

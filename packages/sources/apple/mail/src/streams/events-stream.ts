@@ -1,4 +1,4 @@
-import { eventsTable } from '@workspace/sdk-apple-mail';
+import { eventsTable } from '@eltjs/sdk-apple-mail';
 
 import type { MailSelection } from '../mail-selection.ts';
 import { MailTableStream } from '../mail-table-stream.ts';

@@ -2,11 +2,11 @@ import {
   BiomeStore,
   type BiomeStreams,
   type BiomeSync,
-} from '@workspace/sdk-apple-biome';
+} from '@eltjs/sdk-apple-biome';
 import {
   type KnowledgeSnapshot,
   KnowledgeStore,
-} from '@workspace/sdk-apple-knowledge';
+} from '@eltjs/sdk-apple-knowledge';
 
 // Where macOS keeps activity: the Biome folder, with its streams and device
 // list, and the knowledgeC database.

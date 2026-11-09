@@ -1,6 +1,6 @@
 import type postgres from 'postgres';
 
-import type { Match } from '@workspace/eca';
+import type { Match } from '@eltjs/eca';
 
 import { NotifyAutomation } from './notify-automation.ts';
 

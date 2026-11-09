@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { NoteAccount } from '@workspace/sdk-apple-notes';
+import type { RecordDraft } from '@eltjs/elt';
+import type { NoteAccount } from '@eltjs/sdk-apple-notes';
 
 import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
 import type { NotesScan } from './notes-scan.ts';

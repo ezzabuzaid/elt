@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type postgres from 'postgres';
 
-import type { Match } from '@workspace/eca';
+import type { Match } from '@eltjs/eca';
 
 import { Automation } from './automation.ts';
 import type { MeetingBriefWriter } from './meeting-brief-writer.ts';

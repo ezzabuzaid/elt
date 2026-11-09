@@ -3,8 +3,8 @@ import {
   CompositeRevisit,
   OnceRevisit,
   PaginationReader,
-} from '@workspace/sdk-web-crawler';
-import { WebStream } from '@workspace/source-web-pages/web-stream';
+} from '@eltjs/sdk-web-crawler';
+import { WebStream } from '@eltjs/source-web-pages/web-stream';
 
 import { OpenSooqExtractor } from './opensooq-extractor.ts';
 

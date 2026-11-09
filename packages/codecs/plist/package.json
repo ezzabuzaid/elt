@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/codec-plist",
+  "name": "@eltjs/codec-plist",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     }
   },
   "dependencies": {
-    "@workspace/codec-apple-reference-date": "0.0.1"
+    "@eltjs/codec-apple-reference-date": "0.0.1"
   },
   "devDependencies": {
     "@zukhruf/testing": "^0.8.10"

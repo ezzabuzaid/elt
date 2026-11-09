@@ -1,7 +1,7 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import { appRunning } from '@workspace/sdk-apple-launch-services';
+import { appRunning } from '@eltjs/sdk-apple-launch-services';
 
 const execFile = promisify(execFileCallback);
 const bundle = 'com.apple.Notes';

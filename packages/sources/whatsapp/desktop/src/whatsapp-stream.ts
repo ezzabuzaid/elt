@@ -9,8 +9,8 @@ import {
   type SyncMode,
   diffSnapshot,
   validateRecords,
-} from '@workspace/elt';
-import type { WhatsAppStore } from '@workspace/sdk-whatsapp-desktop';
+} from '@eltjs/elt';
+import type { WhatsAppStore } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from './whatsapp-scan.ts';
 

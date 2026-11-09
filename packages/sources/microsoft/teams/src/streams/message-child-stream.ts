@@ -1,7 +1,7 @@
 import type { KeyValue } from '@zukhruf/snapshot-differential';
 
-import type { Properties, RecordDraft } from '@workspace/elt';
-import type { TeamsMessage } from '@workspace/sdk-microsoft-teams';
+import type { Properties, RecordDraft } from '@eltjs/elt';
+import type { TeamsMessage } from '@eltjs/sdk-microsoft-teams';
 
 import type { TeamsScan } from '../teams-scan.ts';
 import { TeamsStream, teamsFields } from '../teams-stream.ts';

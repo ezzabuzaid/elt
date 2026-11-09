@@ -1,11 +1,11 @@
-# @workspace/sdk-apple-eventkit
+# @eltjs/sdk-apple-eventkit
 
 Reads Calendar and Reminders through EventKit, for the Calendar and Reminders sources of elt. A Swift helper, `eventkit`, does each read and each watch in its own process. `CalendarStore` and `RemindersStore` start the helper and read its output. The Calendar and Reminders sources are in `packages/sources/apple/calendar` and `packages/sources/apple/reminders`.
 
 ## Stores
 
 ```ts
-import { CalendarStore, RemindersStore } from '@workspace/sdk-apple-eventkit';
+import { CalendarStore, RemindersStore } from '@eltjs/sdk-apple-eventkit';
 
 const calendar = new CalendarStore(helper, { env: process.env });
 const reminders = new RemindersStore(helper, { env: process.env });

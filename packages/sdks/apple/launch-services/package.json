@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/sdk-apple-launch-services",
+  "name": "@eltjs/sdk-apple-launch-services",
   "version": "0.0.1",
   "private": true,
   "type": "module",

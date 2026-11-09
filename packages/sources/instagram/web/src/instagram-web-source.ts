@@ -12,12 +12,12 @@ import {
   type SourceMessage,
   type Stream,
   isTimestamp,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   BrowserSessionNotFoundError,
   SafeStorageUnavailableError,
-} from '@workspace/sdk-chromium-cookies';
-import { InstagramLoginError } from '@workspace/sdk-instagram-web';
+} from '@eltjs/sdk-chromium-cookies';
+import { InstagramLoginError } from '@eltjs/sdk-instagram-web';
 
 import { InstagramRun } from './instagram-run.ts';
 import type { DateRange, ReadContext } from './instagram-stream.ts';

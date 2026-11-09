@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/source-web-pages",
+  "name": "@eltjs/source-web-pages",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -31,9 +31,9 @@
   },
   "dependencies": {
     "@keyv/sqlite": "6.1.0",
-    "@workspace/elt": "0.0.1",
-    "@workspace/sdk-web-article": "0.0.1",
-    "@workspace/sdk-web-crawler": "0.0.1",
+    "@eltjs/elt": "*",
+    "@eltjs/sdk-web-article": "0.0.1",
+    "@eltjs/sdk-web-crawler": "0.0.1",
     "@zukhruf/async": "^0.8.10",
     "@zukhruf/snapshot-differential": "^0.8.10",
     "got": "16.1.0",
@@ -42,7 +42,7 @@
   },
   "devDependencies": {
     "@mswjs/interceptors": "^0.45.9",
-    "@workspace/elt-sqlite": "0.0.1",
+    "@eltjs/elt-sqlite": "*",
     "@zukhruf/sqlite-open": "^0.8.10",
     "@zukhruf/testing": "^0.8.10"
   }

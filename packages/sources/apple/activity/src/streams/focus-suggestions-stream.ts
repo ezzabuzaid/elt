@@ -1,8 +1,8 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 import {
   UserFocusInferredMode,
   type UserFocusInferredModeEvent,
-} from '@workspace/sdk-apple-biome';
+} from '@eltjs/sdk-apple-biome';
 
 import { activityFields, isoTime, plistText } from '../activity-values.ts';
 import {

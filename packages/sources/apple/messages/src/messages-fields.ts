@@ -1,13 +1,13 @@
-import { plistJSON } from '@workspace/codec-plist';
-import type { FieldSchema } from '@workspace/elt';
+import { plistJSON } from '@eltjs/codec-plist';
+import type { FieldSchema } from '@eltjs/elt';
 import {
   type ChatColumnKind,
   ChatData,
   type ChatTable,
   type ChatValue,
   type ChatValues,
-} from '@workspace/sdk-apple-messages';
-import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
+} from '@eltjs/sdk-apple-messages';
+import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 const { text, id, nullableText, boolean, nullableTimestamp } = eventKitFields;
 const nullableInteger = { type: ['integer', 'null'] } as const;

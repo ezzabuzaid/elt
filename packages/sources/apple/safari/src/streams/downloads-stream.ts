@@ -1,5 +1,5 @@
-import type { RecordDraft, SchemaRecord } from '@workspace/elt';
-import type { Download } from '@workspace/sdk-apple-safari';
+import type { RecordDraft, SchemaRecord } from '@eltjs/elt';
+import type { Download } from '@eltjs/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, iso, safariFields } from '../safari-stream.ts';

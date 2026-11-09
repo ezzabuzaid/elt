@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/sdk-web-crawler",
+  "name": "@eltjs/sdk-web-crawler",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@crawlee/utils": "3.18.2",
-    "@workspace/codec-sitemap": "0.0.1",
+    "@eltjs/codec-sitemap": "0.0.1",
     "@zukhruf/async": "^0.8.10",
     "fast-xml-parser": "^5.11.1",
     "fast-xml-validator": "^1.4.2",

@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 
-import type { PlistValue } from '@workspace/codec-plist';
+import type { PlistValue } from '@eltjs/codec-plist';
 
 import {
   type Dictionary,

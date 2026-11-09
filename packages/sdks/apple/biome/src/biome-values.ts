@@ -1,5 +1,5 @@
-import { referenceDate } from '@workspace/codec-apple-reference-date';
-import { type PlistValue, decodeArchive } from '@workspace/codec-plist';
+import { referenceDate } from '@eltjs/codec-apple-reference-date';
+import { type PlistValue, decodeArchive } from '@eltjs/codec-plist';
 
 const finite = (value: number | undefined): value is number =>
   value !== undefined && Number.isFinite(value);

@@ -2,7 +2,7 @@
 
 The `accounts` and `smtpServers` streams first read the settings through Mail's scripting with `osascript`. Scripting needs Automation access, and it can start Mail. The system Accounts store (`~/Library/Accounts/Accounts4.sqlite`) holds the same settings, and Full Disk Access opens it, as it opens the Mail store.
 
-Thus the two streams read the Accounts store through `@workspace/sdk-apple-accounts`. Mail names the folder of each account, and the host of its mailbox URLs, with the account identifier of the store. The source joins each mailbox host to its account. A host that the store does not know, such as On My Mac, keeps the values that its URL gives. `smtpServers` has the identifier of the SMTP account as its key, and `accounts.properties.sendingServerId` refers to it.
+Thus the two streams read the Accounts store through `@eltjs/sdk-apple-accounts`. Mail names the folder of each account, and the host of its mailbox URLs, with the account identifier of the store. The source joins each mailbox host to its account. A host that the store does not know, such as On My Mac, keeps the values that its URL gives. `smtpServers` has the identifier of the SMTP account as its key, and `accounts.properties.sendingServerId` refers to it.
 
 The rules that read the store belong to the store, not to Mail: the parent fallbacks, the identity addresses, the incoming and outgoing servers, and the TLS rule. The SDK answers them, so an Accounts source uses the same rules. The source keeps only what Mail knows: the join from mailbox host to account, the record for a host that the store does not know, the folder path, and the shape of its records.
 

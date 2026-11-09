@@ -1,8 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import {
-  AppMediaUsage,
-  type AppMediaUsageEvent,
-} from '@workspace/sdk-apple-biome';
+import type { RecordDraft } from '@eltjs/elt';
+import { AppMediaUsage, type AppMediaUsageEvent } from '@eltjs/sdk-apple-biome';
 
 import { activityFields, isoTime } from '../activity-values.ts';
 import {

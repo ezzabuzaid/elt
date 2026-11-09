@@ -1,4 +1,4 @@
-import type { PlistValue } from '@workspace/codec-plist';
+import type { PlistValue } from '@eltjs/codec-plist';
 
 // UNNotificationInterruptionLevel, whose raw values usernoted stores.
 export type InterruptionLevel =

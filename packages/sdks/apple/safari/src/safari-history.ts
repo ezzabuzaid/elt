@@ -1,6 +1,6 @@
 import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
-import { type PlistValue, parseBinaryPlist } from '@workspace/codec-plist';
+import { type PlistValue, parseBinaryPlist } from '@eltjs/codec-plist';
 
 import { appDatabase } from './app-database.ts';
 import {

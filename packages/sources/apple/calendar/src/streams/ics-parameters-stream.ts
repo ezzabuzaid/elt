@@ -1,4 +1,4 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 
 import type { CalendarScan, IcsPropertyNode } from '../calendar-scan.ts';
 import { CalendarStream, calendarFields } from '../calendar-stream.ts';

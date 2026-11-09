@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/sdk-apple-eventkit",
+  "name": "@eltjs/sdk-apple-eventkit",
   "version": "0.0.1",
   "private": true,
   "type": "module",

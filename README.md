@@ -66,10 +66,10 @@ A pipeline declares connections of copies; the smallest one copies Notes into SQ
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
-import { SQLiteDestination, SQLiteSyncHistory } from '@workspace/elt-sqlite';
-import { noteStorePath } from '@workspace/sdk-apple-notes';
-import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
+import { SQLiteDestination, SQLiteSyncHistory } from '@eltjs/elt-sqlite';
+import { noteStorePath } from '@eltjs/sdk-apple-notes';
+import { AppleNotesSource } from '@eltjs/source-apple-notes/apple-notes-source';
 
 await mkdir('./outputs', { recursive: true });
 
@@ -100,13 +100,13 @@ A copy like this replaces the `notes` table's contents with the current snapshot
 
 ### Connector registration
 
-Each Apple source is its own package under [`packages/sources/apple`](packages/sources/apple) (`@workspace/source-apple-<name>`), written as if published to npm. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) registers a connector for each source and loads it into its own SQLite import.
+Each Apple source is its own package under [`packages/sources/apple`](packages/sources/apple) (`@eltjs/source-apple-<name>`), written as if published to npm. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) registers a connector for each source and loads it into its own SQLite import.
 
 The [Google app](apps/google/src/main.ts) is one inline entry, like `apps/proactive`. It reads `sc-domain:ezz.sh` through one `SearchConsoleSource` and builds one `google-search-console` connection with a copy of every stream the source discovers. Each stream loads into `google_search_console.raw_<stream>`, and readers see it as the view `marts.search_console_<snake_stream>`. Each copy has the id `search-console:<stream>`. The app runs one pass and then stops. An error stops the app: Node prints the error and exits with status 1.
 
 ### Clock
 
-`AppleClockSource` (`@workspace/source-apple-clock/apple-clock-source`) reads saved alarms, timers and recent durations, world clocks, the current stopwatch and its laps, sounds and regional calendar records. Open Clock once to create its stores; it need not stay open. Unchanged records are skipped and removed objects disappear from the destination. Resetting the stopwatch removes its laps; there is no recovered session history. Removing a recent timer can leave its stored duration marked invalid. See [Clock's ten streams, access requirements and live checks](packages/sources/apple/clock/README.md).
+`AppleClockSource` (`@eltjs/source-apple-clock/apple-clock-source`) reads saved alarms, timers and recent durations, world clocks, the current stopwatch and its laps, sounds and regional calendar records. Open Clock once to create its stores; it need not stay open. Unchanged records are skipped and removed objects disappear from the destination. Resetting the stopwatch removes its laps; there is no recovered session history. Removing a recent timer can leave its stored duration marked invalid. See [Clock's ten streams, access requirements and live checks](packages/sources/apple/clock/README.md).
 
 ### Reminders
 
@@ -116,17 +116,17 @@ Reminders reads through EventKit, so Reminders.app need not be open. Grant the p
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
-import { SQLiteDestination, SQLiteSyncHistory } from '@workspace/elt-sqlite';
-import { RemindersStore } from '@workspace/sdk-apple-eventkit';
-import { AppleRemindersSource } from '@workspace/source-apple-reminders/apple-reminders-source';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
+import { SQLiteDestination, SQLiteSyncHistory } from '@eltjs/elt-sqlite';
+import { RemindersStore } from '@eltjs/sdk-apple-eventkit';
+import { AppleRemindersSource } from '@eltjs/source-apple-reminders/apple-reminders-source';
 
 await mkdir('./outputs', { recursive: true });
 
 const source = new AppleRemindersSource({
   store: new RemindersStore(
     fileURLToPath(
-      import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+      import.meta.resolve('@eltjs/sdk-apple-eventkit/eventkit-helper'),
     ),
     { env: process.env },
   ),
@@ -159,7 +159,7 @@ A full-refresh overwrite also removes deleted reminders; an incremental copy (`a
 To retain the latest version of each note across runs, keep the quick-start imports and its source, destination and history setup, then replace the pipeline declaration and execution with:
 
 ```ts
-import { SQLiteCheckpointStore } from '@workspace/elt-sqlite';
+import { SQLiteCheckpointStore } from '@eltjs/elt-sqlite';
 
 const checkpoints = new SQLiteCheckpointStore({
   path: './outputs/checkpoints.sqlite',
@@ -198,12 +198,9 @@ Keep the copy ID and both SQLite files between runs. The checkpoint store must u
 ```ts
 import { homedir } from 'node:os';
 
-import {
-  AccountsStore,
-  accountsStorePath,
-} from '@workspace/sdk-apple-accounts';
-import { mailDirectory } from '@workspace/sdk-apple-mail';
-import { AppleMailSource } from '@workspace/source-apple-mail/apple-mail-source';
+import { AccountsStore, accountsStorePath } from '@eltjs/sdk-apple-accounts';
+import { mailDirectory } from '@eltjs/sdk-apple-mail';
+import { AppleMailSource } from '@eltjs/source-apple-mail/apple-mail-source';
 
 const mail = new AppleMailSource({
   path: mailDirectory(homedir()),
@@ -235,13 +232,13 @@ Calendar and Reminders load incrementally the same way:
 ```ts
 import { fileURLToPath } from 'node:url';
 
-import { CalendarStore } from '@workspace/sdk-apple-eventkit';
-import { AppleCalendarSource } from '@workspace/source-apple-calendar/apple-calendar-source';
+import { CalendarStore } from '@eltjs/sdk-apple-eventkit';
+import { AppleCalendarSource } from '@eltjs/source-apple-calendar/apple-calendar-source';
 
 const calendar = new AppleCalendarSource({
   store: new CalendarStore(
     fileURLToPath(
-      import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+      import.meta.resolve('@eltjs/sdk-apple-eventkit/eventkit-helper'),
     ),
     { env: process.env },
   ),
@@ -256,7 +253,7 @@ new Copy(calendar.events, destination.table('events'), {
 });
 ```
 
-Each run writes only new and changed rows and deletes rows that disappeared, including occurrences that moved out of the window and removed attendees or alarms. A copy that reads attachment files needs `attachments`; `googleCalendarAttachments(requester)` from `@workspace/source-apple-calendar/google-calendar-attachments` downloads those stored in Google Drive and Gmail through a `google-auth` requester. The window can move between runs without resetting the checkpoint. Calendar still reads the whole window every run. See [snapshot streams](packages/elt/README.md#snapshot-streams).
+Each run writes only new and changed rows and deletes rows that disappeared, including occurrences that moved out of the window and removed attendees or alarms. A copy that reads attachment files needs `attachments`; `googleCalendarAttachments(requester)` from `@eltjs/source-apple-calendar/google-calendar-attachments` downloads those stored in Google Drive and Gmail through a `google-auth` requester. The window can move between runs without resetting the checkpoint. Calendar still reads the whole window every run. See [snapshot streams](packages/elt/README.md#snapshot-streams).
 
 See [checkpoint and replay semantics](packages/elt/README.md#incremental-copies-and-checkpoints).
 
@@ -286,8 +283,8 @@ Live verification confirmed that Calendar/Reminders writes through EventKit in a
 Using the `source` and `destination` from the quick start, store attachment metadata and parsed text in the database, and save original files in a directory you choose:
 
 ```ts
-import { LocalFiles } from '@workspace/elt';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
+import { LocalFiles } from '@eltjs/elt';
+import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
 
 const localFiles = new LocalFiles({ directory: './outputs/attachments' });
 
@@ -386,7 +383,7 @@ Manage permissions in **System Settings → Privacy & Security**. Calendar and R
 
 ### Website and feed crawling
 
-`@workspace/sdk-web-crawler` accepts website, sitemap and feed URLs:
+`@eltjs/sdk-web-crawler` accepts website, sitemap and feed URLs:
 
 ```ts
 import got from 'got';
@@ -398,7 +395,7 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 // One read: the record of each origin, which makes the read's crawlers.
 const origins = new Origins(got, null);
@@ -422,7 +419,7 @@ for await (const entry of crawl) {
 
 The crawler hands back pages without publisher-specific filters. It reads sitemaps, feeds and archives completely and follows links within limits; article extraction and destination loading are separate steps. `crawl.snapshot()`, given to the next `crawler.crawl(starts, memento, options)`, continues an interrupted crawl. See the [engine, readers and formats](packages/sdks/web/crawler/README.md).
 
-Pass a crawled page's response to `new WebArticle([new MarkdownExtraction(), new HTMLExtraction()], got).read(entry.response, signal)`, or a URL to `fetch(url, signal)`, from `@workspace/sdk-web-article` to read its content and extract sanitized HTML, readable text, metadata and its declared canonical URL. It prefers native Markdown and falls back to HTML, using Marked, Defuddle, Mozilla Readability, jsdom, DOMPurify and html-to-text. See the [article API, public tests and live quality findings](packages/sdks/web/article/README.md).
+Pass a crawled page's response to `new WebArticle([new MarkdownExtraction(), new HTMLExtraction()], got).read(entry.response, signal)`, or a URL to `fetch(url, signal)`, from `@eltjs/sdk-web-article` to read its content and extract sanitized HTML, readable text, metadata and its declared canonical URL. It prefers native Markdown and falls back to HTML, using Marked, Defuddle, Mozilla Readability, jsdom, DOMPurify and html-to-text. See the [article API, public tests and live quality findings](packages/sdks/web/article/README.md).
 
 ### Workspace
 
@@ -471,7 +468,7 @@ npx nx run-many -t typecheck
 npx nx run-many -t test
 ```
 
-`build` and `typecheck` are inferred by the `@nx/js/typescript` plugin. Each project's `tsconfig.json` is a solution file that references `tsconfig.lib.json` and, in a project with tests, `tsconfig.spec.json`. `build` compiles `tsconfig.lib.json`, which excludes `src/**/*.test.ts`, into `dist`. `typecheck` builds the solution, so `tsconfig.spec.json` type-checks the tests and emits only declarations into `dist/spec`. Both extend `tsconfig.base.json` and reference the workspace packages the project imports; Nx keeps those references current before it runs either target. Typecheck first runs the project's `format:check` target (Prettier, which reads the files and writes none) and its `lint` target (ESLint, inferred by `@nx/eslint/plugin` from the root `eslint.config.mjs`), so a check changes no file. `@zukhruf/nx/format` gives each project `format:check` and `format` (Prettier, which rewrites files and sorts imports); run `nx run-many -t format` yourself to format. `@zukhruf/nx/lint` adds the packages that `@zukhruf/eslint` loads to the cache inputs of `lint`, so an update of a lint package runs `lint` again. A pre-commit hook checks that the staged files are formatted, reading them as staged, and changes nothing, so a concurrent edit to the same checkout never reaches the commit; run `nx sync` yourself when a project's workspace dependencies change, since Nx refuses every task while the workspace is out of sync. `@zukhruf/nx/test` gives the `test` target to each project that has test files. Test targets build the project and its dependencies first, because package exports and native helpers resolve to `dist`. Then Node's test runner runs the `.test.ts` sources from the project folder directly with type stripping, so `tsconfig.base.json` sets `erasableSyntaxOnly`. The EventKit package compiles the Swift `eventkit` helper (`sdk-apple-eventkit:helper`), which needs the Xcode Command Line Tools. Database integration tests require Docker. Their projects carry the `test:docker` tag, so their Nx targets give Node's test runner the global setup of `@zukhruf/testing`, and `@zukhruf/testing` creates or reuses PostgreSQL 18 and full SQL Server 2022 test servers on available ports. Each test acquires an isolated database directly and disposes its clients before the database; SQL Server permission tests also create and dispose their read-only logins. Full SQL Server runs emulated on Apple silicon so the tests cover Change Tracking, hierarchyid and spatial types. The supervisor cleans up run-owned containers, volumes, port forwards and temporary directories when a test process is killed. Databases inside shared servers are dropped by normal test disposal; after a forced kill, they remain until the shared server is stopped. Shared test servers remain available for later runs; list them with `docker ps --filter label=dev.zukhruf.testing.shared=1` and stop the chosen container with `docker stop <container-id>` when finished. Apple tests require macOS and an environment that permits native filesystem notifications. Calendar and Reminders tests share one "context-compiler tests" calendar and one reminders list, in the first EventKit account that accepts one, made on first use and never deleted, because iCloud brings a deleted calendar back, empty, hours later. A test holds them alone, across processes, through an exclusive SQLite transaction on `~/Library/Caches/elt/eventkit-tests.sqlite`, empties the one it uses, reads its own events through the real helper, and empties it again. Where EventKit cannot produce a case (attendees, malformed documents, denied access, a missing ICS export), `StubEventKitHelper` (`@workspace/sdk-apple-eventkit/test`), a real executable, runs in place of the helper. One live test per store also reads this Mac's Calendar or Reminders read-only into a temporary SQLite database, skipped without access.
+`build` and `typecheck` are inferred by the `@nx/js/typescript` plugin. Each project's `tsconfig.json` is a solution file that references `tsconfig.lib.json` and, in a project with tests, `tsconfig.spec.json`. `build` compiles `tsconfig.lib.json`, which excludes `src/**/*.test.ts`, into `dist`. `typecheck` builds the solution, so `tsconfig.spec.json` type-checks the tests and emits only declarations into `dist/spec`. Both extend `tsconfig.base.json` and reference the workspace packages the project imports; Nx keeps those references current before it runs either target. Typecheck first runs the project's `format:check` target (Prettier, which reads the files and writes none) and its `lint` target (ESLint, inferred by `@nx/eslint/plugin` from the root `eslint.config.mjs`), so a check changes no file. `@zukhruf/nx/format` gives each project `format:check` and `format` (Prettier, which rewrites files and sorts imports); run `nx run-many -t format` yourself to format. `@zukhruf/nx/lint` adds the packages that `@zukhruf/eslint` loads to the cache inputs of `lint`, so an update of a lint package runs `lint` again. A pre-commit hook checks that the staged files are formatted, reading them as staged, and changes nothing, so a concurrent edit to the same checkout never reaches the commit; run `nx sync` yourself when a project's workspace dependencies change, since Nx refuses every task while the workspace is out of sync. `@zukhruf/nx/test` gives the `test` target to each project that has test files. Test targets build the project and its dependencies first, because package exports and native helpers resolve to `dist`. Then Node's test runner runs the `.test.ts` sources from the project folder directly with type stripping, so `tsconfig.base.json` sets `erasableSyntaxOnly`. The EventKit package compiles the Swift `eventkit` helper (`sdk-apple-eventkit:helper`), which needs the Xcode Command Line Tools. Database integration tests require Docker. Their projects carry the `test:docker` tag, so their Nx targets give Node's test runner the global setup of `@zukhruf/testing`, and `@zukhruf/testing` creates or reuses PostgreSQL 18 and full SQL Server 2022 test servers on available ports. Each test acquires an isolated database directly and disposes its clients before the database; SQL Server permission tests also create and dispose their read-only logins. Full SQL Server runs emulated on Apple silicon so the tests cover Change Tracking, hierarchyid and spatial types. The supervisor cleans up run-owned containers, volumes, port forwards and temporary directories when a test process is killed. Databases inside shared servers are dropped by normal test disposal; after a forced kill, they remain until the shared server is stopped. Shared test servers remain available for later runs; list them with `docker ps --filter label=dev.zukhruf.testing.shared=1` and stop the chosen container with `docker stop <container-id>` when finished. Apple tests require macOS and an environment that permits native filesystem notifications. Calendar and Reminders tests share one "context-compiler tests" calendar and one reminders list, in the first EventKit account that accepts one, made on first use and never deleted, because iCloud brings a deleted calendar back, empty, hours later. A test holds them alone, across processes, through an exclusive SQLite transaction on `~/Library/Caches/elt/eventkit-tests.sqlite`, empties the one it uses, reads its own events through the real helper, and empties it again. Where EventKit cannot produce a case (attendees, malformed documents, denied access, a missing ICS export), `StubEventKitHelper` (`@eltjs/sdk-apple-eventkit/test`), a real executable, runs in place of the helper. One live test per store also reads this Mac's Calendar or Reminders read-only into a temporary SQLite database, skipped without access.
 
 Put `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` in the workspace `.env` (gitignored), then run the Search Console example with `npx nx run google:start`. It loads `sc-domain:ezz.sh` into the warehouse (`npx nx run infra:up`) in one pass, checkpoints included, and writes no local files. Readers see each stream as a [reader view](packages/sources/google/search-console/README.md#reader-views) `marts.search_console_<snake_stream>`; an explicitly invoked consumer reads them directly through PostgreSQL as `agent_reader` (MCP is optional). Sync status and declared coverage are discoverable through `marts.catalog`; reading never starts a refresh. The first run opens a browser for Google consent; see [Search Console authorization](packages/sources/google/search-console/README.md#access) for the one-time OAuth client setup. `npx nx run google:test` runs the built app twice: once without the OAuth client, and once against the real API and the local warehouse. The second run needs the grant that an earlier `google:start` stored. It is a local test; CI does not run it.
 

@@ -6,7 +6,7 @@ import {
   type GoogleRequester,
   reasonsOf,
   statusOf,
-} from '@workspace/google-auth';
+} from '@eltjs/google-auth';
 
 const BASE = 'https://searchconsole.googleapis.com/';
 

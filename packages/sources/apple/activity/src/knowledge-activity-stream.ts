@@ -10,11 +10,11 @@ import {
   type SyncMode,
   diffSnapshot,
   validateRecords,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import type {
   KnowledgeEvent,
   KnowledgeStream,
-} from '@workspace/sdk-apple-knowledge';
+} from '@eltjs/sdk-apple-knowledge';
 
 import type { ActivityScan } from './activity-scan.ts';
 import { activityFields, isoTime, retainedSince } from './activity-values.ts';

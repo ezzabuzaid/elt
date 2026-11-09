@@ -4,12 +4,12 @@ import type {
   ExtractionCoverage,
   SourceMessage,
   Stream,
-} from '@workspace/elt';
-import { Catalog, Source } from '@workspace/elt';
-import type { AccountsStore } from '@workspace/sdk-apple-accounts';
-import { MailStore, StoreUnavailableError } from '@workspace/sdk-apple-mail';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
+} from '@eltjs/elt';
+import { Catalog, Source } from '@eltjs/elt';
+import type { AccountsStore } from '@eltjs/sdk-apple-accounts';
+import { MailStore, StoreUnavailableError } from '@eltjs/sdk-apple-mail';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
+import { localAppleStoreCoverage } from '@eltjs/source-apple-macos/local-apple-store-coverage';
 
 import type { AppleMailStream } from './apple-mail-stream.ts';
 import { MailScan } from './mail-scan.ts';

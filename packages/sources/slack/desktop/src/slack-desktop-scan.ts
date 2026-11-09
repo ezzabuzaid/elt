@@ -2,12 +2,12 @@ import type {
   SlackClient,
   SlackDownload,
   SlackMessage,
-} from '@workspace/sdk-slack-desktop';
+} from '@eltjs/sdk-slack-desktop';
 import {
   type ImportScope,
   selected,
   withinDates,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 // A sent time cut to the millisecond, the precision of an import's dates, so
 // it compares with them as text.

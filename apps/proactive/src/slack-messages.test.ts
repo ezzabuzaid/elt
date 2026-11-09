@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
-import { Eca } from '@workspace/eca';
+import { Eca } from '@eltjs/eca';
 
 import { ClayBdAgentMessages } from './clay-bd-agent-messages.ts';
 import { ClayDataHubMcpMessages } from './clay-data-hub-mcp-messages.ts';

@@ -1,11 +1,11 @@
 import type {
   Notification,
   NotificationCenterSnapshot,
-} from '@workspace/sdk-apple-notification-center';
+} from '@eltjs/sdk-apple-notification-center';
 import {
   type ImportScope,
   withinDates,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 // A delivery time cut to the millisecond, the precision of an import's dates,
 // so it compares with them as text: cutting keeps every notification on the

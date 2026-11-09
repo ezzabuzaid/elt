@@ -6,7 +6,7 @@ import { Gauge } from '@zukhruf/async';
 import type {
   AppDatabaseVersion,
   AppFilesVersion,
-} from '@workspace/sdk-macos-app-database';
+} from '@eltjs/sdk-macos-app-database';
 
 import { appDatabase } from './app-database.ts';
 import { type SafariLocation, storeFiles } from './safari-location.ts';

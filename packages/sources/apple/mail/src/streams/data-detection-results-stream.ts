@@ -1,4 +1,4 @@
-import { dataDetectionResultsTable } from '@workspace/sdk-apple-mail';
+import { dataDetectionResultsTable } from '@eltjs/sdk-apple-mail';
 
 import { undocumented } from '../mail-fields.ts';
 import { MailTableStream } from '../mail-table-stream.ts';

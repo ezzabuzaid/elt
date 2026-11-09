@@ -8,13 +8,13 @@ import {
   type SourceMessage,
   type Stream,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   ArcSidebar,
   type ArcSidebarContent,
   ArcSidebarUnavailableError,
-} from '@workspace/sdk-arc-desktop';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/sdk-arc-desktop';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { SidebarItemsStream } from './streams/sidebar-items-stream.ts';
 import { SpacesStream } from './streams/spaces-stream.ts';

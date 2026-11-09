@@ -6,14 +6,14 @@ import type {
   PipelineClock,
   SourceMessage,
   Stream,
-} from '@workspace/elt';
-import { Catalog, Source } from '@workspace/elt';
+} from '@eltjs/elt';
+import { Catalog, Source } from '@eltjs/elt';
 import {
   BiomeStore,
   type BiomeStream,
   StoreUnavailableError,
-} from '@workspace/sdk-apple-biome';
-import { KnowledgeStore } from '@workspace/sdk-apple-knowledge';
+} from '@eltjs/sdk-apple-biome';
+import { KnowledgeStore } from '@eltjs/sdk-apple-knowledge';
 
 import type { ActivityReader } from './activity-reader.ts';
 import { type ActivityLocation, ActivityScan } from './activity-scan.ts';

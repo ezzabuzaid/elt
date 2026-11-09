@@ -27,16 +27,16 @@ import {
   StreamStatus,
   readerCatalog,
   syncHistoryRelations,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { ImageFormat } from '@workspace/source-apple-macos/image-format';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
-import { VisionWorker } from '@workspace/source-apple-macos/vision';
+} from '@eltjs/elt-sqlite';
+import { ImageFormat } from '@eltjs/source-apple-macos/image-format';
+import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
+import { VisionWorker } from '@eltjs/source-apple-macos/vision';
 
 import { AppleMessagesSource } from './apple-messages-source.ts';
 
@@ -420,7 +420,7 @@ test('the document parser reads every attachment kind and throws only on unreada
     create: () =>
       new VisionWorker(
         fileURLToPath(
-          import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
+          import.meta.resolve('@eltjs/source-apple-macos/vision-worker'),
         ),
         globalThis,
       ),
@@ -635,7 +635,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
     create: () =>
       new VisionWorker(
         fileURLToPath(
-          import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
+          import.meta.resolve('@eltjs/source-apple-macos/vision-worker'),
         ),
         globalThis,
       ),
@@ -1293,8 +1293,8 @@ test('a Messages pass over a large chat.db holds one message at a time, so it lo
   // Bodies live outside the JavaScript heap, so the cap measures the rows
   // themselves; the pass itself needs about 20 MB.
   const pass = `
-    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { Connection, Copy, Pipeline } = await import('@eltjs/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@eltjs/elt-sqlite');
     const { AppleMessagesSource } = await import(process.env.SOURCE);
     const source = new AppleMessagesSource({ path: process.env.CHAT, home: process.env.OUT, scope: { startAt: process.env.SINCE } });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });

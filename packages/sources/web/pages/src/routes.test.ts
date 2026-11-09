@@ -20,13 +20,13 @@ import {
   Pipeline,
   PipelineError,
   StreamStatus,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
   View,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   AdaptiveRevisit,
   AlwaysRevisit,
@@ -38,7 +38,7 @@ import {
   PaginationReader,
   type RevisitPolicy,
   day,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 import { RecordExtractor } from './record-extractor.ts';
 import { WebSource } from './web-source.ts';

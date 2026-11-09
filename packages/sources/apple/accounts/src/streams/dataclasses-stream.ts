@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { Dataclass } from '@workspace/sdk-apple-accounts';
+import type { RecordDraft } from '@eltjs/elt';
+import type { Dataclass } from '@eltjs/sdk-apple-accounts';
 
 import type { AccountsScan } from '../accounts-scan.ts';
 import {

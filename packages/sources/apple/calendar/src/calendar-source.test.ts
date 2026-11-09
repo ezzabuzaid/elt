@@ -26,15 +26,15 @@ import {
   StreamStatus,
   readerCatalog,
   syncHistoryRelations,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
   type SQLiteTable,
-} from '@workspace/elt-sqlite';
-import { GaxiosError, type GoogleRequester } from '@workspace/google-auth';
+} from '@eltjs/elt-sqlite';
+import { GaxiosError, type GoogleRequester } from '@eltjs/google-auth';
 import {
   type AccountDocument,
   type AlarmDocument,
@@ -45,13 +45,13 @@ import {
   type OccurrenceDocument,
   type ParticipantDocument,
   type RecurrenceRuleDocument,
-} from '@workspace/sdk-apple-eventkit';
+} from '@eltjs/sdk-apple-eventkit';
 import {
   type HelperCalendarDocument,
   type HelperRead,
   type HelperRequest,
   StubEventKitHelper,
-} from '@workspace/sdk-apple-eventkit/test';
+} from '@eltjs/sdk-apple-eventkit/test';
 
 import {
   AppleCalendarSource,
@@ -71,10 +71,10 @@ const chunkTable = (table: string, column: string) =>
 
 const execFile = promisify(execFileCallback);
 
-// The helper @workspace/sdk-apple-eventkit compiles, which the live tests read
+// The helper @eltjs/sdk-apple-eventkit compiles, which the live tests read
 // this Mac's calendars through.
 const helper = fileURLToPath(
-  import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+  import.meta.resolve('@eltjs/sdk-apple-eventkit/eventkit-helper'),
 );
 
 const snake = (name: string) =>
@@ -2118,9 +2118,9 @@ test('a Calendar pass over a large ICS export holds one record of a stream at a 
   // the read at once. The process loads the built source from this package's
   // folder, where its dependencies resolve.
   const pass = `
-    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
-    const { CalendarStore } = await import('@workspace/sdk-apple-eventkit');
+    const { Connection, Copy, Pipeline } = await import('@eltjs/elt');
+    const { SQLiteDestination, SQLiteSyncHistory } = await import('@eltjs/elt-sqlite');
+    const { CalendarStore } = await import('@eltjs/sdk-apple-eventkit');
     const { AppleCalendarSource } = await import(process.env.SOURCE);
     const source = new AppleCalendarSource({
       store: new CalendarStore(process.env.HELPER, {

@@ -1,4 +1,4 @@
-import type { Account, AccountsSnapshot } from '@workspace/sdk-apple-accounts';
+import type { Account, AccountsSnapshot } from '@eltjs/sdk-apple-accounts';
 
 // One run's read of the Accounts store: every stream reads the same snapshot.
 // Accounts are read once and kept for the run, since three streams project

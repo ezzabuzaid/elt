@@ -1,6 +1,6 @@
 import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
-import { referenceDateInstant } from '@workspace/codec-apple-reference-date';
+import { referenceDateInstant } from '@eltjs/codec-apple-reference-date';
 
 import { appDatabase } from './app-database.ts';
 import { type Call, type Handle, callCategory, callKind } from './call.ts';

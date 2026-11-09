@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { BusinessHours } from '@workspace/sdk-whatsapp-desktop';
+import type { RecordDraft } from '@eltjs/elt';
+import type { BusinessHours } from '@eltjs/sdk-whatsapp-desktop';
 
 import { unique } from '../chat-storage-records.ts';
 import type { WhatsAppScan } from '../whatsapp-scan.ts';

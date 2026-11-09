@@ -12,12 +12,12 @@ import {
   CopyProgress,
   Pipeline,
   passChannels,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   AlwaysRevisit,
   ArchiveReader,
@@ -26,7 +26,7 @@ import {
   ListingReader,
   OnceRevisit,
   PaginationReader,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 import { ArticleExtractor } from './article-extractor.ts';
 import { WebSource } from './web-source.ts';

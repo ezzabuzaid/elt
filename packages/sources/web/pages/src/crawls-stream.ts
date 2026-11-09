@@ -1,10 +1,6 @@
 import { z } from 'zod';
 
-import {
-  type CopyConfiguration,
-  type SourceMessage,
-  Stream,
-} from '@workspace/elt';
+import { type CopyConfiguration, type SourceMessage, Stream } from '@eltjs/elt';
 
 import type { CrawlEnd } from './web-scan.ts';
 

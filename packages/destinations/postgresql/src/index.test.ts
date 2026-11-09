@@ -31,7 +31,7 @@ import {
   Stream,
   type StreamSchema,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import {
   PostgresCheckpointStore,

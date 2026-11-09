@@ -10,17 +10,17 @@ import {
   Source,
   type SourceMessage,
   type Stream,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   GoogleGrantRevokedError,
   messageOf,
   statusOf,
-} from '@workspace/google-auth';
+} from '@eltjs/google-auth';
 import {
   SearchConsoleApi,
   readSearchAnalytics,
   today,
-} from '@workspace/sdk-google-search-console';
+} from '@eltjs/sdk-google-search-console';
 
 import { addDays } from './calendar-dates.ts';
 import { DatedAnalyticsStream } from './dated-analytics-stream.ts';

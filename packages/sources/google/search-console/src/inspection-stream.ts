@@ -7,12 +7,12 @@ import {
   diffSnapshot,
   isTimestamp,
   validateRecords,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   type UrlInspection,
   inspectUrls,
   nextPacificMidnight,
-} from '@workspace/sdk-google-search-console';
+} from '@eltjs/sdk-google-search-console';
 
 import { type Discovery, planInspections } from './rolling-inspection.ts';
 import type { SearchConsoleScan } from './search-console-scan.ts';

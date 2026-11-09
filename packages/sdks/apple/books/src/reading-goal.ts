@@ -4,8 +4,8 @@ import {
   type PlistValue,
   isBinaryPlist,
   parseBinaryPlist,
-} from '@workspace/codec-plist';
-import { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
+} from '@eltjs/codec-plist';
+import { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
 
 import { booksStore } from './app-database.ts';
 import { dictionary, integer, plistTime } from './books-values.ts';

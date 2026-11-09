@@ -4,7 +4,7 @@ import {
   LocalTimestampFormat,
   type Stream,
   declaredFormat,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import { SQLiteColumn, type SQLiteColumnType } from './sqlite-column.ts';
 

@@ -1,8 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type {
-  TeamsMessage,
-  TeamsReaction,
-} from '@workspace/sdk-microsoft-teams';
+import type { RecordDraft } from '@eltjs/elt';
+import type { TeamsMessage, TeamsReaction } from '@eltjs/sdk-microsoft-teams';
 
 import { teamsFields } from '../teams-stream.ts';
 import {

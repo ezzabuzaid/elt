@@ -8,16 +8,16 @@ import {
   Source,
   type SourceMessage,
   type Stream,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import type {
   SqlServerDatabase,
   SqlServerSession,
   SqlServerTable,
-} from '@workspace/sdk-microsoft-sql-server';
+} from '@eltjs/sdk-microsoft-sql-server';
 import {
   SqlServerLoginError,
   SqlServerPermissionError,
-} from '@workspace/sdk-microsoft-sql-server';
+} from '@eltjs/sdk-microsoft-sql-server';
 
 import { ChangeTrackingStream } from './change-tracking-stream.ts';
 import { FullRefreshStream } from './full-refresh-stream.ts';

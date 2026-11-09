@@ -9,13 +9,13 @@ import { join } from 'node:path';
 
 import { open } from '@zukhruf/sqlite-open';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { ArcDesktopSource } from '@workspace/source-arc-desktop/arc-desktop-source';
+} from '@eltjs/elt-sqlite';
+import { ArcDesktopSource } from '@eltjs/source-arc-desktop/arc-desktop-source';
 
 const directory = await mkdtemp(join(tmpdir(), 'arc-'));
 const source = new ArcDesktopSource({ home: homedir() });

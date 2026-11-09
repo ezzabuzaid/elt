@@ -1,4 +1,4 @@
-# @workspace/source-instagram-web
+# @eltjs/source-instagram-web
 
 An ELT source for Instagram profiles. Instagram has no Mac app: Meta keeps its iPhone and iPad app off Apple silicon Macs (`isIOSBinaryMacOSCompatible: false`), and no browser keeps its posts on disk. Thus the source reads instagram.com through the web client's own API. It signs in with the session of the browser profile that signed in to Instagram last. A Context Compiler import loads every stream into its `data.sqlite`.
 
@@ -7,13 +7,13 @@ The words in this README have one meaning each. See the glossary in [CONTEXT.md]
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { InstagramWebSource } from '@workspace/source-instagram-web/instagram-web-source';
+} from '@eltjs/elt-sqlite';
+import { InstagramWebSource } from '@eltjs/source-instagram-web/instagram-web-source';
 
 // With no profileIds, the source reads every account that the browser's
 // Instagram account follows.
@@ -50,10 +50,10 @@ await new Pipeline({
 
 ## How the source signs in
 
-- `@workspace/sdk-chromium-cookies` finds the browser profile that signed in to Instagram last, among Dia, Google Chrome, Arc, Microsoft Edge and Brave.
+- `@eltjs/sdk-chromium-cookies` finds the browser profile that signed in to Instagram last, among Dia, Google Chrome, Arc, Microsoft Edge and Brave.
 - It opens the `Cookies` database of that profile read-only, through the locks of SQLite.
 - It decrypts the instagram.com cookies with the key from the browser's "Safe Storage" item in the login keychain, through `/usr/bin/security`. macOS asks one time. When you click Always Allow, later runs do not ask. But then each process that runs `security` can read that key. Always Allow applies to one browser.
-- `@workspace/sdk-instagram-web` reads the `fb_dtsg` and `lsd` tokens of the page. Then it sends the persisted GraphQL queries and the REST calls that the web client sends, with its headers.
+- `@eltjs/sdk-instagram-web` reads the `fb_dtsg` and `lsd` tokens of the page. Then it sends the persisted GraphQL queries and the REST calls that the web client sends, with its headers.
 
 ## Streams
 

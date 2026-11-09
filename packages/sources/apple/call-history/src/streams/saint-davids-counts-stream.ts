@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { SaintDavidsCount } from '@workspace/sdk-apple-call-history';
+import type { RecordDraft } from '@eltjs/elt';
+import type { SaintDavidsCount } from '@eltjs/sdk-apple-call-history';
 
 import {
   AppleCallHistoryStream,

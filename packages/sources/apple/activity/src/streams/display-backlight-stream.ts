@@ -1,9 +1,9 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 import {
   DisplayIsBacklit,
   type DisplayIsBacklitEvent,
   type KnowledgeEvent,
-} from '@workspace/sdk-apple-knowledge';
+} from '@eltjs/sdk-apple-knowledge';
 
 import { activityFields } from '../activity-values.ts';
 import {

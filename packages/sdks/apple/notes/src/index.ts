@@ -1,4 +1,4 @@
-export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
+export { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
 export {
   type NoteAttachmentReference,
   NoteDocument,

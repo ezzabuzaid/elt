@@ -21,18 +21,18 @@ import {
   Pipeline,
   PipelineError,
   type Target,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   PassBundleError,
   StoreUnavailableError,
   walletStorePath,
-} from '@workspace/sdk-apple-wallet';
+} from '@eltjs/sdk-apple-wallet';
 
 import { AppleWalletSource } from './apple-wallet-source.ts';
 

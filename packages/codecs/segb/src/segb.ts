@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { open, readFile } from 'node:fs/promises';
 import { crc32 } from 'node:zlib';
 
-import { referenceDateSeconds } from '@workspace/codec-apple-reference-date';
+import { referenceDateSeconds } from '@eltjs/codec-apple-reference-date';
 
 // SEGB v2, the segment files Biome appends protobuf records to: a 32-byte
 // header whose int32 at byte 4 counts the slots, the records from byte 32, and

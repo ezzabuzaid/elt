@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { openDestination } from '@workspace/elt-sqlite';
+import { openDestination } from '@eltjs/elt-sqlite';
 
 import directory from './directory.ts';
 

@@ -1,18 +1,18 @@
-# @workspace/source-apple-safari
+# @eltjs/source-apple-safari
 
-An ELT source for Safari. It reads the local stores of Safari in `~/Library/Safari` and in the Safari container (history, tabs, iCloud Tabs, bookmarks, the Reading List, recently closed tabs and downloads) in read-only mode through `@workspace/sdk-apple-safari`. It does not use the network, and Safari does not have to be open.
+An ELT source for Safari. It reads the local stores of Safari in `~/Library/Safari` and in the Safari container (history, tabs, iCloud Tabs, bookmarks, the Reading List, recently closed tabs and downloads) in read-only mode through `@eltjs/sdk-apple-safari`. It does not use the network, and Safari does not have to be open.
 
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { safariContainer, safariDirectory } from '@workspace/sdk-apple-safari';
-import { AppleSafariSource } from '@workspace/source-apple-safari/apple-safari-source';
+} from '@eltjs/elt-sqlite';
+import { safariContainer, safariDirectory } from '@eltjs/sdk-apple-safari';
+import { AppleSafariSource } from '@eltjs/source-apple-safari/apple-safari-source';
 
 const home = homedir();
 const source = new AppleSafariSource({
@@ -108,7 +108,7 @@ The source does not read:
 
 ## Scope
 
-The constructor requires `directory` (`~/Library/Safari`) and `container` (the Safari container). `safariDirectory(home)` and `safariContainer(home)` from `@workspace/sdk-apple-safari` give them in the home folder `home`. `new AppleSafariSource({ directory, container, scope })` narrows the import. `collectionIds` names profiles. It selects history, profiles, windows, tab groups, tabs, recently closed windows and tabs, and downloads. Folders of no profile, such as the pinned-tab folders, load under the scope of any profile. `startAt` (inclusive) and `endAt` (exclusive) select history visits, and the history items, tag links and tags that these visits reach. Tombstones and all other streams load whole. Bookmarks, the Reading List and iCloud Tabs belong to no profile and load whole. The Context Compiler plugin leaves them out of a scoped import. If you omit a key, the source reads all.
+The constructor requires `directory` (`~/Library/Safari`) and `container` (the Safari container). `safariDirectory(home)` and `safariContainer(home)` from `@eltjs/sdk-apple-safari` give them in the home folder `home`. `new AppleSafariSource({ directory, container, scope })` narrows the import. `collectionIds` names profiles. It selects history, profiles, windows, tab groups, tabs, recently closed windows and tabs, and downloads. Folders of no profile, such as the pinned-tab folders, load under the scope of any profile. `startAt` (inclusive) and `endAt` (exclusive) select history visits, and the history items, tag links and tags that these visits reach. Tombstones and all other streams load whole. Bookmarks, the Reading List and iCloud Tabs belong to no profile and load whole. The Context Compiler plugin leaves them out of a scoped import. If you omit a key, the source reads all.
 
 ## Changes and deletions
 

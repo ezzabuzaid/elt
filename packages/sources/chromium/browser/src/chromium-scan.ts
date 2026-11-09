@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import {
   type ChromiumBookmark,
   ChromiumBookmarks,
-} from '@workspace/sdk-chromium-bookmarks';
-import type { ChromiumBrowser } from '@workspace/sdk-chromium-browser';
+} from '@eltjs/sdk-chromium-bookmarks';
+import type { ChromiumBrowser } from '@eltjs/sdk-chromium-browser';
 import {
   type ChromiumHistory,
   type HistoryDownload,
@@ -12,12 +12,12 @@ import {
   type HistoryUrl,
   type HistoryVisit,
   openChromiumHistory,
-} from '@workspace/sdk-chromium-history';
+} from '@eltjs/sdk-chromium-history';
 import {
   type ImportScope,
   selected,
   withinDates,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 // The files of a profile that the streams read: History, Bookmarks, and the
 // browser's Local State, which names the profiles.

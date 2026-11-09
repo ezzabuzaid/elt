@@ -1,5 +1,5 @@
-import type { SchemaRecord } from '@workspace/elt';
-import type { MailFile } from '@workspace/sdk-apple-mail';
+import type { SchemaRecord } from '@eltjs/elt';
+import type { MailFile } from '@eltjs/sdk-apple-mail';
 
 import { type MailEntry, mailSchema } from '../apple-mail-stream.ts';
 import {

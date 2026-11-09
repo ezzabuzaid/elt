@@ -2,7 +2,7 @@
 
 The source must find the pages of each input in sitemaps, feeds, archives and links. To find them, a crawl needs a frontier. When two classes each keep a frontier, one job has two queues, two visited sets and two download loops.
 
-Thus the source keeps no frontier. It gives each input to `WebCrawler` from `@workspace/sdk-web-crawler`, with the readers and the `include` patterns of the web stream. The crawler downloads each URL one time and hands back the pages. The source reads the pages in the order that the crawl hands them back, one page at a time. Got owns timeouts, the retries of network errors and the HTTP cache. The crawler's record of each origin spaces the requests to it ([ADR 0014](./0014-the-crawls-of-a-read-share-the-record-of-each-origin.md)).
+Thus the source keeps no frontier. It gives each input to `WebCrawler` from `@eltjs/sdk-web-crawler`, with the readers and the `include` patterns of the web stream. The crawler downloads each URL one time and hands back the pages. The source reads the pages in the order that the crawl hands them back, one page at a time. Got owns timeouts, the retries of network errors and the HTTP cache. The crawler's record of each origin spaces the requests to it ([ADR 0014](./0014-the-crawls-of-a-read-share-the-record-of-each-origin.md)).
 
 ## Considered Options
 

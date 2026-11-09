@@ -5,7 +5,7 @@ A user wants the history, the downloads, the searches and the bookmarks of a Chr
 ## Language
 
 **Browser**:
-One Chromium browser on this Mac, as a `ChromiumBrowser` of `@workspace/sdk-chromium-browser` describes it: its data folder in `~/Library/Application Support`, and whether it removes old history. The source reads one browser.
+One Chromium browser on this Mac, as a `ChromiumBrowser` of `@eltjs/sdk-chromium-browser` describes it: its data folder in `~/Library/Application Support`, and whether it removes old history. The source reads one browser.
 _Avoid_: App, Chromium (Chromium is the code that the browsers share)
 
 **Data folder**:

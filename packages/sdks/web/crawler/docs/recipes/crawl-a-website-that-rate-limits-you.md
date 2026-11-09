@@ -27,7 +27,7 @@ import {
   AdaptiveRevisit,
   ListingReader,
   Origins,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 // A blog whose post 2 answers 429 one time.
 let refusals = 0;

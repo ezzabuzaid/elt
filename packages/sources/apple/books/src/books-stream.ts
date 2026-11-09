@@ -5,8 +5,8 @@ import {
   Stream,
   type SyncMode,
   validateRecords,
-} from '@workspace/elt';
-import type { BooksStore } from '@workspace/sdk-apple-books';
+} from '@eltjs/elt';
+import type { BooksStore } from '@eltjs/sdk-apple-books';
 
 import type { BooksScan } from './books-scan.ts';
 

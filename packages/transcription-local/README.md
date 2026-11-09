@@ -1,4 +1,4 @@
-# @workspace/transcription-local
+# @eltjs/transcription-local
 
 A local transcription model for the AI SDK. `LocalTranscriptionModel` implements `TranscriptionModelV4` over a native worker that runs [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp). The worker loads a GGUF model and runs it on Metal. Give the model to `AudioFormat` of [source-apple-macos](../sources/apple/macos/README.md#parsing), or call it directly.
 
@@ -8,8 +8,8 @@ import { readFile } from 'node:fs/promises';
 import { Fixed, NoEviction, Parallel, Pool } from '@zukhruf/pool';
 import { transcribe } from 'ai';
 
-import { LocalTranscriptionModel } from '@workspace/transcription-local';
-import { TranscriptionWorker } from '@workspace/transcription-local/transcription-worker';
+import { LocalTranscriptionModel } from '@eltjs/transcription-local';
+import { TranscriptionWorker } from '@eltjs/transcription-local/transcription-worker';
 
 const configuration = {
   name: 'cohere-transcribe-arabic-07-2026',

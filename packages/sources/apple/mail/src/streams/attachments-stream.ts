@@ -3,13 +3,13 @@ import { join } from 'node:path';
 
 import type { SnapshotGroup } from '@zukhruf/snapshot-differential';
 
-import { type RecordDraft, fileExtension } from '@workspace/elt';
+import { type RecordDraft, fileExtension } from '@eltjs/elt';
 import {
   type IndexedAttachment,
   type MailFile,
   type MimePart,
   readMailMime,
-} from '@workspace/sdk-apple-mail';
+} from '@eltjs/sdk-apple-mail';
 
 import { type MailEntry, mailSchema } from '../apple-mail-stream.ts';
 import {

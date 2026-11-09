@@ -28,7 +28,7 @@ import {
   AdaptiveRevisit,
   Origins,
   PaginationReader,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 // A list of startup programs, as a GitHub list, that links its own license and
 // one company's program page on another website.

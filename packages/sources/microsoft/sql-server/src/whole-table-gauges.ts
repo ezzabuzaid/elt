@@ -4,7 +4,7 @@ import {
   SqlServerPermissionError,
   type SqlServerSession,
   type SqlServerTable,
-} from '@workspace/sdk-microsoft-sql-server';
+} from '@eltjs/sdk-microsoft-sql-server';
 
 import type { WatchGauges } from './watch-gauges.ts';
 

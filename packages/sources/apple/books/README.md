@@ -1,21 +1,21 @@
-# @workspace/source-apple-books
+# @eltjs/source-apple-books
 
-An ELT source for Apple Books: the library, collections, highlights and notes, reading state that iCloud syncs, reading history and goal, store purchases and reviews, themes, and the book files that are on this Mac. It reads the stores that Books and its sync daemon `bookdatastored` keep in Books' container and group container, through the SDK `@workspace/sdk-apple-books`. It does not use the network, and Books does not have to be open.
+An ELT source for Apple Books: the library, collections, highlights and notes, reading state that iCloud syncs, reading history and goal, store purchases and reviews, themes, and the book files that are on this Mac. It reads the stores that Books and its sync daemon `bookdatastored` keep in Books' container and group container, through the SDK `@eltjs/sdk-apple-books`. It does not use the network, and Books does not have to be open.
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../../elt/CONTEXT.md) for the words of all of elt.
 
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, LocalFiles, Pipeline } from '@workspace/elt';
+import { Connection, Copy, LocalFiles, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { booksLocation } from '@workspace/sdk-apple-books';
-import { AppleBooksSource } from '@workspace/source-apple-books/apple-books-source';
+} from '@eltjs/elt-sqlite';
+import { booksLocation } from '@eltjs/sdk-apple-books';
+import { AppleBooksSource } from '@eltjs/source-apple-books/apple-books-source';
 
 // Books' container and its group container in this user's home folder.
 const source = new AppleBooksSource(booksLocation(homedir()));
@@ -59,7 +59,7 @@ await new Pipeline({
 }).run();
 ```
 
-`bookFiles` supports file transfer. The example gives its copy the column `attachmentRef` from `source.bookFiles.file`, so a book whose bytes are on this Mac is stored in `./outputs/books-files`. The constructor requires the two folders: `new AppleBooksSource({ container, groupContainer })`. `booksLocation(home)` from `@workspace/sdk-apple-books` gives the two folders in the home folder `home`. To read copies of the stores, give other folders.
+`bookFiles` supports file transfer. The example gives its copy the column `attachmentRef` from `source.bookFiles.file`, so a book whose bytes are on this Mac is stored in `./outputs/books-files`. The constructor requires the two folders: `new AppleBooksSource({ container, groupContainer })`. `booksLocation(home)` from `@eltjs/sdk-apple-books` gives the two folders in the home folder `home`. To read copies of the stores, give other folders.
 
 A Context Compiler import loads every stream incrementally into its `data.sqlite`. Readers use its `<snake_stream>` views. The import keeps each local book in its `files` folder, and `attachmentRef` refers to it.
 

@@ -36,25 +36,22 @@ import {
   type StateMessage,
   type Stream,
   StreamStatus,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import {
-  AccountsStore,
-  accountsStorePath,
-} from '@workspace/sdk-apple-accounts';
+} from '@eltjs/elt-sqlite';
+import { AccountsStore, accountsStorePath } from '@eltjs/sdk-apple-accounts';
 import {
   StoreUnavailableError,
   mailDirectory,
   mailVersionDirectory,
-} from '@workspace/sdk-apple-mail';
-import { ImageFormat } from '@workspace/source-apple-macos/image-format';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
-import { VisionWorker } from '@workspace/source-apple-macos/vision';
+} from '@eltjs/sdk-apple-mail';
+import { ImageFormat } from '@eltjs/source-apple-macos/image-format';
+import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
+import { VisionWorker } from '@eltjs/source-apple-macos/vision';
 
 import { AppleMailSource } from './apple-mail-source.ts';
 
@@ -2405,7 +2402,7 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
     create: () =>
       new VisionWorker(
         fileURLToPath(
-          import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
+          import.meta.resolve('@eltjs/source-apple-macos/vision-worker'),
         ),
         globalThis,
       ),

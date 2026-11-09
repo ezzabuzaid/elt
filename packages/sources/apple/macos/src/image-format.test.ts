@@ -34,7 +34,7 @@ function ocr() {
     create: () =>
       new VisionWorker(
         fileURLToPath(
-          import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
+          import.meta.resolve('@eltjs/source-apple-macos/vision-worker'),
         ),
         globalThis,
       ),

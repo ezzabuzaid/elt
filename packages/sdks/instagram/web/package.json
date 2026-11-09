@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/sdk-instagram-web",
+  "name": "@eltjs/sdk-instagram-web",
   "version": "0.0.1",
   "private": true,
   "type": "module",

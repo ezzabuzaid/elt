@@ -1,5 +1,5 @@
-import type { Stream } from '@workspace/elt';
-import { Target } from '@workspace/elt';
+import type { Stream } from '@eltjs/elt';
+import { Target } from '@eltjs/elt';
 
 import { SQLiteColumn, canonical } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';

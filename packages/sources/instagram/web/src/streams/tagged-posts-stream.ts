@@ -1,4 +1,4 @@
-import type { ListMedia } from '@workspace/sdk-instagram-web';
+import type { ListMedia } from '@eltjs/sdk-instagram-web';
 
 import type { InstagramRun, LaneReader } from '../instagram-run.ts';
 import {

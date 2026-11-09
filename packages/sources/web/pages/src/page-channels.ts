@@ -1,10 +1,10 @@
 import { channel } from 'node:diagnostics_channel';
 
-import type { Crawl } from '@workspace/sdk-web-crawler';
+import type { Crawl } from '@eltjs/sdk-web-crawler';
 
 // What the web source publishes of each page it reads, on a
 // node:diagnostics_channel channel, as the crawler publishes its requests
-// (crawlChannels of @workspace/sdk-web-crawler). A subscriber gets each
+// (crawlChannels of @eltjs/sdk-web-crawler). A subscriber gets each
 // message as unknown and tells it by its class; crawl is the crawl that
 // handed the page out, as on the crawler's messages.
 export const pageChannels = { extract: channel('elt:web.extract') };

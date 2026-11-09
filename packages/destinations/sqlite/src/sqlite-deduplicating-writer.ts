@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 
-import type {
-  CopyConfiguration,
-  Deduplication,
-  KeyValue,
-} from '@workspace/elt';
+import type { CopyConfiguration, Deduplication, KeyValue } from '@eltjs/elt';
 
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';

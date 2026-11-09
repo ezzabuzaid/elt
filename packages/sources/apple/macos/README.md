@@ -1,4 +1,4 @@
-# @workspace/source-apple-macos
+# @eltjs/source-apple-macos
 
 The shared macOS kit of the Apple sources. It is not the source of one app. It gives the document parser that turns stored files into text, the native Vision worker for text recognition in images, the import scope type, and other parts that several Apple sources use. Sources use the scope and schema parts. Hosts build the parser and the worker pools.
 
@@ -8,9 +8,9 @@ import { fileURLToPath } from 'node:url';
 
 import { HillClimbing, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
 
-import { ImageFormat } from '@workspace/source-apple-macos/image-format';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
-import { VisionWorker } from '@workspace/source-apple-macos/vision';
+import { ImageFormat } from '@eltjs/source-apple-macos/image-format';
+import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
+import { VisionWorker } from '@eltjs/source-apple-macos/vision';
 
 await using ocr = new Pool({
   size: new HillClimbing({
@@ -26,7 +26,7 @@ await using ocr = new Pool({
   create: () =>
     new VisionWorker(
       fileURLToPath(
-        import.meta.resolve('@workspace/source-apple-macos/vision-worker'),
+        import.meta.resolve('@eltjs/source-apple-macos/vision-worker'),
       ),
       globalThis,
     ),
@@ -89,12 +89,12 @@ import {
   Pool,
 } from '@zukhruf/pool';
 
-import { AudioFormat } from '@workspace/source-apple-macos/audio-format';
-import { ImageFormat } from '@workspace/source-apple-macos/image-format';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
-import { VisionWorker } from '@workspace/source-apple-macos/vision';
-import { LocalTranscriptionModel } from '@workspace/transcription-local';
-import { TranscriptionWorker } from '@workspace/transcription-local/transcription-worker';
+import { AudioFormat } from '@eltjs/source-apple-macos/audio-format';
+import { ImageFormat } from '@eltjs/source-apple-macos/image-format';
+import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
+import { VisionWorker } from '@eltjs/source-apple-macos/vision';
+import { LocalTranscriptionModel } from '@eltjs/transcription-local';
+import { TranscriptionWorker } from '@eltjs/transcription-local/transcription-worker';
 
 const configuration = {
   name: 'cohere-transcribe-arabic-07-2026',
@@ -131,7 +131,7 @@ const parser = new MacOSDocumentParser([
 const text = await parser.parse('/path/to/voice-message.opus');
 ```
 
-`@workspace/transcription-local` is the local transcription model, which also works directly with `transcribe({ model, audio })` of the AI SDK. See its [README](../../../transcription-local/README.md).
+`@eltjs/transcription-local` is the local transcription model, which also works directly with `transcribe({ model, audio })` of the AI SDK. See its [README](../../../transcription-local/README.md).
 
 ## Worker pools
 

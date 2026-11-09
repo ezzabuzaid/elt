@@ -1,6 +1,6 @@
 import { transaction } from '@zukhruf/sqlite-transaction';
 
-import { readerCatalog } from '@workspace/elt';
+import { readerCatalog } from '@eltjs/elt';
 
 import { openDestination } from './open-destination.ts';
 import { createDescriptions, descriptions } from './sqlite-descriptions.ts';

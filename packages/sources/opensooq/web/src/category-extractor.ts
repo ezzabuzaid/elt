@@ -5,7 +5,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import {
   type ExtractorRun,
   RecordExtractor,
-} from '@workspace/source-web-pages/record-extractor';
+} from '@eltjs/source-web-pages/record-extractor';
 
 const pathSegments = (url: string) =>
   new URL(url).pathname.split('/').filter(Boolean);

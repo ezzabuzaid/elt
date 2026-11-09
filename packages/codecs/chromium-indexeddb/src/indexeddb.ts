@@ -1,5 +1,5 @@
-import { LevelDBFormatError, readLevelDB } from '@workspace/codec-leveldb';
-import { V8FormatError } from '@workspace/codec-v8-serialization';
+import { LevelDBFormatError, readLevelDB } from '@eltjs/codec-leveldb';
+import { V8FormatError } from '@eltjs/codec-v8-serialization';
 
 import { ByteReader } from './byte-reader.ts';
 import { IndexedDBFormatError } from './errors.ts';

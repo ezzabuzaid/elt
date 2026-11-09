@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/sdk-google-health",
+  "name": "@eltjs/sdk-google-health",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     }
   },
   "dependencies": {
-    "@workspace/google-auth": "0.0.1",
+    "@eltjs/google-auth": "0.0.1",
     "@zukhruf/async": "^0.8.10",
     "zod": "4.6.5"
   },

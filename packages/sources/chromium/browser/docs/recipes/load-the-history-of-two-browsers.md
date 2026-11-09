@@ -19,14 +19,14 @@ import { join } from 'node:path';
 
 import { open } from '@zukhruf/sqlite-open';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { chrome, dia } from '@workspace/sdk-chromium-browser';
-import { ChromiumSource } from '@workspace/source-chromium-browser/chromium-source';
+} from '@eltjs/elt-sqlite';
+import { chrome, dia } from '@eltjs/sdk-chromium-browser';
+import { ChromiumSource } from '@eltjs/source-chromium-browser/chromium-source';
 
 const directory = await mkdtemp(join(tmpdir(), 'chromium-'));
 const path = join(directory, 'browsers.sqlite');
@@ -83,7 +83,7 @@ await rm(directory, { recursive: true });
 
 ## The output
 
-Run it with `node load-the-history-of-two-browsers.ts` from a folder where the `@workspace` packages resolve. On 2026-11-02, on macOS 27, with Dia running and Chrome closed, the output was:
+Run it with `node load-the-history-of-two-browsers.ts` from a folder where the `@eltjs` packages resolve. On 2026-11-02, on macOS 27, with Dia running and Chrome closed, the output was:
 
 ```text
 first pass:

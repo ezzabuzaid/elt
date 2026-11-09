@@ -1,4 +1,4 @@
-import { AppDatabase, Store } from '@workspace/sdk-macos-app-database';
+import { AppDatabase, Store } from '@eltjs/sdk-macos-app-database';
 
 export const biomeStore = new Store(
   "Biome's store",

@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { HistoryTag } from '@workspace/sdk-apple-safari';
+import type { RecordDraft } from '@eltjs/elt';
+import type { HistoryTag } from '@eltjs/sdk-apple-safari';
 
 import type { Profiled, SafariScan } from '../safari-scan.ts';
 import { SafariStream, iso, safariFields } from '../safari-stream.ts';

@@ -1,6 +1,6 @@
 import type { AfterResponseHook, Got, Response } from 'got';
 
-import type { Properties } from '@workspace/elt';
+import type { Properties } from '@eltjs/elt';
 
 /** One crawl's extraction, opened with the crawl's HTTP client. */
 export type ExtractorRun = {

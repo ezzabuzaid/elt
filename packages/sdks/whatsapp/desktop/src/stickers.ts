@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
-import { decodeArchive } from '@workspace/codec-plist';
+import { decodeArchive } from '@eltjs/codec-plist';
 
 import { appDatabase } from './app-database.ts';
 import { WhatsAppSchemaError } from './errors.ts';

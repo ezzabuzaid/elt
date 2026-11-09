@@ -21,18 +21,18 @@ import {
   type PipelineClock,
   PipelineError,
   passChannels,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-} from '@workspace/elt-postgresql';
+} from '@eltjs/elt-postgresql';
 import {
   SqlServerDatabase,
   SqlServerLoginError,
   SqlServerPermissionError,
   SqlServerUnavailableError,
-} from '@workspace/sdk-microsoft-sql-server';
+} from '@eltjs/sdk-microsoft-sql-server';
 
 import { sqlServerCopies } from './sql-server-copies.ts';
 import { SqlServerSource } from './sql-server-source.ts';

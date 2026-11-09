@@ -2,11 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-  type RecordDraft,
-  type SchemaRecord,
-  fileExtension,
-} from '@workspace/elt';
+import { type RecordDraft, type SchemaRecord, fileExtension } from '@eltjs/elt';
 
 import type { CalendarScan, IcsPropertyNode } from '../calendar-scan.ts';
 import { CalendarStream, calendarFields } from '../calendar-stream.ts';

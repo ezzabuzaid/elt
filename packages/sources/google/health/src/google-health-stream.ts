@@ -3,7 +3,7 @@ import {
   type RecordMessage,
   Stream,
   validateRecords,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import type { GoogleHealthScan } from './google-health-scan.ts';
 

@@ -1,6 +1,6 @@
 import type postgres from 'postgres';
 
-import type { Condition, Match } from '@workspace/eca';
+import type { Condition, Match } from '@eltjs/eca';
 
 // When something starts to be true in the warehouse, do something about it.
 // evaluate is the eca condition: what is true now. act does the work for one

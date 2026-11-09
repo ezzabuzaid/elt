@@ -1,6 +1,6 @@
-import { plistJSON } from '@workspace/codec-plist';
-import type { RecordDraft } from '@workspace/elt';
-import type { Authorization } from '@workspace/sdk-apple-accounts';
+import { plistJSON } from '@eltjs/codec-plist';
+import type { RecordDraft } from '@eltjs/elt';
+import type { Authorization } from '@eltjs/sdk-apple-accounts';
 
 import type { AccountsScan } from '../accounts-scan.ts';
 import {

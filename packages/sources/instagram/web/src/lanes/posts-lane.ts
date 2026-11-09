@@ -3,7 +3,7 @@ import type {
   Page,
   Profile,
   TimelineMedia,
-} from '@workspace/sdk-instagram-web';
+} from '@eltjs/sdk-instagram-web';
 
 import { Lane } from '../lane.ts';
 

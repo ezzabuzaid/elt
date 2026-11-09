@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/source-apple-safari",
+  "name": "@eltjs/source-apple-safari",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,15 +10,15 @@
     }
   },
   "dependencies": {
-    "@workspace/elt": "0.0.1",
-    "@workspace/sdk-apple-safari": "0.0.1",
-    "@workspace/source-apple-macos": "0.0.1",
+    "@eltjs/elt": "*",
+    "@eltjs/sdk-apple-safari": "0.0.1",
+    "@eltjs/source-apple-macos": "0.0.1",
     "@zukhruf/snapshot-differential": "^0.8.10"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
-    "@workspace/codec-apple-reference-date": "0.0.1",
-    "@workspace/elt-sqlite": "0.0.1",
+    "@eltjs/codec-apple-reference-date": "0.0.1",
+    "@eltjs/elt-sqlite": "*",
     "@zukhruf/sqlite-open": "^0.8.10",
     "@zukhruf/testing": "^0.8.10"
   }

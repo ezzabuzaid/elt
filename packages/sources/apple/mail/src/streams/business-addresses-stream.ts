@@ -1,4 +1,4 @@
-import { businessAddressesTable } from '@workspace/sdk-apple-mail';
+import { businessAddressesTable } from '@eltjs/sdk-apple-mail';
 
 import type { MailSelection } from '../mail-selection.ts';
 import { MailTableStream } from '../mail-table-stream.ts';

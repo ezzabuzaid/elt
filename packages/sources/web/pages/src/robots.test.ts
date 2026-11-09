@@ -6,13 +6,13 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { AlwaysRevisit, ListingReader } from '@workspace/sdk-web-crawler';
+} from '@eltjs/elt-sqlite';
+import { AlwaysRevisit, ListingReader } from '@eltjs/sdk-web-crawler';
 
 import { ArticleExtractor } from './article-extractor.ts';
 import { WebSource } from './web-source.ts';

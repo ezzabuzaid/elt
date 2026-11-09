@@ -14,7 +14,7 @@ import {
   Source,
   Stream,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import {
   PostgresCheckpointStore,

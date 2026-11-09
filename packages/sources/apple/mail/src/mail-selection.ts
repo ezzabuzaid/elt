@@ -11,12 +11,12 @@ import {
   recipientsTable,
   senderAddressesTable,
   serverMessagesTable,
-} from '@workspace/sdk-apple-mail';
+} from '@eltjs/sdk-apple-mail';
 import {
   type ImportScope,
   selected,
   withinDates,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 // What an import scope keeps: its accounts' mailboxes, the messages in them
 // within its dates, and the rows those messages reach through the index. It

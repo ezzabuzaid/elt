@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/elt-postgresql",
+  "name": "@eltjs/elt-postgresql",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     }
   },
   "dependencies": {
-    "@workspace/elt": "0.0.1",
+    "@eltjs/elt": "*",
     "postgres": "^3.4.9"
   },
   "devDependencies": {

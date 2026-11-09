@@ -8,8 +8,8 @@ import {
   type Properties,
   type SchemaRecord,
   diffGroupedSnapshot,
-} from '@workspace/elt';
-import type { Message } from '@workspace/sdk-whatsapp-desktop';
+} from '@eltjs/elt';
+import type { Message } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from './whatsapp-scan.ts';
 import { WhatsAppStream } from './whatsapp-stream.ts';

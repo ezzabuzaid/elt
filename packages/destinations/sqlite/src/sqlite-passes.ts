@@ -2,7 +2,7 @@ import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 
 import { UnavailableError, open } from '@zukhruf/sqlite-open';
 
-import type { FailureType, SyncStatus } from '@workspace/elt';
+import type { FailureType, SyncStatus } from '@eltjs/elt';
 
 import { busyTimeout } from './open-destination.ts';
 import { syncHistory } from './sqlite-sync-history-schema.ts';

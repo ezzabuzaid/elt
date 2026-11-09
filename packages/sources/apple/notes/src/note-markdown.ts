@@ -4,7 +4,7 @@ import {
   type Paragraph,
   type Run,
   attachmentCharacter,
-} from '@workspace/sdk-apple-notes';
+} from '@eltjs/sdk-apple-notes';
 
 // How the notes stream writes a note body: plain text, and Markdown with
 // checklists, emphasis, links and tables. Fonts, colors and underline have no

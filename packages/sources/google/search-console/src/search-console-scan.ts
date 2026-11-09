@@ -2,7 +2,7 @@ import { Mutex } from '@zukhruf/mutex';
 import { MemoryStore } from '@zukhruf/mutex/memory';
 import pMemoize from 'p-memoize';
 
-import type { PipelineClock } from '@workspace/elt';
+import type { PipelineClock } from '@eltjs/elt';
 import {
   type SearchConsoleApi,
   type UrlInspection,
@@ -11,7 +11,7 @@ import {
   readSitemaps,
   today,
   underProperty,
-} from '@workspace/sdk-google-search-console';
+} from '@eltjs/sdk-google-search-console';
 
 import { subMonths } from './calendar-dates.ts';
 import type { Discovery, Universe } from './rolling-inspection.ts';

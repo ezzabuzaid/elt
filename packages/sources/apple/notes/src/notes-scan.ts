@@ -7,12 +7,12 @@ import type {
   NoteDocument,
   NoteFolder,
   NoteStoreSnapshot,
-} from '@workspace/sdk-apple-notes';
+} from '@eltjs/sdk-apple-notes';
 import {
   type ImportScope,
   selected,
   withinDates,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 import { markdown, markdownTable, plainText } from './note-markdown.ts';
 

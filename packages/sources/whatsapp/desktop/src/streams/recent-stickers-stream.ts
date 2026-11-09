@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { RecentSticker } from '@workspace/sdk-whatsapp-desktop';
+import type { RecordDraft } from '@eltjs/elt';
+import type { RecentSticker } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
 import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';

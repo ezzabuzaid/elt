@@ -1,4 +1,4 @@
-import { type MailFile, readMailMime } from '@workspace/sdk-apple-mail';
+import { type MailFile, readMailMime } from '@eltjs/sdk-apple-mail';
 
 import { type MailEntry, mailSchema } from '../apple-mail-stream.ts';
 import {

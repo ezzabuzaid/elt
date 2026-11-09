@@ -1,4 +1,4 @@
-import type { Partition } from '@workspace/elt';
+import type { Partition } from '@eltjs/elt';
 
 import { ListingStream } from '../listing-stream.ts';
 import type { SearchConsoleScan } from '../search-console-scan.ts';

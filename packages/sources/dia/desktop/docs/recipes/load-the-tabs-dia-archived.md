@@ -19,13 +19,13 @@ import { join } from 'node:path';
 
 import { open } from '@zukhruf/sqlite-open';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { DiaDesktopSource } from '@workspace/source-dia-desktop/dia-desktop-source';
+} from '@eltjs/elt-sqlite';
+import { DiaDesktopSource } from '@eltjs/source-dia-desktop/dia-desktop-source';
 
 const directory = await mkdtemp(join(tmpdir(), 'dia-'));
 const path = join(directory, 'dia.sqlite');

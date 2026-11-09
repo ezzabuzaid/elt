@@ -4,7 +4,7 @@ import {
   type ChromiumBrowser,
   type ChromiumProfile,
   chromiumBrowsers,
-} from '@workspace/sdk-chromium-browser';
+} from '@eltjs/sdk-chromium-browser';
 
 import { CookieStore } from './cookie-store.ts';
 import { BrowserSessionNotFoundError } from './errors.ts';

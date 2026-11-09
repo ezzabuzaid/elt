@@ -1,4 +1,4 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 
 import type { SlackDesktopScan } from '../slack-desktop-scan.ts';
 import { SlackDesktopStream, slackFields } from '../slack-desktop-stream.ts';

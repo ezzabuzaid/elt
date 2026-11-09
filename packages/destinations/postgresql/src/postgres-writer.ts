@@ -14,7 +14,7 @@ import {
   describeTarget,
   errorMessage,
   reloadMode,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
 import type { EncodedValue } from './postgres-column.ts';

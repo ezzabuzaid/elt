@@ -19,15 +19,15 @@ import {
   PipelineError,
   type Stream,
   type Target,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { BrowserSessionNotFoundError } from '@workspace/sdk-chromium-cookies';
-import { ScratchMac } from '@workspace/sdk-chromium-cookies/test';
+} from '@eltjs/elt-sqlite';
+import { BrowserSessionNotFoundError } from '@eltjs/sdk-chromium-cookies';
+import { ScratchMac } from '@eltjs/sdk-chromium-cookies/test';
 
 import { InstagramWebSource } from './instagram-web-source.ts';
 

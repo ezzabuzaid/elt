@@ -1,13 +1,13 @@
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { referenceDateSeconds } from '@workspace/codec-apple-reference-date';
+import { referenceDateSeconds } from '@eltjs/codec-apple-reference-date';
 import {
   type PlistValue,
   decodeArchive,
   isBinaryPlist,
   isDictionary,
-} from '@workspace/codec-plist';
+} from '@eltjs/codec-plist';
 
 import { attributedText } from './typedstream.ts';
 

@@ -2,11 +2,11 @@ import type {
   AddressBook,
   AddressBookStore,
   StoredData,
-} from '@workspace/sdk-apple-contacts';
+} from '@eltjs/sdk-apple-contacts';
 import {
   type ImportScope,
   selected,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 // What a container selection keeps in one store: its containers, the
 // contacts and groups in them, and any record among those three.

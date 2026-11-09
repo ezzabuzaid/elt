@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { transaction } from '@zukhruf/sqlite-transaction';
 
-import type { ReaderRelation } from '@workspace/elt';
+import type { ReaderRelation } from '@eltjs/elt';
 
 import { isReserved } from './reserved.ts';
 import { describe } from './sqlite-descriptions.ts';

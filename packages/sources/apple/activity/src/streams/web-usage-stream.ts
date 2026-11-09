@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import { AppWebUsage, type AppWebUsageEvent } from '@workspace/sdk-apple-biome';
+import type { RecordDraft } from '@eltjs/elt';
+import { AppWebUsage, type AppWebUsageEvent } from '@eltjs/sdk-apple-biome';
 
 import { activityFields, isoTime } from '../activity-values.ts';
 import {

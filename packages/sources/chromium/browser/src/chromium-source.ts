@@ -9,17 +9,17 @@ import {
   type SourceMessage,
   type Stream,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   BookmarksUnavailableError,
   ChromiumBookmarks,
-} from '@workspace/sdk-chromium-bookmarks';
-import type { ChromiumBrowser } from '@workspace/sdk-chromium-browser';
+} from '@eltjs/sdk-chromium-bookmarks';
+import type { ChromiumBrowser } from '@eltjs/sdk-chromium-browser';
 import {
   StoreUnavailableError,
   chromiumHistoryLastWrite,
-} from '@workspace/sdk-chromium-history';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/sdk-chromium-history';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import {
   ChromiumScan,

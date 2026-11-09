@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/source-apple-macos",
+  "name": "@eltjs/source-apple-macos",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -47,7 +47,7 @@
     "./vision-worker": "./dist/vision-worker"
   },
   "dependencies": {
-    "@workspace/elt": "0.0.1",
+    "@eltjs/elt": "*",
     "@zukhruf/async": "^0.8.10",
     "@zukhruf/coprocess": "^0.8.10",
     "@zukhruf/pool": "^0.8.10",

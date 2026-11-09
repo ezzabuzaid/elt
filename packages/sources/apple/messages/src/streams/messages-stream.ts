@@ -2,8 +2,8 @@ import {
   type ChatDatabase,
   type Message,
   messageTable,
-} from '@workspace/sdk-apple-messages';
-import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
+} from '@eltjs/sdk-apple-messages';
+import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 import { AppleMessagesStream } from '../apple-messages-stream.ts';
 import {

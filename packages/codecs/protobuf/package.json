@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/codec-protobuf",
+  "name": "@eltjs/codec-protobuf",
   "version": "0.0.1",
   "private": true,
   "type": "module",

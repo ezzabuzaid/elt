@@ -44,7 +44,7 @@ import {
   TargetOwnedError,
   diffGroupedSnapshot,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import {
   SQLiteCheckpointStore,

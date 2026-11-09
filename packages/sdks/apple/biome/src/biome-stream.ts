@@ -1,4 +1,4 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
+import type { ProtobufMessage } from '@eltjs/codec-protobuf';
 
 // One Biome stream: its folder under streams/restricted, how long macOS keeps
 // its records, and what each record's protobuf fields mean.

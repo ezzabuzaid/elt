@@ -1,4 +1,4 @@
-# @workspace/source-chromium-browser
+# @eltjs/source-chromium-browser
 
 An ELT source for the history, the downloads, the searches and the bookmarks of one Chromium browser on this Mac, such as Dia, Chrome, Arc or Edge. It reads the files of the browser in each profile folder. The browser does not need to run, and the source needs no Full Disk Access.
 
@@ -7,14 +7,14 @@ The words in this README have one meaning each. See the glossary in [CONTEXT.md]
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { dia } from '@workspace/sdk-chromium-browser';
-import { ChromiumSource } from '@workspace/source-chromium-browser/chromium-source';
+} from '@eltjs/elt-sqlite';
+import { dia } from '@eltjs/sdk-chromium-browser';
+import { ChromiumSource } from '@eltjs/source-chromium-browser/chromium-source';
 
 const source = new ChromiumSource({ browser: dia, home: homedir() });
 const destination = new SQLiteDestination({ path: './dia.sqlite' });
@@ -41,7 +41,7 @@ await new Pipeline({
 }).run();
 ```
 
-`@workspace/sdk-chromium-browser` exports `dia`, `chrome`, `arc`, `edge` and `brave`. The identity of the source is `chromium:<browser id>`, for example `chromium:dia`, so each browser keeps its own checkpoints.
+`@eltjs/sdk-chromium-browser` exports `dia`, `chrome`, `arc`, `edge` and `brave`. The identity of the source is `chromium:<browser id>`, for example `chromium:dia`, so each browser keeps its own checkpoints.
 
 ## Streams
 
@@ -58,8 +58,8 @@ The description of each field in the schema tells readers what the field holds. 
 
 ## How the stores are read
 
-- **History** is a SQLite database with a rollback journal. A running browser holds it in exclusive locking mode, so no other connection can read it. The SDK `@workspace/sdk-chromium-history` reads a checked copy at the last commit of the browser (`Snapshot.ofExclusiveOwner` of `@zukhruf/sqlite-snapshot`). A History with no tables, as in a profile that never kept history, gives no rows. A History without a column that the SDK reads fails with `MissingColumnsError`.
-- **Bookmarks** is JSON that the browser replaces whole. The SDK `@workspace/sdk-chromium-bookmarks` reads it into flat nodes. A time of `"0"` is no time.
+- **History** is a SQLite database with a rollback journal. A running browser holds it in exclusive locking mode, so no other connection can read it. The SDK `@eltjs/sdk-chromium-history` reads a checked copy at the last commit of the browser (`Snapshot.ofExclusiveOwner` of `@zukhruf/sqlite-snapshot`). A History with no tables, as in a profile that never kept history, gives no rows. A History without a column that the SDK reads fails with `MissingColumnsError`.
+- **Bookmarks** is JSON that the browser replaces whole. The SDK `@eltjs/sdk-chromium-bookmarks` reads it into flat nodes. A time of `"0"` is no time.
 - **Local State** names the profiles. A profile folder that Local State does not list loads with a `null` name.
 
 `open` opens only the stores that the selected streams read. A store that cannot be read fails only its streams, and their rows stay loaded. A History or a Bookmarks file that is missing or denied is a `config` failure. A file that is not in the format of the browser is a `system` failure.

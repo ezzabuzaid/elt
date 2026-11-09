@@ -5,14 +5,14 @@ import {
   type RecordDraft,
   type SourceMessage,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import type {
   Image,
   ListMedia,
   Profile,
   ReelMedia,
   TimelineMedia,
-} from '@workspace/sdk-instagram-web';
+} from '@eltjs/sdk-instagram-web';
 
 import { fields, instant, kindOf, largest } from '../fields.ts';
 import type { LaneReader } from '../instagram-run.ts';

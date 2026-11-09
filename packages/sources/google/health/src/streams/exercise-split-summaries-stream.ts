@@ -1,4 +1,4 @@
-import type { DataPoint } from '@workspace/sdk-google-health';
+import type { DataPoint } from '@eltjs/sdk-google-health';
 
 import { ChildStream } from '../child-stream.ts';
 import { fields, finite, seconds, session } from '../health-fields.ts';

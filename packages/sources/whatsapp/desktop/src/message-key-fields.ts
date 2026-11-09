@@ -1,4 +1,4 @@
-import type { MessageKey } from '@workspace/sdk-whatsapp-desktop';
+import type { MessageKey } from '@eltjs/sdk-whatsapp-desktop';
 
 import { whatsappFields } from './whatsapp-stream.ts';
 

@@ -1,7 +1,7 @@
 import type { KeyValue } from '@zukhruf/snapshot-differential';
 
-import type { RecordDraft } from '@workspace/elt';
-import type { SlackAttachment } from '@workspace/sdk-slack-desktop';
+import type { RecordDraft } from '@eltjs/elt';
+import type { SlackAttachment } from '@eltjs/sdk-slack-desktop';
 
 import type { SlackDesktopScan } from '../slack-desktop-scan.ts';
 import { SlackDesktopStream, slackFields } from '../slack-desktop-stream.ts';

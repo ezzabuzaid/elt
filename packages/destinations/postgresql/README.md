@@ -1,4 +1,4 @@
-# @workspace/elt-postgresql
+# @eltjs/elt-postgresql
 
 The Postgres destination of elt. It loads each table of a connection into one schema of a Postgres database, with typed columns, and it does not block readers while it loads. It can keep a reader view of each table in a different schema, such as `marts`, and it publishes documented SQL views that the application defines. It also has a checkpoint store and a sync history that keep their data in the same database.
 
@@ -9,12 +9,12 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 ## Load a stream into Postgres
 
 ```ts
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-} from '@workspace/elt-postgresql';
+} from '@eltjs/elt-postgresql';
 
 const url = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
 const warehouse = new PostgresDestination({ url, schema: 'apple_notes' });
@@ -162,7 +162,7 @@ Shape changes:
 With a `postgres` client `sql` and a table `raw.notes`:
 
 ```ts
-import { publishPostgresViews } from '@workspace/elt-postgresql';
+import { publishPostgresViews } from '@eltjs/elt-postgresql';
 
 await sql.begin(async (transaction) => {
   await publishPostgresViews(transaction, {

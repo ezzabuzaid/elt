@@ -4,7 +4,7 @@ import {
   type PlistValue,
   decodeArchive,
   parseBinaryPlist,
-} from '@workspace/codec-plist';
+} from '@eltjs/codec-plist';
 
 import { appDatabase } from './app-database.ts';
 import {

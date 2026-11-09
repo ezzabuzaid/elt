@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/source-opensooq-web",
+  "name": "@eltjs/source-opensooq-web",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -18,16 +18,16 @@
     }
   },
   "dependencies": {
-    "@workspace/elt": "0.0.1",
-    "@workspace/sdk-web-crawler": "0.0.1",
-    "@workspace/source-web-pages": "0.0.1",
+    "@eltjs/elt": "*",
+    "@eltjs/sdk-web-crawler": "0.0.1",
+    "@eltjs/source-web-pages": "0.0.1",
     "got": "16.1.0",
     "jsdom": "30.1.3",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/jsdom": "28.0.3",
-    "@workspace/elt-sqlite": "0.0.1",
+    "@eltjs/elt-sqlite": "*",
     "@zukhruf/testing": "^0.8.10"
   }
 }

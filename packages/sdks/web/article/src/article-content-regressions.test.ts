@@ -10,7 +10,7 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 import { HTMLExtraction, MarkdownExtraction, WebArticle } from './index.ts';
 

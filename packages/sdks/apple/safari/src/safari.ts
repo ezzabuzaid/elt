@@ -7,11 +7,11 @@ import {
   isDictionary,
   parseBinaryPlist,
   readPlist,
-} from '@workspace/codec-plist';
+} from '@eltjs/codec-plist';
 import {
   AppFilesVersion,
   StoreUnavailableError,
-} from '@workspace/sdk-macos-app-database';
+} from '@eltjs/sdk-macos-app-database';
 
 import { appDatabase, safariStore } from './app-database.ts';
 import { Bookmarks } from './bookmarks.ts';

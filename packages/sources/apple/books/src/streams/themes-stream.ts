@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { Theme } from '@workspace/sdk-apple-books';
+import type { RecordDraft } from '@eltjs/elt';
+import type { Theme } from '@eltjs/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
 import { BooksStream, booksFields } from '../books-stream.ts';

@@ -7,11 +7,8 @@ import {
   diffSnapshot,
   isCalendarDate,
   validateRecords,
-} from '@workspace/elt';
-import {
-  readSearchAnalytics,
-  today,
-} from '@workspace/sdk-google-search-console';
+} from '@eltjs/elt';
+import { readSearchAnalytics, today } from '@eltjs/sdk-google-search-console';
 
 import { addDays, earlier, subMonths } from './calendar-dates.ts';
 import { RETENTION_MONTHS, analyticsRecords } from './search-analytics.ts';

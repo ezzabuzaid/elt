@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { DateComponentsDocument } from '@workspace/sdk-apple-eventkit';
+import type { RecordDraft } from '@eltjs/elt';
+import type { DateComponentsDocument } from '@eltjs/sdk-apple-eventkit';
 
 import {
   AppleRemindersStream,

@@ -2,13 +2,13 @@ import type {
   CopyConfiguration,
   ExtractionCoverage,
   SourceMessage,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   ChangeHistoryExpiredError,
   type ChangePosition,
   type SqlServerSession,
   type SqlServerTable,
-} from '@workspace/sdk-microsoft-sql-server';
+} from '@eltjs/sdk-microsoft-sql-server';
 
 import { SqlServerStream, pageSize } from './sql-server-stream.ts';
 import type { WatchGauges } from './watch-gauges.ts';

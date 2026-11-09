@@ -1,4 +1,4 @@
-import type { Pass } from '@workspace/sdk-apple-wallet';
+import type { Pass } from '@eltjs/sdk-apple-wallet';
 
 // One run's read of Wallet: every pass, read once for every stream. The
 // store's database closed once the passes were read, so nothing stays open.

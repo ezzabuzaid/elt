@@ -24,7 +24,7 @@ import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { referenceDate } from '@workspace/codec-apple-reference-date';
+import { referenceDate } from '@eltjs/codec-apple-reference-date';
 import {
   Connection,
   Copy,
@@ -35,19 +35,19 @@ import {
   type Source,
   type Stream,
   StreamStatus,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
   type SQLiteTable,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   BooksSchemaError,
   StoreUnavailableError,
   booksLocation,
-} from '@workspace/sdk-apple-books';
+} from '@eltjs/sdk-apple-books';
 
 import { AppleBooksSource } from './apple-books-source.ts';
 
@@ -2685,8 +2685,8 @@ test('a Books pass over a large annotation store holds one annotation at a time,
   // time fits in 28. The process loads the built source from this package's
   // folder, where its dependencies resolve.
   const pass = `
-    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { Connection, Copy, Pipeline } = await import('@eltjs/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@eltjs/elt-sqlite');
     const { AppleBooksSource } = await import(process.env.SOURCE);
     const source = new AppleBooksSource({ container: process.env.CONTAINER, groupContainer: process.env.GROUP_CONTAINER });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });

@@ -1,7 +1,7 @@
 import { statSync } from 'node:fs';
 
-import type { RecordDraft, SchemaRecord } from '@workspace/elt';
-import type { SlackDownload } from '@workspace/sdk-slack-desktop';
+import type { RecordDraft, SchemaRecord } from '@eltjs/elt';
+import type { SlackDownload } from '@eltjs/sdk-slack-desktop';
 
 import type { SlackDesktopScan } from '../slack-desktop-scan.ts';
 import { SlackDesktopStream, slackFields } from '../slack-desktop-stream.ts';

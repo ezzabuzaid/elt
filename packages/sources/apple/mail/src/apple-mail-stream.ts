@@ -8,7 +8,7 @@ import {
   type SyncMode,
   diffSnapshot,
   validateRecords,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import type { MailScan } from './mail-scan.ts';
 import type { MailSelection } from './mail-selection.ts';

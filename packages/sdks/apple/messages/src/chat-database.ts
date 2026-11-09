@@ -7,7 +7,7 @@ import {
   AppDatabase,
   type AppDatabaseVersion,
   Store,
-} from '@workspace/sdk-macos-app-database';
+} from '@eltjs/sdk-macos-app-database';
 
 import {
   type ChatColumnKind,

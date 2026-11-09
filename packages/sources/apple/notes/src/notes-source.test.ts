@@ -23,14 +23,14 @@ import {
   type Source,
   type Stream,
   StreamStatus,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { launchNotesHidden, notesRunning } from '@workspace/sdk-apple-notes';
+} from '@eltjs/elt-sqlite';
+import { launchNotesHidden, notesRunning } from '@eltjs/sdk-apple-notes';
 
 import { AppleNotesSource } from './apple-notes-source.ts';
 
@@ -1088,8 +1088,8 @@ test('a Notes pass over a large store holds one note at a time, so it loads in a
   // reads and validates a note at a time fits in 32. The process loads the
   // built source from this package's folder, where its dependencies resolve.
   const pass = `
-    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { Connection, Copy, Pipeline } = await import('@eltjs/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@eltjs/elt-sqlite');
     const { AppleNotesSource } = await import(process.env.SOURCE);
     const source = new AppleNotesSource({ path: process.env.STORE });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });

@@ -1,4 +1,4 @@
-import { referenceDateInstant } from '@workspace/codec-apple-reference-date';
+import { referenceDateInstant } from '@eltjs/codec-apple-reference-date';
 import {
   PlistDate,
   type PlistValue,
@@ -6,7 +6,7 @@ import {
   isDictionary,
   parseBinaryPlist,
   plistJSON,
-} from '@workspace/codec-plist';
+} from '@eltjs/codec-plist';
 
 export function dictionary(value: unknown): { [key: string]: PlistValue } {
   if (!isDictionary(value))

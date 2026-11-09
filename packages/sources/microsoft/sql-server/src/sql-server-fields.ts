@@ -1,4 +1,4 @@
-import type { FieldSchema, KeyValue, Properties } from '@workspace/elt';
+import type { FieldSchema, KeyValue, Properties } from '@eltjs/elt';
 import {
   OffsetTimestamp,
   type SqlServerColumn,
@@ -6,7 +6,7 @@ import {
   type SqlServerTable,
   type SqlServerValue,
   VariantValue,
-} from '@workspace/sdk-microsoft-sql-server';
+} from '@eltjs/sdk-microsoft-sql-server';
 
 type Scalar = Omit<FieldSchema, 'type' | 'description'> & {
   readonly type: 'string' | 'integer' | 'number' | 'boolean';

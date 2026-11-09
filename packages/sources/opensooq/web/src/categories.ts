@@ -1,5 +1,5 @@
-import { StartReader } from '@workspace/sdk-web-crawler';
-import { WebStream } from '@workspace/source-web-pages/web-stream';
+import { StartReader } from '@eltjs/sdk-web-crawler';
+import { WebStream } from '@eltjs/source-web-pages/web-stream';
 
 import { CategoryExtractor } from './category-extractor.ts';
 

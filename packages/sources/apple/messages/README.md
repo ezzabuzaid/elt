@@ -1,6 +1,6 @@
-# @workspace/source-apple-messages
+# @eltjs/source-apple-messages
 
-An ELT source for Apple Messages. It reads the database of Messages, `~/Library/Messages/chat.db`, in read-only mode through `@workspace/sdk-apple-messages`. It does not use the network, and Messages does not have to be open.
+An ELT source for Apple Messages. It reads the database of Messages, `~/Library/Messages/chat.db`, in read-only mode through `@eltjs/sdk-apple-messages`. It does not use the network, and Messages does not have to be open.
 
 ```ts
 import { homedir } from 'node:os';
@@ -11,17 +11,17 @@ import {
   DocumentText,
   LocalFiles,
   Pipeline,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   ComputedDataset,
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { chatDatabasePath } from '@workspace/sdk-apple-messages';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
-import { AppleMessagesSource } from '@workspace/source-apple-messages/apple-messages-source';
+} from '@eltjs/elt-sqlite';
+import { chatDatabasePath } from '@eltjs/sdk-apple-messages';
+import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
+import { AppleMessagesSource } from '@eltjs/source-apple-messages/apple-messages-source';
 
 const home = homedir();
 const source = new AppleMessagesSource({
@@ -88,7 +88,7 @@ await new Pipeline({
 }).run();
 ```
 
-The `attachments` copy stores each file in `files` and keeps its reference in `attachmentRef`. The `attachment_text` dataset reads the text of the stored files after each pass. A `MacOSDocumentParser` without more formats reads documents and vCards only. To read text in images and voice messages, give it an `ImageFormat` and an `AudioFormat` (see [`@workspace/source-apple-macos`](../macos/README.md)).
+The `attachments` copy stores each file in `files` and keeps its reference in `attachmentRef`. The `attachment_text` dataset reads the text of the stored files after each pass. A `MacOSDocumentParser` without more formats reads documents and vCards only. To read text in images and voice messages, give it an `ImageFormat` and an `AudioFormat` (see [`@eltjs/source-apple-macos`](../macos/README.md)).
 
 A Context Compiler import loads every stream incrementally into its `data.sqlite`. It stores each attachment file in its `files` folder and refers to it by `attachmentRef`.
 

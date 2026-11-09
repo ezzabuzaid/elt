@@ -10,8 +10,8 @@ import { promisify } from 'node:util';
 import { Fixed, NoEviction, Parallel, Pool } from '@zukhruf/pool';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { LocalTranscriptionModel } from '@workspace/transcription-local';
-import { TranscriptionWorker } from '@workspace/transcription-local/transcription-worker';
+import { LocalTranscriptionModel } from '@eltjs/transcription-local';
+import { TranscriptionWorker } from '@eltjs/transcription-local/transcription-worker';
 
 import type { SpeechModel } from './speech-model.ts';
 import { SpeechModels } from './speech-models.ts';
@@ -209,8 +209,7 @@ async function transcribe(
     create: () =>
       new TranscriptionWorker(
         fileURLToPath(
-          import.meta
-            .resolve('@workspace/transcription-local/transcribe-local'),
+          import.meta.resolve('@eltjs/transcription-local/transcribe-local'),
         ),
         model.configuration,
       ),

@@ -1,5 +1,5 @@
-import type { CopyConfiguration, SourceMessage, Stream } from '@workspace/elt';
-import type { BiomeStream } from '@workspace/sdk-apple-biome';
+import type { CopyConfiguration, SourceMessage, Stream } from '@eltjs/elt';
+import type { BiomeStream } from '@eltjs/sdk-apple-biome';
 
 import type { ActivityScan } from './activity-scan.ts';
 

@@ -33,7 +33,7 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 // A list of startup programs, as a GitHub list, that links the home page of
 // one company.

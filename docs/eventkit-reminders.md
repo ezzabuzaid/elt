@@ -6,7 +6,7 @@ Verified on macOS 26.6.2 on 2026-09-21. The connector supports macOS 27, the rel
 
 `AppleRemindersSource` uses EventKit exclusively, through `eventkit`, a compiled Swift helper. There are no calls to Reminders.app's scripting interface, no scripting fallback, and no matching between two identifier namespaces.
 
-The design is the **Adapter pattern**, using the existing `Source` contract. `AppleRemindersSource` translates native objects into immutable stream descriptions and validated records consumed by `Copy`, `Pipeline` and SQLite. EventKit access is its own package, `packages/sdks/apple/eventkit` (`@workspace/sdk-apple-eventkit`), which does not import ELT or know about sources, streams, catalogs, or schemas; each source maps it into its own streams:
+The design is the **Adapter pattern**, using the existing `Source` contract. `AppleRemindersSource` translates native objects into immutable stream descriptions and validated records consumed by `Copy`, `Pipeline` and SQLite. EventKit access is its own package, `packages/sdks/apple/eventkit` (`@eltjs/sdk-apple-eventkit`), which does not import ELT or know about sources, streams, catalogs, or schemas; each source maps it into its own streams:
 
 - [helper/](../packages/sdks/apple/eventkit/src/helper): the Swift helper. `eventkit read '<json request>'` checks access, fetches the reminders, writes one JSON document per line (account, list, reminder), and fails with `EVENTKIT_CHANGED` when the store changed during the read; `eventkit watch reminders` prints `changed` per `EKEventStoreChangedNotification`. The Nx target `sdk-apple-eventkit:helper` builds it as a universal (arm64 and x86_64) binary.
 - [eventkit-store.ts](../packages/sdks/apple/eventkit/src/eventkit-store.ts): `EventKitStore`, a template method base. It runs the helper through [native-process.ts](../packages/sdks/apple/eventkit/src/native-process.ts), repeats reads that a store change disturbed, keeps the accounts and lists inside the requested scope, orders each item's attendees and alarms by content, and maps access failures to the store's error. [reminders-store.ts](../packages/sdks/apple/eventkit/src/reminders-store.ts) is `RemindersStore`, whose `read()` returns accounts, lists (EventKit calendars) and reminders and throws `RemindersUnavailableError`. [documents.ts](../packages/sdks/apple/eventkit/src/documents.ts) types the helper's documents.
@@ -14,7 +14,7 @@ The design is the **Adapter pattern**, using the existing `Source` contract. `Ap
 - [streams/](../packages/sources/apple/reminders/src/streams): one class per stream, each with its schema and how its records come out of the scan: accounts, lists, reminders, date components, attendees, alarms, and recurrence rules and values, with JSON-array IDs and ISO timestamps.
 - [apple-reminders-source.ts](../packages/sources/apple/reminders/src/apple-reminders-source.ts): the source adapter composes `RemindersStore`, builds its catalog from the stream classes, owns its identity and preflights selections; each stream validates its records when its copy reads them.
 
-The dependency is one-way: sources import `@workspace/sdk-apple-eventkit` and the public `elt` API; neither imports a source.
+The dependency is one-way: sources import `@eltjs/sdk-apple-eventkit` and the public `elt` API; neither imports a source.
 
 Calendar keeps its own occurrence-window and occurrence-identity behavior.
 

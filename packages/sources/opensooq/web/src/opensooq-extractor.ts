@@ -6,7 +6,7 @@ import { z } from 'zod';
 import {
   type ExtractorRun,
   RecordExtractor,
-} from '@workspace/source-web-pages/record-extractor';
+} from '@eltjs/source-web-pages/record-extractor';
 
 const listingPath = new URLPattern({ pathname: '/:lang/search/:id(\\d+)' });
 

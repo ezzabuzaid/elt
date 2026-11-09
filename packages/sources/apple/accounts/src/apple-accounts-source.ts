@@ -5,13 +5,13 @@ import type {
   ExtractionCoverage,
   SourceMessage,
   Stream,
-} from '@workspace/elt';
-import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+} from '@eltjs/elt';
+import { Catalog, Source, diffSnapshot } from '@eltjs/elt';
 import {
   AccountsStore,
   StoreUnavailableError,
-} from '@workspace/sdk-apple-accounts';
-import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
+} from '@eltjs/sdk-apple-accounts';
+import { localAppleStoreCoverage } from '@eltjs/source-apple-macos/local-apple-store-coverage';
 
 import { AccountsScan } from './accounts-scan.ts';
 import type { AccountsReader } from './apple-accounts-stream.ts';

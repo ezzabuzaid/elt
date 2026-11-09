@@ -1,20 +1,20 @@
-# @workspace/source-microsoft-teams
+# @eltjs/source-microsoft-teams
 
-An ELT source for the data that the new Microsoft Teams app (`com.microsoft.teams2`) keeps on this Mac. It reads the app's own store with the `@workspace/sdk-microsoft-teams` SDK. It uses no Microsoft Graph, no token and no network. A Context Compiler import loads every stream into its `data.sqlite`, and readers query it through the `<snake_stream>` views.
+An ELT source for the data that the new Microsoft Teams app (`com.microsoft.teams2`) keeps on this Mac. It reads the app's own store with the `@eltjs/sdk-microsoft-teams` SDK. It uses no Microsoft Graph, no token and no network. A Context Compiler import loads every stream into its `data.sqlite`, and readers query it through the `<snake_stream>` views.
 
 The words in this README have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { teamsDirectory } from '@workspace/sdk-microsoft-teams';
-import { TeamsSource } from '@workspace/source-microsoft-teams/teams-source';
+} from '@eltjs/elt-sqlite';
+import { teamsDirectory } from '@eltjs/sdk-microsoft-teams';
+import { TeamsSource } from '@eltjs/source-microsoft-teams/teams-source';
 
 // ~/Library/Containers/com.microsoft.teams2/…/EBWebView/WV2Profile_tfw
 const source = new TeamsSource({ directory: teamsDirectory(homedir()) });

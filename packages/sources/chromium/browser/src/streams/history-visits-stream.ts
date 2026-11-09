@@ -1,9 +1,9 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 import {
   type HistoryVisit,
   transitionQualifierNames,
   transitionTypes,
-} from '@workspace/sdk-chromium-history';
+} from '@eltjs/sdk-chromium-history';
 
 import type { ChromiumScan, Profiled } from '../chromium-scan.ts';
 import { ChromiumStream, chromiumFields } from '../chromium-stream.ts';

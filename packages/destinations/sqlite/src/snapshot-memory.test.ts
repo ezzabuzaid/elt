@@ -15,7 +15,7 @@ import { storedRows } from './testing/stored-rows.ts';
 // one record of each stream, so an incremental pass diffs every scan against
 // the snapshot the first saved.
 const passes = `
-  const { Catalog, Connection, Copy, Gauge, Pipeline, Source, Stream, diffGroupedSnapshot, diffSnapshot } = await import('@workspace/elt');
+  const { Catalog, Connection, Copy, Gauge, Pipeline, Source, Stream, diffGroupedSnapshot, diffSnapshot } = await import('@eltjs/elt');
   const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import(process.env.DESTINATION);
   const { ClosedWorld } = await import('@zukhruf/snapshot-differential');
   const keys = Number(process.env.KEYS);

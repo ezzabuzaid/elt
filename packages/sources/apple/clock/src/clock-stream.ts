@@ -4,11 +4,11 @@ import {
   type SchemaRecord,
   Stream,
   validateRecords,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import type {
   ClockSnapshot,
   ClockStoreKind,
-} from '@workspace/sdk-apple-clock/clock-store';
+} from '@eltjs/sdk-apple-clock/clock-store';
 
 export const fields = {
   id: { type: 'string', minLength: 1 },

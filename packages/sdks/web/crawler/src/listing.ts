@@ -10,7 +10,7 @@ import {
   parseRssFeed,
 } from 'feedsmith';
 
-import { type SitemapListing, parseSitemap } from '@workspace/codec-sitemap';
+import { type SitemapListing, parseSitemap } from '@eltjs/codec-sitemap';
 
 export const paginationLinks = [
   'next',

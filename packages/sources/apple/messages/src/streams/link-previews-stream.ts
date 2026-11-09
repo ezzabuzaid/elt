@@ -1,9 +1,6 @@
-import { plistJSON } from '@workspace/codec-plist';
-import type {
-  ChatDatabase,
-  MessagePayload,
-} from '@workspace/sdk-apple-messages';
-import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
+import { plistJSON } from '@eltjs/codec-plist';
+import type { ChatDatabase, MessagePayload } from '@eltjs/sdk-apple-messages';
+import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 import { AppleMessagesStream } from '../apple-messages-stream.ts';
 import { localStore, messageGuid, unverified } from '../messages-fields.ts';

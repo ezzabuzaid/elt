@@ -6,13 +6,13 @@ import { Postgres } from '@zukhruf/testing/postgres';
 import { http } from 'msw';
 import postgres from 'postgres';
 
-import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
+import { Connection, Copy, Pipeline, PipelineError } from '@eltjs/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-} from '@workspace/elt-postgresql';
-import { GoogleGrant, GoogleOAuthApp } from '@workspace/google-auth';
+} from '@eltjs/elt-postgresql';
+import { GoogleGrant, GoogleOAuthApp } from '@eltjs/google-auth';
 
 import { GoogleHealthSource } from './google-health-source.ts';
 

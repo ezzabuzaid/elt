@@ -1,26 +1,23 @@
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-} from '@workspace/elt-postgresql';
-import {
-  AccountsStore,
-  accountsStorePath,
-} from '@workspace/sdk-apple-accounts';
-import { CalendarStore } from '@workspace/sdk-apple-eventkit';
-import { mailDirectory } from '@workspace/sdk-apple-mail';
-import { chatDatabasePath } from '@workspace/sdk-apple-messages';
-import { slackDesktopDirectory } from '@workspace/sdk-slack-desktop';
-import { whatsappContainer } from '@workspace/sdk-whatsapp-desktop';
-import { AppleCalendarSource } from '@workspace/source-apple-calendar/apple-calendar-source';
-import { AppleMailSource } from '@workspace/source-apple-mail/apple-mail-source';
-import { AppleMessagesSource } from '@workspace/source-apple-messages/apple-messages-source';
-import { SlackDesktopSource } from '@workspace/source-slack-desktop/slack-desktop-source';
-import { WhatsAppDesktopSource } from '@workspace/source-whatsapp-desktop/whatsapp-desktop-source';
+} from '@eltjs/elt-postgresql';
+import { AccountsStore, accountsStorePath } from '@eltjs/sdk-apple-accounts';
+import { CalendarStore } from '@eltjs/sdk-apple-eventkit';
+import { mailDirectory } from '@eltjs/sdk-apple-mail';
+import { chatDatabasePath } from '@eltjs/sdk-apple-messages';
+import { slackDesktopDirectory } from '@eltjs/sdk-slack-desktop';
+import { whatsappContainer } from '@eltjs/sdk-whatsapp-desktop';
+import { AppleCalendarSource } from '@eltjs/source-apple-calendar/apple-calendar-source';
+import { AppleMailSource } from '@eltjs/source-apple-mail/apple-mail-source';
+import { AppleMessagesSource } from '@eltjs/source-apple-messages/apple-messages-source';
+import { SlackDesktopSource } from '@eltjs/source-slack-desktop/slack-desktop-source';
+import { WhatsAppDesktopSource } from '@eltjs/source-whatsapp-desktop/whatsapp-desktop-source';
 
 if (process.platform !== 'darwin')
   throw new Error(
@@ -60,7 +57,7 @@ calendarEnd.setUTCFullYear(calendarEnd.getUTCFullYear() + 1);
 const calendar = new AppleCalendarSource({
   store: new CalendarStore(
     fileURLToPath(
-      import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+      import.meta.resolve('@eltjs/sdk-apple-eventkit/eventkit-helper'),
     ),
     { env: process.env },
   ),

@@ -4,7 +4,7 @@ import v8 from 'node:v8';
 
 import snappy from 'snappyjs';
 
-import { maskedCrc32c } from '@workspace/codec-leveldb';
+import { maskedCrc32c } from '@eltjs/codec-leveldb';
 
 // Writes an IndexedDB as Chromium lays it out, for tests of what reads one:
 // the stand-in for the browser, which a test cannot run. LevelDB files whose

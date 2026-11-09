@@ -1,19 +1,19 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-} from '@workspace/elt-postgresql';
+} from '@eltjs/elt-postgresql';
 import {
   GOOGLE_HEALTH_SCOPES,
   GOOGLE_SEARCH_CONSOLE_SCOPE,
   googleSession,
-} from '@workspace/google-auth';
-import { GoogleHealthSource } from '@workspace/source-google-health/google-health-source';
-import { SearchConsoleSource } from '@workspace/source-google-search-console/search-console-source';
+} from '@eltjs/google-auth';
+import { GoogleHealthSource } from '@eltjs/source-google-health/google-health-source';
+import { SearchConsoleSource } from '@eltjs/source-google-search-console/search-console-source';
 
 const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
 const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;

@@ -1,6 +1,6 @@
 import { Declaration } from '@zukhruf/sqlite-drift';
 
-import { syncHistoryRelations } from '@workspace/elt';
+import { syncHistoryRelations } from '@eltjs/elt';
 
 import { type SQLiteView, viewDefinition } from './sqlite-views.ts';
 

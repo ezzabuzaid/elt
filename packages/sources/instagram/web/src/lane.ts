@@ -1,4 +1,4 @@
-import type { InstagramWeb, Page, Profile } from '@workspace/sdk-instagram-web';
+import type { InstagramWeb, Page, Profile } from '@eltjs/sdk-instagram-web';
 
 export type LaneName = 'posts' | 'reels' | 'reposts' | 'tagged';
 

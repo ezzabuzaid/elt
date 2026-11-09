@@ -1,4 +1,4 @@
-import type { TimelineMedia } from '@workspace/sdk-instagram-web';
+import type { TimelineMedia } from '@eltjs/sdk-instagram-web';
 
 import { fields, instant, kindOf, postUrl } from '../fields.ts';
 import type { InstagramRun, LaneReader } from '../instagram-run.ts';

@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { SlackChannel } from '@workspace/sdk-slack-desktop';
+import type { RecordDraft } from '@eltjs/elt';
+import type { SlackChannel } from '@eltjs/sdk-slack-desktop';
 
 import type { SlackDesktopScan } from '../slack-desktop-scan.ts';
 import { SlackDesktopStream, slackFields } from '../slack-desktop-stream.ts';

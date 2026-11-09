@@ -3,7 +3,7 @@ import type { SQLOutputValue } from 'node:sqlite';
 
 import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
-import { referenceDateSeconds } from '@workspace/codec-apple-reference-date';
+import { referenceDateSeconds } from '@eltjs/codec-apple-reference-date';
 
 import { appDatabase } from './app-database.ts';
 import {

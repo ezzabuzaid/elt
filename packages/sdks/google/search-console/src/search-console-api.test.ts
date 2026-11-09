@@ -4,11 +4,7 @@ import { test } from 'node:test';
 import { Msw } from '@zukhruf/testing/msw';
 import { http } from 'msw';
 
-import {
-  GaxiosError,
-  GoogleGrant,
-  GoogleOAuthApp,
-} from '@workspace/google-auth';
+import { GaxiosError, GoogleGrant, GoogleOAuthApp } from '@eltjs/google-auth';
 
 import { SearchConsoleApi, SearchConsoleQuotaError } from './index.ts';
 

@@ -1,7 +1,7 @@
 import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
-import { decodeArchive, isDictionary } from '@workspace/codec-plist';
-import { ProtobufMessage } from '@workspace/codec-protobuf';
+import { decodeArchive, isDictionary } from '@eltjs/codec-plist';
+import { ProtobufMessage } from '@eltjs/codec-protobuf';
 
 import { appDatabase } from './app-database.ts';
 import {

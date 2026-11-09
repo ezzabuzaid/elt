@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import { type Annotation, annotationKinds } from '@workspace/sdk-apple-books';
+import type { RecordDraft } from '@eltjs/elt';
+import { type Annotation, annotationKinds } from '@eltjs/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
 import { BooksStream, booksFields, iso } from '../books-stream.ts';

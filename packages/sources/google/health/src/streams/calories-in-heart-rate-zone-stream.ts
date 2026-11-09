@@ -1,4 +1,4 @@
-import type { DailyRollupDataPoint } from '@workspace/sdk-google-health';
+import type { DailyRollupDataPoint } from '@eltjs/sdk-google-health';
 
 import { calendarDate, fields, finite } from '../health-fields.ts';
 import { RollupStream } from '../rollup-stream.ts';

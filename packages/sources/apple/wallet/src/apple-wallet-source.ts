@@ -8,12 +8,9 @@ import {
   type SourceMessage,
   type Stream,
   diffSnapshot,
-} from '@workspace/elt';
-import {
-  StoreUnavailableError,
-  WalletStore,
-} from '@workspace/sdk-apple-wallet';
-import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
+} from '@eltjs/elt';
+import { StoreUnavailableError, WalletStore } from '@eltjs/sdk-apple-wallet';
+import { localAppleStoreCoverage } from '@eltjs/source-apple-macos/local-apple-store-coverage';
 
 import type { WalletReader } from './apple-wallet-stream.ts';
 import { PassBarcodesStream } from './streams/pass-barcodes-stream.ts';

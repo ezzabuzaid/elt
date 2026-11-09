@@ -1,23 +1,23 @@
-# @workspace/source-apple-reminders
+# @eltjs/source-apple-reminders
 
-An ELT source for Apple Reminders. It reads reminder lists and reminders through EventKit, with the `eventkit-helper` process of `@workspace/sdk-apple-eventkit`. It does not use the network or the scripting API of Reminders, and Reminders does not have to be open.
+An ELT source for Apple Reminders. It reads reminder lists and reminders through EventKit, with the `eventkit-helper` process of `@eltjs/sdk-apple-eventkit`. It does not use the network or the scripting API of Reminders, and Reminders does not have to be open.
 
 ```ts
 import { fileURLToPath } from 'node:url';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { RemindersStore } from '@workspace/sdk-apple-eventkit';
-import { AppleRemindersSource } from '@workspace/source-apple-reminders/apple-reminders-source';
+} from '@eltjs/elt-sqlite';
+import { RemindersStore } from '@eltjs/sdk-apple-eventkit';
+import { AppleRemindersSource } from '@eltjs/source-apple-reminders/apple-reminders-source';
 
 const source = new AppleRemindersSource({
   store: new RemindersStore(
     fileURLToPath(
-      import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+      import.meta.resolve('@eltjs/sdk-apple-eventkit/eventkit-helper'),
     ),
     { env: process.env },
   ),
@@ -53,7 +53,7 @@ The host decides where the compiled helper is. The example uses the helper that 
 
 ## Streams
 
-The source reads **EventKit only**, through the `eventkit` helper of `@workspace/sdk-apple-eventkit` ([ADR 0001](./docs/adr/0001-reminders-reads-eventkit-only.md)). The [Calendar README](../calendar/README.md) tells how the helper runs.
+The source reads **EventKit only**, through the `eventkit` helper of `@eltjs/sdk-apple-eventkit` ([ADR 0001](./docs/adr/0001-reminders-reads-eventkit-only.md)). The [Calendar README](../calendar/README.md) tells how the helper runs.
 
 | Stream                 | Contents                                                                                                                                                                                                                 |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

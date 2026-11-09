@@ -6,7 +6,7 @@ import {
   Stream,
   diffSnapshot,
   validateRecords,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 const properties = {
   inputUrl: {

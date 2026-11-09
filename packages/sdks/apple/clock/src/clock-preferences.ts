@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
-import { PlistDate, parseBinaryPlist } from '@workspace/codec-plist';
-import { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
+import { PlistDate, parseBinaryPlist } from '@eltjs/codec-plist';
+import { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
 
 import { clockStore } from './app-database.ts';
 import {

@@ -2,7 +2,7 @@ import {
   type AddressBookStore,
   type ValueRow,
   urlAddressView,
-} from '@workspace/sdk-apple-contacts';
+} from '@eltjs/sdk-apple-contacts';
 
 import { localStores } from '../contacts-fields.ts';
 import {

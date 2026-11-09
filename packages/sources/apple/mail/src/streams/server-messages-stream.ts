@@ -1,4 +1,4 @@
-import { serverMessagesTable } from '@workspace/sdk-apple-mail';
+import { serverMessagesTable } from '@eltjs/sdk-apple-mail';
 
 import { undocumented } from '../mail-fields.ts';
 import type { MailSelection } from '../mail-selection.ts';

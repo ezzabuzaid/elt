@@ -1,20 +1,20 @@
-# @workspace/source-apple-accounts
+# @eltjs/source-apple-accounts
 
-An ELT source for the macOS Accounts store, `~/Library/Accounts/Accounts4.sqlite`. macOS keeps in this store every account that its apps sync through, such as iCloud and Google. The source reads the file on this Mac with the SDK `@workspace/sdk-apple-accounts`. It does not use the network, the Accounts framework or app scripting, and no app has to be open.
+An ELT source for the macOS Accounts store, `~/Library/Accounts/Accounts4.sqlite`. macOS keeps in this store every account that its apps sync through, such as iCloud and Google. The source reads the file on this Mac with the SDK `@eltjs/sdk-apple-accounts`. It does not use the network, the Accounts framework or app scripting, and no app has to be open.
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../../elt/CONTEXT.md) for the words of all of elt.
 
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { accountsStorePath } from '@workspace/sdk-apple-accounts';
-import { AppleAccountsSource } from '@workspace/source-apple-accounts/apple-accounts-source';
+} from '@eltjs/elt-sqlite';
+import { accountsStorePath } from '@eltjs/sdk-apple-accounts';
+import { AppleAccountsSource } from '@eltjs/source-apple-accounts/apple-accounts-source';
 
 const source = new AppleAccountsSource({
   path: accountsStorePath(homedir()),
@@ -44,7 +44,7 @@ await new Pipeline({
 }).run();
 ```
 
-The constructor takes `{ path }`, the path of the store. It has no default. `accountsStorePath(home)` of `@workspace/sdk-apple-accounts` gives the path of the store in the home folder `home`. To read a different store, give its path.
+The constructor takes `{ path }`, the path of the store. It has no default. `accountsStorePath(home)` of `@eltjs/sdk-apple-accounts` gives the path of the store in the home folder `home`. To read a different store, give its path.
 
 A Context Compiler import loads every stream incrementally into its `data.sqlite`. Readers use its `<snake_stream>` views. Every stream of a run reads one snapshot of the store: a read transaction on a read-only connection. The connection is never `immutable`, because accountsd keeps a write-ahead log.
 

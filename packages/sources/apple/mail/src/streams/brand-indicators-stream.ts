@@ -1,4 +1,4 @@
-import { brandIndicatorsTable } from '@workspace/sdk-apple-mail';
+import { brandIndicatorsTable } from '@eltjs/sdk-apple-mail';
 
 import { undocumented } from '../mail-fields.ts';
 import type { MailSelection } from '../mail-selection.ts';

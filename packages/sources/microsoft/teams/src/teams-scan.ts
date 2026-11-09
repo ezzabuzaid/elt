@@ -1,9 +1,9 @@
-import type { TeamsClient, TeamsMessage } from '@workspace/sdk-microsoft-teams';
+import type { TeamsClient, TeamsMessage } from '@eltjs/sdk-microsoft-teams';
 import {
   type ImportScope,
   selected,
   withinDates,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 // One run's read of the Teams app's store: every stream reads what the web
 // client had saved when the run opened. The import scope keeps the selected

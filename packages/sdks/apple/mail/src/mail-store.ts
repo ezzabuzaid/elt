@@ -1,4 +1,4 @@
-import { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
+import { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
 
 import { appDatabase, mailStore } from './app-database.ts';
 import { EnvelopeIndex } from './envelope-index.ts';

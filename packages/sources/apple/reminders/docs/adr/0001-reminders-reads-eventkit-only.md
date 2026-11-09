@@ -4,7 +4,7 @@ Two APIs give reminders on macOS: the scripting interface of Reminders.app and E
 
 EventKit gives the start and due date components with their own calendar and time zone, each alarm with its location, the recurrence rules with all their selectors, and the account and list of each reminder. Thus `AppleRemindersSource` reads EventKit only. It does not call the scripting interface of Reminders, and it has no scripting fallback.
 
-At first, the source called EventKit through the Objective-C bridge of JXA in `osascript`. Now `eventkit`, a compiled Swift helper of `@workspace/sdk-apple-eventkit`, reads the store one time for each read and writes one JSON document for each account, list and reminder. The Calendar source uses the same helper.
+At first, the source called EventKit through the Objective-C bridge of JXA in `osascript`. Now `eventkit`, a compiled Swift helper of `@eltjs/sdk-apple-eventkit`, reads the store one time for each read and writes one JSON document for each account, list and reminder. The Calendar source uses the same helper.
 
 ## Considered Options
 

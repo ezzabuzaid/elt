@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { isDictionary, readPlist } from '@workspace/codec-plist';
+import { isDictionary, readPlist } from '@eltjs/codec-plist';
 
 import { PassBundleError } from './errors.ts';
 import { passContent } from './pass-content.ts';

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { Msw } from '@zukhruf/testing/msw';
 import { HttpResponse, http } from 'msw';
 
-import { GoogleGrant, GoogleOAuthApp } from '@workspace/google-auth';
+import { GoogleGrant, GoogleOAuthApp } from '@eltjs/google-auth';
 
 import {
   GoogleHealthAccountNotLinkedError,

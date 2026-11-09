@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import { type TabGroup, tabGroupKinds } from '@workspace/sdk-apple-safari';
+import type { RecordDraft } from '@eltjs/elt';
+import { type TabGroup, tabGroupKinds } from '@eltjs/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, iso, safariFields } from '../safari-stream.ts';

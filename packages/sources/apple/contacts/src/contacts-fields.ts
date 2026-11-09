@@ -1,5 +1,5 @@
-import { plistJSON } from '@workspace/codec-plist';
-import type { FieldSchema } from '@workspace/elt';
+import { plistJSON } from '@eltjs/codec-plist';
+import type { FieldSchema } from '@eltjs/elt';
 import {
   type CalendarDate,
   type ContactsAttributeKind,
@@ -7,8 +7,8 @@ import {
   type ContactsValue,
   type ContactsValues,
   type ContactsView,
-} from '@workspace/sdk-apple-contacts';
-import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
+} from '@eltjs/sdk-apple-contacts';
+import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 const { text, nullableText, nullableTimestamp } = eventKitFields;
 export const nullableInteger = { type: ['integer', 'null'] } as const;

@@ -5,7 +5,7 @@ import { basename, join, relative, sep } from 'node:path';
 
 import { FileStamp } from '@zukhruf/fs';
 
-import { type PlistValue, readPlist } from '@workspace/codec-plist';
+import { type PlistValue, readPlist } from '@eltjs/codec-plist';
 
 import type { IndexedAttachment } from './envelope-index.ts';
 import { MailChangingError, MailSchemaError } from './errors.ts';

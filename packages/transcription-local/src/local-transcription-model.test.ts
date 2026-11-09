@@ -13,7 +13,7 @@ import { LocalTranscriptionModel } from './local-transcription-model.ts';
 import { TranscriptionWorker } from './transcription-worker.ts';
 
 const helper = fileURLToPath(
-  import.meta.resolve('@workspace/transcription-local/transcribe-local'),
+  import.meta.resolve('@eltjs/transcription-local/transcribe-local'),
 );
 
 test('real decoding and native model failures reject, and disposing the engines rejects further work', async () => {

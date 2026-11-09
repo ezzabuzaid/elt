@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/codec-apple-reference-date",
+  "name": "@eltjs/codec-apple-reference-date",
   "version": "0.0.1",
   "private": true,
   "type": "module",

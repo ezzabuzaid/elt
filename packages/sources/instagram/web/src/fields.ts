@@ -1,4 +1,4 @@
-import type { Image } from '@workspace/sdk-instagram-web';
+import type { Image } from '@eltjs/sdk-instagram-web';
 
 export const fields = {
   profileId: {

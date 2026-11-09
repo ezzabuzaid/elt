@@ -13,7 +13,7 @@ import {
 } from 'feedscout/methods';
 import { z } from 'zod';
 
-import { decodeSitemap } from '@workspace/codec-sitemap';
+import { decodeSitemap } from '@eltjs/codec-sitemap';
 
 import { paginationLinks, readListing } from './listing.ts';
 import {

@@ -1,8 +1,4 @@
-import {
-  type DeclaredFormat,
-  type Stream,
-  declaredFormat,
-} from '@workspace/elt';
+import { type DeclaredFormat, type Stream, declaredFormat } from '@eltjs/elt';
 
 import { PostgresColumn, type PostgresColumnType } from './postgres-column.ts';
 

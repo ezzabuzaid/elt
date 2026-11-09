@@ -12,7 +12,7 @@ import type {
   ReloadMode,
   Stage,
   TargetDescription,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   FileContent,
   TargetOwnedError,
@@ -20,7 +20,7 @@ import {
   describeTarget,
   errorMessage,
   reloadMode,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import { openDestination } from './open-destination.ts';
 import type { SQLiteColumn } from './sqlite-column.ts';

@@ -2,7 +2,7 @@
 
 **Use case.** A user keeps documents in a folder: invoices, a lease, scans. The user wants to find a document by its words, with SQL, for example each document that says "invoice". The copy must store each file, and it must not wait while each file is parsed. A file that the parser cannot read must not fail the run.
 
-**What you need.** A source whose stream gives files, a `LocalFiles` that keeps the stored files, and a `DocumentParser`. On a Mac, `MacOSDocumentParser` of `@workspace/source-apple-macos` reads text, HTML, Word, PDF and vCard files.
+**What you need.** A source whose stream gives files, a `LocalFiles` that keeps the stored files, and a `DocumentParser`. On a Mac, `MacOSDocumentParser` of `@eltjs/source-apple-macos` reads text, HTML, Word, PDF and vCard files.
 
 ## The steps
 
@@ -33,13 +33,13 @@ import {
   Pipeline,
   Source,
   Stream,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   ComputedDataset,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
+} from '@eltjs/elt-sqlite';
+import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
 
 // The documents a user keeps in one folder. Each file is one record.
 class DocumentsFolder extends Source {

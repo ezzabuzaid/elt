@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/elt-opentelemetry",
+  "name": "@eltjs/elt-opentelemetry",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -12,15 +12,15 @@
   "dependencies": {
     "@opentelemetry/api": "1.10.0",
     "@opentelemetry/instrumentation": "0.300.0",
-    "@workspace/elt": "0.0.1",
-    "@workspace/sdk-web-crawler": "0.0.1",
-    "@workspace/source-web-pages": "0.0.1"
+    "@eltjs/elt": "*",
+    "@eltjs/sdk-web-crawler": "0.0.1",
+    "@eltjs/source-web-pages": "0.0.1"
   },
   "devDependencies": {
     "@opentelemetry/sdk-logs": "3.0.0",
     "@opentelemetry/sdk-metrics": "3.0.0",
     "@opentelemetry/sdk-trace": "3.0.0",
-    "@workspace/elt-sqlite": "0.0.1",
+    "@eltjs/elt-sqlite": "*",
     "@zukhruf/testing": "^0.8.10"
   }
 }

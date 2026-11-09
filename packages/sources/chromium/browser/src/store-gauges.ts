@@ -1,6 +1,6 @@
 import { type Check, Gauge } from '@zukhruf/async';
 
-import { chromiumHistoryVersion } from '@workspace/sdk-chromium-history';
+import { chromiumHistoryVersion } from '@eltjs/sdk-chromium-history';
 
 // The History of each selected profile and its version: a commit to one, and
 // a profile that gains or loses one, change it.

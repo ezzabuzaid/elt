@@ -1,8 +1,8 @@
-import type { RecordDraft, SchemaRecord } from '@workspace/elt';
+import type { RecordDraft, SchemaRecord } from '@eltjs/elt';
 import {
   type ProfilePicture,
   profilePictureFile,
-} from '@workspace/sdk-whatsapp-desktop';
+} from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
 import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';

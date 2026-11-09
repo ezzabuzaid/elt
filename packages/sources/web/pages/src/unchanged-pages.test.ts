@@ -13,24 +13,24 @@ import {
   CopyConfiguration,
   Pipeline,
   diffGroupedSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   type ArticlePage,
   HTMLExtraction,
   WebArticle,
-} from '@workspace/sdk-web-article';
+} from '@eltjs/sdk-web-article';
 import {
   AlwaysRevisit,
   ArchiveReader,
   LinkReader,
   ListingReader,
   PaginationReader,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 import { ArticleExtractor } from './article-extractor.ts';
 import { type ExtractorRun } from './record-extractor.ts';

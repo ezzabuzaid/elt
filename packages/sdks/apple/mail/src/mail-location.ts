@@ -1,12 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-  isBinaryPlist,
-  parseBinaryPlist,
-  readPlist,
-} from '@workspace/codec-plist';
-import { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
+import { isBinaryPlist, parseBinaryPlist, readPlist } from '@eltjs/codec-plist';
+import { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
 
 import { mailStore } from './app-database.ts';
 import { MailSchemaError } from './errors.ts';

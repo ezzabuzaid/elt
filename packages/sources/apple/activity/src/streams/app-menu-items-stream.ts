@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import { AppMenuItem, type AppMenuItemEvent } from '@workspace/sdk-apple-biome';
+import type { RecordDraft } from '@eltjs/elt';
+import { AppMenuItem, type AppMenuItemEvent } from '@eltjs/sdk-apple-biome';
 
 import { activityFields } from '../activity-values.ts';
 import {

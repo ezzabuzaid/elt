@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/sdk-apple-mail",
+  "name": "@eltjs/sdk-apple-mail",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     }
   },
   "dependencies": {
-    "@workspace/codec-plist": "0.0.1",
-    "@workspace/sdk-macos-app-database": "0.0.1",
+    "@eltjs/codec-plist": "0.0.1",
+    "@eltjs/sdk-macos-app-database": "0.0.1",
     "@zone-eu/mailsplit": "5.4.19",
     "@zukhruf/async": "^0.8.10",
     "@zukhruf/fs": "^0.8.10",

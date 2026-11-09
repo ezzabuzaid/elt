@@ -1,10 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type {
-  CopyConfiguration,
-  Deduplication,
-  KeyValue,
-} from '@workspace/elt';
+import type { CopyConfiguration, Deduplication, KeyValue } from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
 import type { EncodedValue, PostgresColumn } from './postgres-column.ts';

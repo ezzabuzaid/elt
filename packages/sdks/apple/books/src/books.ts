@@ -1,4 +1,4 @@
-import { AppFilesVersion } from '@workspace/sdk-macos-app-database';
+import { AppFilesVersion } from '@eltjs/sdk-macos-app-database';
 
 import { appDatabase } from './app-database.ts';
 import { BookAssetData } from './book-asset-data.ts';

@@ -5,11 +5,11 @@ import {
   type ExtractionCoverage,
   type SourceMessage,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import type {
   SqlServerSession,
   SqlServerTable,
-} from '@workspace/sdk-microsoft-sql-server';
+} from '@eltjs/sdk-microsoft-sql-server';
 
 import { SqlServerStream } from './sql-server-stream.ts';
 import type { WatchGauges } from './watch-gauges.ts';

@@ -1,8 +1,8 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 import {
   SafariNavigations,
   type SafariNavigationsEvent,
-} from '@workspace/sdk-apple-biome';
+} from '@eltjs/sdk-apple-biome';
 
 import { activityFields, isoTime } from '../activity-values.ts';
 import {

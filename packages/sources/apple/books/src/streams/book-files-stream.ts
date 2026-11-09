@@ -1,11 +1,11 @@
 import { join } from 'node:path';
 
-import type { RecordDraft, SchemaRecord } from '@workspace/elt';
+import type { RecordDraft, SchemaRecord } from '@eltjs/elt';
 import {
   type BookFile,
   bookFileFormats,
   exportBookFile,
-} from '@workspace/sdk-apple-books';
+} from '@eltjs/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
 import { BooksStream, booksFields, iso } from '../books-stream.ts';

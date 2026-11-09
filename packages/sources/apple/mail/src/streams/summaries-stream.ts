@@ -1,4 +1,4 @@
-import { summariesTable } from '@workspace/sdk-apple-mail';
+import { summariesTable } from '@eltjs/sdk-apple-mail';
 
 import type { MailSelection } from '../mail-selection.ts';
 import { MailTableStream } from '../mail-table-stream.ts';

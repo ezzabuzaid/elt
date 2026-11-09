@@ -1,20 +1,20 @@
-# @workspace/source-apple-notification-center
+# @eltjs/source-apple-notification-center
 
-An ELT source for macOS Notification Center. It reads `~/Library/Group Containers/group.com.apple.usernoted/db2/db`, the store that usernoted keeps for Notification Center, with the SDK `@workspace/sdk-apple-notification-center`. It does not use the network, Notification Center or the UserNotifications framework, and no app has to be open. The framework shows an app only its own notifications.
+An ELT source for macOS Notification Center. It reads `~/Library/Group Containers/group.com.apple.usernoted/db2/db`, the store that usernoted keeps for Notification Center, with the SDK `@eltjs/sdk-apple-notification-center`. It does not use the network, Notification Center or the UserNotifications framework, and no app has to be open. The framework shows an app only its own notifications.
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../../elt/CONTEXT.md) for the words of all of elt.
 
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { notificationCenterStorePath } from '@workspace/sdk-apple-notification-center';
-import { AppleNotificationCenterSource } from '@workspace/source-apple-notification-center/apple-notification-center-source';
+} from '@eltjs/elt-sqlite';
+import { notificationCenterStorePath } from '@eltjs/sdk-apple-notification-center';
+import { AppleNotificationCenterSource } from '@eltjs/source-apple-notification-center/apple-notification-center-source';
 
 const source = new AppleNotificationCenterSource({
   path: notificationCenterStorePath(homedir()),
@@ -58,7 +58,7 @@ for await (const pass of pipeline.watch({ signal: controller.signal })) {
 
 Notification Center keeps many notifications for some minutes only. A watch examines the store every second and loads each notification before it goes. A pipeline that only calls `run()` gets what the store holds at each run. See [Watching](#watching).
 
-`new AppleNotificationCenterSource({ path, scope })` takes the path of the store and an optional scope: see [Date range](#date-range). `path` has no default. `notificationCenterStorePath(home)` of `@workspace/sdk-apple-notification-center` gives the path of the store in the home folder `home`.
+`new AppleNotificationCenterSource({ path, scope })` takes the path of the store and an optional scope: see [Date range](#date-range). `path` has no default. `notificationCenterStorePath(home)` of `@eltjs/sdk-apple-notification-center` gives the path of the store in the home folder `home`.
 
 A Context Compiler import loads every stream incrementally into its `data.sqlite`. Readers use its `<snake_stream>` views (`notifications`, `apps`, `categories`, `category_actions`). Every stream of a run reads one snapshot of the store: a read transaction on a read-only connection. The connection is never `immutable`, because usernoted keeps a write-ahead log.
 

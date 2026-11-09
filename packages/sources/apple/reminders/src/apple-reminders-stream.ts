@@ -5,8 +5,8 @@ import {
   Stream,
   type SyncMode,
   validateRecords,
-} from '@workspace/elt';
-import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
+} from '@eltjs/elt';
+import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 import type { RemindersScan } from './reminders-scan.ts';
 

@@ -1,4 +1,4 @@
-import type { Profile } from '@workspace/sdk-instagram-web';
+import type { Profile } from '@eltjs/sdk-instagram-web';
 
 import type { LaneReader } from './instagram-run.ts';
 

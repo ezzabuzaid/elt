@@ -1,4 +1,4 @@
-import { type PlistValue, isDictionary } from '@workspace/codec-plist';
+import { type PlistValue, isDictionary } from '@eltjs/codec-plist';
 
 import { MailSchemaError } from './errors.ts';
 

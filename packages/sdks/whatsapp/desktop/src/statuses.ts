@@ -1,6 +1,6 @@
 import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
-import { referenceDate } from '@workspace/codec-apple-reference-date';
+import { referenceDate } from '@eltjs/codec-apple-reference-date';
 
 import { appDatabase } from './app-database.ts';
 import { messageMediaFile } from './chat-storage.ts';

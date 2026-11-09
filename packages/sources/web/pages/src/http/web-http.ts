@@ -6,13 +6,13 @@ import got, { type Got } from 'got';
 import { Keyv } from 'keyv';
 import { z } from 'zod';
 
-import type { PipelineClock } from '@workspace/elt';
+import type { PipelineClock } from '@eltjs/elt';
 import {
   type OriginMemento,
   Origins,
   type Reader,
   type RevisitPolicy,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 import type { ExtractorRun } from '../record-extractor.ts';
 

@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/codec-segb",
+  "name": "@eltjs/codec-segb",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,6 +10,6 @@
     }
   },
   "dependencies": {
-    "@workspace/codec-apple-reference-date": "0.0.1"
+    "@eltjs/codec-apple-reference-date": "0.0.1"
   }
 }

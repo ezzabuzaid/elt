@@ -1,4 +1,4 @@
-import { plistJSON } from '@workspace/codec-plist';
+import { plistJSON } from '@eltjs/codec-plist';
 
 import {
   AppleMailStream,

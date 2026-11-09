@@ -8,7 +8,7 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
-import { Eca } from '@workspace/eca';
+import { Eca } from '@eltjs/eca';
 
 import { MeetingBriefWriter } from './meeting-brief-writer.ts';
 import { type MeetingBrief, PlanningMeetings } from './planning-meetings.ts';

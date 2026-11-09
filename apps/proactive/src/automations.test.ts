@@ -7,7 +7,7 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
-import type { Match } from '@workspace/eca';
+import type { Match } from '@eltjs/eca';
 
 import { AgentAutomation } from './agent-automation.ts';
 import { Automation } from './automation.ts';

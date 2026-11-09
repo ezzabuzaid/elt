@@ -2,7 +2,7 @@ import {
   AdaptiveRevisit,
   type Reader,
   type RevisitPolicy,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 import type { RecordExtractor } from './record-extractor.ts';
 

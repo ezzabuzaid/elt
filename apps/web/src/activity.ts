@@ -1,8 +1,8 @@
 import { EventEmitter, on } from 'node:events';
 
-import { passChannels } from '@workspace/elt';
-import { crawlChannels } from '@workspace/sdk-web-crawler';
-import { pageChannels } from '@workspace/source-web-pages/page-channels';
+import { passChannels } from '@eltjs/elt';
+import { crawlChannels } from '@eltjs/sdk-web-crawler';
+import { pageChannels } from '@eltjs/source-web-pages/page-channels';
 
 import type { Activity as State } from './contract.ts';
 import { RunProgress } from './run-progress.ts';

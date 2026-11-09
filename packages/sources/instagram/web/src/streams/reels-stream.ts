@@ -1,4 +1,4 @@
-import type { ReelMedia } from '@workspace/sdk-instagram-web';
+import type { ReelMedia } from '@eltjs/sdk-instagram-web';
 
 import { fields, reelUrl } from '../fields.ts';
 import type { InstagramRun, LaneReader } from '../instagram-run.ts';

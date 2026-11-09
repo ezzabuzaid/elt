@@ -1,24 +1,21 @@
-# @workspace/source-apple-mail
+# @eltjs/source-apple-mail
 
-An ELT source for Apple Mail. It reads the Mail store under `~/Library/Mail` through `@workspace/sdk-apple-mail`: the index (`Envelope Index`), the message files (`.emlx`), the detached files and the property lists. It reads the account and server settings from the system Accounts store through `@workspace/sdk-apple-accounts`. It does not write, it does not start Mail, and it does not use the network.
+An ELT source for Apple Mail. It reads the Mail store under `~/Library/Mail` through `@eltjs/sdk-apple-mail`: the index (`Envelope Index`), the message files (`.emlx`), the detached files and the property lists. It reads the account and server settings from the system Accounts store through `@eltjs/sdk-apple-accounts`. It does not write, it does not start Mail, and it does not use the network.
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md). The decisions are in [docs/adr](./docs/adr).
 
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import {
-  AccountsStore,
-  accountsStorePath,
-} from '@workspace/sdk-apple-accounts';
-import { mailDirectory } from '@workspace/sdk-apple-mail';
-import { AppleMailSource } from '@workspace/source-apple-mail/apple-mail-source';
+} from '@eltjs/elt-sqlite';
+import { AccountsStore, accountsStorePath } from '@eltjs/sdk-apple-accounts';
+import { mailDirectory } from '@eltjs/sdk-apple-mail';
+import { AppleMailSource } from '@eltjs/source-apple-mail/apple-mail-source';
 
 const source = new AppleMailSource({
   path: mailDirectory(homedir()),

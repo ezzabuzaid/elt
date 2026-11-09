@@ -1,7 +1,7 @@
 import type { SQLOutputValue } from 'node:sqlite';
 
-import { referenceDate } from '@workspace/codec-apple-reference-date';
-import { type PlistValue, decodeArchive } from '@workspace/codec-plist';
+import { referenceDate } from '@eltjs/codec-apple-reference-date';
+import { type PlistValue, decodeArchive } from '@eltjs/codec-plist';
 
 type Value = SQLOutputValue | undefined;
 

@@ -1,20 +1,20 @@
-# @workspace/source-apple-call-history
+# @eltjs/source-apple-call-history
 
-An ELT source for the call history of Phone and FaceTime. It reads `~/Library/Application Support/CallHistoryDB/CallHistory.storedata`, the Core Data store of the CallHistory framework, with the SDK `@workspace/sdk-apple-call-history`. callhistoryd writes this store for Phone and FaceTime, and fills it through iCloud from the other devices of the user (`CallHistorySyncHelper`). Thus it holds the phone calls of the iPhone and the FaceTime calls of the Mac. The source does not use the network, the apps or the framework, and no app has to be open.
+An ELT source for the call history of Phone and FaceTime. It reads `~/Library/Application Support/CallHistoryDB/CallHistory.storedata`, the Core Data store of the CallHistory framework, with the SDK `@eltjs/sdk-apple-call-history`. callhistoryd writes this store for Phone and FaceTime, and fills it through iCloud from the other devices of the user (`CallHistorySyncHelper`). Thus it holds the phone calls of the iPhone and the FaceTime calls of the Mac. The source does not use the network, the apps or the framework, and no app has to be open.
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../../elt/CONTEXT.md) for the words of all of elt.
 
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { callHistoryStorePath } from '@workspace/sdk-apple-call-history';
-import { AppleCallHistorySource } from '@workspace/source-apple-call-history/apple-call-history-source';
+} from '@eltjs/elt-sqlite';
+import { callHistoryStorePath } from '@eltjs/sdk-apple-call-history';
+import { AppleCallHistorySource } from '@eltjs/source-apple-call-history/apple-call-history-source';
 
 // The calls that started on 2026-01-01 or later.
 const source = new AppleCallHistorySource({
@@ -48,7 +48,7 @@ await new Pipeline({
 }).run();
 ```
 
-The constructor takes `{ path, scope }`. `path` is the path of the store. It has no default. `callHistoryStorePath(home)` of `@workspace/sdk-apple-call-history` gives the path of the store in the home folder `home`. `scope` is optional: see [Date range](#date-range).
+The constructor takes `{ path, scope }`. `path` is the path of the store. It has no default. `callHistoryStorePath(home)` of `@eltjs/sdk-apple-call-history` gives the path of the store in the home folder `home`. `scope` is optional: see [Date range](#date-range).
 
 A Context Compiler import loads every stream incrementally into its `data.sqlite`. Readers use its `<snake_stream>` views (`calls`, `call_participants`). Every stream of a run reads one snapshot of the store: a read transaction on a read-only connection. The connection is never `immutable`, because callhistoryd keeps a write-ahead log.
 

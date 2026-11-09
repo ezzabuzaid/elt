@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/elt-sqlite",
+  "name": "@eltjs/elt-sqlite",
   "version": "0.0.1",
   "private": true,
   "description": "The SQLite destination of elt: each stream is a raw table in one SQLite file, with a reader view over it and a catalog of each table, view and column.",
@@ -40,7 +40,7 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@workspace/elt": "^0.0.1",
+    "@eltjs/elt": "^0.0.1",
     "@zukhruf/mutex": "^0.8.10",
     "@zukhruf/sqlite-drift": "^0.8.10",
     "@zukhruf/sqlite-open": "^0.8.10",

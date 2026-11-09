@@ -5,12 +5,12 @@ import type {
   ExtractionCoverage,
   SourceMessage,
   Stream,
-} from '@workspace/elt';
-import { Catalog, Source, diffSnapshot } from '@workspace/elt';
-import type { RemindersStore } from '@workspace/sdk-apple-eventkit';
-import { RemindersUnavailableError } from '@workspace/sdk-apple-eventkit';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
+} from '@eltjs/elt';
+import { Catalog, Source, diffSnapshot } from '@eltjs/elt';
+import type { RemindersStore } from '@eltjs/sdk-apple-eventkit';
+import { RemindersUnavailableError } from '@eltjs/sdk-apple-eventkit';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
+import { localAppleStoreCoverage } from '@eltjs/source-apple-macos/local-apple-store-coverage';
 
 import type { RemindersReader } from './apple-reminders-stream.ts';
 import { RemindersScan } from './reminders-scan.ts';

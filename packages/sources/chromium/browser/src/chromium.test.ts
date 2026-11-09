@@ -18,19 +18,19 @@ import {
   Pipeline,
   PipelineError,
   type Source,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   type ChromiumBrowser,
   chrome,
   chromiumBrowsers,
   dia,
-} from '@workspace/sdk-chromium-browser';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/sdk-chromium-browser';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { ChromiumSource } from './chromium-source.ts';
 
@@ -1282,9 +1282,9 @@ test('a Chromium pass over a large History holds one visit at a time, so it load
   // loads the source from this package's folder, where its dependencies
   // resolve.
   const pass = `
-    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
-    const { dia } = await import('@workspace/sdk-chromium-browser');
+    const { Connection, Copy, Pipeline } = await import('@eltjs/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@eltjs/elt-sqlite');
+    const { dia } = await import('@eltjs/sdk-chromium-browser');
     const { ChromiumSource } = await import(process.env.SOURCE);
     const source = new ChromiumSource({ browser: dia, home: process.env.HOME_FOLDER });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });

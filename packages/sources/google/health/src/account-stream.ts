@@ -1,4 +1,4 @@
-import type { RecordMessage } from '@workspace/elt';
+import type { RecordMessage } from '@eltjs/elt';
 
 import type { GoogleHealthScan } from './google-health-scan.ts';
 import { GoogleHealthStream } from './google-health-stream.ts';

@@ -16,7 +16,7 @@ import {
   passFailureType,
   passStatus,
   recordedFailure,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import { openDestination } from './open-destination.ts';
 import { installSQLiteCatalog } from './sqlite-catalog.ts';

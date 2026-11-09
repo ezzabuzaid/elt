@@ -30,7 +30,7 @@ Only these parts are copied:
 - `#read`: three attempts, a retry on `ENOENT` while the directory exists, `IndexedDBFormatError` changed to the SDK's format error, and the codes in `unreadable` changed to the SDK's access error.
 - `#exists`, the `unreadable` set and `errorCode`.
 - `#files()`, without `storage/root-state.json`: Teams has no file of its own beside its IndexedDB.
-- `version()`: an `AppFilesVersion` of `@workspace/sdk-macos-app-database` over `#files()`.
+- `version()`: an `AppFilesVersion` of `@eltjs/sdk-macos-app-database` over `#files()`.
 - `#saved()` and `lastWrite()`: the files of the database with their stats, and the latest of their modification times.
 
 The choice between two installations (`slackDesktopDirectory(home)`) is not copied: Teams has one location in a home folder, `teamsDirectory(home)`.
@@ -40,4 +40,4 @@ The same two classes, `TeamsUnavailableError` and `TeamsFormatError`, with messa
 
 ## Not a copy
 
-The test writer of a Chromium IndexedDB was in three places (the Slack source test, the CLI test, and these tests). It moved to `IndexedDBWriter` in `@workspace/codec-chromium-indexeddb/test`, and every place uses it.
+The test writer of a Chromium IndexedDB was in three places (the Slack source test, the CLI test, and these tests). It moved to `IndexedDBWriter` in `@eltjs/codec-chromium-indexeddb/test`, and every place uses it.

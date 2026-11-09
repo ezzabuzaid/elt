@@ -25,16 +25,16 @@ import { join } from 'node:path';
 
 import { open } from '@zukhruf/sqlite-open';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { ListingReader } from '@workspace/sdk-web-crawler';
-import { ArticleExtractor } from '@workspace/source-web-pages/article-extractor';
-import { WebSource } from '@workspace/source-web-pages/web-source';
-import { WebStream } from '@workspace/source-web-pages/web-stream';
+} from '@eltjs/elt-sqlite';
+import { ListingReader } from '@eltjs/sdk-web-crawler';
+import { ArticleExtractor } from '@eltjs/source-web-pages/article-extractor';
+import { WebSource } from '@eltjs/source-web-pages/web-source';
+import { WebStream } from '@eltjs/source-web-pages/web-stream';
 
 // A blog whose sitemap gives the date when each post last changed.
 const posts = new Map([

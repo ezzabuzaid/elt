@@ -36,7 +36,7 @@ const execFile = promisify(execFileCallback);
 
 // The helper this package compiles, through its package export.
 const helper = fileURLToPath(
-  import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+  import.meta.resolve('@eltjs/sdk-apple-eventkit/eventkit-helper'),
 );
 
 const january = {

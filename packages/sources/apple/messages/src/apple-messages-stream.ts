@@ -3,8 +3,8 @@ import {
   Stream,
   type SyncMode,
   validateRecords,
-} from '@workspace/elt';
-import type { ChatDatabase } from '@workspace/sdk-apple-messages';
+} from '@eltjs/elt';
+import type { ChatDatabase } from '@eltjs/sdk-apple-messages';
 
 import type { MessageSelection, MessagesScan } from './messages-scan.ts';
 

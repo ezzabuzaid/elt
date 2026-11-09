@@ -4,7 +4,7 @@ import { basename, extname } from 'node:path';
 import { ALL_MODELS } from '@handy-computer/models';
 import { gguf } from '@huggingface/gguf';
 
-import type { LocalTranscriptionConfiguration } from '@workspace/transcription-local';
+import type { LocalTranscriptionConfiguration } from '@eltjs/transcription-local';
 
 // Handy's catalog lists every model transcribe.cpp publishes, and each
 // model's family is the architecture its GGUF names, so the catalog's

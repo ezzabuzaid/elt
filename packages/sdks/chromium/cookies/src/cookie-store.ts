@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 
 import { open } from '@zukhruf/sqlite-open';
 
-import { chromiumTime } from '@workspace/codec-chromium-time';
+import { chromiumTime } from '@eltjs/codec-chromium-time';
 
 import { CookieDecryptionError } from './errors.ts';
 

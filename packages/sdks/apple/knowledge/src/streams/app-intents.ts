@@ -1,4 +1,4 @@
-import type { PlistValue } from '@workspace/codec-plist';
+import type { PlistValue } from '@eltjs/codec-plist';
 
 import { type KnowledgeRow, KnowledgeStream } from '../knowledge-stream.ts';
 import {

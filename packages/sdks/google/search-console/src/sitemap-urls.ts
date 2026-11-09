@@ -5,7 +5,7 @@ import {
   type SitemapListing,
   decodeSitemap,
   parseSitemap,
-} from '@workspace/codec-sitemap';
+} from '@eltjs/codec-sitemap';
 
 export class SitemapError extends Error {
   override readonly name = 'SitemapError';

@@ -1,4 +1,4 @@
-import { ProtobufMessage } from '@workspace/codec-protobuf';
+import { ProtobufMessage } from '@eltjs/codec-protobuf';
 
 import { appDatabase } from './app-database.ts';
 import { BooksSchemaError } from './errors.ts';

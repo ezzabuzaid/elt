@@ -1,4 +1,4 @@
-import type { SearchAnalyticsRow } from '@workspace/sdk-google-search-console';
+import type { SearchAnalyticsRow } from '@eltjs/sdk-google-search-console';
 
 import { searchConsoleFields } from './search-console-stream.ts';
 

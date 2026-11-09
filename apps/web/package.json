@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/web",
+  "name": "@eltjs/web",
   "private": true,
   "type": "module",
   "dependencies": {
@@ -8,10 +8,10 @@
     "@hono/node-server": "2.1.5",
     "@sdk-it/hono": "0.46.11",
     "@tanstack/react-query": "5.104.5",
-    "@workspace/elt": "0.0.1",
-    "@workspace/elt-sqlite": "0.0.1",
-    "@workspace/sdk-web-crawler": "0.0.1",
-    "@workspace/source-web-pages": "0.0.1",
+    "@eltjs/elt": "*",
+    "@eltjs/elt-sqlite": "*",
+    "@eltjs/sdk-web-crawler": "0.0.1",
+    "@eltjs/source-web-pages": "0.0.1",
     "@zukhruf/single-flight": "^0.8.10",
     "hono": "4.13.14",
     "html-react-parser": "6.1.9",

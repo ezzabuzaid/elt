@@ -5,7 +5,7 @@ import {
   type GoogleRequester,
   reasonsOf,
   statusOf,
-} from '@workspace/google-auth';
+} from '@eltjs/google-auth';
 
 import {
   LISTED_DATA_TYPES,

@@ -1,4 +1,4 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
+import type { ProtobufMessage } from '@eltjs/codec-protobuf';
 
 import { BiomeStream } from '../biome-stream.ts';
 import { appleDate } from '../biome-values.ts';

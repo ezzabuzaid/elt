@@ -25,18 +25,18 @@ import {
   StreamStatus,
   type SyncMode,
   type Target,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   StoreUnavailableError,
   whatsappContainer,
-} from '@workspace/sdk-whatsapp-desktop';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/sdk-whatsapp-desktop';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { WhatsAppDesktopSource } from './whatsapp-desktop-source.ts';
 
@@ -3485,8 +3485,8 @@ test('large WhatsApp passes stream payloads and reuse compact metadata within a 
   // this heap on repeat; compact metadata must fit alongside checkpoints.
   // Load the built source where its workspace dependencies resolve.
   const pass = `
-    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { Connection, Copy, Pipeline } = await import('@eltjs/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@eltjs/elt-sqlite');
     const { WhatsAppDesktopSource } = await import(process.env.SOURCE);
     const source = new WhatsAppDesktopSource({ container: process.env.CONTAINER });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });

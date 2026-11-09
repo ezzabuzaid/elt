@@ -3,13 +3,13 @@ import { join } from 'node:path';
 import {
   type AppDatabaseVersion,
   AppFilesVersion,
-} from '@workspace/sdk-macos-app-database';
+} from '@eltjs/sdk-macos-app-database';
 
 import { appDatabase } from './app-database.ts';
 import { ClockDatabase } from './clock-database.ts';
 import { stopwatches, worldClocks } from './clock-preferences.ts';
 
-export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
+export { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
 
 export type ClockLocation = {
   readonly database: string;

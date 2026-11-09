@@ -10,16 +10,16 @@ import type {
   PipelineClock,
   SourceMessage,
   Stream,
-} from '@workspace/elt';
-import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+} from '@eltjs/elt';
+import { Catalog, Source, diffSnapshot } from '@eltjs/elt';
 import {
   Safari,
   type SafariLocation,
   StoreUnavailableError,
   safariRunning,
-} from '@workspace/sdk-apple-safari';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
+} from '@eltjs/sdk-apple-safari';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
+import { localAppleStoreCoverage } from '@eltjs/source-apple-macos/local-apple-store-coverage';
 
 import { SafariScan } from './safari-scan.ts';
 import type { SafariReader } from './safari-stream.ts';

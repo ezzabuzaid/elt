@@ -9,14 +9,14 @@ import type {
   ExtractionCoverage,
   SourceMessage,
   Stream,
-} from '@workspace/elt';
-import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+} from '@eltjs/elt';
+import { Catalog, Source, diffSnapshot } from '@eltjs/elt';
 import {
   Books,
   type BooksLocation,
   StoreUnavailableError,
-} from '@workspace/sdk-apple-books';
-import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
+} from '@eltjs/sdk-apple-books';
+import { localAppleStoreCoverage } from '@eltjs/source-apple-macos/local-apple-store-coverage';
 
 import { BooksScan } from './books-scan.ts';
 import type { BooksReader } from './books-stream.ts';

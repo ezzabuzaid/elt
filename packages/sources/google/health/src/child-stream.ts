@@ -1,5 +1,5 @@
-import type { RecordMessage } from '@workspace/elt';
-import type { DataPoint, ListedDataType } from '@workspace/sdk-google-health';
+import type { RecordMessage } from '@eltjs/elt';
+import type { DataPoint, ListedDataType } from '@eltjs/sdk-google-health';
 
 import type { GoogleHealthScan } from './google-health-scan.ts';
 import {

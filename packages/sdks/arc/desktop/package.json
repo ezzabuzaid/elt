@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/sdk-arc-desktop",
+  "name": "@eltjs/sdk-arc-desktop",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     }
   },
   "dependencies": {
-    "@workspace/codec-apple-reference-date": "0.0.1",
-    "@workspace/sdk-macos-app-database": "0.0.1",
+    "@eltjs/codec-apple-reference-date": "0.0.1",
+    "@eltjs/sdk-macos-app-database": "0.0.1",
     "@zukhruf/fs": "^0.8.10"
   }
 }

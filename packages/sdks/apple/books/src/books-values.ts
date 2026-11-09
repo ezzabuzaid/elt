@@ -3,8 +3,8 @@ import type { SQLOutputValue } from 'node:sqlite';
 import {
   isWithinDistantDates,
   referenceDate,
-} from '@workspace/codec-apple-reference-date';
-import { type PlistValue, isDictionary } from '@workspace/codec-plist';
+} from '@eltjs/codec-apple-reference-date';
+import { type PlistValue, isDictionary } from '@eltjs/codec-plist';
 
 export type Row = Record<string, SQLOutputValue>;
 type Dictionary = Readonly<Record<string, PlistValue>>;

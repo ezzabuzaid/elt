@@ -1,4 +1,4 @@
-import type { ClockSnapshot } from '@workspace/sdk-apple-clock/clock-store';
+import type { ClockSnapshot } from '@eltjs/sdk-apple-clock/clock-store';
 
 import { ClockStream, fields } from '../clock-stream.ts';
 

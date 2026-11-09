@@ -10,7 +10,7 @@ import {
   DerivedDataset,
   type RefreshTrigger,
   type Rule,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import { busyTimeout, openDestination } from './open-destination.ts';
 import { SQLiteDestination } from './sqlite-destination.ts';

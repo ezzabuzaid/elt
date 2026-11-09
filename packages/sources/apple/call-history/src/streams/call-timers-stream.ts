@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { CallTimers } from '@workspace/sdk-apple-call-history';
+import type { RecordDraft } from '@eltjs/elt';
+import type { CallTimers } from '@eltjs/sdk-apple-call-history';
 
 import {
   AppleCallHistoryStream,

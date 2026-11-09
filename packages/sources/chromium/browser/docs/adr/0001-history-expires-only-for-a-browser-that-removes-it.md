@@ -19,7 +19,7 @@ A snapshot diff deletes each key that is not in the read. For Chrome, a visit th
 
 `downloads` and `bookmarks` never expire. Their snapshot diff always uses `ClosedWorld`.
 
-The SDK `@workspace/sdk-chromium-history` calculates `expiresAt` to the millisecond, because `expiresBy` compares the time as text with a horizon to the millisecond. A row with no time, such as a search whose URL is gone, has an expiry in 1601, so it is already expired.
+The SDK `@eltjs/sdk-chromium-history` calculates `expiresAt` to the millisecond, because `expiresBy` compares the time as text with a horizon to the millisecond. A row with no time, such as a search whose URL is gone, has an expiry in 1601, so it is already expired.
 
 ## Consequences
 

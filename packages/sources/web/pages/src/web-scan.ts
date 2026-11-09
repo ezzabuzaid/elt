@@ -1,7 +1,7 @@
 import { Latch, untilAborted } from '@zukhruf/async';
 import { z } from 'zod';
 
-import { routeHows } from '@workspace/sdk-web-crawler';
+import { routeHows } from '@eltjs/sdk-web-crawler';
 
 /**
  * The groups of routes that the crawls of one input found and that its

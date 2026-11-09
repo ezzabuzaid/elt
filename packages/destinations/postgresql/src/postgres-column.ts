@@ -5,7 +5,7 @@ import {
   type FileReference,
   isCalendarDate,
   isTimestamp,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
 

@@ -7,7 +7,7 @@ import {
   Stream,
   type SyncMode,
   validateRecords,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import type { TeamsScan } from './teams-scan.ts';
 

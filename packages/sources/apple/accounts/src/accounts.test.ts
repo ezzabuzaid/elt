@@ -12,16 +12,16 @@ import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
+import { Connection, Copy, Pipeline, PipelineError } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   StoreUnavailableError,
   accountsStorePath,
-} from '@workspace/sdk-apple-accounts';
+} from '@eltjs/sdk-apple-accounts';
 
 import { AppleAccountsSource } from './apple-accounts-source.ts';
 
@@ -907,8 +907,8 @@ test('an Accounts pass over a large store holds one authorization at a time, so 
   // 70 MB cap sits well clear of both sides. The process loads the built
   // source from this package's folder, where its dependencies resolve.
   const pass = `
-    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { Connection, Copy, Pipeline } = await import('@eltjs/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@eltjs/elt-sqlite');
     const { AppleAccountsSource } = await import(process.env.SOURCE);
     const source = new AppleAccountsSource({ path: process.env.STORE });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/out.sqlite' });

@@ -26,13 +26,13 @@ import {
   StreamStatus,
   readerCatalog,
   syncHistoryRelations,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   type AccountDocument,
   type DateComponentsDocument,
@@ -40,22 +40,22 @@ import {
   type ParticipantDocument,
   type ReminderDocument,
   RemindersStore,
-} from '@workspace/sdk-apple-eventkit';
+} from '@eltjs/sdk-apple-eventkit';
 import {
   type HelperCalendarDocument,
   type HelperRead,
   type HelperRequest,
   StubEventKitHelper,
-} from '@workspace/sdk-apple-eventkit/test';
+} from '@eltjs/sdk-apple-eventkit/test';
 
 import { AppleRemindersSource } from './apple-reminders-source.ts';
 
 const execFile = promisify(execFileCallback);
 
-// The helper @workspace/sdk-apple-eventkit compiles, which the live tests read
+// The helper @eltjs/sdk-apple-eventkit compiles, which the live tests read
 // this Mac's reminders through.
 const helper = fileURLToPath(
-  import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+  import.meta.resolve('@eltjs/sdk-apple-eventkit/eventkit-helper'),
 );
 
 const snake = (name: string) =>

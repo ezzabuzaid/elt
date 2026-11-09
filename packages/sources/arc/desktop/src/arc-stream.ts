@@ -4,12 +4,12 @@ import {
   type SchemaRecord,
   Stream,
   validateRecords,
-} from '@workspace/elt';
-import type { ArcSidebarContent } from '@workspace/sdk-arc-desktop';
+} from '@eltjs/elt';
+import type { ArcSidebarContent } from '@eltjs/sdk-arc-desktop';
 import {
   type ImportScope,
   selected,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 export const fields = {
   id: { type: 'string', minLength: 1 },

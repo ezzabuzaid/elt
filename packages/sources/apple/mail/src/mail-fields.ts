@@ -1,9 +1,9 @@
-import type { FieldSchema } from '@workspace/elt';
+import type { FieldSchema } from '@eltjs/elt';
 import type {
   MailColumnKind,
   MailStoredValue,
   MailTable,
-} from '@workspace/sdk-apple-mail';
+} from '@eltjs/sdk-apple-mail';
 
 // How each kind of index column loads: its field type, the suffix its field
 // name takes, and what a reader gets. Only confirmed Unix dates convert;

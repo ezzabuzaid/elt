@@ -6,7 +6,7 @@ import {
   type SourceMessage,
   diffSnapshot,
   validateRecords,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import type { SearchConsoleScan } from './search-console-scan.ts';
 import {

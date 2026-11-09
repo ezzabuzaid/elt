@@ -2,7 +2,7 @@
 
 A host wants to see a crawl while it runs: how many requests each origin gets, where the time goes, which origins block, and how each crawl ends. elt already publishes these facts on `node:diagnostics_channel` channels (`passChannels`, `crawlChannels`, `pageChannels`). Before this package, one host read them as console text (logful's `CrawlLog`), and no other host could use that text.
 
-Thus `@workspace/elt-opentelemetry` turns the channels into OpenTelemetry spans, metrics and log records. elt and its packages do not depend on OpenTelemetry. A host installs the bridge with its SDK, and the SDK sends the signals to a backend that the host chooses, such as `grafana/otel-lgtm`. This is the way of `@opentelemetry/instrumentation-undici`: undici publishes on its channels, and the instrumentation subscribes and makes the spans (opentelemetry-js-contrib 47ab4c2def, `undici.ts`). Node asks a module to publish what it does on channels, so that tools can subscribe (`doc/api/diagnostics_channel.md`).
+Thus `@eltjs/elt-opentelemetry` turns the channels into OpenTelemetry spans, metrics and log records. elt and its packages do not depend on OpenTelemetry. A host installs the bridge with its SDK, and the SDK sends the signals to a backend that the host chooses, such as `grafana/otel-lgtm`. This is the way of `@opentelemetry/instrumentation-undici`: undici publishes on its channels, and the instrumentation subscribes and makes the spans (opentelemetry-js-contrib 47ab4c2def, `undici.ts`). Node asks a module to publish what it does on channels, so that tools can subscribe (`doc/api/diagnostics_channel.md`).
 
 ## Considered Options
 

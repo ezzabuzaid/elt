@@ -4,7 +4,7 @@ import type { SQLOutputValue } from 'node:sqlite';
 
 import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
-import { referenceDate } from '@workspace/codec-apple-reference-date';
+import { referenceDate } from '@eltjs/codec-apple-reference-date';
 
 import { appDatabase } from './app-database.ts';
 import { NoteDocument, decodeTable } from './note-document.ts';

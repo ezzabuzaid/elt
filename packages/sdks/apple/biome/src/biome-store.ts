@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import {
   type AppDatabaseVersion,
   StoreUnavailableError,
-} from '@workspace/sdk-macos-app-database';
+} from '@eltjs/sdk-macos-app-database';
 
 import { appDatabase, biomeStore } from './app-database.ts';
 import { type BiomeSegment, segments } from './biome-segment.ts';

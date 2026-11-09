@@ -1,19 +1,19 @@
-# @workspace/source-microsoft-sql-server
+# @eltjs/source-microsoft-sql-server
 
 An ELT source for one SQL Server database. Each user table that the login can read becomes a stream named `<schema>.<table>`. The source needs SQL Server 2016 or later, Azure SQL Database or Azure SQL Managed Instance.
 
 The words in this README have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
 ```ts
-import { Connection, Pipeline } from '@workspace/elt';
+import { Connection, Pipeline } from '@eltjs/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-} from '@workspace/elt-postgresql';
-import { SqlServerDatabase } from '@workspace/sdk-microsoft-sql-server';
-import { sqlServerCopies } from '@workspace/source-microsoft-sql-server/sql-server-copies';
-import { SqlServerSource } from '@workspace/source-microsoft-sql-server/sql-server-source';
+} from '@eltjs/elt-postgresql';
+import { SqlServerDatabase } from '@eltjs/sdk-microsoft-sql-server';
+import { sqlServerCopies } from '@eltjs/source-microsoft-sql-server/sql-server-copies';
+import { SqlServerSource } from '@eltjs/source-microsoft-sql-server/sql-server-source';
 
 const url = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
 const schema = 'shop';
@@ -45,7 +45,7 @@ await new Pipeline({
 3. Call `sqlServerCopies` to make one copy for each discovered table, with the sync strategy that discovery selected.
 4. Connect the copies to a destination and a checkpoint store through `Connection` and `Pipeline`.
 
-`@workspace/sdk-microsoft-sql-server` owns the database: the connection string, discovery, exact reads, Change Tracking and the values that a watch reads. The source owns the streams, their schemas and the sync strategy. The SDK and the source hold no configuration from environment variables or for a standalone app.
+`@eltjs/sdk-microsoft-sql-server` owns the database: the connection string, discovery, exact reads, Change Tracking and the values that a watch reads. The source owns the streams, their schemas and the sync strategy. The SDK and the source hold no configuration from environment variables or for a standalone app.
 
 `sqlServerCopies` makes each stream a copy:
 

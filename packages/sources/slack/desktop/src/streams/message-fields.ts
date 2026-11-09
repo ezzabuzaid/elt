@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { SlackMessage } from '@workspace/sdk-slack-desktop';
+import type { RecordDraft } from '@eltjs/elt';
+import type { SlackMessage } from '@eltjs/sdk-slack-desktop';
 
 import { slackFields } from '../slack-desktop-stream.ts';
 

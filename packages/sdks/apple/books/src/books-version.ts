@@ -1,7 +1,7 @@
 import type {
   AppDatabaseVersion,
   AppFilesVersion,
-} from '@workspace/sdk-macos-app-database';
+} from '@eltjs/sdk-macos-app-database';
 
 // What changes when one Books store does. Books and bookdatastored commit
 // through WALs they keep open, so a database reports each commit through

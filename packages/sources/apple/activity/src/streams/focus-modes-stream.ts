@@ -1,8 +1,8 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 import {
   UserFocusComputedMode,
   type UserFocusComputedModeEvent,
-} from '@workspace/sdk-apple-biome';
+} from '@eltjs/sdk-apple-biome';
 
 import { activityFields } from '../activity-values.ts';
 import {

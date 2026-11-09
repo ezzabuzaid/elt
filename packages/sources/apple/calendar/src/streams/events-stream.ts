@@ -1,4 +1,4 @@
-import type { RecordDraft, SchemaRecord } from '@workspace/elt';
+import type { RecordDraft, SchemaRecord } from '@eltjs/elt';
 
 import {
   type CalendarEvent,

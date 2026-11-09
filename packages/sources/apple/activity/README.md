@@ -1,4 +1,4 @@
-# @workspace/source-apple-activity
+# @eltjs/source-apple-activity
 
 An ELT source for the activity that macOS records about the user: app focus, Screen Time usage, web usage, media, Focus modes, notifications, Bluetooth connections and more. It reads the Biome streams in `~/Library/Biome`, `knowledgeC.db` in `~/Library/Application Support/Knowledge`, and Biome's `sync.db`, on this Mac. It does not use the network, and no app has to be open.
 
@@ -7,15 +7,15 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { biomeDirectory } from '@workspace/sdk-apple-biome';
-import { knowledgeStorePath } from '@workspace/sdk-apple-knowledge';
-import { AppleActivitySource } from '@workspace/source-apple-activity/apple-activity-source';
+} from '@eltjs/elt-sqlite';
+import { biomeDirectory } from '@eltjs/sdk-apple-biome';
+import { knowledgeStorePath } from '@eltjs/sdk-apple-knowledge';
+import { AppleActivitySource } from '@eltjs/source-apple-activity/apple-activity-source';
 
 const source = new AppleActivitySource({
   biome: biomeDirectory(homedir()),
@@ -48,7 +48,7 @@ await new Pipeline({
 }).run();
 ```
 
-The constructor takes `{ biome, knowledge, pollIntervalMs }`: the Biome folder, the path of `knowledgeC.db`, and the poll interval of a watch (one minute when you do not give it). `biome` and `knowledge` have no default. `biomeDirectory(home)` of `@workspace/sdk-apple-biome` and `knowledgeStorePath(home)` of `@workspace/sdk-apple-knowledge` give them in the home folder `home`.
+The constructor takes `{ biome, knowledge, pollIntervalMs }`: the Biome folder, the path of `knowledgeC.db`, and the poll interval of a watch (one minute when you do not give it). `biome` and `knowledge` have no default. `biomeDirectory(home)` of `@eltjs/sdk-apple-biome` and `knowledgeStorePath(home)` of `@eltjs/sdk-apple-knowledge` give them in the home folder `home`.
 
 A Context Compiler import loads every stream incrementally into its `data.sqlite`. Readers use its `<snake_stream>` views.
 

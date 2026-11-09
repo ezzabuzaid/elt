@@ -11,7 +11,7 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import {
   type IndexedDBWrite,
   IndexedDBWriter,
-} from '@workspace/codec-chromium-indexeddb/test';
+} from '@eltjs/codec-chromium-indexeddb/test';
 import {
   Connection,
   Copy,
@@ -21,18 +21,18 @@ import {
   PipelineError,
   type Stream,
   type Target,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   TeamsFormatError,
   TeamsStore,
   TeamsUnavailableError,
   teamsDirectory,
-} from '@workspace/sdk-microsoft-teams';
+} from '@eltjs/sdk-microsoft-teams';
 
 import { TeamsSource } from './teams-source.ts';
 

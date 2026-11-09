@@ -9,7 +9,7 @@ import {
   Stream,
   type SyncMode,
   validateRecords,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import type { InstagramRun } from './instagram-run.ts';
 

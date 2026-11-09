@@ -8,7 +8,7 @@ import type {
   BooksThemes,
   ReadingGoal,
   ReadingHistory,
-} from '@workspace/sdk-apple-books';
+} from '@eltjs/sdk-apple-books';
 
 type Opened = {
   library: BooksLibrary;

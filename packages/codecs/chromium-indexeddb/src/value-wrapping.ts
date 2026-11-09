@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import snappy from 'snappyjs';
 
-import { deserializeV8 } from '@workspace/codec-v8-serialization';
+import { deserializeV8 } from '@eltjs/codec-v8-serialization';
 
 import { ByteReader } from './byte-reader.ts';
 

@@ -5,9 +5,9 @@ import {
   Stream,
   type SyncMode,
   validateRecords,
-} from '@workspace/elt';
-import type { Pass } from '@workspace/sdk-apple-wallet';
-import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
+} from '@eltjs/elt';
+import type { Pass } from '@eltjs/sdk-apple-wallet';
+import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 import type { WalletScan } from './wallet-scan.ts';
 

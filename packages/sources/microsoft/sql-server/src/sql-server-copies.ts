@@ -1,4 +1,4 @@
-import { Copy, type Target } from '@workspace/elt';
+import { Copy, type Target } from '@eltjs/elt';
 
 import type { SqlServerSource } from './sql-server-source.ts';
 

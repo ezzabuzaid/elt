@@ -3,8 +3,8 @@ import {
   Stream,
   type SyncMode,
   validateRecords,
-} from '@workspace/elt';
-import type { AddressBookStore } from '@workspace/sdk-apple-contacts';
+} from '@eltjs/elt';
+import type { AddressBookStore } from '@eltjs/sdk-apple-contacts';
 
 import type { ContactSelection, ContactsScan } from './contacts-scan.ts';
 

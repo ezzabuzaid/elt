@@ -1,4 +1,4 @@
-export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
+export { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
 export { Account, type MailServer, mailDataclass } from './account.ts';
 export {
   type AccessOptionKey,

@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/sdk-microsoft-sql-server",
+  "name": "@eltjs/sdk-microsoft-sql-server",
   "version": "0.0.1",
   "private": true,
   "description": "Reads one SQL Server database: discovery, exact reads, Change Tracking and change signals. It knows nothing of elt.",

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import pMemoize from 'p-memoize';
 
-import { BrowserSession } from '@workspace/sdk-chromium-cookies';
+import { BrowserSession } from '@eltjs/sdk-chromium-cookies';
 import {
   type Highlight,
   InstagramWeb,
@@ -13,7 +13,7 @@ import {
   type Profile,
   type ReelMedia,
   type TimelineMedia,
-} from '@workspace/sdk-instagram-web';
+} from '@eltjs/sdk-instagram-web';
 
 import type { Lane } from './lane.ts';
 import { PostsLane } from './lanes/posts-lane.ts';

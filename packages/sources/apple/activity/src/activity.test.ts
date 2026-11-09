@@ -21,18 +21,14 @@ import {
   Pipeline,
   PipelineError,
   type Source,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import {
-  AppInFocus,
-  BiomeStore,
-  biomeDirectory,
-} from '@workspace/sdk-apple-biome';
-import { knowledgeStorePath } from '@workspace/sdk-apple-knowledge';
+} from '@eltjs/elt-sqlite';
+import { AppInFocus, BiomeStore, biomeDirectory } from '@eltjs/sdk-apple-biome';
+import { knowledgeStorePath } from '@eltjs/sdk-apple-knowledge';
 
 import { AppleActivitySource } from './apple-activity-source.ts';
 
@@ -1667,8 +1663,8 @@ test('an Activity pass over a large knowledgeC holds one event at a time, so it 
   // of 128 leaves over 60 MB on each side. The process loads the built source
   // from this package's folder, where its dependencies resolve.
   const pass = `
-    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { Connection, Copy, Pipeline } = await import('@eltjs/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@eltjs/elt-sqlite');
     const { AppleActivitySource } = await import(process.env.SOURCE);
     const source = new AppleActivitySource({ biome: process.env.BIOME, knowledge: process.env.KNOWLEDGE });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });

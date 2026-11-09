@@ -1,4 +1,4 @@
-import type { UrlInspection } from '@workspace/sdk-google-search-console';
+import type { UrlInspection } from '@eltjs/sdk-google-search-console';
 
 import {
   type InspectionOptions,

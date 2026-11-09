@@ -10,8 +10,8 @@ import {
   type SyncMode,
   diffGroupedSnapshot,
   validateRecords,
-} from '@workspace/elt';
-import type { BiomeSegment, BiomeStream } from '@workspace/sdk-apple-biome';
+} from '@eltjs/elt';
+import type { BiomeSegment, BiomeStream } from '@eltjs/sdk-apple-biome';
 
 import type { ActivityScan } from './activity-scan.ts';
 import { retainedSince } from './activity-values.ts';

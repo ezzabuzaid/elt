@@ -1,4 +1,4 @@
-import type { PipelineClock } from '@workspace/elt';
+import type { PipelineClock } from '@eltjs/elt';
 
 import type { WebClient } from './http/web-http.ts';
 import type { WebScan } from './web-scan.ts';

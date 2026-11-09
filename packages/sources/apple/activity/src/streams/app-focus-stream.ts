@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import { AppInFocus, type AppInFocusEvent } from '@workspace/sdk-apple-biome';
+import type { RecordDraft } from '@eltjs/elt';
+import { AppInFocus, type AppInFocusEvent } from '@eltjs/sdk-apple-biome';
 
 import { activityFields, isoTime } from '../activity-values.ts';
 import {

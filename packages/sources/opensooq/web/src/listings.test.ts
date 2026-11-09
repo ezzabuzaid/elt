@@ -6,14 +6,14 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
-import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
+import { Connection, Copy, Pipeline, PipelineError } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { day, hour } from '@workspace/sdk-web-crawler';
-import { WebSource } from '@workspace/source-web-pages/web-source';
+} from '@eltjs/elt-sqlite';
+import { day, hour } from '@eltjs/sdk-web-crawler';
+import { WebSource } from '@eltjs/source-web-pages/web-source';
 
 import { listings } from './listings.ts';
 

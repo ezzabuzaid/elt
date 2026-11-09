@@ -1,10 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 
-import {
-  type GoogleRequester,
-  reasonsOf,
-  statusOf,
-} from '@workspace/google-auth';
+import { type GoogleRequester, reasonsOf, statusOf } from '@eltjs/google-auth';
 
 import type { CalendarAttachmentFetcher } from './apple-calendar-source.ts';
 

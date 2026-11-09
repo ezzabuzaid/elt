@@ -22,7 +22,7 @@ import {
   Source,
   Stream,
   SyncHistory,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import {
   SQLiteDestination,

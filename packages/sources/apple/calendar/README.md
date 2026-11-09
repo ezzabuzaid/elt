@@ -1,23 +1,23 @@
-# @workspace/source-apple-calendar
+# @eltjs/source-apple-calendar
 
-An ELT source for the calendars on this Mac: accounts, calendars, event occurrences in a date range, and their attendees, alarms, recurrence rules and iCalendar data. It reads EventKit through `CalendarStore` from `@workspace/sdk-apple-eventkit`, which runs a compiled Swift helper. It does not use Calendar.app or its scripting. Only attachment files can use the network, through a fetcher that you give.
+An ELT source for the calendars on this Mac: accounts, calendars, event occurrences in a date range, and their attendees, alarms, recurrence rules and iCalendar data. It reads EventKit through `CalendarStore` from `@eltjs/sdk-apple-eventkit`, which runs a compiled Swift helper. It does not use Calendar.app or its scripting. Only attachment files can use the network, through a fetcher that you give.
 
 ```ts
 import { fileURLToPath } from 'node:url';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { CalendarStore } from '@workspace/sdk-apple-eventkit';
-import { AppleCalendarSource } from '@workspace/source-apple-calendar/apple-calendar-source';
+} from '@eltjs/elt-sqlite';
+import { CalendarStore } from '@eltjs/sdk-apple-eventkit';
+import { AppleCalendarSource } from '@eltjs/source-apple-calendar/apple-calendar-source';
 
 const source = new AppleCalendarSource({
   store: new CalendarStore(
     fileURLToPath(
-      import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+      import.meta.resolve('@eltjs/sdk-apple-eventkit/eventkit-helper'),
     ),
     { env: process.env },
   ),
@@ -53,7 +53,7 @@ To narrow the import, give `scope` with `accountIds` or `collectionIds` (calenda
 
 ## The EventKit helper
 
-`CalendarStore` runs `eventkit`, a compiled Swift helper ([helper](../../../sdks/apple/eventkit/src/helper)). The Nx target `sdk-apple-eventkit:helper` builds it as a universal (arm64 and x86_64) binary into `packages/sdks/apple/eventkit/dist/eventkit-helper`. The package exports it as `@workspace/sdk-apple-eventkit/eventkit-helper`. The host decides which copy runs: each store takes the path of the helper.
+`CalendarStore` runs `eventkit`, a compiled Swift helper ([helper](../../../sdks/apple/eventkit/src/helper)). The Nx target `sdk-apple-eventkit:helper` builds it as a universal (arm64 and x86_64) binary into `packages/sdks/apple/eventkit/dist/eventkit-helper`. The package exports it as `@eltjs/sdk-apple-eventkit/eventkit-helper`. The host decides which copy runs: each store takes the path of the helper.
 
 - `eventkit read '<json request>'` writes one JSON document on each line (account, calendar, occurrence, ICS export, reminder).
 - `eventkit watch events|reminders` writes `changed` for each store change.
@@ -130,7 +130,7 @@ Apple documents [EventKit retrieval](https://developer.apple.com/documentation/e
 
 ## Attachment files
 
-`icsAttachments` reads attachment bytes only when the target asks for them, and remote references need a fetcher. For Google calendars, `googleCalendarAttachments` (`@workspace/source-apple-calendar/google-calendar-attachments`) downloads:
+`icsAttachments` reads attachment bytes only when the target asks for them, and remote references need a fetcher. For Google calendars, `googleCalendarAttachments` (`@eltjs/source-apple-calendar/google-calendar-attachments`) downloads:
 
 - Drive files: native Docs, Sheets and Slides as PDF, shortcuts followed to their target, and link-shared files with their resource key;
 - Gmail message attachments.
@@ -151,7 +151,7 @@ const requester = await googleSession({
 const calendar = new AppleCalendarSource({
   store: new CalendarStore(
     fileURLToPath(
-      import.meta.resolve('@workspace/sdk-apple-eventkit/eventkit-helper'),
+      import.meta.resolve('@eltjs/sdk-apple-eventkit/eventkit-helper'),
     ),
     { env: process.env },
   ),

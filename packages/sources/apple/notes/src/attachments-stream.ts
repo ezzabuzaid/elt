@@ -1,5 +1,5 @@
-import type { RecordDraft, SchemaRecord } from '@workspace/elt';
-import type { NoteAttachment } from '@workspace/sdk-apple-notes';
+import type { RecordDraft, SchemaRecord } from '@eltjs/elt';
+import type { NoteAttachment } from '@eltjs/sdk-apple-notes';
 
 import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
 import { type NotesScan, string } from './notes-scan.ts';

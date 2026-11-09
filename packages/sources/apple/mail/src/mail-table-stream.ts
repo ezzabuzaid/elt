@@ -1,4 +1,4 @@
-import type { MailTable } from '@workspace/sdk-apple-mail';
+import type { MailTable } from '@eltjs/sdk-apple-mail';
 
 import {
   AppleMailStream,

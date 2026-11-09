@@ -1,9 +1,9 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { ProtobufMessage } from '@workspace/codec-protobuf';
-import { readSegb, segbFingerprint } from '@workspace/codec-segb';
-import { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
+import { ProtobufMessage } from '@eltjs/codec-protobuf';
+import { readSegb, segbFingerprint } from '@eltjs/codec-segb';
+import { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
 
 import { biomeStore } from './app-database.ts';
 import type { BiomeStream } from './biome-stream.ts';

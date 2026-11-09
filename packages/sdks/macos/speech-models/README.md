@@ -1,4 +1,4 @@
-# @workspace/sdk-macos-speech-models
+# @eltjs/sdk-macos-speech-models
 
 Lists the speech models installed on this Mac, whichever app or tool installed them. Each model gives the configuration of a [local transcription model](../../../transcription-local/README.md).
 
@@ -6,7 +6,7 @@ Lists the speech models installed on this Mac, whichever app or tool installed t
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { SpeechModels } from '@workspace/sdk-macos-speech-models';
+import { SpeechModels } from '@eltjs/sdk-macos-speech-models';
 
 const models = await new SpeechModels({
   hub: join(homedir(), '.cache/huggingface/hub'),

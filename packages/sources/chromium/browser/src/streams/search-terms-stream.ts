@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { HistorySearchTerm } from '@workspace/sdk-chromium-history';
+import type { RecordDraft } from '@eltjs/elt';
+import type { HistorySearchTerm } from '@eltjs/sdk-chromium-history';
 
 import type { ChromiumScan, Profiled } from '../chromium-scan.ts';
 import { ChromiumStream, chromiumFields } from '../chromium-stream.ts';

@@ -1,4 +1,4 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 
 import type { ChromiumProfileEntry, ChromiumScan } from '../chromium-scan.ts';
 import { ChromiumStream, chromiumFields } from '../chromium-stream.ts';

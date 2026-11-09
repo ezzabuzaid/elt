@@ -1,4 +1,4 @@
-import type { Match } from '@workspace/eca';
+import type { Match } from '@eltjs/eca';
 
 import { Automation } from './automation.ts';
 

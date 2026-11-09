@@ -1,8 +1,5 @@
-import type { Partition } from '@workspace/elt';
-import {
-  readSearchAnalytics,
-  today,
-} from '@workspace/sdk-google-search-console';
+import type { Partition } from '@eltjs/elt';
+import { readSearchAnalytics, today } from '@eltjs/sdk-google-search-console';
 
 import { subMonths } from '../calendar-dates.ts';
 import { ListingStream } from '../listing-stream.ts';

@@ -10,12 +10,12 @@ import {
   type MessageKey,
   type ProfilePicture,
   type PushName,
-} from '@workspace/sdk-whatsapp-desktop';
+} from '@eltjs/sdk-whatsapp-desktop';
 import {
   type ImportScope,
   selected,
   withinDates,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 // Each cached group holds a numeric row ID and the SDK's SHA-256 digest.
 const groupBytes = 40;

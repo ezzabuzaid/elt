@@ -16,7 +16,7 @@ import {
   Source,
   type SourceMessage,
   Stream,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import { SQLiteDestination, SQLiteSyncHistory } from './index.ts';
 

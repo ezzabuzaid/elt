@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/sdk-chromium-cookies",
+  "name": "@eltjs/sdk-chromium-cookies",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -14,8 +14,8 @@
     }
   },
   "dependencies": {
-    "@workspace/codec-chromium-time": "0.0.1",
-    "@workspace/sdk-chromium-browser": "0.0.1",
+    "@eltjs/codec-chromium-time": "0.0.1",
+    "@eltjs/sdk-chromium-browser": "0.0.1",
     "@zukhruf/sqlite-open": "^0.8.10"
   }
 }

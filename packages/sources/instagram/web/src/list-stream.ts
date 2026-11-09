@@ -5,7 +5,7 @@ import {
   type RecordDraft,
   type SourceMessage,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import type { InstagramRun, LaneReader } from './instagram-run.ts';
 import {

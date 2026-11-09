@@ -1,6 +1,6 @@
 import type postgres from 'postgres';
 
-import { type CheckpointSession, CheckpointStore } from '@workspace/elt';
+import { type CheckpointSession, CheckpointStore } from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
 import {

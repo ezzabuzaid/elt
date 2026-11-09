@@ -5,7 +5,7 @@ import type {
   LocationDocument,
   OccurrenceDocument,
   RecurrenceRuleDocument,
-} from '@workspace/sdk-apple-eventkit';
+} from '@eltjs/sdk-apple-eventkit';
 
 import type {
   CalendarAttachment,

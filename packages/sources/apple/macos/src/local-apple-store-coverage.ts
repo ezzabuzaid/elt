@@ -1,4 +1,4 @@
-import type { ExtractionCoverage } from '@workspace/elt';
+import type { ExtractionCoverage } from '@eltjs/elt';
 
 // Every Apple source except Calendar exports its local store whole.
 export const localAppleStoreCoverage: ExtractionCoverage = Object.freeze({

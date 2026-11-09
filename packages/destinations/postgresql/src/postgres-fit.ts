@@ -1,4 +1,4 @@
-import type { StoredFit } from '@workspace/elt';
+import type { StoredFit } from '@eltjs/elt';
 
 import type { Transaction } from './postgres-load.ts';
 import type { PostgresTable } from './postgres-table.ts';

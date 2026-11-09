@@ -1,6 +1,6 @@
 import pMemoize from 'p-memoize';
 
-import type { PipelineClock } from '@workspace/elt';
+import type { PipelineClock } from '@eltjs/elt';
 import {
   type CallOptions,
   type CivilDate,
@@ -8,7 +8,7 @@ import {
   type GoogleHealthApi,
   LISTED_DATA_TYPES,
   type ListedDataType,
-} from '@workspace/sdk-google-health';
+} from '@eltjs/sdk-google-health';
 
 import { calendarDate } from './health-fields.ts';
 

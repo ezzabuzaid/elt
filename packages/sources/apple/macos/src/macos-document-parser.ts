@@ -1,6 +1,6 @@
 import { extname } from 'node:path';
 
-import { DocumentParser } from '@workspace/elt';
+import { DocumentParser } from '@eltjs/elt';
 
 import type { DocumentFormat } from './document-formats/document-format.ts';
 import { FileHead } from './document-formats/file-head.ts';

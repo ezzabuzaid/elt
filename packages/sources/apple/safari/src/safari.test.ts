@@ -15,7 +15,7 @@ import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { referenceDate } from '@workspace/codec-apple-reference-date';
+import { referenceDate } from '@eltjs/codec-apple-reference-date';
 import {
   Connection,
   Copy,
@@ -27,15 +27,15 @@ import {
   StreamStatus,
   readerCatalog,
   syncHistoryRelations,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { safariContainer, safariDirectory } from '@workspace/sdk-apple-safari';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/elt-sqlite';
+import { safariContainer, safariDirectory } from '@eltjs/sdk-apple-safari';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AppleSafariSource } from './apple-safari-source.ts';
 
@@ -2987,8 +2987,8 @@ test('a Safari pass over a large History.db holds one visit at a time, so it loa
   // loads the built source from this package's folder, where its
   // dependencies resolve.
   const pass = `
-    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { Connection, Copy, Pipeline } = await import('@eltjs/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@eltjs/elt-sqlite');
     const { AppleSafariSource } = await import(process.env.SOURCE);
     const source = new AppleSafariSource({ directory: process.env.DIRECTORY, container: process.env.CONTAINER });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });

@@ -1,4 +1,4 @@
-import { type Connection, DerivedDataset } from '@workspace/elt';
+import { type Connection, DerivedDataset } from '@eltjs/elt';
 
 import { openDestination } from './open-destination.ts';
 import { SQLiteDestination } from './sqlite-destination.ts';

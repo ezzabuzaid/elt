@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 
 import type postgres from 'postgres';
 
-import { Eca, type Warehouse } from '@workspace/eca';
+import { Eca, type Warehouse } from '@eltjs/eca';
 
 import type { Automation } from './automation.ts';
 

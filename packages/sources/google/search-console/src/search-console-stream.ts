@@ -5,7 +5,7 @@ import {
   type SourceMessage,
   Stream,
   type SyncMode,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import type { SearchConsoleScan } from './search-console-scan.ts';
 

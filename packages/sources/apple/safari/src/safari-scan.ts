@@ -19,12 +19,12 @@ import type {
   TabGroup,
   WindowProfile,
   WindowTabGroup,
-} from '@workspace/sdk-apple-safari';
+} from '@eltjs/sdk-apple-safari';
 import {
   type ImportScope,
   selected,
   withinDates,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 import { iso } from './safari-stream.ts';
 

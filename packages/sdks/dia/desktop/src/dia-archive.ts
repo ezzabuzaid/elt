@@ -3,8 +3,8 @@ import { join } from 'node:path';
 
 import { FileStamp, isErrno } from '@zukhruf/fs';
 
-import { referenceDateInstant } from '@workspace/codec-apple-reference-date';
-import { AppFilesVersion } from '@workspace/sdk-macos-app-database';
+import { referenceDateInstant } from '@eltjs/codec-apple-reference-date';
+import { AppFilesVersion } from '@eltjs/sdk-macos-app-database';
 
 import { DiaArchiveFormatError, DiaArchiveMissingError } from './errors.ts';
 

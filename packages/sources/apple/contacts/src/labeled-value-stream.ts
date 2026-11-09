@@ -1,10 +1,10 @@
-import type { FieldSchema } from '@workspace/elt';
+import type { FieldSchema } from '@eltjs/elt';
 import type {
   AddressBookStore,
   ContactsView,
   ValueRow,
-} from '@workspace/sdk-apple-contacts';
-import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
+} from '@eltjs/sdk-apple-contacts';
+import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 import { AppleContactsStream } from './apple-contacts-stream.ts';
 import {

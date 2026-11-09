@@ -1,9 +1,9 @@
-import type { ChatDatabase } from '@workspace/sdk-apple-messages';
+import type { ChatDatabase } from '@eltjs/sdk-apple-messages';
 import {
   type ImportScope,
   selected,
   withinDates,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 // What an import scope keeps: its chats, the messages linked to them within
 // its dates, their attachments, and the handles those chats and messages name.

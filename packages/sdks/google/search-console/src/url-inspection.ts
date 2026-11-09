@@ -1,6 +1,6 @@
 import { delay } from '@zukhruf/async';
 
-import { messageOf, statusOf } from '@workspace/google-auth';
+import { messageOf, statusOf } from '@eltjs/google-auth';
 
 import {
   type InspectionResult,

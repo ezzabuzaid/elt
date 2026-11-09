@@ -21,14 +21,14 @@ import {
   Pipeline,
   PipelineError,
   type Source,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/elt-sqlite';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AppleContactsSource } from './apple-contacts-source.ts';
 
@@ -1866,8 +1866,8 @@ test('a Contacts pass over a large store holds one contact at a time, so it load
   // both. The process loads the built source from this package's folder,
   // where its dependencies resolve.
   const pass = `
-    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { Connection, Copy, Pipeline } = await import('@eltjs/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@eltjs/elt-sqlite');
     const { AppleContactsSource } = await import(process.env.SOURCE);
     const source = new AppleContactsSource({ directory: process.env.STORE, preferences: process.env.PREFERENCES });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });

@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import { type Pass, passJsonText } from '@workspace/sdk-apple-wallet';
+import type { RecordDraft } from '@eltjs/elt';
+import { type Pass, passJsonText } from '@eltjs/sdk-apple-wallet';
 
 import { AppleWalletStream, walletFields } from '../apple-wallet-stream.ts';
 

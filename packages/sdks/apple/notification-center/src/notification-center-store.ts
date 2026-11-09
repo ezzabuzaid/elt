@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
+import type { AppDatabaseVersion } from '@eltjs/sdk-macos-app-database';
 
 import { appDatabase } from './app-database.ts';
 import { NotificationCenterSnapshot } from './notification-center-snapshot.ts';

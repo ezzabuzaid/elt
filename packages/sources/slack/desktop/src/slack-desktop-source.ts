@@ -8,12 +8,12 @@ import {
   type SourceMessage,
   type Stream,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SlackDesktopStore,
   SlackDesktopUnavailableError,
-} from '@workspace/sdk-slack-desktop';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/sdk-slack-desktop';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { SlackDesktopScan } from './slack-desktop-scan.ts';
 import type { SlackDesktopReader } from './slack-desktop-stream.ts';

@@ -5,8 +5,8 @@
 ```ts
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 
-import { ComputedDataset } from '@workspace/elt-sqlite';
-import { Embedding } from '@workspace/embedding';
+import { ComputedDataset } from '@eltjs/elt-sqlite';
+import { Embedding } from '@eltjs/embedding';
 
 const model = createOpenAICompatible({
   name: 'llama.cpp',

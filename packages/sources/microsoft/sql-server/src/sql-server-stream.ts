@@ -7,12 +7,12 @@ import {
   Stream,
   type SyncMode,
   validateRecords,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import type {
   SqlServerRow,
   SqlServerSession,
   SqlServerTable,
-} from '@workspace/sdk-microsoft-sql-server';
+} from '@eltjs/sdk-microsoft-sql-server';
 
 import { TableFields, sentence } from './sql-server-fields.ts';
 import type { WatchGauges } from './watch-gauges.ts';

@@ -1,4 +1,4 @@
-import { ProtobufMessage } from '@workspace/codec-protobuf';
+import { ProtobufMessage } from '@eltjs/codec-protobuf';
 
 // The message a reply quotes: its stanza ID, which names a message of the
 // same chat, and its sender as the reply recorded it (a LID where the quoted

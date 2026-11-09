@@ -1,5 +1,5 @@
-import type { SyncMode } from '@workspace/elt';
-import type { FollowedAccount } from '@workspace/sdk-instagram-web';
+import type { SyncMode } from '@eltjs/elt';
+import type { FollowedAccount } from '@eltjs/sdk-instagram-web';
 
 import { fields } from '../fields.ts';
 import type { ReadContext } from '../instagram-stream.ts';

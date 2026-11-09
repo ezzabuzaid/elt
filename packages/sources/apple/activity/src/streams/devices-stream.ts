@@ -9,8 +9,8 @@ import {
   type SyncMode,
   diffSnapshot,
   validateRecords,
-} from '@workspace/elt';
-import type { BiomeDevice } from '@workspace/sdk-apple-biome';
+} from '@eltjs/elt';
+import type { BiomeDevice } from '@eltjs/sdk-apple-biome';
 
 import type { ActivityScan } from '../activity-scan.ts';
 import { activityFields, isoTime } from '../activity-values.ts';

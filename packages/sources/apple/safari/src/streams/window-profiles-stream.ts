@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { WindowProfile } from '@workspace/sdk-apple-safari';
+import type { RecordDraft } from '@eltjs/elt';
+import type { WindowProfile } from '@eltjs/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';

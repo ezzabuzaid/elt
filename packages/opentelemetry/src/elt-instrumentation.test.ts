@@ -28,25 +28,25 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   AlwaysRevisit,
   CrawlHandedOff,
   ListingReader,
   crawlChannels,
-} from '@workspace/sdk-web-crawler';
-import { ArticleExtractor } from '@workspace/source-web-pages/article-extractor';
+} from '@eltjs/sdk-web-crawler';
+import { ArticleExtractor } from '@eltjs/source-web-pages/article-extractor';
 import {
   PageExtracted,
   pageChannels,
-} from '@workspace/source-web-pages/page-channels';
-import { WebSource } from '@workspace/source-web-pages/web-source';
-import { WebStream } from '@workspace/source-web-pages/web-stream';
+} from '@eltjs/source-web-pages/page-channels';
+import { WebSource } from '@eltjs/source-web-pages/web-source';
+import { WebStream } from '@eltjs/source-web-pages/web-stream';
 
 import { EltInstrumentation } from './elt-instrumentation.ts';
 

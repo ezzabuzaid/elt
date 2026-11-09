@@ -19,12 +19,12 @@ import {
   Pipeline,
   Source,
   Stream,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   ComputedDataset,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 
 import { Embedding } from './embedding.ts';
 

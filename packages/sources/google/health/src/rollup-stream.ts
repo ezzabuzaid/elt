@@ -1,8 +1,8 @@
-import type { RecordMessage } from '@workspace/elt';
+import type { RecordMessage } from '@eltjs/elt';
 import type {
   DailyRollupDataPoint,
   RolledUpDataType,
-} from '@workspace/sdk-google-health';
+} from '@eltjs/sdk-google-health';
 
 import type { GoogleHealthScan } from './google-health-scan.ts';
 import {

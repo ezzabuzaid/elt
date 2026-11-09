@@ -14,7 +14,7 @@ import {
   Stream,
   diffGroupedSnapshot,
   validateRecords,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import { crawlRecords, crawlsStream } from './crawls-stream.ts';
 import { DueTime } from './due-time.ts';

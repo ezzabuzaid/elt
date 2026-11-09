@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 
-import type { CopyConfiguration, Load, PipelineClock } from '@workspace/elt';
-import { Destination } from '@workspace/elt';
+import type { CopyConfiguration, Load, PipelineClock } from '@eltjs/elt';
+import { Destination } from '@eltjs/elt';
 
 import { openDestination } from './open-destination.ts';
 import { SQLiteAppendWriter } from './sqlite-append-writer.ts';

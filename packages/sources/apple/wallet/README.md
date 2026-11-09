@@ -1,20 +1,20 @@
-# @workspace/source-apple-wallet
+# @eltjs/source-apple-wallet
 
-An ELT source for the Wallet passes on this Mac. It reads `~/Library/Passes`, where passd keeps the Wallet passes of this Mac, with the SDK `@workspace/sdk-apple-wallet`. `passes23.sqlite` records each pass, and `Cards/<id>.pkpass/` holds the bundle that the issuer signed. The source does not use Wallet or PassKit, and no app has to be open. PassKit shows an app only the passes of the types that its entitlement names.
+An ELT source for the Wallet passes on this Mac. It reads `~/Library/Passes`, where passd keeps the Wallet passes of this Mac, with the SDK `@eltjs/sdk-apple-wallet`. `passes23.sqlite` records each pass, and `Cards/<id>.pkpass/` holds the bundle that the issuer signed. The source does not use Wallet or PassKit, and no app has to be open. PassKit shows an app only the passes of the types that its entitlement names.
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../../elt/CONTEXT.md) for the words of all of elt.
 
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { walletStorePath } from '@workspace/sdk-apple-wallet';
-import { AppleWalletSource } from '@workspace/source-apple-wallet/apple-wallet-source';
+} from '@eltjs/elt-sqlite';
+import { walletStorePath } from '@eltjs/sdk-apple-wallet';
+import { AppleWalletSource } from '@eltjs/source-apple-wallet/apple-wallet-source';
 
 const source = new AppleWalletSource({ directory: walletStorePath(homedir()) });
 const destination = new SQLiteDestination({ path: './wallet.sqlite' });
@@ -42,7 +42,7 @@ await new Pipeline({
 }).run();
 ```
 
-The constructor takes `{ directory }`, the folder of the passes. It has no default. `walletStorePath(home)` of `@workspace/sdk-apple-wallet` gives the folder in the home folder `home`. To read a different folder, give it.
+The constructor takes `{ directory }`, the folder of the passes. It has no default. `walletStorePath(home)` of `@eltjs/sdk-apple-wallet` gives the folder in the home folder `home`. To read a different folder, give it.
 
 A Context Compiler import loads every stream incrementally into its `data.sqlite`. Readers use its `<snake_stream>` views (`passes`, `pass_fields`, `pass_barcodes`, …). Passes come from Pass Viewer, which adds a `.pkpass` file to Wallet on this Mac, and from the iPhone of the user through iCloud.
 

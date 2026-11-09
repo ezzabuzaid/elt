@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { AlarmDocument } from '@workspace/sdk-apple-eventkit';
+import type { RecordDraft } from '@eltjs/elt';
+import type { AlarmDocument } from '@eltjs/sdk-apple-eventkit';
 
 import { type CalendarScan, location, timestamp } from '../calendar-scan.ts';
 import {

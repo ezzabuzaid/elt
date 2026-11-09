@@ -1,6 +1,6 @@
 import type { KeyValue } from '@zukhruf/snapshot-differential';
 
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 
 import type { TeamsScan } from '../teams-scan.ts';
 import { TeamsStream, teamsFields } from '../teams-stream.ts';

@@ -21,7 +21,7 @@ import {
   PipelineError,
   Source,
   Stream,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import {
   ComputedDataset,

@@ -9,7 +9,7 @@ import {
   type RecordDraft,
   Stream,
   validateRecords,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import type { ChromiumScan, ChromiumStore } from './chromium-scan.ts';
 

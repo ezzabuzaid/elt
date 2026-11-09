@@ -7,13 +7,13 @@ import {
   Stream,
   diffSnapshot,
   validateRecords,
-} from '@workspace/elt';
-import { DiaArchive, DiaArchiveMissingError } from '@workspace/sdk-dia-desktop';
+} from '@eltjs/elt';
+import { DiaArchive, DiaArchiveMissingError } from '@eltjs/sdk-dia-desktop';
 import {
   type ImportScope,
   selected,
   withinDates,
-} from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/source-apple-macos/import-scope';
 
 const text = { type: 'string' } as const;
 const nullableText = { type: ['string', 'null'] } as const;

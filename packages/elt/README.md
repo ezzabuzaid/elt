@@ -1,4 +1,4 @@
-# @workspace/elt
+# @eltjs/elt
 
 Copies the data of apps and services into stores that SQL can read. A source reads an upstream, for example the Mail store of a Mac. A destination keeps each stream as a table, for example in one SQLite file. The pipeline starts the copies, and it keeps derived datasets in step with what they load. A derived dataset is data that the pipeline can always make again from the loaded data, for example the text of each stored file, or a view that counts rows. Kleppmann calls it derived data, and Estuary calls it a derivation.
 
@@ -8,19 +8,19 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 
 ## Copy a stream
 
-This example copies two streams of Apple Notes into one SQLite file. The pipeline types come from `elt`. The SQLite destination, its checkpoint store and its sync history come from `elt-sqlite`. Each Apple source has its own package, `@workspace/source-apple-<name>` in `packages/sources/apple`. The later examples use `notes`, `sqlite`, `checkpoints` and `history` from this example.
+This example copies two streams of Apple Notes into one SQLite file. The pipeline types come from `elt`. The SQLite destination, its checkpoint store and its sync history come from `elt-sqlite`. Each Apple source has its own package, `@eltjs/source-apple-<name>` in `packages/sources/apple`. The later examples use `notes`, `sqlite`, `checkpoints` and `history` from this example.
 
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { noteStorePath } from '@workspace/sdk-apple-notes';
-import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
+} from '@eltjs/elt-sqlite';
+import { noteStorePath } from '@eltjs/sdk-apple-notes';
+import { AppleNotesSource } from '@eltjs/source-apple-notes/apple-notes-source';
 
 const notes = new AppleNotesSource({ path: noteStorePath(homedir()) });
 const sqlite = new SQLiteDestination({ path: './notes.sqlite' });
@@ -518,9 +518,9 @@ class ChatSource extends Source<ChatDatabase> {
 A stream that supports file transfer, such as `attachments` of Notes, gives a file with each record. A copy declares in its columns what it takes from the file: the parsed text, a stored file, or the bytes in the database.
 
 ```ts
-import { Connection, Copy, LocalFiles, Pipeline } from '@workspace/elt';
-import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
+import { Connection, Copy, LocalFiles, Pipeline } from '@eltjs/elt';
+import { SQLiteSyncHistory } from '@eltjs/elt-sqlite';
+import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
 
 const files = new LocalFiles({ directory: './outputs/attachments' });
 const attachmentCopy = new Copy(
@@ -797,7 +797,7 @@ Before a read, `run()` and `watch()` validate each declaration of each connectio
 When a copy is not complete, `run()` throws one `PipelineError` after each pass ends:
 
 ```ts
-import { PipelineError } from '@workspace/elt';
+import { PipelineError } from '@eltjs/elt';
 
 try {
   await pipeline.run(); // [{ copy, count, deleted }] when every copy completed.
@@ -863,7 +863,7 @@ import {
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-} from '@workspace/elt-postgresql';
+} from '@eltjs/elt-postgresql';
 
 const url = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
 const warehouse = new PostgresDestination({ url, schema: 'apple_notes' });
@@ -905,7 +905,7 @@ Each pass publishes what it does on `node:diagnostics_channel` channels, as Node
 ```ts
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import { CopyProgress, passChannels } from '@workspace/elt';
+import { CopyProgress, passChannels } from '@eltjs/elt';
 
 const scope = new AsyncLocalStorage<string>();
 passChannels.progress.subscribe((message) => {
@@ -988,13 +988,9 @@ What the history does not prove:
 ## Declare derived datasets on the pipeline
 
 ```ts
-import { DocumentText, LocalFiles, Pipeline } from '@workspace/elt';
-import {
-  ComputedDataset,
-  SQLiteSyncHistory,
-  View,
-} from '@workspace/elt-sqlite';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
+import { DocumentText, LocalFiles, Pipeline } from '@eltjs/elt';
+import { ComputedDataset, SQLiteSyncHistory, View } from '@eltjs/elt-sqlite';
+import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
 
 const pipeline = new Pipeline({
   history: new SQLiteSyncHistory(),
@@ -1052,10 +1048,10 @@ The dataset makes an output again when its input or its rule identity changes. S
 
 Two rules exist:
 
-| Rule                                      | Package                | Input                                                | Output                                                                                                       |
-| ----------------------------------------- | ---------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `DocumentText({ parser, files, column })` | `@workspace/elt`       | the ref in `column`, relative to the folder `files`  | `content`, the text that a `DocumentParser` reads. The rule identity is the parser of the format of the file |
-| `Embedding({ model, key, fields })`       | `@workspace/embedding` | the text of `fields`, with a line break between them | `vector`, from an AI SDK embedding model. The rule identity is the provider and the id of the model          |
+| Rule                                      | Package            | Input                                                | Output                                                                                                       |
+| ----------------------------------------- | ------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `DocumentText({ parser, files, column })` | `@eltjs/elt`       | the ref in `column`, relative to the folder `files`  | `content`, the text that a `DocumentParser` reads. The rule identity is the parser of the format of the file |
+| `Embedding({ model, key, fields })`       | `@eltjs/embedding` | the text of `fields`, with a line break between them | `vector`, from an AI SDK embedding model. The rule identity is the provider and the id of the model          |
 
 `DocumentText` asks for its parser at each refresh, so a parser that the host changed, for example a new speech model, applies from the next refresh.
 

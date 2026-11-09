@@ -7,8 +7,8 @@ import {
   Stream,
   diffSnapshot,
   validateRecords,
-} from '@workspace/elt';
-import { type Route, routeHows } from '@workspace/sdk-web-crawler';
+} from '@eltjs/elt';
+import { type Route, routeHows } from '@eltjs/sdk-web-crawler';
 
 import type { Outbox } from './web-scan.ts';
 

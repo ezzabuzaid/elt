@@ -8,7 +8,7 @@
 
 1. Make a route for each part of the website that needs its own policy: `[new URLPattern({ pathname: '/news/*' }), new FixedRevisit({ every: hour })]`. A starting URL follows its policy too, so give the sitemap that names the news pages the same route.
 2. Give the routes and a fallback to `new CompositeRevisit(routes, fallback)`.
-3. Give the composite policy to `origins.crawler(http, readers, policy)`. With `@workspace/source-web-pages`, give it to `new WebStream({ revisit })`.
+3. Give the composite policy to `origins.crawler(http, readers, policy)`. With `@eltjs/source-web-pages`, give it to `new WebStream({ revisit })`.
 4. Start the next crawl at `crawl.nextDue()`, or when your host decides.
 
 ## The program
@@ -28,7 +28,7 @@ import {
   ListingReader,
   Origins,
   hour,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 // A website whose sitemap names two news pages and one guide.
 const server = createServer((request, response) => {

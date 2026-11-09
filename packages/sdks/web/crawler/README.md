@@ -14,7 +14,7 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 const http = got.extend({ timeout: { request: 30_000 } });
 const read = (file: string) =>
@@ -163,15 +163,15 @@ One use case each, with a full program that you can run.
 4. [Crawl a website that rate-limits you](./docs/recipes/crawl-a-website-that-rate-limits-you.md)
 5. [Follow a list to other websites](./docs/recipes/follow-a-list-to-other-websites.md)
 6. [Search inside the sites a list links](./docs/recipes/search-inside-the-sites-a-list-links.md)
-7. [Sync again the next day](../../../sources/web/pages/docs/recipes/sync-again-the-next-day.md), with `@workspace/source-web-pages`
-8. [Refresh from a Sync button or a watch](../../../sources/web/pages/docs/recipes/refresh-from-a-sync-button-or-a-watch.md), with `@workspace/source-web-pages`
+7. [Sync again the next day](../../../sources/web/pages/docs/recipes/sync-again-the-next-day.md), with `@eltjs/source-web-pages`
+8. [Refresh from a Sync button or a watch](../../../sources/web/pages/docs/recipes/refresh-from-a-sync-button-or-a-watch.md), with `@eltjs/source-web-pages`
 
 ## Package ownership
 
 | Public API                       | Responsibility                                                                              |
 | -------------------------------- | ------------------------------------------------------------------------------------------- |
 | Got                              | HTTP, decompression, retries of network errors, timeouts, caching, cancellation             |
-| `@workspace/codec-sitemap`       | Gzip and text decoding, XML url sets and indexes, RSS and Atom items and titles, text lists |
+| `@eltjs/codec-sitemap`           | Gzip and text decoding, XML url sets and indexes, RSS and Atom items and titles, text lists |
 | `@crawlee/utils` `RobotsTxtFile` | `robots.txt` sitemap declarations                                                           |
 | `robots-parser`                  | `robots.txt` rules and `Crawl-delay` for the engine                                         |
 | `feedscout`                      | Feed and sitemap declarations, anchors, HTTP `Link` headers, feed validation                |

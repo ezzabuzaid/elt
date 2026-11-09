@@ -11,8 +11,8 @@ import type {
   UsersSnapshot,
   WhatsApp,
   WhatsAppStore,
-} from '@workspace/sdk-whatsapp-desktop';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/sdk-whatsapp-desktop';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { ChatStorageRecords } from './chat-storage-records.ts';
 

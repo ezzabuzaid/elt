@@ -23,7 +23,7 @@ import {
   Source,
   Stream,
   passChannels,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import {
   SQLiteDestination,
@@ -428,7 +428,7 @@ test('a pass a killed process left running stays running, until a history that i
   const path = join(scratch.path, 'data.sqlite');
   // A process that begins a pass of notes, then is killed while it reads.
   const pass = `
-    import { Catalog, Connection, Copy, Gauge, Pipeline, Source, Stream } from '@workspace/elt';
+    import { Catalog, Connection, Copy, Gauge, Pipeline, Source, Stream } from '@eltjs/elt';
     import { SQLiteDestination, SQLiteSyncHistory } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'index.ts')).href)};
     class Hanging extends Source {
       identity = 'hanging';

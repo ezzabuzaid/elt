@@ -1,4 +1,4 @@
-# @workspace/source-apple-clock
+# @eltjs/source-apple-clock
 
 An ELT source for the Clock app: alarms, timers, recent timer durations, sounds, world clocks, stopwatches and laps, and three regional and diagnostic tables. It reads three stores on this Mac: the MobileTimer database, the city preferences and the stopwatch preferences. It does not write, it does not start Clock, and it does not use the network.
 
@@ -7,14 +7,14 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { clockLocation } from '@workspace/sdk-apple-clock/clock-store';
-import { AppleClockSource } from '@workspace/source-apple-clock/apple-clock-source';
+} from '@eltjs/elt-sqlite';
+import { clockLocation } from '@eltjs/sdk-apple-clock/clock-store';
+import { AppleClockSource } from '@eltjs/source-apple-clock/apple-clock-source';
 
 const source = new AppleClockSource(clockLocation(homedir()));
 const destination = new SQLiteDestination({ path: './clock.sqlite' });
@@ -40,11 +40,11 @@ await new Pipeline({
 }).run();
 ```
 
-The constructor requires a `ClockLocation` (`{ database, cities, stopwatches }`, from `@workspace/sdk-apple-clock/clock-store`). `clockLocation(home)` gives the three stores in the home folder `home`. To read copies of the stores, give other paths. `Pipeline.watch()` watches the source. Context Compiler's `connector-apple-clock` imports all ten streams, with no account, collection, date-range or attachment selection.
+The constructor requires a `ClockLocation` (`{ database, cities, stopwatches }`, from `@eltjs/sdk-apple-clock/clock-store`). `clockLocation(home)` gives the three stores in the home folder `home`. To read copies of the stores, give other paths. `Pipeline.watch()` watches the source. Context Compiler's `connector-apple-clock` imports all ten streams, with no account, collection, date-range or attachment selection.
 
 ## Stores and access
 
-`@workspace/sdk-apple-clock/clock-store` reads three local stores:
+`@eltjs/sdk-apple-clock/clock-store` reads three local stores:
 
 | Store                 | Location relative to the home folder                                                      | Streams                                                                          |
 | --------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
@@ -88,7 +88,7 @@ On macOS 27, a launchd probe that the user approved ran outside the host that ha
 
 ## Values
 
-- Dates are UTC strings with six fractional digits. Core Data dates and native or archived plist dates keep their original seconds since 2001 until `referenceDateInstant` of `@workspace/codec-apple-reference-date` formats them. Thus the millisecond `Date` of JavaScript does not round away the fraction. `codec-plist` gives `PlistDate.referenceSeconds` to consumers that need this precision, and the value still acts as a normal `Date`.
+- Dates are UTC strings with six fractional digits. Core Data dates and native or archived plist dates keep their original seconds since 2001 until `referenceDateInstant` of `@eltjs/codec-apple-reference-date` formats them. Thus the millisecond `Date` of JavaScript does not round away the fraction. `codec-plist` gives `PlistDate.referenceSeconds` to consumers that need this precision, and the value still acts as a normal `Date`.
 - Large media IDs are strings with `format: int64`.
 - Optional values stay null. Opaque Siri and timer context bytes are base64.
 - `fireTime` keeps the original keyed archive as JSON, with its references and the numeric `NS.time`.

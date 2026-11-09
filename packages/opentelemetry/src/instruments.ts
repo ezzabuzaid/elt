@@ -5,7 +5,7 @@ import {
   ValueType,
 } from '@opentelemetry/api';
 
-import { type CrawlRequested, priorities } from '@workspace/sdk-web-crawler';
+import { type CrawlRequested, priorities } from '@eltjs/sdk-web-crawler';
 
 // OpenTelemetry's buckets for HTTP durations in seconds, with 30 and 60 for a
 // crawl's slow pages and long waits.

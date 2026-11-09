@@ -22,7 +22,7 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import {
   type IndexedDBWrite,
   IndexedDBWriter,
-} from '@workspace/codec-chromium-indexeddb/test';
+} from '@eltjs/codec-chromium-indexeddb/test';
 import {
   Connection,
   Copy,
@@ -32,19 +32,19 @@ import {
   PipelineError,
   type Stream,
   type Target,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   SlackDesktopFormatError,
   SlackDesktopStore,
   SlackDesktopUnavailableError,
   slackDesktopDirectory,
-} from '@workspace/sdk-slack-desktop';
+} from '@eltjs/sdk-slack-desktop';
 
 import { SlackDesktopSource } from './slack-desktop-source.ts';
 

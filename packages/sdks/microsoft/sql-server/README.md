@@ -1,9 +1,9 @@
-# @workspace/sdk-microsoft-sql-server
+# @eltjs/sdk-microsoft-sql-server
 
-Reads one SQL Server database. This SDK knows nothing of elt. It works with SQL Server 2016 or later, Azure SQL Database and Azure SQL Managed Instance. [@workspace/source-microsoft-sql-server](../../../sources/microsoft/sql-server/README.md) uses it to make the streams of a pipeline.
+Reads one SQL Server database. This SDK knows nothing of elt. It works with SQL Server 2016 or later, Azure SQL Database and Azure SQL Managed Instance. [@eltjs/source-microsoft-sql-server](../../../sources/microsoft/sql-server/README.md) uses it to make the streams of a pipeline.
 
 ```ts
-import { SqlServerDatabase } from '@workspace/sdk-microsoft-sql-server';
+import { SqlServerDatabase } from '@eltjs/sdk-microsoft-sql-server';
 
 const database = new SqlServerDatabase(
   'Server=localhost,1433;Database=sales;User Id=reader;Password=secret;Encrypt=true',

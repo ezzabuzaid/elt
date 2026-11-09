@@ -22,13 +22,13 @@ import {
   Pipeline,
   type PipelineClock,
   PipelineError,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/elt-sqlite';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { ArcDesktopSource } from './arc-desktop-source.ts';
 

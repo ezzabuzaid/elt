@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import type { Match } from '@workspace/eca';
+import type { Match } from '@eltjs/eca';
 
 import { Automation } from './automation.ts';
 

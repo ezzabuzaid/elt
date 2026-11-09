@@ -1,6 +1,6 @@
 import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
-import { ProtobufMessage } from '@workspace/codec-protobuf';
+import { ProtobufMessage } from '@eltjs/codec-protobuf';
 
 import { appDatabase } from './app-database.ts';
 import { bytes, instant, requiredText, unixSecondInstant } from './values.ts';

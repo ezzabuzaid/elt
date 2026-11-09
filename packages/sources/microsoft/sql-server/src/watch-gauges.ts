@@ -9,7 +9,7 @@ import {
 import type {
   SqlServerDatabase,
   SqlServerSession,
-} from '@workspace/sdk-microsoft-sql-server';
+} from '@eltjs/sdk-microsoft-sql-server';
 
 // A value of each table, by its quoted name, from one query.
 class TableValues extends Collector<string> {

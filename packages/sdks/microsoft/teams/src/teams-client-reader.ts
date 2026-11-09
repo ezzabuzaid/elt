@@ -1,7 +1,7 @@
 import type {
   IndexedDBDatabase,
   IndexedDBRecord,
-} from '@workspace/codec-chromium-indexeddb';
+} from '@eltjs/codec-chromium-indexeddb';
 
 import { readConversation } from './conversations.ts';
 import { readActivity, readCallLog, readSaved } from './feeds.ts';

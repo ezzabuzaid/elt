@@ -1,8 +1,5 @@
-import type { RecordDraft, SchemaRecord } from '@workspace/elt';
-import {
-  type Message,
-  messageMediaFile,
-} from '@workspace/sdk-whatsapp-desktop';
+import type { RecordDraft, SchemaRecord } from '@eltjs/elt';
+import { type Message, messageMediaFile } from '@eltjs/sdk-whatsapp-desktop';
 
 import { WhatsAppMessageStream } from '../whatsapp-message-stream.ts';
 import type { WhatsAppScan } from '../whatsapp-scan.ts';

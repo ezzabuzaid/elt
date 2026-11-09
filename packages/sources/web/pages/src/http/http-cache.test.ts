@@ -13,12 +13,12 @@ import { Sqlite } from '@zukhruf/testing/sqlite';
 
 // A new Node process for each scan proves the production cache survives restart.
 const scan = `
-import { ArticleExtractor } from ${JSON.stringify(import.meta.resolve('@workspace/source-web-pages/article-extractor'))};
-import { WebSource } from ${JSON.stringify(import.meta.resolve('@workspace/source-web-pages/web-source'))};
-import { WebStream } from ${JSON.stringify(import.meta.resolve('@workspace/source-web-pages/web-stream'))};
-import { AlwaysRevisit, ArchiveReader, LinkReader, ListingReader, PaginationReader } from ${JSON.stringify(import.meta.resolve('@workspace/sdk-web-crawler'))};
-import { Connection, Copy, Pipeline } from ${JSON.stringify(import.meta.resolve('@workspace/elt'))};
-import { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } from ${JSON.stringify(import.meta.resolve('@workspace/elt-sqlite'))};
+import { ArticleExtractor } from ${JSON.stringify(import.meta.resolve('@eltjs/source-web-pages/article-extractor'))};
+import { WebSource } from ${JSON.stringify(import.meta.resolve('@eltjs/source-web-pages/web-source'))};
+import { WebStream } from ${JSON.stringify(import.meta.resolve('@eltjs/source-web-pages/web-stream'))};
+import { AlwaysRevisit, ArchiveReader, LinkReader, ListingReader, PaginationReader } from ${JSON.stringify(import.meta.resolve('@eltjs/sdk-web-crawler'))};
+import { Connection, Copy, Pipeline } from ${JSON.stringify(import.meta.resolve('@eltjs/elt'))};
+import { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } from ${JSON.stringify(import.meta.resolve('@eltjs/elt-sqlite'))};
 const [input, path, checkpoints, id, syncMode, cachePath] = process.argv.slice(1);
 const stream = new WebStream({
   name: 'articles',

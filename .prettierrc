@@ -3,7 +3,7 @@
   "importOrder": [
     "^node:(.*)$",
     "<THIRD_PARTY_MODULES>",
-    "^@workspace/(.*)$",
+    "^@eltjs/(.*)$",
     "^[./]"
   ],
   "plugins": ["@trivago/prettier-plugin-sort-imports"],

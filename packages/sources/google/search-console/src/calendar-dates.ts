@@ -1,4 +1,4 @@
-import { isCalendarDate } from '@workspace/elt';
+import { isCalendarDate } from '@eltjs/elt';
 
 export function addDays(date: string, days: number): string {
   return calendarDate(date).add({ days }).toString();

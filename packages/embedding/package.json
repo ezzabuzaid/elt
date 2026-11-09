@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/embedding",
+  "name": "@eltjs/embedding",
   "version": "0.0.1",
   "private": true,
   "description": "A rule of an elt computed dataset: it gives each loaded row a vector of its text, made by an AI SDK embedding model, so a search can find rows by meaning.",
@@ -41,11 +41,11 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@workspace/elt": "^0.0.1"
+    "@eltjs/elt": "^0.0.1"
   },
   "devDependencies": {
     "@ai-sdk/provider": "^4.0.37",
-    "@workspace/elt-sqlite": "^0.0.1",
+    "@eltjs/elt-sqlite": "^0.0.1",
     "@zukhruf/sqlite-open": "^0.8.10",
     "@zukhruf/testing": "^0.8.10",
     "ai": "^7.0.165"

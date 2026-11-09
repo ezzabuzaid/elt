@@ -10,17 +10,17 @@ import {
   Source,
   type SourceMessage,
   type Stream,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   GoogleGrantRevokedError,
   type GoogleRequester,
   messageOf,
   statusOf,
-} from '@workspace/google-auth';
+} from '@eltjs/google-auth';
 import {
   GoogleHealthAccountNotLinkedError,
   GoogleHealthApi,
-} from '@workspace/sdk-google-health';
+} from '@eltjs/sdk-google-health';
 
 import { AccountStream } from './account-stream.ts';
 import { ChildStream } from './child-stream.ts';

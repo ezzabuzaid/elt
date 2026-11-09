@@ -5,8 +5,8 @@ import {
   Stream,
   type SyncMode,
   validateRecords,
-} from '@workspace/elt';
-import type { SafariStore } from '@workspace/sdk-apple-safari';
+} from '@eltjs/elt';
+import type { SafariStore } from '@eltjs/sdk-apple-safari';
 
 import type { SafariScan } from './safari-scan.ts';
 

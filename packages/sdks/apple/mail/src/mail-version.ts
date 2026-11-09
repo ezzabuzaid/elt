@@ -2,7 +2,7 @@ import { type FSWatcher, watch } from 'node:fs';
 
 import { Gauge } from '@zukhruf/async';
 
-import type { AppDatabaseVersion } from '@workspace/sdk-macos-app-database';
+import type { AppDatabaseVersion } from '@eltjs/sdk-macos-app-database';
 
 import { appDatabase } from './app-database.ts';
 import { envelopeIndexPath, mailVersionDirectory } from './mail-location.ts';

@@ -17,13 +17,13 @@ import {
   type Source,
   readerCatalog,
   syncHistoryRelations,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 
 import { AppleNotesSource } from './apple-notes-source.ts';
 

@@ -1,4 +1,4 @@
-# @workspace/source-google-health
+# @eltjs/source-google-health
 
 An ELT source for all the data that a Google account keeps in Google Health. It reads the Google Health API v4 (`health.googleapis.com`), which replaces the Fitbit Web API. The data comes from Fitbit and Pixel devices, the Google Health app, and the apps that write to Google Health. The source has 56 streams: each data type, their child lists (for example sleep stages and exercise splits), the TCX routes of exercises, the rollups and the account.
 
@@ -7,8 +7,8 @@ Apple Health data gets to Google Health through the Google Health iPhone app. Th
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../../elt/CONTEXT.md) for the words of all of elt.
 
 ```ts
-import { GOOGLE_HEALTH_SCOPES, googleSession } from '@workspace/google-auth';
-import { GoogleHealthSource } from '@workspace/source-google-health/google-health-source';
+import { GOOGLE_HEALTH_SCOPES, googleSession } from '@eltjs/google-auth';
+import { GoogleHealthSource } from '@eltjs/source-google-health/google-health-source';
 
 const source = new GoogleHealthSource({
   requester: await googleSession({

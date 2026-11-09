@@ -1,4 +1,4 @@
-import { Identifiers } from '@workspace/elt';
+import { Identifiers } from '@eltjs/elt';
 
 // SQLite holds a name of any length and compares two without ASCII case: it
 // folds A-Z only, so `É` and `é` stay two names.

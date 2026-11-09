@@ -3,14 +3,14 @@ import { mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { AccountsStore } from '@workspace/sdk-apple-accounts';
+import type { AccountsStore } from '@eltjs/sdk-apple-accounts';
 import type {
   IndexedAttachment,
   MailFile,
   MailSnapshot,
   MailStore,
-} from '@workspace/sdk-apple-mail';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/sdk-apple-mail';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { type AccountRecord, MailAccounts } from './mail-accounts.ts';
 import { MailSelection } from './mail-selection.ts';

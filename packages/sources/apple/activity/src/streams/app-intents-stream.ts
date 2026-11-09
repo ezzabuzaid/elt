@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import { AppIntent, type AppIntentEvent } from '@workspace/sdk-apple-biome';
+import type { RecordDraft } from '@eltjs/elt';
+import { AppIntent, type AppIntentEvent } from '@eltjs/sdk-apple-biome';
 
 import { activityFields, isoTime, plistText } from '../activity-values.ts';
 import {

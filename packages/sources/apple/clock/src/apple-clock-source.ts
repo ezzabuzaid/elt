@@ -7,14 +7,14 @@ import {
   type SourceMessage,
   type Stream,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   type ClockLocation,
   type ClockSnapshot,
   ClockStore,
   StoreUnavailableError,
-} from '@workspace/sdk-apple-clock/clock-store';
-import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
+} from '@eltjs/sdk-apple-clock/clock-store';
+import { localAppleStoreCoverage } from '@eltjs/source-apple-macos/local-apple-store-coverage';
 
 import { AlarmsStream } from './streams/alarms-stream.ts';
 import { CalendarReleasesStream } from './streams/calendar-releases-stream.ts';

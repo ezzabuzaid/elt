@@ -1,4 +1,4 @@
-import type { DataPoint } from '@workspace/sdk-google-health';
+import type { DataPoint } from '@eltjs/sdk-google-health';
 
 import { day, fields, finite } from '../health-fields.ts';
 import { PointStream } from '../point-stream.ts';

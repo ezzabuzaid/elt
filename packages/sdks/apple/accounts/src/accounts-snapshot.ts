@@ -4,12 +4,12 @@ import {
   type SnapshotColumns,
 } from '@zukhruf/sqlite-snapshot';
 
-import { referenceDateSeconds } from '@workspace/codec-apple-reference-date';
+import { referenceDateSeconds } from '@eltjs/codec-apple-reference-date';
 import {
   type PlistValue,
   decodeArchive,
   isDictionary,
-} from '@workspace/codec-plist';
+} from '@eltjs/codec-plist';
 
 import { Account } from './account.ts';
 import { appDatabase } from './app-database.ts';

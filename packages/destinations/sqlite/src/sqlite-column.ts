@@ -1,11 +1,7 @@
 import type { SQLInputValue } from 'node:sqlite';
 
-import type {
-  DeclaredFormat,
-  DocumentParser,
-  FileReference,
-} from '@workspace/elt';
-import { FileRead, isCalendarDate, isTimestamp } from '@workspace/elt';
+import type { DeclaredFormat, DocumentParser, FileReference } from '@eltjs/elt';
+import { FileRead, isCalendarDate, isTimestamp } from '@eltjs/elt';
 
 // STRICT tables accept only these types, so dates and times are their
 // canonical ISO text, which sorts in time order, and exact decimals are text.

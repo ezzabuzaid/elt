@@ -21,7 +21,7 @@ import {
   PassStarted,
   errorMessage,
   passChannels,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   type Crawl,
   CrawlEnded,
@@ -30,11 +30,11 @@ import {
   CrawlStarted,
   OriginBlocked,
   crawlChannels,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 import {
   PageExtracted,
   pageChannels,
-} from '@workspace/source-web-pages/page-channels';
+} from '@eltjs/source-web-pages/page-channels';
 
 import { Instruments } from './instruments.ts';
 
@@ -80,7 +80,7 @@ export class EltInstrumentation extends InstrumentationBase {
     clock: { readonly Date: { now(): number } },
     config: InstrumentationConfig = {},
   ) {
-    super('@workspace/elt-opentelemetry', '0.0.1', config);
+    super('@eltjs/elt-opentelemetry', '0.0.1', config);
     this.#clock = clock;
   }
 

@@ -2,7 +2,7 @@ import {
   type ChatDatabase,
   type ChatMessageRow,
   recoverableMessageTable,
-} from '@workspace/sdk-apple-messages';
+} from '@eltjs/sdk-apple-messages';
 
 import { AppleMessagesStream } from '../apple-messages-stream.ts';
 import {

@@ -1,4 +1,4 @@
-import { type PlistValue, plistJSON } from '@workspace/codec-plist';
+import { type PlistValue, plistJSON } from '@eltjs/codec-plist';
 
 const text = { type: 'string' } as const;
 const nullableText = { type: ['string', 'null'] } as const;

@@ -9,14 +9,14 @@ import type {
   ExtractionCoverage,
   SourceMessage,
   Stream,
-} from '@workspace/elt';
-import { Catalog, Source, diffSnapshot, isTimestamp } from '@workspace/elt';
+} from '@eltjs/elt';
+import { Catalog, Source, diffSnapshot, isTimestamp } from '@eltjs/elt';
 import {
   type CalendarStore,
   CalendarUnavailableError,
   IcsExportUnavailableError,
-} from '@workspace/sdk-apple-eventkit';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/sdk-apple-eventkit';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { CalendarScan } from './calendar-scan.ts';
 import type { CalendarReader } from './calendar-stream.ts';

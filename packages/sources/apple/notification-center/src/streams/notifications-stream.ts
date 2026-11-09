@@ -1,6 +1,6 @@
-import { plistJSON } from '@workspace/codec-plist';
-import type { RecordDraft } from '@workspace/elt';
-import type { Notification } from '@workspace/sdk-apple-notification-center';
+import { plistJSON } from '@eltjs/codec-plist';
+import type { RecordDraft } from '@eltjs/elt';
+import type { Notification } from '@eltjs/sdk-apple-notification-center';
 
 import {
   AppleNotificationCenterStream,

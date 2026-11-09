@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
-import type { FileContent } from '@workspace/elt';
+import type { FileContent } from '@eltjs/elt';
 
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { identifiers } from './sqlite-identifiers.ts';

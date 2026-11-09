@@ -1,5 +1,5 @@
-import type { RecordDraft, SchemaRecord } from '@workspace/elt';
-import { type Sticker, stickerFile } from '@workspace/sdk-whatsapp-desktop';
+import type { RecordDraft, SchemaRecord } from '@eltjs/elt';
+import { type Sticker, stickerFile } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
 import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';

@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/sdk-google-search-console",
+  "name": "@eltjs/sdk-google-search-console",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     }
   },
   "dependencies": {
-    "@workspace/codec-sitemap": "0.0.1",
-    "@workspace/google-auth": "0.0.1",
+    "@eltjs/codec-sitemap": "0.0.1",
+    "@eltjs/google-auth": "0.0.1",
     "@zukhruf/async": "^0.8.10",
     "zod": "4.6.5"
   },

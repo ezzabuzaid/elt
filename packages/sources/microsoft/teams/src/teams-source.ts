@@ -8,12 +8,9 @@ import {
   type SourceMessage,
   type Stream,
   diffSnapshot,
-} from '@workspace/elt';
-import {
-  TeamsStore,
-  TeamsUnavailableError,
-} from '@workspace/sdk-microsoft-teams';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/elt';
+import { TeamsStore, TeamsUnavailableError } from '@eltjs/sdk-microsoft-teams';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AccountsStream } from './streams/accounts-stream.ts';
 import { ActivitiesStream } from './streams/activities-stream.ts';

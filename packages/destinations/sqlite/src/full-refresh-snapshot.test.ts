@@ -19,7 +19,7 @@ import {
   Stream,
   diffGroupedSnapshot,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import { SQLiteDestination, SQLiteSyncHistory } from './index.ts';
 

@@ -6,13 +6,13 @@ import {
   Source,
   type SourceMessage,
   type Stream,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   StoreUnavailableError,
   WhatsApp,
   whatsappRunning,
-} from '@workspace/sdk-whatsapp-desktop';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/sdk-whatsapp-desktop';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { BlockedContactsStream } from './streams/blocked-contacts-stream.ts';
 import { BusinessBotPromptsStream } from './streams/business-bot-prompts-stream.ts';

@@ -1,4 +1,4 @@
-export { StoreUnavailableError } from '@workspace/sdk-macos-app-database';
+export { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
 export { NotificationCenterSnapshot } from './notification-center-snapshot.ts';
 export {
   NotificationCenterStore,

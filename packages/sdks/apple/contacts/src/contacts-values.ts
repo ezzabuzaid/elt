@@ -5,7 +5,7 @@ import {
   type PlistValue,
   decodeArchive,
   isBinaryPlist,
-} from '@workspace/codec-plist';
+} from '@eltjs/codec-plist';
 
 import type { ContactsAttributeKind } from './contacts-tables.ts';
 

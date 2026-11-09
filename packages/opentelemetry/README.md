@@ -10,7 +10,7 @@ import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 
-import { EltInstrumentation } from '@workspace/elt-opentelemetry';
+import { EltInstrumentation } from '@eltjs/elt-opentelemetry';
 
 const sdk = new NodeSDK({
   serviceName: 'logful',

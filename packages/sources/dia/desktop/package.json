@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/source-dia-desktop",
+  "name": "@eltjs/source-dia-desktop",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,13 +10,13 @@
     }
   },
   "dependencies": {
-    "@workspace/elt": "0.0.1",
-    "@workspace/sdk-dia-desktop": "0.0.1",
-    "@workspace/source-apple-macos": "0.0.1"
+    "@eltjs/elt": "*",
+    "@eltjs/sdk-dia-desktop": "0.0.1",
+    "@eltjs/source-apple-macos": "0.0.1"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
-    "@workspace/elt-sqlite": "0.0.1",
+    "@eltjs/elt-sqlite": "*",
     "@zukhruf/sqlite-open": "^0.8.10",
     "@zukhruf/testing": "^0.8.10"
   }

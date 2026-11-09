@@ -11,12 +11,12 @@ import {
   HTMLExtraction,
   MarkdownExtraction,
   WebArticle,
-} from '@workspace/sdk-web-article';
+} from '@eltjs/sdk-web-article';
 import {
   AdaptiveRevisit,
   ListingReader,
   Origins,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 const signal = AbortSignal.timeout(30_000);
 // The record of each origin for this read: the crawl and the reader's own
@@ -60,7 +60,7 @@ The publisher and the URL selection in the example belong to the caller.
 - `fetch(url, signal)` downloads a page and returns its article, or null when the page has no article.
 - `download(url, signal)` and `read(response, signal)` return a lazy extraction: a `fingerprint` and an `extract()` function. The reader requests every response that the extraction needs before it gives the fingerprint, and the fingerprint covers all of them. `extract()` makes no request. Compare the fingerprint with your committed state before you extract ([ADR 0008](./docs/adr/0008-the-fingerprint-is-known-before-extraction.md)).
 - `negotiation` tells how to request a page that you download yourself and give to `read()`. Send its `accept` as the Accept header, and add its `afterResponse` to the `afterResponse` hooks of a client that follows no redirect, such as a crawler's: it marks the context of a redirect that `Accept` chose with the URL that asked, and the crawler carries the context to the request of the redirect target. Without the hook, `read()` cannot see an Accept redirect.
-- The client that you give is the client of every request that `WebArticle` makes itself: the HTML companion, the advertised alternatives and the request as a browser asks. Give `Origins.http` of `@workspace/sdk-web-crawler`, so each of them passes the `robots.txt`, the delay and the block of its origin, as a crawl's request does.
+- The client that you give is the client of every request that `WebArticle` makes itself: the HTML companion, the advertised alternatives and the request as a browser asks. Give `Origins.http` of `@eltjs/sdk-web-crawler`, so each of them passes the `robots.txt`, the delay and the block of its origin, as a crawl's request does.
 
 Got owns HTTP: redirects, decompression, retries, deadlines, cancellation and the HTTP cache. When Got revalidates a cached response and gets a 304, it gives back the cached body, so the page reads as an identical 200.
 
@@ -134,7 +134,7 @@ For native Markdown, `markdown` is the body of the publisher. It can hold naviga
 ## What the SDK does not do
 
 - It does not run JavaScript, and it does not read pages that need a login.
-- It does not crawl, schedule or keep checkpoints. `@workspace/sdk-web-crawler` and `@workspace/source-web-pages` do that.
+- It does not crawl, schedule or keep checkpoints. `@eltjs/sdk-web-crawler` and `@eltjs/source-web-pages` do that.
 - It buffers each download and parses synchronously, so cancellation does not stop a parse that has started.
 
 ## Package ownership

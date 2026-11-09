@@ -1,5 +1,5 @@
-import type { PlistValue } from '@workspace/codec-plist';
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
+import type { PlistValue } from '@eltjs/codec-plist';
+import type { ProtobufMessage } from '@eltjs/codec-protobuf';
 
 import { BiomeStream } from '../biome-stream.ts';
 import { appleDate, archive, flag, optionalText } from '../biome-values.ts';

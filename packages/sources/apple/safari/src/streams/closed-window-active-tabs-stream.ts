@@ -1,4 +1,4 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';

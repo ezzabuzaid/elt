@@ -1,8 +1,8 @@
 import type {
   AddressBookStore,
   UnknownPropertyRow,
-} from '@workspace/sdk-apple-contacts';
-import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
+} from '@eltjs/sdk-apple-contacts';
+import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 import { AppleContactsStream } from '../apple-contacts-stream.ts';
 import { encode, explained, localStores } from '../contacts-fields.ts';

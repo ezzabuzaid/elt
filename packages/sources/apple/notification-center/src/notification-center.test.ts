@@ -21,17 +21,17 @@ import {
   type PipelineClock,
   PipelineError,
   type Target,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   StoreUnavailableError,
   notificationCenterStorePath,
-} from '@workspace/sdk-apple-notification-center';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/sdk-apple-notification-center';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AppleNotificationCenterSource } from './apple-notification-center-source.ts';
 
@@ -1054,8 +1054,8 @@ test('a Notification Center pass over a large store holds one notification at a 
   // notification at a time fits in 32). The process loads the built source from
   // this package's folder, where its dependencies resolve.
   const pass = `
-    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { Connection, Copy, Pipeline } = await import('@eltjs/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@eltjs/elt-sqlite');
     const { AppleNotificationCenterSource } = await import(process.env.SOURCE);
     const source = new AppleNotificationCenterSource({ path: process.env.STORE });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/out.sqlite' });

@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { EmergencyMediaItem } from '@workspace/sdk-apple-call-history';
+import type { RecordDraft } from '@eltjs/elt';
+import type { EmergencyMediaItem } from '@eltjs/sdk-apple-call-history';
 
 import {
   AppleCallHistoryStream,

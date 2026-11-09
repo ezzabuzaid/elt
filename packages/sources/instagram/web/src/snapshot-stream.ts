@@ -8,7 +8,7 @@ import {
   type RecordDraft,
   type SourceMessage,
   diffSnapshot,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import { InstagramStream, type ReadContext } from './instagram-stream.ts';
 

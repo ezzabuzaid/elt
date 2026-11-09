@@ -4,7 +4,7 @@ import {
   HTMLExtraction,
   MarkdownExtraction,
   WebArticle,
-} from '@workspace/sdk-web-article';
+} from '@eltjs/sdk-web-article';
 
 import { type ExtractorRun, RecordExtractor } from './record-extractor.ts';
 

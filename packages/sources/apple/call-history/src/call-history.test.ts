@@ -21,18 +21,18 @@ import {
   type PipelineClock,
   PipelineError,
   type Target,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
+} from '@eltjs/elt-sqlite';
 import {
   CallHistorySchemaError,
   StoreUnavailableError,
   callHistoryStorePath,
-} from '@workspace/sdk-apple-call-history';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+} from '@eltjs/sdk-apple-call-history';
+import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AppleCallHistorySource } from './apple-call-history-source.ts';
 
@@ -1104,8 +1104,8 @@ test('a Call History pass over a large store holds one call at a time, so it loa
   // 35 MB on each side. The process loads the built source from this
   // package's folder, where its dependencies resolve.
   const pass = `
-    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
+    const { Connection, Copy, Pipeline } = await import('@eltjs/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@eltjs/elt-sqlite');
     const { AppleCallHistorySource } = await import(process.env.SOURCE);
     const source = new AppleCallHistorySource({ path: process.env.STORE });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });

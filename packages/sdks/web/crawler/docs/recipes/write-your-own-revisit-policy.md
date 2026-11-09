@@ -30,7 +30,7 @@ import {
   ListingReader,
   Origins,
   type Schedule,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 /** A page that loaded once is never due again. A failed or gone page is tried again. */
 class NeverRevisit extends IntervalRevisit<null> {
@@ -116,7 +116,7 @@ second crawl {
 
 After the first crawl, each post has `due: null` in the crawl memento. On the second crawl, the feed names posts 1, 2 and 3. The crawler knows posts 1 and 2, and asks the policy whether they are due. They are not, so they stay out of the frontier. Post 3 is new, so the crawl downloads it. The feed has `AlwaysRevisit`, so it is requested in each crawl. The second crawl does not request `robots.txt`: its origins' records come from the first crawl's, and the rules last 24 hours (RFC 9309 §2.4).
 
-A post that the crawl did not request is a deferred page. `WebSource` of `@workspace/source-web-pages` keeps its rows.
+A post that the crawl did not request is a deferred page. `WebSource` of `@eltjs/source-web-pages` keeps its rows.
 
 ## Is "never" a good practice?
 

@@ -1,8 +1,8 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 import type {
   TeamsMessage,
   TeamsMessageLink,
-} from '@workspace/sdk-microsoft-teams';
+} from '@eltjs/sdk-microsoft-teams';
 
 import { teamsFields } from '../teams-stream.ts';
 import {

@@ -1,4 +1,4 @@
-import { referenceDateSeconds } from '@workspace/codec-apple-reference-date';
+import { referenceDateSeconds } from '@eltjs/codec-apple-reference-date';
 
 // Apple binary property lists (bplist00) and NSKeyedArchiver graphs, as
 // Messages stores them. Values decode to JSON-shaped data: Data becomes a

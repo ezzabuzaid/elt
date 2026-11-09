@@ -1,20 +1,20 @@
-# @workspace/source-slack-desktop
+# @eltjs/source-slack-desktop
 
-An ELT source for the data that the Slack desktop app keeps on this Mac. It reads the app's own store with the `@workspace/sdk-slack-desktop` SDK. It uses no Slack API, no token and no network. A Context Compiler import loads every stream into its `data.sqlite`, and readers query it through the `<snake_stream>` views.
+An ELT source for the data that the Slack desktop app keeps on this Mac. It reads the app's own store with the `@eltjs/sdk-slack-desktop` SDK. It uses no Slack API, no token and no network. A Context Compiler import loads every stream into its `data.sqlite`, and readers query it through the `<snake_stream>` views.
 
 The words in this README have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { slackDesktopDirectory } from '@workspace/sdk-slack-desktop';
-import { SlackDesktopSource } from '@workspace/source-slack-desktop/slack-desktop-source';
+} from '@eltjs/elt-sqlite';
+import { slackDesktopDirectory } from '@eltjs/sdk-slack-desktop';
+import { SlackDesktopSource } from '@eltjs/source-slack-desktop/slack-desktop-source';
 
 // Finds the store of the Slack build in the home folder.
 const source = new SlackDesktopSource({

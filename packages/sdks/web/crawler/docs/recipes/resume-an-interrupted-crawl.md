@@ -28,7 +28,7 @@ import {
   AdaptiveRevisit,
   ListingReader,
   Origins,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 // A blog with a feed that names five posts.
 const server = createServer((request, response) => {
@@ -116,4 +116,4 @@ The crawl counts the page that it handed out last as unfinished until you ask fo
 - **To start again from nothing, delete the crawl memento.** The next crawl then requests every page.
 - **The revisit policy keeps its history in the crawl memento too.** If you delete the crawl memento, each URL goes back to its first visit.
 - **The records of the origins are not in the crawl memento.** `Origins.snapshot()` keeps the blocks, the slowdowns and the `robots.txt` rules of the origins. Give it to `new Origins(http, memento, globalThis)` of the next read so that a block outlives the process; here each process starts with no records, so it reads `robots.txt` again.
-- **`WebSource` of `@workspace/source-web-pages` does these steps for you.** It keeps the crawl memento in its state, in the checkpoint store of elt.
+- **`WebSource` of `@eltjs/source-web-pages` does these steps for you.** It keeps the crawl memento in its state, in the checkpoint store of elt.

@@ -6,7 +6,7 @@ import { Gauge } from '@zukhruf/async';
 import {
   type AppDatabaseVersion,
   StoreUnavailableError,
-} from '@workspace/sdk-macos-app-database';
+} from '@eltjs/sdk-macos-app-database';
 
 import { AddressBookStore, storeFile } from './address-book-store.ts';
 import { appDatabase, contactsStore } from './app-database.ts';

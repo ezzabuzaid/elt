@@ -14,7 +14,7 @@ import {
   passStatus,
   readerCatalog,
   recordedFailure,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 import { PostgresDestination } from './postgres-destination.ts';
 import {

@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 
-import { AppFilesVersion } from '@workspace/sdk-macos-app-database';
+import { AppFilesVersion } from '@eltjs/sdk-macos-app-database';
 
 import { LocalStateFormatError } from './errors.ts';
 

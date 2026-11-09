@@ -3,17 +3,13 @@ import {
   type SnapshotGroup,
 } from '@zukhruf/snapshot-differential';
 
-import type {
-  CopyConfiguration,
-  RecordDraft,
-  SourceMessage,
-} from '@workspace/elt';
-import { diffGroupedSnapshot } from '@workspace/elt';
+import type { CopyConfiguration, RecordDraft, SourceMessage } from '@eltjs/elt';
+import { diffGroupedSnapshot } from '@eltjs/elt';
 import type {
   IndexedAttachment,
   MailFile,
   MimePart,
-} from '@workspace/sdk-apple-mail';
+} from '@eltjs/sdk-apple-mail';
 
 import {
   AppleMailStream,

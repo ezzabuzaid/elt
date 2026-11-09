@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { NotificationApp } from '@workspace/sdk-apple-notification-center';
+import type { RecordDraft } from '@eltjs/elt';
+import type { NotificationApp } from '@eltjs/sdk-apple-notification-center';
 
 import {
   AppleNotificationCenterStream,

@@ -11,7 +11,7 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
-} from '@workspace/sdk-web-crawler';
+} from '@eltjs/sdk-web-crawler';
 
 import { ArticleError, HTMLExtraction, WebArticle } from './index.ts';
 

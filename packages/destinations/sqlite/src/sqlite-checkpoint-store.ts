@@ -6,7 +6,7 @@ import { SqliteStore } from '@zukhruf/mutex/sqlite';
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { open } from '@zukhruf/sqlite-open';
 
-import { type CheckpointSession, CheckpointStore } from '@workspace/elt';
+import { type CheckpointSession, CheckpointStore } from '@eltjs/elt';
 
 import { busyTimeout } from './open-destination.ts';
 

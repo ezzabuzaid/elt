@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { AddressBookContact } from '@workspace/sdk-whatsapp-desktop';
+import type { RecordDraft } from '@eltjs/elt';
+import type { AddressBookContact } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
 import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';

@@ -1,7 +1,7 @@
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
-import { type SourceMessage, diffSnapshot } from '@workspace/elt';
-import type { HighlightItems, Page } from '@workspace/sdk-instagram-web';
+import { type SourceMessage, diffSnapshot } from '@eltjs/elt';
+import type { HighlightItems, Page } from '@eltjs/sdk-instagram-web';
 
 import { fields, instant, kindOf, largest } from '../fields.ts';
 import {

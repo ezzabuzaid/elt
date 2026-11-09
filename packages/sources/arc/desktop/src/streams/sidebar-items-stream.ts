@@ -1,4 +1,4 @@
-import type { ArcSidebarContent } from '@workspace/sdk-arc-desktop';
+import type { ArcSidebarContent } from '@eltjs/sdk-arc-desktop';
 
 import { ArcStream, fields } from '../arc-stream.ts';
 

@@ -1,5 +1,5 @@
-import type { RecordDraft } from '@workspace/elt';
-import type { User } from '@workspace/sdk-whatsapp-desktop';
+import type { RecordDraft } from '@eltjs/elt';
+import type { User } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
 import { WhatsAppStream, base64, whatsappFields } from '../whatsapp-stream.ts';

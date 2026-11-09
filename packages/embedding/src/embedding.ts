@@ -5,7 +5,7 @@ import {
   Rule,
   type RuleResult,
   errorMessage,
-} from '@workspace/elt';
+} from '@eltjs/elt';
 
 // The vector of each loaded row's text, made by an embedding model, so a
 // vector search finds rows by meaning, as pgai's vectorizer and LanceDB's

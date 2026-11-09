@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { isDictionary, readPlist } from '@workspace/codec-plist';
+import { isDictionary, readPlist } from '@eltjs/codec-plist';
 
 // The global preferences file in the home folder `home`.
 export const globalPreferences = (home: string): string =>

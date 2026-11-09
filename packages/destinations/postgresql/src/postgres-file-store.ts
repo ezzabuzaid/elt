@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type postgres from 'postgres';
 
-import type { FileContent } from '@workspace/elt';
+import type { FileContent } from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
 import type { PostgresColumn } from './postgres-column.ts';

@@ -1,4 +1,4 @@
-# @workspace/source-google-search-console
+# @eltjs/source-google-search-console
 
 An ELT source for Google Search Console properties. It reads each property through the `searchconsole:v1` API: the properties, the sitemaps, the search analytics and the URL inspections. The API serves `sites`, `sitemaps` and `searchAnalytics` under the original `webmasters/v3` path prefix. It serves URL inspection from `v1` on the same host.
 
@@ -8,17 +8,14 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-} from '@workspace/elt-postgresql';
-import {
-  GOOGLE_SEARCH_CONSOLE_SCOPE,
-  googleSession,
-} from '@workspace/google-auth';
-import { SearchConsoleSource } from '@workspace/source-google-search-console/search-console-source';
+} from '@eltjs/elt-postgresql';
+import { GOOGLE_SEARCH_CONSOLE_SCOPE, googleSession } from '@eltjs/google-auth';
+import { SearchConsoleSource } from '@eltjs/source-google-search-console/search-console-source';
 
 const url = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
 const schema = 'google_search_console';
@@ -125,7 +122,7 @@ Do this setup one time in the Cloud Console. Google has no API that makes a Desk
 2. Set the publishing status to **In production**. When an External consent screen is in **Testing**, Google gives refresh tokens that expire after 7 days. Only the scopes name, email address and user profile do not cause this, and `webmasters.readonly` is not one of them.
 3. Make an OAuth client ID of the type **Desktop app**, and export its id and secret.
 
-`googleSession` from `@workspace/google-auth` then operates as follows:
+`googleSession` from `@eltjs/google-auth` then operates as follows:
 
 - **First run.** When no stored grant has the scopes, it listens on `http://127.0.0.1:<random port>/callback`. It opens the consent link in the default macOS browser, and it waits for a maximum of five minutes. It accepts only a redirect that has the `state` of the flow. Each other request gets `400`, and the listener continues to wait.
 - **Browser failures.** When the browser does not open, sign-in fails and the callback listener closes. On other platforms and in headless sessions, give `googleSession({ openBrowser })` to show the consent URL. The library does not print links or errors.
@@ -186,7 +183,7 @@ URL inspection has no list endpoint. Each row costs one request for one URL. A p
 - **Discovery.** The source finds the URLs in two places. The first is each sitemap that the property lists (`sitemaps.list`), downloaded from the site: XML URL sets, sitemap indexes, RSS 2.0 and Atom feeds, and plain-text lists, with or without gzip. The source follows sitemap indexes for a maximum of three levels. A deeper index is a `readError` of that sitemap. The second is each page in the search analytics of 16 months, for each configured report type. The source removes each `#fragment`, because Google Search indexes documents, not anchors. It merges duplicates, and it keeps only absolute `http` and `https` URLs in the property. A domain property (`sc-domain:example.com`) has its host, its subdomains and both schemes. A URL-prefix property has each URL that starts with the prefix. No Google API can find a page that is in no sitemap and that never showed in search.
 - **Rolling refresh.** The checkpoint of each stream keeps the last inspection time of each URL. A run inspects the URLs that it never inspected first. Then it inspects the URLs whose last inspection is older than `inspectionRefreshHours`, the oldest first. A newer URL costs nothing. When a property has more URLs than the daily quota, the source inspects them over many days. Each URL is then inspected again about each ⌈URLs / 2000⌉ days.
 - **Concurrency.** `inspectionConcurrency` requests run at once. The source starts fewer than 600 requests each minute. Thus a quota refusal can only be the daily quota. In a live run, 126 URLs took 54 seconds. One request at a time took about 6.6 seconds for each URL.
-- **Quota.** When Google refuses for quota (a `429` that continues after the retries), `inspectUrls` in `@workspace/sdk-google-search-console` starts no new request. The requests in flight finish, and the source commits the inspections that succeeded. The source then sends no inspection request for that property until the next midnight in Pacific Time, when the daily Google Cloud quotas reset. It keeps that time as `quotaResetAt` in the checkpoint of each inspection stream. Thus the next run also waits. See [ADR 0003](./docs/adr/0003-an-exhausted-inspection-quota-waits-until-pacific-midnight.md).
+- **Quota.** When Google refuses for quota (a `429` that continues after the retries), `inspectUrls` in `@eltjs/sdk-google-search-console` starts no new request. The requests in flight finish, and the source commits the inspections that succeeded. The source then sends no inspection request for that property until the next midnight in Pacific Time, when the daily Google Cloud quotas reset. It keeps that time as `quotaResetAt` in the checkpoint of each inspection stream. Thus the next run also waits. See [ADR 0003](./docs/adr/0003-an-exhausted-inspection-quota-waits-until-pacific-midnight.md).
 - **Rejected URLs.** When Google answers `400` or `404` for one URL, the source loads a `urlInspection` row with `errorStatus`, `errorMessage` and null verdicts, and the run continues. Each other error, for example a `401` or a `403`, fails all URLs in the same way. Thus it fails the copy.
 - **Removal.** Each inspection stream compares its rows with its snapshot under a `Coverage` policy. The policy covers the URLs that the run inspected and the URLs that left the discovered set. When a URL leaves the discovered set, the source deletes it from all three tables. When an array becomes shorter, its extra positions are deleted. A row that did not change is not written again. A URL that the run did not inspect keeps its rows. When a sitemap cannot be read, the discovered set is not complete, and no URL is deleted because it left the set.
 - **Sharing.** One request serves all three inspection streams. The source keeps its inspections in memory for one read. Before it calls the API, a stream uses an inspection that is newer than the inspection that the stream loaded last. The source reads `streamConcurrency` streams at once, so the three inspection streams can run together. For each property, they plan and inspect one at a time. Thus a stream sees what the stream before it inspected, and no URL is inspected two times. Different properties do not wait for each other.
@@ -194,7 +191,7 @@ URL inspection has no list endpoint. Each row costs one request for one URL. A p
 
 ## Retry
 
-`SearchConsoleApi` in `@workspace/sdk-google-search-console` makes each Search Console call. It retries rate limits and temporary server errors. When the retries end, it fails with an error. Search Console permits 1200 queries each minute for each site and user, and 40000 each minute and 30000000 each day for each project.
+`SearchConsoleApi` in `@eltjs/sdk-google-search-console` makes each Search Console call. It retries rate limits and temporary server errors. When the retries end, it fails with an error. Search Console permits 1200 queries each minute for each site and user, and 40000 each minute and 30000000 each day for each project.
 
 | Response                                                         | Retried | When the retries end                                    |
 | ---------------------------------------------------------------- | ------- | ------------------------------------------------------- |

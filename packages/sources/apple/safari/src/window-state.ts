@@ -1,5 +1,5 @@
-import type { SchemaRecord } from '@workspace/elt';
-import type { WindowState } from '@workspace/sdk-apple-safari';
+import type { SchemaRecord } from '@eltjs/elt';
+import type { WindowState } from '@eltjs/sdk-apple-safari';
 
 import { iso, safariFields } from './safari-stream.ts';
 

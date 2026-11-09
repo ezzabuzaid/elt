@@ -1,9 +1,9 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 import type {
   ReadingDay,
   ReadingMonth,
   StreakRecord,
-} from '@workspace/sdk-apple-books';
+} from '@eltjs/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
 import { BooksStream, booksFields } from '../books-stream.ts';

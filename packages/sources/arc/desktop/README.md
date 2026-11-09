@@ -1,4 +1,4 @@
-# @workspace/source-arc-desktop
+# @eltjs/source-arc-desktop
 
 An ELT source for the sidebar of the Arc browser: the spaces, and the tabs, folders, notes and split views in each space and in the favorites of each profile. It reads the sidebar file on this Mac. It does not write, it does not start Arc, and it does not use the network. It needs no Full Disk Access.
 
@@ -7,13 +7,13 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 ```ts
 import { homedir } from 'node:os';
 
-import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from '@workspace/elt-sqlite';
-import { ArcDesktopSource } from '@workspace/source-arc-desktop/arc-desktop-source';
+} from '@eltjs/elt-sqlite';
+import { ArcDesktopSource } from '@eltjs/source-arc-desktop/arc-desktop-source';
 
 const source = new ArcDesktopSource({ home: homedir() });
 const destination = new SQLiteDestination({ path: './arc.sqlite' });
@@ -39,11 +39,11 @@ await new Pipeline({
 }).run();
 ```
 
-The constructor takes `home`, the home folder that holds the sidebar file, and an optional `scope` (`ImportScope` from `@workspace/source-apple-macos/import-scope`). `Pipeline.watch()` watches the source. The identity is `arc-desktop`.
+The constructor takes `home`, the home folder that holds the sidebar file, and an optional `scope` (`ImportScope` from `@eltjs/source-apple-macos/import-scope`). `Pipeline.watch()` watches the source. The identity is `arc-desktop`.
 
 ## The file and the SDK
 
-`@workspace/sdk-arc-desktop` reads `Library/Application Support/Arc/StorableSidebar.json` in the home folder. Arc keeps dated copies beside it (`StorableSidebar.<date>.json`). They are backups, and the SDK does not read them.
+`@eltjs/sdk-arc-desktop` reads `Library/Application Support/Arc/StorableSidebar.json` in the home folder. Arc keeps dated copies beside it (`StorableSidebar.<date>.json`). They are backups, and the SDK does not read them.
 
 The SDK owns the location, the decoding of the file into typed spaces and items, the errors and the change signal. The source owns the streams, the scope and the snapshot comparison.
 

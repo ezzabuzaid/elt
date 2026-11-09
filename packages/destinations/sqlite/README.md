@@ -1,4 +1,4 @@
-# @workspace/elt-sqlite
+# @eltjs/elt-sqlite
 
 The SQLite destination of elt. It keeps the stream of each copy as a raw table in one SQLite file, with a reader view over it and a catalog that describes each table, view and column. A reader queries the file with SQL, for example with `sqlite3 -readonly`. The SQLite destination also has two kinds of derived dataset: a `View`, which SQLite computes on each read, and a `ComputedDataset`, which a rule computes on write. A dbt model has the same two kinds: it is materialized as a view or as a table.
 
@@ -115,7 +115,7 @@ Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as
 The destination and its sync history own each table, index and view whose name starts with `_elt_`, in any case. Examples are `_elt_writers`, `_elt_descriptions`, the chunk tables `_elt_files_<hash>` and the sync history's `_elt_sync_attempts`. A stream, a view or a computed dataset never has such a name, and `publishSQLiteViews` refuses one. A reader that follows the data of a file, such as a changefeed, skips these tables with `isReserved(name)`:
 
 ```ts
-import { isReserved } from '@workspace/elt-sqlite';
+import { isReserved } from '@eltjs/elt-sqlite';
 
 for (const event of batch) if (!isReserved(event.table)) await accept(event);
 ```
@@ -127,7 +127,7 @@ The view `catalog` lists each table, view and column of the SQLite file that rea
 ## Declare a view
 
 ```ts
-import { View } from '@workspace/elt-sqlite';
+import { View } from '@eltjs/elt-sqlite';
 
 const unread = new View({
   into: sqlite,
@@ -155,8 +155,8 @@ Give the view to the pipeline in `derived`. `sqlite` is the `SQLiteDestination` 
 ## Declare a computed dataset
 
 ```ts
-import { DocumentText } from '@workspace/elt';
-import { ComputedDataset } from '@workspace/elt-sqlite';
+import { DocumentText } from '@eltjs/elt';
+import { ComputedDataset } from '@eltjs/elt-sqlite';
 
 const text = new ComputedDataset({
   into: sqlite,

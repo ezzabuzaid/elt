@@ -1,4 +1,4 @@
-import { type PlistValue, isDictionary } from '@workspace/codec-plist';
+import { type PlistValue, isDictionary } from '@eltjs/codec-plist';
 
 // Mail's data class. On a parent account (iCloud) its settings hold the mail
 // servers the child accounts use.

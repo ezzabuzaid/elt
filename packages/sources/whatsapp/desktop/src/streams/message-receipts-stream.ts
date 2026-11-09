@@ -1,9 +1,9 @@
-import type { RecordDraft } from '@workspace/elt';
+import type { RecordDraft } from '@eltjs/elt';
 import {
   type Message,
   type Receipt,
   ReceiptInfo,
-} from '@workspace/sdk-whatsapp-desktop';
+} from '@eltjs/sdk-whatsapp-desktop';
 
 import type { OnMessage } from '../chat-storage-records.ts';
 import {
