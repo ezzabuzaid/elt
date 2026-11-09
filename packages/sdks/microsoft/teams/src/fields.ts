@@ -95,6 +95,9 @@ export class Fields {
   // up to precision fraction digits: the services that write them trim
   // trailing zeros, and some count ten-millionths of a second, which a Date
   // would round. Offsets are whole minutes, so the fraction carries over.
+  // Zeros past the precision lose nothing, and Teams writes them too, such as
+  // 2024-08-27T15:33:42.8530000Z; any other digit past it would be lost, so it
+  // fails.
   instant(name: string, precision: number): string | null {
     const value = this.string(name);
     if (value === null) return null;
@@ -102,7 +105,7 @@ export class Fields {
       /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)$/.exec(
         value,
       );
-    const fraction = parts?.[2] ?? '';
+    const fraction = (parts?.[2] ?? '').replace(/0+$/, '');
     const seconds = parts ? Date.parse(`${parts[1]}${parts[3]}`) : Number.NaN;
     if (Number.isNaN(seconds) || fraction.length > precision)
       return this.#fail(name, `an instant to ${precision} fraction digits`);

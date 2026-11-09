@@ -1153,6 +1153,68 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
   assert.deepEqual(counts(await run.run()), await unchanged(source));
 });
 
+// The last message of a conversation, sent at the instant that Teams wrote.
+function lastMessageAt(instant: string, messageId: string): Account {
+  return changing(account(), chat, (conversation) => ({
+    ...conversation,
+    lastMessage: {
+      id: messageId,
+      messagetype: 'Text',
+      contenttype: 'text',
+      content: 'on my way',
+      originalarrivaltime: instant,
+      fromUserId: ada,
+      imdisplayname: 'Ada Lovelace',
+      conversationLink: `https://notifications.skype.net/v1/users/ME/conversations/${chat}`,
+      properties: {},
+    },
+  }));
+}
+
+test('a message that Teams timed to 7 fraction digits, with only zeros past the third, loads at its instant and takes nothing else down', async () => {
+  const { dir, app, out } = await scratch();
+  await using _ = dir;
+  const sent = id('2024-08-27T15:33:42.853Z');
+  // The form this Mac's Teams app wrote for one message of 865.
+  await app.save(lastMessageAt('2024-08-27T15:33:42.8530000Z', sent));
+  const source = new TeamsSource({ directory: app.directory });
+  const run = await pipeline(source, dir.path, globalThis);
+
+  await run.run();
+
+  assert.deepEqual(
+    rows(out, `SELECT sentAt FROM messages WHERE id = '${sent}'`),
+    [{ sentAt: '2024-08-27T15:33:42.853Z' }],
+  );
+  assert.ok(
+    Number(rows(out, 'SELECT count(*) AS n FROM messages')[0]?.n) > 1,
+    'the other messages of the account load beside it',
+  );
+});
+
+test('a message timed past the precision the reader keeps fails as a shape it does not read, and loses no digit in silence', async () => {
+  const { dir, app } = await scratch();
+  await using _ = dir;
+  await app.save(
+    lastMessageAt(
+      '2024-08-27T15:33:42.8531234Z',
+      id('2024-08-27T15:33:42.853Z'),
+    ),
+  );
+  const source = new TeamsSource({ directory: app.directory });
+  const run = await pipeline(source, dir.path, globalThis);
+
+  await assert.rejects(run.run(), (error) => {
+    assert.ok(error instanceof PipelineError);
+    assert.notEqual(error.errors.length, 0);
+    for (const cause of error.errors) {
+      assert.ok(cause instanceof TeamsFormatError);
+      assert.match(cause.message, /originalarrivaltime is not an instant/);
+    }
+    return true;
+  });
+});
+
 test('a store in a shape this reader does not know, or that fails to read for another reason, fails every stream as the problem it is and keeps what loaded', async () => {
   const { dir, app, out } = await scratch();
   await using _ = dir;
