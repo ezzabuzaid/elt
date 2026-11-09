@@ -18,7 +18,6 @@
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
-    "@workspace/codec-apple-reference-date": "0.0.1",
     "@workspace/elt-sqlite": "0.0.1",
     "@zukhruf/sqlite-open": "^0.8.10",
     "@zukhruf/testing": "^0.8.10"

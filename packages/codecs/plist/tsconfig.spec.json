@@ -11,6 +11,9 @@
   "references": [
     {
       "path": "./tsconfig.lib.json"
+    },
+    {
+      "path": "../apple-reference-date/tsconfig.lib.json"
     }
   ]
 }

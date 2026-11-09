@@ -4,6 +4,7 @@ import {
   type SnapshotColumns,
 } from '@zukhruf/sqlite-snapshot';
 
+import { referenceDateSeconds } from '@workspace/codec-apple-reference-date';
 import {
   type PlistValue,
   decodeArchive,
@@ -130,7 +131,7 @@ const credentialItemColumns = {
 // Core Data dates are seconds since 2001-01-01. SQLite converts them, so the
 // millisecond rounds as SQLite rounds it.
 const instant = (column: string) =>
-  `strftime('%Y-%m-%dT%H:%M:%fZ', ${column} + 978307200, 'unixepoch')`;
+  `strftime('%Y-%m-%dT%H:%M:%fZ', ${column} + ${referenceDateSeconds}, 'unixepoch')`;
 
 // The store as of one moment: everything read through it agrees. Each kind of
 // record is read on request and checks only the tables it reads. Hold it only

@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { open, readFile } from 'node:fs/promises';
 import { crc32 } from 'node:zlib';
 
+import { referenceDateSeconds } from '@workspace/codec-apple-reference-date';
+
 // SEGB v2, the segment files Biome appends protobuf records to: a 32-byte
 // header whose int32 at byte 4 counts the slots, the records from byte 32, and
 // at the end of the file one 16-byte trailer slot per record, slot k at
@@ -13,7 +15,7 @@ import { crc32 } from 'node:zlib';
 const headerLength = 32;
 const entryHeaderLength = 8;
 const slotLength = 16;
-const appleEpoch = Date.UTC(2001, 0, 1);
+const appleEpoch = referenceDateSeconds * 1000;
 
 export class SegbFormatError extends Error {
   override name = 'SegbFormatError';

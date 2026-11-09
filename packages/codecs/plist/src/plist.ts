@@ -1,3 +1,5 @@
+import { referenceDateSeconds } from '@workspace/codec-apple-reference-date';
+
 // Apple binary property lists (bplist00) and NSKeyedArchiver graphs, as
 // Messages stores them. Values decode to JSON-shaped data: Data becomes a
 // Uint8Array, dates Date, integers beyond 2^53 bigint.
@@ -22,7 +24,7 @@ export class PlistUid {
   }
 }
 
-const appleEpoch = Date.UTC(2001, 0, 1);
+const appleEpoch = referenceDateSeconds * 1000;
 
 // Preserve the format's original double alongside Date's millisecond view.
 // Consumers that export finer timestamps need the seconds before Date rounds.

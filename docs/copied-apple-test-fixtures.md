@@ -49,9 +49,7 @@ Copied with changes: `protobuf` and `Field`. The copy has no `bytes` and no `mes
 
 `packages/sources/apple/messages/src/messages-source.test.ts` → `apps/ipay/src/ipay.test.ts`.
 
-Copied without changes: `chatSchema`.
-
-Copied with changes: `appleNanoseconds`. The elt test takes the epoch from `@workspace/codec-apple-reference-date`. The copy writes `Date.UTC(2001, 0, 1)`.
+Copied without changes: `chatSchema` and `appleNanoseconds`.
 
 ## Mail
 

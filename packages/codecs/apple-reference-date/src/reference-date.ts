@@ -1,5 +1,5 @@
 // Seconds from 1970-01-01 to 2001-01-01 UTC, the reference date.
-const referenceDateSeconds = 978_307_200;
+export const referenceDateSeconds = 978_307_200;
 
 // NSDate's distantPast (year 1) and distantFuture (year 4001), in seconds
 // since the reference date; Apple's stores write them to mean "none" or

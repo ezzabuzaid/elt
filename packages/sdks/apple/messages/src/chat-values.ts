@@ -1,6 +1,7 @@
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { referenceDateSeconds } from '@workspace/codec-apple-reference-date';
 import {
   type PlistValue,
   decodeArchive,
@@ -10,7 +11,7 @@ import {
 
 import { attributedText } from './typedstream.ts';
 
-export const appleEpoch = Date.UTC(2001, 0, 1);
+export const appleEpoch = referenceDateSeconds * 1000;
 
 // A blob from chat.db, decoded only when asked: many are NSKeyedArchiver
 // property lists, and a row the reader skips is never decoded.

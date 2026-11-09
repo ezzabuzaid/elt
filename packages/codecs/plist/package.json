@@ -9,6 +9,9 @@
       "default": "./dist/index.js"
     }
   },
+  "dependencies": {
+    "@workspace/codec-apple-reference-date": "0.0.1"
+  },
   "devDependencies": {
     "@zukhruf/testing": "^0.8.10"
   }

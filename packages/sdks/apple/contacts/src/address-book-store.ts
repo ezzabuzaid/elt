@@ -3,6 +3,8 @@ import type { SQLOutputValue } from 'node:sqlite';
 
 import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
+import { referenceDateSeconds } from '@workspace/codec-apple-reference-date';
+
 import { appDatabase } from './app-database.ts';
 import {
   type ContactEntity,
@@ -49,11 +51,10 @@ export const storeFile = 'AddressBook-v22.abcddb';
 
 // Core Data stores NSDate as seconds since 2001-01-01 UTC; SQLite converts
 // it, so a time keeps SQLite's rounding to the millisecond.
-const appleEpoch = 978307200;
 const instant = (column: string) =>
-  `strftime('%Y-%m-%dT%H:%M:%fZ', ${column} + ${appleEpoch}, 'unixepoch')`;
+  `strftime('%Y-%m-%dT%H:%M:%fZ', ${column} + ${referenceDateSeconds}, 'unixepoch')`;
 const datePart = (column: string, format: string) =>
-  `CAST(strftime('${format}', ${column} + ${appleEpoch}, 'unixepoch') AS INTEGER)`;
+  `CAST(strftime('${format}', ${column} + ${referenceDateSeconds}, 'unixepoch') AS INTEGER)`;
 
 // A view's attributes as a SELECT list under its alias: a record reference
 // resolves to that record's ZUNIQUEID, and a calendar date splits into its

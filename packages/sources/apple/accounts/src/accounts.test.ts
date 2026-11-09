@@ -12,7 +12,6 @@ import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { referenceDate } from '@workspace/codec-apple-reference-date';
 import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
@@ -261,7 +260,7 @@ const calendars = 'com.apple.Dataclass.Calendars';
 const contacts = 'com.apple.Dataclass.Contacts';
 // Core Data seconds since 2001-01-01, and the instant they name.
 const added = 800000000.5;
-const addedAt = referenceDate(added).toISOString();
+const addedAt = new Date((978307200 + added) * 1000).toISOString();
 
 // An iCloud account with its IMAP and SMTP children, the identity service
 // and iTunes Store accounts that keep authentication material, and the

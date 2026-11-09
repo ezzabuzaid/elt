@@ -60,29 +60,26 @@ These do not count as the reader, because each does a different job.
 
 ## Core Data reference date
 
-`packages/codecs/apple-reference-date` reads a stored number as a date. Its own test, `reference-date.test.ts`, keeps its literals. A test of other code uses the codec only when the code under test does not use it. Otherwise the fixture and the code share one epoch, and a wrong epoch passes.
+`packages/codecs/apple-reference-date` reads a stored number as a date, and it exports the reference date as `referenceDateSeconds`, which SQL text can use. All production code reads the reference date from this codec. Its own test, `reference-date.test.ts`, keeps its literals. A test of other code uses the codec only when the test has another oracle. Otherwise the fixture and the code share one epoch, and a wrong epoch passes.
 
 ### Uses the codec
 
-In these tests, the code under test has another source for the epoch.
+In these tests, `plutil` is the oracle, because it stores its own seconds.
 
-- `packages/sources/apple/accounts`: the SDK converts in SQLite, with its own `978307200`.
-- `packages/sources/apple/contacts`: the SDK converts in SQLite, with its own `978307200`.
-- `packages/sources/apple/messages`: the SDK has its own `appleEpoch`.
-- `packages/sources/apple/activity`: `started` in the test of the segment names. `packages/codecs/segb` has its own `appleEpoch` for the time of a record.
-- `packages/sources/apple/books`: `fromAppleSeconds`. The test gives a date to `plutil`, which stores its own seconds. The sentinels `distantPast` and `distantFuture` stay literals in the test.
-- `packages/sources/apple/safari`: `addFraction`. The test finds the seconds in the bytes that `plutil` wrote, so `plutil` is the oracle.
-
-If one of these SDKs moves to the codec, its test takes a literal back (backlog #4049).
+- `packages/sources/apple/books`: `fromAppleSeconds`. The test gives a date to `plutil`. The sentinels `distantPast` and `distantFuture` stay literals in the test.
+- `packages/sources/apple/safari`: `addFraction`. The test finds the seconds in the bytes that `plutil` wrote.
 
 ### Keeps the literal
 
 In these tests, the code under test uses the codec, so the literal is the independent oracle.
 
 - `packages/sdks/apple/knowledge/src/knowledge-store.test.ts`: the expected `startedAt`.
-- `packages/sources/apple/activity/src/activity.test.ts`: `appleEpoch`, because Biome's payload dates go through the codec.
+- `packages/sources/apple/accounts/src/accounts.test.ts`: `addedAt`.
+- `packages/sources/apple/activity/src/activity.test.ts`: `appleEpoch` and `started`, because Biome's payload dates and the time of a record go through the codec.
 - `packages/sources/apple/books/src/books.test.ts`: `appleSeconds`.
 - `packages/sources/apple/call-history/src/call-history.test.ts`: `coreData`.
+- `packages/sources/apple/contacts/src/contacts.test.ts`: `appleSeconds`.
+- `packages/sources/apple/messages/src/messages-source.test.ts`: `appleNanoseconds`.
 - `packages/sources/apple/notes/src/notes.test.ts` and `notes-source.test.ts`: `coreDataSeconds`.
 - `packages/sources/apple/notification-center/src/notification-center.test.ts`: `appleTime`.
 - `packages/sources/apple/safari/src/safari.test.ts`: `appleSeconds`.
