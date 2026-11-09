@@ -17,7 +17,7 @@ import {
   SqlServerPermissionError,
 } from './errors.ts';
 import { SqlServerColumn } from './sql-server-column.ts';
-import { query, stream } from './sql-server-request.ts';
+import { type SqlServerRead, query, stream } from './sql-server-request.ts';
 import { SqlServerRow } from './sql-server-row.ts';
 import { type ChangeTracking, SqlServerTable } from './sql-server-table.ts';
 import type { SqlServerValue } from './values.ts';
@@ -141,9 +141,9 @@ export class SqlServerSession implements AsyncDisposable {
   // login can read.
   async tables(): Promise<SqlServerTable[]> {
     const [tables, columns, keys] = await Promise.all([
-      query(this.#pool.request(), tablesQuery),
-      query(this.#pool.request(), columnsQuery),
-      query(this.#pool.request(), primaryKeysQuery),
+      query(this.#pool.request(), this.#location, tablesQuery),
+      query(this.#pool.request(), this.#location, columnsQuery),
+      query(this.#pool.request(), this.#location, primaryKeysQuery),
     ]);
     const columnsOf = groupBy(columns);
     const keysOf = groupBy(keys);
@@ -213,6 +213,7 @@ export class SqlServerSession implements AsyncDisposable {
   async version(): Promise<SqlServerVersion> {
     const [[changeTracking, rowversion] = []] = await query(
       this.#pool.request(),
+      this.#location,
       'SELECT CONVERT(varchar(20), CHANGE_TRACKING_CURRENT_VERSION()), CONVERT(varchar(20), CAST(@@DBTS AS bigint))',
     );
     return Object.freeze({
@@ -231,7 +232,11 @@ export class SqlServerSession implements AsyncDisposable {
   // statistics has no count, so its value never moves. A login that can read
   // a table can read its counts.
   async statistics(): Promise<ReadonlyMap<string, string>> {
-    const rows = await query(this.#pool.request(), statisticsQuery);
+    const rows = await query(
+      this.#pool.request(),
+      this.#location,
+      statisticsQuery,
+    );
     return new Map(
       rows.map(([table, counts]) => [
         cellText(table, 'table'),
@@ -245,7 +250,11 @@ export class SqlServerSession implements AsyncDisposable {
   // also in a table whose statistics SQL Server has not built, but an update
   // does not. A login that can read a table can read its count.
   async rowCounts(): Promise<ReadonlyMap<string, string>> {
-    const rows = await query(this.#pool.request(), rowCountsQuery);
+    const rows = await query(
+      this.#pool.request(),
+      this.#location,
+      rowCountsQuery,
+    );
     return new Map(
       rows.map(([table, count]) => [
         cellText(table, 'table'),
@@ -260,17 +269,19 @@ export class SqlServerSession implements AsyncDisposable {
   // so the value of each table is then empty. A login needs VIEW SERVER
   // STATE to read them (VIEW DATABASE STATE on Azure SQL Database).
   async lastWrites(): Promise<ReadonlyMap<string, string>> {
-    const rows = await query(this.#pool.request(), lastWritesQuery).catch(
-      (error: unknown) => {
-        // 297: the login may not read the state of the server or database.
-        if (error instanceof sql.RequestError && error.number === 297)
-          throw new SqlServerPermissionError(
-            'VIEW SERVER STATE (VIEW DATABASE STATE on Azure SQL Database)',
-            error,
-          );
-        throw error;
-      },
-    );
+    const rows = await query(
+      this.#pool.request(),
+      this.#location,
+      lastWritesQuery,
+    ).catch((error: unknown) => {
+      // 297: the login may not read the state of the server or database.
+      if (error instanceof sql.RequestError && error.number === 297)
+        throw new SqlServerPermissionError(
+          'VIEW SERVER STATE (VIEW DATABASE STATE on Azure SQL Database)',
+          error,
+        );
+      throw error;
+    });
     return new Map(
       rows.map(([table, writes]) => [
         cellText(table, 'table'),
@@ -285,6 +296,7 @@ export class SqlServerSession implements AsyncDisposable {
   async changeTrackingPosition(table: SqlServerTable): Promise<ChangePosition> {
     const [[version, generation] = []] = await query(
       this.#pool.request(),
+      this.#location,
       `SELECT CONVERT(varchar(20), CHANGE_TRACKING_CURRENT_VERSION()), ${generationQuery}`,
       [table.quoted],
     );
@@ -303,6 +315,7 @@ export class SqlServerSession implements AsyncDisposable {
   async minActiveRowversion(): Promise<string> {
     const [[value] = []] = await query(
       this.#pool.request(),
+      this.#location,
       'SELECT CONVERT(varchar(20), CAST(MIN_ACTIVE_ROWVERSION() AS bigint))',
     );
     return cellText(value, 'MIN_ACTIVE_ROWVERSION');
@@ -315,6 +328,7 @@ export class SqlServerSession implements AsyncDisposable {
     table: SqlServerTable,
     after: readonly string[] | null,
     limit: number,
+    read: SqlServerRead,
   ): AsyncGenerator<SqlServerRow> {
     if (!table.pageable)
       throw new TypeError(
@@ -341,6 +355,7 @@ export class SqlServerSession implements AsyncDisposable {
       table,
       `SELECT TOP (${count(limit)}) ${selection(table)} FROM ${table.quoted} AS t ${where} ORDER BY ${keys.map((_, index) => key(index)).join(', ')}`,
       after ?? [],
+      read,
     );
   }
 
@@ -351,6 +366,7 @@ export class SqlServerSession implements AsyncDisposable {
     above: string,
     below: string,
     limit: number,
+    read: SqlServerRead,
   ): AsyncGenerator<SqlServerRow> {
     const column = table.rowversion;
     if (column === undefined)
@@ -360,15 +376,20 @@ export class SqlServerSession implements AsyncDisposable {
       table,
       `SELECT TOP (${count(limit)}) ${selection(table)} FROM ${table.quoted} AS t WHERE ${version} > ${column.codec.cast('@p0')} AND ${version} < ${column.codec.cast('@p1')} ORDER BY ${version}`,
       [above, below],
+      read,
     );
   }
 
   // Every row, in no particular order.
-  async *rows(table: SqlServerTable): AsyncGenerator<SqlServerRow> {
+  async *rows(
+    table: SqlServerTable,
+    read: SqlServerRead,
+  ): AsyncGenerator<SqlServerRow> {
     yield* this.#rows(
       table,
       `SELECT ${selection(table)} FROM ${table.quoted} AS t`,
       [],
+      read,
     );
   }
 
@@ -383,7 +404,9 @@ export class SqlServerSession implements AsyncDisposable {
   async changes(
     table: SqlServerTable,
     since: ChangePosition,
+    read: SqlServerRead,
   ): Promise<ChangeSet> {
+    const location = this.#location;
     if (table.primaryKey.length === 0)
       throw new TypeError(
         `${table.quoted} has no primary key to track changes by`,
@@ -406,6 +429,7 @@ export class SqlServerSession implements AsyncDisposable {
       const [[current, minimum, viewable, generation, begin] = []] =
         await query(
           request(),
+          location,
           `SELECT CONVERT(varchar(20), CHANGE_TRACKING_CURRENT_VERSION()), CONVERT(varchar(20), CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(@p0))), HAS_PERMS_BY_NAME(@p0, 'OBJECT', 'VIEW CHANGE TRACKING'), ${generationQuery}, (SELECT CONVERT(varchar(20), begin_version) FROM sys.change_tracking_tables WHERE object_id = OBJECT_ID(@p0))`,
           [table.quoted],
         );
@@ -443,7 +467,13 @@ SELECT ${present}, ${changed.join(', ')}, ${selection(table)}
 FROM CHANGETABLE(CHANGES ${table.quoted}, @since) AS ct
 LEFT JOIN ${table.quoted} AS t ON ${keys.map((column) => `t.${column.quoted} = ct.${column.quoted}`).join(' AND ')}`;
       const changes = async function* (): AsyncGenerator<SqlServerChange> {
-        for await (const values of stream(request(), text, [since.version])) {
+        for await (const values of stream(
+          request(),
+          text,
+          [since.version],
+          read,
+          location,
+        )) {
           const [exists] = values;
           const key = decode(keys, values.slice(1, 1 + changed.length));
           yield exists === 1
@@ -478,8 +508,15 @@ LEFT JOIN ${table.quoted} AS t ON ${keys.map((column) => `t.${column.quoted} = c
     table: SqlServerTable,
     text: string,
     parameters: readonly string[],
+    read: SqlServerRead,
   ): AsyncGenerator<SqlServerRow> {
-    for await (const values of stream(this.#pool.request(), text, parameters))
+    for await (const values of stream(
+      this.#pool.request(),
+      text,
+      parameters,
+      read,
+      this.#location,
+    ))
       yield new SqlServerRow(table, decode(table.columns, values));
   }
 }

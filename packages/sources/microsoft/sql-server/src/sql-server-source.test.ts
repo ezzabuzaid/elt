@@ -227,17 +227,35 @@ async function sessionsOf(admin: sql.ConnectionPool, login: string) {
 }
 
 // A TCP hop to the server that can refuse every connection, as a server
-// that is down or fails over does. It is a stand-in because the test cannot
-// take the shared server down.
+// that is down or fails over does, and can stop forwarding what the server
+// sends while both sockets stay open, as a stalled server or network does. It
+// is a stand-in because the test cannot take the shared server down or make it
+// stall in the middle of a read.
 async function relay(database: Database) {
   const sockets = new Set<Socket>();
   const hop = { reachable: true };
+  const links = new Map<Socket, Socket>();
+  let stalling: { left: number; reached: () => void } | undefined;
   const server = createServer((client) => {
     if (!hop.reachable) {
       client.destroy();
       return;
     }
     const upstream = connect(database.port, database.host);
+    links.set(upstream, client);
+    upstream.on('close', () => links.delete(upstream));
+    upstream.on('data', (chunk) => {
+      if (stalling === undefined) return;
+      stalling.left -= chunk.length;
+      if (stalling.left > 0) return;
+      const { reached } = stalling;
+      stalling = undefined;
+      for (const [from, to] of links) {
+        from.unpipe(to);
+        from.pause();
+      }
+      reached();
+    });
     for (const [socket, other] of [
       [client, upstream],
       [upstream, client],
@@ -258,6 +276,15 @@ async function relay(database: Database) {
   assert.ok(address !== null && typeof address === 'object');
   return Object.assign(hop, {
     server: `127.0.0.1,${address.port}`,
+    // Settles once the server sent that many more bytes and the hop stopped
+    // forwarding them.
+    stallAfter: (bytes: number) =>
+      new Promise<void>((reached) => {
+        stalling = { left: bytes, reached };
+      }),
+    resume: () => {
+      for (const [from, to] of links) from.pipe(to);
+    },
     [Symbol.asyncDispose]: async () => {
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve) => server.close(resolve));
@@ -1799,5 +1826,265 @@ test(
       [...(await warehouseSql`SELECT id FROM raw.dbo_items`)],
       [],
     );
+  },
+);
+
+// A table large enough that its read outlasts every buffer of the hop, the
+// sockets and the driver, as one Pipeline over it.
+async function largeTableRead(
+  server: Database,
+  warehouse: Database,
+  admin: sql.ConnectionPool,
+  hop: Awaited<ReturnType<typeof relay>>,
+  reader: { connectionString: string },
+  clock: PipelineClock,
+) {
+  await admin.request().batch(`
+    CREATE TABLE dbo.bookings (note nvarchar(2000) NOT NULL);
+    INSERT dbo.bookings
+      SELECT TOP (${largeTableRows}) REPLICATE(N'x', 2000)
+      FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;`);
+  const source = await SqlServerSource.discover(
+    new SqlServerDatabase(
+      reader.connectionString.replace(
+        `Server=${server.host},${server.port}`,
+        `Server=${hop.server}`,
+      ),
+    ),
+  );
+  const destination = new PostgresDestination({
+    url: warehouse.connectionString,
+    schema: 'raw',
+  });
+  return new Pipeline({
+    clock,
+    history: new PostgresSyncHistory({ url: warehouse.connectionString }),
+    connections: [
+      new Connection({
+        name: 'sql-server',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: warehouse.connectionString,
+          schema: 'raw',
+        }),
+        steps: sqlServerCopies(source, (stream) =>
+          destination.table(stream.replace('.', '_')),
+        ),
+      }),
+    ],
+  });
+}
+
+const largeTableRows = 4000;
+const hourMs = 3_600_000;
+
+test(
+  'a read whose server stops sending fails as a system failure, and the next run loads every row',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using warehouse = await postgresServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await using reader = await readOnlyLogin(server, admin, '');
+    await using hop = await relay(server);
+    const clock = createClock(Date.UTC(2026, 10, 9, 7, 12));
+    const pipeline = await largeTableRead(
+      server,
+      warehouse,
+      admin,
+      hop,
+      reader,
+      clock,
+    );
+
+    const stalled = hop.stallAfter(1_000_000);
+    let settled = false;
+    const run = failing(() => pipeline.run()).finally(() => {
+      settled = true;
+    });
+    await stalled;
+    assert.equal(settled, false);
+    // Checks on the clock, with real time between them for what the hop forwarded
+    // before it stalled to drain, and for the driver to give up on its cancel.
+    await t.waitFor(
+      async () => {
+        await clock.tickAsync(hourMs);
+        assert.ok(settled);
+      },
+      { interval: 500, timeout: 60_000 },
+    );
+    const error = await run;
+
+    assert.deepEqual(
+      error.results.flatMap(({ failures }) =>
+        failures.map(({ error: failure, failureType }) => [
+          failure instanceof SqlServerUnavailableError,
+          failureType,
+          // The check that found no row between two checks an hour apart.
+          String(Error.isError(failure) ? failure.cause : failure),
+        ]),
+      ),
+      [[true, 'system', 'Error: The server sent no row for over 3600000 ms']],
+    );
+    hop.resume();
+    const loaded = await pipeline.run();
+    assert.deepEqual(
+      loaded.flatMap(({ count }) => count),
+      [largeTableRows],
+    );
+  },
+);
+
+test(
+  'a stop ends a read whose server stopped sending',
+  { timeout: 120_000 },
+  async () => {
+    await using server = await sqlServer.database();
+    await using warehouse = await postgresServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await using reader = await readOnlyLogin(server, admin, '');
+    await using hop = await relay(server);
+    const pipeline = await largeTableRead(
+      server,
+      warehouse,
+      admin,
+      hop,
+      reader,
+      globalThis,
+    );
+    const controller = new AbortController();
+
+    // A few rows only: they drain at once, so the read waits on a driver with no
+    // row. A stop while rows still arrive ends at the next row, with no help.
+    const stalled = hop.stallAfter(64_000);
+    const run = pipeline.run({ signal: controller.signal });
+    await stalled;
+    await sleep(2000);
+    const stop = new Error('stop');
+    controller.abort(stop);
+    const outcome = await Promise.race([
+      run.then(
+        () => 'the run finished',
+        (error: unknown) => error,
+      ),
+      sleep(30_000).then(() => 'the stop did not end the read'),
+    ]);
+
+    assert.equal(outcome, stop);
+  },
+);
+
+test(
+  'a read that keeps making progress outlasts the limit: it fails on silence, not on its length',
+  { timeout: 120_000 },
+  async () => {
+    await using server = await sqlServer.database();
+    await using warehouse = await postgresServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await using reader = await readOnlyLogin(server, admin, '');
+    await using hop = await relay(server);
+    const clock = createClock(Date.UTC(2026, 10, 9, 7, 12));
+    const pipeline = await largeTableRead(
+      server,
+      warehouse,
+      admin,
+      hop,
+      reader,
+      clock,
+    );
+
+    const stalled = hop.stallAfter(1_000_000);
+    const run = pipeline.run();
+    await stalled;
+    await clock.tickAsync(hourMs - 60_000);
+    const again = hop.stallAfter(1_000_000);
+    hop.resume();
+    await again;
+    await clock.tickAsync(hourMs - 60_000);
+    hop.resume();
+    const loaded = await run;
+
+    assert.deepEqual(
+      loaded.flatMap(({ count }) => count),
+      [largeTableRows],
+    );
+  },
+);
+
+test(
+  'a login refused at a new connection during a watch fails its streams as config once, and no later check tries it again',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using warehouse = await postgresServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin
+      .request()
+      .batch(
+        'CREATE TABLE dbo.items (id int PRIMARY KEY); INSERT dbo.items VALUES (1);',
+      );
+    await using reader = await readOnlyLogin(server, admin, '');
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(reader.connectionString),
+    );
+    using signals = signalFailures(source);
+    await using watch = watcher(t, source, warehouse.connectionString);
+    await watch.first();
+
+    await admin.request().batch(`ALTER LOGIN ${reader.user} DISABLE;`);
+    try {
+      const { recordset } = await admin
+        .request()
+        .query<{ id: number }>(
+          `SELECT session_id AS id FROM sys.dm_exec_sessions WHERE QUOTENAME(login_name) = '${reader.user}'`,
+        );
+      for (const { id } of recordset) await admin.request().batch(`KILL ${id}`);
+      await watch.check();
+      await t.waitFor(() => assert.ok(signals.failures.length > 0), {
+        timeout: 30_000,
+      });
+      const failures = signals.failures.map(({ error, failureType }) => [
+        error instanceof SqlServerLoginError,
+        failureType,
+      ]);
+      const failedLogins = async () =>
+        (
+          await admin
+            .request()
+            .input('login', reader.login)
+            .query("EXEC sp_readerrorlog 0, 1, N'Login failed', @login")
+        ).recordset.length;
+      const refused = await failedLogins();
+      for (let check = 0; check < 3; check += 1) await watch.check();
+      // A login that a check tried would be refused in milliseconds.
+      await sleep(2000);
+
+      assert.deepEqual(failures, [[true, 'config']]);
+      assert.ok(refused > 0);
+      assert.equal(await failedLogins(), refused);
+    } finally {
+      await admin.request().batch(`ALTER LOGIN ${reader.user} ENABLE;`);
+    }
   },
 );

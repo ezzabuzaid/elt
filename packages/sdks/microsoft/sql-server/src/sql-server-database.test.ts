@@ -24,6 +24,9 @@ import {
   VariantValue,
 } from './index.ts';
 
+// A read of a test: on the real clock, and nothing stops it.
+const reading = { clock: globalThis, signal: undefined };
+
 const sqlServer = new SqlServer({
   environment: process.env,
   image: SQL_SERVER_FULL_IMAGE,
@@ -93,7 +96,7 @@ async function changes(
   of: SqlServerTable,
   since: ChangePosition,
 ) {
-  await using set = await session.changes(of, since);
+  await using set = await session.changes(of, since, reading);
   const read: SqlServerChange[] = await Array.fromAsync(set);
   return { position: set.position, read };
 }
@@ -187,13 +190,13 @@ test('discovery shows only what the login may read, and a read refused later nam
         `DENY SELECT ON dbo.people (secret) TO ${reader.user}; DENY SELECT ON dbo.orders TO ${reader.user};`,
       );
     await assert.rejects(
-      keys(session.rows(people)),
+      keys(session.rows(people, reading)),
       (error: unknown) =>
         error instanceof SqlServerPermissionError &&
         error.grant === 'SELECT ON [dbo].[people] ([secret])',
     );
     await assert.rejects(
-      keys(session.rows(orders)),
+      keys(session.rows(orders, reading)),
       (error: unknown) =>
         error instanceof SqlServerPermissionError &&
         error.grant === 'SELECT ON [dbo].[orders]',
@@ -224,7 +227,7 @@ async function pagedBy(
   const seen = new Set<string>();
   let after: readonly string[] | null = null;
   for (;;) {
-    const page = await keys(session.page(of, after, size));
+    const page = await keys(session.page(of, after, size, reading));
     for (const key of page) {
       const text = JSON.stringify(key);
       assert.ok(!seen.has(text), `${of.quoted} paged ${text} twice`);
@@ -349,22 +352,26 @@ test(
     // More abandoned reads, and abandoned snapshots, than the session holds
     // connections.
     for (let read = 0; read < 6; read += 1) {
-      const rows = session.rows(numbers);
+      const rows = session.rows(numbers, reading);
       await rows.next();
       await rows.return(undefined);
       // From the first insert, before the 20000 inserts, so the set is still
       // streaming. Version 0, where the tracking began, has expired.
-      await using set = await session.changes(numbers, {
-        ...(await session.changeTrackingPosition(numbers)),
-        version: '1',
-      });
+      await using set = await session.changes(
+        numbers,
+        {
+          ...(await session.changeTrackingPosition(numbers)),
+          version: '1',
+        },
+        reading,
+      );
       await set[Symbol.asyncIterator]().next();
     }
 
-    assert.deepEqual(await keys(session.page(numbers, ['19998'], 10)), [
-      ['19999'],
-      ['20000'],
-    ]);
+    assert.deepEqual(
+      await keys(session.page(numbers, ['19998'], 10, reading)),
+      [['19999'], ['20000']],
+    );
   },
 );
 
@@ -416,7 +423,7 @@ for (const snapshot of [false, true])
       DELETE dbo.lines WHERE orderId = 2;
       INSERT dbo.lines VALUES (2, 1, 6.00, NULL);`);
 
-    await using set = await session.changes(lines, synced);
+    await using set = await session.changes(lines, synced, reading);
     // Written after the change set took its version but before it reads: a
     // snapshot does not see it; without one it is read now and again later.
     await admin.request().batch('INSERT dbo.lines VALUES (4, 1, 7.00, NULL);');
@@ -476,7 +483,13 @@ test('rowversion reads stop below the oldest open write, so a row still being wr
     let last = above;
     for (;;) {
       let count = 0;
-      for await (const row of session.rowversions(events, last, below, 1)) {
+      for await (const row of session.rowversions(
+        events,
+        last,
+        below,
+        1,
+        reading,
+      )) {
         const previous = last;
         last = String(row.value(stamp));
         // A page that does not resume above the last version never ends.
@@ -701,7 +714,7 @@ test('paging by two over every kind of key reads each row once, in the order the
   for (const name of Object.keys(kinds)) {
     const of = table(tables, `dbo.${name}`);
     // One page holds the table as ORDER BY sorts it, with no position to cast.
-    const sorted = await keys(session.page(of, null, 1000));
+    const sorted = await keys(session.page(of, null, 1000, reading));
     const inserted = (kinds[name]?.[1].match(/\(/g) ?? []).length;
     assert.equal(sorted.length, inserted, name);
 
@@ -770,7 +783,7 @@ test('every type reads back exactly, at its limits, as the text or number that k
   const everything = table(await session.tables(), 'dbo.everything');
 
   const rows: unknown[][] = await Array.fromAsync(
-    session.page(everything, null, 10),
+    session.page(everything, null, 10, reading),
     (row) => [...row.values],
   );
 
@@ -871,4 +884,87 @@ test('every type reads back exactly, at its limits, as the text or number that k
   assert.equal(column('phone')?.type, 'nvarchar(20)');
   assert.equal(column('email')?.masked, true);
   assert.equal(column('name')?.masked, false);
+});
+
+test('a database that is offline is unavailable, and a wrong password on it stays a refused login', async () => {
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(
+      scratch.connectionString.replace(
+        `Database=${scratch.database}`,
+        'Database=master',
+      ),
+    ),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  await admin
+    .request()
+    .batch(
+      `ALTER DATABASE [${scratch.database}] SET OFFLINE WITH ROLLBACK IMMEDIATE`,
+    );
+  try {
+    const offline = await new SqlServerDatabase(scratch.connectionString)
+      .open()
+      .then(
+        () => assert.fail('the database is offline'),
+        (error: unknown) => error,
+      );
+    const refused = await new SqlServerDatabase(
+      scratch.connectionString.replace(/Password=[^;]+/, 'Password=wrong-one'),
+    )
+      .open()
+      .then(
+        () => assert.fail('the password is wrong'),
+        (error: unknown) => error,
+      );
+
+    assert.ok(offline instanceof SqlServerUnavailableError, String(offline));
+    assert.ok(refused instanceof SqlServerLoginError, String(refused));
+  } finally {
+    await admin
+      .request()
+      .batch(`ALTER DATABASE [${scratch.database}] SET ONLINE`);
+  }
+});
+
+test('a connection lost in the middle of a read is unavailable', async () => {
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  await admin.request().batch(`
+    CREATE TABLE dbo.bookings (note nvarchar(2000) NOT NULL);
+    INSERT dbo.bookings
+      SELECT TOP (4000) REPLICATE(N'x', 2000)
+      FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;`);
+  await using reader = await readOnlyLogin(scratch, admin, '');
+  await using session = await new SqlServerDatabase(
+    reader.connectionString,
+  ).open();
+  const [bookings] = (await session.tables()).filter(
+    ({ name }) => name === 'bookings',
+  );
+  assert.ok(bookings);
+
+  let killed = false;
+  const lost = await (async () => {
+    for await (const _ of session.rows(bookings, reading)) {
+      if (killed) continue;
+      killed = true;
+      const { recordset } = await admin
+        .request()
+        .query<{ id: number }>(
+          `SELECT session_id AS id FROM sys.dm_exec_sessions WHERE QUOTENAME(login_name) = '${reader.user}'`,
+        );
+      for (const { id } of recordset) await admin.request().batch(`KILL ${id}`);
+    }
+    return assert.fail('the read should end when its connection is lost');
+  })().catch((error: unknown) => error);
+
+  assert.ok(lost instanceof SqlServerUnavailableError, inspect(lost));
 });

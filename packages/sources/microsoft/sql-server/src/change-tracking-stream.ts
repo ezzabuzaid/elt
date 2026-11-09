@@ -6,6 +6,7 @@ import type {
 import {
   ChangeHistoryExpiredError,
   type ChangePosition,
+  type SqlServerRead,
   type SqlServerSession,
   type SqlServerTable,
 } from '@eltjs/sdk-microsoft-sql-server';
@@ -106,43 +107,46 @@ export class ChangeTrackingStream extends SqlServerStream {
     configuration: CopyConfiguration,
     state: unknown,
     session: SqlServerSession,
+    read: SqlServerRead,
   ): AsyncGenerator<SourceMessage> {
     if (configuration.syncMode === 'full_refresh') {
-      yield* this.everyRow(session);
+      yield* this.everyRow(session, read);
       return;
     }
     const saved = parse(state);
     if (saved === null) {
-      yield* this.#loadEveryRow(session);
+      yield* this.#loadEveryRow(session, read);
       return;
     }
     if (this.gained(saved.fields)) {
       yield { type: 'RESET', stream: this.stream.name };
-      yield* this.#loadEveryRow(session);
+      yield* this.#loadEveryRow(session, read);
       return;
     }
     if ('initial' in saved) {
-      yield* this.#load(session, saved.initial.from, saved.initial.after);
+      yield* this.#load(session, saved.initial.from, saved.initial.after, read);
       return;
     }
     try {
-      yield* this.#changes(session, saved.from);
+      yield* this.#changes(session, saved.from, read);
     } catch (error) {
       if (!(error instanceof ChangeHistoryExpiredError)) throw error;
       // Whatever the expired read already yielded, the reset drops.
       yield { type: 'RESET', stream: this.stream.name };
-      yield* this.#loadEveryRow(session);
+      yield* this.#loadEveryRow(session, read);
     }
   }
 
   // Every row, from where the table's change history stands now.
   async *#loadEveryRow(
     session: SqlServerSession,
+    read: SqlServerRead,
   ): AsyncGenerator<SourceMessage> {
     yield* this.#load(
       session,
       await session.changeTrackingPosition(this.table),
       null,
+      read,
     );
   }
 
@@ -152,18 +156,19 @@ export class ChangeTrackingStream extends SqlServerStream {
     session: SqlServerSession,
     from: ChangePosition,
     after: readonly string[] | null,
+    read: SqlServerRead,
   ): AsyncGenerator<SourceMessage> {
     const { name } = this.stream;
     const fields = this.fieldNames;
     if (!this.table.pageable) {
-      yield* this.everyRow(session);
+      yield* this.everyRow(session, read);
       yield { type: 'STATE', stream: name, state: { from, fields } };
       return;
     }
     let last = after;
     for (;;) {
       let count = 0;
-      for await (const row of session.page(this.table, last, pageSize)) {
+      for await (const row of session.page(this.table, last, pageSize, read)) {
         yield this.message(row);
         last = row.position;
         count += 1;
@@ -181,11 +186,12 @@ export class ChangeTrackingStream extends SqlServerStream {
   async *#changes(
     session: SqlServerSession,
     since: ChangePosition,
+    read: SqlServerRead,
   ): AsyncGenerator<SourceMessage> {
     const { name } = this.stream;
     let reached: ChangePosition;
     {
-      await using set = await session.changes(this.table, since);
+      await using set = await session.changes(this.table, since, read);
       for await (const change of set)
         yield change.type === 'upsert'
           ? this.message(change.row)

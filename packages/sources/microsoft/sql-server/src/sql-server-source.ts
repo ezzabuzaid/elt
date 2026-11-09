@@ -5,6 +5,7 @@ import {
   type CopyConfiguration,
   type ExtractionCoverage,
   type Partition,
+  type PipelineClock,
   Source,
   type SourceMessage,
   type Stream,
@@ -36,6 +37,22 @@ const pollIntervalMs = 30_000;
 // stuck: its gauges fail, as a system failure, and the next check reads them
 // again.
 const checkTimeoutMs = 10_000;
+
+// What the streams of one read share: its session, and the clock a read waits
+// on (ADR 0019 of elt).
+class OpenRead implements AsyncDisposable {
+  readonly session: SqlServerSession;
+  readonly clock: PipelineClock;
+
+  constructor(session: SqlServerSession, clock: PipelineClock) {
+    this.session = session;
+    this.clock = clock;
+  }
+
+  [Symbol.asyncDispose](): Promise<void> {
+    return this.session[Symbol.asyncDispose]();
+  }
+}
 
 // The gauges of one stream: a check wakes the stream when one changed. The
 // streams of a watch share its session, which the first group that the
@@ -71,7 +88,7 @@ function streamFor(
 // tables, so a source is discovered, and a host discovers it again on every
 // run: a table whose columns changed arrives as a changed stream, which
 // starts its copy over.
-export class SqlServerSource extends Source<SqlServerSession> {
+export class SqlServerSource extends Source<OpenRead> {
   readonly identity: string;
   protected readonly catalog: Catalog;
   readonly #database: SqlServerDatabase;
@@ -121,8 +138,13 @@ export class SqlServerSource extends Source<SqlServerSession> {
     return this.catalog.streams;
   }
 
-  protected override open(): Promise<SqlServerSession> {
-    return this.#database.open();
+  protected override async open(
+    _streams: readonly Stream[],
+    _signal: AbortSignal | undefined,
+    _states: unknown,
+    clock: PipelineClock,
+  ): Promise<OpenRead> {
+    return new OpenRead(await this.#database.open(), clock);
   }
 
   // A server that cannot be reached now is a system failure: a later
@@ -157,14 +179,14 @@ export class SqlServerSource extends Source<SqlServerSession> {
     configuration: CopyConfiguration,
     state: unknown,
     _partition: Partition | null,
-    session: SqlServerSession,
+    { session, clock }: OpenRead,
     signal: AbortSignal | undefined,
   ): AsyncIterable<SourceMessage> {
     return this.#reader(configuration.stream).extract(
       configuration,
       state,
       session,
-      signal,
+      { clock, signal },
     );
   }
 

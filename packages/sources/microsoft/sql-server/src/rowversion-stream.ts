@@ -4,6 +4,7 @@ import type {
   SourceMessage,
 } from '@eltjs/elt';
 import type {
+  SqlServerRead,
   SqlServerSession,
   SqlServerTable,
 } from '@eltjs/sdk-microsoft-sql-server';
@@ -60,9 +61,10 @@ export class RowversionStream extends SqlServerStream {
     configuration: CopyConfiguration,
     state: unknown,
     session: SqlServerSession,
+    read: SqlServerRead,
   ): AsyncGenerator<SourceMessage> {
     if (configuration.syncMode === 'full_refresh') {
-      yield* this.everyRow(session);
+      yield* this.everyRow(session, read);
       return;
     }
     const column = this.#column();
@@ -77,6 +79,7 @@ export class RowversionStream extends SqlServerStream {
         above,
         below,
         pageSize,
+        read,
       )) {
         yield this.message(row);
         above = String(row.value(column));

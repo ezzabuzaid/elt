@@ -4,6 +4,7 @@ import type {
   SourceMessage,
 } from '@eltjs/elt';
 import type {
+  SqlServerRead,
   SqlServerSession,
   SqlServerTable,
 } from '@eltjs/sdk-microsoft-sql-server';
@@ -40,7 +41,8 @@ export class FullRefreshStream extends SqlServerStream {
     _configuration: CopyConfiguration,
     _state: unknown,
     session: SqlServerSession,
+    read: SqlServerRead,
   ): AsyncIterable<SourceMessage> {
-    return this.everyRow(session);
+    return this.everyRow(session, read);
   }
 }

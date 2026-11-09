@@ -7,6 +7,7 @@ import {
   diffSnapshot,
 } from '@eltjs/elt';
 import type {
+  SqlServerRead,
   SqlServerSession,
   SqlServerTable,
 } from '@eltjs/sdk-microsoft-sql-server';
@@ -52,11 +53,11 @@ export class SnapshotStream extends SqlServerStream {
     configuration: CopyConfiguration,
     state: unknown,
     session: SqlServerSession,
-    signal: AbortSignal | undefined,
+    read: SqlServerRead,
   ): AsyncIterable<SourceMessage> {
-    return diffSnapshot(configuration, this.records(session), state, {
+    return diffSnapshot(configuration, this.records(session, read), state, {
       policy: new ClosedWorld(),
-      signal,
+      signal: read.signal,
     });
   }
 }

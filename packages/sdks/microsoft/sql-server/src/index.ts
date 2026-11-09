@@ -8,6 +8,7 @@ export {
 } from './errors.ts';
 export { SqlServerColumn } from './sql-server-column.ts';
 export { SqlServerDatabase } from './sql-server-database.ts';
+export { type SqlServerRead } from './sql-server-request.ts';
 export { SqlServerRow } from './sql-server-row.ts';
 export { SqlServerSession } from './sql-server-session.ts';
 export { SqlServerTable } from './sql-server-table.ts';

@@ -1,12 +1,8 @@
 import sql from 'mssql';
 
 import { cellNumber } from './cells.ts';
-import {
-  SqlServerLoginError,
-  SqlServerUnavailableError,
-  SqlServerVersionError,
-} from './errors.ts';
-import { query } from './sql-server-request.ts';
+import { SqlServerVersionError } from './errors.ts';
+import { connectionFailure, query } from './sql-server-request.ts';
 import { SqlServerSession } from './sql-server-session.ts';
 
 // One database on a SQL Server, named by an ADO.NET connection string
@@ -32,7 +28,12 @@ export class SqlServerDatabase {
     this.location = `${config.server}${instance ? `\\${instance}` : ''}:${config.port ?? 1433}/${config.database}`;
     this.name = config.database;
     // A read streams a whole table, so no time limit fits every table.
-    this.#config = { ...config, requestTimeout: 0, pool: { min: 0, max: 4 } };
+    this.#config = {
+      ...config,
+      requestTimeout: 0,
+      pool: { min: 0, max: 4 },
+      beforeConnect: markBusyLogin,
+    };
     Object.freeze(this);
   }
 
@@ -41,13 +42,12 @@ export class SqlServerDatabase {
     try {
       await pool.connect();
     } catch (cause) {
-      throw refused(cause)
-        ? new SqlServerLoginError(this.location, cause)
-        : new SqlServerUnavailableError(this.location, cause);
+      throw connectionFailure(this.location, cause);
     }
     try {
       const [[edition, major, snapshot] = []] = await query(
         pool.request(),
+        this.location,
         `SELECT CAST(SERVERPROPERTY('EngineEdition') AS int), CAST(SERVERPROPERTY('ProductMajorVersion') AS int), CAST(snapshot_isolation_state AS int) FROM sys.databases WHERE database_id = DB_ID()`,
       );
       const version = cellNumber(major, 'ProductMajorVersion');
@@ -63,17 +63,22 @@ export class SqlServerDatabase {
   }
 }
 
-// Whether the server answered and refused the login. tedious marks the login
-// errors SQL Server raises while it fails over or is busy (4060, 10928,
-// 10929, 40197, 40501, 40613) as transient, and tries them again before it
-// gives up; those mean the server cannot be reached now.
-function refused(error: unknown): boolean {
-  if (!(error instanceof sql.ConnectionError) || error.code !== 'ELOGIN')
-    return false;
-  const { originalError } = error;
-  return !(
-    originalError !== undefined &&
-    'isTransient' in originalError &&
-    originalError.isTransient === true
-  );
+// The login errors SQL Server raises while it fails over or is busy.
+const busyLoginErrors = new Set([4060, 10928, 10929, 40197, 40501, 40613]);
+
+// Marks a failed login as transient when the server raised one of those errors
+// on the way. tedious keeps only the last error of a login, and SQL Server
+// follows 4060 with 18456, which alone means a refused login. tedious also
+// leaves its own mark off the error of its last retry, so a database that stays
+// unavailable through its retries would read as refused.
+function markBusyLogin(
+  connection: Parameters<NonNullable<sql.config['beforeConnect']>>[0],
+): void {
+  let busy = false;
+  connection.on('errorMessage', ({ number }) => {
+    busy ||= busyLoginErrors.has(number);
+  });
+  connection.once('connect', (error) => {
+    if (error !== undefined && busy) error.isTransient = true;
+  });
 }

@@ -9,6 +9,7 @@ import {
   validateRecords,
 } from '@eltjs/elt';
 import type {
+  SqlServerRead,
   SqlServerRow,
   SqlServerSession,
   SqlServerTable,
@@ -89,7 +90,7 @@ export abstract class SqlServerStream {
     configuration: CopyConfiguration,
     state: unknown,
     session: SqlServerSession,
-    signal: AbortSignal | undefined,
+    read: SqlServerRead,
   ): AsyncIterable<SourceMessage>;
 
   protected message(row: SqlServerRow): SourceMessage {
@@ -104,8 +105,9 @@ export abstract class SqlServerStream {
   // Every row as it is now, in one read.
   protected async *records(
     session: SqlServerSession,
+    read: SqlServerRead,
   ): AsyncGenerator<Record<string, unknown>> {
-    for await (const row of session.rows(this.table))
+    for await (const row of session.rows(this.table, read))
       yield* validateRecords(
         this.stream,
         [this.fields.record(row)],
@@ -115,8 +117,9 @@ export abstract class SqlServerStream {
 
   protected async *everyRow(
     session: SqlServerSession,
+    read: SqlServerRead,
   ): AsyncGenerator<SourceMessage> {
-    for await (const data of this.records(session))
+    for await (const data of this.records(session, read))
       yield { stream: this.stream.name, data };
   }
 }
