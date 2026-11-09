@@ -27,6 +27,12 @@ Before you move, extract or wrap a guard such as a lock, name the failure it pre
 
 Before proposing a change to a package's rule, state why the rule exists and what each part is responsible for, from the package's README, its ADRs and the commit that introduced the rule. A rule that blocks your case is not yet a gap. The web crawler went this way: `LinkReader`'s starting-origin rule, `ListingReader`'s starting-page-only sitemaps and `PaginationReader`'s nav and footer removal were first called three gaps for the startup-credits app; they are one designed rule, the crawl expands only the starting origins (sdk-web-crawler ADR 0002), and one correct job, a list's items exclude a menu.
 
+## A push of main can publish to npm
+
+When CI is green for a push of `main`, the Release workflow publishes the public `@eltjs/*` packages if the conventional commits ask for it (README, Release). Before a push, list `git log origin/main..HEAD`, and push only finished commits. The workflow pushes a `chore(release): publish <version>` commit to `main`, so pull before you push.
+
+A new package has `"private": true` until Ezz says to release it. A private package asks for a public one with `"*"`, or npm workspaces stop linking it after a release. CI runs on Linux and checks only the public packages, so check the macOS packages on a Mac before you push.
+
 ## The app lives in context-compiler
 
 The Context Compiler plugin, its CLI and its connectors are in [ezzabuzaid/context-compiler](https://github.com/ezzabuzaid/context-compiler), which links this checkout as `../elt`. Connectors exist to find elt gaps: fix a gap here, not in the connector. A change that spans both repositories is two commits, elt first.

@@ -1,7 +1,6 @@
 {
   "name": "@eltjs/source-microsoft-sql-server",
   "version": "0.0.1",
-  "private": true,
   "description": "An elt source for one SQL Server database: each user table that the login can read becomes a stream.",
   "license": "Apache-2.0",
   "repository": {

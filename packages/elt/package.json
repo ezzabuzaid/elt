@@ -1,7 +1,6 @@
 {
   "name": "@eltjs/elt",
   "version": "0.0.1",
-  "private": true,
   "description": "A pipeline that copies the data of apps and services into stores that SQL can read: sources, streams, checkpoints, watches and derived datasets.",
   "license": "Apache-2.0",
   "repository": {

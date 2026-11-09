@@ -1,7 +1,6 @@
 {
   "name": "@eltjs/embedding",
   "version": "0.0.1",
-  "private": true,
   "description": "A rule of an elt computed dataset: it gives each loaded row a vector of its text, made by an AI SDK embedding model, so a search can find rows by meaning.",
   "license": "Apache-2.0",
   "repository": {

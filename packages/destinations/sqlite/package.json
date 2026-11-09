@@ -1,7 +1,6 @@
 {
   "name": "@eltjs/elt-sqlite",
   "version": "0.0.1",
-  "private": true,
   "description": "The SQLite destination of elt: each stream is a raw table in one SQLite file, with a reader view over it and a catalog of each table, view and column.",
   "license": "Apache-2.0",
   "repository": {

@@ -55,7 +55,6 @@
       "preVersionCommand": "nx run-many -t build --projects=tag:npm:public",
       "conventionalCommits": true,
       "preserveMatchingDependencyRanges": false,
-      "fallbackCurrentVersionResolver": "disk",
       "git": {
         "commit": true,
         "tag": true,
