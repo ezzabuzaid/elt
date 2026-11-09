@@ -46,6 +46,8 @@ class LetterModel implements EmbeddingModelV4 {
   readonly maxEmbeddingsPerCall = undefined;
   readonly supportsParallelCalls = true;
   readonly embedded: string[] = [];
+  // What the model answers for a text, in place of counting its letters.
+  readonly answers = new Map<string, number[]>();
   refusing = false;
 
   constructor(modelId: string) {
@@ -57,7 +59,10 @@ class LetterModel implements EmbeddingModelV4 {
   }: EmbeddingModelV4CallOptions): Promise<EmbeddingModelV4Result> {
     if (this.refusing) throw new Error('the model server is down');
     this.embedded.push(...values);
-    return { embeddings: values.map(letters), warnings: [] };
+    return {
+      embeddings: values.map((text) => this.answers.get(text) ?? letters(text)),
+      warnings: [],
+    };
   }
 }
 
@@ -261,5 +266,60 @@ test('a model that refuses a call stores those listings failed with why, the run
   assert.deepEqual(
     listings.vectors().map(({ id, status }) => ({ id, status })),
     [{ id: '1', status: 'computed' }],
+  );
+});
+
+test('a model that answers a vector with no usable length stores that listing failed with why, keeps its neighbour, and asks again at the next refresh', async () => {
+  await using scratch = await new TemporaryFiles().directory('embedding-');
+  const model = new LetterModel('letters-1');
+  const listings = listingsImport(scratch.path, () => model);
+  listings.source.rows = [
+    { id: '1', title: 'red car', description: null },
+    // No letter to count, so the model answers an all-zero vector.
+    { id: '2', title: '1234', description: null },
+    { id: '3', title: 'blue van', description: null },
+    { id: '4', title: 'old bus', description: null },
+  ];
+  model.answers.set('blue van', [Number.NaN, 1]);
+  model.answers.set('old bus', [Number.POSITIVE_INFINITY, 1]);
+
+  await listings.run();
+  const first = listings.vectors();
+  model.answers.clear();
+  await listings.run();
+
+  assert.deepEqual(
+    first.map(({ id, status, vector }) => ({
+      id,
+      status,
+      stored: vector !== null,
+    })),
+    [
+      { id: '1', status: 'computed', stored: true },
+      { id: '2', status: 'failed', stored: false },
+      { id: '3', status: 'failed', stored: false },
+      { id: '4', status: 'failed', stored: false },
+    ],
+  );
+  for (const { id, error } of first.filter(({ id }) => id !== '1'))
+    assert.match(String(error), /length/, `listing ${String(id)}`);
+  assert.deepEqual(
+    listings.vectors().map(({ id, status }) => ({ id, status })),
+    [
+      { id: '1', status: 'computed' },
+      { id: '2', status: 'failed' },
+      { id: '3', status: 'computed' },
+      { id: '4', status: 'computed' },
+    ],
+  );
+  assert.equal(
+    model.embedded.filter((text) => text === 'red car').length,
+    1,
+    'a computed listing is not asked again',
+  );
+  assert.equal(
+    model.embedded.filter((text) => text === '1234').length,
+    2,
+    'a failed listing is asked again',
   );
 });

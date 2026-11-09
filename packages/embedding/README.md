@@ -31,6 +31,7 @@ new ComputedDataset({
 - The output column `vector` holds a unit vector of float32 values in the byte order of the platform. This is the form that `VectorSearch` of `@zukhruf/embeddings` reads, so the cosine similarity of two vectors is their dot product.
 - The identity of each row is the provider and the id of the model. When you change the model, the next refresh makes every vector again.
 - The rule sends 64 rows to `embedMany` at a time. When the model refuses a call, each row of that call is stored as `failed` with the error, and the next refresh asks again. The load does not fail.
+- A vector with no usable length, because it is all zeros or holds a value that is not finite, has no unit vector. Its row is stored as `failed` with the error, the other rows of the call stay `computed`, and the next refresh asks again.
 - To search, declare a view that gives `id` and `vector`, and give its name to `VectorSearch`. A search by publish date, such as `nearest`, also needs `published_at`. A query without a date range does not.
 
 ## Give the model its prompts

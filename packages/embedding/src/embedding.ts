@@ -84,9 +84,7 @@ export class Embedding extends Rule<string, Uint8Array> {
         values: [...texts],
         abortSignal: signal,
       });
-      return embeddings.map((embedding) => ({
-        value: { vector: unitVector(embedding) },
-      }));
+      return embeddings.map(unitVector);
     } catch (failure) {
       if (signal?.aborted) return texts.map(() => ({ gone: true }));
       // A model that refuses a call fails each row of it; the next refresh
@@ -97,9 +95,20 @@ export class Embedding extends Rule<string, Uint8Array> {
   }
 }
 
-function unitVector(embedding: readonly number[]): Uint8Array {
+// A vector with no usable length has no unit vector: the division gives NaN,
+// which a search would rank as an answer. The row fails, and the next refresh
+// asks again.
+function unitVector(
+  embedding: readonly number[],
+): RuleResult<Readonly<Record<string, Uint8Array>>> {
   const length = Math.hypot(...embedding);
-  return new Uint8Array(
-    Float32Array.from(embedding, (value) => value / length).buffer,
-  );
+  if (length === 0 || !Number.isFinite(length))
+    return { error: `The model answered a vector of length ${length}.` };
+  return {
+    value: {
+      vector: new Uint8Array(
+        Float32Array.from(embedding, (value) => value / length).buffer,
+      ),
+    },
+  };
 }
