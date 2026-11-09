@@ -106,7 +106,7 @@ async function entries(directory: string) {
   try {
     return await readdir(directory, { withFileTypes: true });
   } catch (cause) {
-    if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT')
+    if (Error.isError(cause) && 'code' in cause && cause.code === 'ENOENT')
       return [];
     throw new StoreUnavailableError(biomeStore, directory, cause);
   }

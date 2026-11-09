@@ -24,7 +24,7 @@ export async function mailVersionDirectory(root: string): Promise<string> {
   const path = join(root, 'PersistenceInfo.plist');
   const bytes = await readFile(path).catch((cause: unknown) => {
     if (
-      cause instanceof Error &&
+      Error.isError(cause) &&
       'code' in cause &&
       unreadable.has(String(cause.code))
     )

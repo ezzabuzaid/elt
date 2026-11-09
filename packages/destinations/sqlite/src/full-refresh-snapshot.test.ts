@@ -138,7 +138,7 @@ test('a full refresh checks a snapshot stream’s declaration as an incremental 
       copy.from.name,
       count,
       failures.map(({ error }) =>
-        error instanceof Error ? error.message : String(error),
+        Error.isError(error) ? error.message : String(error),
       ),
     ]),
     [

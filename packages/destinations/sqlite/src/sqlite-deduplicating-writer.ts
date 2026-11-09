@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 
 import type { CopyConfiguration, Deduplication, KeyValue } from '@eltjs/elt';
@@ -49,11 +49,7 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
   // Named after the table and its key, so a changed key builds a new index
   // and an unchanged one is never rebuilt.
   get #dedupIndex(): string {
-    return `_elt_dedup_${createHash('sha256')
-      .update(
-        JSON.stringify([this.table.name, this.keys.map((key) => key.name)]),
-      )
-      .digest('hex')}`;
+    return `_elt_dedup_${hash('sha256', JSON.stringify([this.table.name, this.keys.map((key) => key.name)]))}`;
   }
 
   // A stored table the load merges into must hold keys and cursors of the

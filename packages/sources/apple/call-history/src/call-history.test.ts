@@ -78,7 +78,7 @@ class ScratchCallHistory implements Disposable {
 
 // Core Data stores dates as seconds since 2001-01-01.
 const coreData = (iso: string) => Date.parse(iso) / 1000 - 978307200;
-const uuidBytes = (hex: string) => Uint8Array.from(Buffer.from(hex, 'hex'));
+const uuidBytes = (hex: string) => Uint8Array.fromHex(hex);
 
 // Five calls: an answered outgoing phone call with a distinct value in every
 // column, an incoming group FaceTime video call with media shared during it, a
@@ -844,7 +844,7 @@ test('a store missing a column this reader reads fails every stream by name and 
     assert.ok(error instanceof PipelineError);
     assert.equal(error.errors.length, 5);
     for (const cause of error.errors) {
-      assert.ok(cause instanceof Error);
+      assert.ok(Error.isError(cause));
       assert.equal(cause.name, 'MissingColumnsError');
       assert.match(cause.message, /ZCALLRECORD\.ZDURATION/);
     }

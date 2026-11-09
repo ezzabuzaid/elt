@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import type { SQLInputValue } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
@@ -212,9 +212,7 @@ export class ComputedDataset<
     }[] = [];
     for (const [id, input] of inputs) {
       if (signal?.aborted) return;
-      const inputHash = createHash('sha256')
-        .update(JSON.stringify(input))
-        .digest('hex');
+      const inputHash = hash('sha256', JSON.stringify(input));
       const rule = await this.#rule.identity(input);
       const before = stored.get(id);
       // A rule that does not handle the input keeps what it made before.

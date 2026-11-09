@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { open, readFile } from 'node:fs/promises';
 import { crc32 } from 'node:zlib';
 
@@ -56,7 +56,7 @@ export async function segbFingerprint(path: string): Promise<string> {
   const count = slotCount(path, header, size);
   const trailer = new Uint8Array(count * slotLength);
   await file.read(trailer, 0, trailer.length, size - trailer.length);
-  return createHash('sha256').update(trailer).digest('base64url');
+  return hash('sha256', trailer, 'base64url');
 }
 
 // Every record the trailer lists, in slot order.

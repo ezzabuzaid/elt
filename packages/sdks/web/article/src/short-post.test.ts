@@ -9,7 +9,8 @@ import { HTMLExtraction, WebArticle } from './index.ts';
 test('short linked prose survives beside a longer subscription section', async () => {
   // Reproduces the nested prose, link density and competing sidebar observed
   // in a live short post. A local page keeps the public HTTP test deterministic.
-  const upstream = await new HttpServer().start((_request, response) => {
+
+  await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(`<html><head><title>A field recording</title></head><body>
       <div id="primary"><div class="entry">
@@ -37,23 +38,19 @@ test('short linked prose survives beside a longer subscription section', async (
     </body></html>`);
   });
 
-  try {
-    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
-      upstream.origin,
-      AbortSignal.timeout(5000),
-    );
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+    upstream.origin,
+    AbortSignal.timeout(5000),
+  );
 
-    assert.ok(article);
-    assert.match(article.textContent, /This is an unusual discovery/);
-    assert.match(
-      article.textContent,
-      /field measurements were recorded by Lina Haddad/,
-    );
-    assert.doesNotMatch(
-      article.textContent,
-      /monthly briefing|sponsor our work/i,
-    );
-  } finally {
-    await upstream[Symbol.asyncDispose]();
-  }
+  assert.ok(article);
+  assert.match(article.textContent, /This is an unusual discovery/);
+  assert.match(
+    article.textContent,
+    /field measurements were recorded by Lina Haddad/,
+  );
+  assert.doesNotMatch(
+    article.textContent,
+    /monthly briefing|sponsor our work/i,
+  );
 });

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { createCipheriv, createHash, pbkdf2Sync } from 'node:crypto';
+import { createCipheriv, hash, pbkdf2Sync } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -95,7 +95,7 @@ export class ScratchMac implements AsyncDisposable {
     for (const { host, name, value, days, signedFor = host } of cookies) {
       const cipher = createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 32));
       const plain = Buffer.concat([
-        createHash('sha256').update(signedFor).digest(),
+        hash('sha256', signedFor, 'buffer'),
         Buffer.from(value),
       ]);
       insert.run(

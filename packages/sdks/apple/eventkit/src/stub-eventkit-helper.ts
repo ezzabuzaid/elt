@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -112,7 +112,7 @@ export class StubEventKitHelper implements AsyncDisposable {
   // The helper parses the request it receives, so keys ignore property order.
   static #key(request: HelperRequest): string {
     const sorted = Object.fromEntries(Object.entries(request).toSorted());
-    return createHash('sha1').update(JSON.stringify(sorted)).digest('hex');
+    return hash('sha1', JSON.stringify(sorted));
   }
 
   #save(): void {

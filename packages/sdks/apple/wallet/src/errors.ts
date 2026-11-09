@@ -6,7 +6,7 @@ export class PassBundleError extends Error {
 
   constructor(id: string, directory: string, cause: unknown) {
     super(
-      `The bundle of pass ${id} at ${directory} cannot be read: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `The bundle of pass ${id} at ${directory} cannot be read: ${Error.isError(cause) ? cause.message : String(cause)}`,
       { cause },
     );
   }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir, readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -138,7 +138,7 @@ class ScratchWallet implements Disposable {
       const file = join(this.bundle(pass.id), path);
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, content);
-      manifest[path] = createHash('sha1').update(content).digest('hex');
+      manifest[path] = hash('sha1', content);
     }
     writeFileSync(
       join(this.bundle(pass.id), 'manifest.json'),
@@ -563,7 +563,7 @@ test('a store missing a column this reader reads fails every stream by name and 
     assert.ok(error instanceof PipelineError);
     assert.equal(error.errors.length, streamNames.length);
     for (const cause of error.errors) {
-      assert.ok(cause instanceof Error);
+      assert.ok(Error.isError(cause));
       assert.equal(cause.name, 'MissingColumnsError');
       assert.match(cause.message, /pass_annotations\.archived_timestamp/);
     }
@@ -684,9 +684,7 @@ function withoutToken(pass: ScratchPass): string {
 }
 
 const sha1 = (content: string | Uint8Array | undefined) =>
-  createHash('sha1')
-    .update(content ?? '')
-    .digest('hex');
+  hash('sha1', content ?? '');
 
 // A field as passFields loads it when pass.json sets only what it names.
 const field = (row: Record<string, unknown>) => ({

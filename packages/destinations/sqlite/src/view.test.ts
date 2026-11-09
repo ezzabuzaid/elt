@@ -266,7 +266,7 @@ test('a view that reads a table no copy of the pipeline makes fails the run with
   );
 
   assert.ok(!(error instanceof PipelineError), String(error));
-  assert.ok(error instanceof Error);
+  assert.ok(Error.isError(error));
   assert.match(error.message, /no such table: (main\.)?recordz/);
   assert.deepEqual(shell(path, 'SELECT id FROM records').rows, [{ id: 'r1' }]);
   assert.equal(views(path).includes('record_count'), false);
@@ -399,7 +399,7 @@ test('a view that reads a view declared after it fails the run with the error of
   );
 
   assert.ok(!(error instanceof PipelineError), String(error));
-  assert.ok(error instanceof Error);
+  assert.ok(Error.isError(error));
   assert.match(error.message, /no such table: (main\.)?record_count/);
   assert.equal(views(path).includes('record_load'), false);
 });

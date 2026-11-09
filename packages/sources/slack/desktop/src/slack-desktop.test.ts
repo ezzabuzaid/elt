@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import {
   chmod,
   mkdir,
@@ -761,10 +761,10 @@ const unchanged = Object.fromEntries(
 // first 40 hex digits of SHA-256 over the JSON of [table, column], both in
 // ASCII lower case.
 const chunkTable = (table: string, column: string) =>
-  `"_elt_files_${createHash('sha256')
-    .update(JSON.stringify([table.toLowerCase(), column.toLowerCase()]))
-    .digest('hex')
-    .slice(0, 40)}"`;
+  `"_elt_files_${hash(
+    'sha256',
+    JSON.stringify([table.toLowerCase(), column.toLowerCase()]),
+  ).slice(0, 40)}"`;
 
 async function scratch() {
   const dir = await new TemporaryFiles().directory('slack-desktop-');

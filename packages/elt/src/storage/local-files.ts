@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, hash, randomUUID } from 'node:crypto';
 import { link, lstat, mkdir, open, readdir, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
@@ -35,7 +35,7 @@ export class LocalFiles extends FileStorage {
 
   // The scope's folder, relative to the storage folder.
   private scopeFolder(scope: string): string {
-    return join('.elt-files', createHash('sha256').update(scope).digest('hex'));
+    return join('.elt-files', hash('sha256', scope));
   }
 
   private async inspect(path: string): Promise<boolean> {

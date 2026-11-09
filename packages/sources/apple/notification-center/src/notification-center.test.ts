@@ -160,7 +160,7 @@ function keyedArchive(entries: Record<string, string>): Uint8Array {
 const appleTime = (iso: string, micros = 0) =>
   Date.parse(iso) / 1000 - 978307200 + micros / 1e6;
 const uuidBytes = (uuid: string) =>
-  Uint8Array.from(Buffer.from(uuid.replaceAll('-', ''), 'hex'));
+  Uint8Array.fromHex(uuid.replaceAll('-', ''));
 
 type Delivery = {
   recId: number;
@@ -801,7 +801,7 @@ test('a store missing a column this reader reads fails every stream by name and 
     assert.ok(error instanceof PipelineError);
     assert.equal(error.errors.length, 4);
     for (const cause of error.errors) {
-      assert.ok(cause instanceof Error);
+      assert.ok(Error.isError(cause));
       assert.equal(cause.name, 'MissingColumnsError');
       assert.match(cause.message, /record\.style/);
     }

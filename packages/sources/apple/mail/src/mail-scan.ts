@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -145,19 +145,19 @@ export class MailScan implements AsyncDisposable {
       this.snapshot.files.relative(input),
       input.fingerprint,
     ];
-    return createHash('sha256')
-      .update(
-        JSON.stringify([
-          messageParserVersion,
-          file === undefined ? null : identity(file),
-          (detached.get(id) ?? []).map(([key, files]) => [
-            key,
-            files.map(identity),
-          ]),
-          (indexed.get(id) ?? []).map((row) => [row.attachmentId, row.name]),
+    return hash(
+      'sha256',
+      JSON.stringify([
+        messageParserVersion,
+        file === undefined ? null : identity(file),
+        (detached.get(id) ?? []).map(([key, files]) => [
+          key,
+          files.map(identity),
         ]),
-      )
-      .digest('base64url');
+        (indexed.get(id) ?? []).map((row) => [row.attachmentId, row.name]),
+      ]),
+      'base64url',
+    );
   }
 
   async [Symbol.asyncDispose](): Promise<void> {

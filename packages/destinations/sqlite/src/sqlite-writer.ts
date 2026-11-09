@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
@@ -139,7 +139,7 @@ export abstract class SQLiteWriter extends Writer {
   }
 
   private get hash(): string {
-    return createHash('sha256').update(this.table.location).digest('hex');
+    return hash('sha256', this.table.location);
   }
 
   protected get fields(): string[] {

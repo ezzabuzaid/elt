@@ -749,10 +749,10 @@ test(
       const [download, extraction, ...rest] = failure.error.errors;
       assert.deepEqual(rest, []);
       assert(download instanceof CrawlError);
-      assert(download.cause instanceof Error);
+      assert(Error.isError(download.cause));
       assert.equal(download.url, `${upstream.origin}/a`);
       assert(extraction instanceof ArticleError);
-      assert(extraction.cause instanceof Error);
+      assert(Error.isError(extraction.cause));
       assert.equal(extraction.url, `${upstream.origin}/b`);
       return true;
     });

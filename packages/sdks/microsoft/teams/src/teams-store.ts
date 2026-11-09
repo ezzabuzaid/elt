@@ -204,5 +204,5 @@ function tenantDomains(database: IndexedDBDatabase | undefined): string[] {
 }
 
 function errorCode(error: unknown): unknown {
-  return error instanceof Error && 'code' in error ? error.code : undefined;
+  return Error.isError(error) && 'code' in error ? error.code : undefined;
 }

@@ -54,7 +54,7 @@ async function readSafariPreferences(path: string): Promise<PlistValue | null> {
   } catch (error) {
     if (
       error instanceof StoreUnavailableError &&
-      error.cause instanceof Error &&
+      Error.isError(error.cause) &&
       'code' in error.cause &&
       error.cause.code === 'ENOENT'
     )

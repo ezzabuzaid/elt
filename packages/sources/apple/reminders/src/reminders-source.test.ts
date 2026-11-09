@@ -1179,7 +1179,7 @@ test('Reminders rejects malformed records and preserves its target on access or 
       // Opening the read fails, so every copy reports it, as the run's cause.
       (error: unknown) =>
         error instanceof PipelineError &&
-        error.cause instanceof Error &&
+        Error.isError(error.cause) &&
         error.cause.name === 'RemindersUnavailableError' &&
         /full Reminders access/.test(error.cause.message) &&
         Reflect.get(Object(error.cause.cause), 'stderr') === stderr &&
@@ -1193,7 +1193,7 @@ test('Reminders rejects malformed records and preserves its target on access or 
     run(),
     (error: unknown) =>
       error instanceof PipelineError &&
-      error.cause instanceof Error &&
+      Error.isError(error.cause) &&
       error.cause.name !== 'RemindersUnavailableError' &&
       /EventKit reminder query failed/.test(error.cause.message) &&
       failureTypes(error).join() === 'system',
@@ -1358,10 +1358,7 @@ test(
     const access = await store
       .collections({}, undefined)
       .catch((error: unknown) => {
-        if (
-          error instanceof Error &&
-          error.name === 'RemindersUnavailableError'
-        )
+        if (Error.isError(error) && error.name === 'RemindersUnavailableError')
           return null;
         throw error;
       });
@@ -1438,10 +1435,7 @@ test(
     const access = await store
       .collections({}, undefined)
       .catch((error: unknown) => {
-        if (
-          error instanceof Error &&
-          error.name === 'RemindersUnavailableError'
-        )
+        if (Error.isError(error) && error.name === 'RemindersUnavailableError')
           return null;
         throw error;
       });
@@ -1524,7 +1518,7 @@ test(
       .catch((error: unknown) => {
         if (
           error instanceof PipelineError &&
-          error.cause instanceof Error &&
+          Error.isError(error.cause) &&
           error.cause.name === 'RemindersUnavailableError'
         )
           return null;

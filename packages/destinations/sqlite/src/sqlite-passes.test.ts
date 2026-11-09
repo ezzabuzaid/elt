@@ -342,7 +342,7 @@ test('each recorded failure keeps the causes its error chains, such as why a con
     () => assert.fail('a closed port answered'),
     (error: unknown) => error,
   );
-  assert.ok(refused instanceof Error, String(refused));
+  assert.ok(Error.isError(refused), String(refused));
   class Fetching extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };

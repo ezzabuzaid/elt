@@ -518,12 +518,5 @@ function decode(
 }
 
 function groupBy(rows: readonly unknown[][]): Map<number, unknown[][]> {
-  const groups = new Map<number, unknown[][]>();
-  for (const row of rows) {
-    const id = cellNumber(row[0], 'object_id');
-    const group = groups.get(id) ?? [];
-    group.push(row);
-    groups.set(id, group);
-  }
-  return groups;
+  return Map.groupBy(rows, (row) => cellNumber(row[0], 'object_id'));
 }

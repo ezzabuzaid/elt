@@ -174,7 +174,7 @@ const noteBody = (runs: NoteRun[]) => {
               ...(run.todo === undefined
                 ? []
                 : protobuf.bytes(5, [
-                    ...protobuf.bytes(1, Buffer.from(run.todo.id, 'hex')),
+                    ...protobuf.bytes(1, Uint8Array.fromHex(run.todo.id)),
                     ...protobuf.number(2, run.todo.done ? 1 : 0),
                   ])),
             ])),
@@ -440,7 +440,7 @@ test('a Notes store that cannot be read publishes nothing, and an empty one publ
     missing.load(),
     (error) =>
       error instanceof PipelineError &&
-      error.cause instanceof Error &&
+      Error.isError(error.cause) &&
       error.cause.name === 'StoreUnavailableError' &&
       failureTypes(error).join() === 'config',
   );

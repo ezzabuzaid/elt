@@ -79,12 +79,9 @@ const integer = (value: ProtobufMessage, layout: Layout) =>
   layout.need(value.int(1), 'integer value');
 
 const reference = (value: ProtobufMessage, layout: Layout) =>
-  Buffer.from(
-    layout.need(
-      layout.need(value.message(6), 'reference').bytes(1),
-      'reference id',
-    ),
-  ).toString('hex');
+  layout
+    .need(layout.need(value.message(6), 'reference').bytes(1), 'reference id')
+    .toHex();
 
 // A dictionary CRDT keyed by integers, each value a register.
 function dictionary(
@@ -149,7 +146,7 @@ function decode(bytes: Uint8Array, source: string): ReadingHistory {
     document
       .messages(2)
       .map((object) => [
-        Buffer.from(layout.need(object.bytes(1), 'object id')).toString('hex'),
+        layout.need(object.bytes(1), 'object id').toHex(),
         layout.need(object.message(3), 'object value'),
       ]),
   );

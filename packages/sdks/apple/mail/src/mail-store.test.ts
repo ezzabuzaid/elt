@@ -129,7 +129,7 @@ test(
 
       const failed = await outcome();
       assert.ok(failed?.state === 'failed');
-      assert.ok(failed.error instanceof Error);
+      assert.ok(Error.isError(failed.error));
       assert.equal(failed.error.message, 'EMFILE: too many open files, watch');
       assert.notEqual((await outcome())?.state, 'failed');
       await writeFile(join(dir.path, 'V10/MailData/attachment'), 'downloaded');

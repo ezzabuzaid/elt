@@ -220,7 +220,7 @@ test('failed Clock stores preserve rows and checkpoints while independent stores
     assert.ok(
       error.errors.every(
         (cause) =>
-          cause instanceof Error && /ZMTCDALARM.ZHOUR/.test(cause.message),
+          Error.isError(cause) && /ZMTCDALARM.ZHOUR/.test(cause.message),
       ),
     );
     return true;

@@ -382,33 +382,31 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
   // Each property's daily web totals; a change in any of them wakes the
   // analytics streams.
   async #totals({ signal, now }: Check, clock: PipelineClock): Promise<string> {
-    const totals = [];
-    for (const siteUrl of this.siteUrls)
-      totals.push(
-        await this.#probe(signal, async () => {
-          const endDate = today(new Date(now));
-          const page = await readSearchAnalytics(
-            this.#api,
-            siteUrl,
-            {
-              dataState: 'ALL',
-              dimensions: ['date'],
-              endDate,
-              startDate: addDays(endDate, -PROBE_DAYS),
-              type: 'WEB',
-            },
-            { signal, clock },
-          );
-          return {
-            firstIncompleteDate: page.firstIncompleteDate,
-            rows: page.rows.map((row) => [
-              row.keys[0],
-              row.clicks,
-              row.impressions,
-            ]),
-          };
-        }),
-      );
+    const totals = await Array.fromAsync(this.siteUrls, (siteUrl) =>
+      this.#probe(signal, async () => {
+        const endDate = today(new Date(now));
+        const page = await readSearchAnalytics(
+          this.#api,
+          siteUrl,
+          {
+            dataState: 'ALL',
+            dimensions: ['date'],
+            endDate,
+            startDate: addDays(endDate, -PROBE_DAYS),
+            type: 'WEB',
+          },
+          { signal, clock },
+        );
+        return {
+          firstIncompleteDate: page.firstIncompleteDate,
+          rows: page.rows.map((row) => [
+            row.keys[0],
+            row.clicks,
+            row.impressions,
+          ]),
+        };
+      }),
+    );
     return JSON.stringify(totals);
   }
 

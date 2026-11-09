@@ -154,7 +154,7 @@ const noteBody = (runs: NoteRun[]) => {
               ...(run.todo === undefined
                 ? []
                 : protobuf.bytes(5, [
-                    ...protobuf.bytes(1, Buffer.from(run.todo.id, 'hex')),
+                    ...protobuf.bytes(1, Uint8Array.fromHex(run.todo.id)),
                     ...protobuf.number(2, run.todo.done ? 1 : 0),
                   ])),
             ])),
@@ -744,15 +744,15 @@ test('Notes names Full Disk Access when its store cannot be opened and refuses a
   );
 
   await assert.rejects(opening, (error) => {
-    assert.ok(error instanceof Error);
+    assert.ok(Error.isError(error));
     assert.equal(error.name, 'StoreUnavailableError');
     assert.match(error.message, /Full Disk Access/);
-    assert.ok(error.cause instanceof Error);
+    assert.ok(Error.isError(error.cause));
     assert.equal(missing.failureType(error), 'config');
     return true;
   });
   await assert.rejects(reading, (error) => {
-    assert.ok(error instanceof Error);
+    assert.ok(Error.isError(error));
     assert.equal(error.name, 'MissingColumnsError');
     assert.match(error.message, /ZICCLOUDSYNCINGOBJECT\.ZTITLE1/);
     assert.equal(other.failureType(error), 'system');
@@ -1073,7 +1073,7 @@ test('a Notes pass over a large store holds one note at a time, so it loads in a
         100 + n,
         noteBody([
           { text: `Note ${n}\n`, style: 0 },
-          { text: `${randomBytes(500).toString('hex')} ${n}\n` },
+          { text: `${randomBytes(500).toHex()} ${n}\n` },
         ]),
       );
     }

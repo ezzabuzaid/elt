@@ -20,7 +20,7 @@ export class GoogleGrantRevokedError extends Error {
    */
   static matches(error: unknown): boolean {
     if (error instanceof GoogleGrantRevokedError) return true;
-    if (!(error instanceof Error)) return false;
+    if (!Error.isError(error)) return false;
     return (
       'response' in error &&
       typeof error.response === 'object' &&

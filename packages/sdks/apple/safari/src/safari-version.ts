@@ -17,7 +17,7 @@ async function historyFiles(location: SafariLocation): Promise<string[]> {
   const profiles = join(location.container, 'Profiles');
   const found = await readdir(profiles, { withFileTypes: true }).catch(
     (error: unknown) => {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
+      if (Error.isError(error) && 'code' in error && error.code === 'ENOENT')
         return [];
       throw error;
     },

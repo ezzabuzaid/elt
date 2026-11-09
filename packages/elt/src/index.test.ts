@@ -568,7 +568,7 @@ class ContextSource extends LiveSource<ReadContext> {
     for (const step of this.scripts[stream] ?? [
       record(stream, `${stream}-${context.id}`),
     ]) {
-      if (step instanceof Error) throw step;
+      if (Error.isError(step)) throw step;
       // @ts-expect-error -- a scripted StreamStatus plays a connector that reports status itself, which Source.read must reject
       yield step;
     }
@@ -848,7 +848,7 @@ test('a failed copy does not stop later copies, and the run reports it at the en
 
   assert.ok(error instanceof PipelineError, String(error));
   assert.match(error.message, /did not load completely: left: left failed/);
-  assert.ok(error.cause instanceof Error);
+  assert.ok(Error.isError(error.cause));
   assert.equal(error.cause.message, 'left failed');
   assert.deepEqual(
     error.results.map(({ copy, count, failures }) => [
@@ -1294,7 +1294,7 @@ test('a checkpoint that fails to save fails only its stream, which keeps what it
   assert.equal(left?.count, 1);
   assert.equal(left?.failures.length, 1);
   const failure = left?.failures[0]?.error;
-  assert.ok(failure instanceof Error, String(failure));
+  assert.ok(Error.isError(failure), String(failure));
   assert.match(failure.message, /Checkpoint left was not saved/);
   assert.equal(failure.cause, refusal);
   assert.deepEqual([right?.count, right?.failures], [1, []]);
@@ -1603,7 +1603,7 @@ class MemoryHistory extends SyncHistory<NamedTarget> {
       },
       fail: async (error) => {
         this.log.push(
-          `fail ${connection.name} ${error instanceof Error ? error.message : String(error)}`,
+          `fail ${connection.name} ${Error.isError(error) ? error.message : String(error)}`,
         );
       },
     };
@@ -1944,7 +1944,7 @@ test('a pass publishes its end once its history recorded it, and a failed change
       );
     if (message instanceof PassFailed) {
       history.log.push(
-        `observed fail ${message.connection.name} ${message.error instanceof Error ? message.error.message : String(message.error)} ${message.failureType}`,
+        `observed fail ${message.connection.name} ${Error.isError(message.error) ? message.error.message : String(message.error)} ${message.failureType}`,
       );
       controller.abort();
     }

@@ -2598,7 +2598,7 @@ test(
         failed: outcome?.failures.map(({ partition, error, failureType }) => [
           partition?.siteUrl,
           failureType,
-          error instanceof Error ? error.message : error,
+          Error.isError(error) ? error.message : error,
         ]),
         reads: reads(searchConsole).slice(before).toSorted(),
       };

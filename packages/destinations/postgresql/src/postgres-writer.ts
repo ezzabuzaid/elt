@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
@@ -290,10 +290,7 @@ export abstract class PostgresWriter extends Writer {
   }
 
   get #hash(): string {
-    return createHash('sha256')
-      .update(this.qualifiedName)
-      .digest('hex')
-      .slice(0, 40);
+    return hash('sha256', this.qualifiedName).slice(0, 40);
   }
 
   // One staged row as JSON. A row too large to send even alone, past V8's

@@ -655,7 +655,7 @@ test('a table in a layout this reader does not know fails only the stream that r
       assert.ok(error instanceof PipelineError);
       assert.equal(error.errors.length, 1);
       const [cause] = error.errors;
-      assert.ok(cause instanceof Error);
+      assert.ok(Error.isError(cause));
       assert.equal(cause.name, 'MissingColumnsError');
       assert.match(cause.message, /ZAUTHORIZATION\.ZOPTIONS/);
       return true;

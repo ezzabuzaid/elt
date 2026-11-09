@@ -176,7 +176,7 @@ function bytes(value: unknown): Uint8Array {
 }
 
 function uuid(value: unknown): string {
-  const hex = Buffer.from(bytes(value)).toString('hex');
+  const hex = bytes(value).toHex();
   if (hex.length !== 32)
     throw new TypeError('A notification UUID is not 16 bytes');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`.toUpperCase();

@@ -73,7 +73,8 @@ test('a page with an apostrophe inside a single-quoted attribute keeps its artic
 test('a discovered article retains its introductory summary before the main body', async () => {
   // Mirrors the separate front matter and body in the captured Fowler articles.
   // Original fixture prose keeps this independent of the live publisher.
-  const upstream = await new HttpServer().start((request, response) => {
+
+  await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     switch (request.url) {
       case '/':
@@ -114,48 +115,45 @@ test('a discovered article retains its introductory summary before the main body
     }
   });
 
-  try {
-    // Each origin answers one request a second, so a crawl takes seconds.
-    const signal = AbortSignal.timeout(120_000);
-    const pages = (
-      await Array.fromAsync(
-        new Origins(got, null, globalThis)
-          .crawler(
-            got,
-            [new ListingReader(), new ArchiveReader(), new PaginationReader()],
-            new AdaptiveRevisit(),
-          )
-          .crawl([upstream.origin], null, { signal }),
-      )
+  // Each origin answers one request a second, so a crawl takes seconds.
+  const signal = AbortSignal.timeout(120_000);
+  const pages = (
+    await Array.fromAsync(
+      new Origins(got, null, globalThis)
+        .crawler(
+          got,
+          [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+          new AdaptiveRevisit(),
+        )
+        .crawl([upstream.origin], null, { signal }),
     )
-      // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
-      .flatMap((entry) =>
-        'progress' in entry || 'deferred' in entry ? [] : [entry],
-      );
-    assert.equal(pages.length, 1);
-    const page = pages[0];
-    assert.ok(page);
-    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
-      page.url,
-      signal,
+  )
+    // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
+    .flatMap((entry) =>
+      'progress' in entry || 'deferred' in entry ? [] : [entry],
     );
+  assert.equal(pages.length, 1);
+  const page = pages[0];
+  assert.ok(page);
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+    page.url,
+    signal,
+  );
 
-    assert.ok(article);
-    assert.match(article.textContent, /We placed sensors in three garden beds/);
-    assert.match(
-      article.textContent,
-      /Battery-powered sensors need different engineering defaults\./,
-      'The introductory summary is part of the article, even outside its main body container.',
-    );
-  } finally {
-    await upstream[Symbol.asyncDispose]();
-  }
+  assert.ok(article);
+  assert.match(article.textContent, /We placed sensors in three garden beds/);
+  assert.match(
+    article.textContent,
+    /Battery-powered sensors need different engineering defaults\./,
+    'The introductory summary is part of the article, even outside its main body container.',
+  );
 });
 
 test('a feed article retains a figure caption containing a descriptive link', async () => {
   // Mirrors the linked figure caption in the captured slide-template article.
   // Trafilatura 2.3.1 retains this prose in the same synthetic document.
-  const upstream = await new HttpServer().start((request, response) => {
+
+  await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     switch (request.url) {
       case '/feed.xml':
@@ -186,50 +184,47 @@ test('a feed article retains a figure caption containing a descriptive link', as
     }
   });
 
-  try {
-    // Each origin answers one request a second, so a crawl takes seconds.
-    const signal = AbortSignal.timeout(120_000);
-    const pages = (
-      await Array.fromAsync(
-        new Origins(got, null, globalThis)
-          .crawler(
-            got,
-            [new ListingReader(), new ArchiveReader(), new PaginationReader()],
-            new AdaptiveRevisit(),
-          )
-          .crawl([`${upstream.origin}/feed.xml`], null, { signal }),
-      )
+  // Each origin answers one request a second, so a crawl takes seconds.
+  const signal = AbortSignal.timeout(120_000);
+  const pages = (
+    await Array.fromAsync(
+      new Origins(got, null, globalThis)
+        .crawler(
+          got,
+          [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+          new AdaptiveRevisit(),
+        )
+        .crawl([`${upstream.origin}/feed.xml`], null, { signal }),
     )
-      // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
-      .flatMap((entry) =>
-        'progress' in entry || 'deferred' in entry ? [] : [entry],
-      );
-    assert.equal(pages.length, 1);
-    const page = pages[0];
-    assert.ok(page);
-    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
-      page.url,
-      signal,
+  )
+    // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
+    .flatMap((entry) =>
+      'progress' in entry || 'deferred' in entry ? [] : [entry],
     );
+  assert.equal(pages.length, 1);
+  const page = pages[0];
+  assert.ok(page);
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+    page.url,
+    signal,
+  );
 
-    assert.ok(article);
-    assert.match(article.textContent, /We placed sensors in three garden beds/);
-    assert.match(
-      article.textContent,
-      /Figure 6: A reusable diagram library for our field study/,
-      'A descriptive link does not make the surrounding figure caption navigation.',
-    );
-    assert.match(article.textContent, /that uses the garden journal palette\./);
-    assert(article.content.includes(`href="${upstream.origin}/library"`));
-  } finally {
-    await upstream[Symbol.asyncDispose]();
-  }
+  assert.ok(article);
+  assert.match(article.textContent, /We placed sensors in three garden beds/);
+  assert.match(
+    article.textContent,
+    /Figure 6: A reusable diagram library for our field study/,
+    'A descriptive link does not make the surrounding figure caption navigation.',
+  );
+  assert.match(article.textContent, /that uses the garden journal palette\./);
+  assert(article.content.includes(`href="${upstream.origin}/library"`));
 });
 
 test('a feed article retains acknowledgments and an authorship disclosure after its main body', async () => {
   // Mirrors the appendix outside the main body in the captured Fowler articles.
   // Trafilatura 2.3.1 preserves both paragraphs in this synthetic document.
-  const upstream = await new HttpServer().start((request, response) => {
+
+  await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     switch (request.url) {
       case '/feed.xml':
@@ -271,44 +266,40 @@ test('a feed article retains acknowledgments and an authorship disclosure after 
     }
   });
 
-  try {
-    // Each origin answers one request a second, so a crawl takes seconds.
-    const signal = AbortSignal.timeout(120_000);
-    const pages = (
-      await Array.fromAsync(
-        new Origins(got, null, globalThis)
-          .crawler(
-            got,
-            [new ListingReader(), new ArchiveReader(), new PaginationReader()],
-            new AdaptiveRevisit(),
-          )
-          .crawl([`${upstream.origin}/feed.xml`], null, { signal }),
-      )
+  // Each origin answers one request a second, so a crawl takes seconds.
+  const signal = AbortSignal.timeout(120_000);
+  const pages = (
+    await Array.fromAsync(
+      new Origins(got, null, globalThis)
+        .crawler(
+          got,
+          [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+          new AdaptiveRevisit(),
+        )
+        .crawl([`${upstream.origin}/feed.xml`], null, { signal }),
     )
-      // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
-      .flatMap((entry) =>
-        'progress' in entry || 'deferred' in entry ? [] : [entry],
-      );
-    assert.equal(pages.length, 1);
-    const page = pages[0];
-    assert.ok(page);
-    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
-      page.url,
-      signal,
+  )
+    // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
+    .flatMap((entry) =>
+      'progress' in entry || 'deferred' in entry ? [] : [entry],
     );
+  assert.equal(pages.length, 1);
+  const page = pages[0];
+  assert.ok(page);
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+    page.url,
+    signal,
+  );
 
-    assert.ok(article);
-    assert.match(article.textContent, /Before publication, a second team/);
-    assert.match(
-      article.textContent,
-      /The field measurements were reviewed by Lina Haddad/,
-      'Article acknowledgments remain content when placed in a separate appendix.',
-    );
-    assert.match(
-      article.textContent,
-      /An automated writing assistant helped edit grammar and organize the draft\./,
-    );
-  } finally {
-    await upstream[Symbol.asyncDispose]();
-  }
+  assert.ok(article);
+  assert.match(article.textContent, /Before publication, a second team/);
+  assert.match(
+    article.textContent,
+    /The field measurements were reviewed by Lina Haddad/,
+    'Article acknowledgments remain content when placed in a separate appendix.',
+  );
+  assert.match(
+    article.textContent,
+    /An automated writing assistant helped edit grammar and organize the draft\./,
+  );
 });

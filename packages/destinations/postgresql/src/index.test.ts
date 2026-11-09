@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -293,252 +293,246 @@ test('two loads into one schema commit side by side across their commits, and re
 });
 
 test('Postgres stores per-field attachment references and reconciles only the files its committed rows retain', async () => {
-  const scratch = await new TemporaryFiles().directory('elt-local-pg-');
-  try {
-    await using database = await databases.database();
-    await using clients = new AsyncDisposableStack();
-    const sql = clients.adopt(
-      postgres(database.connectionString, { max: 2, onnotice: () => {} }),
-      (sql) => sql.end(),
-    );
-    const path = join(scratch.path, 'source.txt');
-    await writeFile(path, 'original');
-    const directories = [
-      join(scratch.path, 'originals'),
-      join(scratch.path, 'copies'),
-    ] as const;
-    const files = directories.map((directory) => new LocalFiles({ directory }));
-    const stream = new Stream({
-      name: 'docs',
-      jsonSchema: {
-        type: 'object',
-        properties: { id: { type: 'string' }, version: { type: 'integer' } },
-      },
-      primaryKey: ['id'],
-      supportedSyncModes: ['full_refresh', 'incremental'],
-      emitsDeletes: true,
-      supportsFileTransfer: true,
-    });
-    const source = new Messages(stream);
-    const destination = new PostgresDestination({
-      url: database.connectionString,
-      schema: 'raw',
-    });
-    const copy = new Copy(
-      stream,
-      destination.table('docs', (c) => [
-        c.text('id'),
-        c.integer('version'),
-        ...files.map((store, i) =>
-          c.text(`ref${i}`).from(stream.file.store(store)),
-        ),
-      ]),
-      {
-        id: 'docs',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        cursorField: 'version',
-      },
-    );
-    const pipeline = new Pipeline({
-      clock: globalThis,
-      history: new PostgresSyncHistory({ url: database.connectionString }),
-      connections: [
-        new Connection({
-          name: 'test',
-          source,
-          destination,
-          steps: [copy],
-          checkpoints: new PostgresCheckpointStore({
-            url: database.connectionString,
-            schema: 'raw',
-          }),
-        }),
-      ],
-    });
-    const loaded = async () => [
-      ...(await sql.unsafe('SELECT id, ref0, ref1 FROM raw.docs ORDER BY id')),
-    ];
-    const storedFiles = async (directory: string) =>
-      (
-        await readdir(directory, { recursive: true, withFileTypes: true })
-      ).filter((entry) => entry.isFile());
-    const fileRecord = (version: number): SourceMessage => ({
-      stream: 'docs',
-      data: { id: 'a', version },
-      file: path,
-    });
-    source.messages = [
-      fileRecord(2),
-      { stream: 'docs', data: { id: 'b', version: 1 }, file: null },
-    ];
-    await pipeline.run();
-    const [first, unavailable] = await loaded();
-    assert.ok(first);
-    assert.equal(unavailable?.ref0, null);
-    assert.equal(unavailable?.ref1, null);
-    for (const i of [0, 1] as const) {
-      assert.equal(
-        await readFile(join(directories[i], first[`ref${i}`]), 'utf8'),
-        'original',
-      );
-      assert.equal((await storedFiles(directories[i])).length, 1);
-    }
-    assert.notEqual(first.ref0, first.ref1);
-    assert.equal(
-      (
-        await sql.unsafe(
-          "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = 'raw' AND table_name LIKE '_elt_files_%'",
-        )
-      )[0]?.n,
-      0,
-    );
+  await using scratch = await new TemporaryFiles().directory('elt-local-pg-');
 
-    await pipeline.run();
-    assert.deepEqual(await loaded(), [first, unavailable]);
-    await writeFile(path, 'rejected');
-    source.messages = [fileRecord(1)];
-    await pipeline.run();
-    assert.deepEqual(await loaded(), [first, unavailable]);
-    for (const directory of directories)
-      assert.equal((await storedFiles(directory)).length, 1);
-    // A database failure must preserve both prior references and their bytes.
-    await sql.unsafe(
-      'ALTER TABLE raw.docs ADD CONSTRAINT reject_three CHECK (version <> 3)',
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 2, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  const path = join(scratch.path, 'source.txt');
+  await writeFile(path, 'original');
+  const directories = [
+    join(scratch.path, 'originals'),
+    join(scratch.path, 'copies'),
+  ] as const;
+  const files = directories.map((directory) => new LocalFiles({ directory }));
+  const stream = new Stream({
+    name: 'docs',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    emitsDeletes: true,
+    supportsFileTransfer: true,
+  });
+  const source = new Messages(stream);
+  const destination = new PostgresDestination({
+    url: database.connectionString,
+    schema: 'raw',
+  });
+  const copy = new Copy(
+    stream,
+    destination.table('docs', (c) => [
+      c.text('id'),
+      c.integer('version'),
+      ...files.map((store, i) =>
+        c.text(`ref${i}`).from(stream.file.store(store)),
+      ),
+    ]),
+    {
+      id: 'docs',
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      cursorField: 'version',
+    },
+  );
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [copy],
+        checkpoints: new PostgresCheckpointStore({
+          url: database.connectionString,
+          schema: 'raw',
+        }),
+      }),
+    ],
+  });
+  const loaded = async () => [
+    ...(await sql.unsafe('SELECT id, ref0, ref1 FROM raw.docs ORDER BY id')),
+  ];
+  const storedFiles = async (directory: string) =>
+    (await readdir(directory, { recursive: true, withFileTypes: true })).filter(
+      (entry) => entry.isFile(),
     );
-    source.messages = [fileRecord(3)];
-    await assert.rejects(pipeline.run(), PipelineError);
-    for (const i of [0, 1] as const)
-      assert.equal(
-        await readFile(join(directories[i], first[`ref${i}`]), 'utf8'),
-        'original',
-      );
-    await sql.unsafe('ALTER TABLE raw.docs DROP CONSTRAINT reject_three');
-    await writeFile(path, 'replacement');
-    await pipeline.run();
-    const [replacement] = await loaded();
-    assert.ok(replacement);
-    for (const i of [0, 1] as const) {
-      assert.equal(
-        await readFile(join(directories[i], replacement[`ref${i}`]), 'utf8'),
-        'replacement',
-      );
-      await assert.rejects(readFile(join(directories[i], first[`ref${i}`])), {
-        code: 'ENOENT',
-      });
-      assert.equal((await storedFiles(directories[i])).length, 1);
-    }
-    source.messages = [{ type: 'DELETE', stream: 'docs', key: { id: 'a' } }];
-    await pipeline.run();
-    for (const directory of directories)
-      assert.equal((await storedFiles(directory)).length, 0);
-    source.messages = [fileRecord(4)];
-    await pipeline.run();
-    await pipeline.clear();
-    assert.equal((await loaded()).length, 0);
-    for (const directory of directories)
-      assert.equal((await storedFiles(directory)).length, 0);
-  } finally {
-    await scratch[Symbol.asyncDispose]();
+  const fileRecord = (version: number): SourceMessage => ({
+    stream: 'docs',
+    data: { id: 'a', version },
+    file: path,
+  });
+  source.messages = [
+    fileRecord(2),
+    { stream: 'docs', data: { id: 'b', version: 1 }, file: null },
+  ];
+  await pipeline.run();
+  const [first, unavailable] = await loaded();
+  assert.ok(first);
+  assert.equal(unavailable?.ref0, null);
+  assert.equal(unavailable?.ref1, null);
+  for (const i of [0, 1] as const) {
+    assert.equal(
+      await readFile(join(directories[i], first[`ref${i}`]), 'utf8'),
+      'original',
+    );
+    assert.equal((await storedFiles(directories[i])).length, 1);
   }
+  assert.notEqual(first.ref0, first.ref1);
+  assert.equal(
+    (
+      await sql.unsafe(
+        "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = 'raw' AND table_name LIKE '_elt_files_%'",
+      )
+    )[0]?.n,
+    0,
+  );
+
+  await pipeline.run();
+  assert.deepEqual(await loaded(), [first, unavailable]);
+  await writeFile(path, 'rejected');
+  source.messages = [fileRecord(1)];
+  await pipeline.run();
+  assert.deepEqual(await loaded(), [first, unavailable]);
+  for (const directory of directories)
+    assert.equal((await storedFiles(directory)).length, 1);
+  // A database failure must preserve both prior references and their bytes.
+  await sql.unsafe(
+    'ALTER TABLE raw.docs ADD CONSTRAINT reject_three CHECK (version <> 3)',
+  );
+  source.messages = [fileRecord(3)];
+  await assert.rejects(pipeline.run(), PipelineError);
+  for (const i of [0, 1] as const)
+    assert.equal(
+      await readFile(join(directories[i], first[`ref${i}`]), 'utf8'),
+      'original',
+    );
+  await sql.unsafe('ALTER TABLE raw.docs DROP CONSTRAINT reject_three');
+  await writeFile(path, 'replacement');
+  await pipeline.run();
+  const [replacement] = await loaded();
+  assert.ok(replacement);
+  for (const i of [0, 1] as const) {
+    assert.equal(
+      await readFile(join(directories[i], replacement[`ref${i}`]), 'utf8'),
+      'replacement',
+    );
+    await assert.rejects(readFile(join(directories[i], first[`ref${i}`])), {
+      code: 'ENOENT',
+    });
+    assert.equal((await storedFiles(directories[i])).length, 1);
+  }
+  source.messages = [{ type: 'DELETE', stream: 'docs', key: { id: 'a' } }];
+  await pipeline.run();
+  for (const directory of directories)
+    assert.equal((await storedFiles(directory)).length, 0);
+  source.messages = [fileRecord(4)];
+  await pipeline.run();
+  await pipeline.clear();
+  assert.equal((await loaded()).length, 0);
+  for (const directory of directories)
+    assert.equal((await storedFiles(directory)).length, 0);
 });
 
 test('renamed file columns keep their original bytes and stored files through later commits', async () => {
-  const scratch = await new TemporaryFiles().directory('elt-renamed-pg-');
-  try {
-    await using database = await databases.database();
-    await using clients = new AsyncDisposableStack();
-    const sql = clients.adopt(
-      postgres(database.connectionString, { max: 2, onnotice: () => {} }),
-      (sql) => sql.end(),
-    );
-    const path = join(scratch.path, 'source.txt');
-    await writeFile(path, 'original');
-    const directory = join(scratch.path, 'files');
-    const store = new LocalFiles({ directory });
-    const stream = new Stream({
-      name: 'docs',
-      jsonSchema: {
-        type: 'object',
-        properties: { id: { type: 'string' }, version: { type: 'integer' } },
-      },
-      primaryKey: ['id'],
-      supportedSyncModes: ['full_refresh', 'incremental'],
-      emitsDeletes: true,
-      supportsFileTransfer: true,
-    });
-    const source = new Messages(stream);
-    const destination = new PostgresDestination({
-      url: database.connectionString,
-      schema: 'raw',
-    });
-    const pipeline = new Pipeline({
-      clock: globalThis,
-      history: new PostgresSyncHistory({ url: database.connectionString }),
-      connections: [
-        new Connection({
-          name: 'test',
-          source,
-          destination,
-          checkpoints: new PostgresCheckpointStore({
-            url: database.connectionString,
-            schema: 'raw',
-          }),
-          steps: [
-            new Copy(
-              stream,
-              destination.table('docs', (c) => [
-                c.text('id'),
-                c.integer('version'),
-                c.text('Stored Ref').from(stream.file.store(store)),
-                c.blob('Original Bytes').from(stream.file),
-              ]),
-              {
-                id: 'docs',
-                syncMode: 'incremental',
-                destinationSyncMode: 'append_dedup',
-                cursorField: 'version',
-              },
-            ),
-          ],
+  await using scratch = await new TemporaryFiles().directory('elt-renamed-pg-');
+
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 2, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  const path = join(scratch.path, 'source.txt');
+  await writeFile(path, 'original');
+  const directory = join(scratch.path, 'files');
+  const store = new LocalFiles({ directory });
+  const stream = new Stream({
+    name: 'docs',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    emitsDeletes: true,
+    supportsFileTransfer: true,
+  });
+  const source = new Messages(stream);
+  const destination = new PostgresDestination({
+    url: database.connectionString,
+    schema: 'raw',
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.connectionString,
+          schema: 'raw',
         }),
-      ],
-    });
-    // Original bytes are read as the column's comment tells a reader to.
-    const original = async (id: string) => {
-      const [comment] =
-        await sql`SELECT col_description('raw.docs'::regclass, attnum) AS text
+        steps: [
+          new Copy(
+            stream,
+            destination.table('docs', (c) => [
+              c.text('id'),
+              c.integer('version'),
+              c.text('Stored Ref').from(stream.file.store(store)),
+              c.blob('Original Bytes').from(stream.file),
+            ]),
+            {
+              id: 'docs',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+              cursorField: 'version',
+            },
+          ),
+        ],
+      }),
+    ],
+  });
+  // Original bytes are read as the column's comment tells a reader to.
+  const original = async (id: string) => {
+    const [comment] =
+      await sql`SELECT col_description('raw.docs'::regclass, attnum) AS text
           FROM pg_attribute WHERE attrelid = 'raw.docs'::regclass AND attname = 'Original_Bytes'`;
-      const chunks = /Join (\S+) on file/.exec(String(comment?.text))?.[1];
-      assert.ok(chunks, String(comment?.text));
-      const [row] = await sql.unsafe(
-        `SELECT convert_from(string_agg(c.bytes, ''::bytea ORDER BY c.n), 'UTF8') AS text
+    const chunks = /Join (\S+) on file/.exec(String(comment?.text))?.[1];
+    assert.ok(chunks, String(comment?.text));
+    const [row] = await sql.unsafe(
+      `SELECT convert_from(string_agg(c.bytes, ''::bytea ORDER BY c.n), 'UTF8') AS text
           FROM raw.docs d JOIN ${chunks} c ON c.file = d."Original_Bytes" WHERE d.id = $1`,
-        [id],
-      );
-      return row?.text;
-    };
-    const stored = async (id: string) =>
-      (await sql`SELECT "Stored_Ref" AS ref FROM raw.docs WHERE id = ${id}`)[0]
-        ?.ref;
-
-    source.messages = [
-      { stream: 'docs', data: { id: 'a', version: 1 }, file: path },
-    ];
-    await pipeline.run();
-    source.messages = [
-      { stream: 'docs', data: { id: 'b', version: 1 }, file: null },
-    ];
-    await pipeline.run();
-
-    assert.equal(await original('a'), 'original');
-    assert.equal(
-      await readFile(join(store.directory, String(await stored('a'))), 'utf8'),
-      'original',
+      [id],
     );
-  } finally {
-    await scratch[Symbol.asyncDispose]();
-  }
+    return row?.text;
+  };
+  const stored = async (id: string) =>
+    (await sql`SELECT "Stored_Ref" AS ref FROM raw.docs WHERE id = ${id}`)[0]
+      ?.ref;
+
+  source.messages = [
+    { stream: 'docs', data: { id: 'a', version: 1 }, file: path },
+  ];
+  await pipeline.run();
+  source.messages = [
+    { stream: 'docs', data: { id: 'b', version: 1 }, file: null },
+  ];
+  await pipeline.run();
+
+  assert.equal(await original('a'), 'original');
+  assert.equal(
+    await readFile(join(store.directory, String(await stored('a'))), 'utf8'),
+    'original',
+  );
 });
 
 test('schema annotations follow each copy, including projections, append history and removed descriptions', async () => {
@@ -1861,8 +1855,7 @@ test('declarations are checked before any connection', () => {
     /Invalid schema name/,
   );
   const destination = new PostgresDestination({ url, schema: 'raw' });
-  const sha8 = (name: string) =>
-    createHash('sha256').update(name).digest('hex').slice(0, 8);
+  const sha8 = (name: string) => hash('sha256', name).slice(0, 8);
   // A table name sanitizing changes keeps a hash of the name asked for; one
   // past 63 bytes keeps its first 54 bytes and a hash.
   assert.equal(
@@ -2121,7 +2114,7 @@ test('a checkpoint that cannot be saved after its rows commit is reported with t
     String(failure.cause),
     /was not saved after the destination committed/,
   );
-  assert.ok(failure.cause instanceof Error);
+  assert.ok(Error.isError(failure.cause));
   assert.match(String(failure.cause.cause), /disk full/);
   assert.deepEqual(
     (await sql`SELECT id FROM raw.items ORDER BY id`).map((row) => row.id),
@@ -2439,7 +2432,7 @@ class ScriptedSource extends LiveSource {
 
   protected async *play(script: string) {
     for (const entry of this.scripts[script] ?? []) {
-      if (entry instanceof Error) throw entry;
+      if (Error.isError(entry)) throw entry;
       if (typeof entry === 'function') await entry();
       else yield entry;
     }
@@ -2732,7 +2725,7 @@ test('every field name is sanitized as Airbyte does, around the names Postgres k
   // A name past 63 bytes keeps its first 54, then `_` and the first 8 hex
   // digits of the SHA-256 of the field name.
   const fitted = (field: string) =>
-    `${field.slice(0, 54)}_${createHash('sha256').update(field).digest('hex').slice(0, 8)}`;
+    `${field.slice(0, 54)}_${hash('sha256', field).slice(0, 8)}`;
   const long = 'x'.repeat(100);
   const sharing = `${'x'.repeat(60)}${'y'.repeat(10)}`;
   // Each field, in field order, and the column the documented rule gives it.
@@ -3052,7 +3045,7 @@ test('a key and cursor past 63 bytes merge under their renamed columns, which th
   // A name past 63 bytes keeps its first 54, then `_` and the first 8 hex
   // digits of the SHA-256 of the field name.
   const column = (field: string) =>
-    `${field.slice(0, 54)}_${createHash('sha256').update(field).digest('hex').slice(0, 8)}`;
+    `${field.slice(0, 54)}_${hash('sha256', field).slice(0, 8)}`;
   const keyed = (name: string, snapshot: boolean) =>
     new Stream({
       name,
@@ -3887,7 +3880,7 @@ test('each recorded failure keeps the causes its error chains, such as why a con
   const refused = await fetch(`${listener.origin}/`).then(
     () => assert.fail('a closed port answered'),
     (error: unknown) =>
-      error instanceof Error ? error : assert.fail('fetch threw no Error'),
+      Error.isError(error) ? error : assert.fail('fetch threw no Error'),
   );
   class Refusing extends ScriptedSource {
     opening: Error | null = null;
@@ -3959,7 +3952,7 @@ test('a watch whose poll fails records the failure with the causes its error cha
   const refused = await fetch(`${listener.origin}/`).then(
     () => assert.fail('a closed port answered'),
     (error: unknown) =>
-      error instanceof Error ? error : assert.fail('fetch threw no Error'),
+      Error.isError(error) ? error : assert.fail('fetch threw no Error'),
   );
   // An upstream whose second check is refused, and whose third finds a
   // change.
@@ -4625,164 +4618,156 @@ async function readerNotes(url: string, files: LocalFiles) {
 }
 
 test('a reader view shows exactly the loaded columns and their descriptions, follows changes without being recreated, and never locks readers out', async () => {
-  const scratch = await new TemporaryFiles().directory('elt-reader-pg-');
-  try {
-    await using database = await databases.database();
-    await using clients = new AsyncDisposableStack();
-    const sql = clients.adopt(
-      postgres(database.connectionString, { max: 2, onnotice: () => {} }),
-      (sql) => sql.end(),
-    );
-    await sql`CREATE SCHEMA marts`;
-    const path = join(scratch.path, 'note.txt');
-    await writeFile(path, 'body');
-    const files = new LocalFiles({ directory: join(scratch.path, 'files') });
-    const { source, destination, copy, pipeline } = await readerNotes(
-      database.connectionString,
-      files,
-    );
-    source.messages = [
-      { stream: 'notes', data: { id: 1, title: 'First' }, file: path },
-      { stream: 'notes', data: { id: 2, title: 'Second' }, file: null },
-    ];
-    await pipeline.run();
+  await using scratch = await new TemporaryFiles().directory('elt-reader-pg-');
 
-    const view = async () => [
-      ...(await sql`SELECT id, title, ref, loaded_at FROM marts.notes ORDER BY id`),
-    ];
-    const [first, second] = await view();
-    assert.equal(
-      await readFile(join(files.directory, String(first?.ref)), 'utf8'),
-      'body',
-    );
-    assert.equal(second?.ref, null);
-    const descriptions = async (relation: string) => [
-      ...(await sql`SELECT a.attname AS name, col_description(a.attrelid, a.attnum) AS description
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 2, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  await sql`CREATE SCHEMA marts`;
+  const path = join(scratch.path, 'note.txt');
+  await writeFile(path, 'body');
+  const files = new LocalFiles({ directory: join(scratch.path, 'files') });
+  const { source, destination, copy, pipeline } = await readerNotes(
+    database.connectionString,
+    files,
+  );
+  source.messages = [
+    { stream: 'notes', data: { id: 1, title: 'First' }, file: path },
+    { stream: 'notes', data: { id: 2, title: 'Second' }, file: null },
+  ];
+  await pipeline.run();
+
+  const view = async () => [
+    ...(await sql`SELECT id, title, ref, loaded_at FROM marts.notes ORDER BY id`),
+  ];
+  const [first, second] = await view();
+  assert.equal(
+    await readFile(join(files.directory, String(first?.ref)), 'utf8'),
+    'body',
+  );
+  assert.equal(second?.ref, null);
+  const descriptions = async (relation: string) => [
+    ...(await sql`SELECT a.attname AS name, col_description(a.attrelid, a.attnum) AS description
         FROM pg_attribute a WHERE a.attrelid = ${relation}::regclass AND a.attnum > 0 ORDER BY a.attnum`),
-    ];
-    const viewColumns = await descriptions('marts.notes');
-    assert.deepEqual(
-      viewColumns.map(({ name }) => name),
-      ['id', 'title', 'ref', 'loaded_at'],
-    );
-    assert.deepEqual(viewColumns, await descriptions('raw.raw_notes'));
-    assert.equal(
-      viewColumns[2]?.description,
-      `${files.reference} NULL when the source file is unavailable.`,
-    );
-    const [comments] =
-      await sql`SELECT obj_description('marts.notes'::regclass) AS view,
+  ];
+  const viewColumns = await descriptions('marts.notes');
+  assert.deepEqual(
+    viewColumns.map(({ name }) => name),
+    ['id', 'title', 'ref', 'loaded_at'],
+  );
+  assert.deepEqual(viewColumns, await descriptions('raw.raw_notes'));
+  assert.equal(
+    viewColumns[2]?.description,
+    `${files.reference} NULL when the source file is unavailable.`,
+  );
+  const [comments] =
+    await sql`SELECT obj_description('marts.notes'::regclass) AS view,
       obj_description('raw.raw_notes'::regclass) AS "table"`;
-    assert.match(String(comments?.view), /One row per note\./);
-    assert.equal(comments?.view, comments?.table);
+  assert.match(String(comments?.view), /One row per note\./);
+  assert.equal(comments?.view, comments?.table);
 
-    const oid = async () =>
-      (await sql`SELECT 'marts.notes'::regclass::oid AS oid`)[0]?.oid;
-    const created = await oid();
-    source.messages = [
-      { stream: 'notes', data: { id: 1, title: 'Renamed' }, file: path },
-      { type: 'DELETE', stream: 'notes', key: { id: 2 } },
-    ];
-    await pipeline.run();
-    assert.deepEqual(
-      (await view()).map(({ id, title }) => ({ id, title })),
-      [{ id: '1', title: 'Renamed' }],
-    );
-    assert.equal(await oid(), created);
+  const oid = async () =>
+    (await sql`SELECT 'marts.notes'::regclass::oid AS oid`)[0]?.oid;
+  const created = await oid();
+  source.messages = [
+    { stream: 'notes', data: { id: 1, title: 'Renamed' }, file: path },
+    { type: 'DELETE', stream: 'notes', key: { id: 2 } },
+  ];
+  await pipeline.run();
+  assert.deepEqual(
+    (await view()).map(({ id, title }) => ({ id, title })),
+    [{ id: '1', title: 'Renamed' }],
+  );
+  assert.equal(await oid(), created);
 
-    // A prepared load stays open while the source reads; readers of the view
-    // it keeps must not wait behind it.
-    const load = await destination.load();
-    try {
-      await using stage = await load.prepare(copy.configuration, copy.to, {
-        writer: copy.writer(source),
-        reloading: false,
-      });
-      assert.ok(stage);
-      const blocking = await sql`SELECT mode FROM pg_locks
+  // A prepared load stays open while the source reads; readers of the view
+  // it keeps must not wait behind it.
+
+  await using load = await destination.load();
+
+  await using stage = await load.prepare(copy.configuration, copy.to, {
+    writer: copy.writer(source),
+    reloading: false,
+  });
+  assert.ok(stage);
+  const blocking = await sql`SELECT mode FROM pg_locks
         WHERE relation = 'marts.notes'::regclass AND pid <> pg_backend_pid()
         AND mode = 'AccessExclusiveLock'`;
-      assert.deepEqual([...blocking], []);
-      await sql.begin(async (reader) => {
-        await reader`SET LOCAL lock_timeout = '200ms'`;
-        assert.equal(
-          (await reader`SELECT count(*)::int AS n FROM marts.notes`)[0]?.n,
-          1,
-        );
-      });
-    } finally {
-      await load[Symbol.asyncDispose]();
-    }
-  } finally {
-    await scratch[Symbol.asyncDispose]();
-  }
+  assert.deepEqual([...blocking], []);
+  await sql.begin(async (reader) => {
+    await reader`SET LOCAL lock_timeout = '200ms'`;
+    assert.equal(
+      (await reader`SELECT count(*)::int AS n FROM marts.notes`)[0]?.n,
+      1,
+    );
+  });
 });
 
 test('a run publishes the catalog in marts, which lists each reader view and its columns under their descriptions', async () => {
-  const scratch = await new TemporaryFiles().directory('elt-catalog-pg-');
-  try {
-    await using database = await databases.database();
-    await using clients = new AsyncDisposableStack();
-    const sql = clients.adopt(
-      postgres(database.connectionString, { max: 1, onnotice: () => {} }),
-      (sql) => sql.end(),
-    );
-    const files = new LocalFiles({ directory: join(scratch.path, 'files') });
-    const { source, pipeline } = await readerNotes(
-      database.connectionString,
-      files,
-    );
-    source.messages = [
-      { stream: 'notes', data: { id: 1, title: 'First' }, file: null },
-    ];
+  await using scratch = await new TemporaryFiles().directory('elt-catalog-pg-');
 
-    await pipeline.run();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  const files = new LocalFiles({ directory: join(scratch.path, 'files') });
+  const { source, pipeline } = await readerNotes(
+    database.connectionString,
+    files,
+  );
+  source.messages = [
+    { stream: 'notes', data: { id: 1, title: 'First' }, file: null },
+  ];
 
-    assert.deepEqual(
-      [
-        ...(await sql`SELECT kind, name, data_type, description FROM marts.catalog
+  await pipeline.run();
+
+  assert.deepEqual(
+    [
+      ...(await sql`SELECT kind, name, data_type, description FROM marts.catalog
           WHERE name = 'notes' OR name LIKE 'notes.%' ORDER BY name`),
-      ],
-      [
-        {
-          kind: 'view',
-          name: 'notes',
-          data_type: null,
-          description: (
-            await sql`SELECT obj_description('marts.notes'::regclass) AS description`
-          )[0]?.description,
-        },
-        {
-          kind: 'column',
-          name: 'notes.id',
-          data_type: 'bigint',
-          description: 'Note ID.',
-        },
-        {
-          kind: 'column',
-          name: 'notes.loaded_at',
-          data_type: 'timestamp with time zone',
-          description: (
-            await sql`SELECT col_description('marts.notes'::regclass, 4) AS description`
-          )[0]?.description,
-        },
-        {
-          kind: 'column',
-          name: 'notes.ref',
-          data_type: 'text',
-          description: `${files.reference} NULL when the source file is unavailable.`,
-        },
-        {
-          kind: 'column',
-          name: 'notes.title',
-          data_type: 'text',
-          description: 'Note title.',
-        },
-      ],
-    );
-  } finally {
-    await scratch[Symbol.asyncDispose]();
-  }
+    ],
+    [
+      {
+        kind: 'view',
+        name: 'notes',
+        data_type: null,
+        description: (
+          await sql`SELECT obj_description('marts.notes'::regclass) AS description`
+        )[0]?.description,
+      },
+      {
+        kind: 'column',
+        name: 'notes.id',
+        data_type: 'bigint',
+        description: 'Note ID.',
+      },
+      {
+        kind: 'column',
+        name: 'notes.loaded_at',
+        data_type: 'timestamp with time zone',
+        description: (
+          await sql`SELECT col_description('marts.notes'::regclass, 4) AS description`
+        )[0]?.description,
+      },
+      {
+        kind: 'column',
+        name: 'notes.ref',
+        data_type: 'text',
+        description: `${files.reference} NULL when the source file is unavailable.`,
+      },
+      {
+        kind: 'column',
+        name: 'notes.title',
+        data_type: 'text',
+        description: 'Note title.',
+      },
+    ],
+  );
 });
 
 test('a reader view needs every column described and refuses a view it did not create', async () => {
@@ -4793,58 +4778,56 @@ test('a reader view needs every column described and refuses a view it did not c
     (sql) => sql.end(),
   );
   await sql`CREATE SCHEMA marts`;
-  const scratch = await new TemporaryFiles().directory('elt-reader-pg-');
-  try {
-    const files = new LocalFiles({ directory: scratch.path });
-    const undescribed = new Stream({
-      name: 'notes',
-      jsonSchema: {
-        type: 'object',
-        properties: { id: { type: 'integer' }, title: { type: 'string' } },
-      },
-      supportedSyncModes: ['full_refresh'],
-    });
-    const destination = new PostgresDestination({
-      url: database.connectionString,
-      schema: 'raw',
-    });
-    assert.throws(
-      () =>
-        destination.validate(
-          new Copy(
-            undescribed,
-            destination.table('raw_notes').withReaderView('marts', 'notes'),
-          ).configuration,
-          destination.table('raw_notes').withReaderView('marts', 'notes'),
-        ),
-      /Reader view marts\.notes needs JSON Schema descriptions for the stream, id, title of stream notes/,
-    );
 
-    await sql`CREATE VIEW marts.notes AS SELECT 1 AS id`;
-    const definition = async () =>
-      (await sql`SELECT pg_get_viewdef('marts.notes'::regclass) AS d`)[0]?.d;
-    const before = await definition();
-    const { source, pipeline } = await readerNotes(
-      database.connectionString,
-      files,
+  await using scratch = await new TemporaryFiles().directory('elt-reader-pg-');
+
+  const files = new LocalFiles({ directory: scratch.path });
+  const undescribed = new Stream({
+    name: 'notes',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'integer' }, title: { type: 'string' } },
+    },
+    supportedSyncModes: ['full_refresh'],
+  });
+  const destination = new PostgresDestination({
+    url: database.connectionString,
+    schema: 'raw',
+  });
+  assert.throws(
+    () =>
+      destination.validate(
+        new Copy(
+          undescribed,
+          destination.table('raw_notes').withReaderView('marts', 'notes'),
+        ).configuration,
+        destination.table('raw_notes').withReaderView('marts', 'notes'),
+      ),
+    /Reader view marts\.notes needs JSON Schema descriptions for the stream, id, title of stream notes/,
+  );
+
+  await sql`CREATE VIEW marts.notes AS SELECT 1 AS id`;
+  const definition = async () =>
+    (await sql`SELECT pg_get_viewdef('marts.notes'::regclass) AS d`)[0]?.d;
+  const before = await definition();
+  const { source, pipeline } = await readerNotes(
+    database.connectionString,
+    files,
+  );
+  source.messages = [{ stream: 'notes', data: { id: 1, title: 'A' } }];
+  await assert.rejects(pipeline.run(), (error: unknown) => {
+    assert.ok(error instanceof PipelineError);
+    assert.match(
+      String(error.cause),
+      /"marts"\."notes" is not a view of exactly "raw"\."raw_notes"/,
     );
-    source.messages = [{ stream: 'notes', data: { id: 1, title: 'A' } }];
-    await assert.rejects(pipeline.run(), (error: unknown) => {
-      assert.ok(error instanceof PipelineError);
-      assert.match(
-        String(error.cause),
-        /"marts"\."notes" is not a view of exactly "raw"\."raw_notes"/,
-      );
-      return true;
-    });
-    assert.equal(await definition(), before);
-    assert.equal(
-      (await sql`SELECT to_regclass('raw.raw_notes') AS t`)[0]?.t,
-      null,
-    );
-  } finally {
-    await scratch[Symbol.asyncDispose]();
-  }
+    return true;
+  });
+  assert.equal(await definition(), before);
+  assert.equal(
+    (await sql`SELECT to_regclass('raw.raw_notes') AS t`)[0]?.t,
+    null,
+  );
 });
 
 test('string formats load exactly: microsecond times typed, finer ones as text that orders as time, decimals and int64 exact', async () => {
@@ -4987,8 +4970,7 @@ test('tables and reader views whose names sanitize alike, or pass 63 bytes, stay
     (sql) => sql.end(),
   );
   await sql`CREATE SCHEMA marts`;
-  const sha8 = (name: string) =>
-    createHash('sha256').update(name).digest('hex').slice(0, 8);
+  const sha8 = (name: string) => hash('sha256', name).slice(0, 8);
   const long = 'x'.repeat(70);
   const sharing = `${'x'.repeat(60)}${'y'.repeat(10)}`;
   // Each name a host asks for, and the one the documented rule gives it: a
@@ -5220,7 +5202,7 @@ test('a reset replaces its partition, or the whole table, at the next commit; a 
       const name = String(partition?.account ?? configuration.stream.name);
       received.push([name, state]);
       for (const message of script[name] ?? []) {
-        if (message instanceof Error) throw message;
+        if (Error.isError(message)) throw message;
         yield message;
       }
     }
@@ -5614,7 +5596,7 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
     ) {
       received.push(state);
       for (const step of script) {
-        if (step instanceof Error) throw step;
+        if (Error.isError(step)) throw step;
         if (step === pause) {
           reached.resolve();
           await gate.promise;

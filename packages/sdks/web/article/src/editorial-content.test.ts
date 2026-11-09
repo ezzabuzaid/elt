@@ -8,7 +8,8 @@ import { HTMLExtraction, WebArticle } from './index.ts';
 
 test('editorial asides retain explanations and contributor lists inside an article', async () => {
   // Local markup reproduces the captured editorial sidebars without relying on a publisher.
-  const upstream = await new HttpServer().start((_request, response) => {
+
+  await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(`<html><head><title>Designing a field experiment</title></head><body>
       <main><article><h1>Designing a field experiment</h1>
@@ -29,31 +30,27 @@ test('editorial asides retain explanations and contributor lists inside an artic
     </body></html>`);
   });
 
-  try {
-    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
-      upstream.origin,
-      AbortSignal.timeout(5000),
-    );
-    assert.ok(article);
-    assert.match(
-      article.textContent,
-      /Before taking measurements, place each sensor in the same sample/,
-    );
-    assert.match(
-      article.textContent,
-      /Record a reference reading before moving the sensor/,
-    );
-    assert.match(article.textContent, /Lina Haddad, a field engineer/);
-    assert.match(article.textContent, /Omar Mansour, a researcher/);
-    assert.match(article.textContent, /Nadia Saleh, a statistician/);
-    assert.doesNotMatch(article.textContent, /exclusive offers/);
-  } finally {
-    await upstream[Symbol.asyncDispose]();
-  }
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+    upstream.origin,
+    AbortSignal.timeout(5000),
+  );
+  assert.ok(article);
+  assert.match(
+    article.textContent,
+    /Before taking measurements, place each sensor in the same sample/,
+  );
+  assert.match(
+    article.textContent,
+    /Record a reference reading before moving the sensor/,
+  );
+  assert.match(article.textContent, /Lina Haddad, a field engineer/);
+  assert.match(article.textContent, /Omar Mansour, a researcher/);
+  assert.match(article.textContent, /Nadia Saleh, a statistician/);
+  assert.doesNotMatch(article.textContent, /exclusive offers/);
 });
 
 test('unmarked pages still exclude class-based navigation and advertising', async () => {
-  const upstream = await new HttpServer().start((_request, response) => {
+  await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(`<html><head><title>Checking the field readings</title></head><body><div id="Box">
       <div id="Banner"><a href="/">Garden Journal home page</a></div>
@@ -68,24 +65,21 @@ test('unmarked pages still exclude class-based navigation and advertising', asyn
       <div id="Footer"><p>Copyright 2026 Garden Journal. All rights reserved.</p></div>
     </div></body></html>`);
   });
-  try {
-    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
-      upstream.origin,
-      AbortSignal.timeout(5000),
-    );
-    assert.ok(article);
-    assert.match(article.textContent, /The field team recorded readings/);
-    assert.doesNotMatch(
-      article.textContent,
-      /Garden Journal home page|Browse the archive|Contact our publisher|advertising partner|All rights reserved/,
-    );
-  } finally {
-    await upstream[Symbol.asyncDispose]();
-  }
+
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+    upstream.origin,
+    AbortSignal.timeout(5000),
+  );
+  assert.ok(article);
+  assert.match(article.textContent, /The field team recorded readings/);
+  assert.doesNotMatch(
+    article.textContent,
+    /Garden Journal home page|Browse the archive|Contact our publisher|advertising partner|All rights reserved/,
+  );
 });
 
 test('footer cleanup preserves author metadata without emitting promotional footer prose', async () => {
-  const upstream = await new HttpServer().start((_request, response) => {
+  await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(`<html><head><title>Garden measurements</title></head><body><article>
       <h1>Garden measurements</h1>
@@ -94,18 +88,15 @@ test('footer cleanup preserves author metadata without emitting promotional foot
       <footer><span rel="author">Lina Haddad</span><p>Subscribe for equipment offers.</p></footer>
     </article></body></html>`);
   });
-  try {
-    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
-      upstream.origin,
-      AbortSignal.timeout(5000),
-    );
-    assert.ok(article);
-    assert.equal(article.byline, 'Lina Haddad');
-    assert.match(article.textContent, /We compared soil measurements/);
-    assert.doesNotMatch(article.textContent, /Subscribe for equipment offers/);
-  } finally {
-    await upstream[Symbol.asyncDispose]();
-  }
+
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+    upstream.origin,
+    AbortSignal.timeout(5000),
+  );
+  assert.ok(article);
+  assert.equal(article.byline, 'Lina Haddad');
+  assert.match(article.textContent, /We compared soil measurements/);
+  assert.doesNotMatch(article.textContent, /Subscribe for equipment offers/);
 });
 
 test('an incidental entry widget does not replace semantic article content', async () => {
@@ -116,31 +107,28 @@ test('an incidental entry widget does not replace semantic article content', asy
     'div role="main"',
   ]) {
     const tag = container.split(' ')[0];
-    const upstream = await new HttpServer().start((_request, response) => {
-      response.setHeader('content-type', 'text/html; charset=utf-8');
-      response.end(`<html><head><title>Checking the garden measurements</title></head><body>
+
+    await using upstream = await new HttpServer().start(
+      (_request, response) => {
+        response.setHeader('content-type', 'text/html; charset=utf-8');
+        response.end(`<html><head><title>Checking the garden measurements</title></head><body>
         <div class="entry"><p>A promotional entry about unrelated equipment offers.</p></div>
         <${container}><h1>Checking the garden measurements</h1>
           <p>Our team compared the sensor readings with a reference instrument every morning. We recorded the weather and checked each cable before making changes to the equipment.</p>
           <p>The repeated measurements revealed that one sensor needed calibration. After replacing its damaged connector, the readings matched the reference throughout the remaining field trial.</p>
         </${tag}>
       </body></html>`);
-    });
-    try {
-      const article = await new WebArticle([new HTMLExtraction()], got).fetch(
-        upstream.origin,
-        AbortSignal.timeout(5000),
-      );
-      assert.ok(article);
-      assert.match(
-        article.textContent,
-        /Our team compared the sensor readings/,
-      );
-      assert.match(article.textContent, /one sensor needed calibration/);
-      assert.doesNotMatch(article.textContent, /unrelated equipment offers/);
-    } finally {
-      await upstream[Symbol.asyncDispose]();
-    }
+      },
+    );
+
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+      upstream.origin,
+      AbortSignal.timeout(5000),
+    );
+    assert.ok(article);
+    assert.match(article.textContent, /Our team compared the sensor readings/);
+    assert.match(article.textContent, /one sensor needed calibration/);
+    assert.doesNotMatch(article.textContent, /unrelated equipment offers/);
   }
 });
 
@@ -150,9 +138,10 @@ test('a short linked post retains the outbound resource in its title row', async
     { open: '<div class="entry">', close: '</div>' },
     { open: '<div class="post"><div class="entry">', close: '</div></div>' },
   ]) {
-    const upstream = await new HttpServer().start((_request, response) => {
-      response.setHeader('content-type', 'text/html; charset=utf-8');
-      response.end(`<html><head><title>Tool: Soil Viewer</title></head><body>
+    await using upstream = await new HttpServer().start(
+      (_request, response) => {
+        response.setHeader('content-type', 'text/html; charset=utf-8');
+        response.end(`<html><head><title>Tool: Soil Viewer</title></head><body>
         ${open}<div>
           <div><a href="/category/tools">Tool</a> <span><a href="https://tools.example.org/soil-viewer">Soil Viewer</a></span></div>
           <div><p>I built this tool to compare readings from the garden sensors.</p>
@@ -162,28 +151,24 @@ test('a short linked post retains the outbound resource in its title row', async
           </div>
         </div>${close}
       </body></html>`);
-    });
-    try {
-      const article = await new WebArticle([new HTMLExtraction()], got).fetch(
-        upstream.origin,
-        AbortSignal.timeout(5000),
-      );
-      assert.ok(article, open);
-      assert.ok(
-        article.content.includes(
-          'href="https://tools.example.org/soil-viewer"',
-        ),
-        open,
-      );
-      assert.match(
-        article.textContent,
-        /Soil Viewer \[https:\/\/tools.example.org\/soil-viewer\]/,
-        open,
-      );
-      assert.match(article.textContent, /Plot the measurements on a map/, open);
-    } finally {
-      await upstream[Symbol.asyncDispose]();
-    }
+      },
+    );
+
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+      upstream.origin,
+      AbortSignal.timeout(5000),
+    );
+    assert.ok(article, open);
+    assert.ok(
+      article.content.includes('href="https://tools.example.org/soil-viewer"'),
+      open,
+    );
+    assert.match(
+      article.textContent,
+      /Soil Viewer \[https:\/\/tools.example.org\/soil-viewer\]/,
+      open,
+    );
+    assert.match(article.textContent, /Plot the measurements on a map/, open);
   }
 });
 
@@ -244,9 +229,10 @@ test('a page of several posts is not taken for its first post', async () => {
 
 test('a short post excludes surrounding sponsorship, recommendations and site footer', async () => {
   for (const postClass of ['entry', 'h-entry', 'hentry']) {
-    const upstream = await new HttpServer().start((_request, response) => {
-      response.setHeader('content-type', 'text/html; charset=utf-8');
-      response.end(`<html><head><title>A useful field recording</title></head><body>
+    await using upstream = await new HttpServer().start(
+      (_request, response) => {
+        response.setHeader('content-type', 'text/html; charset=utf-8');
+        response.end(`<html><head><title>A useful field recording</title></head><body>
         <div><strong>Supported by:</strong> Garden Instruments makes reliable sensors.
           <a href="/offer" rel="sponsored noopener">Request a demonstration</a></div>
         <div class="${postClass}"><p>This <a href="/recording">field recording</a> captures an unusual bird call. The original measurements are available in the linked research notebook.</p>
@@ -258,23 +244,19 @@ test('a short post excludes surrounding sponsorship, recommendations and site fo
         </ul></div>
         <footer><p>Subscribe to our weekly newsletter for exclusive equipment offers.</p></footer>
       </body></html>`);
-    });
-    try {
-      const article = await new WebArticle([new HTMLExtraction()], got).fetch(
-        upstream.origin,
-        AbortSignal.timeout(5000),
-      );
-      assert.ok(article);
-      assert.match(article.textContent, /captures an unusual bird call/);
-      assert.ok(
-        article.content.includes(`href="${upstream.origin}/recording"`),
-      );
-      assert.doesNotMatch(
-        article.textContent,
-        /Supported by|Garden Instruments|Request a demonstration|Recent articles|previous report|maintaining soil|exclusive equipment offers/,
-      );
-    } finally {
-      await upstream[Symbol.asyncDispose]();
-    }
+      },
+    );
+
+    const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+      upstream.origin,
+      AbortSignal.timeout(5000),
+    );
+    assert.ok(article);
+    assert.match(article.textContent, /captures an unusual bird call/);
+    assert.ok(article.content.includes(`href="${upstream.origin}/recording"`));
+    assert.doesNotMatch(
+      article.textContent,
+      /Supported by|Garden Instruments|Request a demonstration|Recent articles|previous report|maintaining soil|exclusive equipment offers/,
+    );
   }
 });

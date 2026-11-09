@@ -124,5 +124,5 @@ function storeId(database: number, objectStore: number): string {
 }
 
 function recordId(store: string, key: Uint8Array): string {
-  return `${store}:${Buffer.from(key).toString('hex')}`;
+  return `${store}:${key.toHex()}`;
 }

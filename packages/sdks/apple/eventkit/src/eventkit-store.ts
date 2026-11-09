@@ -159,7 +159,7 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
 }
 
 export function helperStderr(error: unknown): string {
-  return error instanceof Error &&
+  return Error.isError(error) &&
     'stderr' in error &&
     typeof error.stderr === 'string'
     ? error.stderr

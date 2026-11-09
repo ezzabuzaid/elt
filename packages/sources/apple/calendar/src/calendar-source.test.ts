@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { hash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -64,10 +64,10 @@ import { storedRows } from './testing/stored-rows.ts';
 // first 40 hex digits of SHA-256 over the JSON of [table, column], both in
 // ASCII lower case.
 const chunkTable = (table: string, column: string) =>
-  `"_elt_files_${createHash('sha256')
-    .update(JSON.stringify([table.toLowerCase(), column.toLowerCase()]))
-    .digest('hex')
-    .slice(0, 40)}"`;
+  `"_elt_files_${hash(
+    'sha256',
+    JSON.stringify([table.toLowerCase(), column.toLowerCase()]),
+  ).slice(0, 40)}"`;
 
 const execFile = promisify(execFileCallback);
 
@@ -1149,7 +1149,7 @@ test('Calendar rejects malformed records and preserves prior rows on native fail
       // Opening the read fails, so every copy reports it, as the run's cause.
       (error: unknown) =>
         error instanceof PipelineError &&
-        error.cause instanceof Error &&
+        Error.isError(error.cause) &&
         error.cause.name === 'CalendarUnavailableError' &&
         /full Calendar access/.test(error.cause.message) &&
         Reflect.get(Object(error.cause.cause), 'stderr') === failure.stderr &&
@@ -1164,7 +1164,7 @@ test('Calendar rejects malformed records and preserves prior rows on native fail
     run(),
     (error: unknown) =>
       error instanceof PipelineError &&
-      error.cause instanceof Error &&
+      Error.isError(error.cause) &&
       error.cause.name !== 'CalendarUnavailableError' &&
       /native EventKit failure/.test(error.cause.message) &&
       failureTypes(error).join() === 'system',
@@ -2449,8 +2449,7 @@ test(
     const stored = database
       .prepare('SELECT filename, attachmentRef FROM attachments ORDER BY rowid')
       .all();
-    const sha = (bytes: Buffer) =>
-      createHash('sha256').update(bytes).digest('hex');
+    const sha = (bytes: Buffer) => hash('sha256', bytes);
     assert.deepEqual(
       await Promise.all(
         stored.map(async ({ filename, attachmentRef }) => ({
@@ -2822,7 +2821,7 @@ test(
         ),
         (failure: unknown) =>
           failure instanceof PipelineError &&
-          failure.cause instanceof Error &&
+          Error.isError(failure.cause) &&
           message.test(failure.cause.message),
       );
     }
@@ -2857,7 +2856,7 @@ test(
         ),
         (failure: unknown) =>
           failure instanceof PipelineError &&
-          failure.cause instanceof Error &&
+          Error.isError(failure.cause) &&
           /403/.test(failure.cause.message),
       );
     }
@@ -3078,7 +3077,7 @@ test(
     const access = await store
       .collections({}, undefined)
       .catch((error: unknown) => {
-        if (error instanceof Error && error.name === 'CalendarUnavailableError')
+        if (Error.isError(error) && error.name === 'CalendarUnavailableError')
           return null;
         throw error;
       });
@@ -3155,7 +3154,7 @@ test(
     const access = await store
       .collections({}, undefined)
       .catch((error: unknown) => {
-        if (error instanceof Error && error.name === 'CalendarUnavailableError')
+        if (Error.isError(error) && error.name === 'CalendarUnavailableError')
           return null;
         throw error;
       });
@@ -3243,7 +3242,7 @@ test(
       .catch((error: unknown) => {
         if (
           error instanceof PipelineError &&
-          error.cause instanceof Error &&
+          Error.isError(error.cause) &&
           error.cause.name === 'CalendarUnavailableError'
         )
           return null;

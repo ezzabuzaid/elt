@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 
 import type postgres from 'postgres';
 
@@ -162,9 +162,7 @@ export class PlanningMeetings extends Automation<MeetingBrief> {
       const evidence = conversations.filter(({ conversation }) =>
         related.has(conversation),
       );
-      const revision = createHash('sha256')
-        .update(JSON.stringify([meeting, evidence]))
-        .digest('hex');
+      const revision = hash('sha256', JSON.stringify([meeting, evidence]));
       return {
         key: `${meeting.eventId}/${revision}`,
         // Sync timestamps describe coverage, but never change a revision on

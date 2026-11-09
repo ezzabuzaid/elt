@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -318,17 +318,17 @@ export class ChatStorageSnapshot implements Disposable {
           ...key(row),
           id: requiredNumber(row.id, 'A WhatsApp message has no row ID'),
           messageDate: instant(row.messageDate),
-          fingerprint: createHash('sha256')
-            .update(
-              JSON.stringify([
-                store,
-                this.#fileIdentity,
-                ...Object.values(row),
-                path !== null &&
-                  onDisk(messageMediaFile(this.#container, path)) !== null,
-              ]),
-            )
-            .digest('base64url'),
+          fingerprint: hash(
+            'sha256',
+            JSON.stringify([
+              store,
+              this.#fileIdentity,
+              ...Object.values(row),
+              path !== null &&
+                onDisk(messageMediaFile(this.#container, path)) !== null,
+            ]),
+            'base64url',
+          ),
         };
       });
   }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -36,10 +36,10 @@ import { AppleContactsSource } from './apple-contacts-source.ts';
 // first 40 hex digits of SHA-256 over the JSON of [table, column], both in
 // ASCII lower case.
 const chunkTable = (table: string, column: string) =>
-  `"_elt_files_${createHash('sha256')
-    .update(JSON.stringify([table.toLowerCase(), column.toLowerCase()]))
-    .digest('hex')
-    .slice(0, 40)}"`;
+  `"_elt_files_${hash(
+    'sha256',
+    JSON.stringify([table.toLowerCase(), column.toLowerCase()]),
+  ).slice(0, 40)}"`;
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -560,8 +560,7 @@ function fileBytes(path: string, table: string, file: unknown): Buffer {
   );
 }
 
-const sha256 = (bytes: Uint8Array) =>
-  createHash('sha256').update(bytes).digest('hex');
+const sha256 = (bytes: Uint8Array) => hash('sha256', bytes);
 
 function copies(source: AppleContactsSource, destination: SQLiteDestination) {
   return source.discover().then(({ streams }) =>
@@ -1346,7 +1345,7 @@ test('Contacts refuses a store it cannot read instead of reading its account as 
   // Opening the read fails, so every copy reports it, as the run's cause.
   await assert.rejects(pipeline.run(), (error: Error) => {
     assert.ok(error instanceof PipelineError, String(error));
-    assert.ok(error.cause instanceof Error);
+    assert.ok(Error.isError(error.cause));
     assert.equal(error.cause.name, 'StoreUnavailableError');
     assert.match(
       error.cause.message,

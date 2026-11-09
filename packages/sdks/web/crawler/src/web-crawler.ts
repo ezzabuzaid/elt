@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 
 import { type Got, HTTPError, RequestError, type Response } from 'got';
 import { z } from 'zod';
@@ -744,9 +744,7 @@ class CrawlRun implements Crawl {
           before,
         );
       else {
-        const digest = createHash('sha256')
-          .update(response.rawBody)
-          .digest('hex');
+        const digest = hash('sha256', response.rawBody);
         if (before !== undefined && before.last.kind === 'fetched')
           change = before.last.digest === digest ? 'unmodified' : 'modified';
         this.#visited(

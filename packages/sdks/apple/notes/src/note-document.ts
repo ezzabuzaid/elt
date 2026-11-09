@@ -23,7 +23,7 @@ const versionData = (bytes: Uint8Array): ProtobufMessage => {
   return new ProtobufMessage(data);
 };
 
-const uuid = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
+const uuid = (bytes: Uint8Array) => bytes.toHex();
 
 export type ParagraphStyle =
   | 'title'

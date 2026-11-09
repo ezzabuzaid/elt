@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import {
   chmod,
@@ -59,10 +59,10 @@ import { AppleMailSource } from './apple-mail-source.ts';
 // first 40 hex digits of SHA-256 over the JSON of [table, column], both in
 // ASCII lower case.
 const chunkTable = (table: string, column: string) =>
-  `"_elt_files_${createHash('sha256')
-    .update(JSON.stringify([table.toLowerCase(), column.toLowerCase()]))
-    .digest('hex')
-    .slice(0, 40)}"`;
+  `"_elt_files_${hash(
+    'sha256',
+    JSON.stringify([table.toLowerCase(), column.toLowerCase()]),
+  ).slice(0, 40)}"`;
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -588,8 +588,7 @@ CREATE TABLE events (ROWID INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER
 
 const xml = (value: string) =>
   `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0">${value}</plist>`;
-const digest = (value: Uint8Array) =>
-  createHash('sha256').update(value).digest('hex');
+const digest = (value: Uint8Array) => hash('sha256', value);
 const embedded =
   'From: nested@example.test\r\nSubject: nested\r\n\r\nForwarded body\r\n';
 const mime = [
@@ -878,7 +877,7 @@ function assertFailed(
   assert.deepEqual([...failed.keys()].sort(), Object.keys(expected).sort());
   for (const [stream, [name, message]] of Object.entries(expected)) {
     const error = failed.get(stream);
-    assert.ok(error instanceof Error, stream);
+    assert.ok(Error.isError(error), stream);
     assert.equal(error.name, name, stream);
     assert.match(error.message, message, stream);
   }
@@ -1567,7 +1566,7 @@ test('Mail’s store fails to open as unavailable only when its version file or 
       ),
     ),
     (error) =>
-      error instanceof Error &&
+      Error.isError(error) &&
       error.name !== 'StoreUnavailableError' &&
       /unexpected EOF/.test(error.message),
   );
@@ -1591,7 +1590,7 @@ test('Mail’s store fails to open as unavailable only when its version file or 
       writeFile(index, 'not a database'),
     ),
     (error) =>
-      error instanceof Error &&
+      Error.isError(error) &&
       error.name !== 'StoreUnavailableError' &&
       /not a database/.test(error.message),
   );
@@ -2098,8 +2097,7 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
         (x) =>
           x.copy.from === source.attachments &&
           x.failures.some(
-            (f) =>
-              f.error instanceof Error && f.error.name === 'MailSchemaError',
+            (f) => Error.isError(f.error) && f.error.name === 'MailSchemaError',
           ),
       ) &&
       failureTypes(error).join() === 'system',
@@ -2127,7 +2125,7 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
     run.run(),
     (error) =>
       error instanceof PipelineError &&
-      error.cause instanceof Error &&
+      Error.isError(error.cause) &&
       error.cause.name === 'MissingColumnsError' &&
       failureTypes(error).join() === 'system',
   );
@@ -2149,7 +2147,7 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
     missing.run(),
     (error) =>
       error instanceof PipelineError &&
-      error.cause instanceof Error &&
+      Error.isError(error.cause) &&
       error.cause.name === 'StoreUnavailableError' &&
       /^Mail's store at .*Full Disk Access/.test(error.cause.message) &&
       failureTypes(error).join() === 'config',
@@ -2435,7 +2433,7 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
     );
     images.push(
       Buffer.concat([
-        Buffer.from('89504e470d0a1a0a', 'hex'),
+        Uint8Array.fromHex('89504e470d0a1a0a'),
         chunk('IHDR', ihdr),
         chunk('IDAT', deflateSync(pixels)),
         chunk('IEND', Buffer.alloc(0)),
@@ -2575,7 +2573,7 @@ test('A MIME attachment whose extension alone passes the 255-byte file name limi
     destination.path,
     'SELECT filename, attachmentRef FROM attachments ORDER BY partId',
   );
-  const sha = (body: Buffer) => createHash('sha256').update(body).digest('hex');
+  const sha = (body: Buffer) => hash('sha256', body);
   assert.deepEqual(
     await Promise.all(
       stored.map(async ({ filename, attachmentRef }) => ({
@@ -2643,8 +2641,7 @@ test('An attachment Mail indexed before its message arrived, kept on disk under 
     destination.path,
     'SELECT filename, attachmentRef FROM attachments WHERE messageId = 2 ORDER BY partId',
   );
-  const sha = (bytes: Buffer) =>
-    createHash('sha256').update(bytes).digest('hex');
+  const sha = (bytes: Buffer) => hash('sha256', bytes);
   assert.deepEqual(
     await Promise.all(
       stored.map(async ({ filename, attachmentRef }) => ({

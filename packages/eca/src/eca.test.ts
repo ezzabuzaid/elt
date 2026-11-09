@@ -336,7 +336,7 @@ test('a condition that throws yields its failure, the other rules still yield, a
 
   assert.ok(failed.value !== undefined && 'error' in failed.value);
   assert.equal(failed.value.rule, flaky);
-  assert.ok(failed.value.error instanceof Error);
+  assert.ok(Error.isError(failed.value.error));
   assert.equal(failed.value.error.message, 'no such table: messages.mesages');
   assert.deepEqual(
     [crossed.value, retried.value],

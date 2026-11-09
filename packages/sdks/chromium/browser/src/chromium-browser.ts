@@ -108,9 +108,7 @@ export class ChromiumBrowser {
       return true;
     } catch (error) {
       // EPERM: the process lives, but under another user.
-      return (
-        error instanceof Error && 'code' in error && error.code === 'EPERM'
-      );
+      return Error.isError(error) && 'code' in error && error.code === 'EPERM';
     }
   }
 

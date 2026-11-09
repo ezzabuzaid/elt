@@ -1,4 +1,4 @@
-import { createDecipheriv, createHash } from 'node:crypto';
+import { createDecipheriv, hash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
 import { open } from '@zukhruf/sqlite-open';
@@ -109,7 +109,7 @@ function decrypt(
   } catch (cause) {
     throw failed(cause);
   }
-  const digest = createHash('sha256').update(cookie.host).digest();
+  const digest = hash('sha256', cookie.host, 'buffer');
   if (!value.subarray(0, 32).equals(digest)) throw failed();
   return value.subarray(32).toString('utf8');
 }

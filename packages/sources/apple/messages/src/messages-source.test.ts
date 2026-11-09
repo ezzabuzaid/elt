@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -44,10 +44,10 @@ import { AppleMessagesSource } from './apple-messages-source.ts';
 // first 40 hex digits of SHA-256 over the JSON of [table, column], both in
 // ASCII lower case.
 const chunkTable = (table: string, column: string) =>
-  `"_elt_files_${createHash('sha256')
-    .update(JSON.stringify([table.toLowerCase(), column.toLowerCase()]))
-    .digest('hex')
-    .slice(0, 40)}"`;
+  `"_elt_files_${hash(
+    'sha256',
+    JSON.stringify([table.toLowerCase(), column.toLowerCase()]),
+  ).slice(0, 40)}"`;
 
 // Test support shared by the Apple source packages' tests.
 
@@ -547,9 +547,8 @@ test('the document parser reads every attachment kind and throws only on unreada
     // and Vision has no pixels to decode.
     [
       'truncated.png',
-      Buffer.from(
+      Uint8Array.fromHex(
         '89504e470d0a1a0a0000000d4948445200000040000000400802000000250be689',
-        'hex',
       ),
       /Cannot read image: Vision failed/,
     ],
@@ -559,7 +558,7 @@ test('the document parser reads every attachment kind and throws only on unreada
       pipeline.run(),
       (error: unknown) =>
         error instanceof PipelineError &&
-        error.cause instanceof Error &&
+        Error.isError(error.cause) &&
         message.test(error.cause.message),
     );
     chat.prepare('DELETE FROM attachment WHERE guid = ?').run(name);
@@ -980,10 +979,10 @@ test('Messages names Full Disk Access when chat.db cannot be opened', async () =
   );
 
   await assert.rejects(opening, (error) => {
-    assert.ok(error instanceof Error);
+    assert.ok(Error.isError(error));
     assert.equal(error.name, 'StoreUnavailableError');
     assert.match(error.message, /Full Disk Access/);
-    assert.ok(error.cause instanceof Error);
+    assert.ok(Error.isError(error.cause));
     assert.equal(source.failureType(error), 'config');
     return true;
   });

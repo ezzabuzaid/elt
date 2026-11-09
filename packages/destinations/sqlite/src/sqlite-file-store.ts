@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
 import type { FileContent } from '@eltjs/elt';
@@ -46,10 +46,10 @@ export class SQLiteFileStore {
     table: SQLiteTable,
     column: Pick<SQLiteColumn, 'name'>,
   ): string {
-    const key = createHash('sha256')
-      .update(JSON.stringify([table.location, identifiers.key(column.name)]))
-      .digest('hex')
-      .slice(0, 40);
+    const key = hash(
+      'sha256',
+      JSON.stringify([table.location, identifiers.key(column.name)]),
+    ).slice(0, 40);
     return `${tablePrefix}${key}`;
   }
 

@@ -76,7 +76,7 @@ export class DocumentText extends Rule<string, string> {
           } catch (failure) {
             if (
               signal?.aborted ||
-              (failure instanceof Error && failure.name === 'AbortError')
+              (Error.isError(failure) && failure.name === 'AbortError')
             )
               return { gone: true };
             // A commit removed the copy after the refresh listed it; its rows

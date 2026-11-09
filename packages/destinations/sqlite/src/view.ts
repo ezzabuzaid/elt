@@ -58,10 +58,9 @@ export class View extends DerivedDataset<SQLiteTable> {
     try {
       database.prepare(this.#view.query);
     } catch (error) {
-      const missing =
-        error instanceof Error
-          ? /^no such table: (?:main\.)?(.+)$/.exec(error.message)?.[1]
-          : undefined;
+      const missing = Error.isError(error)
+        ? /^no such table: (?:main\.)?(.+)$/.exec(error.message)?.[1]
+        : undefined;
       const missingName = missing?.toLowerCase();
       if (
         missingName !== undefined &&

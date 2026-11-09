@@ -350,7 +350,7 @@ function uuid(value: unknown): string | null {
   if (value === null) return null;
   if (!(value instanceof Uint8Array) || value.length !== 16)
     throw new TypeError('A call UUID is not 16 bytes');
-  const hex = Buffer.from(value).toString('hex');
+  const hex = value.toHex();
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`.toUpperCase();
 }
 

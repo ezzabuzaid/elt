@@ -43,12 +43,10 @@ const packedServers = new Map([
 function packedJid(bytes: Uint8Array): string {
   const [first] = bytes;
   const server = first === undefined ? undefined : packedServers.get(first);
-  const digits = Buffer.from(bytes.subarray(1))
-    .toString('hex')
-    .replace(/f$/, '');
+  const digits = bytes.subarray(1).toHex().replace(/f$/, '');
   if (server === undefined || !/^\d+$/.test(digits))
     throw new TypeError(
-      `A WhatsApp receipt names a recipient this reader does not read (${Buffer.from(bytes).toString('hex')})`,
+      `A WhatsApp receipt names a recipient this reader does not read (${bytes.toHex()})`,
     );
   return `${digits}@${server}`;
 }

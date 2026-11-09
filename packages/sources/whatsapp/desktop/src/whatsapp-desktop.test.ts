@@ -280,7 +280,7 @@ function protobuf(fields: ProtobufFields): Uint8Array {
 // user part in binary-coded decimal padded with an F nibble.
 function packedJid(server: number, user: string): Uint8Array {
   const digits = user.length % 2 === 0 ? user : `${user}f`;
-  return Uint8Array.from([server, ...Buffer.from(digits, 'hex')]);
+  return Uint8Array.from([server, ...Uint8Array.fromHex(digits)]);
 }
 
 class Uid {
@@ -2340,7 +2340,7 @@ test('a store lacking a column or table this reader reads fails only that storeâ
     const broken = await failedAfter((whatsapp) => whatsapp.exec(store, sql));
     assert.deepEqual(broken.streams, streamsOf[store], store);
     for (const error of broken.errors) {
-      assert.ok(error instanceof Error, store);
+      assert.ok(Error.isError(error), store);
       assert.equal(error.name, name, store);
       assert.match(error.message, named);
     }

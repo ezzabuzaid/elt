@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 
-function hash(name: string): string {
-  return createHash('sha256').update(name).digest('hex').slice(0, 8);
+function shortHash(name: string): string {
+  return hash('sha256', name).slice(0, 8);
 }
 
 // Airbyte's rule: decomposed marks dropped, every run of whitespace and every
@@ -53,12 +53,12 @@ export abstract class Identifiers {
     const clean = sanitize(name);
     return clean === name
       ? this.#fit(name, name)
-      : this.#fit(`${clean}_${hash(name)}`, name);
+      : this.#fit(`${clean}_${shortHash(name)}`, name);
   }
 
   // A sanitized name is ASCII, so cutting it by bytes keeps whole characters.
   #fit(name: string, original: string): string {
     if (Buffer.byteLength(name) <= this.maxBytes) return name;
-    return `${name.slice(0, this.maxBytes - 9)}_${hash(original)}`;
+    return `${name.slice(0, this.maxBytes - 9)}_${shortHash(original)}`;
   }
 }

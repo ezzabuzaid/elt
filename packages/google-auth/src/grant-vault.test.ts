@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { test } from 'node:test';
 
 import type { GoogleDataGrantCredential } from './credential.ts';
@@ -21,7 +21,7 @@ function credential(accountId: string): GoogleDataGrantCredential {
 }
 
 function sha256(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
+  return hash('sha256', value);
 }
 
 function mapStore() {

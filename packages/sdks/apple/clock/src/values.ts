@@ -47,7 +47,7 @@ export function instant(value: unknown): string | null {
 export function uuid(value: unknown): string {
   if (!(value instanceof Uint8Array) || value.length !== 16)
     throw new TypeError('Clock UUID is not 16 bytes');
-  const hex = Buffer.from(value).toString('hex').toUpperCase();
+  const hex = value.toHex().toUpperCase();
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 export function bytes(value: unknown): string | null {

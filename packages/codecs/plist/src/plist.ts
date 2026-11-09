@@ -235,7 +235,7 @@ function decodeClass(
       const bytes = value['NS.uuidbytes'];
       if (!(bytes instanceof Uint8Array))
         throw new TypeError('NSUUID without bytes');
-      const hex = Buffer.from(bytes).toString('hex');
+      const hex = bytes.toHex();
       return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`.toUpperCase();
     }
   }

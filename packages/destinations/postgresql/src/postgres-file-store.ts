@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { hash, randomUUID } from 'node:crypto';
 
 import type postgres from 'postgres';
 
@@ -48,10 +48,7 @@ export class PostgresFileStore {
   }
 
   static #key(table: PostgresTable, column: string): string {
-    return createHash('sha256')
-      .update(JSON.stringify([table.name, column]))
-      .digest('hex')
-      .slice(0, 40);
+    return hash('sha256', JSON.stringify([table.name, column])).slice(0, 40);
   }
 
   async stage(sql: postgres.Sql): Promise<void> {

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { mkdir, mkdtempDisposable, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -61,7 +61,7 @@ ${JSON.stringify(brief)}\n`);
       );
     const path = join(
       this.#directory,
-      `${createHash('sha256').update(brief.meeting.eventId).digest('hex')}.md`,
+      `${hash('sha256', brief.meeting.eventId)}.md`,
     );
     await rename(output, path);
     return path;

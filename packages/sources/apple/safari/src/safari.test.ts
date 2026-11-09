@@ -2128,7 +2128,7 @@ test('Safari names Full Disk Access for an unreadable store, refuses an unknown 
     (message) => message instanceof StreamStatus && message.status === 'FAILED',
   );
   assert.ok(status instanceof StreamStatus);
-  assert.ok(status.error instanceof Error);
+  assert.ok(Error.isError(status.error));
   assert.equal(status.error.name, 'MissingColumnsError');
 });
 

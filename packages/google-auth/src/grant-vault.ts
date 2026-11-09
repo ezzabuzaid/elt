@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 
 import type {
   GoogleActiveGrant,
@@ -74,6 +74,6 @@ export class GoogleGrantVault {
   }
 
   #digest(value: string): string {
-    return createHash('sha256').update(value).digest('hex');
+    return hash('sha256', value);
   }
 }

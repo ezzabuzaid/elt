@@ -1501,7 +1501,7 @@ test('Activity reads this Mac’s activity into SQLite', async (t) => {
     )
   )
     return t.skip('no Full Disk Access to Biome and knowledgeC');
-  assert.ok(!(outcome instanceof Error), String(outcome));
+  assert.ok(!Error.isError(outcome), String(outcome));
 
   // Every Mac has a device list naming itself.
   assert.deepEqual(

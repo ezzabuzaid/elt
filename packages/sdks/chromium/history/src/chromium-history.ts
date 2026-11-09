@@ -294,7 +294,7 @@ class StoredHistory implements ChromiumHistory {
         interruptReason: integer(row.interrupt_reason),
         hash:
           row.hash instanceof Uint8Array && row.hash.length > 0
-            ? Buffer.from(row.hash).toString('hex')
+            ? row.hash.toHex()
             : null,
         opened: flag(row.opened),
         lastAccessedAt: instant(row.last_access_time),

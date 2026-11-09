@@ -1110,7 +1110,7 @@ test('a second run with no change upstream writes nothing and downloads no image
   );
   const run = await pipeline(source, dir.path);
   const first = counts(await run.run());
-  const downloaded = [...wire.downloads].sort();
+  const downloaded = wire.downloads.toSorted();
   wire.downloads.length = 0;
   const { streams } = await source.discover();
 

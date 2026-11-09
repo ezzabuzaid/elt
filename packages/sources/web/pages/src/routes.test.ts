@@ -265,7 +265,7 @@ test('while the crawl of an input goes on, the routes of each checkpoint reach t
         .all()
         .map((row) => ({ ...row }));
     } catch (error) {
-      if (error instanceof Error && /^no such table/.test(error.message))
+      if (Error.isError(error) && /^no such table/.test(error.message))
         return [];
       throw error;
     }

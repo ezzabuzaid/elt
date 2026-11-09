@@ -330,7 +330,7 @@ export class PostgresColumn {
       if (typeof value !== 'string' || !type.accepts(value)) return undefined;
       switch (type.name) {
         case 'base64':
-          return `\\x${Buffer.from(value, 'base64').toString('hex')}`;
+          return `\\x${Buffer.from(value, 'base64').toHex()}`;
         case 'date':
         case 'date-time':
         case 'date-time-local':
@@ -372,8 +372,7 @@ export class PostgresColumn {
             /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)
           )
             return value;
-        } else if (value instanceof Uint8Array)
-          return `\\x${Buffer.from(value).toString('hex')}`;
+        } else if (value instanceof Uint8Array) return `\\x${value.toHex()}`;
         break;
       // An object is only an array's item, which #element encodes.
       case 'object':

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
+import { hash, randomUUID } from 'node:crypto';
 import { type Socket, connect, createServer } from 'node:net';
 import { type TestContext, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -388,8 +388,7 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
     (client) => client.end(),
   );
   const history = new PostgresSyncHistory({ url: warehouse.connectionString });
-  const sha8 = (name: string) =>
-    createHash('sha256').update(name).digest('hex').slice(0, 8);
+  const sha8 = (name: string) => hash('sha256', name).slice(0, 8);
   // A name past 63 bytes keeps its first 54, `_` and a hash of the name.
   const fitted = (name: string) => `${name.slice(0, 54)}_${sha8(name)}`;
   const part = 'k'.repeat(100);
@@ -1744,13 +1743,12 @@ test(
       new SqlServerDatabase(reader.connectionString),
     );
     await using warehouse = await postgresServer.database();
-    const watch = watcher(t, source, warehouse.connectionString);
-    try {
+    {
+      await using watch = watcher(t, source, warehouse.connectionString);
+
       assert.deepEqual(await watch.first(), ['dbo.plain']);
       // The pass closed its own session, so this one is the watch's.
       assert.ok(Number(await sessionsOf(admin, reader.login)) > 0);
-    } finally {
-      await watch[Symbol.asyncDispose]();
     }
 
     // An idle connection that nothing closed stays 30 s.
