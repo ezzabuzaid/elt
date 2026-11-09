@@ -2,5 +2,5 @@
   "name": "source-web-pages",
   "sourceRoot": "packages/sources/web/pages/src",
   "projectType": "library",
-  "tags": ["layer:island", "test:docker"]
+  "tags": ["layer:island"]
 }
