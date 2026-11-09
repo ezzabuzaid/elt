@@ -2,6 +2,7 @@ import { Coverage } from '@zukhruf/snapshot-differential';
 
 import {
   Catalog,
+  type ChangeSignal,
   type CopyConfiguration,
   type ExtractionCoverage,
   Source,
@@ -136,7 +137,7 @@ export class TeamsSource extends Source<TeamsScan> {
   // The web client writes its caches as it works, so a write wakes every
   // selected stream; the snapshot diff writes nothing for those that did not
   // change.
-  override changeSignals(streams: readonly Stream[]) {
+  override changeSignals(streams: readonly Stream[]): Iterable<ChangeSignal> {
     return [
       {
         gauge: this.#store.version(),

@@ -2,6 +2,7 @@ import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import {
   Catalog,
+  type ChangeSignal,
   type CopyConfiguration,
   type ExtractionCoverage,
   Source,
@@ -90,7 +91,7 @@ export class ArcDesktopSource extends Source<SidebarRead> {
 
   // One file, so a write wakes every stream; the snapshot diff writes
   // nothing when no record changed.
-  override changeSignals(streams: readonly Stream[]) {
+  override changeSignals(streams: readonly Stream[]): Iterable<ChangeSignal> {
     return [
       {
         gauge: this.#sidebar.version(),

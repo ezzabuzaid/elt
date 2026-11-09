@@ -2,6 +2,7 @@ import { Coverage } from '@zukhruf/snapshot-differential';
 
 import {
   Catalog,
+  type ChangeSignal,
   type CopyConfiguration,
   type ExtractionCoverage,
   Source,
@@ -147,7 +148,7 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
   // The app saves one record for all of a workspace, so a save wakes every
   // selected stream; the snapshot diff writes nothing for those that did not
   // change.
-  override changeSignals(streams: readonly Stream[]) {
+  override changeSignals(streams: readonly Stream[]): Iterable<ChangeSignal> {
     return [
       {
         gauge: this.#store.version(),

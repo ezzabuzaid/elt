@@ -1,6 +1,7 @@
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import type {
+  ChangeSignal,
   CopyConfiguration,
   ExtractionCoverage,
   SourceMessage,
@@ -83,7 +84,7 @@ export class AppleNotesSource extends Source<NotesScan> {
     return (await notesRunning()) ? null : this.#store.lastWrite();
   }
 
-  override changeSignals(streams: readonly Stream[]) {
+  override changeSignals(streams: readonly Stream[]): Iterable<ChangeSignal> {
     return [
       {
         gauge: this.#store.version(),

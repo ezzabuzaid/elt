@@ -1,5 +1,6 @@
 import {
   Catalog,
+  type ChangeSignal,
   type CopyConfiguration,
   type ExtractionCoverage,
   Source,
@@ -127,7 +128,7 @@ export class DiaDesktopSource extends Source<AsyncDisposableStack> {
 
   // One file, so a write wakes the one stream; the snapshot diff writes
   // nothing when no tab changed.
-  override changeSignals(streams: readonly Stream[]) {
+  override changeSignals(streams: readonly Stream[]): Iterable<ChangeSignal> {
     return [
       {
         gauge: this.#archive.version(),

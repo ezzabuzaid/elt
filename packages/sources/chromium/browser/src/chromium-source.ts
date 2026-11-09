@@ -2,6 +2,7 @@ import { join } from 'node:path';
 
 import {
   Catalog,
+  type ChangeSignal,
   type CopyConfiguration,
   type ExtractionCoverage,
   type PipelineClock,
@@ -169,7 +170,7 @@ export class ChromiumSource extends Source<ChromiumScan> {
   // Each store the streams read reports its own changes: a commit to any
   // History, a rewrite of any Bookmarks or of Local State, and a profile
   // that gains or loses one of them.
-  override changeSignals(streams: readonly Stream[]) {
+  override changeSignals(streams: readonly Stream[]): Iterable<ChangeSignal> {
     const gauges = {
       history: () => new HistoryGauge(() => this.#files('history')),
       bookmarks: () =>

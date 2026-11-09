@@ -1,5 +1,6 @@
 import {
   Catalog,
+  type ChangeSignal,
   type CopyConfiguration,
   type ExtractionCoverage,
   type PipelineClock,
@@ -196,7 +197,7 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
   }
 
   // Each store the streams read reports its own commits.
-  override changeSignals(streams: readonly Stream[]) {
+  override changeSignals(streams: readonly Stream[]): Iterable<ChangeSignal> {
     return Map.groupBy(streams, (stream) => readerOf(stream).store)
       .entries()
       .map(([store, watched]) => ({

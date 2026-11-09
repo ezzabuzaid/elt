@@ -1,6 +1,7 @@
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import type {
+  ChangeSignal,
   CopyConfiguration,
   ExtractionCoverage,
   SourceMessage,
@@ -109,7 +110,7 @@ export class AppleMessagesSource extends Source<MessagesScan> {
     return null;
   }
 
-  override changeSignals(streams: readonly Stream[]) {
+  override changeSignals(streams: readonly Stream[]): Iterable<ChangeSignal> {
     return [
       {
         gauge: this.#store.version(),

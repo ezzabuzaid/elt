@@ -2,6 +2,7 @@ import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import {
   Catalog,
+  type ChangeSignal,
   type CopyConfiguration,
   type ExtractionCoverage,
   Source,
@@ -85,7 +86,7 @@ export class AppleWalletSource extends Source<WalletScan> {
   // archived or removed, and data_version cannot say which table a commit
   // touched, so each commit wakes every selected stream; the snapshot diff
   // writes nothing for the ones that did not change.
-  override changeSignals(streams: readonly Stream[]) {
+  override changeSignals(streams: readonly Stream[]): Iterable<ChangeSignal> {
     return [
       {
         gauge: this.#store.version(),
