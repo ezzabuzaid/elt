@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 const root = import.meta.dirname;
 const dist = join(root, 'dist');
+// Cargo's build cache is 362 MB, and dist holds what the package exports.
+const target = join(root, 'node_modules/.cache/cargo');
 mkdirSync(dist, { recursive: true });
 execFileSync(
   'cargo',
@@ -14,9 +16,11 @@ execFileSync(
     '--manifest-path',
     join(root, 'native/Cargo.toml'),
     '--target-dir',
-    join(dist, 'native'),
+    target,
   ],
   { stdio: 'inherit' },
 );
-const release = join(dist, 'native/release');
-copyFileSync(join(release, 'transcribe-local'), join(dist, 'transcribe-local'));
+copyFileSync(
+  join(target, 'release/transcribe-local'),
+  join(dist, 'transcribe-local'),
+);
