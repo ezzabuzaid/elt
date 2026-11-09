@@ -40,16 +40,13 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@eltjs/elt": "^0.1.0"
+    "@eltjs/elt": "^0.1.0",
+    "ai": "^7.0.165"
   },
   "devDependencies": {
     "@ai-sdk/provider": "^4.0.37",
     "@eltjs/elt-sqlite": "^0.1.0",
     "@zukhruf/sqlite-open": "^0.8.10",
-    "@zukhruf/testing": "^0.8.10",
-    "ai": "^7.0.165"
-  },
-  "peerDependencies": {
-    "ai": "^7.0.148"
+    "@zukhruf/testing": "^0.8.10"
   }
 }
