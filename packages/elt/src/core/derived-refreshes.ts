@@ -1,7 +1,11 @@
 import { Latch } from '@zukhruf/async';
 
 import type { Connection } from './connection.ts';
-import type { DerivedDataset, RefreshTrigger } from './derived-dataset.ts';
+import {
+  type DerivedDataset,
+  DerivedDatasetError,
+  type RefreshTrigger,
+} from './derived-dataset.ts';
 import type { Target as DestinationTarget } from './target.ts';
 
 // No refresh runs.
@@ -50,7 +54,7 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
   readonly #datasets: readonly DerivedDataset<Target>[];
   readonly #connections: readonly Connection<Target>[];
   readonly #signal: AbortSignal | undefined;
-  readonly #stop: (error: unknown) => void;
+  readonly #stop: () => void;
   #state: Idle | Running | Queued = new Idle();
   // Each dataset's keys that commit refreshes tried since the last pass
   // refresh; the memory of the passes that run, which ends with them.
@@ -61,7 +65,7 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
     datasets: readonly DerivedDataset<Target>[],
     connections: readonly Connection<Target>[],
     signal: AbortSignal | undefined,
-    stop: (error: unknown) => void,
+    stop: () => void,
   ) {
     this.#datasets = datasets;
     this.#connections = connections;
@@ -106,12 +110,18 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
     for (const [index, dataset] of this.#datasets.entries()) {
       const tried = this.#tried.get(dataset) ?? new Set<string>();
       this.#tried.set(dataset, tried);
-      await dataset.refresh({
-        connections: this.#connections,
-        earlier: this.#datasets.slice(0, index),
-        signal: this.#signal,
-        trigger: { kind, tried },
-      });
+      try {
+        await dataset.refresh({
+          connections: this.#connections,
+          earlier: this.#datasets.slice(0, index),
+          signal: this.#signal,
+          trigger: { kind, tried },
+        });
+      } catch (error) {
+        // A stop is not the dataset's failure.
+        if (this.#signal?.aborted === true) throw error;
+        throw new DerivedDatasetError(dataset.name, error);
+      }
     }
     // The passes it follows ended, and their memory with them.
     if (kind === 'pass') this.#tried.clear();
@@ -129,7 +139,7 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
     } catch (error) {
       if (this.#signal?.aborted !== true) {
         this.#health = new Failed(error);
-        this.#stop(error);
+        this.#stop();
       }
     } finally {
       this.#state = new Idle();

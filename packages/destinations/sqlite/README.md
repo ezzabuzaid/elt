@@ -197,7 +197,8 @@ At each refresh, the computed dataset compares the inputs with the output rows. 
 ## When something fails
 
 - **A rule failure** gives an output row with the status `failed` and the reason in `error`. The run continues, and the refresh after the next pass tries the input again.
-- **A dataset failure**, for example a query that SQLite refuses, rejects the run, or it stops the watch.
+- **A dataset failure**, for example a query that SQLite refuses, rejects the run, or it stops the watch, with a `DerivedDatasetError` that names the dataset.
+- **A table that is gone**, for example one that a person dropped by hand, is no failure. A computed dataset that reads it waits and keeps its output rows. When the copy loads the table again, the dataset asks the rule only for inputs that changed.
 - **A copy that failed** keeps its last committed rows. The derived datasets read those rows.
 
 ## Recipes

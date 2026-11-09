@@ -1,5 +1,5 @@
 import { hash } from 'node:crypto';
-import type { SQLInputValue } from 'node:sqlite';
+import type { SQLInputValue, SQLOutputValue } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { open } from '@zukhruf/sqlite-open';
@@ -137,6 +137,7 @@ export class ComputedDataset<
     readonly trigger: RefreshTrigger;
   }): Promise<void> {
     const inputs = this.#inputs(connections);
+    if (inputs === null) return;
     using database = openDestination(this.#into.path);
     const key = this.#rule.key.name;
     const stored = transaction(
@@ -284,7 +285,13 @@ export class ComputedDataset<
   // Each input by key, from the rows of each relation of from that exists
   // yet: what the copies loaded, or what a view before this dataset gives. A
   // key read twice keeps its first input.
-  #inputs(connections: readonly Connection<SQLiteTable>[]): Map<string, Input> {
+  // null while a relation reads a table that is gone, such as one a person
+  // dropped by hand: its copy loads it again, and the dataset waits with what it
+  // made, as a view waits. Read as no rows, it would delete every output, and the
+  // reload would pay the rule for each again.
+  #inputs(
+    connections: readonly Connection<SQLiteTable>[],
+  ): Map<string, Input> | null {
     const inputs = new Map<string, Input>();
     for (const target of this.#from) {
       const path =
@@ -303,9 +310,15 @@ export class ComputedDataset<
           .get(relation) === undefined
       )
         continue;
-      for (const row of database
-        .prepare(`SELECT * FROM ${quote(relation)}`)
-        .all()) {
+      let rows: Record<string, SQLOutputValue>[];
+      try {
+        rows = database.prepare(`SELECT * FROM ${quote(relation)}`).all();
+      } catch (error) {
+        if (Error.isError(error) && error.message.startsWith('no such table: '))
+          return null;
+        throw error;
+      }
+      for (const row of rows) {
         const read = this.#rule.read(row);
         if (read !== null && !inputs.has(read.key))
           inputs.set(read.key, read.input);

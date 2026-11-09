@@ -1,3 +1,4 @@
+import { errorMessage } from '../state/sync-history.ts';
 import type { Connection } from './connection.ts';
 import type { Target as DestinationTarget } from './target.ts';
 
@@ -11,6 +12,21 @@ import type { Target as DestinationTarget } from './target.ts';
 export type RefreshTrigger =
   | { readonly kind: 'commit'; readonly tried: Set<string> }
   | { readonly kind: 'pass'; readonly tried: ReadonlySet<string> };
+
+// A dataset's own failure, such as SQL its store refuses, named for whoever
+// reads it in a log: the cause alone, such as "no such column: x", does not say
+// which dataset of the pipeline failed.
+export class DerivedDatasetError extends Error {
+  override name = 'DerivedDatasetError';
+  readonly dataset: string;
+
+  constructor(dataset: string, cause: unknown) {
+    super(`Derived dataset ${dataset} failed: ${errorMessage(cause)}`, {
+      cause,
+    });
+    this.dataset = dataset;
+  }
+}
 
 // Data a pipeline keeps in step with what its copies load, and can always
 // rebuild from it (Kleppmann's derived data; Estuary's derivations), such as a

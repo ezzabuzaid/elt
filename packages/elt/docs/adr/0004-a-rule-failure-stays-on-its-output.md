@@ -4,7 +4,7 @@ A rule can fail on one input. For example, a stored PDF can be damaged. On 2026-
 
 Thus a rule failure is the output of that input. The computed dataset keeps it in the row of the key, with the status `failed` and the reason. The load and the run continue. The next refresh tries that input again. pgai keeps the failures of its vectorizer in the same way, in the table `ai.vectorizer_errors`.
 
-A dataset failure is different. It is a failure of the derived dataset itself, for example SQL that its store refuses. No sync history records it, so it rejects the run as itself, or it stops the watch.
+A dataset failure is different. It is a failure of the derived dataset itself, for example SQL that its store refuses. No sync history records it, so it rejects the run, or it stops the watch, with a `DerivedDatasetError` that names the dataset and keeps the error of the store as its cause.
 
 ## Considered Options
 

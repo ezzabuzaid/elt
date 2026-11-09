@@ -227,7 +227,9 @@ export class Pipeline<Target extends DestinationTarget> {
       this.derived,
       this.connections,
       watching,
-      (error) => controller.abort(error),
+      // With no reason: the passes it stops were not refused by this failure,
+      // and no sync history records a dataset's failure (ADR 0004).
+      () => controller.abort(),
     );
     const passes = interleave(
       this.connections

@@ -20,6 +20,7 @@ import {
   CopyProgress,
   type DeclaredCopy,
   DerivedDataset,
+  DerivedDatasetError,
   Destination,
   DocumentParser,
   type FailureType,
@@ -2900,7 +2901,9 @@ test('under a watch, a derived dataset whose refresh fails stops the watch, whic
     'the watch to stop on the failed refresh',
   );
 
-  assert.equal(outcome, refused);
+  assert.ok(outcome instanceof DerivedDatasetError, String(outcome));
+  assert.equal(outcome.dataset, 'refused');
+  assert.equal(outcome.cause, refused);
 });
 
 test('a stopped watch ends only once the derived refresh it started has ended', async () => {

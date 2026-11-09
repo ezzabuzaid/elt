@@ -12,7 +12,11 @@ export {
   type DestinationSyncMode,
   type Load,
 } from './core/destination.ts';
-export { DerivedDataset, type RefreshTrigger } from './core/derived-dataset.ts';
+export {
+  DerivedDataset,
+  DerivedDatasetError,
+  type RefreshTrigger,
+} from './core/derived-dataset.ts';
 export { DocumentParser } from './core/document-parser.ts';
 export { DocumentText } from './core/document-text.ts';
 export {

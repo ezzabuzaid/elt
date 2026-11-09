@@ -1058,7 +1058,7 @@ Two rules exist:
 ## When a derived dataset fails
 
 - **A rule failure** is the output of its input: the status `failed` and the reason. The load and the run continue, and the next refresh tries the input again. See [ADR 0004](./docs/adr/0004-a-rule-failure-stays-on-its-output.md).
-- **A dataset failure**, for example SQL that SQLite refuses, rejects the run as itself, or it stops the watch.
+- **A dataset failure**, for example SQL that SQLite refuses, rejects the run, or it stops the watch, with a `DerivedDatasetError`. Its `dataset` names the dataset, and its `cause` is the error of the store. The passes that a stopped watch ended are `cancelled` in the sync history, and their records do not name the failure.
 - **A copy that failed** keeps its last committed rows. The derived data of those rows stays as it was.
 
 ## The same concepts in other systems
