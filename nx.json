@@ -36,12 +36,6 @@
     "projects": ["tag:npm:public"],
     "conventionalCommits": {
       "types": {
-        "chore": {
-          "semverBump": "none",
-          "changelog": {
-            "hidden": true
-          }
-        },
         "refactor": {
           "semverBump": "patch"
         }
