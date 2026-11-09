@@ -1,5 +1,6 @@
 import nx from '@nx/eslint-plugin';
 import zukhruf from '@zukhruf/eslint';
+import modernNode from '@zukhruf/eslint/modern-node';
 import island, {
   islandConstraint,
   manifest,
@@ -40,6 +41,26 @@ export default defineConfig(
         { ignoredFiles: ['{projectRoot}/frontend/vite.config.mts'] },
       ],
     },
+  },
+  {
+    // Code that runs in a browser stays out: MDN marks Error.isError "Limited
+    // availability", so a fix there can throw. The frontend also imports
+    // contract.ts at run time, so Vite bundles that file too.
+    ignores: ['apps/web/frontend/src/**', 'apps/web/src/contract.ts'],
+    plugins: { 'modern-node': modernNode },
+    extends: ['modern-node/recommended'],
+  },
+  {
+    // These published packages declare engines.node >=24, and Node 24 has no
+    // Uint8Array.prototype.toHex.
+    files: [
+      'packages/elt/**',
+      'packages/destinations/sqlite/**',
+      'packages/embedding/**',
+      'packages/sdks/microsoft/sql-server/**',
+      'packages/sources/microsoft/sql-server/**',
+    ],
+    rules: { 'unicorn/prefer-uint8array-hex': 'off' },
   },
   {
     files: ['**/*.ts', '**/*.js'],
