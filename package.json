@@ -47,5 +47,11 @@
     "cacheable-request": {
       "keyv": "6.1.0"
     }
+  },
+  "allowScripts": {
+    "better-sqlite3": false,
+    "fsevents": false,
+    "nx": false,
+    "unrs-resolver": false
   }
 }
