@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 
+import { type TimerId, createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
@@ -20,11 +22,62 @@ import { WebStream } from './web-stream.ts';
 
 // Each input of a web source is its own crawl; the origins they ask share one record.
 
+// The clock of the runs, which the test moves: the waits of an origin take no
+// real time, and the clock moves by the length of each wait, also on a busy
+// machine. A real timer waits whole milliseconds and at least one, so a wait
+// here lasts its length rounded up; a fake timer shorter than a millisecond
+// would end at once, and the crawl would wait for the rest again and again.
+function clock(now: number) {
+  const fake = createClock(now);
+  const timers = new Map<object, TimerId>();
+  return {
+    fake,
+    Date: fake.Date,
+    performance: fake.performance,
+    setTimeout: (callback: () => void, ms: number) => {
+      const timer = {};
+      timers.set(
+        timer,
+        fake.setTimeout(() => {
+          timers.delete(timer);
+          callback();
+        }, Math.ceil(ms)),
+      );
+      return timer;
+    },
+    clearTimeout: (timer: unknown) => {
+      if (!(timer instanceof Object)) return;
+      fake.clearTimeout(timers.get(timer));
+      timers.delete(timer);
+    },
+  };
+}
+
+type Clock = ReturnType<typeof clock>;
+
+// Whether the promise settled in one turn of the event loop; a rejection throws.
+function settled(promise: Promise<unknown>) {
+  return Promise.race([promise.then(() => true), setImmediate(false)]);
+}
+
+// One run to its end. The run waits only for the delays of origins, one at a
+// time, so a pending timer is such a wait, which ends at once with the clock
+// moved by its length.
+async function ran(run: Promise<unknown>, time: Clock) {
+  while (!(await settled(run)))
+    if (time.fake.countTimers() > 0) time.fake.next();
+}
+
 // Every web stream of the source, copied incrementally into SQLite.
-async function pipeline(source: WebSource, path: string, checkpoints: string) {
+async function pipeline(
+  source: WebSource,
+  path: string,
+  checkpoints: string,
+  time: Clock,
+) {
   const destination = new SQLiteDestination({ path });
   return new Pipeline({
-    clock: globalThis,
+    clock: time,
     history: new SQLiteSyncHistory(),
     connections: [
       new Connection({
@@ -64,11 +117,12 @@ const article = (path: string) =>
   `<html><head><title>${path}</title></head><body><article><p>The report at ${path} has enough words to read as an article of its own.</p></article></body></html>`;
 
 test('two inputs on one origin share its robots.txt and its delay', async () => {
+  const time = clock(0);
   await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: { path: string; at: number }[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     const path = request.url ?? '/';
-    requests.push({ path, at: performance.now() });
+    requests.push({ path, at: time.performance.now() });
     if (path === '/robots.txt')
       response.writeHead(200, { 'content-type': 'text/plain' }).end('');
     else if (path === '/a.xml' || path === '/b.xml')
@@ -94,9 +148,10 @@ test('two inputs on one origin share its robots.txt and its delay', async () => 
     }),
     database.path,
     checkpoints.path,
+    time,
   );
 
-  await ingestion.run();
+  await ran(ingestion.run(), time);
 
   assert.deepEqual(
     requests.map(({ path }) => path),
@@ -105,10 +160,11 @@ test('two inputs on one origin share its robots.txt and its delay', async () => 
   // The second input's first request waits the origin's delay after the first input's last one.
   const last = requests.find(({ path }) => path === '/a')?.at ?? Number.NaN;
   const next = requests.find(({ path }) => path === '/b.xml')?.at ?? Number.NaN;
-  assert.ok(next - last >= 990, `/b.xml started ${next - last} ms after /a`);
+  assert.equal(next - last, 1000);
 });
 
 test("a 429 to one input holds another input's requests to that origin", async () => {
+  const time = clock(0);
   await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
@@ -140,24 +196,27 @@ test("a 429 to one input holds another input's requests to that origin", async (
     }),
     database.path,
     checkpoints.path,
+    time,
   );
 
-  await ingestion.run().catch(() => undefined);
+  await ran(
+    ingestion.run().catch(() => undefined),
+    time,
+  );
 
   // The second input asks nothing of the blocked origin, not even its sitemap.
   assert.deepEqual(requests, ['/robots.txt', '/a.xml', '/a']);
 });
 
-test('a block and a slowdown outlive the source that met them', async (t) => {
-  // A block ends by the clock; the test moves Date forward past it.
-  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+test('a block and a slowdown outlive the source that met them', async () => {
+  const time = clock(0);
   await using cache = await new TemporaryFiles().directory('web-cache-');
   const cachePath = join(cache.path, 'web-http.sqlite');
   const requests: { path: string; at: number }[] = [];
   let blocking = true;
   await using upstream = await new HttpServer().start((request, response) => {
     const path = request.url ?? '/';
-    requests.push({ path, at: performance.now() });
+    requests.push({ path, at: time.performance.now() });
     if (path === '/robots.txt') response.writeHead(404).end();
     else if (path === '/blocked.xml')
       response
@@ -178,25 +237,30 @@ test('a block and a slowdown outlive the source that met them', async (t) => {
   await using checkpoints = await new Sqlite().database();
   // Each run is a new source, as a process that starts again makes one.
   const run = async (input: string) =>
-    (
-      await pipeline(
-        new WebSource({
-          cachePath,
-          streams: [{ stream: articles(), inputs: [input] }],
-        }),
-        database.path,
-        checkpoints.path,
+    ran(
+      (
+        await pipeline(
+          new WebSource({
+            cachePath,
+            streams: [{ stream: articles(), inputs: [input] }],
+          }),
+          database.path,
+          checkpoints.path,
+          time,
+        )
       )
-    )
-      .run()
-      .catch(() => undefined);
+        .run()
+        .catch(() => undefined),
+      time,
+    );
 
   await run(`${upstream.origin}/blocked.xml`);
   requests.length = 0;
   await run(`${upstream.origin}/blocked.xml`);
   const whileBlocked = requests.splice(0).map(({ path }) => path);
   blocking = false;
-  t.mock.timers.setTime(Date.now() + 3_601_000);
+  // A block ends by the clock, so an hour and a second pass.
+  time.fake.tick(3_601_000);
   await run(`${upstream.origin}/slow.xml`);
 
   // The block of an hour outlived the first source, so the second asked nothing.
@@ -208,18 +272,16 @@ test('a block and a slowdown outlive the source that met them', async (t) => {
     ['/slow.xml', '/page'],
   );
   const [sitemapAt = 0, pageAt = 0] = requests.map(({ at }) => at);
-  assert.ok(
-    pageAt - sitemapAt >= 1880,
-    `/page waited ${pageAt - sitemapAt} ms`,
-  );
+  assert.equal(pageAt - sitemapAt, 1900);
 });
 
 test("an article's extra requests pass the robots.txt and the delay of their origin", async () => {
+  const time = clock(0);
   await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: { path: string; at: number }[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     const path = request.url ?? '/';
-    requests.push({ path, at: performance.now() });
+    requests.push({ path, at: time.performance.now() });
     if (path === '/robots.txt')
       response
         .writeHead(200, { 'content-type': 'text/plain' })
@@ -251,9 +313,10 @@ test("an article's extra requests pass the robots.txt and the delay of their ori
     }),
     database.path,
     checkpoints.path,
+    time,
   );
 
-  await ingestion.run();
+  await ran(ingestion.run(), time);
 
   const paths = requests.map(({ path }) => path);
   // robots.txt disallows the Markdown alternate of /private, so it is not requested.
@@ -263,8 +326,5 @@ test("an article's extra requests pass the robots.txt and the delay of their ori
     requests.find(({ path }) => path === '/public')?.at ?? Number.NaN;
   const alternate =
     requests.find(({ path }) => path === '/public.md')?.at ?? Number.NaN;
-  assert.ok(
-    alternate - page >= 990,
-    `/public.md started ${alternate - page} ms after /public`,
-  );
+  assert.equal(alternate - page, 1000);
 });

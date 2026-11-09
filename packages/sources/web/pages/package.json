@@ -42,6 +42,7 @@
   },
   "devDependencies": {
     "@mswjs/interceptors": "^0.45.9",
+    "@sinonjs/fake-timers": "15.4.0",
     "@eltjs/elt-sqlite": "*",
     "@zukhruf/sqlite-open": "^0.8.10",
     "@zukhruf/testing": "^0.8.10"
