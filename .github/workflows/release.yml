@@ -1,0 +1,65 @@
+name: Release
+
+# Releases what the conventional commits on main ask for, once CI is green for
+# that commit: nx release version versions, commits, tags and pushes, then nx
+# release publish publishes, so nothing reaches npm unless main has the release
+# commit and tag. A version already on npm is skipped. A push with nothing to
+# release changes nothing. The release commit and tag are pushed with
+# GITHUB_TOKEN, which starts no further workflow run.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+# A release is never cancelled: one stopped between the tag and the publish
+# would leave a version that no later run releases.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Release only the commit that CI tested
+        id: tested
+        env:
+          TESTED: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$(git rev-parse HEAD)" = "$TESTED" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main moved past $TESTED; the CI run of the newer commit releases it"
+          fi
+
+      - name: Set up the workspace
+        if: steps.tested.outputs.current == 'true'
+        uses: JanuaryLabs/zukhruf/.github/actions/setup-workspace@main
+
+      - name: Verify npm authentication
+        if: steps.tested.outputs.current == 'true'
+        run: npm whoami
+        env:
+          NPM_ACCESS_TOKEN: ${{ secrets.NPM_ACCESS_TOKEN }}
+
+      - name: Release
+        if: steps.tested.outputs.current == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          npx nx release version
+          npx nx release publish
+        env:
+          NPM_ACCESS_TOKEN: ${{ secrets.NPM_ACCESS_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true

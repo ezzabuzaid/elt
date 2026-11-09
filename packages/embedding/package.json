@@ -2,21 +2,55 @@
   "name": "@workspace/embedding",
   "version": "0.0.1",
   "private": true,
+  "description": "A rule of an elt computed dataset: it gives each loaded row a vector of its text, made by an AI SDK embedding model, so a search can find rows by meaning.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ezzabuzaid/elt",
+    "directory": "packages/embedding"
+  },
+  "bugs": {
+    "url": "https://github.com/ezzabuzaid/elt/issues"
+  },
+  "homepage": "https://github.com/ezzabuzaid/elt/tree/main/packages/embedding#readme",
+  "keywords": [
+    "elt",
+    "embedding",
+    "vector",
+    "ai-sdk",
+    "semantic-search"
+  ],
   "type": "module",
   "exports": {
+    "./package.json": "./package.json",
     ".": {
       "types": "./dist/embedding.d.ts",
       "default": "./dist/embedding.js"
     }
   },
+  "files": [
+    "dist",
+    "!dist/spec/**",
+    "!**/*.tsbuildinfo",
+    "!**/*.test.*"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=24"
+  },
   "dependencies": {
-    "@workspace/elt": "0.0.1",
-    "ai": "^7.0.165"
+    "@workspace/elt": "^0.0.1"
   },
   "devDependencies": {
     "@ai-sdk/provider": "^4.0.37",
-    "@workspace/elt-sqlite": "0.0.1",
+    "@workspace/elt-sqlite": "^0.0.1",
     "@zukhruf/sqlite-open": "^0.8.10",
-    "@zukhruf/testing": "^0.8.10"
+    "@zukhruf/testing": "^0.8.10",
+    "ai": "^7.0.165"
+  },
+  "peerDependencies": {
+    "ai": "^7.0.148"
   }
 }

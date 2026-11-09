@@ -2,15 +2,45 @@
   "name": "@workspace/elt-sqlite",
   "version": "0.0.1",
   "private": true,
+  "description": "The SQLite destination of elt: each stream is a raw table in one SQLite file, with a reader view over it and a catalog of each table, view and column.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ezzabuzaid/elt",
+    "directory": "packages/destinations/sqlite"
+  },
+  "bugs": {
+    "url": "https://github.com/ezzabuzaid/elt/issues"
+  },
+  "homepage": "https://github.com/ezzabuzaid/elt/tree/main/packages/destinations/sqlite#readme",
+  "keywords": [
+    "elt",
+    "sqlite",
+    "destination",
+    "pipeline"
+  ],
   "type": "module",
   "exports": {
+    "./package.json": "./package.json",
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
+  "files": [
+    "dist",
+    "!dist/spec/**",
+    "!**/*.tsbuildinfo",
+    "!**/*.test.*"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=24"
+  },
   "dependencies": {
-    "@workspace/elt": "0.0.1",
+    "@workspace/elt": "^0.0.1",
     "@zukhruf/mutex": "^0.8.10",
     "@zukhruf/sqlite-drift": "^0.8.10",
     "@zukhruf/sqlite-open": "^0.8.10",

@@ -2,8 +2,28 @@
   "name": "@workspace/source-microsoft-sql-server",
   "version": "0.0.1",
   "private": true,
+  "description": "An elt source for one SQL Server database: each user table that the login can read becomes a stream.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ezzabuzaid/elt",
+    "directory": "packages/sources/microsoft/sql-server"
+  },
+  "bugs": {
+    "url": "https://github.com/ezzabuzaid/elt/issues"
+  },
+  "homepage": "https://github.com/ezzabuzaid/elt/tree/main/packages/sources/microsoft/sql-server#readme",
+  "keywords": [
+    "elt",
+    "sql-server",
+    "mssql",
+    "azure-sql",
+    "source",
+    "change-tracking"
+  ],
   "type": "module",
   "exports": {
+    "./package.json": "./package.json",
     "./sql-server-copies": {
       "types": "./dist/sql-server-copies.d.ts",
       "default": "./dist/sql-server-copies.js"
@@ -13,9 +33,21 @@
       "default": "./dist/sql-server-source.js"
     }
   },
+  "files": [
+    "dist",
+    "!dist/spec/**",
+    "!**/*.tsbuildinfo",
+    "!**/*.test.*"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=24"
+  },
   "dependencies": {
-    "@workspace/elt": "0.0.1",
-    "@workspace/sdk-microsoft-sql-server": "0.0.1",
+    "@workspace/elt": "^0.0.1",
+    "@workspace/sdk-microsoft-sql-server": "^0.0.1",
     "@zukhruf/async": "^0.8.10",
     "@zukhruf/snapshot-differential": "^0.8.10"
   },

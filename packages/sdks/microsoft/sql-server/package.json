@@ -2,18 +2,48 @@
   "name": "@workspace/sdk-microsoft-sql-server",
   "version": "0.0.1",
   "private": true,
+  "description": "Reads one SQL Server database: discovery, exact reads, Change Tracking and change signals. It knows nothing of elt.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ezzabuzaid/elt",
+    "directory": "packages/sdks/microsoft/sql-server"
+  },
+  "bugs": {
+    "url": "https://github.com/ezzabuzaid/elt/issues"
+  },
+  "homepage": "https://github.com/ezzabuzaid/elt/tree/main/packages/sdks/microsoft/sql-server#readme",
+  "keywords": [
+    "sql-server",
+    "mssql",
+    "azure-sql",
+    "change-tracking"
+  ],
   "type": "module",
   "exports": {
+    "./package.json": "./package.json",
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
+  "files": [
+    "dist",
+    "!dist/spec/**",
+    "!**/*.tsbuildinfo",
+    "!**/*.test.*"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=24"
+  },
   "dependencies": {
+    "@types/mssql": "^12.3.0",
     "mssql": "^12.7.4"
   },
   "devDependencies": {
-    "@types/mssql": "^12.3.0",
     "@zukhruf/testing": "^0.8.10"
   }
 }

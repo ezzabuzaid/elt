@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A new push to a pull request replaces its run. On main every commit keeps its
+# own run, even when it is run again: release.yml releases a commit only after
+# CI passes for it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up the workspace
+        uses: JanuaryLabs/zukhruf/.github/actions/setup-workspace@main
+
+      # elt-sqlite's tests read the destination with the sqlite3 program.
+      - name: Install sqlite3
+        run: sudo apt-get install -y sqlite3
+
+      - parallel:
+          - name: Check Nx workspace sync
+            run: npx nx sync:check
+
+          - name: Check formatting
+            run: npx prettier --check .
+
+      # Only the published packages. The other packages need macOS (swiftc,
+      # plutil, osascript), so no Linux runner can build them. elt-postgresql
+      # is here for the tests of the SQL Server source.
+      - name: Lint, type check, test and build the published packages
+        run: npx nx run-many -t lint typecheck test build --projects=tag:npm:public,elt-postgresql
+        env:
+          NX_PROFILE: nx-profile.json
+
+      # CI hides the output of tasks that pass, so the Nx task profile and the
+      # junit file of each project are kept to find the slow tasks and tests.
+      - name: Keep the task profile and test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          path: |
+            nx-profile.json
+            packages/**/test-results.xml

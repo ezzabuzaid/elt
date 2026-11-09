@@ -491,3 +491,17 @@ Each package owns its docs: a README, a glossary in `CONTEXT.md`, its decisions 
 - Each source package has its own README, with its streams, access, limitations and live checks.
 - [EventKit Reminders notes](docs/eventkit-reminders.md): native API findings and implementation decisions.
 - [Source-authoring guide](.agents/skills/add-elt-source/SKILL.md): repository conventions for implementing sources.
+
+## Release
+
+Releases need no command. The packages that Nx tags `npm:public`, because their package.json is not private, are released together, as their conventional commits on `main` ask: a `feat`, `fix` or `refactor` bumps the patch version while the major version is 0, a breaking change bumps the minor version, and `build`, `chore`, `docs`, `test` and `ci` release nothing.
+
+When CI is green for a push to `main`, `.github/workflows/release.yml` runs `nx release version`, which versions the packages, commits `chore(release): publish <version>`, tags `release/<version>` and pushes both, and then `nx release publish`, which publishes to npm. Nothing reaches npm unless `main` has its release commit and tag, and a version already on npm is skipped. The release runs only for the commit CI tested; when `main` has moved on, the newer commit's CI run releases it.
+
+To see what the next release would be:
+
+```sh
+npx nx release version --dry-run
+```
+
+CI runs on Linux, so it checks only the published packages. The other packages need macOS: check them on a Mac before you push.
