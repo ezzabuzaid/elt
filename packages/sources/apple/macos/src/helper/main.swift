@@ -21,6 +21,18 @@ func recognize(_ handler: VNImageRequestHandler) throws -> String? {
     return lines.isEmpty ? nil : lines.joined(separator: "\n")
 }
 
+// A parent that dies, even by SIGKILL, closes the read end of stdout, and macOS
+// has no parent-death signal. The watch has its own thread, because the main
+// thread can be in a warm-up that hangs (#3067). Stdin stays with the main
+// thread: its end means "finish", so a clean close still gets its answers.
+// poll on macOS reports no hang-up unless asked for POLLHUP, and answers
+// POLLNVAL for a device such as a terminal, which must not end the worker.
+Thread.detachNewThread {
+    var answers = pollfd(fd: STDOUT_FILENO, events: Int16(POLLHUP), revents: 0)
+    while poll(&answers, 1, -1) == -1 && errno == EINTR {}
+    if answers.revents & Int16(POLLHUP) != 0 { _exit(0) }
+}
+
 // Exercise distinct recognition scripts before accepting files. English alone
 // leaves first-use model work for the first multilingual attachments. A failed
 // warm-up goes to stderr and exits 1, so the host reads why the worker ended.

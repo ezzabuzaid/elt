@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
-import { writeFile } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { constants } from 'node:fs';
+import { open, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +18,9 @@ import { VisionWorker } from './vision.ts';
 
 const execute = promisify(execFile);
 const workers = 3;
+const helper = fileURLToPath(
+  import.meta.resolve('@eltjs/source-apple-macos/vision-worker'),
+);
 
 // One macrotask: a read entered the pool's queue and reached its worker.
 // setImmediate is not one of the timers the deadline tests mock.
@@ -31,13 +36,7 @@ function ocr() {
     size: new Fixed(workers),
     startup: new LeaderFirst(),
     eviction: new NoEviction(),
-    create: () =>
-      new VisionWorker(
-        fileURLToPath(
-          import.meta.resolve('@eltjs/source-apple-macos/vision-worker'),
-        ),
-        globalThis,
-      ),
+    create: () => new VisionWorker(helper, globalThis),
   });
 }
 
@@ -497,4 +496,72 @@ test('disposing OCR stops all workers and rejects queued reads without starting 
   );
   await assert.rejects(format.text(path), { name: 'AbortError' });
   assert.deepEqual(await workerPids(), []);
+});
+
+test('a worker exits when its parent dies by SIGKILL, even with its main thread blocked', async (t) => {
+  await using directory = await new TemporaryFiles().directory(
+    'vision-orphan-',
+  );
+  const stdin = join(directory.path, 'stdin');
+  await execute('/usr/bin/mkfifo', [stdin]);
+  // This test keeps the worker's stdin open past the parent's death, so the
+  // main thread stays in a blocking read, as it stays in a compile that hangs
+  // (#3067), and no end of stdin can stop the worker. A healthy warm-up cannot
+  // show this: its ready line hits the closed stdout and ends the worker
+  // anyway.
+  await using held = await open(stdin, constants.O_RDWR);
+  const parent = spawn(
+    process.execPath,
+    [
+      '-e',
+      `const worker = require('node:child_process').spawn(process.argv[1], [], { stdio: ['inherit', 'pipe', 'ignore'] });
+       console.log(String(worker.pid));
+       worker.stdout.pipe(process.stdout);`,
+      helper,
+    ],
+    { stdio: [held.fd, 'pipe', 'inherit'] },
+  );
+  const lines = createInterface({ input: parent.stdout! })[
+    Symbol.asyncIterator
+  ]();
+  const worker = Number((await lines.next()).value);
+  try {
+    // The ready line puts the main thread in that read. A warm-up that hangs
+    // never says it and blocks the main thread just the same, so the wait
+    // ends after a cold compile's 195 s and the kill goes ahead.
+    await Promise.race([
+      lines.next(),
+      setTimeout(200_000, undefined, { ref: false }),
+    ]);
+    // A warm-up that failed already ended the worker, which would prove nothing.
+    process.kill(worker, 0);
+    parent.kill('SIGKILL');
+    await t.waitFor(
+      () => assert.throws(() => process.kill(worker, 0), { code: 'ESRCH' }),
+      { interval: 100, timeout: 30_000 },
+    );
+  } catch (error) {
+    process.kill(worker, 'SIGKILL');
+    throw error;
+  } finally {
+    parent.kill('SIGKILL');
+  }
+});
+
+test('a parent that closes stdin with a read in flight gets its answer, and the worker exits 0', async () => {
+  await using directory = await new TemporaryFiles().directory(
+    'vision-clean-close-',
+  );
+  const path = join(directory.path, 'note.png');
+  await image(path, 'Meet tomorrow');
+  const worker = new VisionWorker(helper, globalThis);
+  try {
+    await worker.ready();
+    const reading = worker.read(path);
+    await worker.close();
+    assert.equal(await reading, 'Meet tomorrow');
+    assert.match((await worker.exited()).message, /exited \(0\)/);
+  } finally {
+    worker.kill();
+  }
 });
