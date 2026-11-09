@@ -20,16 +20,27 @@ new ComputedDataset({
   from: [listings],
   compute: new Embedding({
     model,
+    clock: globalThis,
     key: 'id',
     fields: ['title', 'description'],
   }),
 });
 ```
 
+- `clock` waits out the limit of each model call. An app gives `globalThis`, and a test gives a fake clock.
 - `key` is the column that identifies a row. It is the key of the output row.
 - `fields` are the columns whose text makes the vector. The rule joins their text with line breaks. A row with no text in these columns has no vector.
 - The output column `vector` holds a unit vector of float32 values in the byte order of the platform. This is the form that `VectorSearch` of `@zukhruf/embeddings` reads, so the cosine similarity of two vectors is their dot product.
 - The identity of each row is the provider and the id of the model. When you change the model, the next refresh makes every vector again.
+
+## Failures
+
+A model failure stays on the output row, and the next pass asks again (ADR 0007 of `elt-sqlite`).
+
+- When the model answers a call with HTTP 400, the rule splits the call in halves until it finds each text that the model refuses. Only the row of that text fails. An example is a text over the limit of the model.
+- Any other failure fails each row of the call. A split would only send more calls to a model that is down.
+- One call has 120 seconds, with its retries. At that limit, each row of the call fails, and the next batch runs.
+- A stopped refresh fails no row. The next refresh makes those rows.
 - The rule sends 64 rows to `embedMany` at a time. When the model refuses a call, each row of that call is stored as `failed` with the error, and the next refresh asks again. The load does not fail.
 - A vector with no usable length, because it is all zeros or holds a value that is not finite, has no unit vector. Its row is stored as `failed` with the error, the other rows of the call stay `computed`, and the next refresh asks again.
 - To search, declare a view that gives `id` and `vector`, and give its name to `VectorSearch`. A search by publish date, such as `nearest`, also needs `published_at`. A query without a date range does not.
@@ -62,6 +73,7 @@ const searches = prompted(
 
 new Embedding({
   model: documents,
+  clock: globalThis,
   key: 'id',
   fields: ['title', 'description'],
 });

@@ -9,6 +9,7 @@ import type {
 } from '@ai-sdk/provider';
 import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
+import { APICallError } from 'ai';
 
 import {
   Catalog,
@@ -17,6 +18,7 @@ import {
   type CopyConfiguration,
   Gauge,
   Pipeline,
+  type PipelineClock,
   Source,
   Stream,
 } from '@eltjs/elt';
@@ -49,6 +51,12 @@ class LetterModel implements EmbeddingModelV4 {
   // What the model answers for a text, in place of counting its letters.
   readonly answers = new Map<string, number[]>();
   refusing = false;
+  // Each call the model got, and the status it answers a call of these values
+  // with, as a model server refuses over HTTP.
+  readonly calls: (readonly string[])[] = [];
+  answer: (values: readonly string[]) => number | null = () => null;
+  // A call of these values never answers, until its signal aborts it.
+  hangs: (values: readonly string[]) => boolean = () => false;
 
   constructor(modelId: string) {
     this.modelId = modelId;
@@ -56,8 +64,24 @@ class LetterModel implements EmbeddingModelV4 {
 
   async doEmbed({
     values,
+    abortSignal,
   }: EmbeddingModelV4CallOptions): Promise<EmbeddingModelV4Result> {
+    if (this.hangs(values))
+      await new Promise((_, reject) =>
+        abortSignal?.addEventListener('abort', () =>
+          reject(abortSignal.reason),
+        ),
+      );
     if (this.refusing) throw new Error('the model server is down');
+    this.calls.push(values);
+    const status = this.answer(values);
+    if (status !== null)
+      throw new APICallError({
+        message: `The model answered ${status}`,
+        url: 'http://model.test/embeddings',
+        requestBodyValues: { input: values },
+        statusCode: status,
+      });
     this.embedded.push(...values);
     return {
       embeddings: values.map((text) => this.answers.get(text) ?? letters(text)),
@@ -125,7 +149,33 @@ class Listings extends Source {
   }
 }
 
-function listingsImport(directory: string, model: () => LetterModel) {
+// The timers of a rule, which a test fires by hand: no real model call waits
+// out a limit of minutes in a test.
+class HandClock {
+  readonly timers = new Map<symbol, { callback: () => void; ms: number }>();
+
+  setTimeout(callback: () => void, ms: number) {
+    const timer = Symbol('timer');
+    this.timers.set(timer, { callback, ms });
+    return timer;
+  }
+
+  clearTimeout(timer: unknown) {
+    if (typeof timer === 'symbol') this.timers.delete(timer);
+  }
+
+  fire() {
+    for (const { callback } of this.timers.values()) callback();
+  }
+}
+
+function listingsImport(
+  directory: string,
+  model: () => LetterModel,
+  clock:
+    | Pick<typeof globalThis, 'setTimeout' | 'clearTimeout'>
+    | HandClock = globalThis,
+) {
   const source = new Listings();
   const path = join(directory, 'data.sqlite');
   const destination = new SQLiteDestination({ path });
@@ -150,6 +200,7 @@ function listingsImport(directory: string, model: () => LetterModel) {
           from: [target],
           compute: new Embedding({
             model: model(),
+            clock,
             key: 'id',
             fields: ['title', 'description'],
           }),
@@ -174,7 +225,11 @@ function listingsImport(directory: string, model: () => LetterModel) {
             : null,
       }));
   };
-  return { source, run: () => pipeline().run(), vectors };
+  return {
+    source,
+    run: (options?: { signal: AbortSignal }) => pipeline().run(options),
+    vectors,
+  };
 }
 
 const unit = (values: readonly number[]) => {
@@ -323,3 +378,143 @@ test('a model that answers a vector with no usable length stores that listing fa
     'a failed listing is asked again',
   );
 });
+
+test('an input the model refuses fails only its own row, and the next run asks again only for it', async () => {
+  await using scratch = await new TemporaryFiles().directory('embedding-');
+  const model = new LetterModel('letters-1');
+  const listings = listingsImport(scratch.path, () => model);
+  listings.source.rows = [
+    'red car',
+    'too long',
+    'blue van',
+    'old bus',
+    'new jeep',
+  ].map((title, index) => ({
+    id: String(index + 1),
+    title,
+    description: null,
+  }));
+  model.answer = (values) => (values.includes('too long') ? 400 : null);
+
+  await listings.run();
+  const first = listings.vectors();
+  model.embedded.length = 0;
+  model.calls.length = 0;
+  await listings.run();
+
+  assert.deepEqual(
+    first.map(({ id, status, error }) => ({ id, status, error })),
+    [
+      { id: '1', status: 'computed', error: null },
+      { id: '2', status: 'failed', error: 'The model answered 400' },
+      { id: '3', status: 'computed', error: null },
+      { id: '4', status: 'computed', error: null },
+      { id: '5', status: 'computed', error: null },
+    ],
+  );
+  assert.deepEqual(model.calls, [['too long']]);
+});
+
+for (const [status, calls] of [
+  // A refused API key or model is not tried again.
+  [401, 1],
+  [403, 1],
+  // The AI SDK tries a server failure 3 times, each time with the whole call.
+  [500, 3],
+] as const)
+  test(`a call the model answers with ${status} says nothing about its inputs, so it is not split`, async () => {
+    await using scratch = await new TemporaryFiles().directory('embedding-');
+    const model = new LetterModel('letters-1');
+    const listings = listingsImport(scratch.path, () => model);
+    listings.source.rows = ['red car', 'blue van', 'old bus'].map(
+      (title, index) => ({ id: String(index + 1), title, description: null }),
+    );
+    model.answer = () => status;
+
+    await listings.run();
+
+    assert.deepEqual(
+      model.calls,
+      Array.from({ length: calls }, () => ['red car', 'blue van', 'old bus']),
+    );
+    assert.deepEqual(
+      listings.vectors().map(({ status: stored }) => stored),
+      ['failed', 'failed', 'failed'],
+    );
+  });
+
+test(
+  'a call the model never answers fails its rows at the limit, and the next batch still runs',
+  { timeout: 30_000 },
+  async (t) => {
+    await using scratch = await new TemporaryFiles().directory('embedding-');
+    const model = new LetterModel('letters-1');
+    const clock = new HandClock();
+    const listings = listingsImport(scratch.path, () => model, clock);
+    // 64 rows are one batch, so the 65th goes in the next call.
+    listings.source.rows = [
+      'hung car',
+      ...Array.from(
+        { length: 64 },
+        (_, index) => `car ${'a'.repeat(index + 1)}`,
+      ),
+    ].map((title, index) => ({
+      id: String(index).padStart(3, '0'),
+      title,
+      description: null,
+    }));
+    model.hangs = (values) => values.includes('hung car');
+
+    const run = listings.run();
+    await t.waitFor(() => assert.equal(clock.timers.size, 1));
+    const ms = [...clock.timers.values()].map((timer) => timer.ms);
+    clock.fire();
+    await t.waitFor(() => assert.equal(clock.timers.size, 0), {
+      timeout: 5000,
+    });
+    await run;
+
+    const rows = listings.vectors();
+    assert.deepEqual(ms, [120_000]);
+    assert.deepEqual(
+      new Set(
+        rows.slice(0, 64).map(({ status, error }) => `${status}: ${error}`),
+      ),
+      new Set(['failed: The model did not answer within 120 s.']),
+    );
+    assert.equal(rows[64]?.status, 'computed');
+    assert.equal(clock.timers.size, 0);
+  },
+);
+
+test(
+  'a stop during a call the model never answers fails no row, and the next run computes them',
+  { timeout: 30_000 },
+  async (t) => {
+    await using scratch = await new TemporaryFiles().directory('embedding-');
+    const model = new LetterModel('letters-1');
+    const clock = new HandClock();
+    const listings = listingsImport(scratch.path, () => model, clock);
+    listings.source.rows = [{ id: '1', title: 'red car', description: null }];
+    model.hangs = () => true;
+    const controller = new AbortController();
+
+    const run = listings.run({ signal: controller.signal });
+    await t.waitFor(() => assert.equal(clock.timers.size, 1));
+    controller.abort();
+    await run.catch(() => {});
+    const stopped = clock.timers.size;
+    const failed = listings
+      .vectors()
+      .filter(({ status }) => status === 'failed');
+    model.hangs = () => false;
+    await listings.run();
+
+    assert.equal(stopped, 0);
+    assert.deepEqual(failed, []);
+    assert.deepEqual(
+      listings.vectors().map(({ status }) => status),
+      ['computed'],
+    );
+  },
+);
