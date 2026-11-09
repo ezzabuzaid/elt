@@ -3,9 +3,10 @@ import { subscribe, unsubscribe } from 'node:diagnostics_channel';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
-import { setTimeout } from 'node:timers/promises';
+import { setImmediate, setTimeout } from 'node:timers/promises';
 
 import { ClientRequestInterceptor } from '@mswjs/interceptors/ClientRequest';
+import { type TimerId, createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
@@ -16,6 +17,7 @@ import {
   Copy,
   CopyProgress,
   Pipeline,
+  type PipelineClock,
   PipelineError,
   passChannels,
 } from '@eltjs/elt';
@@ -387,11 +389,62 @@ test('an article that a feed and a sitemap list with and without a trailing slas
   assert.equal((await ingestion.run())[0]?.count, 0);
 });
 
-async function pipeline(source: WebSource, path: string, checkpoints: string) {
+// The clock of the runs, which the test moves: the waits of an origin take no
+// real time, and the clock moves by the length of each wait, also on a busy
+// machine. A real timer waits whole milliseconds and at least one, so a wait
+// here lasts its length rounded up; a fake timer shorter than a millisecond
+// would end at once, and the crawl would wait for the rest again and again.
+function clock(now: number) {
+  const fake = createClock(now);
+  const timers = new Map<object, TimerId>();
+  return {
+    fake,
+    Date: fake.Date,
+    performance: fake.performance,
+    setTimeout: (callback: () => void, ms: number) => {
+      const timer = {};
+      timers.set(
+        timer,
+        fake.setTimeout(() => {
+          timers.delete(timer);
+          callback();
+        }, Math.ceil(ms)),
+      );
+      return timer;
+    },
+    clearTimeout: (timer: unknown) => {
+      if (!(timer instanceof Object)) return;
+      fake.clearTimeout(timers.get(timer));
+      timers.delete(timer);
+    },
+  };
+}
+
+type Clock = ReturnType<typeof clock>;
+
+// Whether the promise settled in one turn of the event loop; a rejection throws.
+function settled(promise: Promise<unknown>) {
+  return Promise.race([promise.then(() => true), setImmediate(false)]);
+}
+
+// One run to its end. The run waits only for the delays of origins, one at a
+// time, so a pending timer is such a wait, which ends at once with the clock
+// moved by its length.
+async function ran(run: Promise<unknown>, time: Clock) {
+  while (!(await settled(run)))
+    if (time.fake.countTimers() > 0) time.fake.next();
+}
+
+async function pipeline(
+  source: WebSource,
+  path: string,
+  checkpoints: string,
+  time: PipelineClock = globalThis,
+) {
   const destination = new SQLiteDestination({ path });
   const history = new SQLiteSyncHistory();
   return new Pipeline({
-    clock: globalThis,
+    clock: time,
     history,
     connections: [
       new Connection({
@@ -823,9 +876,10 @@ test(
 );
 
 test(
-  'listing, redirect and page requests to one origin start at least one second apart',
+  'listing, redirect and page requests to one origin start one second apart',
   { timeout: 30_000 },
   async () => {
+    const time = clock(0);
     await using cache = await new TemporaryFiles().directory('web-cache-');
     const requests: { path: string; at: number }[] = [];
     await using upstream = await new HttpServer().start((request, response) => {
@@ -835,7 +889,7 @@ test(
         return;
       }
       const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
-      requests.push({ path: url.pathname, at: performance.now() });
+      requests.push({ path: url.pathname, at: time.performance.now() });
       if (url.pathname === '/feed.xml') {
         response.setHeader('content-type', 'application/rss+xml');
         response.end(
@@ -862,8 +916,11 @@ test(
       }),
       database.path,
       checkpoints.path,
+      time,
     );
-    assert.equal((await ingestion.run())[0]?.count, 3);
+    const running = ingestion.run();
+    await ran(running, time);
+    assert.equal((await running)[0]?.count, 3);
     // The redirect of /a is a request of its own, after the pages that the feed names.
     assert.deepEqual(
       requests.map(({ path }) => path),
@@ -873,9 +930,9 @@ test(
       const before = requests[index - 1];
       const after = requests[index];
       assert(before && after);
-      // Measure arrivals at the HTTP boundary; allow small event-loop/transport jitter.
-      assert(
-        after.at - before.at >= 950,
+      assert.equal(
+        after.at - before.at,
+        1000,
         `${after.path} started ${after.at - before.at} ms after ${before.path}`,
       );
     }

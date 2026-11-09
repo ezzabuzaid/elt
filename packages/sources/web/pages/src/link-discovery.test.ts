@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 
+import { type TimerId, createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
@@ -327,12 +329,67 @@ test('Markdown pages supply links, and feeds declared on crawled pages are read 
   assert.equal(requests.filter((url) => url === '/extra/2').length, 1);
 });
 
+// The clock of the runs, which the test moves: the waits of an origin take no
+// real time, and the clock moves by the length of each wait, also on a busy
+// machine. A real timer waits whole milliseconds and at least one, so a wait
+// here lasts its length rounded up; a fake timer shorter than a millisecond
+// would end at once, and the crawl would wait for the rest again and again.
+function clock(now: number) {
+  const fake = createClock(now);
+  const timers = new Map<object, TimerId>();
+  return {
+    fake,
+    Date: fake.Date,
+    performance: fake.performance,
+    setTimeout: (callback: () => void, ms: number) => {
+      const timer = {};
+      timers.set(
+        timer,
+        fake.setTimeout(() => {
+          timers.delete(timer);
+          callback();
+        }, Math.ceil(ms)),
+      );
+      return timer;
+    },
+    clearTimeout: (timer: unknown) => {
+      if (!(timer instanceof Object)) return;
+      fake.clearTimeout(timers.get(timer));
+      timers.delete(timer);
+    },
+  };
+}
+
+type Clock = ReturnType<typeof clock>;
+
+// Whether the promise settled in one turn of the event loop; a rejection throws.
+function settled(promise: Promise<unknown>) {
+  return Promise.race([promise.then(() => true), setImmediate(false)]);
+}
+
+// One run to its end. The run waits only for the delays of origins and for the
+// slow answers of the site, so a pending timer is such a wait, which ends at
+// once with the clock moved by its length.
+async function ran(run: Promise<unknown>, time: Clock) {
+  while (!(await settled(run)))
+    if (time.fake.countTimers() > 0) time.fake.next();
+}
+
 test('an interruption during a long stretch of archive pages keeps the progress saved up to a second before it', async () => {
+  const time = clock(0);
   await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: { url: string; at: number }[] = [];
+  const stop = new AbortController(),
+    reason = new Error('stop during the archive chain');
+  let stoppedAt = 0;
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
-    requests.push({ url: request.url, at: performance.now() });
+    requests.push({ url: request.url, at: time.performance.now() });
+    // The stop comes while the sixth archive page downloads.
+    if (request.url === '/archive/6' && !stop.signal.aborted) {
+      stoppedAt = time.performance.now();
+      stop.abort(reason);
+    }
     const archive = /^\/archive\/(\d+)$/.exec(request.url);
     if (request.url === '/')
       response
@@ -341,7 +398,7 @@ test('an interruption during a long stretch of archive pages keeps the progress 
     else if (archive) {
       const number = Number(archive[1]);
       // Each archive page is slow, so the chain is a long stretch without pages.
-      setTimeout(() => {
+      time.setTimeout(() => {
         if (response.destroyed) return;
         response
           .writeHead(200, { 'content-type': 'text/html' })
@@ -405,56 +462,46 @@ test('an interruption during a long stretch of archive pages keeps the progress 
         }),
     ),
   });
-  const stop = new AbortController(),
-    reason = new Error('stop during the archive chain');
-  let stoppedAt = 0;
-  const timer = setTimeout(() => {
-    stoppedAt = performance.now();
-    stop.abort(reason);
-  }, 10_000);
-  try {
-    await assert.rejects(
+  await ran(
+    assert.rejects(
       new Pipeline({
-        clock: globalThis,
+        clock: time,
         connections: [connection],
         history,
       }).run({
         signal: stop.signal,
       }),
       (error) => error === reason,
-    );
-  } finally {
-    clearTimeout(timer);
-  }
+    ),
+    time,
+  );
   const read = requests.filter(({ url }) => url.startsWith('/archive/'));
-  // An origin answers one request a second, after its robots.txt and the
-  // listings of the starting page, so about five archive pages are read.
-  assert.ok(read.length >= 4, `${read.length} archive pages before the stop`);
-  assert.ok(!read.some(({ url }) => url === '/archive/12'));
+  assert.deepEqual(
+    read.map(({ url }) => url),
+    [1, 2, 3, 4, 5, 6].map((number) => `/archive/${number}`),
+  );
   const firstRun = new Map(read.map(({ url, at }) => [url, at]));
   requests.length = 0;
-  assert.equal(
-    (
-      await new Pipeline({
-        clock: globalThis,
-        connections: [connection],
-        history,
-      }).run()
-    )[0]?.count,
-    1,
-  );
+  const second = new Pipeline({
+    clock: time,
+    connections: [connection],
+    history,
+  }).run();
+  await ran(second, time);
+  assert.equal((await second)[0]?.count, 1);
   const again = requests.flatMap(({ url }) => {
     const at = firstRun.get(url);
     return at === undefined ? [] : [{ url, before: stoppedAt - at }];
   });
   // The starting page is due, so the run reads it once more.
   assert.equal(requests.filter(({ url }) => url === '/').length, 1);
-  // Progress is saved at most once a second; the archive page in flight at the last save, up to one
-  // delay of the origin and one slow download earlier, is read once more.
-  assert.ok(
-    again.every(({ before }) => before <= 2500),
-    JSON.stringify(again),
-  );
+  // Progress is saved at most once a second. The last save, at the end of
+  // /archive/5, still holds that page as pending, so it and the page in
+  // flight at the stop, one delay of the origin later, are read once more.
+  assert.deepEqual(again, [
+    { url: '/archive/5', before: 1000 },
+    { url: '/archive/6', before: 0 },
+  ]);
   assert.deepEqual(
     requests.filter(({ url }) => url === '/archive/12').length,
     1,
