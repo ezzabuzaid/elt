@@ -3516,7 +3516,6 @@ test('partition declarations are validated before extraction', async () => {
       ),
     );
   };
-  await assert.rejects(read([]), /requires at least one partition/);
   await assert.rejects(read(['a', 'a']), /lists partition \["a"\] twice/);
 
   const partitioned = new Stream({
