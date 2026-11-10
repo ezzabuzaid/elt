@@ -495,6 +495,8 @@ Releases need no command. The packages that Nx tags `npm:public`, because their 
 
 When CI is green for a push to `main`, `.github/workflows/release.yml` runs `nx release version`, which versions the packages, commits `chore(release): publish <version>`, tags `release/<version>` and pushes both, and then `nx release publish`, which publishes to npm. Nothing reaches npm unless `main` has its release commit and tag, and a version already on npm is skipped. The release runs only for the commit CI tested; when `main` has moved on, the newer commit's CI run releases it.
 
+Below 1.0, Nx moves each bump down one step: a `feat` releases a patch, and a breaking change (`!` or a `BREAKING CHANGE:` footer) releases a minor. A `^0.x.y` range takes every patch, so mark a change to a public signature as breaking. Nx gives a commit to the projects whose files it changes, so an empty commit releases nothing. To release a version that the commits do not ask for, run `npx nx release version <version>` with the exact version: it commits, tags and pushes, and the workflow publishes.
+
 To see what the next release would be:
 
 ```sh
