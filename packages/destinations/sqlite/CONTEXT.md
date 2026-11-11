@@ -67,3 +67,11 @@ _Avoid_: State database
 **Sole writer**:
 A `SQLiteSyncHistory` whose host knows that no other process runs a pass of its connections. Its install fails the passes that it finds unfinished.
 _Avoid_: Leader (the leader of a flight is one host that can be a sole writer), owner
+
+**Epoch**:
+The id that names the numbering of the commits of a SQLite file. A file that is made again has a new epoch, and its numbers start again.
+_Avoid_: Generation, version
+
+**Position**:
+`<epoch>:<number>`: the last commit of a closed load, when no other load has commits before and after it. A reader at a position sees no part of a pass.
+_Avoid_: Offset, cursor (eca keeps a cursor), checkpoint

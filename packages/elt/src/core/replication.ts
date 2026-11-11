@@ -157,10 +157,26 @@ export async function replicate<Target extends DestinationTarget>(
       });
   try {
     if (checkpoints === undefined || bindings.size === 0)
-      await transfer(source, destination, null, replications, signal, clock);
+      await transfer(
+        source,
+        destination,
+        connection,
+        null,
+        replications,
+        signal,
+        clock,
+      );
     else
       await checkpoints.run(bindings, (run) =>
-        transfer(source, destination, run, replications, signal, clock),
+        transfer(
+          source,
+          destination,
+          connection,
+          run,
+          replications,
+          signal,
+          clock,
+        ),
       );
   } catch (error) {
     for (const replication of replications)
@@ -177,6 +193,7 @@ export async function replicate<Target extends DestinationTarget>(
 async function transfer<Target extends DestinationTarget>(
   source: Source,
   destination: Destination<Target>,
+  connection: Connection<Target>,
   run: CheckpointRun | null,
   replications: readonly Replicated<Target>[],
   signal: AbortSignal | undefined,
@@ -224,7 +241,10 @@ async function transfer<Target extends DestinationTarget>(
   }
   if (reading.length === 0) return;
   signal?.throwIfAborted();
-  await using load = await destination.load({ clock });
+  await using load = await destination.load({
+    clock,
+    connection: connection.name,
+  });
   // Every target is prepared before anything is read; a copy whose target is
   // refused reads nothing.
   const prepared: Replicated<Target>[] = [];

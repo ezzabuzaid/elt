@@ -68,8 +68,12 @@ export abstract class Destination<Target extends DestinationTarget> {
     target: Target,
   ): Writer;
 
-  // A destination that records the time of a load reads it from clock.
-  abstract load(options: { clock: PipelineClock }): Promise<Load<Target>>;
+  // A destination that records the time of a load reads it from clock. One
+  // that records which connection made a load reads its name from connection.
+  abstract load(options: {
+    clock: PipelineClock;
+    connection: string;
+  }): Promise<Load<Target>>;
 
   async clear(
     configuration: CopyConfiguration,

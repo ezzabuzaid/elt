@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { CopyConfiguration } from '@eltjs/elt';
 
 import type { SQLiteTable } from './sqlite-table.ts';
-import { SQLiteWriter } from './sqlite-writer.ts';
+import { SQLiteWriter, type Stamp } from './sqlite-writer.ts';
 
 export class SQLiteOverwriteWriter extends SQLiteWriter {
   constructor(
@@ -22,9 +22,9 @@ export class SQLiteOverwriteWriter extends SQLiteWriter {
   protected override merge(
     database: DatabaseSync,
     stage: string,
-    loadedAt: string,
+    stamp: Stamp,
     into: string,
   ): void {
-    this.append(database, stage, loadedAt, into);
+    this.append(database, stage, stamp, into);
   }
 }

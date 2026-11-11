@@ -27,6 +27,7 @@ import type { SQLiteColumn } from './sqlite-column.ts';
 import { describe } from './sqlite-descriptions.ts';
 import { SQLiteFileStore } from './sqlite-file-store.ts';
 import { identifiers } from './sqlite-identifiers.ts';
+import type { SQLiteLoad } from './sqlite-loads.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
@@ -40,6 +41,10 @@ const writersTable = new Declaration(
 
 export const seq = '"_elt_seq"';
 export const op = '"_elt_op"';
+
+// What a commit writes in the destination's own columns of each row that it
+// inserts or updates: when its load began, and its number.
+export type Stamp = { readonly loadedAt: string; readonly committedIn: number };
 
 // One stream's load. Operations, and the chunks of their files, wait in
 // connection-private TEMP tables, so another stream's commit never publishes
@@ -105,7 +110,7 @@ export abstract class SQLiteWriter extends Writer {
   protected abstract merge(
     database: DatabaseSync,
     stage: string,
-    loadedAt: string,
+    stamp: Stamp,
     into: string,
   ): void;
 
@@ -118,14 +123,14 @@ export abstract class SQLiteWriter extends Writer {
   protected append(
     database: DatabaseSync,
     stage: string,
-    loadedAt: string,
+    { loadedAt, committedIn }: Stamp,
     into: string,
   ): void {
     database
       .prepare(
-        `INSERT INTO ${into} (${this.fields.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, ? FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
+        `INSERT INTO ${into} (${this.fields.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, ?, ? FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
       )
-      .run(loadedAt);
+      .run(loadedAt, committedIn);
   }
 
   // An overwrite replaces the target at its first commit.
@@ -146,6 +151,7 @@ export abstract class SQLiteWriter extends Writer {
     return [
       ...this.table.columns.map((column) => column.quotedName),
       '"loaded_at"',
+      '"committed_in"',
     ];
   }
 
@@ -280,9 +286,14 @@ export abstract class SQLiteWriter extends Writer {
         ({ name, dataType }) => [name, dataType] as const,
       ),
       ['loaded_at', 'timestamp'] as const,
+      ['committed_in', 'integer'] as const,
     ]);
     const columns = Object.fromEntries(
-      Object.entries(this.#description.columns).map(([name, description]) => [
+      Object.entries({
+        ...this.#description.columns,
+        committed_in:
+          'Number of the commit that last wrote this row: the row of _elt_commits with this number tells when, and in which load.',
+      }).map(([name, description]) => [
         name,
         { description, dataType: dataTypes.get(name) },
       ]),
@@ -442,10 +453,10 @@ export abstract class SQLiteWriter extends Writer {
   // leaves it to readers as it is, merges into a hidden target from its first
   // commit, and swaps that in at complete().
   prepare(
-    database: DatabaseSync,
+    load: SQLiteLoad,
     { writer, reloading }: { writer: string; reloading: boolean },
-    loadedAt: string,
   ): Stage {
+    const { database, loadedAt } = load;
     const name = quote(`_elt_stage_${this.hash}`);
     const stage = `temp.${name}`;
     const hidden = quote(this.#hiddenName);
@@ -596,6 +607,7 @@ export abstract class SQLiteWriter extends Writer {
         transaction(
           database,
           () => {
+            const committedIn = load.commit();
             if (mode === 'reload') {
               database.exec(`DROP TABLE IF EXISTS ${hidden}`);
               database.exec(`CREATE TABLE ${this.table.definition(hidden)}`);
@@ -607,7 +619,7 @@ export abstract class SQLiteWriter extends Writer {
               database.prepare(`DELETE FROM ${into()}${rows}`).run(...values);
             }
             for (const { store } of stores) store.publish();
-            this.merge(database, stage, loadedAt, into());
+            this.merge(database, stage, { loadedAt, committedIn }, into());
             // Files of the rows a reset emptied, and of staged rows it dropped.
             if (resets.length > 0) prune();
             drop();
@@ -623,6 +635,10 @@ export abstract class SQLiteWriter extends Writer {
         transaction(
           database,
           () => {
+            // Readers see the rows from this commit on.
+            database
+              .prepare(`UPDATE ${hidden} SET "committed_in" = ?`)
+              .run(load.commit());
             if (this.table.readerView !== undefined)
               database.exec(
                 `DROP VIEW IF EXISTS ${quote(this.table.readerView)}`,

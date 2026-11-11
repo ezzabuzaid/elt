@@ -216,6 +216,7 @@ test('the macOS sqlite3 shell reads the catalog of a loaded file: every describe
     rows.map(({ kind, name }: { kind: string; name: string }) => [kind, name]),
     [
       ['view', 'records'],
+      ['column', 'records.committed_in'],
       ['column', 'records.id'],
       ['column', 'records.loaded_at'],
       ['column', 'records.name'],
@@ -3095,6 +3096,7 @@ test('explicit int64 and local timestamp columns keep what the stream spells, wi
         .map(({ name, data_type }) => [name, data_type]),
     ),
     {
+      'bookings.committed_in': 'integer',
       'bookings.id': 'int64',
       'bookings.loaded_at': 'timestamp',
       'bookings.start': 'local_timestamp(7)',
@@ -3104,7 +3106,7 @@ test('explicit int64 and local timestamp columns keep what the stream spells, wi
     () =>
       database
         .prepare(
-          "INSERT INTO raw_bookings (id, start, loaded_at) VALUES (1, '2026-10-01T08:30:00.123', '2026-10-01T00:00:00.000Z')",
+          "INSERT INTO raw_bookings (id, start, loaded_at, committed_in) VALUES (1, '2026-10-01T08:30:00.123', '2026-10-01T00:00:00.000Z', 1)",
         )
         .run(),
     /CHECK constraint failed/,
@@ -4085,8 +4087,14 @@ test('two loads into one SQLite file commit side by side across their commits, a
   const docs = new Copy(scripted('docs'), destination.table('docs'));
   const notes = new Copy(scripted('notes'), destination.table('notes'));
   // A second load on the same file stands in for another replication's run.
-  await using first = await destination.load({ clock: globalThis });
-  await using second = await destination.load({ clock: globalThis });
+  await using first = await destination.load({
+    clock: globalThis,
+    connection: 'docs',
+  });
+  await using second = await destination.load({
+    clock: globalThis,
+    connection: 'notes',
+  });
   await using docsStage = await first.prepare(docs.configuration, docs.to, {
     writer: 'docs',
     reloading: false,
@@ -4140,7 +4148,10 @@ test('a commit waits for a reader in another process instead of failing', async 
     path: join(scratch.path, 'out.sqlite'),
   });
   const copy = new Copy(scripted('docs'), destination.table('docs'));
-  await using load = await destination.load({ clock: globalThis });
+  await using load = await destination.load({
+    clock: globalThis,
+    connection: 'docs',
+  });
 
   await using stage = await load.prepare(copy.configuration, copy.to, {
     writer: 'writer',
@@ -4165,7 +4176,10 @@ test('a clear waits for a reader in another process instead of failing', async (
   });
   const copy = new Copy(scripted('docs'), destination.table('docs'));
   {
-    await using load = await destination.load({ clock: globalThis });
+    await using load = await destination.load({
+      clock: globalThis,
+      connection: 'docs',
+    });
     await using stage = await load.prepare(copy.configuration, copy.to, {
       writer: 'writer',
       reloading: false,
@@ -6131,6 +6145,7 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
       'ledger.bytes': 'blob',
       'ledger.clock': 'local_time(0)',
       'ledger.id': 'int64',
+      'ledger.committed_in': 'integer',
       'ledger.loaded_at': 'timestamp',
       'ledger.local': 'local_timestamp(7)',
       'ledger.version': 'int64',
@@ -6438,7 +6453,7 @@ async function shapeChanges(
     return database
       .prepare('SELECT * FROM items ORDER BY id')
       .all()
-      .map(({ loaded_at: _, ...row }) => ({ ...row }));
+      .map(({ loaded_at: _, committed_in: __, ...row }) => ({ ...row }));
   };
   const tables = () => {
     using database = open(destination.path, { readOnly: true });
@@ -6517,7 +6532,13 @@ test('a stream whose upstream forgets records keeps every row when a field is ad
     { id: 'a', title: 'A', added: null },
     { id: 'b', title: null, added: 'z' },
   ]);
-  assert.deepEqual(columns(), ['id', 'title', 'added', 'loaded_at']);
+  assert.deepEqual(columns(), [
+    'id',
+    'title',
+    'added',
+    'loaded_at',
+    'committed_in',
+  ]);
   assert.deepEqual(received[1], first);
   assert.equal(
     tables().some((name) => name.startsWith('_elt_next_')),
@@ -6650,7 +6671,7 @@ test('a stale table whose reader view was replaced by another is refused before 
     },
   );
 
-  assert.deepEqual(columns(), ['id', 'loaded_at']);
+  assert.deepEqual(columns(), ['id', 'loaded_at', 'committed_in']);
   using database = open(join(scratch.path, 'items.sqlite'), {
     readOnly: true,
   });
@@ -7188,7 +7209,7 @@ test('a copy that declares its columns from the stream and stores its files keep
     return database
       .prepare('SELECT * FROM docs ORDER BY id')
       .all()
-      .map(({ loaded_at: _, ...row }) => ({ ...row }));
+      .map(({ loaded_at: _, committed_in: __, ...row }) => ({ ...row }));
   };
   const saved = () => {
     using database = open(join(scratch.path, 'state.sqlite'), {

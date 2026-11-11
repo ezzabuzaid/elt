@@ -115,6 +115,6 @@ export class SQLiteTable extends Target {
   definition(name: string): string {
     if (this.columns.length === 0)
       throw new TypeError('Resolve inferred columns before creating a table');
-    return `${name} (${this.columns.map((column) => column.definition).join(', ')}, "loaded_at" TEXT NOT NULL${canonical('timestamp', '"loaded_at"')}) STRICT`;
+    return `${name} (${this.columns.map((column) => column.definition).join(', ')}, "loaded_at" TEXT NOT NULL${canonical('timestamp', '"loaded_at"')}, "committed_in" INTEGER NOT NULL) STRICT`;
   }
 }

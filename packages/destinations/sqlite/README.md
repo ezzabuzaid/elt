@@ -34,6 +34,7 @@ Tables:
 
 - SQLite makes strict tables. SQL constraints that exist stay in force.
 - Each copy adds `loaded_at`, the UTC start time of the load. A field with that name gets a different column name.
+- Each copy also adds `committed_in`, the number of the [commit](#commit-numbers-and-positions) that last wrote the row. A field with that name also gets a different column name.
 - Deduplication upserts on a unique index that is named after the table and the key (`_elt_dedup_<hash>`). SQLite makes the index one time, and makes it again only when the key changes. It uses the native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html).
 - Deduplication also checks the stored types of the key and cursor columns, and refuses null keys and cursors.
 - A change to a normal `append` or `overwrite` removes the index of the mode. Explicit constraints stay.
@@ -89,6 +90,17 @@ Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as
 - A file column that the target drops takes its chunk table with it when the table evolves or a reload replaces it.
 - `:memory:` is possible only for a full refresh. The database of the run is gone when its handle closes, so it cannot keep incremental progress.
 
+## Commit numbers and positions
+
+Each commit in the SQLite file has a number. A reader that compares the file at two times can find the positions where no pass is half done, as a Kafka consumer reads up to the last stable offset.
+
+- The table `_elt_commits` has one row for each commit: its `number`, its `load` and its `committed_at`. SQLite writes one transaction at a time, so the numbers follow the order of the commits, also across connections.
+- The table `_elt_loads` has one row for each load: its `connector` (the name of the connection), its `opened_at`, and its `closed_at`, which is null while the load is open. A load opens when a pass starts to load, and closes when the pass ends.
+- A connection runs one pass at a time. Thus when a load of a connection opens, it closes each load of that connection that is still open: the process of that pass ended first. A closed load cannot commit.
+- A commit into a [hidden table](./CONTEXT.md) shows nothing to readers. The commit that swaps the hidden table in also sets `committed_in` of each of its rows to its own number.
+- The table `_elt_epoch` keeps the epoch, an id that names the numbering. A file that is made again, or tables that a different version declared in a different way, start a new epoch.
+- `destination.positions(after?)` gives the positions after the position `after`, in ascending order, or all positions. A position is `<epoch>:<number>`. It names the last commit of a closed load, when no other load has commits before and after it. When `after` is of a different epoch, or is after the newest commit, `positions` gives `{ expired }` with the reason. It opens the file read-only.
+
 ## Checkpoints
 
 `SQLiteCheckpointStore({ path })` keeps the checkpoints of incremental copies in a table `checkpoints` (`id`, `binding`, `reloading`, `state`) in its own file. Use it with SQLite destinations.
@@ -112,7 +124,7 @@ Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as
 
 ## Reserved names
 
-The destination and its sync history own each table, index and view whose name starts with `_elt_`, in any case. Examples are `_elt_writers`, `_elt_descriptions`, the chunk tables `_elt_files_<hash>` and the sync history's `_elt_sync_attempts`. A stream, a view or a computed dataset never has such a name, and `publishSQLiteViews` refuses one. A reader that follows the data of a file, such as a changefeed, skips these tables with `isReserved(name)`:
+The destination and its sync history own each table, index and view whose name starts with `_elt_`, in any case. Examples are `_elt_writers`, `_elt_descriptions`, `_elt_commits`, the chunk tables `_elt_files_<hash>` and the sync history's `_elt_sync_attempts`. A stream, a view or a computed dataset never has such a name, and `publishSQLiteViews` refuses one. A reader that follows the data of a file, such as a changefeed, skips these tables with `isReserved(name)`:
 
 ```ts
 import { isReserved } from '@eltjs/elt-sqlite';
@@ -233,6 +245,7 @@ src/
   sqlite-destination.ts      SQLiteDestination: tables and the load
   open-destination.ts        openDestination: the open of each connection that writes the file
   sqlite-writer.ts           the stage, the commit, evolve and reload of a table
+  sqlite-loads.ts            SQLiteLoad: the loads and commit numbers of a file, and its positions
   sqlite-checkpoint-store.ts SQLiteCheckpointStore
   sqlite-sync-history.ts     SQLiteSyncHistory
   sqlite-catalog.ts          installSQLiteCatalog

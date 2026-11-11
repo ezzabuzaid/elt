@@ -826,7 +826,7 @@ The destination contract:
 
 - Declarations are frozen, and you can use them again.
 - `Destination.createWriter(configuration, target)` selects a strategy of the storage with no I/O.
-- `Destination.load()` opens the one hold of the pass on the storage.
+- `Destination.load({ clock, connection })` opens the one hold of the pass on the storage. `connection` is the name of the connection whose pass opens it, so a destination that records its loads can name each one.
 - `load.prepare(configuration, target, { writer, reloading })` gives each stream its `Stage`. A `Stage` has `apply`, `commit` and `discard`. It also has `fresh`, which is true when the target holds none of the earlier rows of the copy, so the copy reads from no checkpoint; `reloading`, which is true while commits go to a hidden target; and `complete`, which puts that hidden target in the place of the target after the stream ends with no failure.
 - Each destination uses `reloadMode` to decide what to do with the target: load into it, make it, evolve a stored target that the stream does not fit now ([shape changes](#shape-changes)), open a reload for an overwrite whose stored target does not fit now, or continue the reload that the last run of the copy left open. A `RESET` of the full stream also opens a reload.
 - Destinations own connections, files and publication. `Copy` and `Pipeline` have no SQL or file system code of a load.
