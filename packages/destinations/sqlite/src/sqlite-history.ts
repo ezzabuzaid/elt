@@ -34,10 +34,13 @@ export class SQLiteHistory {
     this.name = `_elt_history_${hash('sha256', table.location)}`;
   }
 
-  // Made with the target, and recorded as its history.
-  create(database: DatabaseSync): void {
+  // Made with the target, with written, the quoted columns that each row of
+  // the target holds, and recorded as its history. SQLite cannot add a
+  // column named rowid, _rowid_ or oid to a table, so the history has the
+  // target's columns from the start.
+  create(database: DatabaseSync, written: readonly string[]): void {
     database.exec(
-      `CREATE TABLE IF NOT EXISTS ${quote(this.name)} ("replaced_in" INTEGER NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS ${quote(this.name)} ("replaced_in" INTEGER NOT NULL, ${written.join(', ')})`,
     );
     database.exec(
       `CREATE INDEX IF NOT EXISTS ${quote(`${this.name}_replaced_in`)} ON ${quote(this.name)} ("replaced_in")`,

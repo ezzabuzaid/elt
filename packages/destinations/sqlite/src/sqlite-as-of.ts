@@ -55,6 +55,12 @@ export function readAsOf(
   if (asked !== undefined) {
     const expired = expiry(numbered, asked);
     if (expired !== undefined) return { expired };
+    // No later load can straddle a position, so one that a reader was given
+    // stays one; a commit that is not a position stays inside its pass.
+    if (!numbered?.ends.includes(asked.number))
+      throw new TypeError(
+        `${position} is not a position of ${path}: a reading of a commit inside a pass would show a part of that pass. Read a position that positions() lists.`,
+      );
   }
   const number = asked?.number ?? numbered?.ends.at(-1);
   const at = number === undefined ? undefined : committedAt(database, number);

@@ -4,11 +4,14 @@ import { Identifiers } from '@eltjs/elt';
 // folds A-Z only, so `É` and `é` stay two names.
 class SQLiteIdentifiers extends Identifiers {
   protected readonly maxBytes = Infinity;
+  // _rowid_ reads the id SQLite gives each row, which a difference needs, as
+  // long as no column takes the name.
   protected readonly ownColumns = [
     'loaded_at',
     'committed_in',
     '_elt_row_hash',
     'replaced_in',
+    '_rowid_',
   ];
 
   key(name: string): string {

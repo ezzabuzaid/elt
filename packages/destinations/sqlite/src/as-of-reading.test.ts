@@ -26,6 +26,7 @@ import {
   SQLiteSyncHistory,
   type SQLiteTable,
   View,
+  openDestination,
 } from './index.ts';
 import { storedRows } from './testing/stored-rows.ts';
 
@@ -114,6 +115,23 @@ const notes = (name: string) =>
 const note = (stream: string, id: string, version: number, body = id) => ({
   stream,
   data: { id, version, body },
+});
+// Readings with no key, as an upstream that replaces its table whole sends
+// them: two readings can be the same.
+const readings = () =>
+  new Stream({
+    name: 'readings',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, value: { type: 'integer' } },
+      required: ['id', 'value'],
+    },
+    supportedSyncModes: ['full_refresh'],
+  });
+
+const sample = (id: string, value: number) => ({
+  stream: 'readings',
+  data: { id, value },
 });
 const checkpoint = (stream: string, read: number) => ({
   type: 'STATE' as const,
@@ -268,6 +286,40 @@ test('a reading with no position while a pass waits after its first commit reads
     wait.release();
     await second;
   }
+});
+
+test('a reading of a commit inside a pass is refused, as it would show half of that pass, and the commit that ends the pass reads', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const { destination, connection } = notesFile(scratch.path);
+  await connection({
+    notes: [note('notes', 'n1', 1), checkpoint('notes', 1)],
+  }).run();
+  const before = newest(destination);
+  await connection({
+    notes: [
+      note('notes', 'n2', 1),
+      checkpoint('notes', 2),
+      note('notes', 'n3', 1),
+      checkpoint('notes', 3),
+    ],
+  }).run();
+  const end = newest(destination);
+  // A reader that names the commit of a row it read, here the first
+  // checkpoint of the second pass, which is not a position.
+  const [written] = asOf(
+    destination,
+    "SELECT committed_in FROM notes WHERE id = 'n2'",
+  );
+  const inside = `${before.split(':')[0]}:${written?.committed_in}`;
+
+  assert.notEqual(inside, end);
+  assert.deepEqual(destination.positions(before), [end]);
+  assert.throws(() => destination.reading(inside), TypeError);
+  assert.deepEqual(asOf(destination, 'SELECT id FROM notes ORDER BY id', end), [
+    { id: 'n1' },
+    { id: 'n2' },
+    { id: 'n3' },
+  ]);
 });
 
 test('a reading of a position of a file made again, or past the newest commit, is expired', async () => {
@@ -646,6 +698,353 @@ test('the rows that a later reload swapped out read as of the position before it
   assert.deepEqual(asOf(destination, 'SELECT id FROM notes'), [{ id: 'n3' }]);
   assert.deepEqual(
     asOf(destination, 'SELECT * FROM notes ORDER BY id', before),
+    rows,
+  );
+});
+
+test('a keyless overwrite that sends one of two identical rows again keeps only the copy that left in the history, and the copy that stays keeps its commit', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const { destination, stream, connection } = notesFile(
+    scratch.path,
+    readings(),
+  );
+  const overwrite = new Copy(stream, destination.table('readings'));
+  await connection(
+    { readings: [sample('r1', 1), sample('r1', 1), sample('r2', 2)] },
+    overwrite,
+  ).run();
+  const before = newest(destination);
+  const rows = asOf(destination, 'SELECT * FROM readings ORDER BY id');
+  await delay(5);
+
+  await connection(
+    { readings: [sample('r1', 1), sample('r2', 2)] },
+    overwrite,
+  ).run();
+
+  assert.deepEqual(
+    replaced(destination, 'readings').map(({ id, value }) => ({ id, value })),
+    [{ id: 'r1', value: 1 }],
+  );
+  assert.deepEqual(
+    asOf(destination, 'SELECT * FROM readings ORDER BY id'),
+    rows.slice(1),
+  );
+  assert.deepEqual(
+    asOf(destination, 'SELECT * FROM readings ORDER BY id', before),
+    rows,
+  );
+});
+
+test('a keyless overwrite that sends one more copy of a stored row inserts only that copy, with its own commit, and the stored copy keeps its commit and its loaded_at', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const { destination, stream, connection } = notesFile(
+    scratch.path,
+    readings(),
+  );
+  const overwrite = new Copy(stream, destination.table('readings'));
+  await connection({ readings: [sample('r1', 1)] }, overwrite).run();
+  const before = newest(destination);
+  const rows = asOf(destination, 'SELECT * FROM readings');
+  await delay(5);
+
+  await connection(
+    { readings: [sample('r1', 1), sample('r1', 1)] },
+    overwrite,
+  ).run();
+  const last = lastCommit(destination);
+
+  assert.deepEqual(replaced(destination, 'readings'), []);
+  assert.deepEqual(
+    asOf(destination, 'SELECT * FROM readings ORDER BY committed_in'),
+    [
+      ...rows,
+      ...rows.map((row) => ({
+        ...row,
+        committed_in: last.number,
+        loaded_at: last.opened_at,
+      })),
+    ],
+  );
+  assert.deepEqual(asOf(destination, 'SELECT * FROM readings', before), rows);
+});
+
+test('an overwrite that brings the same rows again keeps no history and leaves each row with its commit and its loaded_at', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const { destination, stream, connection } = notesFile(scratch.path);
+  const overwrite = new Copy(stream, destination.table('notes'));
+  const pass = () =>
+    connection(
+      { notes: [note('notes', 'n1', 1), note('notes', 'n2', 1)] },
+      overwrite,
+    ).run();
+  await pass();
+  const before = newest(destination);
+  const rows = asOf(destination, 'SELECT * FROM notes ORDER BY id');
+  await delay(5);
+
+  await pass();
+
+  assert.notEqual(newest(destination), before);
+  assert.deepEqual(replaced(destination, 'notes'), []);
+  assert.deepEqual(asOf(destination, 'SELECT * FROM notes ORDER BY id'), rows);
+  assert.deepEqual(
+    asOf(destination, 'SELECT * FROM notes ORDER BY id', before),
+    rows,
+  );
+});
+
+test('an overwrite_dedup that changes one row of two keeps only its old values in the history, and the other row keeps its commit and its loaded_at', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const { destination, stream, connection } = notesFile(scratch.path);
+  const overwrite = new Copy(stream, destination.table('notes'), {
+    syncMode: 'full_refresh',
+    destinationSyncMode: 'overwrite_dedup',
+    cursorField: 'version',
+  });
+  await connection(
+    { notes: [note('notes', 'n1', 1), note('notes', 'n2', 1)] },
+    overwrite,
+  ).run();
+  const before = newest(destination);
+  const rows = asOf(destination, 'SELECT * FROM notes ORDER BY id');
+  await delay(5);
+
+  await connection(
+    {
+      notes: [
+        note('notes', 'n1', 1),
+        note('notes', 'n2', 2, 'changed'),
+        note('notes', 'n2', 1),
+      ],
+    },
+    overwrite,
+  ).run();
+
+  assert.deepEqual(
+    replaced(destination, 'notes').map(({ id, body }) => ({ id, body })),
+    [{ id: 'n2', body: 'n2' }],
+  );
+  assert.deepEqual(
+    asOf(destination, 'SELECT id, body FROM notes ORDER BY id'),
+    [
+      { id: 'n1', body: 'n1' },
+      { id: 'n2', body: 'changed' },
+    ],
+  );
+  assert.deepEqual(
+    asOf(destination, "SELECT * FROM notes WHERE id = 'n1'"),
+    rows.filter(({ id }) => id === 'n1'),
+  );
+  assert.deepEqual(
+    asOf(destination, 'SELECT * FROM notes ORDER BY id', before),
+    rows,
+  );
+});
+
+test('a reload that keeps the shape of the table keeps only the row that left in the history, and a row it loads again keeps its commit and its loaded_at', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const { destination, connection } = notesFile(scratch.path);
+  await connection({
+    notes: [
+      note('notes', 'n1', 1),
+      note('notes', 'n2', 1),
+      checkpoint('notes', 1),
+    ],
+  }).run();
+  const before = newest(destination);
+  const rows = asOf(destination, 'SELECT * FROM notes ORDER BY id');
+  await delay(5);
+
+  await connection({
+    notes: [
+      { type: 'RESET', stream: 'notes' },
+      note('notes', 'n1', 1),
+      checkpoint('notes', 2),
+      note('notes', 'n3', 1),
+      checkpoint('notes', 3),
+    ],
+  }).run();
+  const last = lastCommit(destination);
+
+  assert.deepEqual(
+    replaced(destination, 'notes').map(({ id }) => id),
+    ['n2'],
+  );
+  assert.deepEqual(
+    storedRows(
+      destination.path,
+      String.raw`SELECT name FROM sqlite_schema WHERE name LIKE '\_elt\_next\_%' ESCAPE '\'`,
+    ),
+    [],
+  );
+  assert.deepEqual(
+    asOf(
+      destination,
+      'SELECT id, committed_in, loaded_at FROM notes ORDER BY id',
+    ),
+    [
+      ...rows
+        .filter(({ id }) => id === 'n1')
+        .map(({ id, committed_in, loaded_at }) => ({
+          id,
+          committed_in,
+          loaded_at,
+        })),
+      { id: 'n3', committed_in: last.number, loaded_at: last.opened_at },
+    ],
+  );
+  assert.deepEqual(
+    asOf(destination, 'SELECT * FROM notes ORDER BY id', before),
+    rows,
+  );
+});
+
+test('a reload that opens the first pass under a new key loads in place rows that repeat the old key', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  // The stream keyed by id, then by title, as a stream that changes its key.
+  const items = (primaryKey: string[]) =>
+    new Stream({
+      name: 'items',
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          version: { type: 'integer' },
+        },
+        required: ['id', 'title', 'version'],
+      },
+      primaryKey,
+      supportedSyncModes: ['incremental'],
+      emitsDeletes: true,
+    });
+  const item = (id: string, title: string) => ({
+    stream: 'items',
+    data: { id, title, version: 1 },
+  });
+  const pass = (primaryKey: string[], steps: readonly Step[]) => {
+    const stream = items(primaryKey);
+    return pipeline(
+      new Connection({
+        name: 'items',
+        source: new Scripted([stream], { items: steps }),
+        destination,
+        checkpoints,
+        steps: [incremental(stream, destination)],
+      }),
+    ).run();
+  };
+  await pass(['id'], [item('a', 'A'), item('b', 'B'), checkpoint('items', 1)]);
+  await checkpoints.reset('items');
+
+  await pass(
+    ['title'],
+    [
+      { type: 'RESET', stream: 'items' },
+      item('b', 'B'),
+      item('b', 'Z'),
+      checkpoint('items', 2),
+    ],
+  );
+
+  assert.deepEqual(
+    asOf(destination, 'SELECT id, title FROM items ORDER BY title'),
+    [
+      { id: 'b', title: 'B' },
+      { id: 'b', title: 'Z' },
+    ],
+  );
+  assert.deepEqual(
+    replaced(destination, 'items').map(({ id }) => id),
+    ['a'],
+  );
+});
+
+test('an index and a trigger that a host made on the table stay after a reload that keeps the shape of the table', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const { destination, connection } = notesFile(scratch.path);
+  await connection({
+    notes: [note('notes', 'n1', 1), checkpoint('notes', 1)],
+  }).run();
+  {
+    // A host's own index and trigger: no operation of elt makes them.
+    using database = openDestination(destination.path);
+    database.exec('CREATE INDEX "notes_by_body" ON "notes" ("body")');
+    database.exec(
+      'CREATE TRIGGER "notes_seen" AFTER INSERT ON "notes" BEGIN SELECT 1; END',
+    );
+  }
+
+  await connection({
+    notes: [
+      { type: 'RESET', stream: 'notes' },
+      note('notes', 'n2', 1),
+      checkpoint('notes', 2),
+    ],
+  }).run();
+
+  assert.deepEqual(asOf(destination, 'SELECT id FROM notes'), [{ id: 'n2' }]);
+  assert.deepEqual(
+    storedRows(
+      destination.path,
+      "SELECT name, tbl_name FROM sqlite_schema WHERE name IN ('notes_by_body', 'notes_seen') ORDER BY name",
+    ),
+    [
+      { name: 'notes_by_body', tbl_name: 'notes' },
+      { name: 'notes_seen', tbl_name: 'notes' },
+    ],
+  );
+});
+
+test('a keyless overwrite of a stream with fields named rowid and _rowid_ keeps only the row that left in the history', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  // Two rows with one value of each field. SQLite reads a column of such a
+  // name in place of the row's own id.
+  const stream = new Stream({
+    name: 'messages',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        rowid: { type: 'integer' },
+        _rowid_: { type: 'integer' },
+      },
+      required: ['id', 'rowid', '_rowid_'],
+    },
+    supportedSyncModes: ['full_refresh'],
+  });
+  const message = (id: string) => ({
+    stream: 'messages',
+    data: { id, rowid: 1, _rowid_: 1 },
+  });
+  const { destination, connection } = notesFile(scratch.path, stream);
+  const overwrite = new Copy(stream, destination.table('messages'));
+  await connection(
+    { messages: [message('m1'), message('m2')] },
+    overwrite,
+  ).run();
+  const before = newest(destination);
+  const rows = asOf(destination, 'SELECT * FROM messages ORDER BY id');
+
+  await connection({ messages: [message('m2')] }, overwrite).run();
+
+  assert.deepEqual(
+    replaced(destination, 'messages').map(({ id }) => id),
+    ['m1'],
+  );
+  assert.deepEqual(
+    asOf(destination, 'SELECT * FROM messages'),
+    rows.filter(({ id }) => id === 'm2'),
+  );
+  assert.deepEqual(
+    asOf(destination, 'SELECT * FROM messages ORDER BY id', before),
     rows,
   );
 });

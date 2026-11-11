@@ -100,22 +100,14 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
       );
   }
 
-  // A replacing load keeps none of the stored rows: its index is built once
-  // the commit has emptied the table.
+  // A replacing commit builds the index once the rows that leave are gone:
+  // under a narrower key, they can repeat a key.
   protected override initialize(
     database: DatabaseSync,
     replacing: boolean,
   ): void {
     if (replacing) this.dropDedupIndexes(database, this.#dedupIndex);
     else this.#index(database);
-  }
-
-  protected override replace(
-    database: DatabaseSync,
-    committedIn: number,
-  ): void {
-    super.replace(database, committedIn);
-    this.#index(database);
   }
 
   // The target's key index, built only when it does not exist yet.
@@ -145,14 +137,44 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     this.#index(database);
   }
 
-  // The result of applying the staged operations one at a time: a staged
-  // DELETE removes its key, and only records after a key's last DELETE count.
-  // replace keeps the newest extraction, so a restated fact overwrites the
-  // loaded one; cursor_newer keeps the greatest cursor (the first on ties) and
-  // the guard that rejects out-of-order replay. A stored row with the values
-  // of the record that replaces it stays as it is, with its commit and its
-  // loaded_at; history keeps each stored row that a DELETE removes or a
-  // record with other values replaces.
+  // The cursor of the guard that rejects out-of-order replay: cursor_newer's,
+  // when the copy has a cursor.
+  get #guard(): SQLiteColumn | undefined {
+    return this.configuration.dedupPolicy === 'replace'
+      ? undefined
+      : this.cursor;
+  }
+
+  #same(left: string, right: string): string {
+    return this.keys
+      .map(({ quotedName }) => `${left}.${quotedName} = ${right}.${quotedName}`)
+      .join(' AND ');
+  }
+
+  // The seq of each staged record that applying the staged operations one at
+  // a time keeps: only records after a key's last DELETE count. replace keeps
+  // the newest extraction, so a restated fact overwrites the loaded one;
+  // cursor_newer keeps the greatest cursor (the first on ties).
+  #accepted(stage: string): string {
+    const keys = this.keys.map((column) => column.quotedName);
+    const guard = this.#guard;
+    const order =
+      guard === undefined
+        ? `"staged".${seq} DESC`
+        : `"staged".${guard.quotedName} COLLATE BINARY DESC, "staged".${seq}`;
+    // Rank identifiers only: sorting whole mail bodies/files multiplies temporary disk usage.
+    return `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "_elt_last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${this.#same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."_elt_last" IS NULL OR "staged".${seq} > "deleted"."_elt_last")) SELECT ${seq} FROM "ranked" WHERE "_elt_rank" = 1`;
+  }
+
+  protected override kept(stage: string): string {
+    return `${seq} IN (${this.#accepted(stage)})`;
+  }
+
+  // A staged DELETE removes its key, and the records that #accepted keeps are
+  // upserted, with the guard, if any, rejecting out-of-order replay. A stored
+  // row with the values of the record that replaces it stays as it is, with
+  // its commit and its loaded_at; history keeps each stored row that a DELETE
+  // removes or a record with other values replaces.
   protected override merge(
     database: DatabaseSync,
     stage: string,
@@ -161,8 +183,6 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     history: SQLiteHistory | null,
   ): void {
     const keys = this.keys.map((column) => column.quotedName);
-    const same = (left: string, right: string) =>
-      keys.map((key) => `${left}.${key} = ${right}.${key}`).join(' AND ');
     const deleted = `(${keys.join(', ')}) IN (SELECT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D')`;
     history?.keep(
       database,
@@ -170,22 +190,16 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
       `FROM ${into} AS "_elt_old" WHERE ${deleted}`,
     );
     database.exec(`DELETE FROM ${into} WHERE ${deleted}`);
-    const { cursor } = this;
-    const guarded =
-      this.configuration.dedupPolicy !== 'replace' && cursor !== undefined;
-    const order = guarded
-      ? `"staged".${cursor.quotedName} COLLATE BINARY DESC, "staged".${seq}`
-      : `"staged".${seq} DESC`;
-    // Rank identifiers only: sorting whole mail bodies/files multiplies temporary disk usage.
-    const accepted = `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "_elt_last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."_elt_last" IS NULL OR "staged".${seq} > "deleted"."_elt_last")) SELECT ${seq} FROM "ranked" WHERE "_elt_rank" = 1`;
+    const accepted = this.#accepted(stage);
+    const guard = this.#guard;
     // Whether a staged record replaces the stored row: its values differ,
     // and the guard, if any, lets it in.
     const replaces = (record: string, row: string) =>
-      `${record}.${version} IS NOT ${row}.${version}${guarded ? ` AND ${record}.${cursor.quotedName} COLLATE BINARY > ${row}.${cursor.quotedName}` : ''}`;
+      `${record}.${version} IS NOT ${row}.${version}${guard === undefined ? '' : ` AND ${record}.${guard.quotedName} COLLATE BINARY > ${row}.${guard.quotedName}`}`;
     history?.keep(
       database,
       committedIn,
-      `FROM ${stage} AS "_elt_new" JOIN ${into} AS "_elt_old" ON ${same('"_elt_new"', '"_elt_old"')} WHERE "_elt_new".${seq} IN (${accepted}) AND ${replaces('"_elt_new"', '"_elt_old"')}`,
+      `FROM ${stage} AS "_elt_new" JOIN ${into} AS "_elt_old" ON ${this.#same('"_elt_new"', '"_elt_old"')} WHERE "_elt_new".${seq} IN (${accepted}) AND ${replaces('"_elt_new"', '"_elt_old"')}`,
     );
     const columns = this.table.columns.map((column) => column.quotedName);
     database

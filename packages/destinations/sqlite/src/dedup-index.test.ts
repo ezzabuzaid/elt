@@ -120,3 +120,47 @@ test('a deduplicating load that finds nothing new leaves the database schema as 
   assert.equal(result?.count, 0);
   assert.equal(schemaVersion(), before);
 });
+
+test('an overwrite_dedup stage that commits again after the commit that replaced its rows merges on the key', async () => {
+  await using scratch = await new TemporaryFiles().directory('dedup-index-');
+  const stream = new Stream({
+    name: 'records',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'integer' }, body: { type: 'string' } },
+      required: ['id', 'body'],
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh'],
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  const copy = new Copy(stream, destination.table('records'), {
+    syncMode: 'full_refresh',
+    destinationSyncMode: 'overwrite_dedup',
+    dedupPolicy: 'replace',
+  });
+  await using load = await destination.load({
+    clock: globalThis,
+    connection: 'records',
+  });
+  await using stage = await load.prepare(copy.configuration, copy.to, {
+    writer: 'records',
+    reloading: false,
+  });
+
+  await stage.apply({ type: 'RECORD', data: { id: 1, body: 'first' } });
+  await stage.commit();
+  await stage.apply({ type: 'RECORD', data: { id: 1, body: 'second' } });
+  await stage.commit();
+
+  using data = open(destination.path, { readOnly: true });
+  assert.deepEqual(
+    data
+      .prepare('SELECT id, body FROM records')
+      .all()
+      .map((row) => ({ ...row })),
+    [{ id: 1, body: 'second' }],
+  );
+});

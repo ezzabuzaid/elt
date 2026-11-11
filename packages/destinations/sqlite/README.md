@@ -34,8 +34,8 @@ Tables:
 
 - SQLite makes strict tables. SQL constraints that exist stay in force.
 - Each copy adds `loaded_at`, the UTC start time of the load that wrote the values of the row. A field with that name gets a different column name.
-- Each copy also adds `committed_in`, the number of the [commit](#commit-numbers-and-positions) that last wrote the row, and `_elt_row_hash`, the SHA-256 of the values of its columns. A field with one of these names also gets a different column name.
-- A deduplicating load that brings a row with the same values as the stored row leaves the stored row as it is, with its `loaded_at` and its `committed_in`.
+- Each copy also adds `committed_in`, the number of the [commit](#commit-numbers-and-positions) that last wrote the row, and `_elt_row_hash`, the SHA-256 of the values of its columns. A field with one of these names also gets a different column name. So does a field with the name `_rowid_`: SQLite reads that name as the id of each row, which an overwrite and a reload use.
+- When a deduplicating load, an overwrite or a reload brings a row with the same values as a stored row, it leaves the stored row as it is, with its `loaded_at` and its `committed_in`. A deduplicating load finds the stored row by its key. An overwrite and a reload find it by [difference](#commit-numbers-and-positions), also in a table with no key.
 - Deduplication upserts on a unique index that is named after the table and the key (`_elt_dedup_<hash>`). SQLite makes the index one time, and makes it again only when the key changes. It uses the native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html).
 - Deduplication also checks the stored types of the key and cursor columns, and refuses null keys and cursors.
 - A change to a normal `append` or `overwrite` removes the index of the mode. Explicit constraints stay.
@@ -83,7 +83,7 @@ Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as
 - SQLite takes no lock other than its transactions. Loads into one file run side by side. A [checkpoint store](#checkpoints) keeps two runs of one copy apart.
 - No transaction stays open between commits, as in Postgres.
 - `prepare` only refuses and stages. It refuses the target of a different writer, a reader view that is not its own, and stored rows that a deduplicating load cannot keep.
-- Each commit is one write transaction. The first commit also makes the table, the index of its mode, its reader view, its descriptions and its writer.
+- Each commit is one write transaction. The first commit also makes the table, the index of its mode, its reader view, its descriptions and its writer. A full refresh commits one time, when its stream ends. Thus an overwrite replaces the rows of the table in that one commit, and a reader never sees a part of it.
 - Other writers of the file wait only for a commit. A stream that fails before its first commit leaves nothing.
 - Each stream stages its operations in a `TEMP` table that only its connection sees. The commit of a different stream never publishes them, and a crash leaves nothing.
 - A commit merges the staged operations of one stream into its table. The result is the same as when the operations apply one at a time: a staged `DELETE` removes its key, only the records after the last `DELETE` of a key count, `replace` keeps the last record, and `cursor_newer` keeps the first record with the greatest cursor.
@@ -98,12 +98,20 @@ Each commit in the SQLite file has a number. A reader that compares the file at 
 - The table `_elt_commits` has one row for each commit: its `number`, its `load` and its `committed_at`. SQLite writes one transaction at a time, so the numbers follow the order of the commits, also across connections.
 - The table `_elt_loads` has one row for each load: its `connector` (the name of the connection), its `opened_at`, and its `closed_at`, which is null while the load is open. A load opens when a pass starts to load, and closes when the pass ends.
 - A connection runs one pass at a time. Thus when a load of a connection opens, it closes each load of that connection that is still open: the process of that pass ended first. A closed load cannot commit.
-- A commit into a [hidden table](./CONTEXT.md) shows nothing to readers. The commit that swaps the hidden table in also sets `committed_in` of each of its rows to its own number.
+- A commit into a [hidden table](./CONTEXT.md) shows nothing to readers. When the stream ends, one more commit gives its rows to the table, and readers see them from that commit on.
+- An overwrite and a reload replace the rows of the table by [difference](./CONTEXT.md). The difference compares the rows as multisets, so it needs no key. On each side, each row gets a number k among the rows with the same `_elt_row_hash`, and the k-th copy of some values matches the k-th copy of the same values on the other side:
+  - A row with a match stays as it is, with its `committed_in` and its `loaded_at`.
+  - A row of the table with no match goes into the history and leaves the table.
+  - A new row with no match enters the table with the number of the commit.
+- An overwrite applies the difference in its one commit, to the records that it staged. A reload applies it, to the rows of its hidden table, in the commit at the end of the stream. The table keeps its indexes, its triggers and its reader view. When the table has a different shape than the hidden table, the reload puts the hidden table in its place, and every row of the table goes into the history.
+- A row that keeps a file in the SQLite file gets a new file id in each load. Thus it never matches, and each overwrite or reload puts it into the history.
 - The table `_elt_epoch` keeps the epoch, an id that names the numbering. A file that is made again, or tables that a different version declared in a different way, start a new epoch.
 - `destination.positions(after?)` gives the positions after the position `after`, in ascending order, or all positions. A position is `<epoch>:<number>`. It names the last commit of a closed load, when no other load has commits before and after it. When `after` is of a different epoch, or is after the newest commit, `positions` gives `{ expired }` with the reason. It opens the file read-only.
 - A clear that empties a table is a load of one commit. It does not close the open loads of its connection.
-- Each table has a [history](./CONTEXT.md) `_elt_history_<hash>`, which the table `_elt_histories` names. Before a commit changes or removes a row, it copies the row into the history, with `replaced_in`, its own number. This occurs for a deduplicated row with different values, a `DELETE`, the reset of a partition, a clear, an overwrite, and the swap of a reload. A commit into a hidden table copies nothing. The history has each column that the table had, and it does not drop a column. A field with the name `replaced_in` gets a different column name.
-- `destination.reading(position?)` gives a [reading](./CONTEXT.md) of the file as of the position, or as of the newest position: `{ sql, position, at }`, where `sql` is a read-only `DatabaseSync` in one read transaction and `at` is the time of the commit. Dispose the reading to close it. A position of a different epoch, or after the newest commit, gives `{ expired }`.
+- Each table has a [history](./CONTEXT.md) `_elt_history_<hash>`, which the table `_elt_histories` names. Before a commit changes or removes a row, it copies the row into the history, with `replaced_in`, its own number. This occurs for a deduplicated row with different values, a `DELETE`, the reset of a partition, a clear, a row that an overwrite or a reload does not bring again, and the rows of a table that a reload of a different shape replaces. A commit into a hidden table copies nothing. The history has each column that the table had, and it does not drop a column. A field with the name `replaced_in` gets a different column name.
+- The history gets the columns of the table when it is made. SQLite cannot add a column with the name `rowid` or `oid` to a table. Thus when a stream adds a field with one of these names later, a commit that keeps a row in the history fails. Delete the SQLite file to load it again.
+- The reset of a partition copies each row of the partition into the history. The rows that the source sends again after the reset can come in later commits, for example after a checkpoint of each page. Thus no commit can know which rows of the partition left.
+- `destination.reading(position?)` gives a [reading](./CONTEXT.md) of the file as of the position, or as of the newest position: `{ sql, position, at }`, where `sql` is a read-only `DatabaseSync` in one read transaction and `at` is the time of the commit. Dispose the reading to close it. A position of a different epoch, or after the newest commit, gives `{ expired }`. A commit number that `positions` does not list, for example a commit inside a pass, makes `reading` throw a `TypeError`, as a string that is not a position does: a reading there would show a part of a pass. A position that `positions` listed stays a position, because no later load can have commits before and after it.
 - As of a position before the newest commit, each table, its reader view and each view of the file show the rows that the commit of the position left. A column that a later commit added is `NULL`. The sync history keeps no versions, and a read of it fails. A stored view that names a table as `main.<table>` makes the reading fail, because that name shows the table as it is now.
 
 ## Checkpoints
@@ -249,7 +257,7 @@ The files of the destination:
 src/
   sqlite-destination.ts      SQLiteDestination: tables and the load
   open-destination.ts        openDestination: the open of each connection that writes the file
-  sqlite-writer.ts           the stage, the commit, evolve and reload of a table
+  sqlite-writer.ts           the stage, the commit, evolve, reload and the difference of a table
   sqlite-loads.ts            SQLiteLoad: the loads and commit numbers of a file, and its positions
   sqlite-checkpoint-store.ts SQLiteCheckpointStore
   sqlite-sync-history.ts     SQLiteSyncHistory

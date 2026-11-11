@@ -44,10 +44,20 @@ const writersTable = new Declaration(
 export const seq = '"_elt_seq"';
 export const op = '"_elt_op"';
 export const version = '"_elt_row_hash"';
+// The id SQLite gives each row of a table; no column takes the name.
+const rowid = '_rowid_';
 
 // What a commit writes in the destination's own columns of each row that it
 // inserts or updates: when its load began, and its number.
 export type Stamp = { readonly loadedAt: string; readonly committedIn: number };
+
+// One side of a difference: a table, what tells its rows apart, and which
+// of its rows count, all of them when rows is undefined.
+type Side = {
+  readonly table: string;
+  readonly id: string;
+  readonly rows?: string;
+};
 
 // One stream's load. Operations, and the chunks of their files, wait in
 // connection-private TEMP tables, so another stream's commit never publishes
@@ -87,8 +97,10 @@ export abstract class SQLiteWriter extends Writer {
       );
   }
 
-  // What the target needs at its first commit, before its first merge.
-  // replacing: that commit replaces the target, so its rows are moot. A mode
+  // What the target needs before rows of its mode enter it: at its first
+  // commit, once it evolves, and once a difference removed the rows that
+  // leave. replacing: the first commit replaces the rows by difference, so
+  // the index of the mode waits until the rows that leave are gone. A mode
   // without a key releases the index a deduplicating mode made.
   protected initialize(database: DatabaseSync, _replacing: boolean): void {
     this.dropDedupIndexes(database, null);
@@ -141,16 +153,65 @@ export abstract class SQLiteWriter extends Writer {
       .run(loadedAt, committedIn);
   }
 
-  // An overwrite replaces the target at its first commit.
+  // An overwrite replaces the rows of the target at its first commit.
   protected get replaces(): boolean {
     return false;
   }
 
-  // Empties the target a replacing commit is about to fill; its history keeps
-  // the rows, as replaced in that commit.
-  protected replace(database: DatabaseSync, committedIn: number): void {
-    this.#keepRows(database, committedIn);
-    database.exec(`DELETE FROM ${this.table.quotedName}`);
+  // Which rows of the stage a merge into an empty table keeps, as a
+  // condition on them.
+  protected kept(_stage: string): string {
+    return `${op} = 'R'`;
+  }
+
+  // The ids of the rows of left that no row of right matches, as multisets:
+  // the k-th copy of some values on one side matches the k-th copy of the
+  // same values on the other, so no key is needed.
+  #unmatched(left: Side, right: Side): string {
+    const numbered = ({ table, id, rows }: Side) =>
+      `SELECT ${id} AS "row", ${version} AS "hash", row_number() OVER (PARTITION BY ${version} ORDER BY ${id}) AS "copy" FROM ${table}${rows === undefined ? '' : ` WHERE ${rows}`}`;
+    return `SELECT "mine"."row" FROM (${numbered(left)}) AS "mine" LEFT JOIN (${numbered(right)}) AS "theirs" ON "theirs"."hash" = "mine"."hash" AND "theirs"."copy" = "mine"."copy" WHERE "theirs"."row" IS NULL`;
+  }
+
+  get #target(): Side {
+    return { table: this.table.quotedName, id: rowid };
+  }
+
+  // The first half of replacing the rows of the target with the rows of
+  // next: the history keeps each row of the target that no row of next
+  // matches, and the row goes. A row with a match stays as it is, with its
+  // commit and its loaded_at. What remains matches rows of next, so it fits
+  // the index of the mode, which the rows that enter then fit too.
+  #removeUnmatched(
+    database: DatabaseSync,
+    next: Side,
+    committedIn: number,
+  ): void {
+    const { table, id } = this.#target;
+    const leaving = this.#unmatched(this.#target, next);
+    this.history.keep(
+      database,
+      committedIn,
+      `FROM ${table} AS "_elt_old" WHERE "_elt_old".${id} IN (${leaving})`,
+    );
+    database.exec(`DELETE FROM ${table} WHERE ${id} IN (${leaving})`);
+    this.initialize(database, false);
+  }
+
+  // Replaces the rows of the target with the records that the stage keeps,
+  // by difference: each record that no row matches enters with this commit.
+  #replace(
+    database: DatabaseSync,
+    stage: string,
+    { loadedAt, committedIn }: Stamp,
+  ): void {
+    const staged = { table: stage, id: seq, rows: this.kept(stage) };
+    this.#removeUnmatched(database, staged, committedIn);
+    database
+      .prepare(
+        `INSERT INTO ${this.table.quotedName} (${this.written.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, ?, ?, ${version} FROM ${stage} WHERE ${seq} IN (${this.#unmatched(staged, this.#target)}) ORDER BY ${seq}`,
+      )
+      .run(loadedAt, committedIn);
   }
 
   // Copies each row of the target into its history, as replaced in commit
@@ -284,7 +345,7 @@ export abstract class SQLiteWriter extends Writer {
       // rows left, no stored chunk is referenced, including those a failed
       // stream left behind that the file triggers never see.
       if (this.exists(database, this.table.location)) {
-        this.history.create(database);
+        this.history.create(database, this.written);
         this.#keepRows(database, SQLiteLoad.once(database, connection, clock));
         database.exec(`DELETE FROM ${this.table.quotedName}`);
         // Clearing a copy also abandons the reload it left open.
@@ -323,7 +384,7 @@ export abstract class SQLiteWriter extends Writer {
       Object.entries({
         ...this.#description.columns,
         loaded_at:
-          'Start time of the load that wrote these values of the row. A deduplicating load that brings the same values leaves the row, and its loaded_at, as they are. Not the source modification time or the most recent successful sync.',
+          'Start time of the load that wrote these values of the row. A deduplicating load, an overwrite or a reload that brings the same values leaves the row, and its loaded_at, as they are. Not the source modification time or the most recent successful sync.',
         committed_in:
           'Number of the commit that last wrote this row: the row of _elt_commits with this number tells when, and in which load.',
       }).map(([name, description]) => [
@@ -387,7 +448,7 @@ export abstract class SQLiteWriter extends Writer {
   #create(database: DatabaseSync, writer: string, replacing: boolean): void {
     this.own(database, writer);
     database.exec(this.table.createTableSQL);
-    this.history.create(database);
+    this.history.create(database, this.written);
     this.initialize(database, replacing);
     if (this.table.readerView !== undefined)
       this.installReaderView(database, this.table.readerView);
@@ -479,13 +540,47 @@ export abstract class SQLiteWriter extends Writer {
     this.describe(database);
   }
 
+  // Replaces the rows of the target with the rows of the hidden target, by
+  // difference, in place: the table keeps its indexes, triggers and reader
+  // view. Each row of the hidden target that no row matches enters with this
+  // commit, and the loaded_at of the load that wrote it.
+  #reloadInPlace(
+    database: DatabaseSync,
+    hidden: string,
+    committedIn: number,
+  ): void {
+    const reloaded = { table: hidden, id: rowid };
+    this.#removeUnmatched(database, reloaded, committedIn);
+    database
+      .prepare(
+        `INSERT INTO ${this.table.quotedName} (${this.written.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, "loaded_at", ?, ${version} FROM ${hidden} WHERE ${rowid} IN (${this.#unmatched(reloaded, this.#target)}) ORDER BY ${rowid}`,
+      )
+      .run(committedIn);
+    database.exec(`DROP TABLE ${hidden}`);
+  }
+
+  // Replaces the target with the hidden target, whose rows readers see from
+  // this commit on, once the history keeps every row of the target.
+  #swap(database: DatabaseSync, hidden: string, committedIn: number): void {
+    database
+      .prepare(`UPDATE ${hidden} SET "committed_in" = ?`)
+      .run(committedIn);
+    if (this.table.readerView !== undefined)
+      database.exec(`DROP VIEW IF EXISTS ${quote(this.table.readerView)}`);
+    if (this.exists(database, this.table.location))
+      this.#keepRows(database, committedIn);
+    database.exec(`DROP TABLE IF EXISTS ${this.table.quotedName}`);
+    database.exec(`ALTER TABLE ${hidden} RENAME TO ${this.table.quotedName}`);
+    this.adopt(database);
+  }
+
   // Refuses, in one short transaction, a target another writer owns, a
   // reader view not its own and stored rows it cannot keep, evolves a stored
   // table the stream no longer fits unless the load overwrites it, and stages
   // in TEMP. Nothing else reaches the database until a commit. A load into the
   // target creates it, or adopts the stored one, at its first commit; a reload
   // leaves it to readers as it is, merges into a hidden target from its first
-  // commit, and swaps that in at complete().
+  // commit, and gives its rows to the target at complete().
   prepare(
     load: SQLiteLoad,
     { writer, reloading }: { writer: string; reloading: boolean },
@@ -584,15 +679,17 @@ export abstract class SQLiteWriter extends Writer {
     };
     // The first commit claims the target: it owns the hidden target of a
     // reload, or creates or adopts the table. Later commits find it claimed.
-    const claimTarget = (committedIn: number) => {
+    // Returns whether the commit replaces the rows of the target with the
+    // stage's.
+    const claimTarget = () => {
       if (open(mode)) {
         this.own(database, writer);
-        return;
+        return false;
       }
       this.#create(database, writer, this.replaces);
-      if (this.replaces) this.replace(database, committedIn);
+      return this.replaces;
     };
-    const claimed = () => {};
+    const claimed = () => false;
     let claim = claimTarget;
     return {
       fresh,
@@ -648,7 +745,7 @@ export abstract class SQLiteWriter extends Writer {
               database.exec(`CREATE TABLE ${this.table.definition(hidden)}`);
               this.build(database, hidden);
             }
-            claim(committedIn);
+            const replacing = claim();
             // The rows of a hidden target were never shown, so only the
             // target keeps the rows a commit replaces.
             const history = open(mode) ? null : this.history;
@@ -663,13 +760,16 @@ export abstract class SQLiteWriter extends Writer {
               database.prepare(`DELETE FROM ${into()}${rows}`).run(...values);
             }
             for (const { store } of stores) store.publish();
-            this.merge(
-              database,
-              stage,
-              { loadedAt, committedIn },
-              into(),
-              history,
-            );
+            if (replacing)
+              this.#replace(database, stage, { loadedAt, committedIn });
+            else
+              this.merge(
+                database,
+                stage,
+                { loadedAt, committedIn },
+                into(),
+                history,
+              );
             // Files of the rows a reset emptied, and of staged rows it dropped.
             if (resets.length > 0) prune();
             drop();
@@ -688,22 +788,13 @@ export abstract class SQLiteWriter extends Writer {
             // Readers see the rows from this commit on, and the rows of the
             // target it replaces up to it.
             const committedIn = load.commit();
-            database
-              .prepare(`UPDATE ${hidden} SET "committed_in" = ?`)
-              .run(committedIn);
-            if (this.table.readerView !== undefined)
-              database.exec(
-                `DROP VIEW IF EXISTS ${quote(this.table.readerView)}`,
-              );
             this.#dropRetiredChunks(database);
-            this.history.create(database);
-            if (this.exists(database, this.table.location))
-              this.#keepRows(database, committedIn);
-            database.exec(`DROP TABLE IF EXISTS ${this.table.quotedName}`);
-            database.exec(
-              `ALTER TABLE ${hidden} RENAME TO ${this.table.quotedName}`,
-            );
-            this.adopt(database);
+            this.history.create(database, this.written);
+            // A target of another shape cannot take the rows of the hidden
+            // target in place.
+            if (this.#declaration(this.table.name).drift(database) === 'fits')
+              this.#reloadInPlace(database, hidden, committedIn);
+            else this.#swap(database, hidden, committedIn);
             if (this.table.readerView !== undefined)
               this.installReaderView(database, this.table.readerView);
             this.describe(database);

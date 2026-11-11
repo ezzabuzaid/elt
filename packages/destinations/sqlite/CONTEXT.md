@@ -57,7 +57,7 @@ The `TEMP` table where one stream keeps its operations until its next commit. On
 _Avoid_: Buffer, batch, staging table (a stage is not in the SQLite file)
 
 **Hidden table**:
-The table `_elt_next_<hash>` that a reload commits into. It takes the place of the raw table when the stream ends with no failure.
+The table `_elt_next_<hash>` that a reload commits into. When the stream ends with no failure, the raw table takes its rows by difference. The hidden table takes the place of a raw table of a different shape.
 _Avoid_: Shadow table, temp table
 
 **Checkpoint file**:
@@ -73,12 +73,16 @@ The id that names the numbering of the commits of a SQLite file. A file that is 
 _Avoid_: Generation, version
 
 **Position**:
-`<epoch>:<number>`: the last commit of a closed load, when no other load has commits before and after it. A reader at a position sees no part of a pass.
+`<epoch>:<number>`: the last commit of a closed load, when no other load has commits before and after it. A reader at a position sees no part of a pass. A reading of a commit that is not a position fails.
 _Avoid_: Offset, cursor (eca keeps a cursor), checkpoint
 
 **Row hash**:
-`_elt_row_hash`: the SHA-256 of the values of the columns of a row. A deduplicating load that finds a stored row with the same row hash leaves that row as it is.
+`_elt_row_hash`: the SHA-256 of the values of the columns of a row. A deduplicating load that finds a stored row with the same row hash leaves that row as it is, and so does a difference.
 _Avoid_: Checksum, version, input hash (a computed dataset keeps an input hash)
+
+**Difference**:
+How an overwrite or a reload replaces the rows of a raw table. It compares the rows as multisets by row hash: the k-th copy of some values matches the k-th copy of the same values. A row with a match stays, with its commit. A row of the raw table with no match goes into the history. A new row with no match enters.
+_Avoid_: Diff, merge (a commit merges the stage), sync
 
 **History**:
 The table `_elt_history_<hash>` that keeps the rows of a raw table that commits changed or removed. Each row has `replaced_in`, the number of the commit that changed or removed it.
