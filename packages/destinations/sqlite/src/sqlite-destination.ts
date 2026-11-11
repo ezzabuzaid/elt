@@ -1,13 +1,10 @@
 import { resolve } from 'node:path';
-import type { DatabaseSync } from 'node:sqlite';
-
-import { UnavailableError, open } from '@zukhruf/sqlite-open';
 
 import type { CopyConfiguration, Load, PipelineClock } from '@eltjs/elt';
 import { Destination } from '@eltjs/elt';
 
-import { busyTimeout } from './open-destination.ts';
 import { SQLiteAppendWriter } from './sqlite-append-writer.ts';
+import { type SQLiteReading, readAsOf, reader } from './sqlite-as-of.ts';
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
 import { SQLiteDeduplicatingWriter } from './sqlite-deduplicating-writer.ts';
@@ -64,6 +61,18 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     return positionsAfter(database, after);
   }
 
+  // The file as of a position, or as of its newest position: each target,
+  // its reader view and each view over them show the rows that the commit of
+  // the position left, and the sync history refuses to be read. At the
+  // newest commit the reading reads the tables as they are. It opens the
+  // file read-only, in one read transaction. A position of another epoch, or
+  // past the newest commit, is expired.
+  reading(position?: string): SQLiteReading | { readonly expired: string } {
+    if (this.path === ':memory:')
+      throw new TypeError('Readings require a SQLite destination file');
+    return readAsOf(this.path, position);
+  }
+
   table(
     name: string,
     configure?: (columns: SQLiteColumns) => readonly SQLiteColumn[],
@@ -96,15 +105,5 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
           `Destination does not support ${configuration.destinationSyncMode}`,
         );
     }
-  }
-}
-
-// A reader of the file, or null while no file is at the path.
-function reader(path: string): DatabaseSync | null {
-  try {
-    return open(path, { readOnly: true, timeout: busyTimeout });
-  } catch (error) {
-    if (error instanceof UnavailableError) return null;
-    throw error;
   }
 }

@@ -1,5 +1,7 @@
 import type { CheckpointStore } from '../state/checkpoint-store.ts';
 import { errorMessage } from '../state/sync-history.ts';
+import type { PipelineClock } from './clock.ts';
+import type { Connection } from './connection.ts';
 import { CopyConfiguration } from './copy-configuration.ts';
 import type { Destination } from './destination.ts';
 import { FileTransfer } from './file-transfer.ts';
@@ -93,21 +95,21 @@ export class Copy<Target extends DestinationTarget> {
   // Empties the target and removes this copy's checkpoint together, so the
   // next run reloads from scratch.
   async clear(
-    source: Source,
-    destination: Destination<Target>,
-    checkpoints?: CheckpointStore,
+    { name, source, destination, checkpoints }: Connection<Target>,
+    clock: PipelineClock,
   ): Promise<void> {
     this.validate(source, destination, checkpoints);
+    const writer = this.writer(source);
     const files = new FileTransfer(
       this.configuration.fileReads,
       destination.location(this.to),
-      this.writer(source),
+      writer,
     );
     const drop = () =>
       destination.clear(
         this.configuration,
         this.to,
-        this.writer(source),
+        { writer, clock, connection: name },
         (values) => files.reconcile(values),
       );
     if (this.id !== undefined && checkpoints !== undefined)

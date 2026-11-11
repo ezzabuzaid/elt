@@ -5,6 +5,7 @@ import { Declaration } from '@zukhruf/sqlite-drift';
 import { transaction } from '@zukhruf/sqlite-transaction';
 
 import type {
+  Clearing,
   CopyConfiguration,
   FieldValues,
   KeyValue,
@@ -26,8 +27,9 @@ import { openDestination } from './open-destination.ts';
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { describe } from './sqlite-descriptions.ts';
 import { SQLiteFileStore } from './sqlite-file-store.ts';
+import { SQLiteHistory, rowHash } from './sqlite-history.ts';
 import { identifiers } from './sqlite-identifiers.ts';
-import type { SQLiteLoad } from './sqlite-loads.ts';
+import { SQLiteLoad } from './sqlite-loads.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
@@ -41,6 +43,7 @@ const writersTable = new Declaration(
 
 export const seq = '"_elt_seq"';
 export const op = '"_elt_op"';
+export const version = '"_elt_row_hash"';
 
 // What a commit writes in the destination's own columns of each row that it
 // inserts or updates: when its load began, and its number.
@@ -56,6 +59,8 @@ export abstract class SQLiteWriter extends Writer {
   readonly configuration: CopyConfiguration;
   readonly path: string;
   readonly table: SQLiteTable;
+  // Where the target keeps the rows that its commits replace or remove.
+  readonly history: SQLiteHistory;
   readonly #description: TargetDescription;
 
   constructor(
@@ -67,6 +72,7 @@ export abstract class SQLiteWriter extends Writer {
     this.configuration = configuration;
     this.path = path;
     this.table = table;
+    this.history = new SQLiteHistory(table);
     this.#description = describeTarget(
       configuration,
       table.columns,
@@ -106,12 +112,14 @@ export abstract class SQLiteWriter extends Writer {
   protected inspect(_database: DatabaseSync): void {}
 
   // Moves the staged operations into the target, or the hidden target of a
-  // reload.
+  // reload. history keeps the rows of the target that the merge replaces or
+  // removes; it is null for a hidden target, whose rows no reader saw.
   protected abstract merge(
     database: DatabaseSync,
     stage: string,
     stamp: Stamp,
     into: string,
+    history: SQLiteHistory | null,
   ): void;
 
   // What a reload's hidden target needs once it is created, before the first
@@ -128,7 +136,7 @@ export abstract class SQLiteWriter extends Writer {
   ): void {
     database
       .prepare(
-        `INSERT INTO ${into} (${this.fields.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, ?, ? FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
+        `INSERT INTO ${into} (${this.written.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, ?, ?, ${version} FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
       )
       .run(loadedAt, committedIn);
   }
@@ -138,21 +146,40 @@ export abstract class SQLiteWriter extends Writer {
     return false;
   }
 
-  // Empties the target a replacing commit is about to fill.
-  protected replace(database: DatabaseSync): void {
+  // Empties the target a replacing commit is about to fill; its history keeps
+  // the rows, as replaced in that commit.
+  protected replace(database: DatabaseSync, committedIn: number): void {
+    this.#keepRows(database, committedIn);
     database.exec(`DELETE FROM ${this.table.quotedName}`);
+  }
+
+  // Copies each row of the target into its history, as replaced in commit
+  // replacedIn.
+  #keepRows(database: DatabaseSync, replacedIn: number): void {
+    this.history.keep(
+      database,
+      replacedIn,
+      `FROM ${this.table.quotedName} AS "_elt_old"`,
+    );
   }
 
   private get hash(): string {
     return hash('sha256', this.table.location);
   }
 
+  // What a reader reads of each row.
   protected get fields(): string[] {
     return [
       ...this.table.columns.map((column) => column.quotedName),
       '"loaded_at"',
       '"committed_in"',
     ];
+  }
+
+  // What a commit writes into each row: its fields, and the hash of its
+  // values.
+  protected get written(): string[] {
+    return [...this.fields, version];
   }
 
   protected encode(record: unknown): SQLInputValue[] {
@@ -238,8 +265,10 @@ export abstract class SQLiteWriter extends Writer {
     };
   }
 
+  // A clear that empties a table is a change readers see, so it is a load of
+  // one numbered commit, and the history keeps the rows it removes.
   override async clear(
-    writer: string,
+    { writer, clock, connection }: Clearing,
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
     using database = openDestination(this.path);
@@ -255,6 +284,8 @@ export abstract class SQLiteWriter extends Writer {
       // rows left, no stored chunk is referenced, including those a failed
       // stream left behind that the file triggers never see.
       if (this.exists(database, this.table.location)) {
+        this.history.create(database);
+        this.#keepRows(database, SQLiteLoad.once(database, connection, clock));
         database.exec(`DELETE FROM ${this.table.quotedName}`);
         // Clearing a copy also abandons the reload it left open.
         database.exec(`DROP TABLE IF EXISTS ${quote(this.#hiddenName)}`);
@@ -291,6 +322,8 @@ export abstract class SQLiteWriter extends Writer {
     const columns = Object.fromEntries(
       Object.entries({
         ...this.#description.columns,
+        loaded_at:
+          'Start time of the load that wrote these values of the row. A deduplicating load that brings the same values leaves the row, and its loaded_at, as they are. Not the source modification time or the most recent successful sync.',
         committed_in:
           'Number of the commit that last wrote this row: the row of _elt_commits with this number tells when, and in which load.',
       }).map(([name, description]) => [
@@ -349,11 +382,12 @@ export abstract class SQLiteWriter extends Writer {
       database.exec(this.#viewDefinition(view));
   }
 
-  // The target as its first commit makes it: its owner, the table and the
-  // index its mode owns, its reader view and its descriptions.
+  // The target as its first commit makes it: its owner, the table, its
+  // history, the index its mode owns, its reader view and its descriptions.
   #create(database: DatabaseSync, writer: string, replacing: boolean): void {
     this.own(database, writer);
     database.exec(this.table.createTableSQL);
+    this.history.create(database);
     this.initialize(database, replacing);
     if (this.table.readerView !== undefined)
       this.installReaderView(database, this.table.readerView);
@@ -519,7 +553,7 @@ export abstract class SQLiteWriter extends Writer {
         if (next === 'load' && !this.replaces) this.inspect(database);
         database.exec(`DROP TABLE IF EXISTS ${stage}`);
         database.exec(
-          `CREATE TEMP TABLE ${name} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,
+          `CREATE TEMP TABLE ${name} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')}, ${version} TEXT)`,
         );
         for (const { store } of stores) store.stage();
         return next;
@@ -529,7 +563,7 @@ export abstract class SQLiteWriter extends Writer {
     const fresh = mode === 'create' || mode === 'reload';
     const columns = this.table.columns.map((column) => column.quotedName);
     const record = database.prepare(
-      `INSERT INTO ${stage} (${op}, ${columns.join(', ')}) VALUES ('R', ${columns.map(() => '?').join(', ')})`,
+      `INSERT INTO ${stage} (${op}, ${columns.join(', ')}, ${version}) VALUES ('R', ${columns.map(() => '?').join(', ')}, ?)`,
     );
     const staged = (column: SQLiteColumn) =>
       `SELECT ${column.quotedName} FROM ${stage} WHERE ${column.quotedName} IS NOT NULL`;
@@ -550,13 +584,13 @@ export abstract class SQLiteWriter extends Writer {
     };
     // The first commit claims the target: it owns the hidden target of a
     // reload, or creates or adopts the table. Later commits find it claimed.
-    const claimTarget = () => {
+    const claimTarget = (committedIn: number) => {
       if (open(mode)) {
         this.own(database, writer);
         return;
       }
       this.#create(database, writer, this.replaces);
-      if (this.replaces) this.replace(database);
+      if (this.replaces) this.replace(database, committedIn);
     };
     const claimed = () => {};
     let claim = claimTarget;
@@ -599,7 +633,8 @@ export abstract class SQLiteWriter extends Writer {
               [column.field]: await store.save(content),
             };
         }
-        record.run(...this.encode(data));
+        const values = this.encode(data);
+        record.run(...values, rowHash(this.table.columns, values));
       },
       // Each commit is one transaction; a failed one leaves the database as
       // the last commit left it.
@@ -613,13 +648,28 @@ export abstract class SQLiteWriter extends Writer {
               database.exec(`CREATE TABLE ${this.table.definition(hidden)}`);
               this.build(database, hidden);
             }
-            claim();
+            claim(committedIn);
+            // The rows of a hidden target were never shown, so only the
+            // target keeps the rows a commit replaces.
+            const history = open(mode) ? null : this.history;
             for (const partition of resets) {
               const [rows, values] = this.#scope(partition);
+              history?.keep(
+                database,
+                committedIn,
+                `FROM ${into()} AS "_elt_old"${rows}`,
+                values,
+              );
               database.prepare(`DELETE FROM ${into()}${rows}`).run(...values);
             }
             for (const { store } of stores) store.publish();
-            this.merge(database, stage, { loadedAt, committedIn }, into());
+            this.merge(
+              database,
+              stage,
+              { loadedAt, committedIn },
+              into(),
+              history,
+            );
             // Files of the rows a reset emptied, and of staged rows it dropped.
             if (resets.length > 0) prune();
             drop();
@@ -635,15 +685,20 @@ export abstract class SQLiteWriter extends Writer {
         transaction(
           database,
           () => {
-            // Readers see the rows from this commit on.
+            // Readers see the rows from this commit on, and the rows of the
+            // target it replaces up to it.
+            const committedIn = load.commit();
             database
               .prepare(`UPDATE ${hidden} SET "committed_in" = ?`)
-              .run(load.commit());
+              .run(committedIn);
             if (this.table.readerView !== undefined)
               database.exec(
                 `DROP VIEW IF EXISTS ${quote(this.table.readerView)}`,
               );
             this.#dropRetiredChunks(database);
+            this.history.create(database);
+            if (this.exists(database, this.table.location))
+              this.#keepRows(database, committedIn);
             database.exec(`DROP TABLE IF EXISTS ${this.table.quotedName}`);
             database.exec(
               `ALTER TABLE ${hidden} RENAME TO ${this.table.quotedName}`,

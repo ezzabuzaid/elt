@@ -63,24 +63,13 @@ export class SQLiteLoad implements Disposable {
       const id = transaction(
         database,
         () => {
-          numbering.apply(database);
+          const id = begin(database, connection, loadedAt);
           database
             .prepare(
-              `INSERT INTO ${epochs} ("id", "epoch") VALUES (1, ?) ON CONFLICT DO NOTHING`,
+              `UPDATE ${loads} SET "closed_at" = ? WHERE "connector" = ? AND "closed_at" IS NULL AND "id" <> ?`,
             )
-            .run(randomUUID());
-          database
-            .prepare(
-              `UPDATE ${loads} SET "closed_at" = ? WHERE "connector" = ? AND "closed_at" IS NULL`,
-            )
-            .run(loadedAt, connection);
-          return Number(
-            database
-              .prepare(
-                `INSERT INTO ${loads} ("connector", "opened_at") VALUES (?, ?) RETURNING "id"`,
-              )
-              .get(connection, loadedAt)?.id,
-          );
+            .run(loadedAt, connection, id);
+          return id;
         },
         { mode: 'immediate' },
       );
@@ -89,6 +78,31 @@ export class SQLiteLoad implements Disposable {
       database.close();
       throw error;
     }
+  }
+
+  // The number of a change that is a load of one commit, such as a clear,
+  // taken inside the caller's transaction: the load opens, commits and
+  // closes in it. It is not a pass, so it leaves the open loads of its
+  // connection open, and a pass that has commits before and after it keeps it
+  // from being a position until that pass ends.
+  static once(
+    database: DatabaseSync,
+    connection: string,
+    clock: PipelineClock,
+  ): number {
+    const at = now(clock);
+    const id = begin(database, connection, at);
+    const committed = Number(
+      database
+        .prepare(
+          `INSERT INTO ${commits} ("load", "committed_at") VALUES (?, ?) RETURNING "number"`,
+        )
+        .get(id, at)?.number,
+    );
+    database
+      .prepare(`UPDATE ${loads} SET "closed_at" = ? WHERE "id" = ?`)
+      .run(at, id);
+    return committed;
   }
 
   // The number of a commit of this load, taken inside the commit's
@@ -128,46 +142,87 @@ export class SQLiteLoad implements Disposable {
   }
 }
 
+// Records a load of connection that opens at openedAt, with the numbering
+// and its epoch if the file has none yet, and gives its id.
+function begin(
+  database: DatabaseSync,
+  connection: string,
+  openedAt: string,
+): number {
+  numbering.apply(database);
+  database
+    .prepare(
+      `INSERT INTO ${epochs} ("id", "epoch") VALUES (1, ?) ON CONFLICT DO NOTHING`,
+    )
+    .run(randomUUID());
+  return Number(
+    database
+      .prepare(
+        `INSERT INTO ${loads} ("connector", "opened_at") VALUES (?, ?) RETURNING "id"`,
+      )
+      .get(connection, openedAt)?.id,
+  );
+}
+
+// The numbering of a file, as one snapshot reads it.
+export type Numbering = {
+  readonly epoch: string;
+  // The number of the newest commit, 0 before the first.
+  readonly newest: number;
+  // The commits that are positions, ascending.
+  readonly ends: readonly number[];
+};
+
+// A position, as `${epoch}:${number}` names it.
+export type Position = { readonly epoch: string; readonly number: number };
+
 // The positions of the file after `after`, ascending; all of them when
 // after is undefined. database is null while no file is at the path.
 export function positionsAfter(
   database: DatabaseSync | null,
   after: string | undefined,
 ): readonly string[] | { readonly expired: string } {
-  const since = after === undefined ? undefined : parse(after);
+  const since = after === undefined ? undefined : parsePosition(after);
   const numbered =
     database === null
       ? null
-      : transaction(database, () => read(database), { mode: 'deferred' });
-  if (numbered === null)
-    return since === undefined
+      : transaction(database, () => readNumbering(database), {
+          mode: 'deferred',
+        });
+  if (since === undefined)
+    return numbered === null
       ? []
-      : { expired: `Position ${after} is of commits this file does not have` };
-  const { epoch, newest, ends } = numbered;
-  if (since !== undefined) {
-    if (since.epoch !== epoch)
-      return {
-        expired: `Position ${after} is of an earlier numbering: the commits of this file were numbered again since`,
-      };
-    if (since.number > newest)
-      return {
-        expired: `Position ${after} is past the newest commit of this file, ${newest}`,
-      };
-  }
-  const later =
-    since === undefined ? ends : ends.filter((end) => end > since.number);
-  return later.map((end) => `${epoch}:${end}`);
+      : numbered.ends.map((end) => `${numbered.epoch}:${end}`);
+  const expired = expiry(numbered, since);
+  if (expired !== undefined) return { expired };
+  return (numbered?.ends ?? [])
+    .filter((end) => end > since.number)
+    .map((end) => `${since.epoch}:${end}`);
 }
 
-// The numbering of the file, as one snapshot reads it, or null when the file
-// has none. A position is a commit that ends a closed load where no load
-// straddles it, so a reader there sees no part of a pass. A sweep line finds
-// them: taking the loads in order of their first commits, an end is a
-// position when no load that began at or before it ends after it. An open
-// load has no end yet, so it reaches past every later commit.
-function read(
-  database: DatabaseSync,
-): { epoch: string; newest: number; ends: number[] } | null {
+// Why a position is not one of the file's commits, or undefined when it is.
+export function expiry(
+  numbered: Numbering | null,
+  { epoch, number }: Position,
+): string | undefined {
+  const position = `${epoch}:${number}`;
+  if (numbered === null)
+    return `Position ${position} is of commits this file does not have`;
+  if (epoch !== numbered.epoch)
+    return `Position ${position} is of an earlier numbering: the commits of this file were numbered again since`;
+  if (number > numbered.newest)
+    return `Position ${position} is past the newest commit of this file, ${numbered.newest}`;
+  return undefined;
+}
+
+// The numbering of the file, as the snapshot of the open read transaction
+// reads it, or null when the file has none. A position is a commit that ends
+// a closed load where no load straddles it, so a reader there sees no part
+// of a pass. A sweep line finds them: taking the loads in order of their
+// first commits, an end is a position when no load that began at or before
+// it ends after it. An open load has no end yet, so it reaches past every
+// later commit.
+export function readNumbering(database: DatabaseSync): Numbering | null {
   if (numbering.drift(database) !== 'fits') return null;
   const epoch = database.prepare(`SELECT "epoch" FROM ${epochs}`).get()?.epoch;
   if (typeof epoch !== 'string') return null;
@@ -200,7 +255,19 @@ function read(
   return { epoch, newest, ends };
 }
 
-function parse(position: string): { epoch: string; number: number } {
+// When a commit of the file was made, or undefined when it has no commit of
+// that number.
+export function committedAt(
+  database: DatabaseSync,
+  number: number,
+): string | undefined {
+  const at = database
+    .prepare(`SELECT "committed_at" FROM ${commits} WHERE "number" = ?`)
+    .get(number)?.committed_at;
+  return typeof at === 'string' ? at : undefined;
+}
+
+export function parsePosition(position: string): Position {
   const groups = /^(?<epoch>[^:]+):(?<number>0|[1-9]\d*)$/.exec(
     position,
   )?.groups;

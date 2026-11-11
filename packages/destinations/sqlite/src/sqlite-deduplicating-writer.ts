@@ -5,8 +5,9 @@ import type { CopyConfiguration, Deduplication, KeyValue } from '@eltjs/elt';
 
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
+import type { SQLiteHistory } from './sqlite-history.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
-import { SQLiteWriter, type Stamp, op, seq } from './sqlite-writer.ts';
+import { SQLiteWriter, type Stamp, op, seq, version } from './sqlite-writer.ts';
 
 export class SQLiteDeduplicatingWriter extends SQLiteWriter {
   readonly deduplication: Deduplication;
@@ -109,8 +110,11 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     else this.#index(database);
   }
 
-  protected override replace(database: DatabaseSync): void {
-    super.replace(database);
+  protected override replace(
+    database: DatabaseSync,
+    committedIn: number,
+  ): void {
+    super.replace(database, committedIn);
     this.#index(database);
   }
 
@@ -145,19 +149,27 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
   // DELETE removes its key, and only records after a key's last DELETE count.
   // replace keeps the newest extraction, so a restated fact overwrites the
   // loaded one; cursor_newer keeps the greatest cursor (the first on ties) and
-  // the guard that rejects out-of-order replay.
+  // the guard that rejects out-of-order replay. A stored row with the values
+  // of the record that replaces it stays as it is, with its commit and its
+  // loaded_at; history keeps each stored row that a DELETE removes or a
+  // record with other values replaces.
   protected override merge(
     database: DatabaseSync,
     stage: string,
     { loadedAt, committedIn }: Stamp,
     into: string,
+    history: SQLiteHistory | null,
   ): void {
     const keys = this.keys.map((column) => column.quotedName);
     const same = (left: string, right: string) =>
       keys.map((key) => `${left}.${key} = ${right}.${key}`).join(' AND ');
-    database.exec(
-      `DELETE FROM ${into} WHERE (${keys.join(', ')}) IN (SELECT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D')`,
+    const deleted = `(${keys.join(', ')}) IN (SELECT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D')`;
+    history?.keep(
+      database,
+      committedIn,
+      `FROM ${into} AS "_elt_old" WHERE ${deleted}`,
     );
+    database.exec(`DELETE FROM ${into} WHERE ${deleted}`);
     const { cursor } = this;
     const guarded =
       this.configuration.dedupPolicy !== 'replace' && cursor !== undefined;
@@ -165,12 +177,21 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
       ? `"staged".${cursor.quotedName} COLLATE BINARY DESC, "staged".${seq}`
       : `"staged".${seq} DESC`;
     // Rank identifiers only: sorting whole mail bodies/files multiplies temporary disk usage.
+    const accepted = `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "_elt_last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."_elt_last" IS NULL OR "staged".${seq} > "deleted"."_elt_last")) SELECT ${seq} FROM "ranked" WHERE "_elt_rank" = 1`;
+    // Whether a staged record replaces the stored row: its values differ,
+    // and the guard, if any, lets it in.
+    const replaces = (record: string, row: string) =>
+      `${record}.${version} IS NOT ${row}.${version}${guarded ? ` AND ${record}.${cursor.quotedName} COLLATE BINARY > ${row}.${cursor.quotedName}` : ''}`;
+    history?.keep(
+      database,
+      committedIn,
+      `FROM ${stage} AS "_elt_new" JOIN ${into} AS "_elt_old" ON ${same('"_elt_new"', '"_elt_old"')} WHERE "_elt_new".${seq} IN (${accepted}) AND ${replaces('"_elt_new"', '"_elt_old"')}`,
+    );
     const columns = this.table.columns.map((column) => column.quotedName);
     database
       .prepare(
-        `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "_elt_last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."_elt_last" IS NULL OR "staged".${seq} > "deleted"."_elt_last")) ` +
-          `INSERT INTO ${into} AS "_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, ?, ? FROM ${stage} WHERE ${seq} IN (SELECT ${seq} FROM "ranked" WHERE "_elt_rank" = 1) ORDER BY ${seq} ` +
-          `ON CONFLICT (${keys.map((key) => `${key} COLLATE BINARY`).join(', ')}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guarded ? ` WHERE excluded.${cursor.quotedName} COLLATE BINARY > "_elt_target".${cursor.quotedName}` : ''}`,
+        `INSERT INTO ${into} AS "_elt_target" (${this.written.join(', ')}) SELECT ${columns.join(', ')}, ?, ?, ${version} FROM ${stage} WHERE ${seq} IN (${accepted}) ORDER BY ${seq} ` +
+          `ON CONFLICT (${keys.map((key) => `${key} COLLATE BINARY`).join(', ')}) DO UPDATE SET ${this.written.map((field) => `${field} = excluded.${field}`).join(', ')} WHERE ${replaces('excluded', '"_elt_target"')}`,
       )
       .run(loadedAt, committedIn);
   }

@@ -33,8 +33,9 @@ Inferred columns map flat JSON Schema fields:
 Tables:
 
 - SQLite makes strict tables. SQL constraints that exist stay in force.
-- Each copy adds `loaded_at`, the UTC start time of the load. A field with that name gets a different column name.
-- Each copy also adds `committed_in`, the number of the [commit](#commit-numbers-and-positions) that last wrote the row. A field with that name also gets a different column name.
+- Each copy adds `loaded_at`, the UTC start time of the load that wrote the values of the row. A field with that name gets a different column name.
+- Each copy also adds `committed_in`, the number of the [commit](#commit-numbers-and-positions) that last wrote the row, and `_elt_row_hash`, the SHA-256 of the values of its columns. A field with one of these names also gets a different column name.
+- A deduplicating load that brings a row with the same values as the stored row leaves the stored row as it is, with its `loaded_at` and its `committed_in`.
 - Deduplication upserts on a unique index that is named after the table and the key (`_elt_dedup_<hash>`). SQLite makes the index one time, and makes it again only when the key changes. It uses the native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html).
 - Deduplication also checks the stored types of the key and cursor columns, and refuses null keys and cursors.
 - A change to a normal `append` or `overwrite` removes the index of the mode. Explicit constraints stay.
@@ -100,6 +101,10 @@ Each commit in the SQLite file has a number. A reader that compares the file at 
 - A commit into a [hidden table](./CONTEXT.md) shows nothing to readers. The commit that swaps the hidden table in also sets `committed_in` of each of its rows to its own number.
 - The table `_elt_epoch` keeps the epoch, an id that names the numbering. A file that is made again, or tables that a different version declared in a different way, start a new epoch.
 - `destination.positions(after?)` gives the positions after the position `after`, in ascending order, or all positions. A position is `<epoch>:<number>`. It names the last commit of a closed load, when no other load has commits before and after it. When `after` is of a different epoch, or is after the newest commit, `positions` gives `{ expired }` with the reason. It opens the file read-only.
+- A clear that empties a table is a load of one commit. It does not close the open loads of its connection.
+- Each table has a [history](./CONTEXT.md) `_elt_history_<hash>`, which the table `_elt_histories` names. Before a commit changes or removes a row, it copies the row into the history, with `replaced_in`, its own number. This occurs for a deduplicated row with different values, a `DELETE`, the reset of a partition, a clear, an overwrite, and the swap of a reload. A commit into a hidden table copies nothing. The history has each column that the table had, and it does not drop a column. A field with the name `replaced_in` gets a different column name.
+- `destination.reading(position?)` gives a [reading](./CONTEXT.md) of the file as of the position, or as of the newest position: `{ sql, position, at }`, where `sql` is a read-only `DatabaseSync` in one read transaction and `at` is the time of the commit. Dispose the reading to close it. A position of a different epoch, or after the newest commit, gives `{ expired }`.
+- As of a position before the newest commit, each table, its reader view and each view of the file show the rows that the commit of the position left. A column that a later commit added is `NULL`. The sync history keeps no versions, and a read of it fails. A stored view that names a table as `main.<table>` makes the reading fail, because that name shows the table as it is now.
 
 ## Checkpoints
 

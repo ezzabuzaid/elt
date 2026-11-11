@@ -1,3 +1,4 @@
+import type { PipelineClock } from './clock.ts';
 import type { Partition } from './partition.ts';
 import type { FailureType, KeyValue } from './source.ts';
 import type { Stream } from './stream.ts';
@@ -79,7 +80,16 @@ export abstract class Writer {
   // Empties the target and releases its owner, refusing another writer's target.
   // Acknowledges the committed result while holding the target's write lock.
   abstract clear(
-    writer: string,
+    clearing: Clearing,
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void>;
 }
+
+// Who clears a target: writer names the copy, as in a load. A destination
+// that records each change of its rows dates the clear on clock, and names
+// it by connection, as it records a load (Destination.load).
+export type Clearing = {
+  readonly writer: string;
+  readonly clock: PipelineClock;
+  readonly connection: string;
+};

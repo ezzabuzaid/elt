@@ -98,6 +98,7 @@ export {
   type TargetDescription,
 } from './core/target-description.ts';
 export {
+  type Clearing,
   type FieldValues,
   type LoadFailure,
   type Stage,

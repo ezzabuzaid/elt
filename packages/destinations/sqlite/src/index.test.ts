@@ -3106,7 +3106,7 @@ test('explicit int64 and local timestamp columns keep what the stream spells, wi
     () =>
       database
         .prepare(
-          "INSERT INTO raw_bookings (id, start, loaded_at, committed_in) VALUES (1, '2026-10-01T08:30:00.123', '2026-10-01T00:00:00.000Z', 1)",
+          "INSERT INTO raw_bookings (id, start, loaded_at, committed_in, _elt_row_hash) VALUES (1, '2026-10-01T08:30:00.123', '2026-10-01T00:00:00.000Z', 1, '')",
         )
         .run(),
     /CHECK constraint failed/,
@@ -4189,7 +4189,11 @@ test('a clear waits for a reader in another process instead of failing', async (
   }
   using _reader = await readerInAnotherProcess(destination.path);
 
-  await destination.clear(copy.configuration, copy.to, 'writer');
+  await destination.clear(copy.configuration, copy.to, {
+    writer: 'writer',
+    clock: globalThis,
+    connection: 'docs',
+  });
 
   using after = open(destination.path, { readOnly: true });
   assert.equal(after.prepare('SELECT count(*) AS n FROM docs').get()?.n, 0);
@@ -6538,6 +6542,7 @@ test('a stream whose upstream forgets records keeps every row when a field is ad
     'added',
     'loaded_at',
     'committed_in',
+    '_elt_row_hash',
   ]);
   assert.deepEqual(received[1], first);
   assert.equal(
@@ -6671,7 +6676,12 @@ test('a stale table whose reader view was replaced by another is refused before 
     },
   );
 
-  assert.deepEqual(columns(), ['id', 'loaded_at', 'committed_in']);
+  assert.deepEqual(columns(), [
+    'id',
+    'loaded_at',
+    'committed_in',
+    '_elt_row_hash',
+  ]);
   using database = open(join(scratch.path, 'items.sqlite'), {
     readOnly: true,
   });

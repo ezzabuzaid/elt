@@ -145,11 +145,7 @@ export class Pipeline<Target extends DestinationTarget> {
       );
       if (connection === undefined)
         throw new TypeError("Only this pipeline's copies can be cleared");
-      await copy.clear(
-        connection.source,
-        connection.destination,
-        connection.checkpoints,
-      );
+      await copy.clear(connection, this.#clock);
     }
   }
 

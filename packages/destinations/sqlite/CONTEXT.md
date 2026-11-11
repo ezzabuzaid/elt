@@ -75,3 +75,15 @@ _Avoid_: Generation, version
 **Position**:
 `<epoch>:<number>`: the last commit of a closed load, when no other load has commits before and after it. A reader at a position sees no part of a pass.
 _Avoid_: Offset, cursor (eca keeps a cursor), checkpoint
+
+**Row hash**:
+`_elt_row_hash`: the SHA-256 of the values of the columns of a row. A deduplicating load that finds a stored row with the same row hash leaves that row as it is.
+_Avoid_: Checksum, version, input hash (a computed dataset keeps an input hash)
+
+**History**:
+The table `_elt_history_<hash>` that keeps the rows of a raw table that commits changed or removed. Each row has `replaced_in`, the number of the commit that changed or removed it.
+_Avoid_: Audit log, archive, changelog
+
+**Reading**:
+A read-only connection to the SQLite file as of one position. Each raw table, reader view and view shows the rows that the commit of the position left. The sync history cannot be read in it.
+_Avoid_: Snapshot (SQLite gives each read transaction a snapshot), time travel, version

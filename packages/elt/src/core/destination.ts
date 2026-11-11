@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { PipelineClock } from './clock.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { Target as DestinationTarget } from './target.ts';
-import type { FieldValues, Stage, Writer } from './writer.ts';
+import type { Clearing, FieldValues, Stage, Writer } from './writer.ts';
 
 // Recognized warehouse modes; each destination advertises only its implemented subset.
 export type DestinationSyncMode =
@@ -78,9 +78,9 @@ export abstract class Destination<Target extends DestinationTarget> {
   async clear(
     configuration: CopyConfiguration,
     target: Target,
-    writer: string,
+    clearing: Clearing,
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
-    await this.createWriter(configuration, target).clear(writer, committed);
+    await this.createWriter(configuration, target).clear(clearing, committed);
   }
 }

@@ -196,7 +196,7 @@ test('a pass killed in the middle of a commit leaves a file that the sqlite3 she
       `import { openDestination } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'index.ts')).href)};
        const data = openDestination(process.env.DATABASE);
        data.exec('PRAGMA cache_size = 1; BEGIN IMMEDIATE');
-       data.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000) INSERT INTO notes (id, loaded_at, committed_in) SELECT 'lost-' || i, loaded_at, committed_in FROM n, notes");
+       data.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000) INSERT INTO notes (id, loaded_at, committed_in, _elt_row_hash) SELECT 'lost-' || i, loaded_at, committed_in, _elt_row_hash FROM n, notes");
        process.kill(process.pid, 'SIGKILL');`,
     ],
     {

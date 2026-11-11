@@ -2,6 +2,7 @@ import { hash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  type Clearing,
   type CopyConfiguration,
   type FieldValues,
   FileContent,
@@ -242,7 +243,7 @@ export abstract class PostgresWriter extends Writer {
   }
 
   override async clear(
-    writer: string,
+    { writer }: Clearing,
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
     await using connection = new PostgresSession(this.url, 'elt');
