@@ -3,6 +3,7 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
 
+import { SQLiteFileStore } from './sqlite-file-store.ts';
 import { identifiers } from './sqlite-identifiers.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
@@ -75,6 +76,59 @@ export class SQLiteHistory {
         `INSERT INTO ${quote(this.name)} (${columns.map(quote).join(', ')}, "replaced_in") SELECT ${columns.map((column) => `"_elt_old".${quote(column)}`).join(', ')}, ? ${rows}`,
       )
       .run(replacedIn, ...params);
+  }
+}
+
+// Deletes, in each history, the rows that only a reading before commit
+// through reads: each row that a commit up to it replaced. The stored files
+// that only those rows refer to go in the same transaction, so the chunks of
+// the file stay the files that a row refers to. The rows of a reload's hidden
+// target refer to no such file: each file id is given once, and a hidden row
+// reaches a history only after its reload ends and drops the hidden target.
+export function expireHistory(database: DatabaseSync, through: number): void {
+  const exists = (name: string) =>
+    database
+      .prepare(
+        `SELECT 1 FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = lower(?)`,
+      )
+      .get(name) !== undefined;
+  if (!exists(histories)) return;
+  const pairs = database
+    .prepare(`SELECT "target", "history" FROM ${quote(histories)}`)
+    .all()
+    .map((row) => ({
+      target: String(row.target),
+      history: String(row.history),
+    }));
+  for (const { target, history } of pairs) {
+    if (!exists(history)) continue;
+    const current = new Set(
+      exists(target)
+        ? names(database, target).map((name) => identifiers.key(name))
+        : [],
+    );
+    for (const column of names(database, history)) {
+      const chunks = SQLiteFileStore.tableName(
+        { location: target },
+        { name: column },
+      );
+      if (!exists(chunks)) continue;
+      const value = quote(column);
+      const kept = [
+        ...(current.has(identifiers.key(column))
+          ? [`SELECT ${value} FROM ${quote(target)} WHERE ${value} IS NOT NULL`]
+          : []),
+        `SELECT ${value} FROM ${quote(history)} WHERE "replaced_in" > ? AND ${value} IS NOT NULL`,
+      ];
+      database
+        .prepare(
+          `DELETE FROM ${quote(chunks)} WHERE "file" IN (SELECT ${value} FROM ${quote(history)} WHERE "replaced_in" <= ?) AND "file" NOT IN (${kept.join(' UNION ')})`,
+        )
+        .run(through, through);
+    }
+    database
+      .prepare(`DELETE FROM ${quote(history)} WHERE "replaced_in" <= ?`)
+      .run(through);
   }
 }
 

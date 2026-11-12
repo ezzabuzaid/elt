@@ -6,6 +6,8 @@ import { busyTimeout } from './open-destination.ts';
 import { histories } from './sqlite-history.ts';
 import { identifiers } from './sqlite-identifiers.ts';
 import {
+  type Numbering,
+  type Position,
   committedAt,
   expiry,
   parsePosition,
@@ -55,12 +57,7 @@ export function readAsOf(
   if (asked !== undefined) {
     const expired = expiry(numbered, asked);
     if (expired !== undefined) return { expired };
-    // No later load can straddle a position, so one that a reader was given
-    // stays one; a commit that is not a position stays inside its pass.
-    if (!numbered?.ends.includes(asked.number))
-      throw new TypeError(
-        `${position} is not a position of ${path}: a reading of a commit inside a pass would show a part of that pass. Read a position that positions() lists.`,
-      );
+    refuseInsidePass(numbered, asked, path);
   }
   const number = asked?.number ?? numbered?.ends.at(-1);
   const at = number === undefined ? undefined : committedAt(database, number);
@@ -81,13 +78,29 @@ export function readAsOf(
   };
 }
 
+// No later load can straddle a position, so one that a reader was given
+// stays one; a commit that is not a position stays inside its pass.
+function refuseInsidePass(
+  numbered: Numbering | null,
+  { epoch, number }: Position,
+  file: string,
+): void {
+  if (!numbered?.ends.includes(number))
+    throw new TypeError(
+      `${epoch}:${number} is not a position of ${file}: a reading of a commit inside a pass would show a part of that pass. Read a position that positions() lists.`,
+    );
+}
+
 // Shadows, for this connection, each name a reader queries with a TEMP view
 // of what it showed as of commit number. A TEMP view takes the place of a
 // table or view of main for an unqualified name, and SQLite resolves the
 // names of a view when it is read, so the views can be made in any order.
 function shadow(database: DatabaseSync, number: number): void {
-  const targets = versioned(database);
-  for (const version of targets) shadowTarget(database, version, number);
+  const targets = versioned(database, 'main');
+  for (const version of targets)
+    database.exec(
+      `CREATE TEMP VIEW ${quote(version.target)} AS ${selectAsOf(database, version, number, 'main')}`,
+    );
   shadowSyncHistory(database);
   const views = storedViews(database);
   for (const { sql } of views)
@@ -99,17 +112,51 @@ function shadow(database: DatabaseSync, number: number): void {
   );
 }
 
+/**
+ * The SELECT that reads one target of the file as of a position, for a reader
+ * that copies the target, such as into a database of its own: the current
+ * rows that the commit of the position had made, and the history rows that it
+ * had made and a later commit replaced. `schema` names the file where
+ * `database` attached it, main by default. Run the SELECT in the read
+ * transaction that this checks the position in, since a later commit can
+ * expire the position. A position of another epoch, past the newest commit,
+ * or older than the retention, is expired.
+ */
+export function asOfSelect(
+  database: DatabaseSync,
+  target: string,
+  position: string,
+  { schema = 'main' }: { readonly schema?: string } = {},
+): string | { readonly expired: string } {
+  const asked = parsePosition(position);
+  const numbered = readNumbering(database, schema);
+  const expired = expiry(numbered, asked);
+  if (expired !== undefined) return { expired };
+  refuseInsidePass(
+    numbered,
+    asked,
+    schema === 'main' ? 'the file' : `the file attached as ${schema}`,
+  );
+  const version = versioned(database, schema).find(
+    (version) => identifiers.key(version.target) === identifiers.key(target),
+  );
+  if (version === undefined)
+    throw new TypeError(`${quote(target)} is not a target of ${schema}`);
+  return selectAsOf(database, version, asked.number, schema);
+}
+
 // A target as of commit number: its current rows that the commit had made,
 // and the history rows that the commit had made and a later commit replaced.
 // A column that the history lacks reads as NULL there.
-function shadowTarget(
+function selectAsOf(
   database: DatabaseSync,
   { target, history }: Versioned,
   number: number,
-): void {
-  const columns = columnsOf(database, quote(target));
+  schema: string,
+): string {
+  const columns = columnsOf(database, quote(target), schema);
   const kept = new Set(
-    columnsOf(database, quote(history)).map((column) =>
+    columnsOf(database, quote(history), schema).map((column) =>
       identifiers.key(column),
     ),
   );
@@ -121,9 +168,8 @@ function shadowTarget(
         : `NULL AS ${quote(column)}`,
     )
     .join(', ');
-  database.exec(
-    `CREATE TEMP VIEW ${quote(target)} AS SELECT ${current} FROM main.${quote(target)} WHERE "committed_in" <= ${number} UNION ALL SELECT ${replaced} FROM main.${quote(history)} WHERE "committed_in" <= ${number} AND "replaced_in" > ${number}`,
-  );
+  const file = quote(schema);
+  return `SELECT ${current} FROM ${file}.${quote(target)} WHERE "committed_in" <= ${number} UNION ALL SELECT ${replaced} FROM ${file}.${quote(history)} WHERE "committed_in" <= ${number} AND "replaced_in" > ${number}`;
 }
 
 // The sync history keeps no versions, so each of its tables reads as a view
@@ -192,19 +238,20 @@ function refuseQualified(
   }
 }
 
-// Each target with its history, as the file records them.
-function versioned(database: DatabaseSync): Versioned[] {
+// Each target with its history, as the file attached as schema records them.
+function versioned(database: DatabaseSync, schema: string): Versioned[] {
+  const file = quote(schema);
   if (
     database
       .prepare(
-        `SELECT 1 FROM main.sqlite_schema WHERE "type" = 'table' AND "name" = ?`,
+        `SELECT 1 FROM ${file}.sqlite_schema WHERE "type" = 'table' AND "name" = ?`,
       )
       .get(histories) === undefined
   )
     return [];
   return database
     .prepare(
-      `SELECT t."name" AS "target", h."history" FROM ${quote(histories)} AS h JOIN main.sqlite_schema AS t ON t."type" = 'table' AND lower(t."name") = h."target" JOIN main.sqlite_schema AS k ON k."type" = 'table' AND k."name" = h."history"`,
+      `SELECT t."name" AS "target", h."history" FROM ${file}.${quote(histories)} AS h JOIN ${file}.sqlite_schema AS t ON t."type" = 'table' AND lower(t."name") = h."target" JOIN ${file}.sqlite_schema AS k ON k."type" = 'table' AND k."name" = h."history"`,
     )
     .all()
     .map(({ target, history }) => ({
@@ -213,10 +260,14 @@ function versioned(database: DatabaseSync): Versioned[] {
     }));
 }
 
-// The columns of a table of main, named as SQL quotes it.
-function columnsOf(database: DatabaseSync, table: string): string[] {
+// The columns of a table of schema, named as SQL quotes it.
+function columnsOf(
+  database: DatabaseSync,
+  table: string,
+  schema = 'main',
+): string[] {
   return database
-    .prepare(`PRAGMA main.table_info(${table})`)
+    .prepare(`PRAGMA ${quote(schema)}.table_info(${table})`)
     .all()
     .map(({ name }) => String(name));
 }

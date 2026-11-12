@@ -21,11 +21,23 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     'overwrite_dedup',
   ] as const);
   readonly path: string;
+  // How long the history keeps a position readable after its commit; Delta
+  // Lake keeps its log for the same 30 days by default.
+  readonly retention: Temporal.Duration;
 
-  constructor({ path }: { path: string }) {
+  constructor({
+    path,
+    retention = Temporal.Duration.from({ days: 30 }),
+  }: {
+    path: string;
+    retention?: Temporal.Duration;
+  }) {
     super();
     if (!path) throw new TypeError('SQLite requires a database path');
+    if (retention.sign < 0)
+      throw new RangeError(`Retention ${retention} must not be negative`);
     this.path = path === ':memory:' ? path : resolve(path);
+    this.retention = retention;
     Object.freeze(this);
   }
 
@@ -42,7 +54,11 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     clock: PipelineClock;
     connection: string;
   }): Promise<Load<SQLiteTable>> {
-    const load = SQLiteLoad.open(this.path, { connector: connection }, clock);
+    const load = SQLiteLoad.open(
+      this.path,
+      { connector: connection },
+      { clock, retention: this.retention },
+    );
     return {
       prepare: async (configuration, target, binding) =>
         this.createWriter(configuration, target).prepare(load, binding),
@@ -53,7 +69,7 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
   // The positions of the file after a position, ascending, or all of them;
   // each one, `${epoch}:${number}`, names a commit where no pass is half
   // read. A position of another epoch, or past the newest commit, is
-  // expired.
+  // expired, and so is one older than the retention.
   positions(after?: string): readonly string[] | { readonly expired: string } {
     if (this.path === ':memory:')
       throw new TypeError('Positions require a SQLite destination file');
@@ -65,8 +81,8 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
   // its reader view and each view over them show the rows that the commit of
   // the position left, and the sync history refuses to be read. At the
   // newest commit the reading reads the tables as they are. It opens the
-  // file read-only, in one read transaction. A position of another epoch, or
-  // past the newest commit, is expired.
+  // file read-only, in one read transaction. A position of another epoch,
+  // past the newest commit, or older than the retention, is expired.
   reading(position?: string): SQLiteReading | { readonly expired: string } {
     if (this.path === ':memory:')
       throw new TypeError('Readings require a SQLite destination file');
@@ -95,11 +111,11 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     switch (configuration.destinationSyncMode) {
       case 'append_dedup':
       case 'overwrite_dedup':
-        return new SQLiteDeduplicatingWriter(configuration, this.path, table);
+        return new SQLiteDeduplicatingWriter(configuration, this, table);
       case 'append':
-        return new SQLiteAppendWriter(configuration, this.path, table);
+        return new SQLiteAppendWriter(configuration, this, table);
       case 'overwrite':
-        return new SQLiteOverwriteWriter(configuration, this.path, table);
+        return new SQLiteOverwriteWriter(configuration, this, table);
       default:
         throw new TypeError(
           `Destination does not support ${configuration.destinationSyncMode}`,

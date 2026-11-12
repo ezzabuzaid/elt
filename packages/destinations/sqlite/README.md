@@ -63,7 +63,7 @@ SQLite stores an original file in chunks, because one BLOB has a limit of 1,000,
 - The hash is the first 40 hex characters of the SHA-256 of `JSON.stringify([table, column])`, with the two names in ASCII lower case. Thus table `a_b` with column `c` and table `a` with column `b_c` keep their chunks apart.
 - The description of the column names its chunk table.
 - An empty file has one empty chunk. A file that is not available gives a null value.
-- The chunks of a file stay while a row of the table or of its history refers to the file. Thus a [reading](#commit-numbers-and-positions) as of a position reads the bytes of each file that the position shows.
+- The chunks of a file stay while a row of the table or of its history refers to the file. Thus a [reading](#commit-numbers-and-positions) as of a position reads the bytes of each file that the position shows. When the [retention](#retention) deletes the last history row that refers to a file, the same commit deletes its chunks.
 - A commit deletes the chunks of each file that it staged and that no row of the table or of its history refers to. Thus a record that a deduplication guard refuses stores no chunks. The commit that resets a partition, the commit at the end of a reload, and a clear delete the chunks of each file that no row of the table or of its history refers to.
 - When a row with a file has the same values as a stored row, also the same file bytes, the stored row stays with its file id. The commit deletes the chunks of the new copy of the file.
 
@@ -110,14 +110,34 @@ Each commit in the SQLite file has a number. A reader that compares the file at 
 - An overwrite applies the difference in its one commit, to the records that it staged. A reload applies it, to the rows of its hidden table, in the commit at the end of the stream. The table keeps its indexes, its triggers and its reader view. When the table has a different shape than the hidden table, the reload puts the hidden table in its place, and every row of the table goes into the history.
 - A file in the SQLite file counts in `_elt_row_hash` by the SHA-256 of its bytes, which the load calculates while it stages the chunks. Each load gives the file a new id, but a row whose file has the same bytes matches. The row keeps its file id, and the commit deletes the chunks of the new copy.
 - The table `_elt_epoch` keeps the epoch, an id that names the numbering. A file that is made again, or tables that a different version declared in a different way, start a new epoch.
-- `destination.positions(after?)` gives the positions after the position `after`, in ascending order, or all positions. A position is `<epoch>:<number>`. It names the last commit of a closed load, when no other load has commits before and after it. When `after` is of a different epoch, or is after the newest commit, `positions` gives `{ expired }` with the reason. It opens the file read-only.
+- `destination.positions(after?)` gives the positions after the position `after`, in ascending order, or all positions. A position is `<epoch>:<number>`. It names the last commit of a closed load, when no other load has commits before and after it. With no `after`, it gives each position from [min valid](#retention) on. When `after` is of a different epoch, is after the newest commit, or is older than min valid, `positions` gives `{ expired }` with the reason. It opens the file read-only.
 - A clear that empties a table is a load of one commit. It does not close the open loads of its connection.
 - Each table has a [history](./CONTEXT.md) `_elt_history_<hash>`, which the table `_elt_histories` names. Before a commit changes or removes a row, it copies the row into the history, with `replaced_in`, its own number. This occurs for a deduplicated row with different values, a `DELETE`, the reset of a partition, a clear, a row that an overwrite or a reload does not bring again, the rows of a table that a reload of a different shape replaces, a row that loses or changes a value when its table evolves, and an output row of a computed dataset that a refresh changes or deletes. A commit into a hidden table copies nothing. The history has each column that the table had, and it does not drop a column. A field with the name `replaced_in` gets a different column name.
 - A file that a row of the history refers to stays, in the SQLite file and in a [file storage](../../elt/README.md#local-files): the values that the destination gives the file storage to keep include the values of the history.
 - The history gets the columns of the table when it is made. SQLite cannot add a column with the name `rowid` or `oid` to a table. Thus when a stream adds a field with one of these names later, a commit that keeps a row in the history fails. Delete the SQLite file to load it again.
 - The reset of a partition copies each row of the partition into the history. The rows that the source sends again after the reset can come in later commits, for example after a checkpoint of each page. Thus no commit can know which rows of the partition left.
-- `destination.reading(position?)` gives a [reading](./CONTEXT.md) of the file as of the position, or as of the newest position: `{ sql, position, at }`, where `sql` is a read-only `DatabaseSync` in one read transaction and `at` is the time of the commit. Dispose the reading to close it. A position of a different epoch, or after the newest commit, gives `{ expired }`. A commit number that `positions` does not list, for example a commit inside a pass, makes `reading` throw a `TypeError`, as a string that is not a position does: a reading there would show a part of a pass. A position that `positions` listed stays a position, because no later load can have commits before and after it.
+- `destination.reading(position?)` gives a [reading](./CONTEXT.md) of the file as of the position, or as of the newest position: `{ sql, position, at }`, where `sql` is a read-only `DatabaseSync` in one read transaction and `at` is the time of the commit. Dispose the reading to close it. A position of a different epoch, after the newest commit, or older than [min valid](#retention), gives `{ expired }`. A commit number that `positions` does not list, for example a commit inside a pass, makes `reading` throw a `TypeError`, as a string that is not a position does: a reading there would show a part of a pass. A position that `positions` listed stays a position, because no later load can have commits before and after it.
 - As of a position before the newest commit, each table, its reader view and each view of the file show the rows that the commit of the position left. A column that a later commit added is `NULL`. The sync history keeps no versions, and a read of it fails. A stored view that names a table as `main.<table>` makes the reading fail, because that name shows the table as it is now.
+
+- `asOfSelect(database, table, position, { schema })` gives the `SELECT` that reads one table as of a position: the rows of the table with `committed_in ≤ P`, and the rows of its history with `committed_in ≤ P < replaced_in`. A reading uses the same `SELECT` for its `TEMP` views. `schema` names the SQLite file where `database` attached it, `main` by default. Thus a reader can copy a table as of a position into a database of its own. It checks the position as `reading` does, so run the `SELECT` in the same read transaction. See [Read the file as of a position](./docs/recipes/read-the-file-as-of-a-position.md).
+
+### Retention
+
+The history keeps each position readable for the retention of the destination, as Delta Lake keeps its log:
+
+```ts
+new SQLiteDestination({
+  path: 'import.sqlite',
+  retention: Temporal.Duration.from({ days: 30 }), // the default
+});
+```
+
+- In each commit, let W be the newest position whose commit is older than now minus the retention. The commit deletes each history row with `replaced_in ≤ W`, and the chunks of each file that only those rows refer to. It sets min valid, the column `min_valid` of `_elt_epoch`, to W. This is the `MIN_VALID_VERSION` of SQL Server change tracking.
+- Min valid is a position, and it never passes the newest position. Thus a pass that stays open longer than the retention does not expire the position before it.
+- A position older than min valid is expired: `reading`, `positions` and `asOfSelect` give `{ expired }` with a reason that names the retention.
+- A file in a [file storage](../../elt/README.md#local-files) that only the deleted history rows refer to goes when the stream of its table next commits.
+- `_elt_commits` keeps its rows.
+- A retention that is less than zero throws a `RangeError`. A retention in months or years throws a `RangeError` of `Temporal`, because their length depends on the date.
 
 ## Checkpoints
 
@@ -243,6 +263,7 @@ A refresh is a load in `_elt_loads`, so a [reading](#commit-numbers-and-position
 One use case each, with a full program that you can run:
 
 - [Search the text of stored files with SQL](./docs/recipes/search-the-text-of-stored-files.md)
+- [Read the file as of a position](./docs/recipes/read-the-file-as-of-a-position.md)
 
 ## Decisions
 
@@ -252,6 +273,9 @@ One use case each, with a full program that you can run:
 - [ADR 0004](./docs/adr/0004-a-changed-declaration-makes-the-table-again.md): a changed declaration makes the table again.
 - [ADR 0005](./docs/adr/0005-each-checkpointed-copy-has-its-own-lock.md): each checkpointed copy has its own lock.
 - [ADR 0006](./docs/adr/0006-a-sole-writer-fails-the-passes-it-finds-unfinished.md): a sole writer fails the passes that it finds unfinished.
+- [ADR 0007](./docs/adr/0007-each-pass-tries-an-input-at-most-once.md): each pass tries an input at most once.
+- [ADR 0008](./docs/adr/0008-a-file-that-several-connections-load-shows-one-pass.md): a file that several connections load shows one pass.
+- [ADR 0009](./docs/adr/0009-the-sqlite-file-numbers-its-commits-and-keeps-a-history-of-each-row.md): the SQLite file numbers its commits and keeps a history of each row.
 
 ## Development
 
@@ -270,7 +294,9 @@ src/
   sqlite-destination.ts      SQLiteDestination: tables and the load
   open-destination.ts        openDestination: the open of each connection that writes the file
   sqlite-writer.ts           the stage, the commit, evolve, reload and the difference of a table
-  sqlite-loads.ts            SQLiteLoad: the loads and commit numbers of a file, and its positions
+  sqlite-loads.ts            SQLiteLoad: the loads and commit numbers of a file, its positions and its retention
+  sqlite-history.ts          SQLiteHistory: the history of a table, and the rows that the retention deletes
+  sqlite-as-of.ts            readings and asOfSelect: the file as of a position
   sqlite-checkpoint-store.ts SQLiteCheckpointStore
   sqlite-sync-history.ts     SQLiteSyncHistory
   sqlite-catalog.ts          installSQLiteCatalog

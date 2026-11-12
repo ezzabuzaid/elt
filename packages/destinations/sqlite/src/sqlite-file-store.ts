@@ -51,7 +51,7 @@ export class SQLiteFileStore {
   // table a_b with column c and table a with column b_c would share chunks
   // and prune each other's.
   static tableName(
-    table: SQLiteTable,
+    table: Pick<SQLiteTable, 'location'>,
     column: Pick<SQLiteColumn, 'name'>,
   ): string {
     const key = hash(

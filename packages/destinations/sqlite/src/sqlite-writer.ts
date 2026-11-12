@@ -26,6 +26,7 @@ import {
 import { openDestination } from './open-destination.ts';
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { describe } from './sqlite-descriptions.ts';
+import type { SQLiteDestination } from './sqlite-destination.ts';
 import { SQLiteFileStore } from './sqlite-file-store.ts';
 import { SQLiteHistory, rowHash } from './sqlite-history.ts';
 import { identifiers } from './sqlite-identifiers.ts';
@@ -67,7 +68,7 @@ type Side = {
 // operations one at a time, the first also creating the target.
 export abstract class SQLiteWriter extends Writer {
   readonly configuration: CopyConfiguration;
-  readonly path: string;
+  readonly destination: SQLiteDestination;
   readonly table: SQLiteTable;
   // Where the target keeps the rows that its commits replace or remove.
   readonly history: SQLiteHistory;
@@ -75,12 +76,12 @@ export abstract class SQLiteWriter extends Writer {
 
   constructor(
     configuration: CopyConfiguration,
-    path: string,
+    destination: SQLiteDestination,
     table: SQLiteTable,
   ) {
     super(configuration.stream);
     this.configuration = configuration;
-    this.path = path;
+    this.destination = destination;
     this.table = table;
     this.history = new SQLiteHistory(table);
     this.#description = describeTarget(
@@ -322,7 +323,7 @@ export abstract class SQLiteWriter extends Writer {
     { writer, clock, connection }: Clearing,
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
-    using database = openDestination(this.path);
+    using database = openDestination(this.destination.path);
     database.exec('BEGIN IMMEDIATE');
     try {
       this.writers(database);
@@ -335,7 +336,13 @@ export abstract class SQLiteWriter extends Writer {
       // rows left, only the history refers to stored files.
       if (this.exists(database, this.table.location)) {
         this.history.create(database, this.written);
-        this.#keepRows(database, SQLiteLoad.once(database, connection, clock));
+        this.#keepRows(
+          database,
+          SQLiteLoad.once(database, connection, {
+            clock,
+            retention: this.destination.retention,
+          }),
+        );
         database.exec(`DELETE FROM ${this.table.quotedName}`);
         // Clearing a copy also abandons the reload it left open.
         database.exec(`DROP TABLE IF EXISTS ${quote(this.#hiddenName)}`);

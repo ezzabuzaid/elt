@@ -5,6 +5,7 @@ import type { CopyConfiguration, Deduplication, KeyValue } from '@eltjs/elt';
 
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
+import type { SQLiteDestination } from './sqlite-destination.ts';
 import type { SQLiteHistory } from './sqlite-history.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { SQLiteWriter, type Stamp, op, seq, version } from './sqlite-writer.ts';
@@ -16,10 +17,10 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
 
   constructor(
     configuration: CopyConfiguration,
-    path: string,
+    destination: SQLiteDestination,
     table: SQLiteTable,
   ) {
-    super(configuration, path, table);
+    super(configuration, destination, table);
     this.deduplication = configuration.deduplication();
     const inferred = SQLiteColumns.fromSchema(configuration.stream.jsonSchema);
     const column = (field: string): SQLiteColumn => {

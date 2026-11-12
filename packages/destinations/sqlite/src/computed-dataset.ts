@@ -160,7 +160,7 @@ export class ComputedDataset<
     using load = SQLiteLoad.open(
       this.#into.path,
       { dataset: this.name },
-      clock,
+      { clock, retention: this.#into.retention },
     );
     const { database } = load;
     const key = this.#rule.key.name;

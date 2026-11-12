@@ -2,16 +2,17 @@ import type { DatabaseSync } from 'node:sqlite';
 
 import type { CopyConfiguration } from '@eltjs/elt';
 
+import type { SQLiteDestination } from './sqlite-destination.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { SQLiteWriter, type Stamp } from './sqlite-writer.ts';
 
 export class SQLiteOverwriteWriter extends SQLiteWriter {
   constructor(
     configuration: CopyConfiguration,
-    path: string,
+    destination: SQLiteDestination,
     table: SQLiteTable,
   ) {
-    super(configuration, path, table);
+    super(configuration, destination, table);
     Object.freeze(this);
   }
 

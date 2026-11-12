@@ -7,6 +7,7 @@ import { transaction } from '@zukhruf/sqlite-transaction';
 import type { PipelineClock } from '@eltjs/elt';
 
 import { openDestination } from './open-destination.ts';
+import { expireHistory } from './sqlite-history.ts';
 
 const epochs = '"_elt_epoch"';
 const loads = '"_elt_loads"';
@@ -14,10 +15,11 @@ const commits = '"_elt_commits"';
 
 // How the file numbers its commits. The epoch names the numbering: it is
 // made with the tables, so a file made again, or tables another version
-// declared otherwise, start a numbering of their own.
+// declared otherwise, start a numbering of their own. min_valid is the oldest
+// position that the history still reads, as SQL Server's MIN_VALID_VERSION.
 const numbering = new Declaration(
   [
-    `CREATE TABLE ${epochs} ("id" INTEGER PRIMARY KEY CHECK ("id" = 1), "epoch" TEXT NOT NULL) STRICT`,
+    `CREATE TABLE ${epochs} ("id" INTEGER PRIMARY KEY CHECK ("id" = 1), "epoch" TEXT NOT NULL, "min_valid" INTEGER NOT NULL DEFAULT 0) STRICT`,
     `CREATE TABLE ${loads} ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "connector" TEXT, "dataset" TEXT, "opened_at" TEXT NOT NULL, "closed_at" TEXT, CHECK (("connector" IS NULL) <> ("dataset" IS NULL))) STRICT`,
     `CREATE TABLE ${commits} ("number" INTEGER PRIMARY KEY AUTOINCREMENT, "load" INTEGER NOT NULL REFERENCES ${loads} ("id"), "committed_at" TEXT NOT NULL) STRICT`,
     `CREATE INDEX "_elt_commits_load" ON ${commits} ("load", "number")`,
@@ -38,20 +40,20 @@ export class SQLiteLoad implements Disposable {
   readonly loadedAt: string;
   readonly #id: number;
   readonly #owner: LoadOwner;
-  readonly #clock: PipelineClock;
+  readonly #retaining: Retaining;
 
   private constructor(
     database: DatabaseSync,
     id: number,
     loadedAt: string,
     owner: LoadOwner,
-    clock: PipelineClock,
+    retaining: Retaining,
   ) {
     this.database = database;
     this.#id = id;
     this.loadedAt = loadedAt;
     this.#owner = owner;
-    this.#clock = clock;
+    this.#retaining = retaining;
   }
 
   // A connection runs one pass at a time, and a dataset one refresh, so a
@@ -61,10 +63,10 @@ export class SQLiteLoad implements Disposable {
   static open(
     path: string,
     owner: LoadOwner,
-    clock: PipelineClock,
+    retaining: Retaining,
   ): SQLiteLoad {
     const database = openDestination(path);
-    const loadedAt = now(clock);
+    const loadedAt = now(retaining.clock);
     try {
       const id = transaction(
         database,
@@ -80,7 +82,7 @@ export class SQLiteLoad implements Disposable {
         },
         { mode: 'immediate' },
       );
-      return new SQLiteLoad(database, id, loadedAt, owner, clock);
+      return new SQLiteLoad(database, id, loadedAt, owner, retaining);
     } catch (error) {
       database.close();
       throw error;
@@ -95,9 +97,9 @@ export class SQLiteLoad implements Disposable {
   static once(
     database: DatabaseSync,
     connection: string,
-    clock: PipelineClock,
+    retaining: Retaining,
   ): number {
-    const at = now(clock);
+    const at = now(retaining.clock);
     const id = begin(database, { connector: connection }, at);
     const committed = Number(
       database
@@ -109,6 +111,7 @@ export class SQLiteLoad implements Disposable {
     database
       .prepare(`UPDATE ${loads} SET "closed_at" = ? WHERE "id" = ?`)
       .run(at, id);
+    retain(database, retaining);
     return committed;
   }
 
@@ -122,13 +125,14 @@ export class SQLiteLoad implements Disposable {
       .prepare(
         `INSERT INTO ${commits} ("load", "committed_at") SELECT "id", ? FROM ${loads} WHERE "id" = ? AND "closed_at" IS NULL RETURNING "number"`,
       )
-      .get(now(this.#clock), this.#id);
+      .get(now(this.#retaining.clock), this.#id);
     if (row === undefined)
       throw new Error(
         'connector' in this.#owner
           ? `A later load of connection ${this.#owner.connector} closed this load, so it cannot commit; a connection runs one pass at a time`
           : `A later refresh of dataset ${this.#owner.dataset} closed this one, so it cannot commit; a dataset refreshes one at a time`,
       );
+    retain(this.database, this.#retaining);
     return Number(row.number);
   }
 
@@ -142,13 +146,47 @@ export class SQLiteLoad implements Disposable {
             .prepare(
               `UPDATE ${loads} SET "closed_at" = ? WHERE "id" = ? AND "closed_at" IS NULL`,
             )
-            .run(now(this.#clock), this.#id),
+            .run(now(this.#retaining.clock), this.#id),
         { mode: 'immediate' },
       );
     } finally {
       this.database.close();
     }
   }
+}
+
+// What a commit needs to apply the retention of the file: the time, and how
+// long the history keeps a position readable.
+export type Retaining = {
+  readonly clock: PipelineClock;
+  readonly retention: Temporal.Duration;
+};
+
+// Applies the retention inside a commit's transaction, as Delta Lake expires
+// its log at a checkpoint: the newest position whose commit is older than the
+// window becomes min_valid, and the history keeps no row that only readings
+// before it read. min_valid is a position, never past the newest one, so the
+// newest position stays readable while a pass stays open longer than the
+// window.
+function retain(database: DatabaseSync, { clock, retention }: Retaining): void {
+  const cutoff = new Date(
+    clock.Date.now() - retention.total('milliseconds'),
+  ).toISOString();
+  const minValid = Number(
+    database.prepare(`SELECT "min_valid" FROM ${epochs}`).get()?.min_valid,
+  );
+  const older = Number(
+    database
+      .prepare(
+        `SELECT coalesce(max("number"), 0) AS "number" FROM ${commits} WHERE "committed_at" < ?`,
+      )
+      .get(cutoff)?.number,
+  );
+  if (older <= minValid) return;
+  const expired = readNumbering(database)?.ends.findLast((end) => end <= older);
+  if (expired === undefined || expired <= minValid) return;
+  expireHistory(database, expired);
+  database.prepare(`UPDATE ${epochs} SET "min_valid" = ?`).run(expired);
 }
 
 // Records a load of owner that opens at openedAt, with the numbering and
@@ -186,6 +224,9 @@ export type Numbering = {
   readonly epoch: string;
   // The number of the newest commit, 0 before the first.
   readonly newest: number;
+  // The oldest position that a reading reads exactly; 0 until the retention
+  // first deletes history.
+  readonly minValid: number;
   // The commits that are positions, ascending.
   readonly ends: readonly number[];
 };
@@ -193,8 +234,9 @@ export type Numbering = {
 // A position, as `${epoch}:${number}` names it.
 export type Position = { readonly epoch: string; readonly number: number };
 
-// The positions of the file after `after`, ascending; all of them when
-// after is undefined. database is null while no file is at the path.
+// The positions of the file after `after`, ascending; each one that the
+// retention keeps when after is undefined. database is null while no file is
+// at the path.
 export function positionsAfter(
   database: DatabaseSync | null,
   after: string | undefined,
@@ -209,7 +251,9 @@ export function positionsAfter(
   if (since === undefined)
     return numbered === null
       ? []
-      : numbered.ends.map((end) => `${numbered.epoch}:${end}`);
+      : numbered.ends
+          .filter((end) => end >= numbered.minValid)
+          .map((end) => `${numbered.epoch}:${end}`);
   const expired = expiry(numbered, since);
   if (expired !== undefined) return { expired };
   return (numbered?.ends ?? [])
@@ -229,28 +273,49 @@ export function expiry(
     return `Position ${position} is of an earlier numbering: the commits of this file were numbered again since`;
   if (number > numbered.newest)
     return `Position ${position} is past the newest commit of this file, ${numbered.newest}`;
+  if (number < numbered.minValid)
+    return `Position ${position} is older than the retention of this file: its history keeps no row that only a reading before commit ${numbered.minValid} reads`;
   return undefined;
 }
 
 // The numbering of the file, as the snapshot of the open read transaction
-// reads it, or null when the file has none. A position is a commit that ends
-// a closed load where no load straddles it, so a reader there sees no part
-// of a pass. A sweep line finds them: taking the loads in order of their
-// first commits, an end is a position when no load that began at or before
-// it ends after it. An open load has no end yet, so it reaches past every
-// later commit.
-export function readNumbering(database: DatabaseSync): Numbering | null {
-  if (numbering.drift(database) !== 'fits') return null;
-  const epoch = database.prepare(`SELECT "epoch" FROM ${epochs}`).get()?.epoch;
+// reads it, or null when the file has none. schema names the file where
+// database attached it. sqlite-drift compares the tables of main only, so the
+// numbering of an attached file is read as it is, and tables it lacks give
+// null. A position is a commit that ends a closed load where no load
+// straddles it, so a reader there sees no part of a pass. A sweep line finds
+// them: taking the loads in order of their first commits, an end is a
+// position when no load that began at or before it ends after it. An open
+// load has no end yet, so it reaches past every later commit.
+export function readNumbering(
+  database: DatabaseSync,
+  schema = 'main',
+): Numbering | null {
+  if (schema === 'main' && numbering.drift(database) !== 'fits') return null;
+  const file = `"${schema.replaceAll('"', '""')}"`;
+  let row;
+  try {
+    row = database
+      .prepare(`SELECT "epoch", "min_valid" FROM ${file}.${epochs}`)
+      .get();
+  } catch (error) {
+    if (Error.isError(error) && /^no such (table|column): /.test(error.message))
+      return null;
+    throw error;
+  }
+  const epoch = row?.epoch;
   if (typeof epoch !== 'string') return null;
+  const minValid = Number(row?.min_valid);
   const newest = Number(
     database
-      .prepare(`SELECT coalesce(max("number"), 0) AS "newest" FROM ${commits}`)
+      .prepare(
+        `SELECT coalesce(max("number"), 0) AS "newest" FROM ${file}.${commits}`,
+      )
       .get()?.newest,
   );
   const spans = database
     .prepare(
-      `SELECT min(c."number") AS "first", CASE WHEN l."closed_at" IS NULL THEN NULL ELSE max(c."number") END AS "last" FROM ${commits} AS c JOIN ${loads} AS l ON l."id" = c."load" GROUP BY l."id" ORDER BY "first"`,
+      `SELECT min(c."number") AS "first", CASE WHEN l."closed_at" IS NULL THEN NULL ELSE max(c."number") END AS "last" FROM ${file}.${commits} AS c JOIN ${file}.${loads} AS l ON l."id" = c."load" GROUP BY l."id" ORDER BY "first"`,
     )
     .all()
     .map((span) => ({
@@ -269,7 +334,7 @@ export function readNumbering(database: DatabaseSync): Numbering | null {
       reach = Math.max(reach, span.value.last);
     if (reach === end) ends.push(end);
   }
-  return { epoch, newest, ends };
+  return { epoch, newest, minValid, ends };
 }
 
 // When a commit of the file was made, or undefined when it has no commit of

@@ -95,3 +95,11 @@ _Avoid_: Audit log, archive, changelog
 **Reading**:
 A read-only connection to the SQLite file as of one position. Each raw table, reader view and view shows the rows that the commit of the position left. The sync history cannot be read in it.
 _Avoid_: Snapshot (SQLite gives each read transaction a snapshot), time travel, version
+
+**Retention**:
+How long the history keeps a position readable after its commit: 30 days by default, set on the `SQLiteDestination`. Each commit deletes the history rows that only positions older than the retention read.
+_Avoid_: TTL, expiry (an expired position is the result), vacuum
+
+**Min valid**:
+`min_valid` of `_elt_epoch`: the oldest position that a reading reads exactly. Each commit moves it to the newest position that is older than the retention. It never passes the newest position. A position older than it is expired.
+_Avoid_: Low-water mark, horizon, oldest version
