@@ -1,4 +1,5 @@
 import { errorMessage } from '../state/sync-history.ts';
+import type { PipelineClock } from './clock.ts';
 import type { Connection } from './connection.ts';
 import type { Target as DestinationTarget } from './target.ts';
 
@@ -46,9 +47,11 @@ export abstract class DerivedDataset<Target extends DestinationTarget> {
   // earlier holds the derived datasets that this refresh follows, in their
   // declared order, so a dataset that reads one of them can tell an input
   // that is still waiting from one the pipeline never makes. trigger says why
-  // the pipeline refreshes.
+  // the pipeline refreshes. clock is the pipeline's, which tells the time
+  // of each change the refresh makes.
   abstract refresh(options: {
     readonly connections: readonly Connection<Target>[];
+    readonly clock: PipelineClock;
     readonly earlier: readonly DerivedDataset<Target>[];
     readonly signal?: AbortSignal;
     readonly trigger: RefreshTrigger;

@@ -18,12 +18,17 @@ const commits = '"_elt_commits"';
 const numbering = new Declaration(
   [
     `CREATE TABLE ${epochs} ("id" INTEGER PRIMARY KEY CHECK ("id" = 1), "epoch" TEXT NOT NULL) STRICT`,
-    `CREATE TABLE ${loads} ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "connector" TEXT NOT NULL, "opened_at" TEXT NOT NULL, "closed_at" TEXT) STRICT`,
+    `CREATE TABLE ${loads} ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "connector" TEXT, "dataset" TEXT, "opened_at" TEXT NOT NULL, "closed_at" TEXT, CHECK (("connector" IS NULL) <> ("dataset" IS NULL))) STRICT`,
     `CREATE TABLE ${commits} ("number" INTEGER PRIMARY KEY AUTOINCREMENT, "load" INTEGER NOT NULL REFERENCES ${loads} ("id"), "committed_at" TEXT NOT NULL) STRICT`,
     `CREATE INDEX "_elt_commits_load" ON ${commits} ("load", "number")`,
   ],
   { rows: 'replace' },
 );
+
+// What writes a load: a connection's pass, or a refresh of a derived dataset.
+// Each runs one at a time, and a name of one never names the other.
+export type LoadOwner =
+  { readonly connector: string } | { readonly dataset: string };
 
 // One load's connection to its file, and its record there: open from the
 // start of the load until it is disposed, with a number for each commit.
@@ -32,29 +37,30 @@ export class SQLiteLoad implements Disposable {
   // When the load began, which each row it writes keeps in loaded_at.
   readonly loadedAt: string;
   readonly #id: number;
-  readonly #connection: string;
+  readonly #owner: LoadOwner;
   readonly #clock: PipelineClock;
 
   private constructor(
     database: DatabaseSync,
     id: number,
     loadedAt: string,
-    connection: string,
+    owner: LoadOwner,
     clock: PipelineClock,
   ) {
     this.database = database;
     this.#id = id;
     this.loadedAt = loadedAt;
-    this.#connection = connection;
+    this.#owner = owner;
     this.#clock = clock;
   }
 
-  // A connection runs one pass at a time, so a load of it that is still open
-  // is one whose process ended during its pass: the new load closes it, as
-  // the sync history of a sole writer fails such a pass.
+  // A connection runs one pass at a time, and a dataset one refresh, so a
+  // load of the owner that is still open is one whose process ended during
+  // it: the new load closes it, as the sync history of a sole writer fails
+  // such a pass.
   static open(
     path: string,
-    connection: string,
+    owner: LoadOwner,
     clock: PipelineClock,
   ): SQLiteLoad {
     const database = openDestination(path);
@@ -63,17 +69,18 @@ export class SQLiteLoad implements Disposable {
       const id = transaction(
         database,
         () => {
-          const id = begin(database, connection, loadedAt);
+          const id = begin(database, owner, loadedAt);
+          const [column, name] = owned(owner);
           database
             .prepare(
-              `UPDATE ${loads} SET "closed_at" = ? WHERE "connector" = ? AND "closed_at" IS NULL AND "id" <> ?`,
+              `UPDATE ${loads} SET "closed_at" = ? WHERE ${column} = ? AND "closed_at" IS NULL AND "id" <> ?`,
             )
-            .run(loadedAt, connection, id);
+            .run(loadedAt, name, id);
           return id;
         },
         { mode: 'immediate' },
       );
-      return new SQLiteLoad(database, id, loadedAt, connection, clock);
+      return new SQLiteLoad(database, id, loadedAt, owner, clock);
     } catch (error) {
       database.close();
       throw error;
@@ -91,7 +98,7 @@ export class SQLiteLoad implements Disposable {
     clock: PipelineClock,
   ): number {
     const at = now(clock);
-    const id = begin(database, connection, at);
+    const id = begin(database, { connector: connection }, at);
     const committed = Number(
       database
         .prepare(
@@ -108,7 +115,7 @@ export class SQLiteLoad implements Disposable {
   // The number of a commit of this load, taken inside the commit's
   // transaction: SQLite runs one write transaction at a time, so the numbers
   // follow the order of the commits. A load that a later load of its
-  // connection closed has ended, and a commit after its end would move a
+  // owner closed has ended, and a commit after its end would move a
   // position that readers were already given.
   commit(): number {
     const row = this.database
@@ -118,7 +125,9 @@ export class SQLiteLoad implements Disposable {
       .get(now(this.#clock), this.#id);
     if (row === undefined)
       throw new Error(
-        `A later load of connection ${this.#connection} closed this load, so it cannot commit; a connection runs one pass at a time`,
+        'connector' in this.#owner
+          ? `A later load of connection ${this.#owner.connector} closed this load, so it cannot commit; a connection runs one pass at a time`
+          : `A later refresh of dataset ${this.#owner.dataset} closed this one, so it cannot commit; a dataset refreshes one at a time`,
       );
     return Number(row.number);
   }
@@ -142,13 +151,14 @@ export class SQLiteLoad implements Disposable {
   }
 }
 
-// Records a load of connection that opens at openedAt, with the numbering
-// and its epoch if the file has none yet, and gives its id.
+// Records a load of owner that opens at openedAt, with the numbering and
+// its epoch if the file has none yet, and gives its id.
 function begin(
   database: DatabaseSync,
-  connection: string,
+  owner: LoadOwner,
   openedAt: string,
 ): number {
+  const [column, name] = owned(owner);
   numbering.apply(database);
   database
     .prepare(
@@ -158,10 +168,17 @@ function begin(
   return Number(
     database
       .prepare(
-        `INSERT INTO ${loads} ("connector", "opened_at") VALUES (?, ?) RETURNING "id"`,
+        `INSERT INTO ${loads} (${column}, "opened_at") VALUES (?, ?) RETURNING "id"`,
       )
-      .get(connection, openedAt)?.id,
+      .get(name, openedAt)?.id,
   );
+}
+
+// The column of _elt_loads that names owner, and its name there.
+function owned(owner: LoadOwner): readonly [string, string] {
+  return 'connector' in owner
+    ? ['"connector"', owner.connector]
+    : ['"dataset"', owner.dataset];
 }
 
 // The numbering of a file, as one snapshot reads it.

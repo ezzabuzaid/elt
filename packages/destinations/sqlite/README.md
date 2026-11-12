@@ -100,8 +100,8 @@ Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as
 Each commit in the SQLite file has a number. A reader that compares the file at two times can find the positions where no pass is half done, as a Kafka consumer reads up to the last stable offset.
 
 - The table `_elt_commits` has one row for each commit: its `number`, its `load` and its `committed_at`. SQLite writes one transaction at a time, so the numbers follow the order of the commits, also across connections.
-- The table `_elt_loads` has one row for each load: its `connector` (the name of the connection), its `opened_at`, and its `closed_at`, which is null while the load is open. A load opens when a pass starts to load, and closes when the pass ends.
-- A connection runs one pass at a time. Thus when a load of a connection opens, it closes each load of that connection that is still open: the process of that pass ended first. A closed load cannot commit.
+- The table `_elt_loads` has one row for each load: its `connector` (the name of the connection) or its `dataset` (the name of a [computed dataset](#declare-a-computed-dataset)), its `opened_at`, and its `closed_at`, which is null while the load is open. A load of a connection opens when a pass starts to load, and closes when the pass ends. A load of a computed dataset opens when a refresh starts, and closes when the refresh ends, also when a stop or a failure ends it.
+- A connection runs one pass at a time, and a computed dataset runs one refresh at a time. Thus when a load opens, it closes each load of the same connection or dataset that is still open: the process of that pass or refresh ended first. A closed load cannot commit. A load with no commit changes no position.
 - A commit into a [hidden table](./CONTEXT.md) shows nothing to readers. When the stream ends, one more commit gives its rows to the table, and readers see them from that commit on.
 - An overwrite and a reload replace the rows of the table by [difference](./CONTEXT.md). The difference compares the rows as multisets, so it needs no key. On each side, each row gets a number k among the rows with the same `_elt_row_hash`, and the k-th copy of some values matches the k-th copy of the same values on the other side:
   - A row with a match stays as it is, with its `committed_in` and its `loaded_at`.
@@ -112,7 +112,7 @@ Each commit in the SQLite file has a number. A reader that compares the file at 
 - The table `_elt_epoch` keeps the epoch, an id that names the numbering. A file that is made again, or tables that a different version declared in a different way, start a new epoch.
 - `destination.positions(after?)` gives the positions after the position `after`, in ascending order, or all positions. A position is `<epoch>:<number>`. It names the last commit of a closed load, when no other load has commits before and after it. When `after` is of a different epoch, or is after the newest commit, `positions` gives `{ expired }` with the reason. It opens the file read-only.
 - A clear that empties a table is a load of one commit. It does not close the open loads of its connection.
-- Each table has a [history](./CONTEXT.md) `_elt_history_<hash>`, which the table `_elt_histories` names. Before a commit changes or removes a row, it copies the row into the history, with `replaced_in`, its own number. This occurs for a deduplicated row with different values, a `DELETE`, the reset of a partition, a clear, a row that an overwrite or a reload does not bring again, the rows of a table that a reload of a different shape replaces, and a row that loses or changes a value when its table evolves. A commit into a hidden table copies nothing. The history has each column that the table had, and it does not drop a column. A field with the name `replaced_in` gets a different column name.
+- Each table has a [history](./CONTEXT.md) `_elt_history_<hash>`, which the table `_elt_histories` names. Before a commit changes or removes a row, it copies the row into the history, with `replaced_in`, its own number. This occurs for a deduplicated row with different values, a `DELETE`, the reset of a partition, a clear, a row that an overwrite or a reload does not bring again, the rows of a table that a reload of a different shape replaces, a row that loses or changes a value when its table evolves, and an output row of a computed dataset that a refresh changes or deletes. A commit into a hidden table copies nothing. The history has each column that the table had, and it does not drop a column. A field with the name `replaced_in` gets a different column name.
 - A file that a row of the history refers to stays, in the SQLite file and in a [file storage](../../elt/README.md#local-files): the values that the destination gives the file storage to keep include the values of the history.
 - The history gets the columns of the table when it is made. SQLite cannot add a column with the name `rowid` or `oid` to a table. Thus when a stream adds a field with one of these names later, a commit that keeps a row in the history fails. Delete the SQLite file to load it again.
 - The reset of a partition copies each row of the partition into the history. The rows that the source sends again after the reset can come in later commits, for example after a checkpoint of each page. Thus no commit can know which rows of the partition left.
@@ -224,6 +224,13 @@ At each refresh, the computed dataset compares the inputs with the output rows. 
 - Each call of the rule commits as it settles, so readers see the output rows as they land. See [ADR 0003](./docs/adr/0003-each-rule-call-commits-as-it-settles.md).
 - When the declaration of the raw table changes, the refresh makes the table again. See [ADR 0004](./docs/adr/0004-a-changed-declaration-makes-the-table-again.md).
 
+A refresh is a load in `_elt_loads`, so a [reading](#commit-numbers-and-positions) shows the computed dataset as of a position, as it shows a table that a copy loads:
+
+- Each transaction of the refresh that changes a row takes one commit number. A transaction that changes no row takes none. No commit inside a refresh that is open is a position.
+- The raw table has the columns `committed_in` and `_elt_row_hash` after the columns of the rule. The view `<name>` does not show them. `_elt_row_hash` is the SHA-256 of the values of the other columns, as for a copy.
+- When the rule makes a row again with the same values, for example a `failed` row that fails again with the same error, the row stays as it is, with its `committed_in`.
+- Before a commit changes or deletes an output row, it copies the row into the [history](./CONTEXT.md) of the raw table. When the declaration changes, the commit that makes the table again copies each row of the old table into the history. A column that the old table did not have is `NULL` as of a position before.
+
 ## When something fails
 
 - **A rule failure** gives an output row with the status `failed` and the reason in `error`. The run continues, and the refresh after the next pass tries the input again.
@@ -278,4 +285,5 @@ src/
   sqlite-views.ts            publishSQLiteViews: makes described views and checks their columns
   view.test.ts               the tests of View
   computed-dataset.test.ts   the tests of ComputedDataset, and of the refreshes of a run and a watch
+  computed-as-of.test.ts     the tests of the commits, the positions and the history of a refresh
 ```

@@ -42,7 +42,7 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     clock: PipelineClock;
     connection: string;
   }): Promise<Load<SQLiteTable>> {
-    const load = SQLiteLoad.open(this.path, connection, clock);
+    const load = SQLiteLoad.open(this.path, { connector: connection }, clock);
     return {
       prepare: async (configuration, target, binding) =>
         this.createWriter(configuration, target).prepare(load, binding),

@@ -3,7 +3,6 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
 
-import type { SQLiteColumn } from './sqlite-column.ts';
 import { identifiers } from './sqlite-identifiers.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
@@ -27,9 +26,9 @@ const registry = new Declaration(
 // each column of the target that it does not have, and never drops one.
 export class SQLiteHistory {
   readonly name: string;
-  readonly #table: SQLiteTable;
+  readonly #table: Pick<SQLiteTable, 'name' | 'location'>;
 
-  constructor(table: SQLiteTable) {
+  constructor(table: Pick<SQLiteTable, 'name' | 'location'>) {
     this.#table = table;
     this.name = `_elt_history_${hash('sha256', table.location)}`;
   }
@@ -92,7 +91,7 @@ function names(database: DatabaseSync, table: string): string[] {
 // a column the stream adds, null in each stored row, makes no new version. A
 // stored file counts as the SHA-256 of its bytes, not as its id.
 export function rowHash(
-  columns: readonly SQLiteColumn[],
+  columns: readonly { readonly name: string }[],
   values: readonly SQLInputValue[],
 ): string {
   const digest = createHash('sha256');

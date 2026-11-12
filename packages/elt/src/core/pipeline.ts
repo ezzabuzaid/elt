@@ -166,6 +166,7 @@ export class Pipeline<Target extends DestinationTarget> {
     const refreshes = new DerivedRefreshes(
       this.derived,
       this.connections,
+      this.#clock,
       signal,
       () => {},
     );
@@ -222,6 +223,7 @@ export class Pipeline<Target extends DestinationTarget> {
     const refreshes = new DerivedRefreshes(
       this.derived,
       this.connections,
+      this.#clock,
       watching,
       // With no reason: the passes it stops were not refused by this failure,
       // and no sync history records a dataset's failure (ADR 0004).

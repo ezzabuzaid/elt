@@ -8,12 +8,16 @@ import { transaction } from '@zukhruf/sqlite-transaction';
 import {
   type Connection,
   DerivedDataset,
+  type PipelineClock,
   type RefreshTrigger,
   type Rule,
 } from '@eltjs/elt';
 
-import { busyTimeout, openDestination } from './open-destination.ts';
+import { busyTimeout } from './open-destination.ts';
 import { SQLiteDestination } from './sqlite-destination.ts';
+import { SQLiteHistory, rowHash } from './sqlite-history.ts';
+import { identifiers } from './sqlite-identifiers.ts';
+import { SQLiteLoad } from './sqlite-loads.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { publishSQLiteViews } from './sqlite-views.ts';
 import { View } from './view.ts';
@@ -46,6 +50,10 @@ type Stored = {
 // A rule's failure on one input is that row's; it never fails the load.
 // Readers query the view name, over the table raw_<name>, which a refresh
 // replaces when its declaration changes, since it is rebuilt from the inputs.
+// A refresh is a load of the file: each of its transactions that changes a
+// row is a numbered commit, each row names the commit that last wrote it,
+// and the history keeps each row a commit replaced or removed, so the view
+// reads as of a position as the copies' tables do.
 export class ComputedDataset<
   Input,
   Output extends SQLInputValue,
@@ -57,6 +65,7 @@ export class ComputedDataset<
   readonly #rule: Rule<Input, Output>;
   readonly #table: string;
   readonly #declaration: Declaration;
+  readonly #history: SQLiteHistory;
   // Every column of an output row, in table order.
   readonly #columns: readonly string[];
 
@@ -80,6 +89,10 @@ export class ComputedDataset<
     this.#from = Object.freeze([...from]);
     this.#rule = compute;
     this.#table = `raw_${name}`;
+    this.#history = new SQLiteHistory({
+      name: this.#table,
+      location: identifiers.key(this.#table),
+    });
     this.#columns = Object.freeze([
       compute.key.name,
       ...Object.keys(engineColumns),
@@ -98,6 +111,8 @@ export class ComputedDataset<
           `"status" TEXT NOT NULL CHECK ("status" IN ('computed', 'empty', 'failed'))`,
           '"error" TEXT',
           ...ruleColumns,
+          '"committed_in" INTEGER NOT NULL',
+          '"_elt_row_hash" TEXT NOT NULL',
         ].join(', ')}) STRICT`,
       ],
       { rows: 'replace' },
@@ -129,21 +144,52 @@ export class ComputedDataset<
 
   override async refresh({
     connections,
+    clock,
     signal,
     trigger,
   }: {
     readonly connections: readonly Connection<SQLiteTable>[];
+    readonly clock: PipelineClock;
     readonly signal?: AbortSignal;
     readonly trigger: RefreshTrigger;
   }): Promise<void> {
     const inputs = this.#inputs(connections);
     if (inputs === null) return;
-    using database = openDestination(this.#into.path);
+    // Open from the start, so it closes a refresh that a process ended; with
+    // no commit it is no span, and leaves the positions as they are.
+    using load = SQLiteLoad.open(
+      this.#into.path,
+      { dataset: this.name },
+      clock,
+    );
+    const { database } = load;
     const key = this.#rule.key.name;
+    const table = quote(this.#table);
+    const byKey = `FROM ${table} AS "_elt_old" WHERE "_elt_old".${quote(key)} = ?`;
+    // The number of a transaction's commit, taken at its first change, so a
+    // transaction that changes no row takes none.
+    const commits = () => {
+      let number: number | undefined;
+      return () => (number ??= load.commit());
+    };
+    const written = [...this.#columns, 'committed_in', '_elt_row_hash'].map(
+      quote,
+    );
     const stored = transaction(
       database,
       () => {
+        const commit = commits();
+        // A new declaration replaces the table, and the history keeps the
+        // rows it drops.
+        if (
+          this.#declaration.drift(database) === 'stale' &&
+          database.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get() !== undefined
+        ) {
+          this.#history.create(database, written);
+          this.#history.keep(database, commit(), `FROM ${table} AS "_elt_old"`);
+        }
         this.#declaration.apply(database);
+        this.#history.create(database, written);
         publishSQLiteViews(database, {
           views: [
             {
@@ -158,22 +204,24 @@ export class ComputedDataset<
                   ),
                 ),
               },
-              query: `SELECT ${this.#columns.map(quote).join(', ')} FROM ${quote(this.#table)}`,
+              query: `SELECT ${this.#columns.map(quote).join(', ')} FROM ${table}`,
             },
           ],
         });
         const rows = new Map<string, Stored>();
         const remove = database.prepare(
-          `DELETE FROM ${quote(this.#table)} WHERE ${quote(key)} = ?`,
+          `DELETE FROM ${table} WHERE ${quote(key)} = ?`,
         );
         for (const row of database
           .prepare(
-            `SELECT ${quote(key)} AS "key", "input_hash", "rule", "status" FROM ${quote(this.#table)}`,
+            `SELECT ${quote(key)} AS "key", "input_hash", "rule", "status" FROM ${table}`,
           )
           .all()) {
           const id = String(row.key);
-          if (!inputs.has(id)) remove.run(id);
-          else
+          if (!inputs.has(id)) {
+            this.#history.keep(database, commit(), byKey, [id]);
+            remove.run(id);
+          } else
             rows.set(id, {
               inputHash: String(row.input_hash),
               rule: String(row.rule),
@@ -184,18 +232,29 @@ export class ComputedDataset<
       },
       { mode: 'immediate' },
     );
-    const write = database.prepare(
-      `INSERT OR REPLACE INTO ${quote(this.#table)} (${this.#columns.map(quote).join(', ')}) VALUES (${this.#columns.map(() => '?').join(', ')})`,
+    const version = database.prepare(
+      `SELECT "_elt_row_hash" AS "hash" FROM ${table} WHERE ${quote(key)} = ?`,
     );
+    const write = database.prepare(
+      `INSERT INTO ${table} (${written.join(', ')}) VALUES (${written.map(() => '?').join(', ')}) ON CONFLICT (${quote(key)}) DO UPDATE SET ${written
+        .slice(1)
+        .map((column) => `${column} = excluded.${column}`)
+        .join(', ')}`,
+    );
+    const hashed = this.#columns.map((name) => ({ name }));
+    // Writes a row in the commit that commit numbers, unless the stored row
+    // has the same values: then it keeps its commit. The history keeps the
+    // row it replaces.
     const store = (
+      commit: () => number,
       id: string,
       inputHash: string,
       rule: string,
       status: 'computed' | 'empty' | 'failed',
       error: string | null,
       values: Readonly<Record<string, Output>>,
-    ) =>
-      write.run(
+    ) => {
+      const row = [
         id,
         inputHash,
         rule,
@@ -204,7 +263,15 @@ export class ComputedDataset<
         ...Object.keys(this.#rule.output).map(
           (column) => values[column] ?? null,
         ),
-      );
+      ];
+      const hash = rowHash(hashed, row);
+      const before = version.get(id)?.hash;
+      if (before === hash) return;
+      const number = commit();
+      if (before !== undefined)
+        this.#history.keep(database, number, byKey, [id]);
+      write.run(...row, number, hash);
+    };
     const due: {
       readonly id: string;
       readonly input: Input;
@@ -221,7 +288,12 @@ export class ComputedDataset<
         if (before?.status === 'computed') continue;
         if (before?.rule === 'unsupported' && before.inputHash === inputHash)
           continue;
-        store(id, inputHash, 'unsupported', 'empty', null, {});
+        transaction(
+          database,
+          () =>
+            store(commits(), id, inputHash, 'unsupported', 'empty', null, {}),
+          { mode: 'immediate' },
+        );
         continue;
       }
       if (
@@ -264,14 +336,31 @@ export class ComputedDataset<
           transaction(
             database,
             () => {
+              const commit = commits();
               batch.forEach(({ id, inputHash, rule }, index) => {
                 const result = results[index];
                 if (result === undefined || 'gone' in result) return;
                 if ('value' in result)
-                  store(id, inputHash, rule, 'computed', null, result.value);
+                  store(
+                    commit,
+                    id,
+                    inputHash,
+                    rule,
+                    'computed',
+                    null,
+                    result.value,
+                  );
                 else if ('error' in result)
-                  store(id, inputHash, rule, 'failed', result.error, {});
-                else store(id, inputHash, rule, 'empty', null, {});
+                  store(
+                    commit,
+                    id,
+                    inputHash,
+                    rule,
+                    'failed',
+                    result.error,
+                    {},
+                  );
+                else store(commit, id, inputHash, rule, 'empty', null, {});
               });
             },
             { mode: 'immediate' },

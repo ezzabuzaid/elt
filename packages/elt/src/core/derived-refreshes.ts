@@ -1,5 +1,6 @@
 import { Latch } from '@zukhruf/async';
 
+import type { PipelineClock } from './clock.ts';
 import type { Connection } from './connection.ts';
 import {
   type DerivedDataset,
@@ -53,6 +54,7 @@ class Failed {
 export class DerivedRefreshes<Target extends DestinationTarget> {
   readonly #datasets: readonly DerivedDataset<Target>[];
   readonly #connections: readonly Connection<Target>[];
+  readonly #clock: PipelineClock;
   readonly #signal: AbortSignal | undefined;
   readonly #stop: () => void;
   #state: Idle | Running | Queued = new Idle();
@@ -64,11 +66,13 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
   constructor(
     datasets: readonly DerivedDataset<Target>[],
     connections: readonly Connection<Target>[],
+    clock: PipelineClock,
     signal: AbortSignal | undefined,
     stop: () => void,
   ) {
     this.#datasets = datasets;
     this.#connections = connections;
+    this.#clock = clock;
     this.#signal = signal;
     this.#stop = stop;
   }
@@ -113,6 +117,7 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
       try {
         await dataset.refresh({
           connections: this.#connections,
+          clock: this.#clock,
           earlier: this.#datasets.slice(0, index),
           signal: this.#signal,
           trigger: { kind, tried },

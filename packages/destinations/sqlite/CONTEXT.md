@@ -33,7 +33,7 @@ A view waits while its SQL reads a raw table or a reader view that a copy of the
 _Avoid_: Skip (a view that waits appears at a later refresh), pending
 
 **Computed dataset**:
-A derived dataset that keeps one output row for each key in the table `raw_<name>`. Readers query it through the view `<name>`.
+A derived dataset that keeps one output row for each key in the table `raw_<name>`. Readers query it through the view `<name>`. Each refresh is a load of the SQLite file, so its commits have numbers and its table has a history.
 _Avoid_: Cache, index, materialized view
 
 **Output row**:
@@ -73,7 +73,7 @@ The id that names the numbering of the commits of a SQLite file. A file that is 
 _Avoid_: Generation, version
 
 **Position**:
-`<epoch>:<number>`: the last commit of a closed load, when no other load has commits before and after it. A reader at a position sees no part of a pass. A reading of a commit that is not a position fails.
+`<epoch>:<number>`: the last commit of a closed load, when no other load has commits before and after it. A load is a pass of a connection or a refresh of a computed dataset. A reader at a position sees no part of a pass or of a refresh. A reading of a commit that is not a position fails.
 _Avoid_: Offset, cursor (eca keeps a cursor), checkpoint
 
 **Row hash**:
