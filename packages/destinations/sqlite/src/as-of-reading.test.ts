@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { rm } from 'node:fs/promises';
+import { hash } from 'node:crypto';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -13,6 +14,7 @@ import {
   Copy,
   type CopyConfiguration,
   Gauge,
+  LocalFiles,
   type Partition,
   Pipeline,
   Source,
@@ -197,7 +199,7 @@ function notesFile(directory: string, stream = notes('notes')) {
       }),
       derived,
     );
-  return { destination, stream, connection };
+  return { destination, checkpoints, stream, connection };
 }
 
 // The newest position of the file.
@@ -1297,4 +1299,611 @@ test('a reading at the newest commit reads the tables as they are, the sync hist
     `${reading.at} is not ${last.committed_at}`,
   );
   assert.equal(reading.sql.isOpen, false);
+});
+
+// Documents keyed by id, each with the bytes of one file.
+const documents = () =>
+  new Stream({
+    name: 'documents',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      required: ['id', 'version'],
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    emitsDeletes: true,
+    supportsFileTransfer: true,
+  });
+
+// A table that keeps the bytes of each document's file in the SQLite file.
+const documentTable = (stream: Stream, destination: SQLiteDestination) =>
+  destination.table('documents', (c) => [
+    c.text('id'),
+    c.integer('version'),
+    c.blob('bytes').from(stream.file),
+  ]);
+
+// A deduplicating copy of the documents, in which the newest record of a key
+// replaces the stored row.
+const deduplicated = (stream: Stream, destination: SQLiteDestination) =>
+  new Copy(stream, documentTable(stream, destination), {
+    id: 'documents',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    cursorField: 'version',
+    dedupPolicy: 'replace',
+  });
+
+// A document whose file holds the text, written where the source reads it.
+async function document(
+  directory: string,
+  id: string,
+  version: number,
+  text: string,
+): Promise<SourceMessage> {
+  const file = join(directory, `${id}-${version}-${text}.txt`);
+  await writeFile(file, text);
+  return { stream: 'documents', data: { id, version }, file };
+}
+
+// The chunk table of the bytes of the documents, by the documented rule:
+// _elt_files_ and the first 40 hex digits of the SHA-256 of the JSON of
+// [table, column].
+const chunks = `"_elt_files_${hash('sha256', JSON.stringify(['documents', 'bytes'])).slice(0, 40)}"`;
+
+// The text of each document's file, as a reading as of the position, or as
+// of the newest one, puts its chunks together; null when no chunk is left.
+function texts(destination: SQLiteDestination, position?: string) {
+  const rows = asOf(
+    destination,
+    `SELECT d.id, c.bytes FROM documents AS d LEFT JOIN ${chunks} AS c ON c.file = d.bytes ORDER BY d.id, c.n`,
+    position,
+  );
+  return Object.fromEntries(
+    [...Map.groupBy(rows, ({ id }) => String(id))].map(([id, parts]) => {
+      const bytes = parts.flatMap(({ bytes }) =>
+        bytes instanceof Uint8Array ? [bytes] : [],
+      );
+      return [id, bytes.length === 0 ? null : Buffer.concat(bytes).toString()];
+    }),
+  );
+}
+
+// The number of stored files that no row of the documents or of their
+// history refers to.
+function orphans(destination: SQLiteDestination) {
+  const [recorded] = storedRows(
+    destination.path,
+    "SELECT history FROM _elt_histories WHERE target = 'documents'",
+  );
+  if (recorded === undefined) assert.fail('documents has no history');
+  const [counted] = storedRows(
+    destination.path,
+    `SELECT count(DISTINCT file) AS n FROM ${chunks} WHERE file NOT IN (SELECT bytes FROM documents WHERE bytes IS NOT NULL UNION ALL SELECT bytes FROM "${String(recorded.history)}" WHERE bytes IS NOT NULL)`,
+  );
+  return counted?.n;
+}
+
+test('the file of a document that a later pass deletes reads with its own bytes as of the position before it, though that pass saved a new file', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const stream = documents();
+  const { destination, connection } = notesFile(scratch.path, stream);
+  const copy = deduplicated(stream, destination);
+  await connection(
+    {
+      documents: [
+        await document(scratch.path, 'd1', 1, 'first'),
+        await document(scratch.path, 'd2', 1, 'second'),
+        checkpoint('documents', 1),
+      ],
+    },
+    copy,
+  ).run();
+  const before = newest(destination);
+
+  await connection(
+    {
+      documents: [
+        { type: 'DELETE', stream: 'documents', key: { id: 'd2' } },
+        await document(scratch.path, 'd3', 1, 'third'),
+        checkpoint('documents', 2),
+      ],
+    },
+    copy,
+  ).run();
+
+  assert.deepEqual(texts(destination), { d1: 'first', d3: 'third' });
+  assert.deepEqual(texts(destination, before), { d1: 'first', d2: 'second' });
+  assert.equal(orphans(destination), 0);
+});
+
+test('a document whose file changed, or whose fields changed beside the same file, is a new version, and its old row reads its own bytes as of the position before it', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const stream = documents();
+  const { destination, connection } = notesFile(scratch.path, stream);
+  const copy = deduplicated(stream, destination);
+  await connection(
+    {
+      documents: [
+        await document(scratch.path, 'd1', 1, 'first'),
+        await document(scratch.path, 'd2', 1, 'same'),
+        checkpoint('documents', 1),
+      ],
+    },
+    copy,
+  ).run();
+  const before = newest(destination);
+
+  await connection(
+    {
+      documents: [
+        await document(scratch.path, 'd1', 1, 'changed'),
+        await document(scratch.path, 'd2', 2, 'same'),
+        checkpoint('documents', 2),
+      ],
+    },
+    copy,
+  ).run();
+  const last = lastCommit(destination);
+
+  assert.deepEqual(
+    asOf(destination, 'SELECT id, committed_in FROM documents ORDER BY id'),
+    [
+      { id: 'd1', committed_in: last.number },
+      { id: 'd2', committed_in: last.number },
+    ],
+  );
+  assert.deepEqual(
+    replaced(destination, 'documents').map(({ id, version }) => ({
+      id,
+      version,
+    })),
+    [
+      { id: 'd1', version: 1 },
+      { id: 'd2', version: 1 },
+    ],
+  );
+  assert.deepEqual(texts(destination), { d1: 'changed', d2: 'same' });
+  assert.deepEqual(texts(destination, before), { d1: 'first', d2: 'same' });
+  assert.equal(orphans(destination), 0);
+});
+
+test('an overwrite, a deduplicating load and a reload that bring the same files again leave each row with its file, its commit and its loaded_at, keep no history, and keep no second copy of a file', async () => {
+  for (const mode of ['overwrite', 'append_dedup', 'reload'] as const) {
+    await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+    const stream = documents();
+    const { destination, connection } = notesFile(scratch.path, stream);
+    const copy =
+      mode === 'overwrite'
+        ? new Copy(stream, documentTable(stream, destination))
+        : deduplicated(stream, destination);
+    const pass = async (read: number) =>
+      connection(
+        {
+          documents: [
+            ...(mode === 'reload' && read > 1
+              ? [{ type: 'RESET' as const, stream: 'documents' }]
+              : []),
+            await document(scratch.path, 'd1', 1, 'first'),
+            await document(scratch.path, 'd2', 1, 'second'),
+            checkpoint('documents', read),
+          ],
+        },
+        copy,
+      ).run();
+    await pass(1);
+    const before = newest(destination);
+    const rows = asOf(destination, 'SELECT * FROM documents ORDER BY id');
+    await delay(5);
+
+    await pass(2);
+
+    assert.notEqual(newest(destination), before, mode);
+    assert.deepEqual(
+      asOf(destination, 'SELECT * FROM documents ORDER BY id'),
+      rows,
+      mode,
+    );
+    assert.deepEqual(replaced(destination, 'documents'), [], mode);
+    assert.deepEqual(texts(destination), { d1: 'first', d2: 'second' }, mode);
+    assert.deepEqual(
+      storedRows(
+        destination.path,
+        `SELECT count(DISTINCT file) AS files FROM ${chunks}`,
+      ),
+      [{ files: 2 }],
+      mode,
+    );
+  }
+});
+
+test('the file of a document that a later overwrite leaves out reads with its own bytes as of the position before it', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const stream = documents();
+  const { destination, connection } = notesFile(scratch.path, stream);
+  const overwrite = new Copy(stream, documentTable(stream, destination));
+  await connection(
+    {
+      documents: [
+        await document(scratch.path, 'd1', 1, 'first'),
+        await document(scratch.path, 'd2', 1, 'second'),
+      ],
+    },
+    overwrite,
+  ).run();
+  const before = newest(destination);
+
+  await connection(
+    {
+      documents: [
+        await document(scratch.path, 'd1', 1, 'first'),
+        await document(scratch.path, 'd3', 1, 'third'),
+      ],
+    },
+    overwrite,
+  ).run();
+
+  assert.deepEqual(texts(destination), { d1: 'first', d3: 'third' });
+  assert.deepEqual(texts(destination, before), { d1: 'first', d2: 'second' });
+  assert.equal(orphans(destination), 0);
+});
+
+test('the files of the documents that a reload of another shape swapped out read with their own bytes as of the position before it', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const stream = documents();
+  const { destination, connection } = notesFile(scratch.path, stream);
+  await connection(
+    { documents: [await document(scratch.path, 'd1', 1, 'first')] },
+    new Copy(stream, documentTable(stream, destination)),
+  ).run();
+  const before = newest(destination);
+
+  // A table without version has another shape, which an overwrite reloads
+  // into a hidden table that takes the table's place.
+  await connection(
+    { documents: [await document(scratch.path, 'd2', 1, 'second')] },
+    new Copy(
+      stream,
+      destination.table('documents', (c) => [
+        c.text('id'),
+        c.blob('bytes').from(stream.file),
+      ]),
+    ),
+  ).run();
+
+  assert.deepEqual(texts(destination), { d2: 'second' });
+  assert.deepEqual(texts(destination, before), { d1: 'first' });
+  assert.equal(orphans(destination), 0);
+});
+
+test('the files of the documents that a clear removed read with their own bytes as of the position before it, also after a later pass saved a new file', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const stream = documents();
+  const { destination, connection } = notesFile(scratch.path, stream);
+  const copy = deduplicated(stream, destination);
+  const loaded = connection(
+    {
+      documents: [
+        await document(scratch.path, 'd1', 1, 'first'),
+        await document(scratch.path, 'd2', 1, 'second'),
+        checkpoint('documents', 1),
+      ],
+    },
+    copy,
+  );
+  await loaded.run();
+  const before = newest(destination);
+
+  await loaded.clear();
+  await connection(
+    {
+      documents: [
+        await document(scratch.path, 'd3', 1, 'third'),
+        checkpoint('documents', 2),
+      ],
+    },
+    copy,
+  ).run();
+
+  assert.deepEqual(texts(destination), { d3: 'third' });
+  assert.deepEqual(texts(destination, before), { d1: 'first', d2: 'second' });
+  assert.equal(orphans(destination), 0);
+});
+
+test('the files of the documents of a partition that a later pass resets read with their own bytes as of the position before it', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const owned = new Stream({
+    name: 'documents',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        owner: { type: 'string' },
+        version: { type: 'integer' },
+      },
+      required: ['id', 'owner', 'version'],
+    },
+    primaryKey: ['owner', 'id'],
+    supportedSyncModes: ['incremental'],
+    emitsDeletes: true,
+    partitionKey: ['owner'],
+    supportsFileTransfer: true,
+  });
+  const owners = [{ owner: 'ann' }, { owner: 'bob' }];
+  const ownedDocument = async (id: string, owner: string, text: string) => ({
+    ...(await document(scratch.path, id, 1, text)),
+    data: { id, owner, version: 1 },
+  });
+  const pass = (steps: Readonly<Record<string, readonly Step[]>>) =>
+    pipeline(
+      new Connection({
+        name: 'documents',
+        source: new Scripted([owned], steps, owners),
+        destination,
+        checkpoints,
+        steps: [
+          new Copy(
+            owned,
+            destination.table('documents', (c) => [
+              c.text('id'),
+              c.text('owner'),
+              c.integer('version'),
+              c.blob('bytes').from(owned.file),
+            ]),
+            {
+              id: 'documents',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+              cursorField: 'version',
+            },
+          ),
+        ],
+      }),
+    ).run();
+  await pass({
+    'documents:ann': [
+      await ownedDocument('a1', 'ann', 'ann first'),
+      checkpoint('documents', 1),
+    ],
+    'documents:bob': [
+      await ownedDocument('b1', 'bob', 'bob first'),
+      checkpoint('documents', 1),
+    ],
+  });
+  const before = newest(destination);
+
+  await pass({
+    'documents:ann': [
+      { type: 'RESET', stream: 'documents' },
+      await ownedDocument('a2', 'ann', 'ann second'),
+      checkpoint('documents', 2),
+    ],
+    'documents:bob': [checkpoint('documents', 2)],
+  });
+
+  assert.deepEqual(texts(destination), { a2: 'ann second', b1: 'bob first' });
+  assert.deepEqual(texts(destination, before), {
+    a1: 'ann first',
+    b1: 'bob first',
+  });
+  assert.equal(orphans(destination), 0);
+});
+
+test('a file column that a pass drops and a later pass adds again gives each new file an id that no row had, so a reading as of a position before the drop shows the bytes of no other file', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const stream = documents();
+  const { destination, checkpoints, connection } = notesFile(
+    scratch.path,
+    stream,
+  );
+  const withoutBytes = new Copy(
+    stream,
+    destination.table('documents', (c) => [c.text('id'), c.integer('version')]),
+    {
+      id: 'documents',
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      cursorField: 'version',
+    },
+  );
+  const copy = deduplicated(stream, destination);
+  await connection(
+    {
+      documents: [
+        await document(scratch.path, 'd1', 1, 'first'),
+        checkpoint('documents', 1),
+      ],
+    },
+    copy,
+  ).run();
+  const before = newest(destination);
+  await connection(
+    {
+      documents: [
+        { type: 'DELETE', stream: 'documents', key: { id: 'd1' } },
+        checkpoint('documents', 2),
+      ],
+    },
+    copy,
+  ).run();
+  // Whether a copy reads files is part of its checkpoint binding, so the host
+  // resets the checkpoint at each change; the table keeps its rows.
+  await checkpoints.reset('documents');
+  await connection(
+    {
+      documents: [
+        { stream: 'documents', data: { id: 'd0', version: 1 } },
+        checkpoint('documents', 3),
+      ],
+    },
+    withoutBytes,
+  ).run();
+  await checkpoints.reset('documents');
+
+  await connection(
+    {
+      documents: [
+        await document(scratch.path, 'd2', 1, 'second'),
+        checkpoint('documents', 4),
+      ],
+    },
+    copy,
+  ).run();
+
+  const [old] = asOf(
+    destination,
+    "SELECT bytes FROM documents WHERE id = 'd1'",
+    before,
+  );
+  const [saved] = asOf(
+    destination,
+    "SELECT bytes FROM documents WHERE id = 'd2'",
+  );
+  assert.ok(Number(saved?.bytes) > Number(old?.bytes), `${saved?.bytes}`);
+  // The dropped column took the chunks of d1's file with it.
+  assert.deepEqual(texts(destination, before), { d1: null });
+  assert.deepEqual(texts(destination), { d0: null, d2: 'second' });
+});
+
+test('an overwrite that adds a file column to a stored table keeps the files of the rows it loads, though the table it replaces and its history do not have the column', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const stream = documents();
+  const { destination, connection } = notesFile(scratch.path, stream);
+  // No column of a chunk table has this name, so SQL that reads it from a
+  // table without it fails instead of reading the chunk table's own column.
+  const attachments = `"_elt_files_${hash('sha256', JSON.stringify(['documents', 'attachment'])).slice(0, 40)}"`;
+  const read = (position?: string) =>
+    asOf(
+      destination,
+      `SELECT d.id, CAST(c.bytes AS TEXT) AS text FROM documents AS d LEFT JOIN ${attachments} AS c ON c.file = d.attachment ORDER BY d.id`,
+      position,
+    );
+  await connection(
+    { documents: [{ stream: 'documents', data: { id: 'd1', version: 1 } }] },
+    new Copy(
+      stream,
+      destination.table('documents', (c) => [
+        c.text('id'),
+        c.integer('version'),
+      ]),
+    ),
+  ).run();
+  const before = newest(destination);
+
+  // The table gains a column, so the overwrite reloads it into a hidden
+  // table, whose commits keep no row in the history.
+  await connection(
+    { documents: [await document(scratch.path, 'd2', 1, 'second')] },
+    new Copy(
+      stream,
+      destination.table('documents', (c) => [
+        c.text('id'),
+        c.integer('version'),
+        c.blob('attachment').from(stream.file),
+      ]),
+    ),
+  ).run();
+
+  assert.deepEqual(read(), [{ id: 'd2', text: 'second' }]);
+  assert.deepEqual(read(before), [{ id: 'd1', text: null }]);
+});
+
+test('the file in a file storage of a document that a later pass deletes reads with its own bytes as of the position before it', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const stream = documents();
+  const { destination, connection } = notesFile(scratch.path, stream);
+  const files = new LocalFiles({ directory: join(scratch.path, 'files') });
+  const copy = new Copy(
+    stream,
+    destination.table('documents', (c) => [
+      c.text('id'),
+      c.integer('version'),
+      c.text('ref').from(stream.file.store(files)),
+    ]),
+    {
+      id: 'documents',
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      cursorField: 'version',
+    },
+  );
+  await connection(
+    {
+      documents: [
+        await document(scratch.path, 'd1', 1, 'first'),
+        checkpoint('documents', 1),
+      ],
+    },
+    copy,
+  ).run();
+  const before = newest(destination);
+
+  await connection(
+    {
+      documents: [
+        { type: 'DELETE', stream: 'documents', key: { id: 'd1' } },
+        checkpoint('documents', 2),
+      ],
+    },
+    copy,
+  ).run();
+
+  assert.deepEqual(asOf(destination, 'SELECT id FROM documents'), []);
+  const [kept] = asOf(destination, 'SELECT ref FROM documents', before);
+  assert.equal(
+    await readFile(join(files.directory, String(kept?.ref)), 'utf8'),
+    'first',
+  );
+});
+
+test('a row that a later pass sends again after its table dropped a column and took it back has the value again, and reads as it was at each position before', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  const { destination, stream, connection } = notesFile(scratch.path);
+  // The replace policy has no cursor guard to refuse a record with the
+  // cursor of the stored row, so only the values tell the rows apart.
+  const copy = (withBody: boolean) =>
+    new Copy(
+      stream,
+      withBody
+        ? destination.table('notes')
+        : destination.table('notes', (c) => [
+            c.text('id'),
+            c.integer('version'),
+          ]),
+      {
+        id: 'notes',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        cursorField: 'version',
+        dedupPolicy: 'replace',
+      },
+    );
+  await connection(
+    { notes: [note('notes', 'n1', 1, 'kept'), checkpoint('notes', 1)] },
+    copy(true),
+  ).run();
+  const first = newest(destination);
+  const rows = asOf(destination, 'SELECT * FROM notes');
+  await connection({ notes: [checkpoint('notes', 2)] }, copy(false)).run();
+  const dropped = newest(destination);
+
+  await connection(
+    { notes: [note('notes', 'n1', 1, 'kept'), checkpoint('notes', 3)] },
+    copy(true),
+  ).run();
+
+  assert.deepEqual(asOf(destination, 'SELECT id, body FROM notes'), [
+    { id: 'n1', body: 'kept' },
+  ]);
+  assert.deepEqual(asOf(destination, 'SELECT id, body FROM notes', dropped), [
+    { id: 'n1', body: null },
+  ]);
+  assert.deepEqual(asOf(destination, 'SELECT * FROM notes', first), rows);
 });

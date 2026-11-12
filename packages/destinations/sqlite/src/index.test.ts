@@ -3625,7 +3625,19 @@ const chunkTable = (table: string, column: string) =>
     JSON.stringify([table.toLowerCase(), column.toLowerCase()]),
   ).slice(0, 40)}"`;
 
-// Each loaded file's chunk sizes and reassembled hash, plus chunks no row references.
+// The ids of the stored files of a column that a row of the table or of its
+// history refers to, as a SELECT.
+const referenced = (path: string, table: string, column: string) => {
+  const [recorded] = storedRows(
+    path,
+    `SELECT history FROM _elt_histories WHERE target = '${table}'`,
+  );
+  if (recorded === undefined) assert.fail(`${table} has no history`);
+  return `SELECT ${column} FROM ${table} WHERE ${column} IS NOT NULL UNION ALL SELECT ${column} FROM "${String(recorded.history)}" WHERE ${column} IS NOT NULL`;
+};
+
+// Each loaded file's chunk sizes and reassembled hash, plus chunks that no
+// row of the table or of its history refers to.
 const storedFiles = (path: string) => {
   using database = open(path, { readOnly: true });
   const chunks = database
@@ -3648,7 +3660,7 @@ const storedFiles = (path: string) => {
   );
   const orphans = database
     .prepare(
-      `SELECT count(*) AS n FROM ${chunkTable('files', 'bytes')} WHERE file NOT IN (SELECT bytes FROM files WHERE bytes IS NOT NULL)`,
+      `SELECT count(*) AS n FROM ${chunkTable('files', 'bytes')} WHERE file NOT IN (${referenced(path, 'files', 'bytes')})`,
     )
     .get()?.n;
   return { files, orphans };
@@ -3710,7 +3722,7 @@ test('every table of a loaded file that no copy names is reserved: the sync hist
   assert.equal(isReserved('elt_files'), false);
 });
 
-test('file bytes load as bounded chunks that leave with their row', async () => {
+test('file bytes load as bounded chunks, and no chunk stays that no row of the table or of its history refers to', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-files-');
   const large = new Uint8Array(9 * 1024 * 1024 + 3).map((_, i) => i % 251);
   const small = Buffer.from('small');
@@ -3771,7 +3783,7 @@ test('file bytes load as bounded chunks that leave with their row', async () => 
   });
 });
 
-test("an overwrite removes the previous load's files", async () => {
+test('an overwrite leaves no file of the previous load that no row of the table or of its history refers to', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-files-');
   const source = new FileSource(scratch.path, {
     a: { version: 1, bytes: Buffer.from('aye') },
@@ -4306,11 +4318,12 @@ test('file flush failure or cancellation leaves SQLite rows and checkpoints at t
     'replacement',
   );
   assert.equal(saved(), '{"at":2}');
+  // The history keeps the first version of a, and so the original file.
   assert.equal(
     (await readdir(directory, { recursive: true, withFileTypes: true })).filter(
       (entry) => entry.isFile(),
     ).length,
-    1,
+    2,
   );
 
   const stopped = new AbortController();
@@ -4341,7 +4354,7 @@ test('file flush failure or cancellation leaves SQLite rows and checkpoints at t
   );
 });
 
-test('stored file references follow committed SQLite rows, including rejected updates, failures, deletions and clear', async () => {
+test('stored file references follow committed SQLite rows and the rows of their history, including rejected updates, failures, deletions and clear', async () => {
   await using scratch = await new TemporaryFiles().directory(
     'elt-local-sqlite-',
   );
@@ -4446,19 +4459,21 @@ test('stored file references follow committed SQLite rows, including rejected up
   await pipeline.run();
   const replacement = String(loaded()[0]?.ref);
   assert.equal(await readFile(at(replacement), 'utf8'), 'replacement');
-  await assert.rejects(readFile(at(original)), { code: 'ENOENT' });
+  // The history keeps each version that a later commit replaced or removed,
+  // and so its file.
+  assert.equal(await readFile(at(original), 'utf8'), 'original');
   source.scripts = {
     docs: [removal('docs', 'a'), checkpoint('docs', { at: 4 })],
   };
   await pipeline.run();
-  await assert.rejects(readFile(at(replacement)), { code: 'ENOENT' });
-  assert.equal((await storedFiles()).length, 0);
+  assert.equal(await readFile(at(replacement), 'utf8'), 'replacement');
+  assert.equal((await storedFiles()).length, 2);
   source.scripts = { docs: [fileRecord(4), checkpoint('docs', { at: 5 })] };
   await pipeline.run();
   await pipeline.clear();
   assert.deepEqual(loaded(), []);
   assert.equal(saved(), undefined);
-  assert.equal((await storedFiles()).length, 0);
+  assert.equal((await storedFiles()).length, 2);
 });
 
 test('a file whose own name ends in an extension too long to keep is stored under its hash alone', async () => {
@@ -4635,16 +4650,21 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
   source.scripts = { docs: [] };
   await snapshot.run();
   assert.equal(loaded('snapshot'), undefined);
-  await assert.rejects(readFile(at(empty)), { code: 'ENOENT' });
+  // The history of each table keeps the rows that left it, and so their
+  // files.
+  assert.equal((await readFile(at(empty))).length, 0);
   assert.deepEqual(await readFile(at(original)), content);
   await pipeline.clear();
-  await assert.rejects(readFile(at(original)), { code: 'ENOENT' });
+  assert.deepEqual(await readFile(at(original)), content);
   source.scripts = { docs: [{ ...record('docs', 'a', 1), file: path }] };
   await snapshot.run();
   await rm(at(String(loaded('snapshot'))));
   await assert.rejects(snapshot.run(), PipelineError);
   assert.equal(loaded('snapshot'), empty);
-  await snapshot.clear();
+  // The clear empties the table, and the history still refers to the file
+  // that is gone, which the storage reports.
+  await assert.rejects(snapshot.clear(), /Stored attachment is missing/);
+  assert.equal(loaded('snapshot'), undefined);
 });
 
 test('a stream that fails publishes none of its staged rows while its sibling commits, and a failing overwrite keeps the old table', async () => {
@@ -5831,7 +5851,7 @@ for (const { outcome, next, expected } of leftBehind)
         .map(({ id, bytes }) => `${id}=${bytes}`);
       const orphans = database
         .prepare(
-          `SELECT count(*) AS n FROM ${chunkTable('docs', 'bytes')} WHERE file NOT IN (SELECT bytes FROM docs WHERE bytes IS NOT NULL)`,
+          `SELECT count(*) AS n FROM ${chunkTable('docs', 'bytes')} WHERE file NOT IN (${referenced(destination.path, 'docs', 'bytes')})`,
         )
         .get()?.n;
       return { loaded, orphans };
@@ -6987,7 +7007,7 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
   ]);
 });
 
-test('a stored table that no longer fits evolves without a reload, keeping every file its rows refer to, and a deleted row drops its file', async () => {
+test('a stored table that no longer fits evolves without a reload, keeping every file its rows refer to, and leaves no file that no row of the table or of its history refers to', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-files-');
   const source = new FileSource(scratch.path, {
     a: { version: 1, bytes: Buffer.from('aye') },

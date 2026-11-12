@@ -58,8 +58,10 @@ export type Stage = AsyncDisposable & {
   readonly reloading: boolean;
   // The stream ended without a failure: an open reload replaces the target.
   complete(): Promise<void>;
-  // Current target values, excluding pending stage operations. Read while
-  // holding the target's write lock, including after commit reacquires it.
+  // The values that the target keeps, excluding pending stage operations:
+  // its rows, and the replaced rows that a destination keeps for readings as
+  // of a position. Read while holding the target's write lock, including
+  // after commit reacquires it.
   values: FieldValues;
   apply(operation: WriteOperation): Promise<void>;
   // Makes everything applied so far durable and visible.

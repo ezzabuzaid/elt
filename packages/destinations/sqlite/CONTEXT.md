@@ -77,15 +77,19 @@ _Avoid_: Generation, version
 _Avoid_: Offset, cursor (eca keeps a cursor), checkpoint
 
 **Row hash**:
-`_elt_row_hash`: the SHA-256 of the values of the columns of a row. A deduplicating load that finds a stored row with the same row hash leaves that row as it is, and so does a difference.
+`_elt_row_hash`: the SHA-256 of the values of the columns of a row. A file in the SQLite file counts by the SHA-256 of its bytes, not by its file id. It is null in a row that lost or changed a value when its table evolved, until a commit writes the row again. A deduplicating load that finds a stored row with the same row hash leaves that row as it is, and so does a difference.
 _Avoid_: Checksum, version, input hash (a computed dataset keeps an input hash)
+
+**File id**:
+The `INTEGER` that a file column keeps for one file in its chunk table `_elt_files_<hash>`. Each load gives each file a new id. The ids of a chunk table only go up, so no file takes the id of a file that a row of the history refers to.
+_Avoid_: Ref (a file in a file storage has a ref), blob id
 
 **Difference**:
 How an overwrite or a reload replaces the rows of a raw table. It compares the rows as multisets by row hash: the k-th copy of some values matches the k-th copy of the same values. A row with a match stays, with its commit. A row of the raw table with no match goes into the history. A new row with no match enters.
 _Avoid_: Diff, merge (a commit merges the stage), sync
 
 **History**:
-The table `_elt_history_<hash>` that keeps the rows of a raw table that commits changed or removed. Each row has `replaced_in`, the number of the commit that changed or removed it.
+The table `_elt_history_<hash>` that keeps the rows of a raw table that commits changed or removed. Each row has `replaced_in`, the number of the commit that changed or removed it. The file of a row of the history stays, in the SQLite file and in a file storage.
 _Avoid_: Audit log, archive, changelog
 
 **Reading**:

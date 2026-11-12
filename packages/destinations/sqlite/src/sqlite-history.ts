@@ -89,7 +89,8 @@ function names(database: DatabaseSync, table: string): string[] {
 // The SHA-256 of the values of a staged row, which names its version: a
 // commit that finds the stored row with the same hash leaves it as it is.
 // Each value that is not null counts with its column's name and its type, so
-// a column the stream adds, null in each stored row, makes no new version.
+// a column the stream adds, null in each stored row, makes no new version. A
+// stored file counts as the SHA-256 of its bytes, not as its id.
 export function rowHash(
   columns: readonly SQLiteColumn[],
   values: readonly SQLInputValue[],

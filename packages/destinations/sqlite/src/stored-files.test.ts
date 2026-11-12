@@ -127,7 +127,8 @@ test('stored file scopes flush when empty and remain usable across empty, null a
   source.messages = [];
   await pipeline.run();
   assert.deepEqual(loaded(), []);
-  await assert.rejects(readFile(stored), { code: 'ENOENT' });
+  // The history keeps the row that the overwrite removed, and so its file.
+  assert.equal(await readFile(stored, 'utf8'), 'attachment');
   await pipeline.run();
   assert.deepEqual(loaded(), []);
 });

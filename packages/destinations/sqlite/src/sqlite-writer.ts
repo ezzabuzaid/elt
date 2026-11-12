@@ -297,32 +297,22 @@ export abstract class SQLiteWriter extends Writer {
     );
   }
 
-  // The field's values in each of the tables, which while a reload is open
-  // are the target and its hidden target: both rows still refer to files.
+  // The field's values that a row of the tables or of the history holds:
+  // while a reload is open, the rows of the target and of its hidden target
+  // both still refer to files.
   private values(
     database: DatabaseSync,
     tables: () => readonly string[],
   ): FieldValues {
     const { table } = this;
+    const referenced = (column: SQLiteColumn) =>
+      this.#referenced(database, column, tables());
     return async function* (field) {
       const column = table.columns.find((column) => column.field === field);
       if (column === undefined)
         throw new TypeError(`Unknown target field: ${field}`);
-      for (const name of tables()) {
-        // clear also accepts a target or a declared column that was never loaded.
-        if (
-          !database
-            .prepare(
-              'SELECT 1 FROM pragma_table_info(?) WHERE name = ? COLLATE NOCASE',
-            )
-            .get(name, column.name)
-        )
-          continue;
-        for (const row of database
-          .prepare(`SELECT ${column.quotedName} AS value FROM ${quote(name)}`)
-          .iterate())
-          yield row.value;
-      }
+      for (const row of database.prepare(referenced(column)).iterate())
+        yield row.value;
     };
   }
 
@@ -342,8 +332,7 @@ export abstract class SQLiteWriter extends Writer {
       if (owner !== undefined && owner !== writer)
         throw new TargetOwnedError(this.table.name, String(owner), writer);
       // Emptied, not dropped: views built on the table keep working. With no
-      // rows left, no stored chunk is referenced, including those a failed
-      // stream left behind that the file triggers never see.
+      // rows left, only the history refers to stored files.
       if (this.exists(database, this.table.location)) {
         this.history.create(database, this.written);
         this.#keepRows(database, SQLiteLoad.once(database, connection, clock));
@@ -354,7 +343,9 @@ export abstract class SQLiteWriter extends Writer {
         for (const column of this.table.columns) {
           const chunks = SQLiteFileStore.tableName(this.table, column);
           if (column.storesFile && this.exists(database, chunks))
-            database.exec(`DELETE FROM ${quote(chunks)}`);
+            database.exec(
+              `DELETE FROM ${quote(chunks)} WHERE "file" NOT IN (${this.#referenced(database, column, [])})`,
+            );
         }
       }
       database
@@ -490,9 +481,40 @@ export abstract class SQLiteWriter extends Writer {
     );
   }
 
+  // Every stored file of the column that a row of the tables or of the
+  // history refers to, as a SELECT of "value". A row of the history keeps its
+  // file for a reading as of a position before the commit that replaced the
+  // row. A table without the column refers to none of its files: the target
+  // while a reload adds the column, a history that has kept no row since, or
+  // a target that a clear finds never loaded.
+  #referenced(
+    database: DatabaseSync,
+    column: SQLiteColumn,
+    tables: readonly string[],
+  ): string {
+    const selects = [...tables, this.history.name]
+      .filter(
+        (table) =>
+          database
+            .prepare(
+              'SELECT 1 FROM pragma_table_info(?) WHERE name = ? COLLATE NOCASE',
+            )
+            .get(table, column.name) !== undefined,
+      )
+      .map(
+        (table) =>
+          `SELECT ${column.quotedName} AS "value" FROM ${quote(table)} WHERE ${column.quotedName} IS NOT NULL`,
+      );
+    // With no such table yet, no row refers to a file: a query of no rows.
+    return selects.length === 0
+      ? 'SELECT NULL AS "value" WHERE 0'
+      : selects.join(' UNION ');
+  }
+
   // Drops the chunks of every stored column that is no longer one of the
-  // target's file columns, and the triggers that delete them, before the table
-  // is replaced: no row of the table that takes its place refers to them.
+  // target's file columns, before the table is replaced: no row of the table
+  // that takes its place refers to them, and a reading as of a position reads
+  // only the target's columns.
   #dropRetiredChunks(database: DatabaseSync): void {
     const files = new Set(
       this.table.columns
@@ -507,11 +529,47 @@ export abstract class SQLiteWriter extends Writer {
           name: String(name),
         });
         database.exec(`DROP TABLE IF EXISTS ${quote(chunks)}`);
-        for (const trigger of ['delete', 'update'])
-          database.exec(
-            `DROP TRIGGER IF EXISTS ${quote(`${chunks}_${trigger}`)}`,
-          );
       }
+  }
+
+  // Keeps in the history, in a commit of its own, each row with a value in a
+  // stored column that the new shape drops or stores as another type: the
+  // row loses or changes the value, so it is a new version. Its row hash
+  // counted the old value, so evolve sets the hash to NULL, which matches no
+  // record until a commit writes the row again. A column that the shape adds
+  // is NULL in each row, which a row hash does not count, so it makes no new
+  // version. Gives the number of the commit, if any.
+  #keepChanged(database: DatabaseSync, load: SQLiteLoad): number | undefined {
+    const declared = new Map([
+      ...this.table.columns.map(
+        (column) => [identifiers.key(column.name), column.storageType] as const,
+      ),
+      ['loaded_at', 'TEXT'],
+      ['committed_in', 'INTEGER'],
+      ['_elt_row_hash', 'TEXT'],
+    ]);
+    const changed = database
+      .prepare('SELECT "name", "type" FROM pragma_table_info(?)')
+      .all(this.table.name)
+      .filter(
+        ({ name, type }) =>
+          declared.get(identifiers.key(String(name))) !== String(type),
+      )
+      .map(({ name }) => `${quote(String(name))} IS NOT NULL`);
+    if (changed.length === 0) return undefined;
+    const rows = changed.join(' OR ');
+    const committedIn = load.commit();
+    this.history.keep(
+      database,
+      committedIn,
+      `FROM ${this.table.quotedName} AS "_elt_old" WHERE ${rows}`,
+    );
+    database
+      .prepare(
+        `UPDATE ${this.table.quotedName} SET "committed_in" = ?, "loaded_at" = ? WHERE ${rows}`,
+      )
+      .run(committedIn, load.loadedAt);
+    return committedIn;
   }
 
   // Brings a stored table the stream no longer fits to its shape, keeping
@@ -521,10 +579,11 @@ export abstract class SQLiteWriter extends Writer {
   // fails the load, naming the column, and the transaction leaves the table as
   // it was. The reader view selects the stored columns, and the mode index
   // can cover a dropped key, so both are made again for the new shape.
-  #evolve(database: DatabaseSync): void {
+  #evolve(database: DatabaseSync, load: SQLiteLoad): void {
     if (this.table.readerView !== undefined)
       database.exec(`DROP VIEW IF EXISTS ${quote(this.table.readerView)}`);
     this.dropDedupIndexes(database, null);
+    const changedIn = this.#keepChanged(database, load);
     this.#dropRetiredChunks(database);
     try {
       this.#declaration(this.table.name).apply(database);
@@ -534,6 +593,12 @@ export abstract class SQLiteWriter extends Writer {
         { cause },
       );
     }
+    if (changedIn !== undefined)
+      database
+        .prepare(
+          `UPDATE ${this.table.quotedName} SET ${version} = NULL WHERE "committed_in" = ?`,
+        )
+        .run(changedIn);
     this.initialize(database, false);
     if (this.table.readerView !== undefined)
       this.installReaderView(database, this.table.readerView);
@@ -602,23 +667,13 @@ export abstract class SQLiteWriter extends Writer {
       [this.table.name, ...(open(mode) ? [this.#hiddenName] : [])].filter(
         (table) => this.exists(database, identifiers.key(table)),
       );
-    // Every stored file a row of the tables refers to.
-    // With no table yet, no row refers to a file: a query of no rows.
-    const referenced = (column: SQLiteColumn) => {
-      const selects = tables().map(
-        (table) =>
-          `SELECT ${column.quotedName} FROM ${quote(table)} WHERE ${column.quotedName} IS NOT NULL`,
-      );
-      return selects.length === 0
-        ? 'SELECT NULL WHERE 0'
-        : selects.join(' UNION ');
-    };
-    // Drops the chunks of files no row of the tables refers to.
+    // Drops the chunks of files that no row of the tables or of the history
+    // refers to.
     const prune = () => {
       for (const { column, store } of stores)
         if (store.published)
           database.exec(
-            `DELETE FROM ${quote(store.name)} WHERE "file" NOT IN (${referenced(column)})`,
+            `DELETE FROM ${quote(store.name)} WHERE "file" NOT IN (${this.#referenced(database, column, tables())})`,
           );
     };
     mode = transaction(
@@ -642,7 +697,7 @@ export abstract class SQLiteWriter extends Writer {
             target === 'stale',
           );
         if (next === 'evolve') {
-          this.#evolve(database);
+          this.#evolve(database, load);
           next = 'load';
         }
         if (next === 'load' && !this.replaces) this.inspect(database);
@@ -670,7 +725,7 @@ export abstract class SQLiteWriter extends Writer {
       for (const { column, store } of stores) {
         if (store.published)
           database.exec(
-            `DELETE FROM ${quote(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (${referenced(column)})`,
+            `DELETE FROM ${quote(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (${this.#referenced(database, column, tables())})`,
           );
         store.discard();
       }
@@ -720,18 +775,24 @@ export abstract class SQLiteWriter extends Writer {
             .run(...values);
           return;
         }
-        // Each file is read here, before the source advances past it.
+        // Each file is read here, before the source advances past it. The
+        // row keeps its id, and the row hash its content: each load gives a
+        // file a new id, so a row whose file is the same matches.
         let data = operation.data;
+        const contents = new Map<SQLiteColumn, Uint8Array>();
         for (const { column, store } of stores) {
           const content: unknown = Reflect.get(Object(data), column.field);
-          if (content instanceof FileContent)
-            data = {
-              ...Object(data),
-              [column.field]: await store.save(content),
-            };
+          if (content instanceof FileContent) {
+            const { id, sha256 } = await store.save(content);
+            data = { ...Object(data), [column.field]: id };
+            contents.set(column, sha256);
+          }
         }
         const values = this.encode(data);
-        record.run(...values, rowHash(this.table.columns, values));
+        const hashed = this.table.columns.map(
+          (column, index) => contents.get(column) ?? values[index] ?? null,
+        );
+        record.run(...values, rowHash(this.table.columns, hashed));
       },
       // Each commit is one transaction; a failed one leaves the database as
       // the last commit left it.

@@ -34,13 +34,14 @@ Tables:
 
 - SQLite makes strict tables. SQL constraints that exist stay in force.
 - Each copy adds `loaded_at`, the UTC start time of the load that wrote the values of the row. A field with that name gets a different column name.
-- Each copy also adds `committed_in`, the number of the [commit](#commit-numbers-and-positions) that last wrote the row, and `_elt_row_hash`, the SHA-256 of the values of its columns. A field with one of these names also gets a different column name. So does a field with the name `_rowid_`: SQLite reads that name as the id of each row, which an overwrite and a reload use.
+- Each copy also adds `committed_in`, the number of the [commit](#commit-numbers-and-positions) that last wrote the row, and `_elt_row_hash`, the SHA-256 of the values of its columns. A [file in the SQLite file](#file-bytes-in-the-database) counts by the SHA-256 of its bytes, not by its id. A field with one of these names also gets a different column name. So does a field with the name `_rowid_`: SQLite reads that name as the id of each row, which an overwrite and a reload use.
 - When a deduplicating load, an overwrite or a reload brings a row with the same values as a stored row, it leaves the stored row as it is, with its `loaded_at` and its `committed_in`. A deduplicating load finds the stored row by its key. An overwrite and a reload find it by [difference](#commit-numbers-and-positions), also in a table with no key.
 - Deduplication upserts on a unique index that is named after the table and the key (`_elt_dedup_<hash>`). SQLite makes the index one time, and makes it again only when the key changes. It uses the native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html).
 - Deduplication also checks the stored types of the key and cursor columns, and refuses null keys and cursors.
 - A change to a normal `append` or `overwrite` removes the index of the mode. Explicit constraints stay.
 - A table of append history with repeated keys must be replaced with `overwrite_dedup` before incremental deduplication can start.
 - When the stored definition of a table does not agree with the columns of the stream, the load [evolves it](../../elt/README.md#shape-changes) before it reads. SQLite cannot change the type or the constraints of a column in place. Thus, in one transaction, the rows move, column by name, into a table of the new definition. That table takes the name of the table, with its index and its reader view. A value that its type or a `CHECK` refuses fails the load, and the table stays as it was.
+- A row that has a value in a column that the table drops, or that it keeps as a different type, loses or changes that value. Thus the evolve takes a commit number of the load, the [history](#commit-numbers-and-positions) keeps each such row as it was, and the row gets the number in `committed_in`. Its `_elt_row_hash` counted the old value, so it becomes null: a null hash matches no record, and the next commit that writes the row gives it a new version. A column that the table adds is null in each row, and a null value does not count in `_elt_row_hash`. Thus it changes no row.
 - An overwrite reloads such a table into a hidden table `_elt_next_<hash>`. The hidden table replaces the table and its reader view when the stream ends ([resets](../../elt/README.md#resets)).
 - The writer of each target is in the reserved table `_elt_writers` ([target ownership](../../elt/README.md#target-ownership)).
 
@@ -56,12 +57,15 @@ Counts:
 
 SQLite stores an original file in chunks, because one BLOB has a limit of 1,000,000,000 bytes (`SQLITE_MAX_LENGTH` in the build of Node), and a value of the full file would stay in memory.
 
-- The `bytes` column holds an `INTEGER` file id.
+- The `bytes` column holds an `INTEGER` file id. Each load gives each file a new id.
 - A table `_elt_files_<hash>` for each column holds `(file, n, bytes)` rows of up to 4 MiB. `n` counts from 0.
+- The ids of a chunk table only go up. The reserved table `_elt_file_ids` keeps the highest id that each chunk table gave, as `sqlite_sequence` keeps the highest rowid of a table with `AUTOINCREMENT`. Thus a new file never takes the id of a file that a row of the [history](#commit-numbers-and-positions) refers to, also when the chunk table was dropped and made again.
 - The hash is the first 40 hex characters of the SHA-256 of `JSON.stringify([table, column])`, with the two names in ASCII lower case. Thus table `a_b` with column `c` and table `a` with column `b_c` keep their chunks apart.
 - The description of the column names its chunk table.
 - An empty file has one empty chunk. A file that is not available gives a null value.
-- Triggers remove the chunks of a row in the same transaction when the row is deleted, overwritten or replaced. A record that a deduplication guard refuses stores no chunks.
+- The chunks of a file stay while a row of the table or of its history refers to the file. Thus a [reading](#commit-numbers-and-positions) as of a position reads the bytes of each file that the position shows.
+- A commit deletes the chunks of each file that it staged and that no row of the table or of its history refers to. Thus a record that a deduplication guard refuses stores no chunks. The commit that resets a partition, the commit at the end of a reload, and a clear delete the chunks of each file that no row of the table or of its history refers to.
+- When a row with a file has the same values as a stored row, also the same file bytes, the stored row stays with its file id. The commit deletes the chunks of the new copy of the file.
 
 Read a file back in order, with the chunk table that the description names:
 
@@ -87,8 +91,8 @@ Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as
 - Other writers of the file wait only for a commit. A stream that fails before its first commit leaves nothing.
 - Each stream stages its operations in a `TEMP` table that only its connection sees. The commit of a different stream never publishes them, and a crash leaves nothing.
 - A commit merges the staged operations of one stream into its table. The result is the same as when the operations apply one at a time: a staged `DELETE` removes its key, only the records after the last `DELETE` of a key count, `replace` keeps the last record, and `cursor_newer` keeps the first record with the greatest cursor.
-- Original files stream into a `TEMP` chunk table that only the connection sees, and they get to the store in the commit of their rows. After each merge, SQLite deletes the chunks that no row refers to. A clear empties the store.
-- A file column that the target drops takes its chunk table with it when the table evolves or a reload replaces it.
+- Original files stream into a `TEMP` chunk table that only the connection sees, and they get to the store in the commit of their rows.
+- A file column that the target drops takes its chunk table with it when the table evolves or a reload replaces it. A reading as of a position reads only the columns of the table, so it does not read that column.
 - `:memory:` is possible only for a full refresh. The database of the run is gone when its handle closes, so it cannot keep incremental progress.
 
 ## Commit numbers and positions
@@ -104,11 +108,12 @@ Each commit in the SQLite file has a number. A reader that compares the file at 
   - A row of the table with no match goes into the history and leaves the table.
   - A new row with no match enters the table with the number of the commit.
 - An overwrite applies the difference in its one commit, to the records that it staged. A reload applies it, to the rows of its hidden table, in the commit at the end of the stream. The table keeps its indexes, its triggers and its reader view. When the table has a different shape than the hidden table, the reload puts the hidden table in its place, and every row of the table goes into the history.
-- A row that keeps a file in the SQLite file gets a new file id in each load. Thus it never matches, and each overwrite or reload puts it into the history.
+- A file in the SQLite file counts in `_elt_row_hash` by the SHA-256 of its bytes, which the load calculates while it stages the chunks. Each load gives the file a new id, but a row whose file has the same bytes matches. The row keeps its file id, and the commit deletes the chunks of the new copy.
 - The table `_elt_epoch` keeps the epoch, an id that names the numbering. A file that is made again, or tables that a different version declared in a different way, start a new epoch.
 - `destination.positions(after?)` gives the positions after the position `after`, in ascending order, or all positions. A position is `<epoch>:<number>`. It names the last commit of a closed load, when no other load has commits before and after it. When `after` is of a different epoch, or is after the newest commit, `positions` gives `{ expired }` with the reason. It opens the file read-only.
 - A clear that empties a table is a load of one commit. It does not close the open loads of its connection.
-- Each table has a [history](./CONTEXT.md) `_elt_history_<hash>`, which the table `_elt_histories` names. Before a commit changes or removes a row, it copies the row into the history, with `replaced_in`, its own number. This occurs for a deduplicated row with different values, a `DELETE`, the reset of a partition, a clear, a row that an overwrite or a reload does not bring again, and the rows of a table that a reload of a different shape replaces. A commit into a hidden table copies nothing. The history has each column that the table had, and it does not drop a column. A field with the name `replaced_in` gets a different column name.
+- Each table has a [history](./CONTEXT.md) `_elt_history_<hash>`, which the table `_elt_histories` names. Before a commit changes or removes a row, it copies the row into the history, with `replaced_in`, its own number. This occurs for a deduplicated row with different values, a `DELETE`, the reset of a partition, a clear, a row that an overwrite or a reload does not bring again, the rows of a table that a reload of a different shape replaces, and a row that loses or changes a value when its table evolves. A commit into a hidden table copies nothing. The history has each column that the table had, and it does not drop a column. A field with the name `replaced_in` gets a different column name.
+- A file that a row of the history refers to stays, in the SQLite file and in a [file storage](../../elt/README.md#local-files): the values that the destination gives the file storage to keep include the values of the history.
 - The history gets the columns of the table when it is made. SQLite cannot add a column with the name `rowid` or `oid` to a table. Thus when a stream adds a field with one of these names later, a commit that keeps a row in the history fails. Delete the SQLite file to load it again.
 - The reset of a partition copies each row of the partition into the history. The rows that the source sends again after the reset can come in later commits, for example after a checkpoint of each page. Thus no commit can know which rows of the partition left.
 - `destination.reading(position?)` gives a [reading](./CONTEXT.md) of the file as of the position, or as of the newest position: `{ sql, position, at }`, where `sql` is a read-only `DatabaseSync` in one read transaction and `at` is the time of the commit. Dispose the reading to close it. A position of a different epoch, or after the newest commit, gives `{ expired }`. A commit number that `positions` does not list, for example a commit inside a pass, makes `reading` throw a `TypeError`, as a string that is not a position does: a reading there would show a part of a pass. A position that `positions` listed stays a position, because no later load can have commits before and after it.
