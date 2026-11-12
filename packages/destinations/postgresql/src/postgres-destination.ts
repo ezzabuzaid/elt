@@ -1,4 +1,9 @@
-import { type CopyConfiguration, Destination, type Load } from '@eltjs/elt';
+import {
+  type CopyConfiguration,
+  Destination,
+  type Load,
+  type PipelineClock,
+} from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
 import { PostgresAppendWriter } from './postgres-append-writer.ts';
@@ -6,8 +11,13 @@ import type { PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
 import { PostgresDeduplicatingWriter } from './postgres-deduplicating-writer.ts';
 import { PostgresLoad } from './postgres-load.ts';
+import { positionsAfter } from './postgres-numbering.ts';
 import { PostgresOverwriteWriter } from './postgres-overwrite-writer.ts';
-import { connectionUrl, schemaName } from './postgres-session.ts';
+import {
+  PostgresSession,
+  connectionUrl,
+  schemaName,
+} from './postgres-session.ts';
 import { PostgresTable } from './postgres-table.ts';
 import type { PostgresWriter } from './postgres-writer.ts';
 
@@ -34,14 +44,29 @@ export class PostgresDestination extends Destination<PostgresTable> {
     return `${quote(this.schema)}.${target.quotedName}`;
   }
 
-  // One connection for the whole run; each commit is its own transaction.
-  override async load(): Promise<Load<PostgresTable>> {
-    const load = await PostgresLoad.open(this.#url, this.schema);
+  // One connection for the whole run; each commit is its own transaction,
+  // numbered in the numbering that the destinations of the database share.
+  override async load(owner: {
+    clock: PipelineClock;
+    connection: string;
+  }): Promise<Load<PostgresTable>> {
+    const load = await PostgresLoad.open(this.#url, owner);
     return {
       prepare: (configuration, target, binding) =>
         this.createWriter(configuration, target).prepare(load, binding),
       [Symbol.asyncDispose]: () => load[Symbol.asyncDispose](),
     };
+  }
+
+  // The positions of the database after a position, ascending, or all of
+  // them; each one, `${epoch}:${number}`, names a commit where no pass of any
+  // schema of the database is half read. A position of another epoch, or past
+  // the newest commit, is expired.
+  async positions(
+    after?: string,
+  ): Promise<readonly string[] | { readonly expired: string }> {
+    await using session = new PostgresSession(this.#url, 'elt-positions');
+    return await positionsAfter(session.sql, after);
   }
 
   table(

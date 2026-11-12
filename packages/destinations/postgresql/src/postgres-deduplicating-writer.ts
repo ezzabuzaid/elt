@@ -7,7 +7,7 @@ import type { EncodedValue, PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
 import type { Transaction } from './postgres-load.ts';
 import type { PostgresTable } from './postgres-table.ts';
-import { PostgresWriter, op, seq } from './postgres-writer.ts';
+import { PostgresWriter, type Written, op, seq } from './postgres-writer.ts';
 
 export class PostgresDeduplicatingWriter extends PostgresWriter {
   readonly deduplication: Deduplication;
@@ -136,7 +136,7 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
   protected override async merge(
     sql: Transaction,
     stage: string,
-    loadedAt: string,
+    written: Written,
     into = this.qualifiedName,
   ): Promise<void> {
     const keys = this.keys.map((column) => column.quotedName);
@@ -155,9 +155,9 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     const columns = this.table.columns.map((column) => column.quotedName);
     await sql.unsafe(
       `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "_elt_last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".*, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."_elt_last" IS NULL OR "staged".${seq} > "deleted"."_elt_last")) ` +
-        `INSERT INTO ${into} AS "_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, $1::text::timestamptz FROM "ranked" WHERE "_elt_rank" = 1 ORDER BY ${seq} ` +
+        `INSERT INTO ${into} AS "_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, $1::text::timestamptz, $2::integer FROM "ranked" WHERE "_elt_rank" = 1 ORDER BY ${seq} ` +
         `ON CONFLICT (${keys.join(', ')}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guarded ? ` WHERE excluded.${cursor.quotedName}${collate} > "_elt_target".${cursor.quotedName}${collate}` : ''}`,
-      [loadedAt],
+      [written.loadedAt, written.committedIn],
     );
   }
 

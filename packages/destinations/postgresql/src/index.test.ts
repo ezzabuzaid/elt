@@ -265,8 +265,14 @@ test('two loads into one schema commit side by side across their commits, and re
   const docs = new Copy(stream('docs'), destination.table('docs'));
   const notes = new Copy(stream('notes'), destination.table('notes'));
   // A second load on the same schema stands in for another replication's run.
-  await using first = await destination.load();
-  await using second = await destination.load();
+  await using first = await destination.load({
+    clock: globalThis,
+    connection: 'docs',
+  });
+  await using second = await destination.load({
+    clock: globalThis,
+    connection: 'notes',
+  });
   await using docsStage = await first.prepare(docs.configuration, docs.to, {
     writer: 'docs',
     reloading: false,
@@ -1014,6 +1020,7 @@ test('a copy creates its schema and a table typed from the stream schema', async
         data_type: 'timestamp with time zone',
         is_nullable: 'NO',
       },
+      { column_name: 'committed_in', data_type: 'integer', is_nullable: 'NO' },
     ],
   );
   assert.deepEqual(
@@ -1617,8 +1624,8 @@ test('a stored column that is NOT NULL where the stream allows null is relaxed i
   // A table typed by hand, which no operation makes, stands in for one an
   // earlier stream shape left, when note could not be null.
   await sql`CREATE SCHEMA raw`;
-  await sql`CREATE TABLE raw.items (id text, note text NOT NULL, loaded_at timestamptz NOT NULL)`;
-  await sql`INSERT INTO raw.items VALUES ('a', 'kept', now())`;
+  await sql`CREATE TABLE raw.items (id text, note text NOT NULL, loaded_at timestamptz NOT NULL, committed_in integer NOT NULL)`;
+  await sql`INSERT INTO raw.items VALUES ('a', 'kept', now(), 0)`;
   const oid = async () =>
     (await sql`SELECT 'raw.items'::regclass::oid AS oid`)[0]?.oid;
   const stored = await oid();
@@ -2826,17 +2833,17 @@ test('every field name is sanitized as Airbyte does, around the names Postgres k
   const view = await described('marts.odd');
   assert.deepEqual(
     view.map(({ name }) => name),
-    [...names.map(([, column]) => column), 'loaded_at'],
+    [...names.map(([, column]) => column), 'loaded_at', 'committed_in'],
   );
   assert.deepEqual(
-    view.slice(0, -1).map(({ description }) => description),
+    view.slice(0, -2).map(({ description }) => description),
     names.map(([field, column], index) =>
       field === column
         ? `Field ${index}.`
         : `Field ${index}. Source field: ${JSON.stringify(field)}.`,
     ),
   );
-  assert.match(String(view.at(-1)?.description), /^Start time of the load/);
+  assert.match(String(view.at(-2)?.description), /^Start time of the load/);
   assert.deepEqual(await described('raw.odd'), view);
   const [row] = await sql.unsafe(
     `SELECT ${names.map(([, column]) => `"${column}"`).join(', ')} FROM marts.odd`,
@@ -4656,7 +4663,7 @@ test('a reader view shows exactly the loaded columns and their descriptions, fol
   const viewColumns = await descriptions('marts.notes');
   assert.deepEqual(
     viewColumns.map(({ name }) => name),
-    ['id', 'title', 'ref', 'loaded_at'],
+    ['id', 'title', 'ref', 'loaded_at', 'committed_in'],
   );
   assert.deepEqual(viewColumns, await descriptions('raw.raw_notes'));
   assert.equal(
@@ -4686,7 +4693,10 @@ test('a reader view shows exactly the loaded columns and their descriptions, fol
   // A prepared load stays open while the source reads; readers of the view
   // it keeps must not wait behind it.
 
-  await using load = await destination.load();
+  await using load = await destination.load({
+    clock: globalThis,
+    connection: 'test',
+  });
 
   await using stage = await load.prepare(copy.configuration, copy.to, {
     writer: copy.writer(source),
@@ -4739,6 +4749,13 @@ test('a run publishes the catalog in marts, which lists each reader view and its
         description: (
           await sql`SELECT obj_description('marts.notes'::regclass) AS description`
         )[0]?.description,
+      },
+      {
+        kind: 'column',
+        name: 'notes.committed_in',
+        data_type: 'integer',
+        description:
+          'Number of the commit that last wrote this row: the row of _warehouse._elt_commits with this number tells when, and in which load.',
       },
       {
         kind: 'column',
@@ -4932,6 +4949,7 @@ test('string formats load exactly: microsecond times typed, finer ones as text t
       'clock time without time zone  ',
       'bytes bytea  ',
       'ids ARRAY  ',
+      'committed_in integer 32 0',
     ],
   );
   assert.deepEqual(
@@ -5388,7 +5406,7 @@ test('a stream whose shape changes is evolved in place under its reader view, ke
     )[0]?.nullable;
   const loaded = async () =>
     (await sql`SELECT * FROM marts.items ORDER BY id`).map(
-      ({ loaded_at: _, ...row }) => ({ ...row }),
+      ({ loaded_at: _, committed_in: __, ...row }) => ({ ...row }),
     );
 
   await run({ id, name }, [{ id: '1', name: 'one' }]);
@@ -5458,7 +5476,7 @@ test('a stream whose shape changes is evolved in place under its reader view, ke
     (
       await sql`SELECT attname FROM pg_attribute WHERE attrelid = 'raw.items'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum`
     ).map(({ attname }) => attname),
-    ['id', 'name', 'loaded_at'],
+    ['id', 'name', 'loaded_at', 'committed_in'],
   );
   await pipeline({ id, name, size }, []).clear();
   await run({ id, name, size }, [{ id: '4', name: 'four', size: 4 }]);

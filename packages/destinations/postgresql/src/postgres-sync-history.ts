@@ -17,6 +17,7 @@ import {
 } from '@eltjs/elt';
 
 import { PostgresDestination } from './postgres-destination.ts';
+import { schemaLock } from './postgres-session.ts';
 import {
   syncHistoryTables,
   syncHistoryViews,
@@ -118,7 +119,9 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
   // safe to repeat.
   override async install(): Promise<void> {
     await this.#write(async (transaction) => {
-      await transaction`SELECT pg_advisory_xact_lock(hashtextextended('elt:sync-history', 0))`;
+      // The numbering of the destinations makes _warehouse too, under the
+      // same lock.
+      await transaction`SELECT pg_advisory_xact_lock(hashtextextended(${schemaLock('_warehouse')}, 0))`;
       for (const statement of syncHistoryTables)
         await transaction.unsafe(statement);
       await publishPostgresViews(transaction, {

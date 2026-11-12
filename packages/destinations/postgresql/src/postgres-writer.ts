@@ -23,6 +23,7 @@ import { TargetComments } from './postgres-comments.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
 import { storedColumns, storedFit } from './postgres-fit.ts';
 import type { PostgresLoad, Transaction } from './postgres-load.ts';
+import { commitOnce, installNumbering } from './postgres-numbering.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
 import { PostgresSession } from './postgres-session.ts';
 import type { PostgresTable } from './postgres-table.ts';
@@ -66,13 +67,17 @@ export abstract class PostgresWriter extends Writer {
       (column) =>
         `UUID reference to the source file's original bytes. Join ${new PostgresFileStore(schema, table, column).qualifiedName} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
     );
-    this.#comments = new TargetComments(description.table, description.columns);
+    this.#comments = new TargetComments(description.table, {
+      ...description.columns,
+      committed_in:
+        'Number of the commit that last wrote this row: the row of _warehouse._elt_commits with this number tells when, and in which load.',
+    });
     this.#view =
       table.readerView &&
       new TargetReaderView(
         table.readerView,
         this.qualifiedName,
-        [...table.columns.map(({ name }) => name), 'loaded_at'],
+        [...table.columns.map(({ name }) => name), 'loaded_at', 'committed_in'],
         this.fields,
       );
     if (table.readerView === undefined) return;
@@ -105,7 +110,7 @@ export abstract class PostgresWriter extends Writer {
   #tableSQL(name: string): string {
     if (this.table.columns.length === 0)
       throw new TypeError('Resolve inferred columns before creating a table');
-    return `${name} (${this.table.columns.map((column) => column.definition).join(', ')}, "loaded_at" TIMESTAMPTZ NOT NULL)`;
+    return `${name} (${this.table.columns.map((column) => column.definition).join(', ')}, "loaded_at" TIMESTAMPTZ NOT NULL, "committed_in" INTEGER NOT NULL)`;
   }
 
   // What a reload's hidden target needs once it is created, before the first
@@ -117,6 +122,7 @@ export abstract class PostgresWriter extends Writer {
     return [
       ...this.table.columns.map((column) => column.quotedName),
       '"loaded_at"',
+      '"committed_in"',
     ];
   }
 
@@ -143,16 +149,17 @@ export abstract class PostgresWriter extends Writer {
   }
 
   // Moves the staged operations into the target, or the table a rebuild
-  // fills; every row of a run shares its loaded_at.
+  // fills; every row of a run shares its loaded_at, and each row names the
+  // commit that wrote it.
   protected async merge(
     sql: Transaction,
     stage: string,
-    loadedAt: string,
+    written: Written,
     into = this.qualifiedName,
   ): Promise<void> {
     await sql.unsafe(
-      `INSERT INTO ${into} (${this.fields.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, $1::text::timestamptz FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
-      [loadedAt],
+      `INSERT INTO ${into} (${this.fields.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, $1::text::timestamptz, $2::integer FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
+      [written.loadedAt, written.committedIn],
     );
   }
 
@@ -242,11 +249,13 @@ export abstract class PostgresWriter extends Writer {
     };
   }
 
+  // A clear of a stored table is a load of one commit of its connection.
   override async clear(
-    { writer }: Clearing,
+    { writer, clock, connection: connector }: Clearing,
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
     await using connection = new PostgresSession(this.url, 'elt');
+    await installNumbering(connection.sql);
     await connection.sql.begin(async (transaction) => {
       const [schema] = await transaction.unsafe(
         'SELECT to_regnamespace($1) IS NOT NULL AS "exists"',
@@ -268,8 +277,10 @@ export abstract class PostgresWriter extends Writer {
         'SELECT to_regclass($1) IS NOT NULL AS "exists"',
         [this.qualifiedName],
       );
-      if (table?.exists === true)
+      if (table?.exists === true) {
+        await commitOnce(transaction, connector, new Date(clock.Date.now()));
         await transaction.unsafe(`DELETE FROM ${this.qualifiedName}`);
+      }
       // Clearing a copy also abandons the reload it left open.
       await transaction.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
       for (const column of this.table.columns.filter(
@@ -352,8 +363,12 @@ export abstract class PostgresWriter extends Writer {
   // stored table wait only for the swap, not the reload. A reader that holds
   // it past the timeout fails the copy until the next run. Whatever else
   // depends on the target, such as marts, refuses the swap.
-  async #swap(sql: Transaction): Promise<void> {
+  // Its rows are new to readers at this commit.
+  async #swap(sql: Transaction, committedIn: number): Promise<void> {
     await sql.unsafe(`SET LOCAL lock_timeout = '${swapTimeout}'`);
+    await sql.unsafe(`UPDATE ${this.#hidden} SET "committed_in" = $1`, [
+      committedIn,
+    ]);
     await this.#view?.drop(sql);
     await this.#dropRetiredChunks(sql);
     await sql.unsafe(`DROP TABLE IF EXISTS ${this.qualifiedName}`);
@@ -398,7 +413,7 @@ export abstract class PostgresWriter extends Writer {
         type,
       ]),
     );
-    const kept = new Set(['loaded_at']);
+    const kept = new Set(['loaded_at', 'committed_in']);
     await this.#view?.drop(sql);
     try {
       await this.#dropRetiredChunks(sql);
@@ -608,7 +623,7 @@ export abstract class PostgresWriter extends Writer {
       },
       commit: async () => {
         await flush();
-        await load.transaction(async (sql) => {
+        await load.commit(async (sql, committedIn) => {
           if (mode === 'reload') {
             await sql.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
             await sql.unsafe(`CREATE TABLE ${this.#tableSQL(this.#hidden)}`);
@@ -620,7 +635,12 @@ export abstract class PostgresWriter extends Writer {
             await sql.unsafe(`DELETE FROM ${into()}${rows}`, values);
           }
           for (const store of stores) await store.publish(sql);
-          await this.merge(sql, stage, load.loadedAt, into());
+          await this.merge(
+            sql,
+            stage,
+            { loadedAt: load.loadedAt, committedIn },
+            into(),
+          );
           await sql.unsafe(`TRUNCATE ${stage}`);
           for (const store of stores) await store.prune(sql, tables());
         });
@@ -631,8 +651,8 @@ export abstract class PostgresWriter extends Writer {
       },
       complete: async () => {
         if (!open()) return;
-        await load.transaction(async (sql) => {
-          await this.#swap(sql);
+        await load.commit(async (sql, committedIn) => {
+          await this.#swap(sql, committedIn);
           for (const store of stores)
             await store.prune(sql, [this.qualifiedName]);
         });
@@ -647,3 +667,10 @@ export abstract class PostgresWriter extends Writer {
     };
   }
 }
+
+// What each row a commit writes keeps: when its load began, and the number of
+// the commit.
+export type Written = {
+  readonly loadedAt: string;
+  readonly committedIn: number;
+};

@@ -6,6 +6,7 @@ class PostgresIdentifiers extends Identifiers {
   protected readonly maxBytes = 63;
   protected readonly ownColumns = [
     'loaded_at',
+    'committed_in',
     'tableoid',
     'cmax',
     'xmax',

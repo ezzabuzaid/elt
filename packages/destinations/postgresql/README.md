@@ -75,7 +75,7 @@ Inferred columns follow the stream schema. The [string formats](../../elt/README
 - ISO dates count years astronomically, and Postgres does not. Thus the year `0000` loads as `0001 BC`, which is the same day. Each other year is written as it is given.
 - Explicit columns are `columns.text`, `integer`, `real`, `boolean`, `date`, `timestamp` and `blob(field)`, with `.notNull()` and `.primaryKey()`.
 - A plain `blob()` stores `BYTEA`. `blob().from(file)` keeps the original file in chunk tables, and `text().from(file).parse(parser)` stores the parsed text as `TEXT`. See [file bytes in the database](#file-bytes-in-the-database).
-- Table, view and column names follow the [naming rule](../../elt/README.md#names). Postgres compares names with their case, keeps 63 bytes of a name, and reserves `loaded_at` and the system column names `xmin`, `xmax`, `cmin`, `cmax`, `ctid` and `tableoid`.
+- Table, view and column names follow the [naming rule](../../elt/README.md#names). Postgres compares names with their case, keeps 63 bytes of a name, and reserves `loaded_at`, `committed_in` and the system column names `xmin`, `xmax`, `cmin`, `cmax`, `ctid` and `tableoid`.
 
 ## File bytes in the database
 
@@ -122,7 +122,8 @@ Each commit:
 - Original files wait in a chunk table that only the session sees, until the commit moves them.
 - The first commit of a stream makes its table, comments, index and reader view, and records its writer.
 - A commit merges the stage of one stream into its table. The result is the same as when the operations apply one at a time: staged `DELETE`s remove their keys, only the records after the last `DELETE` of a key count, `replace` keeps the last record, and `cursor_newer` keeps the first record with the greatest cursor. Text cursors compare by bytes (`COLLATE "C"`).
-- Each row of a run has the same `loaded_at` (`TIMESTAMPTZ`).
+- Each row of a run has the same `loaded_at` (`TIMESTAMPTZ`), the time on the clock of the pipeline when the load opened.
+- Each row has `committed_in` (`INTEGER`), the number of the commit that last wrote it. See [commit numbers and positions](#commit-numbers-and-positions).
 - An overwrite empties the table with `DELETE`, not `TRUNCATE`, at the commit of its stream. The exclusive lock of `TRUNCATE` would block readers until the commit ends. Until then, readers see the earlier load. A [reset](../../elt/README.md#resets) deletes its scope in the same way. See [ADR 0004](./docs/adr/0004-an-overwrite-deletes-rows-and-does-not-truncate.md).
 - Deduplication upserts on a unique index that is named after the table and the key (`_elt_dedup_<hash>`). Postgres makes the index one time, and makes it again only when the key changes. A load that replaces the rows makes the index after it empties the table.
 - The writer of each table is in `<schema>._elt_writers`, by the [target ownership](../../elt/README.md#target-ownership) rule.
@@ -133,6 +134,24 @@ Shape changes:
 - The change waits at most 3 seconds for readers to let go. Otherwise it fails the copy until the next run.
 - A value that does not convert, rows that repeat a new key, or a view of a different schema built on the reader view fail the change. The table stays as it was.
 - A [reset](../../elt/README.md#resets) of the full stream, or an overwrite whose stored table does not fit, reloads into a hidden table `_elt_next_<hash>`. The first commit of the reload makes it. When the stream ends with no failure, the load swaps it in, also with a wait of at most 3 seconds, and drops the chunk table of a file column that it does not have now. A view built on the reader view refuses the swap.
+
+## Commit numbers and positions
+
+Each commit has a number. One numbering orders the commits of every schema of the database, so a reader such as eca reads the whole warehouse at one position, as a Kafka consumer reads up to the last stable offset.
+
+- The numbering is in the schema `_warehouse`, beside the [sync history](#sync-history). The first load or clear in the database makes it. It takes the same lock as the sync history, because Postgres refuses two sessions that make one schema at the same moment. Thus first loads into many schemas can start together.
+- `_warehouse._elt_commits` has one row for each commit: its `number`, its `load` and its `committed_at`. The sequence `_warehouse._elt_commit_numbers` gives the numbers. A commit takes its number at its start, so two commits that run at the same time can end in a different order than their numbers.
+- `_warehouse._elt_loads` has one row for each load: its `connector` (the name of the connection), its `opened_at`, and its `closed_at`, which is null while the load is open. A load opens when a pass starts to load, and closes when the pass ends. When a load opens, it closes each load of the same connector that is still open: the process of that pass ended first, for example because it was killed. A closed load cannot commit: a commit locks the row of its load (`FOR SHARE`), so a close at the same time waits for the commit, or makes it fail.
+- A clear that empties a table is a load of one commit, in the same transaction. It does not close the open loads of its connector.
+- A commit into a [hidden table](./CONTEXT.md) shows nothing to readers. When the stream ends, one more commit gives the rows to the table with its number, and readers see them from that commit on.
+- `_warehouse._elt_epoch` keeps the epoch, an id that names the numbering. A new database, or a database whose `_warehouse` was dropped, starts a new epoch.
+- `await destination.positions(after?)` gives the positions of the database after the position `after`, in ascending order, or all positions. A position is `<epoch>:<number>`. It names the last commit of a closed load, when no other load has commits before and after it, so a reader there sees no part of a pass in any schema. When `after` is of a different epoch, or is after the newest settled commit, it gives `{ expired }` with the reason. A string that is not a position throws a `TypeError`. A database with no numbering has no positions.
+
+How a reader knows which numbers are done:
+
+- Commits run side by side, so a number can still be in flight while a higher one has committed. Each commit holds a transaction lock on its number (`pg_advisory_xact_lock`) until it ends. The newest settled commit is the highest number below the first number whose lock is still held. Numbers of commits that rolled back are gaps that the reader skips. This is the high-water mark of event stores, and no commit waits for another.
+- Postgres releases the locks of a transaction after its commit is visible to new snapshots. Thus the reader finds the high-water mark first, and then reads `_elt_commits` and `_elt_loads` in a `REPEATABLE READ` snapshot. `pg_locks` is not part of a snapshot, so the other order could show a commit at or below the mark that the snapshot does not see.
+- A commit takes its number and then its lock, in two steps. A reader that looked between them would pass the number. Thus each commit holds a shared lock (`pg_advisory_lock_shared`) across the two steps, and a reader holds the same lock alone while it reads the last number taken and the locks held. This is a readers–writer lock with the commits as the many readers.
 
 ## Checkpoints
 
@@ -146,10 +165,10 @@ Shape changes:
 
 ## Reader views
 
-`table.withReaderView(schema, name)` returns the same target. A load also shows it as the view `schema.name`, with the columns of the table and `loaded_at`, and with the comments of the table.
+`table.withReaderView(schema, name)` returns the same target. A load also shows it as the view `schema.name`, with the columns of the table, `loaded_at` and `committed_in`, and with the comments of the table.
 
 - The load makes the view in the same commit as its table, so the view exists when the table exists. It follows inserts, updates and deletes, and it is not made again for them.
-- The stream needs a JSON Schema `description`, and each column needs one too. File columns and `loaded_at` bring their own. A missing description fails the declaration of the copy before a connection reads.
+- The stream needs a JSON Schema `description`, and each column needs one too. File columns, `loaded_at` and `committed_in` bring their own. A missing description fails the declaration of the copy before a connection reads.
 - The schema must exist. In the [warehouse](../../../infra/README.md), `marts` is part of the contract of the reader, and default privileges make the view readable.
 - A load never replaces a view that exists, because a replace of a view that readers can see would lock them out. It only writes the comments again, which does not block readers.
 - A relation with the name of the view that is not a view of the table, or that has different columns, is refused before the load reads. The error names it.

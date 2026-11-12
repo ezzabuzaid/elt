@@ -35,6 +35,7 @@ export async function storedFit(
         `${column.name} ${types.get(column.name)} ${column.isPrimaryKey}`,
     ),
     'loaded_at timestamp with time zone true',
+    'committed_in integer true',
   ];
   const has = stored.map(
     ({ name, type, required }) => `${name} ${type} ${required}`,

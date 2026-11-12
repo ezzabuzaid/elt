@@ -35,3 +35,19 @@ _Avoid_: Shadow table, temp table
 **Swap wait**:
 The time, at most 3 seconds, that a change of a stored table waits for readers to let go before it fails the copy.
 _Avoid_: Timeout (a statement timeout is a setting of a role)
+
+**Numbering**:
+The commit numbers of a database, in `_warehouse`: one sequence, `_elt_commits`, `_elt_loads` and `_elt_epoch`. Every `PostgresDestination` of the database shares it.
+_Avoid_: Version (a row keeps no version yet), log
+
+**Epoch**:
+The id that names the numbering of a database. A new database, or one whose `_warehouse` was dropped, has a new epoch, and its numbers start again.
+_Avoid_: Generation, version
+
+**Position**:
+`<epoch>:<number>`: the last commit of a closed load, when no other load of any schema has commits before and after it. A reader at a position sees no part of a pass.
+_Avoid_: Offset, cursor (eca keeps a cursor), checkpoint
+
+**High-water mark**:
+The highest commit number below the first number that a commit still holds. Each number at or below it is a commit that a new snapshot sees, or one that rolled back.
+_Avoid_: Newest commit (a commit with a higher number can have ended first), watermark
