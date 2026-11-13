@@ -2160,7 +2160,7 @@ test('a watch keeps loading the streams of its other change signals after one ch
   assert.deepEqual(passes, [['left', 'right'], ['right']]);
 });
 
-test('a change signal that fails for a system reason is recorded one time for each run of failures, as a failed pass of its stream, and its stream loads again once a check reads a new value', async () => {
+test('a change signal that fails for a system reason is recorded one time for each run of failures, as a failed pass of its stream, and its stream loads again once a check reads its store again, with the same version or with a new one', async () => {
   const history = new MemoryHistory();
   let failure: Error | undefined;
   let leftVersion = 0;
@@ -2195,14 +2195,15 @@ test('a change signal that fails for a system reason is recorded one time for ea
     signal: AbortSignal.any([controller.signal, deadline]),
   })) {
     passes.push(outcomes.map(({ copy }) => copy.from.name));
-    // Two runs of failures, each ended by a new version of the store.
+    // Two runs of failures: after the first the store answers again with the
+    // same version, and after the second with a new version.
     if (passes.length < 3) {
       failedReads.length = 0;
       failedThrice = new Latch();
       failure = new Error('left store cannot be read');
       await untilAborted(failedThrice.wait(), deadline);
       failure = undefined;
-      leftVersion = passes.length;
+      if (passes.length === 2) leftVersion = 1;
     } else controller.abort();
   }
 

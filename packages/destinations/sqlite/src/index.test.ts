@@ -8,6 +8,7 @@ import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { Latch } from '@zukhruf/async';
 import {
   ClosedWorld,
@@ -7467,6 +7468,114 @@ test('under a watch, a stream whose change fails to load stays current only as o
     assert.equal(streams().a?.current_as_of, loaded.a?.current_as_of);
     assert.equal(connector(), loaded.a?.current_as_of);
     assert.ok(String(streams().b?.current_as_of) >= checked);
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+});
+
+test('under a watch, a stream whose change signal times out at one check and reads the same version at the next loads again, so readers see the stream and its connector succeeded, and no other stream loads', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-checks-');
+  const path = join(scratch.path, 'data.sqlite');
+  const clock = createClock(0);
+  // The store of stream a. Its second read does not answer, as a read that
+  // is in flight when the computer sleeps, so that check ends at its timeout.
+  // Each other read gives the same version.
+  class Asleep extends Gauge<number> {
+    #reads = 0;
+
+    protected async read(): Promise<number> {
+      this.#reads += 1;
+      if (this.#reads === 2) return new Promise<number>(() => {});
+      return 0;
+    }
+  }
+  class Slept extends CheckedSource {
+    override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+      return streams.map((stream) => ({
+        gauge: stream.name === 'a' ? new Asleep() : new Filled(),
+        streams: [stream],
+        interval: 1000,
+        timeout: 1000,
+      }));
+    }
+  }
+  const source = new Slept();
+  const destination = new SQLiteDestination({ path });
+  const pipeline = new Pipeline({
+    clock,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'checked',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.a, destination.table('a')),
+          new Copy(source.b, destination.table('b')),
+        ],
+      }),
+    ],
+  });
+  const read = (sql: string) => storedRows(path, sql);
+  const controller = new AbortController();
+  const watching = pipeline.watch({ signal: controller.signal });
+  try {
+    await watching.next();
+    const next: Promise<IteratorResult<Pass<SQLiteTable>, void>> =
+      watching.next();
+
+    // Each second on the clock is the interval or the timeout of one check:
+    // the second check times out, and the third reads the same version. The
+    // race gives the next pass of the watch once it ran.
+    const reload = await timebox(
+      async () => {
+        await clock.tickAsync(1000);
+        return Promise.race([
+          next,
+          Promise.reject(
+            new assert.AssertionError({
+              message: 'The watch ran no pass after the timeout',
+            }),
+          ),
+        ]);
+      },
+      {
+        minTimeout: 50,
+        maxRetryTime: 5_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
+
+    assert.deepEqual(
+      reload.value?.outcomes.map(({ copy }) => copy.from.name),
+      ['a'],
+    );
+    const timedOut = 'The operation was aborted due to timeout';
+    assert.deepEqual(
+      read(
+        'SELECT c.stream, a.status, a.error FROM sync_attempts a JOIN extraction_coverage c USING (attempt_id) ORDER BY a.attempt_id, c.stream',
+      ),
+      [
+        { stream: 'a', status: 'succeeded', error: null },
+        { stream: 'b', status: 'succeeded', error: null },
+        { stream: 'a', status: 'failed', error: timedOut },
+        { stream: 'a', status: 'succeeded', error: null },
+      ],
+    );
+    assert.deepEqual(
+      read('SELECT stream, status FROM stream_status ORDER BY stream'),
+      [
+        { stream: 'a', status: 'succeeded' },
+        { stream: 'b', status: 'succeeded' },
+      ],
+    );
+    assert.deepEqual(read('SELECT status, error FROM sync_status'), [
+      { status: 'succeeded', error: null },
+    ]);
   } finally {
     controller.abort();
     await watching.return(undefined);

@@ -391,8 +391,12 @@ export class Pipeline<Target extends DestinationTarget> {
                 }
                 continue;
               }
-              failing.delete(name);
-              if (outcome.state === 'changed') {
+              // A stream whose change signal failed loads again when a check
+              // reads the signal again, also with no new value: the history
+              // shows the latest attempt of a stream, and only a pass follows
+              // the failed one (ADR 0020).
+              const recovered = failing.delete(name);
+              if (outcome.state === 'changed' || recovered) {
                 unchangedAt.delete(name);
                 pending.add(name);
               } else unchangedAt.set(name, at);

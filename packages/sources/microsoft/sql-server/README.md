@@ -161,7 +161,7 @@ The source gives elt's pipeline one change signal for each stream, checked every
 
 The statistics, the row count and the last write are collectors: one key for each table, by its quoted name. A table that a collector does not give, for example a table dropped after discovery, changed, so its stream wakes and its read fails.
 
-The queries of one check have 10 seconds. When a gauge fails, for example because its query took longer or a restart of the SQL Server engine dropped the connection, the streams of the gauge fail, as a `system` failure, and the next check reads the gauge again. The other streams keep loading. A server that cannot be reached at the first check leaves the session closed, and the next check opens it again. A login that the server refuses fails every stream as `config`, and the pipeline reads the gauges no more in this watch.
+The queries of one check have 10 seconds. When a gauge fails, for example because its query took longer or a restart of the SQL Server engine dropped the connection, the streams of the gauge fail, as a `system` failure, and the next check reads the gauge again. When that check reads the gauge, its streams load again. The other streams keep loading. A server that cannot be reached at the first check leaves the session closed, and the next check opens it again. A login that the server refuses fails every stream as `config`, and the pipeline reads the gauges no more in this watch.
 
 The database is current whenever the source reads it, so the source gives no `currentAsOf`.
 
