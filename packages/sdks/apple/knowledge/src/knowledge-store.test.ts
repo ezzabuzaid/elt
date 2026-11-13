@@ -13,7 +13,7 @@ import {
   StoreUnavailableError,
 } from './index.ts';
 
-test('a knowledgeC that is missing fails with StoreUnavailableError naming its path', async () => {
+test('a knowledgeC that is missing fails with StoreUnavailableError saying it is not there at its path, and does not name Full Disk Access', async () => {
   await using scratch = await new TemporaryFiles().directory('knowledge-');
   const path = join(scratch.path, 'knowledgeC.db');
 
@@ -22,7 +22,8 @@ test('a knowledgeC that is missing fails with StoreUnavailableError naming its p
     (error: unknown) =>
       error instanceof StoreUnavailableError &&
       error.path === path &&
-      error.message.includes(`${path} cannot be read`),
+      error.message.includes(`${path} is not there.`) &&
+      !error.message.includes('Full Disk Access'),
   );
 });
 

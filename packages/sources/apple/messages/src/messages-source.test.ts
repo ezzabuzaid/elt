@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { hash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -966,10 +965,47 @@ test('one Messages read sees one moment of chat.db while Messages keeps writing'
   assert.deepEqual(after, [...during, 'm-new'].sort());
 });
 
-test('Messages names Full Disk Access when chat.db cannot be opened', async () => {
+test(
+  'Messages names Full Disk Access when chat.db cannot be opened',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using scratch = await new TemporaryFiles().directory('elt-messages-');
+    const path = await chatFixture(scratch.path);
+    const source = new AppleMessagesSource({ path, home: scratch.path });
+    // chmod stands in for macOS withholding Full Disk Access: SQLite reports
+    // CANTOPEN (14) for chmod and for a privacy denial alike.
+    await chmod(path, 0o000);
+
+    try {
+      const opening = Array.fromAsync(
+        source.read([configured(source.messages)], new Map(), {
+          clock: globalThis,
+        }),
+      );
+
+      await assert.rejects(opening, (error) => {
+        assert.ok(Error.isError(error));
+        assert.equal(error.name, 'StoreUnavailableError');
+        assert.match(error.message, /Full Disk Access/);
+        assert.ok(Error.isError(error.cause));
+        assert.equal(source.failureType(error), 'config');
+        return true;
+      });
+    } finally {
+      await chmod(path, 0o644);
+    }
+  },
+);
+
+test('Messages says chat.db is not there, and does not name Full Disk Access, when no file is at its path', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-messages-');
+  const path = join(scratch.path, 'missing', 'chat.db');
   const source = new AppleMessagesSource({
-    path: join(tmpdir(), 'missing', 'chat.db'),
-    home: join(tmpdir(), 'missing'),
+    path,
+    home: join(scratch.path, 'missing'),
   });
 
   const opening = Array.fromAsync(
@@ -981,7 +1017,8 @@ test('Messages names Full Disk Access when chat.db cannot be opened', async () =
   await assert.rejects(opening, (error) => {
     assert.ok(Error.isError(error));
     assert.equal(error.name, 'StoreUnavailableError');
-    assert.match(error.message, /Full Disk Access/);
+    assert.ok(error.message.endsWith(`${path} is not there.`));
+    assert.doesNotMatch(error.message, /Full Disk Access/);
     assert.ok(Error.isError(error.cause));
     assert.equal(source.failureType(error), 'config');
     return true;

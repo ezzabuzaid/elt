@@ -14,7 +14,7 @@ import {
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { test } from 'node:test';
+import { type TestContext, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
@@ -2149,17 +2149,73 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
       error instanceof PipelineError &&
       Error.isError(error.cause) &&
       error.cause.name === 'StoreUnavailableError' &&
-      /^Mail's store at .*Full Disk Access/.test(error.cause.message) &&
+      error.cause.message ===
+        `Mail's store at ${join(dir.path, 'absent')} is not there.` &&
       failureTypes(error).join() === 'config',
   );
 });
 
-test('An unreadable Accounts store fails only accounts and smtpServers, naming Full Disk Access', async () => {
+test(
+  'An unreadable Accounts store fails only accounts and smtpServers, naming Full Disk Access',
+  // chmod denies nothing to root or on Windows.
+  { skip: process.platform === 'win32' || process.getuid?.() === 0 },
+  async () => {
+    await using dir = await new TemporaryFiles().directory(
+      'elt-mail-accounts-',
+    );
+    const store = await fixture(join(dir.path, 'Mail'));
+    const accounts = join(dir.path, 'Accounts4.sqlite');
+    const source = new AppleMailSource({
+      path: store.root,
+      accounts: scratchAccounts(accounts),
+    });
+    // chmod stands in for macOS withholding Full Disk Access: SQLite reports
+    // CANTOPEN (14) for chmod and for a privacy denial alike.
+    await chmod(accounts, 0o000);
+
+    try {
+      await assert.rejects(
+        (await pipeline(source, dir.path)).run(),
+        (error) => {
+          assert.ok(error instanceof PipelineError);
+          const failed = error.results.filter(
+            ({ failures }) => failures.length > 0,
+          );
+          assert.deepEqual(
+            failed.map(({ copy }) => copy.from.name),
+            ['accounts', 'smtpServers'],
+          );
+          for (const { error: cause } of failed.flatMap(
+            ({ failures }) => failures,
+          )) {
+            assert.ok(cause instanceof StoreUnavailableError);
+            assert.match(
+              cause.message,
+              /^The system Accounts store at .*Full Disk Access/,
+            );
+          }
+          assert.deepEqual(failureTypes(error), ['config']);
+          const loaded = error.results.filter(
+            ({ failures }) => failures.length === 0,
+          );
+          assert.equal(loaded.length, 40);
+          assert.ok(loaded.every(({ count }) => count > 0));
+          return true;
+        },
+      );
+    } finally {
+      await chmod(accounts, 0o644);
+    }
+  },
+);
+
+test('An Accounts store that is not there fails only accounts and smtpServers, saying so and not naming Full Disk Access', async () => {
   await using dir = await new TemporaryFiles().directory('elt-mail-accounts-');
   const store = await fixture(join(dir.path, 'Mail'));
+  const accounts = join(dir.path, 'missing/Accounts4.sqlite');
   const source = new AppleMailSource({
     path: store.root,
-    accounts: new AccountsStore(join(dir.path, 'missing/Accounts4.sqlite')),
+    accounts: new AccountsStore(accounts),
   });
 
   await assert.rejects((await pipeline(source, dir.path)).run(), (error) => {
@@ -2171,10 +2227,11 @@ test('An unreadable Accounts store fails only accounts and smtpServers, naming F
     );
     for (const { error: cause } of failed.flatMap(({ failures }) => failures)) {
       assert.ok(cause instanceof StoreUnavailableError);
-      assert.match(
+      assert.equal(
         cause.message,
-        /^The system Accounts store at .*Full Disk Access/,
+        `The system Accounts store at ${accounts} is not there.`,
       );
+      assert.doesNotMatch(cause.message, /Full Disk Access/);
     }
     assert.deepEqual(failureTypes(error), ['config']);
     const loaded = error.results.filter(
@@ -2223,7 +2280,7 @@ async function nextPass(watch: ReturnType<typeof watchMail>) {
   return pass.value.outcomes.map(({ copy }) => copy.from.name);
 }
 
-test('An unreadable Accounts store leaves Mail’s watch running', async () => {
+test('An Accounts store that is not there leaves Mail’s watch running', async () => {
   await using dir = await new TemporaryFiles().directory(
     'elt-mail-accounts-watch-',
   );
@@ -2249,62 +2306,85 @@ test('An unreadable Accounts store leaves Mail’s watch running', async () => {
   assert.equal((await watch.next()).done, true);
 });
 
-test('Mail’s streams fail as config when its version file or index cannot be read, and as system for an index that is not a database, while the watch goes on', async (t) => {
-  await using dir = await new TemporaryFiles().directory('elt-mail-watch-');
-  // The first failure that the watch's sync history records.
-  const failureAfter = async (
-    root: string,
-    change: (store: Awaited<ReturnType<typeof fixture>>) => Promise<void>,
-  ) => {
-    const store = await fixture(root);
-    await change(store);
-    const source = new AppleMailSource({
-      path: store.root,
-      accounts: store.accounts,
-    });
-    const directory = `${root}-import`;
-    const controller = new AbortController();
-    const watching = (async () => {
-      for await (const _ of watchMail(
-        source,
-        [source.messages],
-        directory,
-        AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
-      ));
-    })();
-    try {
-      let failure: Record<string, unknown> | undefined;
-      await t.waitFor(
-        () => {
-          using out = open(join(directory, 'data.sqlite'), { readOnly: true });
-          failure = out
-            .prepare(
-              "SELECT error, failure_type FROM sync_attempts WHERE status = 'failed'",
-            )
-            .get();
-          assert.ok(failure);
-        },
-        { interval: 10, timeout: 10000 },
-      );
-      assert.ok(failure);
-      return failure;
-    } finally {
-      controller.abort();
-      await watching;
-    }
-  };
-
-  for (const failure of [
-    await failureAfter(join(dir.path, 'version'), ({ root }) =>
-      rm(join(root, 'PersistenceInfo.plist')),
-    ),
-    await failureAfter(join(dir.path, 'index'), ({ index }) => rm(index)),
-  ]) {
-    // A failed copy's error is in the attempt's list of copies that failed.
-    assert.match(String(failure.error), /Mail's store at .*Full Disk Access/);
-    assert.equal(failure.failure_type, 'config');
+// The first failure that the sync history of a watch records, for a store
+// that change has broken.
+async function firstWatchFailure(
+  t: TestContext,
+  root: string,
+  change: (store: Awaited<ReturnType<typeof fixture>>) => Promise<void>,
+) {
+  const store = await fixture(root);
+  await change(store);
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+  const directory = `${root}-import`;
+  const controller = new AbortController();
+  const watching = (async () => {
+    for await (const _ of watchMail(
+      source,
+      [source.messages],
+      directory,
+      AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+    ));
+  })();
+  try {
+    let failure: Record<string, unknown> | undefined;
+    await t.waitFor(
+      () => {
+        using out = open(join(directory, 'data.sqlite'), { readOnly: true });
+        failure = out
+          .prepare(
+            "SELECT error, failure_type FROM sync_attempts WHERE status = 'failed'",
+          )
+          .get();
+        assert.ok(failure);
+      },
+      { interval: 10, timeout: 10000 },
+    );
+    assert.ok(failure);
+    return failure;
+  } finally {
+    controller.abort();
+    await watching;
   }
-  const text = await failureAfter(join(dir.path, 'text'), ({ index }) =>
+}
+
+test(
+  'Mail’s streams fail as config, naming Full Disk Access, when its version file or index cannot be read, while the watch goes on',
+  // chmod denies nothing to root or on Windows.
+  { skip: process.platform === 'win32' || process.getuid?.() === 0 },
+  async (t) => {
+    await using dir = await new TemporaryFiles().directory('elt-mail-watch-');
+    for (const [name, file] of [
+      ['version', 'PersistenceInfo.plist'],
+      ['index', 'V10/MailData/Envelope Index'],
+    ] as const) {
+      const root = join(dir.path, name);
+      const denied = join(root, file);
+      try {
+        // A file mode that refuses this process, as macOS does without Full
+        // Disk Access.
+        const failure = await firstWatchFailure(t, root, () =>
+          chmod(denied, 0o000),
+        );
+        // A failed copy's error is in the attempt's list of copies that failed.
+        assert.match(
+          String(failure.error),
+          /Mail's store at .*Full Disk Access/,
+        );
+        assert.equal(failure.failure_type, 'config');
+      } finally {
+        await chmod(denied, 0o644);
+      }
+    }
+  },
+);
+
+test('Mail’s streams fail as system for an index that is not a database, while the watch goes on', async (t) => {
+  await using dir = await new TemporaryFiles().directory('elt-mail-watch-');
+  const text = await firstWatchFailure(t, join(dir.path, 'text'), ({ index }) =>
     writeFile(index, 'not a database'),
   );
   assert.match(String(text.error), /not a database/);

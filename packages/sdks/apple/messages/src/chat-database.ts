@@ -39,10 +39,11 @@ export const chatDatabasePath = (home: string): string =>
   join(home, 'Library/Messages/chat.db');
 
 const appDatabase = new AppDatabase(
-  new Store(
-    'Messages history',
-    'Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Messages.app does not need to be open.',
-  ),
+  new Store('Messages history', {
+    missing: '',
+    denied:
+      'Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Messages.app does not need to be open.',
+  }),
 );
 
 // Messages stores times since 2001-01-01 UTC, in nanoseconds since macOS 10.13

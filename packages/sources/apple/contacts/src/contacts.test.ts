@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { hash } from 'node:crypto';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { chmod, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
@@ -1312,60 +1312,87 @@ test('Contacts loads edits incrementally, deletes removed rows and writes nothin
   );
 });
 
-test('Contacts refuses a store it cannot read instead of reading its account as empty', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-contacts-');
-  const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
-  const source = new AppleContactsSource({
-    directory,
-    preferences: preferencesFixture(scratch.path),
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'out.sqlite'),
-  });
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        checkpoints: new SQLiteCheckpointStore({
-          path: join(scratch.path, 'state.sqlite'),
+test(
+  'Contacts refuses a store it cannot read instead of reading its account as empty',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using scratch = await new TemporaryFiles().directory('elt-contacts-');
+    const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
+    const source = new AppleContactsSource({
+      directory,
+      preferences: preferencesFixture(scratch.path),
+    });
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'out.sqlite'),
+    });
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 'state.sqlite'),
+          }),
+          steps: (await copies(source, destination)).filter(
+            ({ from }) => from.name === 'contacts',
+          ),
         }),
-        steps: (await copies(source, destination)).filter(
-          ({ from }) => from.name === 'contacts',
-        ),
-      }),
-    ],
-  });
-  await pipeline.run();
-  rmSync(join(directory, 'Sources/ACCOUNT-B/AddressBook-v22.abcddb'));
+      ],
+    });
+    await pipeline.run();
+    const store = join(directory, 'Sources/ACCOUNT-B/AddressBook-v22.abcddb');
+    // chmod stands in for macOS withholding the grant: SQLite reports CANTOPEN
+    // (14) for chmod and for a privacy denial alike.
+    await chmod(store, 0o000);
 
-  // Opening the read fails, so every copy reports it, as the run's cause.
-  await assert.rejects(pipeline.run(), (error: Error) => {
-    assert.ok(error instanceof PipelineError, String(error));
-    assert.ok(Error.isError(error.cause));
-    assert.equal(error.cause.name, 'StoreUnavailableError');
-    assert.match(
-      error.cause.message,
-      /ACCOUNT-B.*Contacts access or Full Disk Access/,
+    try {
+      // Opening the read fails, so every copy reports it, as the run's cause.
+      await assert.rejects(pipeline.run(), (error: Error) => {
+        assert.ok(error instanceof PipelineError, String(error));
+        assert.ok(Error.isError(error.cause));
+        assert.equal(error.cause.name, 'StoreUnavailableError');
+        assert.match(
+          error.cause.message,
+          /ACCOUNT-B.*Contacts access or Full Disk Access/,
+        );
+        assert.deepEqual(failureTypes(error), ['config']);
+        return true;
+      });
+    } finally {
+      await chmod(store, 0o644);
+    }
+    assert.equal(
+      rows(destination.path, 'SELECT count(*) AS n FROM contacts')[0]?.n,
+      4,
     );
-    assert.deepEqual(failureTypes(error), ['config']);
-    return true;
-  });
-  assert.equal(
-    rows(destination.path, 'SELECT count(*) AS n FROM contacts')[0]?.n,
-    4,
-  );
+  },
+);
+
+test('Contacts says that an address book that is not there is not there, and does not name Full Disk Access', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-contacts-');
+  const directory = join(scratch.path, 'missing');
+
   await assert.rejects(
     readFirst(
       new AppleContactsSource({
-        directory: join(scratch.path, 'missing'),
+        directory,
         preferences: preferencesFixture(scratch.path),
       }),
     ),
-    { name: 'StoreUnavailableError', message: /Full Disk Access/ },
+    (error: Error) => {
+      assert.equal(error.name, 'StoreUnavailableError');
+      assert.ok(
+        error.message.includes(`${join(directory, 'Sources')} is not there.`),
+      );
+      assert.doesNotMatch(error.message, /Full Disk Access/);
+      return true;
+    },
   );
 });
 

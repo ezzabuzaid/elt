@@ -66,6 +66,8 @@ A Context Compiler import loads every stream incrementally into its `data.sqlite
 
 The store needs [Full Disk Access](../messages/README.md#full-disk-access) for the process that runs the pipeline. On 2026-10-07, a terminal with the grant read the store. A launchd job without the grant got `Operation not permitted` when it listed `db2/`. On 2026-11-06, a node process without the grant opened Mail's store, and SQLite gave CANTOPEN (14) for a read-only open and for a writable open. SQLite reports CANTOPEN (14) for chmod and for a privacy denial alike. The SDK turns the error into `StoreUnavailableError`, which names the grant, and every stream fails.
 
+The store can also be not there. On 2026-11-13, on macOS 27.2, `db2/` held no file since 2026-11-11, while usernoted delivered notifications and kept them only in memory: it had no database open, and its binary still names this path and these tables. SQLite reports CANTOPEN (14) for a file that is not there too. The error then says that the store is not there, and it does not name the grant, because a process with the grant listed the empty folder. usernoted has code that makes the database again when it starts.
+
 ## Streams
 
 | Stream            | Upstream                                    | One record for each                                                             |

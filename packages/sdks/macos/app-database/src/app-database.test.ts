@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { renameSync } from 'node:fs';
-import { chmod } from 'node:fs/promises';
+import { chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
@@ -22,7 +22,10 @@ import {
   StoreUnavailableError,
 } from './index.ts';
 
-const store = new Store('The store', 'Grant access.');
+const store = new Store('The store', {
+  missing: 'Open the app once.',
+  denied: 'Grant access.',
+});
 
 function database(): AppDatabase {
   return new AppDatabase(store);
@@ -48,6 +51,69 @@ test('a snapshot of a store that is not there is the SDK unavailable error, caus
     },
   );
 });
+
+test('a store that is not there says so and gives what makes its app create it, not the grant', async () => {
+  await using dir = await new TemporaryFiles().directory('app-database-');
+  const path = join(dir.path, 'store.sqlite');
+
+  assert.throws(() => database().snapshot(path), {
+    message: `The store at ${path} is not there. Open the app once.`,
+  });
+  assert.throws(() => database().lastWrite(path), {
+    message: `The store at ${path} is not there. Open the app once.`,
+  });
+});
+
+test(
+  'a store that the system keeps from this process says that it cannot be read and gives the grant',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using dir = await new TemporaryFiles().directory('app-database-');
+    const path = join(dir.path, 'store.sqlite');
+    created(path);
+    // chmod stands in for a privacy denial of macOS: SQLite reports CANTOPEN
+    // (14) for both, and the file is there in both.
+    await chmod(path, 0o000);
+
+    try {
+      assert.throws(() => database().snapshot(path), {
+        message: `The store at ${path} cannot be read. Grant access.`,
+      });
+    } finally {
+      await chmod(path, 0o644);
+    }
+  },
+);
+
+test(
+  'a store in a folder that the system keeps from this process says that it cannot be read and gives the grant',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using dir = await new TemporaryFiles().directory('app-database-');
+    const folder = join(dir.path, 'container');
+    await mkdir(folder);
+    const path = join(folder, 'store.sqlite');
+    created(path);
+    // macOS refuses even a look into a folder behind a privacy grant, as a
+    // launchd job without the grant found for the folder of Notification
+    // Center. The store can be there, so the message keeps the grant.
+    await chmod(folder, 0o000);
+
+    try {
+      assert.throws(() => database().snapshot(path), {
+        message: `The store at ${path} cannot be read. Grant access.`,
+      });
+    } finally {
+      await chmod(folder, 0o755);
+    }
+  },
+);
 
 test('a store that lacks a column the reader reads is the package missing-columns error, naming the column', async () => {
   await using dir = await new TemporaryFiles().directory('app-database-');

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { chmod, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
@@ -722,7 +722,62 @@ test('one Notes read sees one moment of the store while Notes keeps writing', as
   assert.deepEqual(after, [...during, 'NOTE-NEW'].sort());
 });
 
-test('Notes names Full Disk Access when its store cannot be opened and refuses an unknown layout', async () => {
+test(
+  'Notes names Full Disk Access when its store cannot be opened',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using scratch = await new TemporaryFiles().directory('elt-notes-');
+    const path = await noteStoreFixture(scratch.path);
+    const source = new AppleNotesSource({ path });
+    // chmod stands in for macOS withholding Full Disk Access: SQLite reports
+    // CANTOPEN (14) for chmod and for a privacy denial alike.
+    await chmod(path, 0o000);
+
+    try {
+      const opening = Array.fromAsync(
+        source.read([configured(source.notes)], new Map(), {
+          clock: globalThis,
+        }),
+      );
+
+      await assert.rejects(opening, (error) => {
+        assert.ok(Error.isError(error));
+        assert.equal(error.name, 'StoreUnavailableError');
+        assert.match(error.message, /Full Disk Access/);
+        assert.ok(Error.isError(error.cause));
+        assert.equal(source.failureType(error), 'config');
+        return true;
+      });
+    } finally {
+      await chmod(path, 0o644);
+    }
+  },
+);
+
+test('Notes says its store is not there, and does not name Full Disk Access, when no file is at its path', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-notes-');
+  const path = join(scratch.path, 'missing', 'NoteStore.sqlite');
+  const source = new AppleNotesSource({ path });
+
+  const opening = Array.fromAsync(
+    source.read([configured(source.notes)], new Map(), { clock: globalThis }),
+  );
+
+  await assert.rejects(opening, (error) => {
+    assert.ok(Error.isError(error));
+    assert.equal(error.name, 'StoreUnavailableError');
+    assert.ok(error.message.endsWith(`${path} is not there.`));
+    assert.doesNotMatch(error.message, /Full Disk Access/);
+    assert.ok(Error.isError(error.cause));
+    assert.equal(source.failureType(error), 'config');
+    return true;
+  });
+});
+
+test('Notes refuses a store in a layout it does not know, naming a column it needs', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-notes-');
   const unknown = join(scratch.path, 'NoteStore.sqlite');
   {
@@ -731,26 +786,12 @@ test('Notes names Full Disk Access when its store cannot be opened and refuses a
       'CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER, Z_NAME VARCHAR); CREATE TABLE ZICNOTEDATA (Z_PK INTEGER, ZDATA BLOB); CREATE TABLE ZICLOCATION (ZATTACHMENT INTEGER, ZLATITUDE FLOAT, ZLONGITUDE FLOAT); CREATE TABLE ZICCLOUDSYNCINGOBJECT (Z_PK INTEGER, Z_ENT INTEGER, ZIDENTIFIER VARCHAR)',
     );
   }
-  const missing = new AppleNotesSource({
-    path: join(scratch.path, 'missing', 'NoteStore.sqlite'),
-  });
   const other = new AppleNotesSource({ path: unknown });
 
-  const opening = Array.fromAsync(
-    missing.read([configured(missing.notes)], new Map(), { clock: globalThis }),
-  );
   const reading = Array.fromAsync(
     other.read([configured(other.notes)], new Map(), { clock: globalThis }),
   );
 
-  await assert.rejects(opening, (error) => {
-    assert.ok(Error.isError(error));
-    assert.equal(error.name, 'StoreUnavailableError');
-    assert.match(error.message, /Full Disk Access/);
-    assert.ok(Error.isError(error.cause));
-    assert.equal(missing.failureType(error), 'config');
-    return true;
-  });
   await assert.rejects(reading, (error) => {
     assert.ok(Error.isError(error));
     assert.equal(error.name, 'MissingColumnsError');

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -621,18 +622,53 @@ test('an account changed in the store updates its rows, and a removed one delete
   );
 });
 
-test('an unreadable Accounts store fails every stream, naming Full Disk Access', async () => {
+test(
+  'an unreadable Accounts store fails every stream, naming Full Disk Access',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using dir = await new TemporaryFiles().directory('elt-accounts-');
+    const path = join(dir.path, 'Accounts4.sqlite');
+    accountsFixture(path);
+    const source = new AppleAccountsSource({ path });
+    // chmod stands in for macOS withholding Full Disk Access: SQLite reports
+    // CANTOPEN (14) for chmod and for a privacy denial alike.
+    await chmod(path, 0o000);
+
+    try {
+      await assert.rejects(
+        (await pipeline(source, dir.path)).run(),
+        (error) => {
+          assert.ok(error instanceof PipelineError);
+          assert.ok(error.errors.length > 0);
+          for (const cause of error.errors) {
+            assert.ok(cause instanceof StoreUnavailableError);
+            assert.match(cause.message, /Full Disk Access/);
+          }
+          assert.deepEqual(failureTypes(error), ['config']);
+          return true;
+        },
+      );
+    } finally {
+      await chmod(path, 0o644);
+    }
+  },
+);
+
+test('an Accounts store that is not there fails every stream, saying so and not naming Full Disk Access', async () => {
   await using dir = await new TemporaryFiles().directory('elt-accounts-');
-  const source = new AppleAccountsSource({
-    path: join(dir.path, 'missing', 'Accounts4.sqlite'),
-  });
+  const path = join(dir.path, 'missing', 'Accounts4.sqlite');
+  const source = new AppleAccountsSource({ path });
 
   await assert.rejects((await pipeline(source, dir.path)).run(), (error) => {
     assert.ok(error instanceof PipelineError);
     assert.ok(error.errors.length > 0);
     for (const cause of error.errors) {
       assert.ok(cause instanceof StoreUnavailableError);
-      assert.match(cause.message, /Full Disk Access/);
+      assert.ok(cause.message.endsWith(`${path} is not there.`));
+      assert.doesNotMatch(cause.message, /Full Disk Access/);
     }
     assert.deepEqual(failureTypes(error), ['config']);
     return true;

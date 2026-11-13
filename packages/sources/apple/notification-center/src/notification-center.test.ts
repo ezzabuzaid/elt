@@ -781,6 +781,31 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
   assert.deepEqual(counts(await run.run()), unchanged);
 });
 
+test('a store that is not there fails every stream saying so and what makes macOS create it, and does not name Full Disk Access', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
+  // As on a Mac of 2026-11-13: the folder of the store is there and holds no
+  // file, and the process has the grant.
+  const path = join(dir.path, 'db');
+  const run = await pipeline(
+    new AppleNotificationCenterSource({ path }),
+    dir.path,
+    globalThis,
+  );
+
+  await assert.rejects(run.run(), (error) => {
+    assert.ok(error instanceof PipelineError);
+    assert.equal(error.errors.length, 4);
+    for (const cause of error.errors) {
+      assert.ok(cause instanceof StoreUnavailableError);
+      assert.match(cause.message, /is not there\..*log out and log in/);
+      assert.doesNotMatch(cause.message, /Full Disk Access/);
+      assert.ok(cause.message.includes(path));
+    }
+    assert.deepEqual(failureTypes(error), ['config']);
+    return true;
+  });
+});
+
 test('a store missing a column this reader reads fails every stream by name and keeps what loaded', async () => {
   await using dir = await new TemporaryFiles().directory('elt-notes-center-');
   const path = join(dir.path, 'db');

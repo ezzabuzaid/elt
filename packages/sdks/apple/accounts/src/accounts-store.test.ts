@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { writeFile } from 'node:fs/promises';
+import { chmod, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -403,7 +403,37 @@ test('an account answers its name, user, addresses and mail servers, through its
   assert.equal(exchange.sendingAccountIdentifier, 'EXCHANGE');
 });
 
-test('a store that cannot be opened fails with StoreUnavailableError', async () => {
+test(
+  'a store that cannot be opened fails with StoreUnavailableError',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using scratch = await ScratchAccountsStore.create();
+    const path = scratch.path;
+    // chmod stands in for macOS withholding Full Disk Access: SQLite reports
+    // CANTOPEN (14) for chmod and for a privacy denial alike.
+    await chmod(path, 0o000);
+
+    try {
+      assert.throws(
+        () => new AccountsStore(path).open(),
+        (error: unknown) => {
+          assert.ok(error instanceof StoreUnavailableError);
+          assert.equal(error.path, path);
+          assert.match(error.message, /Full Disk Access/);
+          assert.ok(error.message.includes(path));
+          return true;
+        },
+      );
+    } finally {
+      await chmod(path, 0o644);
+    }
+  },
+);
+
+test('a store that is not there fails with StoreUnavailableError, saying so and not naming Full Disk Access', async () => {
   await using scratch = await new TemporaryFiles().directory('accounts-');
   const path = join(scratch.path, 'missing', 'Accounts4.sqlite');
 
@@ -412,8 +442,8 @@ test('a store that cannot be opened fails with StoreUnavailableError', async () 
     (error: unknown) => {
       assert.ok(error instanceof StoreUnavailableError);
       assert.equal(error.path, path);
-      assert.match(error.message, /Full Disk Access/);
-      assert.ok(error.message.includes(path));
+      assert.ok(error.message.endsWith(`${path} is not there.`));
+      assert.doesNotMatch(error.message, /Full Disk Access/);
       return true;
     },
   );

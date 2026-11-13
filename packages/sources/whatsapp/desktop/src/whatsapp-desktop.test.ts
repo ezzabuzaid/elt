@@ -1089,11 +1089,14 @@ function rows(path: string, sql: string) {
     .map((row) => ({ ...row }));
 }
 
+// The columns that the destination adds to each row.
+const added = new Set(['loaded_at', 'committed_in', '_elt_row_hash']);
+
 // A loaded table as a reader reads it, without the load's own columns.
 function table(path: string, name: string, orderBy: string) {
   const columns = rows(path, `SELECT name FROM pragma_table_info('${name}')`)
     .map((column) => String(column.name))
-    .filter((column) => column !== 'loaded_at' && !column.startsWith('_elt'))
+    .filter((column) => !added.has(column))
     .map((column) => `"${column}"`);
   return rows(
     path,
@@ -2230,7 +2233,7 @@ const removeStore = (whatsapp: ScratchWhatsApp, store: Store) => {
     rmSync(`${whatsapp.path(store)}${suffix}`, { force: true });
 };
 
-test('a store WhatsApp has not created, or macOS denies, fails only the streams that read it, as the user’s to fix; one that is no database fails as the system’s', async () => {
+test('a store WhatsApp has not created fails only the streams that read it, as the user’s to fix, saying to open WhatsApp once and not naming Full Disk Access', async () => {
   const missing = await failedAfter((whatsapp) =>
     removeStore(whatsapp, 'businesses'),
   );
@@ -2238,34 +2241,54 @@ test('a store WhatsApp has not created, or macOS denies, fails only the streams 
   assert.deepEqual(missing.types, ['config']);
   for (const error of missing.errors) {
     assert.ok(error instanceof StoreUnavailableError);
-    assert.match(error.message, /Biz\.sqlite.*Full Disk Access/s);
+    assert.match(
+      error.message,
+      /Biz\.sqlite is not there\. Open WhatsApp once so it creates its stores\.$/,
+    );
+    assert.doesNotMatch(error.message, /Full Disk Access/);
   }
   assert.equal(missing.messages, 7);
+});
 
-  const { dir, whatsapp } = await scratch();
-  await using _ = dir;
-  // chmod stands in for macOS withdrawing Full Disk Access.
-  await chmod(whatsapp.path('chatStorage'), 0o000);
-  try {
-    const run = await pipeline(
-      new WhatsAppDesktopSource({ container: whatsapp.container }),
-      dir.path,
-    );
-    await assert.rejects(run.run(), (error) => {
-      const denied = failures(error);
-      assert.deepEqual(denied.streams, streamsOf.chatStorage);
-      assert.deepEqual(denied.types, ['config']);
-      return true;
-    });
-    assert.equal(
-      rows(join(dir.path, 'out.sqlite'), 'SELECT count(*) AS n FROM users')[0]
-        ?.n,
-      2,
-    );
-  } finally {
-    await chmod(whatsapp.path('chatStorage'), 0o644);
-  }
+test(
+  'a store macOS denies fails only the streams that read it, as the user’s to fix, naming Full Disk Access',
+  // chmod denies nothing to root or on Windows.
+  { skip: process.platform === 'win32' || process.getuid?.() === 0 },
+  async () => {
+    const { dir, whatsapp } = await scratch();
+    await using _ = dir;
+    // chmod stands in for macOS withdrawing Full Disk Access.
+    await chmod(whatsapp.path('chatStorage'), 0o000);
+    try {
+      const run = await pipeline(
+        new WhatsAppDesktopSource({ container: whatsapp.container }),
+        dir.path,
+      );
+      await assert.rejects(run.run(), (error) => {
+        const denied = failures(error);
+        assert.deepEqual(denied.streams, streamsOf.chatStorage);
+        assert.deepEqual(denied.types, ['config']);
+        for (const cause of denied.errors) {
+          assert.ok(cause instanceof StoreUnavailableError);
+          assert.match(
+            cause.message,
+            /ChatStorage\.sqlite cannot be read\..*Full Disk Access/s,
+          );
+        }
+        return true;
+      });
+      assert.equal(
+        rows(join(dir.path, 'out.sqlite'), 'SELECT count(*) AS n FROM users')[0]
+          ?.n,
+        2,
+      );
+    } finally {
+      await chmod(whatsapp.path('chatStorage'), 0o644);
+    }
+  },
+);
 
+test('a store that is no database fails only the streams that read it, as the system’s', async () => {
   const garbled = await failedAfter((whatsapp) => {
     removeStore(whatsapp, 'stickers');
     writeFileSync(
@@ -3075,10 +3098,7 @@ test('a full refresh loads every stream as an incremental first pass does, its f
           .all()
           .map((row) =>
             Object.fromEntries(
-              Object.entries(row).filter(
-                ([column]) =>
-                  column !== 'loaded_at' && !column.startsWith('_elt'),
-              ),
+              Object.entries(row).filter(([column]) => !added.has(column)),
             ),
           ),
       ]),

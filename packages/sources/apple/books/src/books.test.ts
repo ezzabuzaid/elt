@@ -1219,13 +1219,84 @@ test('Books follows each store on its own: a rerun writes nothing, and edits, de
   );
 });
 
-test('Books names Full Disk Access for an unreadable store, refuses an unknown layout or reading history format, and keeps the rows it had', async () => {
+test(
+  'Books names Full Disk Access for a preference file it may not read, fails only readingGoal, and keeps the rows it had',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using scratch = await new TemporaryFiles().directory('books-');
+    const location = await booksFixture(scratch.path);
+    const source = new AppleBooksSource(location);
+    const books = await appleImport(source, join(scratch.path, 'import'));
+    await books.load();
+    // chmod stands in for macOS withholding Full Disk Access: the read of the
+    // file is refused with EACCES where a privacy denial gives EPERM, and the
+    // file is there for both.
+    await using denial = new AsyncDisposableStack();
+    await chmod(location.files.appPreferences, 0o000);
+    denial.defer(() => chmod(location.files.appPreferences, 0o644));
+
+    const failure = await books.load().then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    assert.ok(failure instanceof PipelineError);
+    const failed = Object.fromEntries(
+      failure.results
+        .filter(({ failures }) => failures.length > 0)
+        .map(({ copy, failures }) => [
+          copy.configuration.stream.name,
+          String(failures[0]?.error),
+        ]),
+    );
+    // The store fails only its own stream.
+    assert.deepEqual(Object.keys(failed), ['readingGoal']);
+    assert.match(
+      failed.readingGoal ?? '',
+      /com\.apple\.iBooksX\.plist cannot be read\. Allow the process that runs the export Full Disk Access/,
+    );
+    assert.deepEqual(failedStreams(failure), { config: ['readingGoal'] });
+    assert.deepEqual(
+      rows(
+        books.read(`SELECT (SELECT count(*) FROM asset_details) AS details,
+        (SELECT count(*) FROM reading_days) AS days,
+        (SELECT count(*) FROM reading_goal) AS goal,
+        (SELECT count(*) FROM annotations) AS annotations`),
+      ),
+      [{ details: 2, days: 2, goal: 1, annotations: 4 }],
+    );
+    const messages = await Array.fromAsync(
+      source.read(
+        [
+          new Copy(
+            source.readingGoal,
+            new SQLiteDestination({
+              path: join(scratch.path, 'goal.sqlite'),
+            }).table('goal'),
+          ).configuration,
+        ],
+        new Map(),
+        { clock: globalThis },
+      ),
+    );
+    const status = messages.find(
+      (message) =>
+        message instanceof StreamStatus && message.status === 'FAILED',
+    );
+    assert.ok(status instanceof StreamStatus);
+    assert.ok(status.error instanceof StoreUnavailableError);
+  },
+);
+
+test('Books refuses a store in a layout it does not know and a reading history format it does not know, fails only their streams, and keeps the rows it had', async () => {
   await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const source = new AppleBooksSource(location);
   const books = await appleImport(source, join(scratch.path, 'import'));
   await books.load();
-  await rm(location.files.appPreferences);
   {
     using store = open(location.files.assetData);
     store.exec('ALTER TABLE ZBCASSETDETAIL DROP COLUMN ZREADINGPROGRESS');
@@ -1261,15 +1332,10 @@ test('Books names Full Disk Access for an unreadable store, refuses an unknown l
   assert.deepEqual(Object.keys(failed).sort(), [
     'assetDetails',
     'readingDays',
-    'readingGoal',
     'readingMonths',
     'reviews',
     'streakRecords',
   ]);
-  assert.match(
-    failed.readingGoal ?? '',
-    /com\.apple\.iBooksX\.plist cannot be read\. Open Books once so it creates its stores; if they exist, allow the process that runs the export Full Disk Access/,
-  );
   assert.match(
     failed.assetDetails ?? '',
     /lacks the columns ZBCASSETDETAIL\.ZREADINGPROGRESS/,
@@ -1279,7 +1345,6 @@ test('Books names Full Disk Access for an unreadable store, refuses an unknown l
     /missing reading history format version 6/,
   );
   assert.deepEqual(failedStreams(failure), {
-    config: ['readingGoal'],
     system: [
       'assetDetails',
       'readingDays',
@@ -1297,25 +1362,6 @@ test('Books names Full Disk Access for an unreadable store, refuses an unknown l
     ),
     [{ details: 2, days: 2, goal: 1, annotations: 4 }],
   );
-  const messages = await Array.fromAsync(
-    source.read(
-      [
-        new Copy(
-          source.readingGoal,
-          new SQLiteDestination({
-            path: join(scratch.path, 'goal.sqlite'),
-          }).table('goal'),
-        ).configuration,
-      ],
-      new Map(),
-      { clock: globalThis },
-    ),
-  );
-  const status = messages.find(
-    (message) => message instanceof StreamStatus && message.status === 'FAILED',
-  );
-  assert.ok(status instanceof StreamStatus);
-  assert.ok(status.error instanceof StoreUnavailableError);
   const history = await Array.fromAsync(
     source.read(
       [
@@ -1648,7 +1694,7 @@ test('a malformed or missing Books store, column or value fails only the streams
   assert.deepEqual(Object.keys(blobId), ['assetDetails']);
   assert.match(blobId.assetDetails ?? '', /invalid assetDetails\.assetId/);
   // Without the group container, everything bookdatastored keeps fails, and
-  // each failure names its own file and the grant.
+  // each failure names its own file and what creates it, never the grant.
   assert.deepEqual(Object.keys(noGroup).sort(), [
     'assetDetails',
     'purchases',
@@ -1660,22 +1706,26 @@ test('a malformed or missing Books store, column or value fails only the streams
   ]);
   for (const error of Object.values(noGroup)) {
     assert.match(error, /^StoreUnavailableError: /);
-    assert.match(error, /Full Disk Access/);
+    assert.match(
+      error,
+      /is not there\. Open Books once so it creates its stores\.$/,
+    );
+    assert.doesNotMatch(error, /Full Disk Access/);
   }
-  assert.match(noGroup.assetDetails ?? '', /BCAssetData cannot be read/);
-  assert.match(noGroup.reviews ?? '', /BCAssetData cannot be read/);
+  assert.match(noGroup.assetDetails ?? '', /BCAssetData is not there/);
+  assert.match(noGroup.reviews ?? '', /BCAssetData is not there/);
   for (const stream of reading)
     assert.match(
       noGroup[stream] ?? '',
-      /CRDTModelSync-ReadingHistoryModel cannot be read/,
+      /CRDTModelSync-ReadingHistoryModel is not there/,
     );
   assert.match(
     noGroup.purchases ?? '',
-    /BKJaliscoServerSource-v09182016\.sqlite cannot be read/,
+    /BKJaliscoServerSource-v09182016\.sqlite is not there/,
   );
   assert.match(
     noGroup.readingGoal ?? '',
-    /group\.com\.apple\.iBooks\.plist cannot be read/,
+    /group\.com\.apple\.iBooks\.plist is not there/,
   );
   assert.deepEqual(Object.keys(emptyHistory).sort(), reading);
   for (const error of Object.values(emptyHistory)) {
@@ -1691,53 +1741,64 @@ test('a malformed or missing Books store, column or value fails only the streams
   }
 });
 
-test('Books names the preference file it cannot read, and only readingGoal fails', async () => {
-  await using scratch = await new TemporaryFiles().directory('books-');
-  // The app's preferences as an XML property list, which Books never writes.
-  const xmlPreferences = (path: string) =>
-    writeFile(
-      path,
-      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0">${xml({
-        'ReadingGoals.StreakDay': { goal: 1800 },
-        'ReadingHistory.CurrentStreak': 0,
-      })}</plist>`,
+test(
+  'Books names the preference file it cannot read, and only readingGoal fails',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using scratch = await new TemporaryFiles().directory('books-');
+    await using denial = new AsyncDisposableStack();
+    // The app's preferences as an XML property list, which Books never writes.
+    const xmlPreferences = (path: string) =>
+      writeFile(
+        path,
+        `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0">${xml({
+          'ReadingGoals.StreakDay': { goal: 1800 },
+          'ReadingHistory.CurrentStreak': 0,
+        })}</plist>`,
+      );
+
+    // chmod stands in for macOS withholding Full Disk Access: the file is
+    // there and the process may not read it.
+    const sharedDenied = await failedAfter(
+      join(scratch.path, 'shared-denied'),
+      async ({ files }) => {
+        await chmod(files.sharedPreferences, 0o000);
+        denial.defer(() => chmod(files.sharedPreferences, 0o644));
+      },
+    );
+    const appXml = await failedAfter(
+      join(scratch.path, 'app-xml'),
+      async ({ files }) => {
+        await xmlPreferences(files.appPreferences);
+      },
+    );
+    const both = await failedAfter(
+      join(scratch.path, 'both'),
+      async ({ files }) => {
+        await xmlPreferences(files.appPreferences);
+        await rm(files.sharedPreferences);
+      },
     );
 
-  const sharedMissing = await failedAfter(
-    join(scratch.path, 'shared-missing'),
-    async ({ files }) => {
-      await rm(files.sharedPreferences);
-    },
-  );
-  const appXml = await failedAfter(
-    join(scratch.path, 'app-xml'),
-    async ({ files }) => {
-      await xmlPreferences(files.appPreferences);
-    },
-  );
-  const both = await failedAfter(
-    join(scratch.path, 'both'),
-    async ({ files }) => {
-      await xmlPreferences(files.appPreferences);
-      await rm(files.sharedPreferences);
-    },
-  );
-
-  assert.deepEqual(Object.keys(sharedMissing), ['readingGoal']);
-  assert.match(sharedMissing.readingGoal ?? '', /^StoreUnavailableError: /);
-  assert.match(
-    sharedMissing.readingGoal ?? '',
-    /group\.com\.apple\.iBooks\.plist cannot be read\..*Full Disk Access/,
-  );
-  // The app's file is read first, so its layout fails the read even when the
-  // shared file is gone.
-  for (const failed of [appXml, both]) {
-    assert.deepEqual(Object.keys(failed), ['readingGoal']);
-    assert.match(failed.readingGoal ?? '', /^BooksSchemaError: /);
-    assert.match(failed.readingGoal ?? '', /com\.apple\.iBooksX\.plist /);
-    assert.match(failed.readingGoal ?? '', /binary property list/);
-  }
-});
+    assert.deepEqual(Object.keys(sharedDenied), ['readingGoal']);
+    assert.match(sharedDenied.readingGoal ?? '', /^StoreUnavailableError: /);
+    assert.match(
+      sharedDenied.readingGoal ?? '',
+      /group\.com\.apple\.iBooks\.plist cannot be read\..*Full Disk Access/,
+    );
+    // The app's file is read first, so its layout fails the read even when the
+    // shared file is gone.
+    for (const failed of [appXml, both]) {
+      assert.deepEqual(Object.keys(failed), ['readingGoal']);
+      assert.match(failed.readingGoal ?? '', /^BooksSchemaError: /);
+      assert.match(failed.readingGoal ?? '', /com\.apple\.iBooksX\.plist /);
+      assert.match(failed.readingGoal ?? '', /binary property list/);
+    }
+  },
+);
 
 test('a Books watch with a missing database loads the other streams, and the read of the missing store says why, as the user’s to fix', async () => {
   await using scratch = await new TemporaryFiles().directory('books-');
@@ -1762,7 +1823,11 @@ test('a Books watch with a missing database loads the other streams, and the rea
   assert.deepEqual(failures('libraryAssets'), []);
   const [failure] = failures('themes');
   assert.ok(failure?.error instanceof StoreUnavailableError);
-  assert.match(failure.error.message, /BookTheme\.sqlite cannot be read/);
+  assert.match(
+    failure.error.message,
+    /BookTheme\.sqlite is not there\. Open Books once so it creates its stores\.$/,
+  );
+  assert.doesNotMatch(failure.error.message, /Full Disk Access/);
   assert.equal(failure.failureType, 'config');
 });
 

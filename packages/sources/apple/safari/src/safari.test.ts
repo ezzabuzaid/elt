@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFile, spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -2048,13 +2055,108 @@ test('Safari scope keeps the chosen profiles and visit dates, and leaves unattri
   });
 });
 
-test('Safari names Full Disk Access for an unreadable store, refuses an unknown layout, and keeps the rows it had', async () => {
+test(
+  'Safari names Full Disk Access for a Bookmarks.plist it may not read, fails only the bookmark streams, and keeps the rows it had',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using scratch = await new TemporaryFiles().directory('safari-');
+    const location = await safariFixture(scratch.path);
+    const source = new AppleSafariSource(location);
+    const safari = await appleImport(source, join(scratch.path, 'import'));
+    await safari.load();
+    // chmod stands in for macOS withholding Full Disk Access: the read of the
+    // file is refused with EACCES where a privacy denial gives EPERM, and the
+    // file is there for both.
+    const bookmarks = join(location.directory, 'Bookmarks.plist');
+    await using denial = new AsyncDisposableStack();
+    await chmod(bookmarks, 0o000);
+    denial.defer(() => chmod(bookmarks, 0o644));
+
+    const failure = await safari.load().then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    assert.ok(failure instanceof PipelineError);
+    const failed = Object.fromEntries(
+      failure.results
+        .filter(({ failures }) => failures.length > 0)
+        .map(({ copy, failures }) => [
+          copy.configuration.stream.name,
+          String(failures[0]?.error),
+        ]),
+    );
+    // The store fails only its own streams.
+    assert.deepEqual(Object.keys(failed).sort(), [
+      'bookmarks',
+      'readingListItems',
+    ]);
+    assert.match(
+      failed.bookmarks ?? '',
+      /Bookmarks\.plist cannot be read\. Allow the process that runs the export Full Disk Access/,
+    );
+    assert.deepEqual(failedStreams(failure), {
+      config: ['bookmarks', 'readingListItems'],
+    });
+    assert.deepEqual(
+      rows(
+        safari.read(`SELECT (SELECT count(*) FROM bookmarks) AS bookmarks,
+        (SELECT count(*) FROM history_visits) AS visits,
+        (SELECT count(*) FROM cloud_tabs) AS cloud`),
+      ),
+      [{ bookmarks: 7, visits: 4, cloud: 1 }],
+    );
+  },
+);
+
+test('Safari says Bookmarks.plist is not there, without naming Full Disk Access, fails only the bookmark streams, and keeps the rows it had', async () => {
   await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   const source = new AppleSafariSource(location);
   const safari = await appleImport(source, join(scratch.path, 'import'));
   await safari.load();
-  await rm(join(location.directory, 'Bookmarks.plist'));
+  const bookmarks = join(location.directory, 'Bookmarks.plist');
+  await rm(bookmarks);
+
+  const failure = await safari.load().then(
+    () => null,
+    (error: unknown) => error,
+  );
+
+  assert.ok(failure instanceof PipelineError);
+  const failed = failure.results.filter(({ failures }) => failures.length > 0);
+  assert.deepEqual(
+    failed.map(({ copy }) => copy.configuration.stream.name).sort(),
+    ['bookmarks', 'readingListItems'],
+  );
+  for (const { error } of failed.flatMap(({ failures }) => failures)) {
+    assert.ok(Error.isError(error));
+    assert.equal(error.name, 'StoreUnavailableError');
+    assert.ok(error.message.endsWith(`${bookmarks} is not there.`));
+    assert.doesNotMatch(error.message, /Full Disk Access/);
+  }
+  assert.deepEqual(failedStreams(failure), {
+    config: ['bookmarks', 'readingListItems'],
+  });
+  assert.deepEqual(
+    rows(
+      safari.read(`SELECT (SELECT count(*) FROM bookmarks) AS bookmarks,
+        (SELECT count(*) FROM history_visits) AS visits,
+        (SELECT count(*) FROM cloud_tabs) AS cloud`),
+    ),
+    [{ bookmarks: 7, visits: 4, cloud: 1 }],
+  );
+});
+
+test('Safari refuses a History.db in a layout it does not know, fails only the history streams, and keeps the rows it had', async () => {
+  await using scratch = await new TemporaryFiles().directory('safari-');
+  const location = await safariFixture(scratch.path);
+  const source = new AppleSafariSource(location);
+  const safari = await appleImport(source, join(scratch.path, 'import'));
+  await safari.load();
   {
     using history = open(join(location.directory, 'History.db'));
     history.exec('ALTER TABLE history_visits DROP COLUMN score');
@@ -2074,26 +2176,19 @@ test('Safari names Full Disk Access for an unreadable store, refuses an unknown 
         String(failures[0]?.error),
       ]),
   );
-  // Each store fails only its own streams.
+  // The store fails only its own streams.
   assert.deepEqual(Object.keys(failed).sort(), [
-    'bookmarks',
     'historyItemTags',
     'historyItems',
     'historyTags',
     'historyTombstones',
     'historyVisits',
-    'readingListItems',
   ]);
-  assert.match(
-    failed.bookmarks ?? '',
-    /Bookmarks\.plist cannot be read\. Allow the process that runs the export Full Disk Access/,
-  );
   assert.match(
     failed.historyVisits ?? '',
     /lacks the columns history_visits\.score/,
   );
   assert.deepEqual(failedStreams(failure), {
-    config: ['bookmarks', 'readingListItems'],
     system: [
       'historyItemTags',
       'historyItems',
