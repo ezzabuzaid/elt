@@ -1,3 +1,4 @@
+export type { PostgresReading } from './postgres-as-of.ts';
 export { PostgresCheckpointStore } from './postgres-checkpoint-store.ts';
 export { PostgresColumn } from './postgres-column.ts';
 export { PostgresColumns } from './postgres-columns.ts';

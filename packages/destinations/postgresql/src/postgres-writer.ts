@@ -18,10 +18,11 @@ import {
 } from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
-import type { EncodedValue } from './postgres-column.ts';
+import type { EncodedValue, PostgresColumn } from './postgres-column.ts';
 import { TargetComments } from './postgres-comments.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
 import { storedColumns, storedFit } from './postgres-fit.ts';
+import { TargetHistory, rowHash, version } from './postgres-history.ts';
 import type { PostgresLoad, Transaction } from './postgres-load.ts';
 import { commitOnce, installNumbering } from './postgres-numbering.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
@@ -42,11 +43,21 @@ export const op = '"_elt_op"';
 // copy gives up until the next run.
 const swapTimeout = '3s';
 
+// One side of a difference: a table, what tells its rows apart, and which
+// of its rows count, all of them when rows is undefined.
+type Side = {
+  readonly table: string;
+  readonly id: string;
+  readonly rows?: string;
+};
+
 export abstract class PostgresWriter extends Writer {
   readonly configuration: CopyConfiguration;
   protected readonly url: string;
   readonly schema: string;
   readonly table: PostgresTable;
+  // Where the target keeps the rows that its commits replace or remove.
+  readonly #history: TargetHistory;
   readonly #comments: TargetComments;
   readonly #view: TargetReaderView | undefined;
 
@@ -61,6 +72,7 @@ export abstract class PostgresWriter extends Writer {
     this.url = url;
     this.schema = schema;
     this.table = table;
+    this.#history = new TargetHistory(schema, this.#hash);
     const description = describeTarget(
       configuration,
       table.columns,
@@ -77,8 +89,8 @@ export abstract class PostgresWriter extends Writer {
       new TargetReaderView(
         table.readerView,
         this.qualifiedName,
+        this.#history.qualifiedName,
         [...table.columns.map(({ name }) => name), 'loaded_at', 'committed_in'],
-        this.fields,
       );
     if (table.readerView === undefined) return;
     const { missing } = description;
@@ -110,7 +122,7 @@ export abstract class PostgresWriter extends Writer {
   #tableSQL(name: string): string {
     if (this.table.columns.length === 0)
       throw new TypeError('Resolve inferred columns before creating a table');
-    return `${name} (${this.table.columns.map((column) => column.definition).join(', ')}, "loaded_at" TIMESTAMPTZ NOT NULL, "committed_in" INTEGER NOT NULL)`;
+    return `${name} (${this.table.columns.map((column) => column.definition).join(', ')}, "loaded_at" TIMESTAMPTZ NOT NULL, "committed_in" INTEGER NOT NULL, ${version} TEXT)`;
   }
 
   // What a reload's hidden target needs once it is created, before the first
@@ -118,12 +130,20 @@ export abstract class PostgresWriter extends Writer {
   protected async build(_sql: Transaction, _into: string): Promise<void> {}
   protected async adopt(_sql: Transaction): Promise<void> {}
 
-  protected get fields(): string[] {
+  // What a commit writes into each row: its values, when its load began,
+  // its number, and the hash of its values.
+  protected get written(): string[] {
     return [
       ...this.table.columns.map((column) => column.quotedName),
       '"loaded_at"',
       '"committed_in"',
+      version,
     ];
+  }
+
+  // The staged values of each row, and what the commit writes beside them.
+  protected get staged(): string {
+    return `${this.table.columns.map((column) => column.quotedName).join(', ')}, $1::text::timestamptz, $2::integer, ${version}`;
   }
 
   protected encode(record: unknown): EncodedValue[] {
@@ -143,22 +163,65 @@ export abstract class PostgresWriter extends Writer {
     return false;
   }
 
-  // Empties the target a replacing commit is about to fill.
-  protected async replace(sql: Transaction): Promise<void> {
-    await sql.unsafe(`DELETE FROM ${this.qualifiedName}`);
+  // Which rows of the stage a commit that replaces the target keeps, as a
+  // condition on them.
+  protected kept(_stage: string): string {
+    return `${op} = 'R'`;
   }
 
-  // Moves the staged operations into the target, or the table a rebuild
-  // fills; every row of a run shares its loaded_at, and each row names the
-  // commit that wrote it.
+  // Moves the staged operations into the target, or the hidden target of a
+  // reload; every row of a run shares its loaded_at, and each row names the
+  // commit that wrote it. history keeps the rows of the target that the
+  // merge replaces or removes; it is null for a hidden target, whose rows no
+  // reader saw.
   protected async merge(
     sql: Transaction,
     stage: string,
     written: Written,
-    into = this.qualifiedName,
+    into: string,
+    _history: TargetHistory | null,
   ): Promise<void> {
     await sql.unsafe(
-      `INSERT INTO ${into} (${this.fields.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, $1::text::timestamptz, $2::integer FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
+      `INSERT INTO ${into} (${this.written.join(', ')}) SELECT ${this.staged} FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
+      [written.loadedAt, written.committedIn],
+    );
+  }
+
+  // The ids of the rows of left that no row of right matches, as multisets:
+  // the k-th copy of some values on one side matches the k-th copy of the
+  // same values on the other, so no key is needed.
+  #unmatched(left: Side, right: Side): string {
+    const numbered = ({ table, id, rows }: Side) =>
+      `SELECT ${id} AS "row", ${version} AS "hash", row_number() OVER (PARTITION BY ${version} ORDER BY ${id}) AS "copy" FROM ${table}${rows === undefined ? '' : ` WHERE ${rows}`}`;
+    return `SELECT "mine"."row" FROM (${numbered(left)}) AS "mine" LEFT JOIN (${numbered(right)}) AS "theirs" ON "theirs"."hash" = "mine"."hash" AND "theirs"."copy" = "mine"."copy" WHERE "theirs"."row" IS NULL`;
+  }
+
+  // Replaces the rows of the target with the records that the stage keeps,
+  // by difference: the history keeps each row of the target that no record
+  // matches, and the row goes; a row with a match stays as it is, with its
+  // commit and its loaded_at; and each record that no row matches enters
+  // with this commit. What stays matches records, so it fits the index of
+  // the mode, which the records that enter then fit too.
+  async #replace(
+    sql: Transaction,
+    stage: string,
+    written: Written,
+  ): Promise<void> {
+    const target = { table: this.qualifiedName, id: 'ctid' };
+    const staged = { table: stage, id: seq, rows: this.kept(stage) };
+    const leaving = this.#unmatched(target, staged);
+    await this.#history.keep(
+      sql,
+      written.committedIn,
+      this.qualifiedName,
+      `FROM ${this.qualifiedName} AS "_elt_old" WHERE "_elt_old".ctid IN (${leaving})`,
+    );
+    await sql.unsafe(
+      `DELETE FROM ${this.qualifiedName} WHERE ctid IN (${leaving})`,
+    );
+    await this.initialize(sql, false);
+    await sql.unsafe(
+      `INSERT INTO ${this.qualifiedName} (${this.written.join(', ')}) SELECT ${this.staged} FROM ${stage} WHERE ${seq} IN (${this.#unmatched(staged, target)}) ORDER BY ${seq}`,
       [written.loadedAt, written.committedIn],
     );
   }
@@ -208,22 +271,38 @@ export abstract class PostgresWriter extends Writer {
     );
   }
 
-  // The target as its first commit makes it: the schema, its owner, the
-  // table and its comments, and the reader view.
+  // The target as its first commit, numbered committedIn, makes it: the
+  // schema, its owner, the table, its history and its comments, and the
+  // reader view.
   async #create(
     sql: Transaction,
     writer: string,
     replacing: boolean,
+    committedIn: number,
   ): Promise<void> {
     await sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quote(this.schema)}`);
     await this.#own(sql, writer);
     await this.initialize(sql, replacing);
-    await this.#comments.write(sql, 'TABLE', this.schema, this.table.name);
-    await this.#view?.describe(sql, this.#comments);
+    await this.#describe(sql, async () => committedIn);
   }
 
-  // The field's values in each of the tables, which while a reload is open
-  // are the target and its hidden target: both rows still refer to files.
+  // The history in the target's shape, the comments of the table, and its
+  // reader view, which reads each column of the target from its history too.
+  // change gives the number of the commit that changes the target's shape.
+  async #describe(
+    sql: Transaction,
+    change: () => Promise<number>,
+  ): Promise<void> {
+    await this.#history.create(sql, this.qualifiedName, change);
+    await this.#comments.write(sql, 'TABLE', this.schema, this.table.name);
+    if (this.#view === undefined) return;
+    await this.#view.describe(sql, this.#comments);
+  }
+
+  // The field's values in each of the tables and in the history: while a
+  // reload is open, the rows of the target and of its hidden target both
+  // still refer to files, and a row of the history keeps its file for a
+  // reading as of a position before the commit that replaced it.
   private values(
     sql: Transaction,
     tables: () => readonly string[],
@@ -278,7 +357,22 @@ export abstract class PostgresWriter extends Writer {
         [this.qualifiedName],
       );
       if (table?.exists === true) {
-        await commitOnce(transaction, connector, new Date(clock.Date.now()));
+        const committedIn = await commitOnce(
+          transaction,
+          connector,
+          new Date(clock.Date.now()),
+        );
+        await this.#history.create(
+          transaction,
+          this.qualifiedName,
+          async () => committedIn,
+        );
+        await this.#history.keep(
+          transaction,
+          committedIn,
+          this.qualifiedName,
+          `FROM ${this.qualifiedName} AS "_elt_old"`,
+        );
         await transaction.unsafe(`DELETE FROM ${this.qualifiedName}`);
       }
       // Clearing a copy also abandons the reload it left open.
@@ -291,14 +385,17 @@ export abstract class PostgresWriter extends Writer {
           'SELECT to_regclass($1) IS NOT NULL AS "exists"',
           [store.qualifiedName],
         );
+        // With no rows left, only the history refers to stored files.
         if (chunks?.exists === true)
-          await transaction.unsafe(`DELETE FROM ${store.qualifiedName}`);
+          await store.prune(transaction, [this.#history.qualifiedName]);
       }
       await transaction.unsafe(`DELETE FROM ${writers} WHERE "target" = $1`, [
         this.table.name,
       ]);
     });
-    await committed?.(this.values(connection.sql, () => [this.table.name]));
+    await committed?.(
+      this.values(connection.sql, () => [this.table.name, this.#history.name]),
+    );
   }
 
   get #hash(): string {
@@ -363,7 +460,8 @@ export abstract class PostgresWriter extends Writer {
   // stored table wait only for the swap, not the reload. A reader that holds
   // it past the timeout fails the copy until the next run. Whatever else
   // depends on the target, such as marts, refuses the swap.
-  // Its rows are new to readers at this commit.
+  // Its rows are new to readers at this commit, and the history keeps every
+  // row of the target it replaces.
   async #swap(sql: Transaction, committedIn: number): Promise<void> {
     await sql.unsafe(`SET LOCAL lock_timeout = '${swapTimeout}'`);
     await sql.unsafe(`UPDATE ${this.#hidden} SET "committed_in" = $1`, [
@@ -371,13 +469,23 @@ export abstract class PostgresWriter extends Writer {
     ]);
     await this.#view?.drop(sql);
     await this.#dropRetiredChunks(sql);
+    const [target] = await sql.unsafe(
+      'SELECT to_regclass($1) IS NOT NULL AS "exists"',
+      [this.qualifiedName],
+    );
+    if (target?.exists === true)
+      await this.#history.keep(
+        sql,
+        committedIn,
+        this.qualifiedName,
+        `FROM ${this.qualifiedName} AS "_elt_old"`,
+      );
     await sql.unsafe(`DROP TABLE IF EXISTS ${this.qualifiedName}`);
     await sql.unsafe(
       `ALTER TABLE ${this.#hidden} RENAME TO ${this.table.quotedName}`,
     );
     await this.adopt(sql);
-    await this.#comments.write(sql, 'TABLE', this.schema, this.table.name);
-    await this.#view?.describe(sql, this.#comments);
+    await this.#describe(sql, async () => committedIn);
   }
 
   // Brings a stored table the stream no longer fits to its shape in place,
@@ -388,7 +496,21 @@ export abstract class PostgresWriter extends Writer {
   // fail the load, naming the column, and the transaction leaves the table
   // as it was. Readers wait for the change as they wait for a swap, and
   // whatever else depends on the reader view refuses it.
-  async #evolve(sql: Transaction, stage: string): Promise<void> {
+  // A row with a value in a column that the change drops or casts loses or
+  // changes the value, so it is a new version, in a commit of the load of its
+  // own: the history keeps the row as it was. Its row hash counted the old
+  // value, so it becomes NULL, which matches no record until a commit writes
+  // the row again. A column that the change adds is NULL in each row, which a
+  // row hash does not count, so it makes no new version.
+  // A change of type that the history cannot follow by a widening makes the
+  // change a commit too, which expires each position before it.
+  async #evolve(
+    sql: Transaction,
+    stage: string,
+    load: PostgresLoad,
+  ): Promise<void> {
+    let changedIn: number | undefined;
+    const change = async () => (changedIn ??= await load.number(sql));
     await sql.unsafe(`SET LOCAL lock_timeout = '${swapTimeout}'`);
     // Postgres keeps the primary key as a constraint apart from NOT NULL, and
     // refuses to drop NOT NULL from a column it covers.
@@ -413,8 +535,29 @@ export abstract class PostgresWriter extends Writer {
         type,
       ]),
     );
-    const kept = new Set(['loaded_at', 'committed_in']);
+    const kept = new Set(['loaded_at', 'committed_in', '_elt_row_hash']);
+    const declared = new Set(this.table.columns.map(({ name }) => name));
+    const changed = [...stored.values()]
+      .filter(
+        ({ name, type }) =>
+          !kept.has(name) && (!declared.has(name) || types.get(name) !== type),
+      )
+      .map(({ name }) => `${quote(name)} IS NOT NULL`)
+      .join(' OR ');
     await this.#view?.drop(sql);
+    if (changed !== '') {
+      const committedIn = await change();
+      await this.#history.keep(
+        sql,
+        committedIn,
+        this.qualifiedName,
+        `FROM ${this.qualifiedName} AS "_elt_old" WHERE ${changed}`,
+      );
+      await sql.unsafe(
+        `UPDATE ${this.qualifiedName} SET "committed_in" = $1, "loaded_at" = $2::text::timestamptz, ${version} = NULL WHERE ${changed}`,
+        [committedIn, load.loadedAt],
+      );
+    }
     try {
       await this.#dropRetiredChunks(sql);
       const [constraint] = storedKey;
@@ -456,8 +599,7 @@ export abstract class PostgresWriter extends Writer {
         { cause },
       );
     }
-    await this.#comments.write(sql, 'TABLE', this.schema, this.table.name);
-    await this.#view?.describe(sql, this.#comments);
+    await this.#describe(sql, change);
   }
 
   // The rows of one partition, or every row when the stream is not
@@ -502,7 +644,7 @@ export abstract class PostgresWriter extends Writer {
       await this.#refuse(sql, writer);
       await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${stage}`);
       await sql.unsafe(
-        `CREATE TEMP TABLE ${stage} (${seq} BIGINT PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,
+        `CREATE TEMP TABLE ${stage} (${seq} BIGINT PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')}, ${version} TEXT)`,
       );
       for (const store of stores) await store.stage(sql);
       const target = await storedFit(
@@ -523,7 +665,7 @@ export abstract class PostgresWriter extends Writer {
         await sql.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
       await this.#view?.refuse(sql, target === 'stale');
       if (decided === 'evolve') {
-        await this.#evolve(sql, stage);
+        await this.#evolve(sql, stage, load);
         decided = 'load';
       }
       if (decided === 'load' && !this.replaces) await this.inspect(sql);
@@ -532,12 +674,14 @@ export abstract class PostgresWriter extends Writer {
     const fresh = mode === 'create' || mode === 'reload';
     const open = () => mode === 'reload' || mode === 'continue';
     const into = () => (open() ? this.#hidden : this.qualifiedName);
-    const tables = () =>
-      open() ? [this.qualifiedName, this.#hidden] : [this.qualifiedName];
+    const tables = () => [
+      ...(open() ? [this.qualifiedName, this.#hidden] : [this.qualifiedName]),
+      this.#history.qualifiedName,
+    ];
     const { columns } = this.table;
     // One JSON parameter per batch, cast back per column: no bind-parameter
     // limit. Declared text so the driver sends it as given.
-    const insert = `INSERT INTO ${stage} (${seq}, ${op}, ${columns.map((column) => column.quotedName).join(', ')}) SELECT (row->>0)::bigint, row->>1, ${columns.map((column, index) => column.valueFrom('row', index + 2)).join(', ')} FROM json_array_elements($1::text::json) AS row`;
+    const insert = `INSERT INTO ${stage} (${seq}, ${op}, ${columns.map((column) => column.quotedName).join(', ')}, ${version}) SELECT (row->>0)::bigint, row->>1, ${columns.map((column, index) => column.valueFrom('row', index + 2)).join(', ')}, row->>${columns.length + 2} FROM json_array_elements($1::text::json) AS row`;
     // Each staged row as its JSON, and how many bytes they add up to.
     let pending: string[] = [];
     let pendingBytes = 0;
@@ -561,24 +705,28 @@ export abstract class PostgresWriter extends Writer {
     };
     // The first commit claims the target: it owns the hidden target of a
     // reload, or creates or adopts the table. Later commits find it claimed.
-    const claimTarget = async (sql: Transaction) => {
+    // Gives whether the commit replaces the rows of the target with the
+    // stage's.
+    const claimTarget = async (sql: Transaction, committedIn: number) => {
       if (open()) {
         await this.#own(sql, writer);
-        return;
+        return false;
       }
-      await this.#create(sql, writer, this.replaces);
-      if (this.replaces) await this.replace(sql);
+      await this.#create(sql, writer, this.replaces, committedIn);
+      return this.replaces;
     };
-    const claimed = async () => {};
-    let claim: (sql: Transaction) => Promise<void> = claimTarget;
+    const claimed = async () => false;
+    let claim: (sql: Transaction, committedIn: number) => Promise<boolean> =
+      claimTarget;
     return {
       fresh,
       get reloading() {
         return open();
       },
-      values: this.values(sql, () =>
-        open() ? [this.table.name, this.#hiddenName] : [this.table.name],
-      ),
+      values: this.values(sql, () => [
+        ...(open() ? [this.table.name, this.#hiddenName] : [this.table.name]),
+        this.#history.name,
+      ]),
       apply: async (operation) => {
         if (operation.type === 'RESET') {
           await flush();
@@ -594,24 +742,37 @@ export abstract class PostgresWriter extends Writer {
           resets.push(partition);
           return;
         }
+        // Each file is read here, before the source advances past it. The
+        // row keeps its id, and the row hash its content: each load gives a
+        // file a new id, so a row whose file is the same matches.
         let data = operation.type === 'RECORD' ? operation.data : undefined;
+        const contents = new Map<PostgresColumn, Uint8Array>();
         for (const store of stores) {
           const content: unknown = Reflect.get(
             Object(data),
             store.column.field,
           );
-          if (content instanceof FileContent)
-            data = {
-              ...Object(data),
-              [store.column.field]: await store.save(sql, content),
-            };
+          if (content instanceof FileContent) {
+            const { file, sha256 } = await store.save(sql, content);
+            data = { ...Object(data), [store.column.field]: file };
+            contents.set(store.column, sha256);
+          }
         }
         const row =
           operation.type === 'RECORD'
             ? this.encode(data)
             : this.deletionRow(operation.key);
+        const hashed =
+          operation.type === 'RECORD'
+            ? rowHash(
+                columns,
+                columns.map(
+                  (column, index) => contents.get(column) ?? row[index] ?? null,
+                ),
+              )
+            : null;
         const text = this.#serialize(
-          [next++, operation.type === 'RECORD' ? 'R' : 'D', ...row],
+          [next++, operation.type === 'RECORD' ? 'R' : 'D', ...row, hashed],
           data,
         );
         const bytes = Buffer.byteLength(text);
@@ -629,18 +790,25 @@ export abstract class PostgresWriter extends Writer {
             await sql.unsafe(`CREATE TABLE ${this.#tableSQL(this.#hidden)}`);
             await this.build(sql, this.#hidden);
           }
-          await claim(sql);
+          const replacing = await claim(sql, committedIn);
+          // The rows of a hidden target were never shown, so only the target
+          // keeps the rows a commit replaces.
+          const history = open() ? null : this.#history;
           for (const partition of resets) {
             const [rows, values] = this.#scope(partition);
+            await history?.keep(
+              sql,
+              committedIn,
+              into(),
+              `FROM ${into()} AS "_elt_old"${rows}`,
+              values,
+            );
             await sql.unsafe(`DELETE FROM ${into()}${rows}`, values);
           }
           for (const store of stores) await store.publish(sql);
-          await this.merge(
-            sql,
-            stage,
-            { loadedAt: load.loadedAt, committedIn },
-            into(),
-          );
+          const written = { loadedAt: load.loadedAt, committedIn };
+          if (replacing) await this.#replace(sql, stage, written);
+          else await this.merge(sql, stage, written, into(), history);
           await sql.unsafe(`TRUNCATE ${stage}`);
           for (const store of stores) await store.prune(sql, tables());
         });
@@ -654,7 +822,10 @@ export abstract class PostgresWriter extends Writer {
         await load.commit(async (sql, committedIn) => {
           await this.#swap(sql, committedIn);
           for (const store of stores)
-            await store.prune(sql, [this.qualifiedName]);
+            await store.prune(sql, [
+              this.qualifiedName,
+              this.#history.qualifiedName,
+            ]);
         });
         mode = 'load';
       },

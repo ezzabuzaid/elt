@@ -122,10 +122,11 @@ Each commit:
 - Original files wait in a chunk table that only the session sees, until the commit moves them.
 - The first commit of a stream makes its table, comments, index and reader view, and records its writer.
 - A commit merges the stage of one stream into its table. The result is the same as when the operations apply one at a time: staged `DELETE`s remove their keys, only the records after the last `DELETE` of a key count, `replace` keeps the last record, and `cursor_newer` keeps the first record with the greatest cursor. Text cursors compare by bytes (`COLLATE "C"`).
-- Each row of a run has the same `loaded_at` (`TIMESTAMPTZ`), the time on the clock of the pipeline when the load opened.
+- Each row has `loaded_at` (`TIMESTAMPTZ`), the time on the clock of the pipeline when the load that wrote its values opened. A deduplicating load or an overwrite that brings the same values again leaves the row, its `loaded_at` and its `committed_in` as they are.
+- Each row has `_elt_row_hash` (`TEXT`), the SHA-256 of its values, which the load computes as it stages the row. A null value does not count, so a column that the stream adds makes no new version. A stored file counts as the SHA-256 of its bytes, not as its UUID.
 - Each row has `committed_in` (`INTEGER`), the number of the commit that last wrote it. See [commit numbers and positions](#commit-numbers-and-positions).
-- An overwrite empties the table with `DELETE`, not `TRUNCATE`, at the commit of its stream. The exclusive lock of `TRUNCATE` would block readers until the commit ends. Until then, readers see the earlier load. A [reset](../../elt/README.md#resets) deletes its scope in the same way. See [ADR 0004](./docs/adr/0004-an-overwrite-deletes-rows-and-does-not-truncate.md).
-- Deduplication upserts on a unique index that is named after the table and the key (`_elt_dedup_<hash>`). Postgres makes the index one time, and makes it again only when the key changes. A load that replaces the rows makes the index after it empties the table.
+- An overwrite replaces the rows of the table by difference, with `DELETE`, not `TRUNCATE`, at the commit of its stream: each stored row that no staged record matches by `_elt_row_hash` goes, each record that no row matches enters, and each row that matches stays as it is. Two identical rows match as a multiset, so a keyless overwrite that sends one of them again removes only the other. The exclusive lock of `TRUNCATE` would block readers until the commit ends. Until then, readers see the earlier load. A [reset](../../elt/README.md#resets) deletes its scope in the same way. See [ADR 0004](./docs/adr/0004-an-overwrite-deletes-rows-and-does-not-truncate.md).
+- Deduplication upserts on a unique index that is named after the table and the key (`_elt_dedup_<hash>`). Postgres makes the index one time, and makes it again only when the key changes. A load that replaces the rows makes the index after it removes the rows that leave.
 - The writer of each table is in `<schema>._elt_writers`, by the [target ownership](../../elt/README.md#target-ownership) rule.
 
 Shape changes:
@@ -144,14 +145,33 @@ Each commit has a number. One numbering orders the commits of every schema of th
 - `_warehouse._elt_loads` has one row for each load: its `connector` (the name of the connection), its `opened_at`, and its `closed_at`, which is null while the load is open. A load opens when a pass starts to load, and closes when the pass ends. When a load opens, it closes each load of the same connector that is still open: the process of that pass ended first, for example because it was killed. A closed load cannot commit: a commit locks the row of its load (`FOR SHARE`), so a close at the same time waits for the commit, or makes it fail.
 - A clear that empties a table is a load of one commit, in the same transaction. It does not close the open loads of its connector.
 - A commit into a [hidden table](./CONTEXT.md) shows nothing to readers. When the stream ends, one more commit gives the rows to the table with its number, and readers see them from that commit on.
-- `_warehouse._elt_epoch` keeps the epoch, an id that names the numbering. A new database, or a database whose `_warehouse` was dropped, starts a new epoch.
-- `await destination.positions(after?)` gives the positions of the database after the position `after`, in ascending order, or all positions. A position is `<epoch>:<number>`. It names the last commit of a closed load, when no other load has commits before and after it, so a reader there sees no part of a pass in any schema. When `after` is of a different epoch, or is after the newest settled commit, it gives `{ expired }` with the reason. A string that is not a position throws a `TypeError`. A database with no numbering has no positions.
+- A change of shape that casts a column or drops one with values is a commit of the load too. The history keeps each row that it changes, as it was, and the row hash of the row becomes null, so the next record of the row writes it again. A change of type that the history cannot follow by a [widening](./CONTEXT.md) is a commit of the load too, even when it changes no row.
+- `_warehouse._elt_epoch` keeps the epoch, an id that names the numbering, and `min_valid`, the oldest commit that a reading can read as of. A new database, or a database whose `_warehouse` was dropped, starts a new epoch, with `min_valid` 0.
+- `await destination.positions(after?)` gives the positions of the database after the position `after`, in ascending order, or all positions. A position is `<epoch>:<number>`. It names the last commit of a closed load, when no other load has commits before and after it, so a reader there sees no part of a pass in any schema. The list starts at `min_valid`. When `after` is of a different epoch, is after the newest settled commit, or is before `min_valid`, it gives `{ expired }` with the reason. A string that is not a position throws a `TypeError`. A database with no numbering has no positions.
 
 How a reader knows which numbers are done:
 
 - Commits run side by side, so a number can still be in flight while a higher one has committed. Each commit holds a transaction lock on its number (`pg_advisory_xact_lock`) until it ends. The newest settled commit is the highest number below the first number whose lock is still held. Numbers of commits that rolled back are gaps that the reader skips. This is the high-water mark of event stores, and no commit waits for another.
 - Postgres releases the locks of a transaction after its commit is visible to new snapshots. Thus the reader finds the high-water mark first, and then reads `_elt_commits` and `_elt_loads` in a `REPEATABLE READ` snapshot. `pg_locks` is not part of a snapshot, so the other order could show a commit at or below the mark that the snapshot does not see.
 - A commit takes its number and then its lock, in two steps. A reader that looked between them would pass the number. Thus each commit holds a shared lock (`pg_advisory_lock_shared`) across the two steps, and a reader holds the same lock alone while it reads the last number taken and the locks held. This is a readers–writer lock with the commits as the many readers.
+
+The history of a table:
+
+- `<schema>._elt_history_<hash>` keeps each row that a commit replaced or removed, with `replaced_in`, the number of that commit, as a SQL Server temporal table keeps its history beside the current table. The writes that keep rows are a deduplicating upsert that changes the values (behind the same cursor guard), a staged `DELETE`, a reset of a partition, an overwrite, a reload, a change of shape, and `clear()`. A write into a hidden table keeps nothing, because no reader saw its rows.
+- Each column of the history has the type of the table's column of the same name. It takes each new column of the table. A column that the table drops stays in the history with its last type.
+- When a change of shape, or the swap of a reload, gives a column of the table another type, the history changes the type of its column in the same commit. This includes a column that the table dropped and a later change adds back with another type. Delta Lake, Iceberg, BigQuery and Snowflake change a type in place only when the change is a widening, and they read the past with its own schema, which one Postgres view cannot do. The destination follows the same rule:
+  - A widening maps each old value to one new value exactly, with no loss: any type to `text`, `bigint` to `numeric`, `date` to `timestamp without time zone`, and an array whose item widens. The history casts its column with the same cast (`USING column::type`), and each position stays readable.
+  - Any other change, such as `text` to `bigint`, or `double precision` to `bigint`, acts as a rewrite. `bigint` to `double precision` is not a widening, because above 2^53 it loses digits. The commit E of the change sets `min_valid` to E, if it is higher. The history of the table deletes each row with `replaced_in <= E`, which only positions before E read, together with the stored chunks that only those rows refer to, and then casts its column. A reading or `positions(after)` before E gives `{ expired }`, with the reason that a commit changed the type of a column. Each position from E on reads exactly. The history of other tables keeps its rows with `replaced_in <= E` until a retention deletes them.
+- A file that a row of the history refers to stays while the row stays: its chunks, or its file in a file storage (`.store(files)`).
+- No retention applies yet: the history deletes rows only for a change of type that is not a widening.
+
+A reading as of a position:
+
+- Each [reader view](#reader-views) reads its table as of the position that its transaction sets in `elt.position`: the rows of the table with `committed_in <= P`, and the rows of the history with `committed_in <= P < replaced_in`. A session that sets nothing reads the table as it is now, and no row of the history. A view built on a reader view, such as a documented view in `marts` or a view of the host in another schema, refers to it by OID and reads as of the same position. A read makes no object.
+- `await destination.reading(position?)` opens its own session and gives `{ sql, position, at }`, or `{ expired }`. Dispose it with `await using` to end the session. It takes the high-water mark, then begins `REPEATABLE READ READ ONLY`, so no commit after it opens shows. With no position, it reads the newest position. Below the newest commit that its snapshot sees, it sets `elt.position` for its transaction. `at` is when the commit of the position was made.
+- A position of a different epoch, past the newest settled commit, or before `min_valid`, gives `{ expired }`. A number that is not a position, such as a commit inside a pass, and a string that is not a position, throw a `TypeError`.
+- The [sync history](#sync-history) keeps no row versions. A reading below the newest commit fails each of its views in `marts`, with the message that it cannot be read as of a position. The tables in `_warehouse` read as they are now.
+- A table with no reader view reads as it is now. Read through the reader view.
 
 ## Checkpoints
 
@@ -173,6 +193,7 @@ How a reader knows which numbers are done:
 - A load never replaces a view that exists, because a replace of a view that readers can see would lock them out. It only writes the comments again, which does not block readers.
 - A relation with the name of the view that is not a view of the table, or that has different columns, is refused before the load reads. The error names it.
 - A table that evolves or reloads gets its view again, as [above](#locks-and-commits).
+- The view reads its table and the [history](#commit-numbers-and-positions) of the table as of a position. Each column of the history has the type that the column of the table has now, so the view reads it with no cast.
 
 ## Documented views
 
@@ -269,7 +290,10 @@ src/
   postgres-destination.ts         PostgresDestination: tables and the load
   postgres-writer.ts              the stage, the commit, evolve and reload of a table
   postgres-column.ts              the type of each column
-  postgres-reader-view.ts         the reader view of a table
+  postgres-reader-view.ts         the reader view of a table, as of a position
+  postgres-history.ts             the history of a table, and the row hash
+  postgres-numbering.ts           commit numbers, loads and positions
+  postgres-as-of.ts               a reading of the database as of a position
   postgres-views.ts               publishPostgresViews
   postgres-checkpoint-store.ts    PostgresCheckpointStore
   postgres-sync-history.ts        PostgresSyncHistory and the catalog

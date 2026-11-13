@@ -60,9 +60,15 @@ const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
 };
 
 // How readers see the sync history: what each pass declared and loaded.
+// The sync history keeps no row versions, so a reading as of a position
+// fails each of its views: the scalar subquery is a one-time filter, which
+// Postgres evaluates before it reads a row.
 export const syncHistoryViews: readonly PostgresView[] = Object.values(
   syncHistoryRelations,
-).map((relation) => ({ ...relation, query: queries[relation.name] }));
+).map((relation) => ({
+  ...relation,
+  query: `SELECT * FROM (${queries[relation.name]}) AS "history" WHERE (SELECT _warehouse._elt_unversioned())`,
+}));
 
 export const syncHistoryTables = [
   'CREATE SCHEMA IF NOT EXISTS _warehouse',
@@ -77,6 +83,13 @@ export const syncHistoryTables = [
     CHECK ((status = 'running') = (completed_at IS NULL)),
     CHECK ((status IN ('partial', 'failed')) = (failure_type IS NOT NULL))
   )`,
+  `CREATE OR REPLACE FUNCTION _warehouse._elt_unversioned() RETURNS boolean LANGUAGE plpgsql STABLE AS $$
+  BEGIN
+    IF coalesce(current_setting('elt.position', true), '') <> '' THEN
+      RAISE EXCEPTION 'The sync history cannot be read as of a position: it keeps no row versions';
+    END IF;
+    RETURN true;
+  END $$`,
   'CREATE INDEX IF NOT EXISTS sync_attempts_connector ON _warehouse.sync_attempts (connector, id DESC)',
   `CREATE TABLE IF NOT EXISTS _warehouse.extraction_coverage (
     attempt_id bigint NOT NULL REFERENCES _warehouse.sync_attempts(id),

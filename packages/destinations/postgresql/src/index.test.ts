@@ -298,7 +298,7 @@ test('two loads into one schema commit side by side across their commits, and re
   );
 });
 
-test('Postgres stores per-field attachment references and reconciles only the files its committed rows retain', async () => {
+test('Postgres stores per-field attachment references and reconciles only the files that its committed rows and the rows of their history retain', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-local-pg-');
 
   await using database = await databases.database();
@@ -429,21 +429,29 @@ test('Postgres stores per-field attachment references and reconciles only the fi
       await readFile(join(directories[i], replacement[`ref${i}`]), 'utf8'),
       'replacement',
     );
-    await assert.rejects(readFile(join(directories[i], first[`ref${i}`])), {
-      code: 'ENOENT',
-    });
-    assert.equal((await storedFiles(directories[i])).length, 1);
+    // The history keeps each version that a later commit replaced or
+    // removed, and so its file.
+    assert.equal(
+      await readFile(join(directories[i], first[`ref${i}`]), 'utf8'),
+      'original',
+    );
+    assert.equal((await storedFiles(directories[i])).length, 2);
   }
   source.messages = [{ type: 'DELETE', stream: 'docs', key: { id: 'a' } }];
   await pipeline.run();
-  for (const directory of directories)
-    assert.equal((await storedFiles(directory)).length, 0);
+  for (const i of [0, 1] as const) {
+    assert.equal(
+      await readFile(join(directories[i], replacement[`ref${i}`]), 'utf8'),
+      'replacement',
+    );
+    assert.equal((await storedFiles(directories[i])).length, 2);
+  }
   source.messages = [fileRecord(4)];
   await pipeline.run();
   await pipeline.clear();
   assert.equal((await loaded()).length, 0);
   for (const directory of directories)
-    assert.equal((await storedFiles(directory)).length, 0);
+    assert.equal((await storedFiles(directory)).length, 2);
 });
 
 test('renamed file columns keep their original bytes and stored files through later commits', async () => {
@@ -863,10 +871,15 @@ test('file text and bounded original bytes survive replay, replacement and delet
     [PostgresFileStore.chunkSize, 3],
   );
   assert.deepEqual(Buffer.concat(chunks.map((chunk) => chunk.bytes)), bytes);
+  // Chunks that no row of the table or of its history refers to.
+  const [history] = await sql<{ name: string }[]>`
+    SELECT relname AS name FROM pg_class
+    WHERE relnamespace = 'apple_notes'::regnamespace AND relkind = 'r' AND relname LIKE '\\_elt\\_history\\_%'`;
+  assert.ok(history);
   const orphanCount = async () =>
     (
       await sql.unsafe(
-        `SELECT count(*)::int AS n FROM ${store.qualifiedName} chunks WHERE NOT EXISTS (SELECT 1 FROM apple_notes.attachments a WHERE a.bytes = chunks.file)`,
+        `SELECT count(*)::int AS n FROM ${store.qualifiedName} chunks WHERE NOT EXISTS (SELECT 1 FROM apple_notes.attachments a WHERE a.bytes = chunks.file) AND NOT EXISTS (SELECT 1 FROM apple_notes."${history.name}" h WHERE h.bytes = chunks.file)`,
       )
     )[0]?.n;
   assert.equal(await orphanCount(), 0);
@@ -897,11 +910,13 @@ test('file text and bounded original bytes survive replay, replacement and delet
     'updated',
   );
   assert.equal(await orphanCount(), 0);
+  // The history keeps the first version of note and the deleted empty, and
+  // so their chunks beside the one of the updated note.
   assert.equal(
     (
       await sql.unsafe(`SELECT count(*)::int AS n FROM ${store.qualifiedName}`)
     )[0]?.n,
-    1,
+    4,
   );
 
   // A failed record discards files already staged by this uncommitted batch.
@@ -919,11 +934,18 @@ test('file text and bounded original bytes survive replay, replacement and delet
   assert.equal(await orphanCount(), 0);
 
   await pipeline.clear();
+  // The clear empties the table, and its history keeps each row it cleared,
+  // and so every chunk.
+  assert.equal(
+    (await sql`SELECT count(*)::int AS n FROM apple_notes.attachments`)[0]?.n,
+    0,
+  );
+  assert.equal(await orphanCount(), 0);
   assert.equal(
     (
       await sql.unsafe(`SELECT count(*)::int AS n FROM ${store.qualifiedName}`)
     )[0]?.n,
-    0,
+    4,
   );
   assert.equal(
     (await sql`SELECT count(*)::int AS n FROM apple_notes._elt_checkpoints`)[0]
@@ -1021,6 +1043,7 @@ test('a copy creates its schema and a table typed from the stream schema', async
         is_nullable: 'NO',
       },
       { column_name: 'committed_in', data_type: 'integer', is_nullable: 'NO' },
+      { column_name: '_elt_row_hash', data_type: 'text', is_nullable: 'YES' },
     ],
   );
   assert.deepEqual(
@@ -1624,8 +1647,8 @@ test('a stored column that is NOT NULL where the stream allows null is relaxed i
   // A table typed by hand, which no operation makes, stands in for one an
   // earlier stream shape left, when note could not be null.
   await sql`CREATE SCHEMA raw`;
-  await sql`CREATE TABLE raw.items (id text, note text NOT NULL, loaded_at timestamptz NOT NULL, committed_in integer NOT NULL)`;
-  await sql`INSERT INTO raw.items VALUES ('a', 'kept', now(), 0)`;
+  await sql`CREATE TABLE raw.items (id text, note text NOT NULL, loaded_at timestamptz NOT NULL, committed_in integer NOT NULL, _elt_row_hash text)`;
+  await sql`INSERT INTO raw.items (id, note, loaded_at, committed_in) VALUES ('a', 'kept', now(), 0)`;
   const oid = async () =>
     (await sql`SELECT 'raw.items'::regclass::oid AS oid`)[0]?.oid;
   const stored = await oid();
@@ -2844,7 +2867,10 @@ test('every field name is sanitized as Airbyte does, around the names Postgres k
     ),
   );
   assert.match(String(view.at(-2)?.description), /^Start time of the load/);
-  assert.deepEqual(await described('raw.odd'), view);
+  assert.deepEqual(await described('raw.odd'), [
+    ...view,
+    { name: '_elt_row_hash', description: null },
+  ]);
   const [row] = await sql.unsafe(
     `SELECT ${names.map(([, column]) => `"${column}"`).join(', ')} FROM marts.odd`,
   );
@@ -4665,7 +4691,10 @@ test('a reader view shows exactly the loaded columns and their descriptions, fol
     viewColumns.map(({ name }) => name),
     ['id', 'title', 'ref', 'loaded_at', 'committed_in'],
   );
-  assert.deepEqual(viewColumns, await descriptions('raw.raw_notes'));
+  assert.deepEqual(await descriptions('raw.raw_notes'), [
+    ...viewColumns,
+    { name: '_elt_row_hash', description: null },
+  ]);
   assert.equal(
     viewColumns[2]?.description,
     `${files.reference} NULL when the source file is unavailable.`,
@@ -4950,6 +4979,7 @@ test('string formats load exactly: microsecond times typed, finer ones as text t
       'bytes bytea  ',
       'ids ARRAY  ',
       'committed_in integer 32 0',
+      '_elt_row_hash text  ',
     ],
   );
   assert.deepEqual(
@@ -5476,7 +5506,7 @@ test('a stream whose shape changes is evolved in place under its reader view, ke
     (
       await sql`SELECT attname FROM pg_attribute WHERE attrelid = 'raw.items'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum`
     ).map(({ attname }) => attname),
-    ['id', 'name', 'loaded_at', 'committed_in'],
+    ['id', 'name', 'loaded_at', 'committed_in', '_elt_row_hash'],
   );
   await pipeline({ id, name, size }, []).clear();
   await run({ id, name, size }, [{ id: '4', name: 'four', size: 4 }]);

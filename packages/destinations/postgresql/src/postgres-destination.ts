@@ -7,6 +7,7 @@ import {
 
 import { quote } from './identifier.ts';
 import { PostgresAppendWriter } from './postgres-append-writer.ts';
+import { type PostgresReading, readAsOf } from './postgres-as-of.ts';
 import type { PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
 import { PostgresDeduplicatingWriter } from './postgres-deduplicating-writer.ts';
@@ -67,6 +68,15 @@ export class PostgresDestination extends Destination<PostgresTable> {
   ): Promise<readonly string[] | { readonly expired: string }> {
     await using session = new PostgresSession(this.#url, 'elt-positions');
     return await positionsAfter(session.sql, after);
+  }
+
+  // The database as of a position, or as of its newest one, read through the
+  // reader views: { expired } for a position of another epoch or past the
+  // newest commit, and a TypeError for one inside a pass or not a position.
+  reading(
+    position?: string,
+  ): Promise<PostgresReading | { readonly expired: string }> {
+    return readAsOf(this.#url, position);
   }
 
   table(

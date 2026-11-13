@@ -1,4 +1,4 @@
-import { hash, randomUUID } from 'node:crypto';
+import { createHash, hash, randomUUID } from 'node:crypto';
 
 import type postgres from 'postgres';
 
@@ -56,18 +56,26 @@ export class PostgresFileStore {
     await sql.unsafe(`CREATE TEMP TABLE ${this.#staged} ${chunks}`);
   }
 
-  async save(sql: postgres.Sql, content: FileContent): Promise<string> {
+  // Stages the file's bytes under a new id, and gives the id and the SHA-256
+  // of the bytes, which the row hash counts in place of the id.
+  async save(
+    sql: postgres.Sql,
+    content: FileContent,
+  ): Promise<{ readonly file: string; readonly sha256: Uint8Array }> {
     const file = randomUUID();
+    const sha256 = createHash('sha256');
     let n = 0;
     const insert = (bytes: Uint8Array) =>
       sql.unsafe(
         `INSERT INTO pg_temp.${this.#staged} ("file", "n", "bytes") VALUES ($1, $2, $3)`,
         [file, n++, Buffer.from(bytes)],
       );
-    for await (const chunk of content.chunks(PostgresFileStore.chunkSize))
+    for await (const chunk of content.chunks(PostgresFileStore.chunkSize)) {
+      sha256.update(chunk);
       await insert(chunk);
+    }
     if (n === 0) await insert(new Uint8Array());
-    return file;
+    return { file, sha256: sha256.digest() };
   }
 
   // Moves the staged chunks into the store, inside a commit.
@@ -90,11 +98,17 @@ export class PostgresFileStore {
   }
 
   // Called inside each commit, after the merge: chunks no row of the tables
-  // refers to, such as a deduplication loser's, go. The tables are the target
-  // and, while a reload is open, its hidden target. This store belongs to
-  // just one target column and one writer.
+  // refers to, such as a deduplication loser's, go. The tables are the target,
+  // its history, whose rows keep their files for a reading as of a position
+  // before the commit that replaced them, and, while a reload is open, its
+  // hidden target. A table can type the column otherwise, such as a target
+  // whose reload makes it a file column, so ids compare as text. This store
+  // belongs to just one target column and one writer.
   // ponytail: scans this column's chunks; use targeted cleanup if checkpoint cost grows.
-  async prune(sql: postgres.Sql, tables: readonly string[]): Promise<void> {
+  async prune(
+    sql: Pick<postgres.Sql, 'unsafe'>,
+    tables: readonly string[],
+  ): Promise<void> {
     const referring: string[] = [];
     for (const table of tables) {
       const [column] = await sql.unsafe(
@@ -108,7 +122,7 @@ export class PostgresFileStore {
         referring
           .map(
             (table) =>
-              `NOT EXISTS (SELECT 1 FROM ${table} AS kept WHERE kept.${this.column.quotedName} = chunks."file")`,
+              `NOT EXISTS (SELECT 1 FROM ${table} AS kept WHERE kept.${this.column.quotedName}::text = chunks."file"::text)`,
           )
           .join(' AND ') || 'true'
       }`,

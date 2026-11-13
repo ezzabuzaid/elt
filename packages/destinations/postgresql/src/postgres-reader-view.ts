@@ -3,25 +3,33 @@ import type { TargetComments } from './postgres-comments.ts';
 import type { Transaction } from './postgres-load.ts';
 import type { PostgresReaderView } from './postgres-table.ts';
 
-// The view readers see a target through: exactly the target's columns and
-// loaded_at, created with the target and described by the same comments.
+// The position a reader reads at: the one a reading set for its
+// transaction, or, for a session that set none, past every commit, so the
+// view shows the target as it is now and no row of its history.
+const position = `coalesce(nullif(current_setting('elt.position', true), '')::integer, 2147483647)`;
+
+// The view readers see a target through: exactly the target's columns,
+// loaded_at and committed_in, created with the target and described by the
+// same comments. It reads the target as of the position its reader set: the
+// rows that the target had then, and that it still has or its history kept.
 export class TargetReaderView {
   readonly #view: PostgresReaderView;
-  // The target's qualified name, and its columns as the view lists them.
+  // The target's and its history's qualified names, and the columns the
+  // view lists.
   readonly #target: string;
+  readonly #history: string;
   readonly #columns: readonly string[];
-  readonly #fields: readonly string[];
 
   constructor(
     view: PostgresReaderView,
     target: string,
+    history: string,
     columns: readonly string[],
-    fields: readonly string[],
   ) {
     this.#view = view;
     this.#target = target;
+    this.#history = history;
     this.#columns = columns;
-    this.#fields = fields;
     Object.freeze(this);
   }
 
@@ -66,10 +74,12 @@ export class TargetReaderView {
       'SELECT to_regclass($1) IS NOT NULL AS "exists"',
       [view],
     );
-    if (existing?.exists !== true)
+    if (existing?.exists !== true) {
+      const columns = this.#columns.map(quote);
       await sql.unsafe(
-        `CREATE VIEW ${view} AS SELECT ${this.#fields.join(', ')} FROM ${this.#target}`,
+        `CREATE VIEW ${view} AS SELECT ${columns.join(', ')} FROM ${this.#target} WHERE "committed_in" <= ${position} UNION ALL SELECT ${columns.join(', ')} FROM ${this.#history} AS "_elt_old" WHERE "_elt_old"."committed_in" <= ${position} AND "_elt_old"."replaced_in" > ${position}`,
       );
+    }
     await comments.write(sql, 'VIEW', this.#view.schema, this.#view.name);
   }
 

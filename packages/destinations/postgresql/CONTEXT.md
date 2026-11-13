@@ -38,7 +38,7 @@ _Avoid_: Timeout (a statement timeout is a setting of a role)
 
 **Numbering**:
 The commit numbers of a database, in `_warehouse`: one sequence, `_elt_commits`, `_elt_loads` and `_elt_epoch`. Every `PostgresDestination` of the database shares it.
-_Avoid_: Version (a row keeps no version yet), log
+_Avoid_: Version (a version is a row of a table or of its history), log
 
 **Epoch**:
 The id that names the numbering of a database. A new database, or one whose `_warehouse` was dropped, has a new epoch, and its numbers start again.
@@ -51,3 +51,23 @@ _Avoid_: Offset, cursor (eca keeps a cursor), checkpoint
 **High-water mark**:
 The highest commit number below the first number that a commit still holds. Each number at or below it is a commit that a new snapshot sees, or one that rolled back.
 _Avoid_: Newest commit (a commit with a higher number can have ended first), watermark
+
+**Row hash**:
+`_elt_row_hash`: the SHA-256 of the values of a row, computed when the row is staged. A stored file counts as the SHA-256 of its bytes. A commit that finds the stored row with the same hash leaves it as it is.
+_Avoid_: Checksum, version number
+
+**History**:
+The table `_elt_history_<hash>` beside a raw table, which keeps each row that a commit replaced or removed, with `replaced_in`.
+_Avoid_: Audit log, sync history (the sync history records passes, not rows)
+
+**Widening**:
+A change of the type of a column that maps each old value to one value of the new type exactly, with no loss, such as `bigint` to `numeric`, or any type to `text`. The history casts its column for a widening, and each position stays readable.
+_Avoid_: Promotion, relaxation (the names that Iceberg and BigQuery use), compatible change
+
+**Min valid**:
+`min_valid` in `_warehouse._elt_epoch`: the oldest commit that a reading can read as of. A change of type that is not a widening sets it to its own commit, and each position before it is expired.
+_Avoid_: Retention (a retention window is one cause of an expired position), low-water mark
+
+**Reading**:
+A read-only transaction, of its own session, that sees the database as of one position: each reader view reads `elt.position`.
+_Avoid_: Snapshot (a reading has one, but a snapshot alone shows commits inside a pass), time travel

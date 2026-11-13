@@ -5,6 +5,7 @@ import type { CopyConfiguration, Deduplication, KeyValue } from '@eltjs/elt';
 import { quote } from './identifier.ts';
 import type { EncodedValue, PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
+import { type TargetHistory, version } from './postgres-history.ts';
 import type { Transaction } from './postgres-load.ts';
 import type { PostgresTable } from './postgres-table.ts';
 import { PostgresWriter, type Written, op, seq } from './postgres-writer.ts';
@@ -68,8 +69,8 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     replacing: boolean,
   ): Promise<void> {
     await transaction.unsafe(this.createTableSQL);
-    // A replacing load keeps none of these rows: its index is built once the
-    // commit has emptied the table.
+    // A replacing load keeps only the rows its records match: its index is
+    // built once the rows that leave are gone, since they may repeat a key.
     if (replacing) await this.dropOtherIndexes(transaction);
     else await this.index(transaction);
   }
@@ -84,11 +85,6 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
       throw new TypeError(
         'Existing deduplication keys and cursors must be non-null',
       );
-  }
-
-  protected override async replace(transaction: Transaction): Promise<void> {
-    await super.replace(transaction);
-    await this.index(transaction);
   }
 
   private async dropOtherIndexes(transaction: Transaction): Promise<void> {
@@ -127,36 +123,76 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     );
   }
 
-  // The result of applying the staged operations one at a time: a staged
-  // DELETE removes its key, and only records after a key's last DELETE count.
-  // replace keeps the newest extraction, so a restated fact overwrites the
-  // loaded one; cursor_newer keeps the greatest cursor (the first on ties) and
-  // the guard that rejects out-of-order replay. Text cursors compare by bytes,
-  // as SQLite's BINARY does.
+  get #guarded(): PostgresColumn | undefined {
+    return this.configuration.dedupPolicy === 'replace'
+      ? undefined
+      : this.cursor;
+  }
+
+  // A text cursor compares by bytes, as SQLite's BINARY does.
+  get #collate(): string {
+    return this.cursor?.dataType === 'text' ? ' COLLATE "C"' : '';
+  }
+
+  #same(left: string, right: string): string {
+    return this.keys
+      .map(({ quotedName }) => `${left}.${quotedName} = ${right}.${quotedName}`)
+      .join(' AND ');
+  }
+
+  // The staged records that the result of applying the operations one at a
+  // time keeps, as a SELECT of their seq: a staged DELETE removes its key,
+  // and only records after a key's last DELETE count. replace keeps the
+  // newest extraction, so a restated fact overwrites the loaded one;
+  // cursor_newer keeps the greatest cursor, the first on ties.
+  #accepted(stage: string): string {
+    const keys = this.keys.map((column) => column.quotedName);
+    const guard = this.#guarded;
+    const order =
+      guard === undefined
+        ? `"staged".${seq} DESC`
+        : `"staged".${guard.quotedName}${this.#collate} DESC, "staged".${seq}`;
+    return `SELECT "ranked".${seq} FROM (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN (SELECT ${keys.join(', ')}, max(${seq}) AS "_elt_last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}) AS "deleted" ON ${this.#same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."_elt_last" IS NULL OR "staged".${seq} > "deleted"."_elt_last")) AS "ranked" WHERE "ranked"."_elt_rank" = 1`;
+  }
+
+  protected override kept(stage: string): string {
+    return `${seq} IN (${this.#accepted(stage)})`;
+  }
+
+  // Whether a staged record replaces the stored row: its values differ, and
+  // the cursor guard, if any, lets it in, which rejects out-of-order replay.
+  #replaces(record: string, row: string): string {
+    const guard = this.#guarded;
+    return `${record}.${version} IS DISTINCT FROM ${row}.${version}${guard === undefined ? '' : ` AND ${record}.${guard.quotedName}${this.#collate} > ${row}.${guard.quotedName}${this.#collate}`}`;
+  }
+
+  // Applies the staged operations as if one at a time. The history keeps
+  // each row that a DELETE removes or an accepted record replaces; a record
+  // with the stored row's values leaves the row, its commit and its
+  // loaded_at as they are.
   protected override async merge(
     sql: Transaction,
     stage: string,
     written: Written,
-    into = this.qualifiedName,
+    into: string,
+    history: TargetHistory | null,
   ): Promise<void> {
     const keys = this.keys.map((column) => column.quotedName);
-    const same = (left: string, right: string) =>
-      keys.map((key) => `${left}.${key} = ${right}.${key}`).join(' AND ');
+    const deleted = `FROM ${into} AS "_elt_old" WHERE (${keys.map((key) => `"_elt_old".${key}`).join(', ')}) IN (SELECT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D')`;
+    await history?.keep(sql, written.committedIn, into, deleted);
     await sql.unsafe(
-      `DELETE FROM ${into} AS "_elt_target" USING (SELECT DISTINCT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D') AS "deleted" WHERE ${same('"_elt_target"', '"deleted"')}`,
+      `DELETE FROM ${into} AS "_elt_target" USING (SELECT DISTINCT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D') AS "deleted" WHERE ${this.#same('"_elt_target"', '"deleted"')}`,
     );
-    const { cursor } = this;
-    const guarded =
-      this.configuration.dedupPolicy !== 'replace' && cursor !== undefined;
-    const collate = cursor?.dataType === 'text' ? ' COLLATE "C"' : '';
-    const order = guarded
-      ? `"staged".${cursor.quotedName}${collate} DESC, "staged".${seq}`
-      : `"staged".${seq} DESC`;
-    const columns = this.table.columns.map((column) => column.quotedName);
+    const accepted = this.#accepted(stage);
+    await history?.keep(
+      sql,
+      written.committedIn,
+      into,
+      `FROM ${stage} AS "_elt_new" JOIN ${into} AS "_elt_old" ON ${this.#same('"_elt_new"', '"_elt_old"')} WHERE "_elt_new".${seq} IN (${accepted}) AND ${this.#replaces('"_elt_new"', '"_elt_old"')}`,
+    );
     await sql.unsafe(
-      `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "_elt_last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".*, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."_elt_last" IS NULL OR "staged".${seq} > "deleted"."_elt_last")) ` +
-        `INSERT INTO ${into} AS "_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, $1::text::timestamptz, $2::integer FROM "ranked" WHERE "_elt_rank" = 1 ORDER BY ${seq} ` +
-        `ON CONFLICT (${keys.join(', ')}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guarded ? ` WHERE excluded.${cursor.quotedName}${collate} > "_elt_target".${cursor.quotedName}${collate}` : ''}`,
+      `INSERT INTO ${into} AS "_elt_target" (${this.written.join(', ')}) SELECT ${this.staged} FROM ${stage} WHERE ${seq} IN (${accepted}) ORDER BY ${seq} ` +
+        `ON CONFLICT (${keys.join(', ')}) DO UPDATE SET ${this.written.map((field) => `${field} = excluded.${field}`).join(', ')} WHERE ${this.#replaces('excluded', '"_elt_target"')}`,
       [written.loadedAt, written.committedIn],
     );
   }

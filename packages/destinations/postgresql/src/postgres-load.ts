@@ -57,7 +57,8 @@ export class PostgresLoad implements AsyncDisposable {
     }
   }
 
-  // What work does becomes durable and visible together, or not at all.
+  // What work does becomes durable and visible together, or not at all. A
+  // failure lets go of the gate a commit number holds while it is taken.
   async transaction<T>(work: (sql: Transaction) => Promise<T>): Promise<T> {
     await this.sql.unsafe('BEGIN');
     try {
@@ -66,29 +67,26 @@ export class PostgresLoad implements AsyncDisposable {
       return result;
     } catch (error) {
       await this.sql.unsafe('ROLLBACK');
+      await releaseGate(this.sql);
       throw error;
     }
   }
 
+  // Makes the transaction it runs in a commit of this load, and gives its
+  // number.
+  number(sql: Transaction): Promise<number> {
+    return commitNumber(
+      sql,
+      { load: this.#id, connector: this.#connector },
+      new Date(this.#clock.Date.now()),
+    );
+  }
+
   // A transaction that is a commit of this load, with its number.
-  async commit<T>(
+  commit<T>(
     work: (sql: Transaction, committedIn: number) => Promise<T>,
   ): Promise<T> {
-    try {
-      return await this.transaction(async (sql) =>
-        work(
-          sql,
-          await commitNumber(
-            sql,
-            { load: this.#id, connector: this.#connector },
-            new Date(this.#clock.Date.now()),
-          ),
-        ),
-      );
-    } catch (error) {
-      await releaseGate(this.sql);
-      throw error;
-    }
+    return this.transaction(async (sql) => work(sql, await this.number(sql)));
   }
 
   async [Symbol.asyncDispose](): Promise<void> {

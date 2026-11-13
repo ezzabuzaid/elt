@@ -5,7 +5,10 @@ import type { PostgresTable } from './postgres-table.ts';
 
 // The columns a relation stores, with each one's type as Postgres spells it
 // and whether it is NOT NULL.
-export function storedColumns(sql: Transaction, relation: string) {
+export function storedColumns(
+  sql: Pick<Transaction, 'unsafe'>,
+  relation: string,
+) {
   return sql.unsafe<{ name: string; type: string; required: boolean }[]>(
     'SELECT attname AS name, format_type(atttypid, atttypmod) AS type, attnotnull AS required FROM pg_attribute WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped',
     [relation],
@@ -36,6 +39,7 @@ export async function storedFit(
     ),
     'loaded_at timestamp with time zone true',
     'committed_in integer true',
+    '_elt_row_hash text false',
   ];
   const has = stored.map(
     ({ name, type, required }) => `${name} ${type} ${required}`,
