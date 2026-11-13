@@ -1010,12 +1010,15 @@ function rows(path: string, sql: string) {
     .map((row) => ({ ...row }));
 }
 
-// A stream's rows as a consumer reads them: every column but the time the
-// destination loaded the row.
+// A stream's rows as a consumer reads them: every column but the three that
+// the destination adds to each row (when it loaded the row, in which commit,
+// and the hash of the row's values).
+const added = new Set(['loaded_at', 'committed_in', '_elt_row_hash']);
+
 function table(path: string, name: string, order: string) {
   const columns = rows(path, `SELECT name FROM pragma_table_info('${name}')`)
     .map((column) => String(column.name))
-    .filter((column) => column !== 'loaded_at');
+    .filter((column) => !added.has(column));
   return rows(
     path,
     `SELECT ${columns.map((column) => `"${column}"`).join(', ')} FROM "${name}" ORDER BY ${order}`,
@@ -2438,6 +2441,91 @@ test('a file the app lists several times in one message loads as one file of tha
   assert.deepEqual(rows(out, 'SELECT messageId, fileId FROM messageFiles'), [
     { messageId: ids.hello, fileId: 'file-1' },
   ]);
+});
+
+test('a mention whose number the app wrote as its digits loads at that number, and takes no stream down', async () => {
+  const { dir, app, out } = await scratch();
+  await using _ = dir;
+  // A live store held the number of one mention as 0 and of another as "0".
+  // Each number here is not the mention's place in the list, so a reader that
+  // falls back to that place gives the other mention's number.
+  const asDigits = (c: Chain): Chain =>
+    chain(
+      Object.values(c.messageMap).map((m) => {
+        if (m.id !== ids.hello) return m;
+        const [mention]: Record<string, unknown>[] = JSON.parse(
+          String(m.properties.mentions),
+        );
+        return {
+          ...m,
+          properties: {
+            ...m.properties,
+            mentions: JSON.stringify([
+              { ...mention, itemid: '1' },
+              { ...mention, itemid: '0', mri: ada, displayName: 'Ada' },
+            ]),
+          },
+        };
+      }),
+    );
+  const base = account();
+  await app.save({ ...base, chains: base.chains.map(asDigits) });
+  const source = new TeamsSource({ directory: app.directory });
+  const run = await pipeline(source, dir.path, globalThis);
+
+  await run.run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT position, mentionedId FROM messageMentions ORDER BY position',
+    ),
+    [
+      { position: 0, mentionedId: ada },
+      { position: 1, mentionedId: me },
+    ],
+  );
+});
+
+test('a reply whose quoted messages the app wrote as JSON text loads its quote, and takes no stream down', async () => {
+  const { dir, app, out } = await scratch();
+  await using _ = dir;
+  // The form a live store held for one reply: the list as JSON text, with
+  // the quoted message's id as its digits.
+  const asText = (c: Chain): Chain =>
+    chain(
+      Object.values(c.messageMap).map((m) =>
+        m.id === ids.reply
+          ? {
+              ...m,
+              properties: {
+                ...m.properties,
+                qtdMsgs: JSON.stringify([
+                  {
+                    messageId: ids.hello,
+                    sender: ada,
+                    time: Number(ids.hello),
+                  },
+                ]),
+              },
+            }
+          : m,
+      ),
+    );
+  const base = account();
+  await app.save({ ...base, chains: base.chains.map(asText) });
+  const source = new TeamsSource({ directory: app.directory });
+  const run = await pipeline(source, dir.path, globalThis);
+
+  await run.run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT messageId, quotedMessageId, quotedSenderId FROM messageQuotes',
+    ),
+    [{ messageId: ids.reply, quotedMessageId: ids.hello, quotedSenderId: ada }],
+  );
 });
 
 test('an import scope keeps the selected accounts, conversations and dates, and keeps what belongs to the account alone', async () => {

@@ -170,6 +170,11 @@ Checked on 2026-10-12 against Microsoft Teams 26163.407 (Edge WebView2 149) on m
   - Deleting the message loaded the same row with `deletedAt` and no content.
 - The pin got to `threadProperties.pinnedItems` at once, while the conversation's own copy, `pinnedItems`, stayed empty. In every other conversation the two lists were the same. `pins` reads the thread's list.
 
+Checked on 2026-11-13 on macOS 27.2, when the store held 6 messages:
+
+- The number of one mention (`itemid`) was the number `0`, and of another the text `"0"`. The reader takes both.
+- One reply held its quoted messages (`qtdMsgs`) as JSON text, where the store of 2026-10-12 held a list. The reader takes both, as it does for mentions, files and links.
+
 ## Decisions
 
 - [ADR 0001: A message is deleted only inside a held span](./docs/adr/0001-a-message-is-deleted-only-inside-a-held-span.md)

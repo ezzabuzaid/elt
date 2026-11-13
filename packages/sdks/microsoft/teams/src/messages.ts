@@ -79,7 +79,7 @@ function body(message: Fields): Body {
     mentions: properties?.parsedList('mentions').map(mention) ?? [],
     files: files(properties),
     links: properties?.parsedList('links').map(link) ?? [],
-    quotes: properties?.list('qtdMsgs').map(quote) ?? [],
+    quotes: properties?.parsedList('qtdMsgs').map(quote) ?? [],
     pinnedBy: pinnedAt === null ? null : (pinned?.string('creatorId') ?? null),
     pinnedAt,
   };
@@ -96,7 +96,7 @@ function reactions(emotion: Fields): TeamsReaction[] {
 
 function mention(mention: Fields, index: number): TeamsMention {
   return {
-    position: mention.number('itemid') ?? index,
+    position: mention.wholeNumber('itemid') ?? index,
     mentionedId: mention.requiredString('mri'),
     kind: mention.string('mentionType'),
     displayName: mention.string('displayName'),
