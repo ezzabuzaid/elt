@@ -4,7 +4,6 @@ import { access, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import { open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
@@ -72,9 +71,24 @@ class Scripted extends Source {
   }
 }
 
-// A window of history so short that a test outwaits it.
+// The wall time of every pass, which the tests move, as elt's own tests do
+// (ADR 0019). The timers run for real, so a pass runs as it does, but the
+// time of each commit, which the retention compares with its window, is the
+// test's own: a slow machine cannot make a commit older than the test says.
+let now = Date.now();
+const clock = {
+  Date: { now: () => now },
+  performance,
+  setTimeout,
+  clearTimeout,
+};
+const after = (duration: Temporal.DurationLike) => {
+  now += Temporal.Duration.from(duration).total('milliseconds');
+};
+
+// A window of history that a test outwaits by moving the clock past it.
 const window = Temporal.Duration.from({ milliseconds: 20 });
-const outwait = () => delay(60);
+const outwait = () => after({ milliseconds: 60 });
 
 const notes = () =>
   new Stream({
@@ -126,7 +140,7 @@ function file(
   });
   const pipeline = (steps: readonly Step[]) =>
     new Pipeline({
-      clock: globalThis,
+      clock,
       connections: [
         new Connection({
           name: 'notes',
@@ -207,7 +221,7 @@ test('a commit after the window deletes the history that only positions older th
   await pass([note('n1', 2, 'second'), checkpoint('notes', 2)]);
   const second = newest(destination);
   const asSecond = asOf(destination, 'SELECT * FROM notes', second);
-  await outwait();
+  outwait();
 
   await pass([note('n1', 3, 'third'), checkpoint('notes', 3)]);
 
@@ -232,7 +246,7 @@ test('a position inside the window stays readable after a later commit applies t
   await pass([note('n1', 1, 'first'), checkpoint('notes', 1)]);
   await pass([note('n1', 2, 'second'), checkpoint('notes', 2)]);
   const second = newest(destination);
-  await delay(1200);
+  after({ milliseconds: 1200 });
   await pass([note('n1', 3, 'third'), checkpoint('notes', 3)]);
   const third = newest(destination);
 
@@ -259,12 +273,12 @@ test('the commit that first outwaits the window keeps readable each position ins
   );
   await pass([note('n1', 1, 'first'), checkpoint('notes', 1)]);
   const first = newest(destination);
-  await delay(1800);
+  after({ milliseconds: 1800 });
   await pass([note('n1', 2, 'second'), checkpoint('notes', 2)]);
   const second = newest(destination);
   await pass([note('n1', 3, 'third'), checkpoint('notes', 3)]);
   const third = newest(destination);
-  await delay(1800);
+  after({ milliseconds: 1800 });
 
   await pass([note('n1', 4, 'fourth'), checkpoint('notes', 4)]);
 
@@ -288,7 +302,7 @@ test('a reading of a position older than the window, and the positions after it,
   await pass([note('n1', 1, 'first'), checkpoint('notes', 1)]);
   const first = newest(destination);
   await pass([note('n1', 2, 'second'), checkpoint('notes', 2)]);
-  await outwait();
+  outwait();
   await pass([note('n1', 3, 'third'), checkpoint('notes', 3)]);
 
   const reading = destination.reading(first);
@@ -300,19 +314,26 @@ test('a reading of a position older than the window, and the positions after it,
   assert.match(listed.expired, /retention/);
 });
 
-test('with no window set, the window is 30 days and a position read after the waits of these tests stays readable', async () => {
+test('with no window set, the window is 30 days: a position stays readable for 30 days and is expired after', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-retention-');
   const { destination, pass } = notesFile(scratch.path);
   await pass([note('n1', 1, 'first'), checkpoint('notes', 1)]);
   const first = newest(destination);
   await pass([note('n1', 2, 'second'), checkpoint('notes', 2)]);
-  await outwait();
+  after({ days: 29 });
   await pass([note('n1', 3, 'third'), checkpoint('notes', 3)]);
 
   assert.deepEqual(destination.retention, Temporal.Duration.from({ days: 30 }));
   assert.deepEqual(asOf(destination, 'SELECT body FROM notes', first), [
     { body: 'first' },
   ]);
+
+  after({ days: 2 });
+  await pass([note('n1', 4, 'fourth'), checkpoint('notes', 4)]);
+
+  const reading = destination.reading(first);
+  assert.ok('expired' in reading, 'a position 31 days old is expired');
+  assert.match(reading.expired, /retention/);
 });
 
 test('a pass that stays open longer than the window leaves the position before it readable exactly', async () => {
@@ -330,7 +351,7 @@ test('a pass that stays open longer than the window leaves the position before i
     checkpoint('notes', 4),
   ]);
   await wait.reached;
-  await outwait();
+  outwait();
   wait.release();
   await open;
 
@@ -345,7 +366,7 @@ test('a clear after the window deletes the history that only positions older tha
   await pass([note('n1', 1, 'first'), checkpoint('notes', 1)]);
   await pass([note('n1', 2, 'second'), checkpoint('notes', 2)]);
   const second = newest(destination);
-  await outwait();
+  outwait();
 
   await pipeline([]).clear();
 
@@ -409,7 +430,7 @@ test('a commit after the window deletes the stored files that only expired histo
     checkpoint('documents', 2),
   ]);
   const second = newest(destination);
-  await outwait();
+  outwait();
 
   await pass([
     await document(scratch.path, 'd2', 2, 'b2'),
@@ -492,7 +513,7 @@ test('a stored file that an expired history row and a current row both refer to 
     checkpoint('documents', 2),
   ]);
   const kept = replaced(untitled.destination, 'documents');
-  await outwait();
+  outwait();
 
   await untitled.pass([
     await document(scratch.path, 'd3', 1, 'c'),
@@ -570,12 +591,12 @@ test('a stored file that an expired history row and a newer history row both ref
     checkpoint('documents', 2),
   ]);
   const second = newest(untitled.destination);
-  await delay(1800);
+  after({ milliseconds: 1800 });
   await untitled.pass([
     await document(scratch.path, 'd1', 2, 'a2'),
     checkpoint('documents', 3),
   ]);
-  await delay(1800);
+  after({ milliseconds: 1800 });
 
   await untitled.pass([
     await document(scratch.path, 'd3', 1, 'c'),
@@ -622,7 +643,7 @@ test('a file in a file storage that only an expired history row refers to is del
     checkpoint('documents', 2),
   ]);
   await access(kept);
-  await outwait();
+  outwait();
 
   await pass([
     await document(scratch.path, 'd2', 1, 'second'),
@@ -663,7 +684,7 @@ test('the select of a target as of a position, run on the file or on the file at
 
   const fromFile = select(direct, second);
   const fromAttached = select(federation, second, 'hidden');
-  await outwait();
+  outwait();
   await pass([note('n4', 1), checkpoint('notes', 4)]);
   const expired = asOfSelect(direct, 'notes', first);
 
