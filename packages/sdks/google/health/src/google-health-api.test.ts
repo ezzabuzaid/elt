@@ -254,6 +254,24 @@ test('a 429 that outlasts every retry fails as a rate limit naming the call, and
   );
 });
 
+// Google Health names its quota in an ErrorInfo detail, so only its own
+// reason makes a 403 a rate limit to send again.
+test('a 403 quota refusal that never clears is sent five times and fails as a rate limit', async () => {
+  using health = google(() =>
+    refusal(403, 'RESOURCE_EXHAUSTED', 'Quota exceeded or rate limited.'),
+  );
+
+  await assert.rejects(
+    Array.fromAsync(health.api.dataPoints('steps', { clock: globalThis })),
+    (error: unknown) => {
+      assert.ok(error instanceof GoogleHealthRateLimitError);
+      assert.equal(error.attempts, 5);
+      return true;
+    },
+  );
+  assert.equal(health.received.length, 5);
+});
+
 test('an account with no Google Health profile is refused with a typed error that names the fix', async () => {
   using health = google(() =>
     refusal(

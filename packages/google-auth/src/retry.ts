@@ -1,10 +1,7 @@
 import { type WallClock, delay } from '@zukhruf/async';
 
-import {
-  GaxiosError,
-  reasonsOf,
-  statusOf,
-} from './platform/google/google-errors.ts';
+import { GaxiosError, statusOf } from './platform/google/google-errors.ts';
+import { isRateLimit } from './rate-limit.ts';
 
 /** Total tries, including the first. */
 const ATTEMPTS = 5;
@@ -16,19 +13,12 @@ const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 60_000;
 const TRANSIENT_STATUSES = [408, 500, 502, 503, 504];
 
-// Google reports some rate limits as 403 with one of these reasons. Every other
-// 403, such as an insufficient scope or a disabled API, is a refusal.
-export const RATE_LIMIT_REASONS: readonly string[] = [
-  'rateLimitExceeded',
-  'userRateLimitExceeded',
-];
-
 /**
  * The fields that turn on the retry of gaxios for one request, spread into
  * the request: `requester.request({ url, ...googleRetry({ clock, signal }) })`.
  *
- * A rate limit (a 429, or a refusal with one of `rateLimitReasons`) and a
- * transient status are sent again, five times in all. The Retry-After of
+ * A rate limit (`isRateLimit` with `rateLimitReasons`) and a transient
+ * status are sent again, five times in all. The Retry-After of
  * Google is the wait; without one the wait doubles from 1 s to at most 60 s
  * with full jitter, so concurrent callers do not retry in lockstep. The wait
  * runs on `clock` and rejects with the reason of `signal` when it aborts.
@@ -42,7 +32,7 @@ export const RATE_LIMIT_REASONS: readonly string[] = [
 export function googleRetry({
   clock,
   signal,
-  rateLimitReasons = RATE_LIMIT_REASONS,
+  rateLimitReasons,
 }: {
   readonly clock: WallClock;
   readonly signal?: AbortSignal;
@@ -73,11 +63,8 @@ export function googleRetry({
         const status = statusOf(error);
         return (
           attemptsOf(error) < ATTEMPTS &&
-          (status === 429 ||
-            (status !== undefined && TRANSIENT_STATUSES.includes(status)) ||
-            reasonsOf(error).some((reason) =>
-              rateLimitReasons.includes(reason),
-            )) &&
+          (isRateLimit(error, rateLimitReasons) ||
+            (status !== undefined && TRANSIENT_STATUSES.includes(status))) &&
           (retryAfterMs(error, clock.Date.now()) ?? 0) <= MAX_DELAY_MS
         );
       },

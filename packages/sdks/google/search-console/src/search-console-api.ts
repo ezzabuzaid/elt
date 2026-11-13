@@ -5,7 +5,7 @@ import {
   type GoogleRequester,
   attemptsOf,
   googleRetry,
-  reasonsOf,
+  isRateLimit,
   statusOf,
 } from '@eltjs/google-auth';
 
@@ -34,13 +34,6 @@ export class SearchConsoleQuotaError extends Error {
     this.attempts = attempts;
   }
 }
-
-// Google reports some rate limits as 403 with one of these reasons. Every other
-// 403, such as an insufficient scope or a disabled API, is not a quota error.
-const RATE_LIMIT_REASONS = new Set([
-  'rateLimitExceeded',
-  'userRateLimitExceeded',
-]);
 
 export type SearchAnalyticsRequest = {
   readonly startDate: string;
@@ -226,16 +219,12 @@ export class SearchConsoleApi {
       return response.data;
     } catch (cause) {
       signal?.throwIfAborted();
-      const status = statusOf(cause);
       // Live, an exhausted daily inspection quota is a 429 with reason
       // rateLimitExceeded and no Retry-After, like a per-minute limit.
-      const rateLimited =
-        status === 429 ||
-        reasonsOf(cause).some((reason) => RATE_LIMIT_REASONS.has(reason));
-      if (!rateLimited) throw cause;
+      if (!isRateLimit(cause)) throw cause;
       const attempts = attemptsOf(cause);
       throw new SearchConsoleQuotaError(
-        status ?? 403,
+        statusOf(cause) ?? 403,
         attempts,
         `Search Console rate limited ${method} ${path} after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}`,
         { cause },

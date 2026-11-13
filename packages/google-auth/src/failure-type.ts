@@ -1,6 +1,6 @@
 import { GoogleGrantRevokedError } from './errors.ts';
-import { reasonsOf, statusOf } from './platform/google/google-errors.ts';
-import { RATE_LIMIT_REASONS } from './retry.ts';
+import { statusOf } from './platform/google/google-errors.ts';
+import { isRateLimit } from './rate-limit.ts';
 
 /**
  * Whose failure an answer of Google is. `config`: only the user can fix it,
@@ -16,9 +16,6 @@ export function googleFailureType(error: unknown): 'config' | 'system' {
   const answer =
     statusOf(error) === undefined && Error.isError(error) ? error.cause : error;
   const status = statusOf(answer);
-  const refused =
-    status === 401 ||
-    (status === 403 &&
-      !reasonsOf(answer).some((reason) => RATE_LIMIT_REASONS.includes(reason)));
+  const refused = status === 401 || (status === 403 && !isRateLimit(answer));
   return refused ? 'config' : 'system';
 }

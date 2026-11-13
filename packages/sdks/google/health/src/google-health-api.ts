@@ -4,8 +4,8 @@ import {
   type GoogleRequester,
   attemptsOf,
   googleRetry,
+  isRateLimit,
   reasonsOf,
-  statusOf,
 } from '@eltjs/google-auth';
 
 import {
@@ -41,6 +41,10 @@ const BASE = 'https://health.googleapis.com/v4/';
  * waits for room under it.
  */
 const REQUESTS_PER_MINUTE = 300;
+
+// Google Health names its rate limit in an ErrorInfo detail (AIP-193); its
+// error catalog gives RESOURCE_EXHAUSTED for quota.
+const RATE_LIMIT_REASONS = ['RESOURCE_EXHAUSTED'];
 
 /**
  * The most points a list request asks for. Google answers fewer per page
@@ -219,7 +223,7 @@ export class GoogleHealthApi {
     const retry = googleRetry({
       clock,
       signal,
-      rateLimitReasons: ['RESOURCE_EXHAUSTED'],
+      rateLimitReasons: RATE_LIMIT_REASONS,
     });
     await this.#pace(signal, clock);
     try {
@@ -242,13 +246,9 @@ export class GoogleHealthApi {
       return response.data;
     } catch (cause) {
       signal?.throwIfAborted();
-      const status = statusOf(cause);
-      const reasons = reasonsOf(cause);
-      if (reasons.includes('ACCOUNT_NOT_LINKED'))
+      if (reasonsOf(cause).includes('ACCOUNT_NOT_LINKED'))
         throw new GoogleHealthAccountNotLinkedError({ cause });
-      const rateLimited =
-        status === 429 || reasons.includes('RESOURCE_EXHAUSTED');
-      if (!rateLimited) throw cause;
+      if (!isRateLimit(cause, RATE_LIMIT_REASONS)) throw cause;
       const attempts = attemptsOf(cause);
       throw new GoogleHealthRateLimitError(
         attempts,

@@ -18,6 +18,7 @@ export {
   OAuthCallbackTimeoutError,
 } from './platform/google/loopback-callback.ts';
 export { openBrowser } from './platform/google/open-browser.ts';
+export * from './rate-limit.ts';
 export * from './requester.ts';
 export { attemptsOf, googleRetry } from './retry.ts';
 export * from './scopes.ts';

@@ -4,7 +4,7 @@ The Google Health SDK keeps its requests under a per-minute quota the way the Se
 
 The reason is the Rule of Three: code that a second place needs is copied, and it is extracted only when a third place needs it, so the shared boundary comes from three working copies. When a third Google SDK needs this code, the shared parts move to one place. Until then, a fix in one copy is made in the other copy too, and the commit names both files.
 
-The retry is not a copy: both SDKs take the policy from `googleRetry` of `@eltjs/google-auth`. The Google Health SDK gives it the reason `RESOURCE_EXHAUSTED` as its rate limit, because Google Health gives its reason in an ErrorInfo detail (AIP-193), and its error catalog names `RESOURCE_EXHAUSTED` for quota.
+The retry and the rate-limit rule are not copies: both SDKs take the policy from `googleRetry` of `@eltjs/google-auth`, and ask its `isRateLimit` whether the last error is a rate limit. The Google Health SDK gives both the reason `RESOURCE_EXHAUSTED` as its rate limit, because Google Health gives its reason in an ErrorInfo detail (AIP-193), and its error catalog names `RESOURCE_EXHAUSTED` for quota.
 
 Paths on the left are in `packages/sdks/google/search-console/src`. Paths on the right are in `packages/sdks/google/health/src`.
 

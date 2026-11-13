@@ -143,6 +143,27 @@ test('rate limits that never clear end after five attempts and say so', async ()
   assert.equal(searchConsole.calls.length, 5);
 });
 
+test('a rate-limit 403 that never clears ends after five attempts as a quota error', async () => {
+  for (const reason of ['rateLimitExceeded', 'userRateLimitExceeded']) {
+    using searchConsole = google({
+      reply: () => refusal(403, reason, 'Rate Limit Exceeded', RETRY_NOW),
+    });
+
+    await assert.rejects(
+      new SearchConsoleApi(searchConsole.requester).sites({
+        clock: globalThis,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof SearchConsoleQuotaError, reason);
+        assert.equal(error.status, 403);
+        assert.equal(error.attempts, 5);
+        return true;
+      },
+    );
+    assert.equal(searchConsole.calls.length, 5, reason);
+  }
+});
+
 test('a rate-limit 403 is retried but a scope 403 is not', async () => {
   const replies = [
     () =>
