@@ -5,7 +5,7 @@ import type postgres from 'postgres';
 import { quote } from './identifier.ts';
 import type { EncodedValue } from './postgres-column.ts';
 import { storedColumns } from './postgres-fit.ts';
-import { expireBefore } from './postgres-numbering.ts';
+import { expireBefore, minValid } from './postgres-numbering.ts';
 
 // A session, or a transaction of one, such as a clear's.
 type Queries = Pick<postgres.Sql, 'unsafe'>;
@@ -94,6 +94,20 @@ export class TargetHistory {
         );
     }
     return { columns: columns.map(({ name }) => name), rewritten };
+  }
+
+  // Deletes the rows that only a reading before min_valid reads, which the
+  // retention or a change of type left, once the history exists.
+  async expire(sql: Queries): Promise<void> {
+    const [history] = await sql.unsafe(
+      'SELECT to_regclass($1) IS NOT NULL AS "exists"',
+      [this.qualifiedName],
+    );
+    if (history?.exists !== true) return;
+    await sql.unsafe(
+      `DELETE FROM ${this.qualifiedName} WHERE "replaced_in" <= $1`,
+      [await minValid(sql)],
+    );
   }
 
   // Copies the rows of the target that rows selects into the history, as

@@ -165,7 +165,14 @@ The history of a table:
   - A widening maps each old value to one new value exactly, with no loss: any type to `text`, `bigint` to `numeric`, `date` to `timestamp without time zone`, and an array whose item widens. The history casts its column with the same cast (`USING column::type`), and each position stays readable.
   - Any other change, such as `text` to `bigint`, or `double precision` to `bigint`, acts as a rewrite. `bigint` to `double precision` is not a widening, because above 2^53 it loses digits. The commit E of the change sets `min_valid` to E, if it is higher. The history of the table deletes each row with `replaced_in <= E`, which only positions before E read, together with the stored chunks that only those rows refer to, and then casts its column. A reading or `positions(after)` before E gives `{ expired }`, with the reason that a commit changed the type of a column. Each position from E on reads exactly. The history of other tables keeps its rows with `replaced_in <= E` until a retention deletes them.
 - A file that a row of the history refers to stays while the row stays: its chunks, or its file in a file storage (`.store(files)`).
-- No retention applies yet: the history deletes rows only for a change of type that is not a widening.
+
+Retention:
+
+- `new PostgresDestination({ url, schema, retention })` sets how long the history keeps a position readable, as a `Temporal.Duration`: 30 days unless set, as Delta Lake keeps its log. A negative one throws a `RangeError`.
+- When a commit takes its number, let W be the newest position at or below the newest commit older than the window. The commit sets `min_valid` to W, if it is higher. W is a position, not a commit, so a pass that stays open longer than the window keeps the position before it readable.
+- In the same commit, the writer deletes each row of its table's history with `replaced_in <= min_valid`, and then the chunks that no row of the table or of its history refers to. The history of another table deletes its rows at that table's next commit; until then a reading skips them, because no position at or after `min_valid` reads them.
+- A reading or `positions(after)` before `min_valid` gives `{ expired }`, with the reason that names the retention, or the change of type, that set it last.
+- One numbering serves every destination of the database, so the shortest retention among them decides for all readers.
 
 A reading as of a position:
 

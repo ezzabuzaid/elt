@@ -65,8 +65,12 @@ A change of the type of a column that maps each old value to one value of the ne
 _Avoid_: Promotion, relaxation (the names that Iceberg and BigQuery use), compatible change
 
 **Min valid**:
-`min_valid` in `_warehouse._elt_epoch`: the oldest commit that a reading can read as of. A change of type that is not a widening sets it to its own commit, and each position before it is expired.
-_Avoid_: Retention (a retention window is one cause of an expired position), low-water mark
+`min_valid` in `_warehouse._elt_epoch`: the oldest commit that a reading can read as of. The retention sets it to the newest position older than its window, and a change of type that is not a widening sets it to its own commit; `expired_by` names which one set it last. Each position before it is expired.
+_Avoid_: Low-water mark
+
+**Retention**:
+How long the history keeps a position readable: a `Temporal.Duration` set on the destination, 30 days unless set. The shortest retention among the destinations of one database decides.
+_Avoid_: TTL, expiry (an expired position is what the retention leaves)
 
 **Reading**:
 A read-only transaction, of its own session, that sees the database as of one position: each reader view reads `elt.position`.

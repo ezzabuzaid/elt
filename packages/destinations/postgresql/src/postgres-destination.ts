@@ -32,12 +32,27 @@ export class PostgresDestination extends Destination<PostgresTable> {
     'overwrite_dedup',
   ] as const);
   readonly schema: string;
+  // How long the history keeps a position readable: 30 days unless set, as
+  // Delta Lake keeps its log. The destinations of one database share one
+  // numbering, so the shortest retention among them decides.
+  readonly retention: Temporal.Duration;
   readonly #url: string;
 
-  constructor({ url, schema }: { url: string; schema: string }) {
+  constructor({
+    url,
+    schema,
+    retention = Temporal.Duration.from({ days: 30 }),
+  }: {
+    url: string;
+    schema: string;
+    retention?: Temporal.Duration;
+  }) {
     super();
+    if (retention.sign < 0)
+      throw new RangeError(`Retention ${retention} must not be negative`);
     this.#url = connectionUrl(url);
     this.schema = schemaName(schema);
+    this.retention = retention;
     Object.freeze(this);
   }
 
@@ -51,7 +66,10 @@ export class PostgresDestination extends Destination<PostgresTable> {
     clock: PipelineClock;
     connection: string;
   }): Promise<Load<PostgresTable>> {
-    const load = await PostgresLoad.open(this.#url, owner);
+    const load = await PostgresLoad.open(this.#url, {
+      ...owner,
+      retention: this.retention,
+    });
     return {
       prepare: (configuration, target, binding) =>
         this.createWriter(configuration, target).prepare(load, binding),
@@ -102,6 +120,7 @@ export class PostgresDestination extends Destination<PostgresTable> {
           this.#url,
           this.schema,
           table,
+          this.retention,
         );
       case 'append':
         return new PostgresAppendWriter(
@@ -109,6 +128,7 @@ export class PostgresDestination extends Destination<PostgresTable> {
           this.#url,
           this.schema,
           table,
+          this.retention,
         );
       case 'overwrite':
         return new PostgresOverwriteWriter(
@@ -116,6 +136,7 @@ export class PostgresDestination extends Destination<PostgresTable> {
           this.#url,
           this.schema,
           table,
+          this.retention,
         );
       default:
         throw new TypeError(

@@ -56,8 +56,10 @@ export abstract class PostgresWriter extends Writer {
   protected readonly url: string;
   readonly schema: string;
   readonly table: PostgresTable;
-  // Where the target keeps the rows that its commits replace or remove.
+  // Where the target keeps the rows that its commits replace or remove, and
+  // how long it keeps a position readable.
   readonly #history: TargetHistory;
+  readonly #retention: Temporal.Duration;
   readonly #comments: TargetComments;
   readonly #view: TargetReaderView | undefined;
 
@@ -66,12 +68,14 @@ export abstract class PostgresWriter extends Writer {
     url: string,
     schema: string,
     table: PostgresTable,
+    retention: Temporal.Duration,
   ) {
     super(configuration.stream);
     this.configuration = configuration;
     this.url = url;
     this.schema = schema;
     this.table = table;
+    this.#retention = retention;
     this.#history = new TargetHistory(schema, this.#hash);
     const description = describeTarget(
       configuration,
@@ -361,6 +365,7 @@ export abstract class PostgresWriter extends Writer {
           transaction,
           connector,
           new Date(clock.Date.now()),
+          this.#retention,
         );
         await this.#history.create(
           transaction,
@@ -374,6 +379,7 @@ export abstract class PostgresWriter extends Writer {
           `FROM ${this.qualifiedName} AS "_elt_old"`,
         );
         await transaction.unsafe(`DELETE FROM ${this.qualifiedName}`);
+        await this.#history.expire(transaction);
       }
       // Clearing a copy also abandons the reload it left open.
       await transaction.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
@@ -839,6 +845,7 @@ export abstract class PostgresWriter extends Writer {
           if (replacing) await this.#replace(sql, stage, written);
           else await this.merge(sql, stage, written, into(), history);
           await sql.unsafe(`TRUNCATE ${stage}`);
+          await this.#history.expire(sql);
           for (const store of stores) await store.prune(sql, tables());
         });
         claim = claimed;
@@ -857,6 +864,7 @@ export abstract class PostgresWriter extends Writer {
           );
           if (target === 'fits') await this.#reloadInPlace(sql, committedIn);
           else await this.#swap(sql, committedIn);
+          await this.#history.expire(sql);
           for (const store of stores)
             await store.prune(sql, [
               this.qualifiedName,

@@ -22,6 +22,7 @@ export type Transaction = postgres.Sql;
 export class PostgresLoad implements AsyncDisposable {
   readonly #connection: PostgresSession;
   readonly #clock: PipelineClock;
+  readonly #retention: Temporal.Duration;
   readonly #connector: string;
   readonly #id: string;
   // When the load began, which each row it writes keeps in loaded_at.
@@ -29,12 +30,13 @@ export class PostgresLoad implements AsyncDisposable {
 
   private constructor(
     connection: PostgresSession,
-    { clock, connection: connector }: Owner,
+    { clock, connection: connector, retention }: Owner,
     id: string,
     loadedAt: Date,
   ) {
     this.#connection = connection;
     this.#clock = clock;
+    this.#retention = retention;
     this.#connector = connector;
     this.#id = id;
     this.loadedAt = loadedAt.toISOString();
@@ -79,6 +81,7 @@ export class PostgresLoad implements AsyncDisposable {
       sql,
       { load: this.#id, connector: this.#connector },
       new Date(this.#clock.Date.now()),
+      this.#retention,
     );
   }
 
@@ -98,5 +101,10 @@ export class PostgresLoad implements AsyncDisposable {
   }
 }
 
-// What opens a load: the clock that dates it, and the connection it records.
-type Owner = { readonly clock: PipelineClock; readonly connection: string };
+// What opens a load: the clock that dates it, the connection it records, and
+// how long the history keeps a position readable.
+type Owner = {
+  readonly clock: PipelineClock;
+  readonly connection: string;
+  readonly retention: Temporal.Duration;
+};

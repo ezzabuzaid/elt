@@ -21,7 +21,7 @@ const numbers = `${shared}."_elt_commit_numbers"`;
 // at its end rather than wrap to a number that names another commit.
 const tables = [
   `CREATE SCHEMA IF NOT EXISTS ${shared}`,
-  `CREATE TABLE IF NOT EXISTS ${epochs} ("id" integer PRIMARY KEY CHECK ("id" = 1), "epoch" text NOT NULL, "min_valid" integer NOT NULL DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS ${epochs} ("id" integer PRIMARY KEY CHECK ("id" = 1), "epoch" text NOT NULL, "min_valid" integer NOT NULL DEFAULT 0, "expired_by" text CHECK ("expired_by" IN ('retention', 'type')))`,
   `CREATE TABLE IF NOT EXISTS ${loads} ("id" bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, "connector" text NOT NULL, "opened_at" timestamptz NOT NULL, "closed_at" timestamptz)`,
   `CREATE INDEX IF NOT EXISTS "_elt_loads_open" ON ${loads} ("connector") WHERE "closed_at" IS NULL`,
   `CREATE SEQUENCE IF NOT EXISTS ${numbers} AS integer`,
@@ -101,6 +101,7 @@ export async function commitNumber(
   sql: Queries,
   { load, connector }: { load: string; connector: string },
   committedAt: Date,
+  retention: Temporal.Duration,
 ): Promise<number> {
   await sql`SELECT pg_advisory_lock_shared(${sql.unsafe(gate)})`;
   const [taken] = await sql<{ number: number }[]>`
@@ -118,7 +119,43 @@ export async function commitNumber(
   await sql`
     INSERT INTO ${sql.unsafe(commits)} ("number", "load", "committed_at")
     VALUES (${taken.number}, ${load}, ${committedAt})`;
+  await retain(sql, committedAt, retention);
   return taken.number;
+}
+
+// Applies the retention inside a commit's transaction, as Delta Lake expires
+// its log at a checkpoint: the newest position whose commit is older than the
+// window becomes min_valid. It is a position, so the newest position stays
+// readable while a pass stays open longer than the window. Each writer then
+// deletes the rows of its own target's history that only readings before it
+// read. One numbering serves every destination of the database, so the
+// shortest retention among them decides.
+async function retain(
+  sql: Queries,
+  at: Date,
+  retention: Temporal.Duration,
+): Promise<void> {
+  const cutoff = new Date(at.getTime() - retention.total('milliseconds'));
+  const [row] = await sql<{ older: number; min_valid: number }[]>`
+    SELECT (SELECT coalesce(max("number"), 0) FROM ${sql.unsafe(commits)} WHERE "committed_at" < ${cutoff}) AS "older", "min_valid"
+    FROM ${sql.unsafe(epochs)}`;
+  if (row === undefined || row.older <= row.min_valid) return;
+  const numbered = await numberingIn(sql, row.older);
+  const expired = numbered?.ends.at(-1);
+  if (expired === undefined || expired <= row.min_valid) return;
+  await sql`
+    UPDATE ${sql.unsafe(epochs)} SET "min_valid" = ${expired}, "expired_by" = 'retention'`;
+}
+
+// The oldest commit that a reading can read as of, inside the transaction
+// sql runs in.
+export async function minValid(
+  sql: Pick<postgres.Sql, 'unsafe'>,
+): Promise<number> {
+  const [row] = await sql.unsafe<{ min_valid: number }[]>(
+    `SELECT "min_valid" FROM ${epochs}`,
+  );
+  return row?.min_valid ?? 0;
 }
 
 // Lets go of the gate that a commit holds while it takes its number. A commit
@@ -136,12 +173,18 @@ export async function commitOnce(
   sql: Queries,
   connector: string,
   at: Date,
+  retention: Temporal.Duration,
 ): Promise<number> {
   const [load] = await sql<{ id: string }[]>`
     INSERT INTO ${sql.unsafe(loads)} ("connector", "opened_at")
     VALUES (${connector}, ${at}) RETURNING "id"`;
   if (load === undefined) throw new Error('The load was not recorded');
-  const number = await commitNumber(sql, { load: load.id, connector }, at);
+  const number = await commitNumber(
+    sql,
+    { load: load.id, connector },
+    at,
+    retention,
+  );
   await closeLoad(sql, load.id, at);
   return number;
 }
@@ -153,7 +196,7 @@ export async function expireBefore(
   changedIn: number,
 ): Promise<void> {
   await sql.unsafe(
-    `UPDATE ${epochs} SET "min_valid" = greatest("min_valid", $1)`,
+    `UPDATE ${epochs} SET "min_valid" = $1, "expired_by" = 'type' WHERE "min_valid" < $1`,
     [changedIn],
   );
 }
@@ -161,8 +204,9 @@ export async function expireBefore(
 // The numbering of a database, as one reader saw it.
 export type Numbering = {
   readonly epoch: string;
-  // The oldest commit that a reading can read as of.
+  // The oldest commit that a reading can read as of, and what set it last.
   readonly minValid: number;
+  readonly expiredBy: 'retention' | 'type' | null;
   // Every number at or below it is a commit that a reader sees, or one that
   // rolled back: the high-water mark of event stores, which skips the gaps
   // that rolled back and stops below the first number still in flight.
@@ -207,8 +251,12 @@ export async function numberingIn(
   settled: number,
 ): Promise<Numbering | null> {
   const [row] = await sql<
-    { epoch: string; min_valid: number }[]
-  >`SELECT "epoch", "min_valid" FROM ${sql.unsafe(epochs)}`;
+    {
+      epoch: string;
+      min_valid: number;
+      expired_by: 'retention' | 'type' | null;
+    }[]
+  >`SELECT "epoch", "min_valid", "expired_by" FROM ${sql.unsafe(epochs)}`;
   if (row === undefined) return null;
   const spans = (
     await sql<{ first: number; last: number | null }[]>`
@@ -221,6 +269,7 @@ export async function numberingIn(
   return {
     epoch: row.epoch,
     minValid: row.min_valid,
+    expiredBy: row.expired_by,
     settled,
     ends: ends(spans, settled).filter((end) => end >= row.min_valid),
   };
@@ -301,7 +350,9 @@ export function expiry(
   if (number > numbered.settled)
     return `Position ${position} is past the newest commit of this database, ${numbered.settled}`;
   if (number < numbered.minValid)
-    return `Position ${position} is before commit ${numbered.minValid}, which changed the type of a column to one that does not hold each earlier value: the history keeps no row that only a reading before that commit reads`;
+    return numbered.expiredBy === 'type'
+      ? `Position ${position} is before commit ${numbered.minValid}, which changed the type of a column to one that does not hold each earlier value: the history keeps no row that only a reading before that commit reads`
+      : `Position ${position} is before commit ${numbered.minValid}, the oldest position that the retention of the database keeps readable: the history keeps no row that only a reading before it reads`;
   return undefined;
 }
 

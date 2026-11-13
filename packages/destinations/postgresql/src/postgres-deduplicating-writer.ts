@@ -20,8 +20,9 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     url: string,
     schema: string,
     table: PostgresTable,
+    retention: Temporal.Duration,
   ) {
-    super(configuration, url, schema, table);
+    super(configuration, url, schema, table, retention);
     this.deduplication = configuration.deduplication();
     const inferred = PostgresColumns.fromSchema(
       configuration.stream.jsonSchema,
