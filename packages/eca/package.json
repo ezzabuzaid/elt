@@ -1,6 +1,6 @@
 {
   "name": "@eltjs/eca",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Event-condition-action rules over a warehouse that elt loads: a condition reads the warehouse at two positions, and the host saves each rule's cursor with what became true between them.",
   "license": "Apache-2.0",
   "repository": {
@@ -42,8 +42,8 @@
     "node": ">=26"
   },
   "devDependencies": {
-    "@eltjs/elt": "^0.3.1",
-    "@eltjs/elt-sqlite": "^0.3.1",
+    "@eltjs/elt": "^0.3.2",
+    "@eltjs/elt-sqlite": "^0.3.2",
     "@zukhruf/sqlite-open": "^0.8.10",
     "@zukhruf/testing": "^0.8.10"
   }
