@@ -1,7 +1,9 @@
 export * from './app.ts';
 export * from './consent.ts';
 export * from './credential.ts';
+export * from './download.ts';
 export * from './errors.ts';
+export * from './failure-type.ts';
 export * from './grant.ts';
 export * from './grant-opener.ts';
 export * from './grant-session.ts';
@@ -17,4 +19,5 @@ export {
 } from './platform/google/loopback-callback.ts';
 export { openBrowser } from './platform/google/open-browser.ts';
 export * from './requester.ts';
+export { attemptsOf, googleRetry } from './retry.ts';
 export * from './scopes.ts';

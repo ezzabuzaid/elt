@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { OAuth2Client } from 'google-auth-library';
 
 import type { GoogleRequester } from './requester.ts';
+import { googleRetry } from './retry.ts';
 
 test('OAuth2Client satisfies GoogleRequester without an assertion', () => {
   // The seam only holds while the real class structurally matches. A widened
@@ -14,6 +15,19 @@ test('OAuth2Client satisfies GoogleRequester without an assertion', () => {
     clientSecret: 'client-secret',
   });
   assert.equal(typeof client.request, 'function');
+});
+
+test('a streamed request with the retry of googleRetry fits OAuth2Client.request', () => {
+  // A method parameter is compared both ways, so the annotation above passes
+  // when either side fits the other. This one passes only when the request of
+  // the seam is a request of the real class, new fields included.
+  const request: Parameters<GoogleRequester['request']>[0] = {
+    responseType: 'stream',
+    url: 'https://www.googleapis.com/drive/v3/files/file-id?alt=media',
+    ...googleRetry({ clock: globalThis }),
+  };
+  const real: Parameters<OAuth2Client['request']>[0] = request;
+  assert.equal(typeof real.retryConfig?.shouldRetry, 'function');
 });
 
 test('a stub satisfies GoogleRequester without knowing the library', async () => {

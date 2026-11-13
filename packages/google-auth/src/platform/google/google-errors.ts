@@ -20,8 +20,26 @@ export type GoogleErrorBody = {
 
 function bodyOf(error: unknown): GoogleErrorBody | undefined {
   if (!(error instanceof GaxiosError)) return undefined;
+  // gaxios parses the body of a failed request, except for a streamed one: it
+  // reads that body as text and keeps the text only as the message of the
+  // error (gaxios.js `_request`, `extractAPIErrorFromResponse`).
+  // `response.data` is then undefined on node-fetch and the same text on
+  // Node's fetch.
+  if (error.config.responseType === 'stream') return parsed(error.message);
   const data: GoogleErrorBody | undefined = error.response?.data;
   return data;
+}
+
+// A refusal from in front of the API, such as a proxy's 503, is not JSON: it
+// has no reasons, and its text stays the message.
+function parsed(text: string): GoogleErrorBody | undefined {
+  try {
+    const body: GoogleErrorBody | undefined = JSON.parse(text);
+    return body;
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
 }
 
 export function statusOf(error: unknown): number | undefined {

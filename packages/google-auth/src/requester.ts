@@ -17,7 +17,17 @@ export interface GoogleRequester {
     readonly data?: Record<string, unknown>;
     readonly signal?: AbortSignal;
     readonly headers?: Readonly<Record<string, string>>;
-    // 'arraybuffer' returns a file download's bytes instead of parsed JSON.
-    readonly responseType?: 'json' | 'arraybuffer';
+    // 'arraybuffer' returns a file download's bytes instead of parsed JSON,
+    // and 'stream' returns them as they arrive.
+    readonly responseType?: 'json' | 'arraybuffer' | 'stream';
+    readonly retry?: boolean;
+    // When a failed request is sent again, in the shape of gaxios's
+    // `RetryConfig` and without its types, so a stub can read it:
+    // `shouldRetry` decides for one failure, and `retryBackoff` is the wait
+    // before the next try.
+    readonly retryConfig?: {
+      shouldRetry(error: unknown): boolean;
+      retryBackoff(error: unknown): Promise<void>;
+    };
   }): Promise<{ readonly data: unknown }>;
 }
