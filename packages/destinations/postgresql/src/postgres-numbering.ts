@@ -130,6 +130,16 @@ export async function commitNumber(
 // deletes the rows of its own target's history that only readings before it
 // read. One numbering serves every destination of the database, so the
 // shortest retention among them decides.
+//
+// The numbering then keeps no commit before min_valid and no closed load left
+// with none, so it holds only what a reading still reads: min_valid is a
+// position, so each load that has a commit before it ends at or before it,
+// and keeps min_valid's own commit, whose committed_at a reading there reads.
+// A committed_in of a row only compares with numbers, and needs no commit
+// row. An open load keeps its row with or without commits. Commits of other
+// connectors run at the same time, so min_valid only moves forward: the row
+// of the epoch is locked until the commit that moved it ends, and a commit
+// that read an older min_valid before that finds it moved and deletes nothing.
 async function retain(
   sql: Queries,
   at: Date,
@@ -143,8 +153,15 @@ async function retain(
   const numbered = await numberingIn(sql, row.older);
   const expired = numbered?.ends.at(-1);
   if (expired === undefined || expired <= row.min_valid) return;
+  const moved = await sql`
+    UPDATE ${sql.unsafe(epochs)} SET "min_valid" = ${expired}, "expired_by" = 'retention'
+    WHERE "min_valid" < ${expired} RETURNING 1`;
+  if (moved.length === 0) return;
+  await sql`DELETE FROM ${sql.unsafe(commits)} WHERE "number" < ${expired}`;
   await sql`
-    UPDATE ${sql.unsafe(epochs)} SET "min_valid" = ${expired}, "expired_by" = 'retention'`;
+    DELETE FROM ${sql.unsafe(loads)} AS l
+    WHERE l."closed_at" IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM ${sql.unsafe(commits)} AS c WHERE c."load" = l."id")`;
 }
 
 // The oldest commit that a reading can read as of, inside the transaction

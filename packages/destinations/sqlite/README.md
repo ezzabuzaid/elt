@@ -136,7 +136,7 @@ new SQLiteDestination({
 - Min valid is a position, and it never passes the newest position. Thus a pass that stays open longer than the retention does not expire the position before it.
 - A position older than min valid is expired: `reading`, `positions` and `asOfSelect` give `{ expired }` with a reason that names the retention.
 - A file in a [file storage](../../elt/README.md#local-files) that only the deleted history rows refer to goes when the stream of its table next commits.
-- `_elt_commits` keeps its rows.
+- The same commit deletes each row of `_elt_commits` with a number less than W, and each closed load of `_elt_loads` that has no commit left. W is a position, so each load with a commit before W ends at or before W. The row of W stays, because a reading as of W gives its `committed_at`. A `committed_in` of a row is only compared with numbers, so it needs no row in `_elt_commits`. An open load stays, also when it has no commit yet.
 - A retention that is less than zero throws a `RangeError`. A retention in months or years throws a `RangeError` of `Temporal`, because their length depends on the date.
 
 ## Checkpoints

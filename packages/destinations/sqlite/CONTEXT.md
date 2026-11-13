@@ -97,7 +97,7 @@ A read-only connection to the SQLite file as of one position. Each raw table, re
 _Avoid_: Snapshot (SQLite gives each read transaction a snapshot), time travel, version
 
 **Retention**:
-How long the history keeps a position readable after its commit: 30 days by default, set on the `SQLiteDestination`. Each commit deletes the history rows that only positions older than the retention read.
+How long the history keeps a position readable after its commit: 30 days by default, set on the `SQLiteDestination`. Each commit deletes the history rows that only positions older than the retention read, the commits before min valid, and the closed loads that have no commit left.
 _Avoid_: TTL, expiry (an expired position is the result), vacuum
 
 **Min valid**:

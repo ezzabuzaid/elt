@@ -250,6 +250,115 @@ test('a commit after the window deletes the history that only positions older th
   assert.deepEqual(await kept(sql), ['second']);
 });
 
+test('the retention deletes the commits before the oldest position it keeps and the closed loads left with none, and that position still lists and reads', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = client(database.connectionString, clients);
+  const { destination, pass } = warehouse(
+    database.connectionString,
+    Temporal.Duration.from({ seconds: 1 }),
+  );
+  await pass({ notes: [note('n1', 1, 'first'), checkpoint('notes', 1)] }).run();
+  await pass({
+    notes: [note('n1', 2, 'second'), checkpoint('notes', 2)],
+  }).run();
+  const second = await newest(destination);
+  elapse({ milliseconds: 1500 });
+
+  await pass({ notes: [note('n1', 3, 'third'), checkpoint('notes', 3)] }).run();
+
+  const [oldest] = await sql<{ number: number }[]>`
+    SELECT min("number") AS "number" FROM _warehouse."_elt_commits"`;
+  assert.equal(oldest?.number, Number(second.split(':')[1]));
+  assert.deepEqual(
+    (
+      await sql`
+        SELECT "id" FROM _warehouse."_elt_loads" AS l
+        WHERE NOT EXISTS (SELECT 1 FROM _warehouse."_elt_commits" AS c WHERE c."load" = l."id")`
+    ).map(({ id }) => id),
+    [],
+  );
+  const last = await newest(destination);
+  assert.deepEqual(await positions(destination), [second, last]);
+  assert.deepEqual(await destination.positions(second), [last]);
+  assert.deepEqual(await asOf(destination, body, second), [{ body: 'second' }]);
+});
+
+test('the retention keeps an open load that has no commit yet, and that load commits after it', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = client(database.connectionString, clients);
+  const url = database.connectionString;
+  const { destination, pass } = warehouse(
+    url,
+    Temporal.Duration.from({ seconds: 1 }),
+  );
+  const reached = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  const stream = notes();
+  const drafts = new PostgresDestination({
+    url,
+    schema: 'drafts',
+    retention: Temporal.Duration.from({ seconds: 1 }),
+  });
+  const copy = new Copy(
+    stream,
+    drafts.table('notes').withReaderView('marts', 'drafts_notes'),
+    {
+      id: 'notes',
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      cursorField: 'version',
+    },
+  );
+  const draftPass = new Pipeline({
+    clock,
+    history: new PostgresSyncHistory({ url }),
+    connections: [
+      new Connection({
+        name: 'drafts',
+        source: new Scripted([stream], {
+          notes: [
+            async () => {
+              reached.resolve();
+              await released.promise;
+            },
+            note('d1', 1, 'draft'),
+            checkpoint('notes', 1),
+          ],
+        }),
+        destination: drafts,
+        checkpoints: new PostgresCheckpointStore({ url, schema: 'drafts' }),
+        steps: [copy],
+      }),
+    ],
+  });
+  const openDrafts = () => sql`
+    SELECT "id" FROM _warehouse."_elt_loads"
+    WHERE "connector" = 'drafts' AND "closed_at" IS NULL`;
+  await pass({ notes: [note('n1', 1, 'first'), checkpoint('notes', 1)] }).run();
+  await pass({
+    notes: [note('n1', 2, 'second'), checkpoint('notes', 2)],
+  }).run();
+  const running = draftPass.run();
+  await reached.promise;
+  const open = (await openDrafts()).map(({ id }) => id);
+  elapse({ milliseconds: 1500 });
+
+  await pass({ notes: [note('n1', 3, 'third'), checkpoint('notes', 3)] }).run();
+
+  assert.equal(open.length, 1);
+  assert.deepEqual(
+    (await openDrafts()).map(({ id }) => id),
+    open,
+  );
+  released.resolve();
+  await running;
+  assert.deepEqual(await asOf(drafts, 'SELECT body FROM marts.drafts_notes'), [
+    { body: 'draft' },
+  ]);
+});
+
 test('a reading of a position older than the window, and the positions after it, are expired with a reason that names the retention', async () => {
   await using database = await databases.database();
   const { destination, pass } = warehouse(

@@ -167,7 +167,12 @@ export type Retaining = {
 // window becomes min_valid, and the history keeps no row that only readings
 // before it read. min_valid is a position, never past the newest one, so the
 // newest position stays readable while a pass stays open longer than the
-// window.
+// window. The numbering then keeps no commit before min_valid and no closed
+// load left with none, so it holds only what a reading still reads: min_valid
+// is a position, so each load that has a commit before it ends at or before
+// it, and keeps min_valid's own commit, whose committed_at a reading there
+// reads. A committed_in of a row only compares with numbers, and needs no
+// commit row. An open load keeps its row with or without commits.
 function retain(database: DatabaseSync, { clock, retention }: Retaining): void {
   const cutoff = new Date(
     clock.Date.now() - retention.total('milliseconds'),
@@ -187,6 +192,12 @@ function retain(database: DatabaseSync, { clock, retention }: Retaining): void {
   if (expired === undefined || expired <= minValid) return;
   expireHistory(database, expired);
   database.prepare(`UPDATE ${epochs} SET "min_valid" = ?`).run(expired);
+  database.prepare(`DELETE FROM ${commits} WHERE "number" < ?`).run(expired);
+  database
+    .prepare(
+      `DELETE FROM ${loads} WHERE "closed_at" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ${commits} AS c WHERE c."load" = ${loads}."id")`,
+    )
+    .run();
 }
 
 // Records a load of owner that opens at openedAt, with the numbering and

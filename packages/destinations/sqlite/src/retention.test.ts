@@ -237,6 +237,93 @@ test('a commit after the window deletes the history that only positions older th
   ]);
 });
 
+test('the retention deletes the commits before the oldest position it keeps and the closed loads left with none, and that position still lists and reads', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-retention-');
+  const { destination, pass } = notesFile(scratch.path, window);
+  await pass([note('n1', 1, 'first'), checkpoint('notes', 1)]);
+  await pass([note('n1', 2, 'second'), checkpoint('notes', 2)]);
+  const second = newest(destination);
+  outwait();
+
+  await pass([note('n1', 3, 'third'), checkpoint('notes', 3)]);
+
+  assert.deepEqual(
+    storedRows(
+      destination.path,
+      'SELECT min("number") AS "oldest" FROM "_elt_commits"',
+    ),
+    [{ oldest: Number(second.split(':')[1]) }],
+  );
+  assert.deepEqual(
+    storedRows(
+      destination.path,
+      'SELECT "id" FROM "_elt_loads" WHERE "id" NOT IN (SELECT "load" FROM "_elt_commits")',
+    ),
+    [],
+  );
+  assert.deepEqual(positions(destination), [second, newest(destination)]);
+  assert.deepEqual(positions(destination, second), [newest(destination)]);
+  assert.deepEqual(asOf(destination, 'SELECT body FROM notes', second), [
+    { body: 'second' },
+  ]);
+});
+
+test('the retention keeps an open load that has no commit yet, and that load commits after it', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-retention-');
+  const { destination, pass } = notesFile(scratch.path, window);
+  const wait = latch();
+  const stream = notes();
+  const drafts = new Pipeline({
+    clock,
+    connections: [
+      new Connection({
+        name: 'drafts',
+        source: new Scripted([stream], {
+          notes: [wait.step, note('d1', 1, 'draft'), checkpoint('notes', 1)],
+        }),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(stream, destination.table('drafts'), {
+            id: 'drafts',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
+        ],
+      }),
+    ],
+    history: new SQLiteSyncHistory(),
+  });
+  await pass([note('n1', 1, 'first'), checkpoint('notes', 1)]);
+  await pass([note('n1', 2, 'second'), checkpoint('notes', 2)]);
+  const running = drafts.run();
+  await wait.reached;
+  const open = storedRows(
+    destination.path,
+    `SELECT "id" FROM "_elt_loads" WHERE "connector" = 'drafts' AND "closed_at" IS NULL`,
+  );
+  outwait();
+
+  await pass([note('n1', 3, 'third'), checkpoint('notes', 3)]);
+
+  assert.deepEqual(
+    storedRows(
+      destination.path,
+      `SELECT "id" FROM "_elt_loads" WHERE "connector" = 'drafts' AND "closed_at" IS NULL`,
+    ),
+    open,
+  );
+  assert.equal(open.length, 1);
+  wait.release();
+  await running;
+  assert.deepEqual(asOf(destination, 'SELECT body FROM drafts'), [
+    { body: 'draft' },
+  ]);
+});
+
 test('a position inside the window stays readable after a later commit applies the retention', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-retention-');
   const { destination, pass } = notesFile(

@@ -69,7 +69,7 @@ _Avoid_: Promotion, relaxation (the names that Iceberg and BigQuery use), compat
 _Avoid_: Low-water mark
 
 **Retention**:
-How long the history keeps a position readable: a `Temporal.Duration` set on the destination, 30 days unless set. The shortest retention among the destinations of one database decides.
+How long the history keeps a position readable: a `Temporal.Duration` set on the destination, 30 days unless set. The shortest retention among the destinations of one database decides. When the retention moves min valid, it deletes the commits before it and the closed loads that have no commit left.
 _Avoid_: TTL, expiry (an expired position is what the retention leaves)
 
 **Reading**:
