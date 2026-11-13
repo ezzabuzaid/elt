@@ -1672,9 +1672,10 @@ test('a field that moves from number to integer, which does not keep each old va
     url,
     sized({ type: 'number', description: 'Size of the note.' }),
   );
+  // A whole number casts exactly; the type is still no widening.
   await connection({
     notes: [
-      { stream: 'notes', data: { id: 'n1', version: 1, size: 1.5 } },
+      { stream: 'notes', data: { id: 'n1', version: 1, size: 2 } },
       checkpoint('notes', 1),
     ],
   }).run();

@@ -17,6 +17,7 @@ A changed declaration (name, `primaryKey`, `partitionKey`, `supportedSyncModes`,
 
 - A stored table is `NOT NULL` only on `loaded_at` and on the explicit primary key columns. The destination still checks the required fields of each record that it writes.
 - A new field gets values only from the source. A snapshot diff emits again each changed record. The rowversion and Change Tracking states of SQL Server record the fields that they read, and a new field makes them read again.
+- 2026-11-13: Postgres checks that each cast is exact before `TYPE ... USING`, as the STRICT tables of SQLite do: a stored value that the cast would change, such as `1.5` to `bigint`, fails the copy and names the column (#4295).
 - Live, a Notification Center import kept a Calendar alert that usernoted had expired, through a field that was added to notifications.
 
 Sources: elt c77d75db; backlog #2437, #2464, #2465, #2469.

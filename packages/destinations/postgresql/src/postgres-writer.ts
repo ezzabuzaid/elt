@@ -522,13 +522,43 @@ export abstract class PostgresWriter extends Writer {
     await sql.unsafe(`DROP TABLE ${this.#hidden}`);
   }
 
+  // Refuses a cast of column from its stored type from that would change a
+  // stored value, such as double precision 1.5 to bigint 2, before the ALTER,
+  // as a STRICT SQLite table refuses it: each value that is not null must
+  // cast back to itself. A cast from text is the parse the load applies to
+  // each value of the new type, so it is trusted, and a value it cannot parse
+  // fails the ALTER.
+  async #refuseInexactCast(
+    sql: Transaction,
+    column: PostgresColumn,
+    from: string,
+  ): Promise<void> {
+    if (from === 'text' || from === 'text[]') return;
+    const { quotedName: name, storageType: to } = column;
+    let changes: unknown[];
+    try {
+      changes = await sql.unsafe(
+        `SELECT 1 FROM ${this.qualifiedName} WHERE ${name} IS NOT NULL AND ${name}::${to}::${from} IS DISTINCT FROM ${name} LIMIT 1`,
+      );
+    } catch (cause) {
+      throw new TypeError(
+        `column ${name} does not cast to ${to}: ${errorMessage(cause)}`,
+        { cause },
+      );
+    }
+    if (changes.length > 0)
+      throw new TypeError(
+        `column ${name} holds a value that a cast to ${to} would change`,
+      );
+  }
+
   // Brings a stored table the stream no longer fits to its shape in place,
   // keeping every row, as Airbyte's Postgres destination does: a column the
   // stream added is added nullable, one it dropped is dropped, a changed type
   // is cast, and NOT NULL and the primary key follow the target's explicit
-  // key columns. A value that will not cast, or rows that repeat a new key,
-  // fail the load, naming the column, and the transaction leaves the table
-  // as it was. Readers wait for the change as they wait for a swap, and
+  // key columns. A value that will not cast exactly, or rows that repeat a
+  // new key, fail the load, naming the column, and the transaction leaves the
+  // table as it was. Readers wait for the change as they wait for a swap, and
   // whatever else depends on the reader view refuses it.
   // A row with a value in a column that the change drops or casts loses or
   // changes the value, so it is a new version, in a commit of the load of its
@@ -609,10 +639,12 @@ export abstract class PostgresWriter extends Writer {
           );
           continue;
         }
-        if (existing.type !== type)
+        if (existing.type !== type) {
+          await this.#refuseInexactCast(sql, column, existing.type);
           await sql.unsafe(
             `ALTER TABLE ${this.qualifiedName} ALTER COLUMN ${column.quotedName} TYPE ${type} USING ${column.quotedName}::${type}`,
           );
+        }
         if (existing.required !== column.isPrimaryKey)
           await sql.unsafe(
             `ALTER TABLE ${this.qualifiedName} ALTER COLUMN ${column.quotedName} ${column.isPrimaryKey ? 'SET' : 'DROP'} NOT NULL`,
