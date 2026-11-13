@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { Postgres } from '@zukhruf/testing/postgres';
@@ -29,6 +28,21 @@ import {
 } from './index.ts';
 
 const databases = new Postgres({ environment: process.env });
+
+// The wall time of every pass, which the tests move, as elt's own tests do
+// (ADR 0019). The timers run for real, so a pass runs as it does, but the
+// time of each commit, which the retention compares with its window, is the
+// test's own: a slow machine cannot make a commit older than the test says.
+let now = Date.now();
+const clock = {
+  Date: { now: () => now },
+  performance,
+  setTimeout,
+  clearTimeout,
+};
+const elapse = (duration: Temporal.DurationLike) => {
+  now += Temporal.Duration.from(duration).total('milliseconds');
+};
 
 // The upstream of a test source, which the test fills before it reads.
 class Filled extends Gauge<number> {
@@ -136,7 +150,7 @@ function warehouse(
     ),
   ) =>
     new Pipeline({
-      clock: globalThis,
+      clock,
       history: new PostgresSyncHistory({ url }),
       connections: [
         new Connection({
@@ -224,7 +238,7 @@ test('a commit after the window deletes the history that only positions older th
     notes: [note('n1', 2, 'second'), checkpoint('notes', 2)],
   }).run();
   const second = await newest(destination);
-  await delay(1500);
+  elapse({ milliseconds: 1500 });
 
   await pass({ notes: [note('n1', 3, 'third'), checkpoint('notes', 3)] }).run();
 
@@ -247,7 +261,7 @@ test('a reading of a position older than the window, and the positions after it,
   await pass({
     notes: [note('n1', 2, 'second'), checkpoint('notes', 2)],
   }).run();
-  await delay(1500);
+  elapse({ milliseconds: 1500 });
 
   await pass({ notes: [note('n1', 3, 'third'), checkpoint('notes', 3)] }).run();
 
@@ -257,9 +271,6 @@ test('a reading of a position older than the window, and the positions after it,
   assert.match(after.expired, retentionReason);
 });
 
-// The window is 4 s and each wait 2.4 s: a pass may take up to 0.8 s before
-// the second position leaves the window at the last commit, or the first one
-// leaves it before then.
 test('the commit that first outwaits the window keeps readable each position inside it, and the newest position older than it', async () => {
   await using database = await databases.database();
   const { destination, pass } = warehouse(
@@ -268,14 +279,14 @@ test('the commit that first outwaits the window keeps readable each position ins
   );
   await pass({ notes: [note('n1', 1, 'first'), checkpoint('notes', 1)] }).run();
   const first = await newest(destination);
-  await delay(2400);
+  elapse({ milliseconds: 2400 });
   await pass({
     notes: [note('n1', 2, 'second'), checkpoint('notes', 2)],
   }).run();
   const second = await newest(destination);
   await pass({ notes: [note('n1', 3, 'third'), checkpoint('notes', 3)] }).run();
   const third = await newest(destination);
-  await delay(2400);
+  elapse({ milliseconds: 2400 });
 
   await pass({
     notes: [note('n1', 4, 'fourth'), checkpoint('notes', 4)],
@@ -291,19 +302,26 @@ test('the commit that first outwaits the window keeps readable each position ins
   assert.deepEqual(await asOf(destination, body, second), [{ body: 'second' }]);
 });
 
-test('with no window set, the window is 30 days and a position read after the waits of these tests stays readable', async () => {
+test('with no window set, the window is 30 days: a position stays readable for 30 days and is expired after', async () => {
   await using database = await databases.database();
   const { destination, pass } = warehouse(database.connectionString);
   await pass({ notes: [note('n1', 1, 'first'), checkpoint('notes', 1)] }).run();
   const first = await newest(destination);
-  await delay(1500);
-
   await pass({
     notes: [note('n1', 2, 'second'), checkpoint('notes', 2)],
   }).run();
+  elapse({ days: 29 });
+  await pass({ notes: [note('n1', 3, 'third'), checkpoint('notes', 3)] }).run();
 
   assert.equal(destination.retention.toString(), 'P30D');
   assert.deepEqual(await asOf(destination, body, first), [{ body: 'first' }]);
+
+  elapse({ days: 2 });
+  await pass({
+    notes: [note('n1', 4, 'fourth'), checkpoint('notes', 4)],
+  }).run();
+
+  assert.match(await expiredReading(destination, first), retentionReason);
 });
 
 test('a pass that stays open longer than the window leaves the position before it readable exactly', async () => {
@@ -319,7 +337,7 @@ test('a pass that stays open longer than the window leaves the position before i
     notes: [
       note('n1', 2, 'second'),
       checkpoint('notes', 2),
-      () => delay(1500),
+      async () => elapse({ milliseconds: 1500 }),
       note('n1', 3, 'third'),
       checkpoint('notes', 3),
     ],
@@ -343,7 +361,7 @@ test('a clear after the window deletes the history that only positions older tha
   });
   await pipeline.run();
   const second = await newest(destination);
-  await delay(1500);
+  elapse({ milliseconds: 1500 });
 
   await pipeline.clear();
 
@@ -413,7 +431,7 @@ test('a commit after the window deletes the stored files that only expired histo
     copy,
   ).run();
   const second = await newest(destination);
-  await delay(1500);
+  elapse({ milliseconds: 1500 });
 
   await pass(
     { documents: [await document('d2', 2, 'b2'), checkpoint('documents', 3)] },
