@@ -3,6 +3,8 @@ import type { SQLInputValue } from 'node:sqlite';
 import type { DeclaredFormat, DocumentParser, FileReference } from '@eltjs/elt';
 import { FileRead, isCalendarDate, isTimestamp } from '@eltjs/elt';
 
+import { quote } from './sqlite-identifiers.ts';
+
 // STRICT tables accept only these types, so dates and times are their
 // canonical ISO text, which sorts in time order, and exact decimals are text.
 const storageTypes = {
@@ -213,7 +215,7 @@ export class SQLiteColumn {
   }
 
   get quotedName(): string {
-    return `"${this.name.replaceAll('"', '""')}"`;
+    return quote(this.name);
   }
 
   // Original file bytes live in a chunk table; the column keeps the file's id.

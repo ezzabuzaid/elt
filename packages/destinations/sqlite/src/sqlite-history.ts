@@ -4,10 +4,8 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { Declaration } from '@zukhruf/sqlite-drift';
 
 import { SQLiteFileStore } from './sqlite-file-store.ts';
-import { identifiers } from './sqlite-identifiers.ts';
+import { identifiers, quote } from './sqlite-identifiers.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
-
-const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
 export const histories = '_elt_histories';
 

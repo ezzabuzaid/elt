@@ -16,13 +16,11 @@ import {
 import { busyTimeout } from './open-destination.ts';
 import { SQLiteDestination } from './sqlite-destination.ts';
 import { SQLiteHistory, rowHash } from './sqlite-history.ts';
-import { identifiers } from './sqlite-identifiers.ts';
+import { identifiers, quote } from './sqlite-identifiers.ts';
 import { SQLiteLoad } from './sqlite-loads.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { publishSQLiteViews } from './sqlite-views.ts';
 import { View } from './view.ts';
-
-const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
 // The columns the dataset keeps on every output row beside the rule's own.
 const engineColumns = {

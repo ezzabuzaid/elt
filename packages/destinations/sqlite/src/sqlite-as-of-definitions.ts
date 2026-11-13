@@ -5,7 +5,6 @@ import { open } from '@zukhruf/sqlite-open';
 import {
   columnsOf,
   literal,
-  quote,
   readable,
   selectAsOf,
   storedViews,
@@ -13,6 +12,7 @@ import {
   syncHistoryViews,
   versioned,
 } from './sqlite-as-of.ts';
+import { quote } from './sqlite-identifiers.ts';
 
 /**
  * The `CREATE TEMP VIEW` statements that show the file attached as `schema`

@@ -6,10 +6,9 @@ import { Declaration } from '@zukhruf/sqlite-drift';
 import type { FileContent } from '@eltjs/elt';
 
 import type { SQLiteColumn } from './sqlite-column.ts';
-import { identifiers } from './sqlite-identifiers.ts';
+import { identifiers, quote } from './sqlite-identifiers.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
-const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 const tablePrefix = '_elt_files_';
 const chunks =
   '("file" INTEGER NOT NULL, "n" INTEGER NOT NULL, "bytes" BLOB NOT NULL, PRIMARY KEY ("file", "n")) STRICT';

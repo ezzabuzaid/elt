@@ -20,3 +20,6 @@ class SQLiteIdentifiers extends Identifiers {
 }
 
 export const identifiers = Object.freeze(new SQLiteIdentifiers());
+
+// SQLite quotes an identifier in double quotes and doubles each one inside it.
+export const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;

@@ -7,10 +7,9 @@ import type { ReaderRelation } from '@eltjs/elt';
 
 import { isReserved } from './reserved.ts';
 import { describe } from './sqlite-descriptions.ts';
+import { quote } from './sqlite-identifiers.ts';
 
 export type SQLiteView = ReaderRelation & { readonly query: string };
-
-const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
 export function viewDefinition(view: SQLiteView): string {
   return `CREATE VIEW ${quote(view.name)} AS ${view.query}`;

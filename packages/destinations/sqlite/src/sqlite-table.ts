@@ -3,7 +3,7 @@ import { Target } from '@eltjs/elt';
 
 import { SQLiteColumn, canonical } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
-import { identifiers } from './sqlite-identifiers.ts';
+import { identifiers, quote } from './sqlite-identifiers.ts';
 
 // A reusable target definition. Empty columns mean infer from the Copy's
 // stream. Its own name, its view's and its columns' follow the destination's
@@ -104,7 +104,7 @@ export class SQLiteTable extends Target {
   }
 
   get quotedName(): string {
-    return `"${this.name.replaceAll('"', '""')}"`;
+    return quote(this.name);
   }
 
   get createTableSQL(): string {

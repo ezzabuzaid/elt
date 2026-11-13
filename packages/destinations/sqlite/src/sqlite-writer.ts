@@ -29,11 +29,9 @@ import { describe } from './sqlite-descriptions.ts';
 import type { SQLiteDestination } from './sqlite-destination.ts';
 import { SQLiteFileStore } from './sqlite-file-store.ts';
 import { SQLiteHistory, rowHash } from './sqlite-history.ts';
-import { identifiers } from './sqlite-identifiers.ts';
+import { identifiers, quote } from './sqlite-identifiers.ts';
 import { SQLiteLoad } from './sqlite-loads.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
-
-const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
 const writersTable = new Declaration(
   [

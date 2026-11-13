@@ -8,6 +8,7 @@ import type { PipelineClock } from '@eltjs/elt';
 
 import { openDestination } from './open-destination.ts';
 import { expireHistory } from './sqlite-history.ts';
+import { quote } from './sqlite-identifiers.ts';
 
 const epochs = '"_elt_epoch"';
 const loads = '"_elt_loads"';
@@ -303,7 +304,7 @@ export function readNumbering(
   schema = 'main',
 ): Numbering | null {
   if (schema === 'main' && numbering.drift(database) !== 'fits') return null;
-  const file = `"${schema.replaceAll('"', '""')}"`;
+  const file = quote(schema);
   let row;
   try {
     row = database

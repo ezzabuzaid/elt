@@ -4,7 +4,7 @@ import { UnavailableError, open } from '@zukhruf/sqlite-open';
 
 import { busyTimeout } from './open-destination.ts';
 import { histories } from './sqlite-history.ts';
-import { identifiers } from './sqlite-identifiers.ts';
+import { identifiers, quote } from './sqlite-identifiers.ts';
 import {
   type Numbering,
   type Position,
@@ -17,8 +17,6 @@ import { attempts, checks, coverage } from './sqlite-sync-history-schema.ts';
 import { version as rowHash } from './sqlite-writer.ts';
 
 type Versioned = { readonly target: string; readonly history: string };
-
-export const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
 /**
  * The SQL functions that views of a position call to fail, by name: a host
