@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { once } from 'node:events';
 import { watch } from 'node:fs';
-import { mkdir, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
@@ -49,7 +49,71 @@ test('a store whose index is missing is unavailable, not a time', async () => {
     new MailStore(dir.path).lastWrite(),
     StoreUnavailableError,
   );
+  await assert.rejects(new MailStore(dir.path).lastWrite(), {
+    message: `Mail's store at ${join(dir.path, 'V10/MailData/Envelope Index')} is not there.`,
+  });
+  await assert.rejects(new MailStore(dir.path).open(), {
+    name: 'StoreUnavailableError',
+    message: `Mail's store at ${dir.path} is not there.`,
+  });
 });
+
+test('a store whose version file is not there says so and names no grant, when it opens and for its last write', async () => {
+  await using dir = await new TemporaryFiles().directory('mail-store-');
+  const unavailable = {
+    name: 'StoreUnavailableError',
+    message: `Mail's store at ${dir.path} is not there.`,
+  };
+
+  await assert.rejects(new MailStore(dir.path).open(), unavailable);
+  await assert.rejects(new MailStore(dir.path).lastWrite(), unavailable);
+});
+
+test(
+  'a store whose version file or index the system keeps from this process says that it cannot be read and names the grant',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using dir = await new TemporaryFiles().directory('mail-store-');
+    const version = join(dir.path, 'PersistenceInfo.plist');
+    await writeFile(
+      version,
+      '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>LastUsedVersionDirectoryName</key><string>V10</string></dict></plist>',
+    );
+    await mkdir(join(dir.path, 'V10/MailData'), { recursive: true });
+    const index = join(dir.path, 'V10/MailData/Envelope Index');
+    open(index, { journal: new RollbackJournal() }).close();
+    const grant =
+      'cannot be read. Grant the exporting process Full Disk Access in System Settings > Privacy & Security.';
+    const store = new MailStore(dir.path);
+
+    // chmod stands in for a privacy denial of macOS: the file is there in
+    // both.
+    await chmod(index, 0o000);
+    try {
+      // A last write is a stat of the index, which a file mode does not
+      // refuse.
+      await assert.rejects(store.open(), {
+        message: `Mail's store at ${dir.path} ${grant}`,
+      });
+    } finally {
+      await chmod(index, 0o644);
+    }
+    await chmod(version, 0o000);
+    try {
+      await assert.rejects(store.open(), {
+        message: `Mail's store at ${dir.path} ${grant}`,
+      });
+      await assert.rejects(store.lastWrite(), {
+        message: `Mail's store at ${dir.path} ${grant}`,
+      });
+    } finally {
+      await chmod(version, 0o644);
+    }
+  },
+);
 
 test('a version that its watch stops during its first read leaves no watch of the store open', async () => {
   await using dir = await new TemporaryFiles().directory('mail-store-');

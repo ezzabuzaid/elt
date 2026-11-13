@@ -1539,25 +1539,32 @@ test('Mail’s store fails to open as unavailable only when its version file or 
         `<dict><key>LastUsedVersionDirectoryName</key><string>${version}</string></dict>`,
       ),
     );
-  const unavailable = {
+  // A file that is not there names no grant: no grant makes it.
+  const notThere = (root: string) => ({
     name: 'StoreUnavailableError',
-    message: /^Mail's store at .*Full Disk Access/,
-  };
+    message: `Mail's store at ${root} is not there.`,
+  });
 
   await assert.rejects(
     readAfter(join(dir.path, 'absent'), ({ root }) =>
       rm(join(root, 'PersistenceInfo.plist')),
     ),
-    unavailable,
+    notThere(join(dir.path, 'absent')),
   );
   // A file mode that refuses this process, as macOS does without Full Disk
   // Access.
-  await assert.rejects(
-    readAfter(join(dir.path, 'denied'), ({ root }) =>
-      chmod(join(root, 'PersistenceInfo.plist'), 0o000),
-    ),
-    unavailable,
-  );
+  const denied = join(dir.path, 'denied/PersistenceInfo.plist');
+  try {
+    await assert.rejects(
+      readAfter(join(dir.path, 'denied'), () => chmod(denied, 0o000)),
+      {
+        name: 'StoreUnavailableError',
+        message: /^Mail's store at .*Full Disk Access/,
+      },
+    );
+  } finally {
+    await chmod(denied, 0o644);
+  }
   await assert.rejects(
     readAfter(join(dir.path, 'truncated'), ({ root }) =>
       writeFile(
@@ -1583,7 +1590,7 @@ test('Mail’s store fails to open as unavailable only when its version file or 
   );
   await assert.rejects(
     readAfter(join(dir.path, 'missing'), persistence('V11')),
-    unavailable,
+    notThere(join(dir.path, 'missing')),
   );
   await assert.rejects(
     readAfter(join(dir.path, 'text'), ({ index }) =>
@@ -2381,6 +2388,30 @@ test(
     }
   },
 );
+
+test('Mail’s streams fail as config, saying that the store is not there and naming no grant, when its version file or index is not there, while the watch goes on', async (t) => {
+  await using dir = await new TemporaryFiles().directory('elt-mail-watch-');
+  // A pass reads the store's last write before it opens the store, and a last
+  // write names the index that it reads.
+  for (const [name, file, named] of [
+    ['version', 'PersistenceInfo.plist', ''],
+    ['index', 'V10/MailData/Envelope Index', '/V10/MailData/Envelope Index'],
+  ] as const) {
+    const root = join(dir.path, name);
+    const failure = await firstWatchFailure(t, root, () =>
+      rm(join(root, file)),
+    );
+    // A failed copy's error is in the attempt's list of copies that failed.
+    assert.ok(
+      String(failure.error).endsWith(
+        `Mail's store at ${root}${named} is not there.`,
+      ),
+      String(failure.error),
+    );
+    assert.doesNotMatch(String(failure.error), /Full Disk Access/);
+    assert.equal(failure.failure_type, 'config');
+  }
+});
 
 test('Mail’s streams fail as system for an index that is not a database, while the watch goes on', async (t) => {
   await using dir = await new TemporaryFiles().directory('elt-mail-watch-');

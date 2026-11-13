@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { renameSync } from 'node:fs';
+import { readFileSync, renameSync } from 'node:fs';
 import { chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -114,6 +114,32 @@ test(
     }
   },
 );
+
+test('a store that is there says that it is not there when the file that failed inside it is not there', async () => {
+  await using dir = await new TemporaryFiles().directory('app-database-');
+  const file = join(dir.path, 'store.sqlite');
+  // An SDK names the folder of its store while the file that failed is inside
+  // it, as Mail names its root for its version file and its index.
+  const failures = [
+    () => open(file, { readOnly: true }).close(),
+    () => readFileSync(file),
+  ].map((read) => {
+    try {
+      read();
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  });
+
+  for (const cause of failures) {
+    assert.ok(Error.isError(cause));
+    assert.equal(
+      new StoreUnavailableError(store, dir.path, cause).message,
+      `The store at ${dir.path} is not there. Open the app once.`,
+    );
+  }
+});
 
 test('a store that lacks a column the reader reads is the package missing-columns error, naming the column', async () => {
   await using dir = await new TemporaryFiles().directory('app-database-');
