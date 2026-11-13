@@ -1,8 +1,9 @@
 import { type Clock, delay } from '@zukhruf/async';
 
 import {
-  GaxiosError,
   type GoogleRequester,
+  attemptsOf,
+  googleRetry,
   reasonsOf,
   statusOf,
 } from '@eltjs/google-auth';
@@ -32,21 +33,6 @@ import {
 } from './responses.ts';
 
 const BASE = 'https://health.googleapis.com/v4/';
-
-const RETRY = {
-  /** Total tries, including the first. */
-  attempts: 5,
-  baseDelayMs: 1000,
-  /**
-   * The longest single wait. A Retry-After beyond it fails the call at once
-   * rather than stalling a pipeline for longer than anyone would wait.
-   */
-  maxDelayMs: 60_000,
-} as const;
-
-// Live, deep pages of long histories answer 503 now and then; a retry reads
-// the same page.
-const TRANSIENT_STATUSES = new Set([408, 500, 502, 503, 504]);
 
 /**
  * Google Health's per-user quota: 300 requests a minute
@@ -230,38 +216,45 @@ export class GoogleHealthApi {
     { data }: { readonly data?: Record<string, unknown> },
     { signal, clock }: CallOptions,
   ): Promise<unknown> {
-    for (let attempt = 1; ; attempt += 1) {
-      await this.#pace(signal, clock);
-      try {
-        const response = await this.#requester.request({
-          method,
-          url: `${BASE}${path}`,
-          ...(data === undefined ? {} : { data }),
-          ...(signal === undefined ? {} : { signal }),
-        });
-        return response.data;
-      } catch (cause) {
-        signal?.throwIfAborted();
-        const status = statusOf(cause);
-        const reasons = reasonsOf(cause);
-        if (reasons.includes('ACCOUNT_NOT_LINKED'))
-          throw new GoogleHealthAccountNotLinkedError({ cause });
-        const rateLimited =
-          status === 429 || reasons.includes('RESOURCE_EXHAUSTED');
-        if (!rateLimited && !(status && TRANSIENT_STATUSES.has(status)))
-          throw cause;
-        const wait = this.#delay(cause, attempt, clock.Date.now());
-        if (attempt < RETRY.attempts && wait !== undefined) {
-          await delay(wait, { clock, signal });
-          continue;
-        }
-        if (!rateLimited) throw cause;
-        throw new GoogleHealthRateLimitError(
-          attempt,
-          `Google Health rate limited ${method} ${path} after ${attempt} ${attempt === 1 ? 'attempt' : 'attempts'}`,
-          { cause },
-        );
-      }
+    const retry = googleRetry({
+      clock,
+      signal,
+      rateLimitReasons: ['RESOURCE_EXHAUSTED'],
+    });
+    await this.#pace(signal, clock);
+    try {
+      const response = await this.#requester.request({
+        method,
+        url: `${BASE}${path}`,
+        ...(data === undefined ? {} : { data }),
+        ...(signal === undefined ? {} : { signal }),
+        retry: true,
+        retryConfig: {
+          ...retry.retryConfig,
+          // A retry is one more request of the minute, so it waits for room
+          // under the quota after its back-off.
+          retryBackoff: async (error) => {
+            await retry.retryConfig.retryBackoff(error);
+            await this.#pace(signal, clock);
+          },
+        },
+      });
+      return response.data;
+    } catch (cause) {
+      signal?.throwIfAborted();
+      const status = statusOf(cause);
+      const reasons = reasonsOf(cause);
+      if (reasons.includes('ACCOUNT_NOT_LINKED'))
+        throw new GoogleHealthAccountNotLinkedError({ cause });
+      const rateLimited =
+        status === 429 || reasons.includes('RESOURCE_EXHAUSTED');
+      if (!rateLimited) throw cause;
+      const attempts = attemptsOf(cause);
+      throw new GoogleHealthRateLimitError(
+        attempts,
+        `Google Health rate limited ${method} ${path} after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}`,
+        { cause },
+      );
     }
   }
 
@@ -282,34 +275,6 @@ export class GoogleHealthApi {
       await delay(60_000 - (now - oldest), { clock, signal });
     }
   }
-
-  /**
-   * How long to wait before the next try, or undefined when the server asked
-   * for longer than the policy allows. The server's Retry-After wins over the
-   * backoff; otherwise the wait doubles per attempt with full jitter, so
-   * concurrent callers do not retry in lockstep.
-   */
-  #delay(error: unknown, attempt: number, now: number): number | undefined {
-    const requested = retryAfterMs(error, now);
-    if (requested !== undefined)
-      return requested <= RETRY.maxDelayMs ? requested : undefined;
-    const ceiling = Math.min(
-      RETRY.maxDelayMs,
-      RETRY.baseDelayMs * 2 ** (attempt - 1),
-    );
-    return Math.random() * ceiling;
-  }
-}
-
-// Retry-After is either whole seconds or an HTTP date (RFC 9110 section
-// 10.2.3), which counts from now.
-function retryAfterMs(error: unknown, now: number): number | undefined {
-  if (!(error instanceof GaxiosError)) return undefined;
-  const value = error.response?.headers.get('retry-after')?.trim();
-  if (!value) return undefined;
-  if (/^\d+$/.test(value)) return Number(value) * 1000;
-  const at = Date.parse(value);
-  return Number.isFinite(at) ? Math.max(0, at - now) : undefined;
 }
 
 const DAY_MS = 86_400_000;

@@ -25,4 +25,4 @@ for await (const point of api.dataPoints('heart-rate', { clock: globalThis }))
 - A `503`, `5xx` or `429` is retried with backoff, honoring `Retry-After`; a rate limit that outlasts the retries is a `GoogleHealthRateLimitError`. `ACCOUNT_NOT_LINKED` is a `GoogleHealthAccountNotLinkedError`.
 - A double Google sends as `NaN`, `Infinity` or `-Infinity` reads as that number.
 
-Limitations: moods, symptoms, menstrual periods and ovulation tests accept only writes, so they are not offered; the public food catalog is not offered. The retry loop is a copy of the Search Console SDK's ([ledger](docs/copied-from-search-console.md)).
+Limitations: moods, symptoms, menstrual periods and ovulation tests accept only writes, so they are not offered; the public food catalog is not offered. The retry is `googleRetry` of `@eltjs/google-auth`; the pacing is a copy of the Search Console SDK's ([ledger](docs/copied-from-search-console.md)).

@@ -173,6 +173,42 @@ test('a 503 on a later page is retried and the read continues from that page', a
   );
 });
 
+test('a retry waits for room under the per-minute quota, as a first try does', async () => {
+  // A clock that a wait moves: it shows how long the API waited, at once.
+  let now = Date.parse('2026-10-15T00:00:00Z');
+  const clock = {
+    Date: { now: () => now },
+    performance: globalThis.performance,
+    setTimeout: (callback: () => void, ms: number) => {
+      now += ms;
+      queueMicrotask(callback);
+    },
+    clearTimeout: () => {},
+  };
+  // The 300th request of the minute is refused, so its retry is the 301st.
+  const sentAt: number[] = [];
+  using health = google(() => {
+    sentAt.push(now);
+    if (sentAt.length < 300)
+      return { dataPoints: [], nextPageToken: `page-${sentAt.length}` };
+    if (sentAt.length === 300)
+      return refusal(
+        503,
+        'UNAVAILABLE',
+        'The service is currently unavailable.',
+      );
+    return { dataPoints: [steps('2026-10-13T10:00:00Z', '7')] };
+  });
+
+  const points = await Array.fromAsync(
+    health.api.dataPoints('steps', { clock }),
+  );
+
+  assert.equal(points.length, 1);
+  assert.equal(sentAt.length, 301);
+  assert.equal(Number(sentAt.at(-1)) - Number(sentAt[0]), 60_000);
+});
+
 test('a 429 waits for Retry-After and then reads on', async () => {
   let failures = 1;
   // Two seconds is longer than the first backoff could be, so only the

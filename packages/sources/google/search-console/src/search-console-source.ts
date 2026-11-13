@@ -11,11 +11,7 @@ import {
   type SourceMessage,
   type Stream,
 } from '@eltjs/elt';
-import {
-  GoogleGrantRevokedError,
-  messageOf,
-  statusOf,
-} from '@eltjs/google-auth';
+import { googleFailureType, messageOf } from '@eltjs/google-auth';
 import {
   SearchConsoleApi,
   readSearchAnalytics,
@@ -284,17 +280,10 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
     return null;
   }
 
-  // Google refused the grant, will no longer refresh it, or the grant cannot
-  // read the property, so only the user can fix it. A rate limit Google sends
-  // as a 403 never gets here: the API turns it into a SearchConsoleQuotaError
-  // once retries run out.
+  // A SearchConsoleQuotaError has no status of its own, so its cause, the
+  // rate limit, decides: a later run can pass it.
   override failureType(error: unknown): FailureType {
-    const status = statusOf(error);
-    return status === 401 ||
-      status === 403 ||
-      GoogleGrantRevokedError.matches(error)
-      ? 'config'
-      : 'system';
+    return googleFailureType(error);
   }
 
   /**

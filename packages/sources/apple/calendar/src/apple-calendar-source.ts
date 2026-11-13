@@ -7,10 +7,12 @@ import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  FailureType,
   SourceMessage,
   Stream,
 } from '@eltjs/elt';
 import { Catalog, Source, diffSnapshot, isTimestamp } from '@eltjs/elt';
+import { googleFailureType } from '@eltjs/google-auth';
 import {
   type CalendarStore,
   CalendarUnavailableError,
@@ -141,6 +143,14 @@ export class AppleCalendarSource extends Source<CalendarScan> {
   }
 
   protected override readonly configErrors = [CalendarUnavailableError];
+
+  // An attachment fetcher reads Google, where only the user can enable an
+  // API or grant a scope.
+  override failureType(error: unknown): FailureType {
+    return super.failureType(error) === 'config'
+      ? 'config'
+      : googleFailureType(error);
+  }
 
   override coverage(stream: Stream): ExtractionCoverage {
     if (!readerOf(stream).dated)

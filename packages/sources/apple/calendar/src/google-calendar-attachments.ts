@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 
 import {
   type GoogleRequester,
+  download,
   messageOf,
   reasonsOf,
   statusOf,
@@ -47,12 +48,19 @@ export function googleCalendarAttachments(
   return async ({ uri }, path) => {
     const attachment = parseGoogleAttachment(uri);
     if (attachment === undefined) return false;
-    let bytes: Uint8Array | undefined;
     try {
-      bytes =
-        attachment.kind === 'drive'
-          ? await driveFile(requester, attachment)
-          : await gmailAttachment(requester, attachment.id, attachment.partId);
+      if (attachment.kind === 'drive') {
+        await driveFile(requester, attachment, path);
+        return true;
+      }
+      const bytes = await gmailAttachment(
+        requester,
+        attachment.id,
+        attachment.partId,
+      );
+      if (bytes === undefined) return false;
+      await writeFile(path, bytes);
+      return true;
     } catch (error) {
       const status = statusOf(error);
       const reasons = reasonsOf(error);
@@ -62,16 +70,11 @@ export function googleCalendarAttachments(
       )
         return false;
       if (status === undefined) throw error;
-      // The text of a failed download is only its status, because gaxios
-      // reads the error body of a binary request after it wrote the message.
       throw new Error(
         `Google answered ${status}${reasons.length > 0 ? ` (${reasons.join(', ')})` : ''} for the attachment ${uri}: ${messageOf(error)}`,
         { cause: error },
       );
     }
-    if (bytes === undefined) return false;
-    await writeFile(path, bytes);
-    return true;
   };
 }
 
@@ -101,7 +104,8 @@ function parseGoogleAttachment(uri: string): GoogleAttachment | undefined {
 async function driveFile(
   requester: GoogleRequester,
   { fileId, resourceKey }: DriveFile,
-): Promise<Uint8Array> {
+  path: string,
+): Promise<void> {
   const file = `${DRIVE}/${encodeURIComponent(fileId)}`;
   const headers = resourceKey
     ? { 'X-Goog-Drive-Resource-Keys': `${fileId}/${resourceKey}` }
@@ -117,23 +121,27 @@ async function driveFile(
     const targetKey = field(shortcut, 'targetResourceKey');
     if (typeof targetId !== 'string')
       throw new TypeError(`Drive shortcut ${fileId} has no target`);
-    return driveFile(requester, {
-      fileId: targetId,
-      ...(typeof targetKey === 'string' ? { resourceKey: targetKey } : {}),
-    });
+    return driveFile(
+      requester,
+      {
+        fileId: targetId,
+        ...(typeof targetKey === 'string' ? { resourceKey: targetKey } : {}),
+      },
+      path,
+    );
   }
-  const response = await requester.request({
-    url:
-      typeof mimeType === 'string' &&
-      mimeType.startsWith('application/vnd.google-apps.')
-        ? `${file}/export?mimeType=application%2Fpdf`
-        : `${file}?alt=media&supportsAllDrives=true`,
-    responseType: 'arraybuffer',
-    ...(headers ? { headers } : {}),
-  });
-  if (!(response.data instanceof ArrayBuffer))
-    throw new TypeError(`Drive returned no file content for ${fileId}`);
-  return new Uint8Array(response.data);
+  await download(
+    requester,
+    {
+      url:
+        typeof mimeType === 'string' &&
+        mimeType.startsWith('application/vnd.google-apps.')
+          ? `${file}/export?mimeType=application%2Fpdf`
+          : `${file}?alt=media&supportsAllDrives=true`,
+      ...(headers ? { headers } : {}),
+    },
+    path,
+  );
 }
 
 async function gmailAttachment(

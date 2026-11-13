@@ -600,6 +600,56 @@ test('an account with no Google Health profile fails the run as a config failure
   assert.match(String(failures[0]?.error), /Google Health app/);
 });
 
+test('a rate limit that outlasts the retries fails the run as a system failure, though Google sends it as a 403', async () => {
+  await using database = await databases.database();
+  const warehouse = {
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  using _google = google({
+    profile,
+    answer: () =>
+      Response.json(
+        {
+          error: {
+            code: 403,
+            details: [
+              {
+                '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+                domain: 'health.googleapis.com',
+                reason: 'RESOURCE_EXHAUSTED',
+              },
+            ],
+            message: 'Quota exceeded or rate limited.',
+            status: 'PERMISSION_DENIED',
+          },
+        },
+        { headers: { 'retry-after': '0' }, status: 403 },
+      ),
+  });
+
+  const error = await load(warehouse).then(
+    () => assert.fail('Google refused every call'),
+    (failure: unknown) => failure,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  const failures = error.results[0]?.failures ?? [];
+  assert.ok(failures.length > 0);
+  assert.match(String(failures[0]?.error), /rate limited/);
+  assert.deepEqual(
+    [...new Set(failures.map(({ failureType }) => failureType))],
+    ['system'],
+  );
+});
+
 test('a measured instant to the microsecond, a session instant to the nanosecond, civil times, offsets and 64-bit counts load exactly', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();

@@ -1,9 +1,10 @@
-import { type Clock, delay } from '@zukhruf/async';
+import type { Clock } from '@zukhruf/async';
 import { z } from 'zod';
 
 import {
-  GaxiosError,
   type GoogleRequester,
+  attemptsOf,
+  googleRetry,
   reasonsOf,
   statusOf,
 } from '@eltjs/google-auth';
@@ -34,24 +35,12 @@ export class SearchConsoleQuotaError extends Error {
   }
 }
 
-const RETRY = {
-  /** Total tries, including the first. */
-  attempts: 5,
-  baseDelayMs: 1000,
-  /**
-   * The longest single wait. A Retry-After beyond it fails the call at once
-   * rather than stalling a pipeline for longer than anyone would wait.
-   */
-  maxDelayMs: 60_000,
-} as const;
-
 // Google reports some rate limits as 403 with one of these reasons. Every other
-// 403, such as an insufficient scope or a disabled API, is not worth retrying.
+// 403, such as an insufficient scope or a disabled API, is not a quota error.
 const RATE_LIMIT_REASONS = new Set([
   'rateLimitExceeded',
   'userRateLimitExceeded',
 ]);
-const TRANSIENT_STATUSES = new Set([408, 500, 502, 503, 504]);
 
 export type SearchAnalyticsRequest = {
   readonly startDate: string;
@@ -226,66 +215,31 @@ export class SearchConsoleApi {
     data: Record<string, unknown> | undefined,
     { signal, clock }: CallOptions,
   ): Promise<unknown> {
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        const response = await this.#requester.request({
-          method,
-          url: `${BASE}${path}`,
-          ...(data === undefined ? {} : { data }),
-          ...(signal === undefined ? {} : { signal }),
-        });
-        return response.data;
-      } catch (cause) {
-        signal?.throwIfAborted();
-        const status = statusOf(cause);
-        // Live, an exhausted daily inspection quota is a 429 with reason
-        // rateLimitExceeded and no Retry-After, like a per-minute limit.
-        const rateLimited =
-          status === 429 ||
-          reasonsOf(cause).some((reason) => RATE_LIMIT_REASONS.has(reason));
-        if (!rateLimited && !(status && TRANSIENT_STATUSES.has(status)))
-          throw cause;
-        const wait = this.#delay(cause, attempt, clock.Date.now());
-        if (attempt < RETRY.attempts && wait !== undefined) {
-          await delay(wait, { clock, signal });
-          continue;
-        }
-        if (!rateLimited) throw cause;
-        throw new SearchConsoleQuotaError(
-          status ?? 403,
-          attempt,
-          `Search Console rate limited ${method} ${path} after ${attempt} ${attempt === 1 ? 'attempt' : 'attempts'}`,
-          { cause },
-        );
-      }
+    try {
+      const response = await this.#requester.request({
+        method,
+        url: `${BASE}${path}`,
+        ...(data === undefined ? {} : { data }),
+        ...(signal === undefined ? {} : { signal }),
+        ...googleRetry({ clock, signal }),
+      });
+      return response.data;
+    } catch (cause) {
+      signal?.throwIfAborted();
+      const status = statusOf(cause);
+      // Live, an exhausted daily inspection quota is a 429 with reason
+      // rateLimitExceeded and no Retry-After, like a per-minute limit.
+      const rateLimited =
+        status === 429 ||
+        reasonsOf(cause).some((reason) => RATE_LIMIT_REASONS.has(reason));
+      if (!rateLimited) throw cause;
+      const attempts = attemptsOf(cause);
+      throw new SearchConsoleQuotaError(
+        status ?? 403,
+        attempts,
+        `Search Console rate limited ${method} ${path} after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}`,
+        { cause },
+      );
     }
   }
-
-  /**
-   * How long to wait before the next try, or undefined when the server asked
-   * for longer than the policy allows. The server's Retry-After wins over the
-   * backoff; otherwise the wait doubles per attempt with full jitter, so
-   * concurrent callers do not retry in lockstep.
-   */
-  #delay(error: unknown, attempt: number, now: number): number | undefined {
-    const requested = retryAfterMs(error, now);
-    if (requested !== undefined)
-      return requested <= RETRY.maxDelayMs ? requested : undefined;
-    const ceiling = Math.min(
-      RETRY.maxDelayMs,
-      RETRY.baseDelayMs * 2 ** (attempt - 1),
-    );
-    return Math.random() * ceiling;
-  }
-}
-
-// Retry-After is either whole seconds or an HTTP date (RFC 9110 section
-// 10.2.3), which counts from now.
-function retryAfterMs(error: unknown, now: number): number | undefined {
-  if (!(error instanceof GaxiosError)) return undefined;
-  const value = error.response?.headers.get('retry-after')?.trim();
-  if (!value) return undefined;
-  if (/^\d+$/.test(value)) return Number(value) * 1000;
-  const at = Date.parse(value);
-  return Number.isFinite(at) ? Math.max(0, at - now) : undefined;
 }

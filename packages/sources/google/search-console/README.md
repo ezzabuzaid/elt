@@ -203,7 +203,7 @@ URL inspection has no list endpoint. Each row costs one request for one URL. A p
 
 The wait uses the `Retry-After` of the server, in seconds or as an HTTP date. When the server sends no `Retry-After`, the wait starts at one second and doubles with each attempt, with full jitter, to a maximum of one minute. When `Retry-After` is longer than one minute, the call fails immediately, and the pipeline does not stop to wait. A call makes a maximum of five attempts. The SDK sets this policy, and no option changes it.
 
-The transport of google-auth-library, gaxios, has its own retry. But that retry is off by default, it does not retry `POST`, and it does not read `Retry-After`. `searchAnalytics.query` and URL inspection both use `POST`. Thus the retry is in `SearchConsoleApi`, over the `GoogleRequester` interface, which is not specific to a library.
+The transport of google-auth-library, gaxios, makes the retries. Its retry is off by default, it does not retry `POST`, and it does not read `Retry-After`. `searchAnalytics.query` and URL inspection both use `POST`. Thus `SearchConsoleApi` gives each request the policy as `googleRetry` of `@eltjs/google-auth`, which turns the retry on and decides which response is sent again and how long the wait is.
 
 ## Watching
 

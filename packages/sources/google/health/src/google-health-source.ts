@@ -12,14 +12,14 @@ import {
   type Stream,
 } from '@eltjs/elt';
 import {
-  GoogleGrantRevokedError,
   type GoogleRequester,
+  googleFailureType,
   messageOf,
-  statusOf,
 } from '@eltjs/google-auth';
 import {
   GoogleHealthAccountNotLinkedError,
   GoogleHealthApi,
+  GoogleHealthRateLimitError,
 } from '@eltjs/sdk-google-health';
 
 import { AccountStream } from './account-stream.ts';
@@ -133,16 +133,13 @@ export class GoogleHealthSource extends Source<GoogleHealthScan> {
     return null;
   }
 
-  // Only the user can fix an account without a Google Health profile, a
-  // grant Google no longer refreshes, or a grant without the data's scope.
+  // The SDK's own errors say whose failure they are, whatever answer of
+  // Google caused them: only the user can fix an account without a Google
+  // Health profile, and a later run can pass a rate limit.
   override failureType(error: unknown): FailureType {
-    const status = statusOf(error);
-    return error instanceof GoogleHealthAccountNotLinkedError ||
-      GoogleGrantRevokedError.matches(error) ||
-      status === 401 ||
-      status === 403
-      ? 'config'
-      : 'system';
+    if (error instanceof GoogleHealthAccountNotLinkedError) return 'config';
+    if (error instanceof GoogleHealthRateLimitError) return 'system';
+    return googleFailureType(error);
   }
 
   /**

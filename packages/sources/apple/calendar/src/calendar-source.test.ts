@@ -6,6 +6,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { Readable } from 'node:stream';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -2590,32 +2591,62 @@ test(
 
 type GoogleCall = { url: string; headers?: Readonly<Record<string, string>> };
 
-// Plays Google's APIs at the requester seam and records each request.
+// Plays Google's APIs at the requester seam and records each request. A
+// download asks for a stream, so it gets the bytes of the reply as one, and a
+// refusal in the shape gaxios gives a streamed request.
 function googleRecorder(reply: (call: GoogleCall) => unknown) {
   const calls: GoogleCall[] = [];
   const requester: GoogleRequester = {
-    async request({ url, headers }) {
+    async request({ url, headers, responseType }) {
       const call: GoogleCall = { url, ...(headers ? { headers } : {}) };
       calls.push(call);
-      return { data: reply(call) };
+      if (responseType !== 'stream') return { data: reply(call) };
+      try {
+        const data = reply(call);
+        return {
+          data:
+            data instanceof ArrayBuffer
+              ? Readable.from([new Uint8Array(data)])
+              : data,
+        };
+      } catch (error) {
+        throw error instanceof GaxiosError ? streamed(error) : error;
+      }
     },
   };
   return { calls, requester };
 }
 
+const googleConfig = () => ({
+  url: new URL('https://www.googleapis.com/'),
+  headers: new Headers(),
+});
+
 // Built as gaxios builds one: from a response whose body it has already read
 // into `data`. GaxiosError drops `data` from a response with an unread body.
 function googleError(status: number, data: unknown = {}) {
-  const config = {
-    url: new URL('https://www.googleapis.com/'),
-    headers: new Headers(),
-  };
+  const config = googleConfig();
   const response = new Response(JSON.stringify(data), { status });
   void response.text();
   return new GaxiosError(
     `Request failed with status code ${status}`,
     config,
     Object.assign(response, { config, data }),
+  );
+}
+
+// The same refusal as gaxios gives it for a streamed request: it reads the
+// body as text, and the text is the message of the error and its `data`.
+function streamed(error: GaxiosError) {
+  const config = { ...googleConfig(), responseType: 'stream' } as const;
+  const data = JSON.stringify(error.response?.data);
+  return new GaxiosError(
+    data,
+    config,
+    Object.assign(new Response(null, { status: error.status }), {
+      config,
+      data,
+    }),
   );
 }
 
@@ -2790,13 +2821,14 @@ test(
       ],
     });
     await using scratch = await new TemporaryFiles().directory('gcal-err-');
-    for (const [index, [error, message]] of (
+    for (const [index, [error, message, failureType]] of (
       [
         [
           googleError(403, {
             error: { errors: [{ reason: 'accessNotConfigured' }] },
           }),
           /403 \(accessNotConfigured\).*drive\.google\.com\/file\/d\/abc\/view/,
+          'config',
         ],
         [
           googleError(403, {
@@ -2807,10 +2839,15 @@ test(
             },
           }),
           /403 \(ACCESS_TOKEN_SCOPE_INSUFFICIENT\).*drive\.google\.com\/file\/d\/abc\/view: Request had insufficient authentication scopes\./,
+          'config',
         ],
-        [googleError(500), /500.*drive\.google\.com\/file\/d\/abc\/view/],
+        [
+          googleError(500),
+          /500.*drive\.google\.com\/file\/d\/abc\/view/,
+          'system',
+        ],
         // A request that Google did not answer keeps its own error.
-        [new Error('socket hang up'), /^socket hang up$/],
+        [new Error('socket hang up'), /^socket hang up$/, 'system'],
       ] as const
     ).entries()) {
       const { requester } = googleRecorder(() => {
@@ -2825,7 +2862,8 @@ test(
         (failure: unknown) =>
           failure instanceof PipelineError &&
           Error.isError(failure.cause) &&
-          message.test(failure.cause.message),
+          message.test(failure.cause.message) &&
+          failureTypes(failure).join() === failureType,
       );
     }
   },
@@ -2860,7 +2898,8 @@ test(
         (failure: unknown) =>
           failure instanceof PipelineError &&
           Error.isError(failure.cause) &&
-          /403/.test(failure.cause.message),
+          /403/.test(failure.cause.message) &&
+          failureTypes(failure).join() === 'system',
       );
     }
   },
