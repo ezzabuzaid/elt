@@ -456,10 +456,11 @@ export abstract class PostgresWriter extends Writer {
         );
   }
 
-  // Swaps a completed reload's hidden target in last, so readers of the
-  // stored table wait only for the swap, not the reload. A reader that holds
-  // it past the timeout fails the copy until the next run. Whatever else
-  // depends on the target, such as marts, refuses the swap.
+  // Swaps a completed reload's hidden target in last, when the target no
+  // longer has the stream's shape, so readers of the stored table wait only
+  // for the swap, not the reload. A reader that holds it past the timeout
+  // fails the copy until the next run. Whatever else depends on the target,
+  // such as marts, refuses the swap.
   // Its rows are new to readers at this commit, and the history keeps every
   // row of the target it replaces.
   async #swap(sql: Transaction, committedIn: number): Promise<void> {
@@ -486,6 +487,33 @@ export abstract class PostgresWriter extends Writer {
     );
     await this.adopt(sql);
     await this.#describe(sql, async () => committedIn);
+  }
+
+  // Gives a completed reload's rows to a target that still has the stream's
+  // shape, in place and by difference: the history keeps each row of the
+  // target that no row of the hidden target matches, and the row goes; a row
+  // with a match stays, with its commit and its loaded_at, and the target
+  // keeps its indexes, its triggers and what depends on it. Each row of the
+  // hidden target that no row matches enters with this commit, and the
+  // loaded_at of the load that wrote it.
+  async #reloadInPlace(sql: Transaction, committedIn: number): Promise<void> {
+    const target = { table: this.qualifiedName, id: 'ctid' };
+    const reloaded = { table: this.#hidden, id: 'ctid' };
+    const leaving = this.#unmatched(target, reloaded);
+    await this.#history.keep(
+      sql,
+      committedIn,
+      this.qualifiedName,
+      `FROM ${this.qualifiedName} AS "_elt_old" WHERE "_elt_old".ctid IN (${leaving})`,
+    );
+    await sql.unsafe(
+      `DELETE FROM ${this.qualifiedName} WHERE ctid IN (${leaving})`,
+    );
+    await sql.unsafe(
+      `INSERT INTO ${this.qualifiedName} (${this.written.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, "loaded_at", $1::integer, ${version} FROM ${this.#hidden} WHERE ctid IN (${this.#unmatched(reloaded, target)}) ORDER BY ctid`,
+      [committedIn],
+    );
+    await sql.unsafe(`DROP TABLE ${this.#hidden}`);
   }
 
   // Brings a stored table the stream no longer fits to its shape in place,
@@ -629,8 +657,9 @@ export abstract class PostgresWriter extends Writer {
   // rows behind.
   // Each commit is one transaction that merges the stage, with the result of
   // applying its operations one at a time, into the target, or into a
-  // reload's hidden target until complete() swaps it in. The first commit
-  // also creates the target, or the hidden target of a new reload.
+  // reload's hidden target until complete() gives its rows to the target.
+  // The first commit also creates the target, or the hidden target of a new
+  // reload.
   async prepare(
     load: PostgresLoad,
     { writer, reloading }: { writer: string; reloading: boolean },
@@ -820,7 +849,14 @@ export abstract class PostgresWriter extends Writer {
       complete: async () => {
         if (!open()) return;
         await load.commit(async (sql, committedIn) => {
-          await this.#swap(sql, committedIn);
+          const target = await storedFit(
+            sql,
+            this.table,
+            this.qualifiedName,
+            stage,
+          );
+          if (target === 'fits') await this.#reloadInPlace(sql, committedIn);
+          else await this.#swap(sql, committedIn);
           for (const store of stores)
             await store.prune(sql, [
               this.qualifiedName,

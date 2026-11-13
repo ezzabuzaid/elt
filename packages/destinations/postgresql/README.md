@@ -134,7 +134,9 @@ Shape changes:
 - When the columns, types or `NOT NULL`s of a stored table do not fit the stream, the load [evolves it](../../elt/README.md#shape-changes) in place before it reads, as the Postgres destination of Airbyte does. `ALTER TABLE` adds a nullable column, drops a column that the stream dropped (with its chunk table, for a file column), and converts a column with a new type `USING column::type`. It keeps `NOT NULL` and the primary key on the explicit key columns of the target, and moves the key when they change. The reader view is made again over the result.
 - The change waits at most 3 seconds for readers to let go. Otherwise it fails the copy until the next run.
 - A value that does not convert, rows that repeat a new key, or a view of a different schema built on the reader view fail the change. The table stays as it was.
-- A [reset](../../elt/README.md#resets) of the full stream, or an overwrite whose stored table does not fit, reloads into a hidden table `_elt_next_<hash>`. The first commit of the reload makes it. When the stream ends with no failure, the load swaps it in, also with a wait of at most 3 seconds, and drops the chunk table of a file column that it does not have now. A view built on the reader view refuses the swap.
+- A [reset](../../elt/README.md#resets) of the full stream, or an overwrite whose stored table does not fit, reloads into a hidden table `_elt_next_<hash>`. The first commit of the reload makes it. When the stream ends with no failure:
+  - If the stored table still has the stream's shape, the load changes it in place, by difference: each row that the hidden table has again stays, with its commit and its `loaded_at`; each other row goes into the history; and each new row enters. The table keeps its indexes, its triggers and the views that depend on it.
+  - If not, the load swaps the hidden table in, also with a wait of at most 3 seconds, and drops the chunk table of a file column that it does not have now. The history keeps every row of the old table. A view built on the table or its reader view refuses the swap.
 
 ## Commit numbers and positions
 

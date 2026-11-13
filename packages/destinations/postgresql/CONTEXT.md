@@ -29,7 +29,7 @@ The session-private `TEMP` table where one stream keeps its operations until its
 _Avoid_: Buffer, staging table
 
 **Hidden table**:
-The table `_elt_next_<hash>` that a reload commits into. The load swaps it in when the stream ends with no failure.
+The table `_elt_next_<hash>` that a reload commits into. When the stream ends with no failure, the load gives its rows to the table by difference if the table still has the stream's shape, and swaps it in if not.
 _Avoid_: Shadow table, temp table
 
 **Swap wait**:

@@ -939,6 +939,105 @@ test('the rows that a later reload swapped out read as of the position before it
   );
 });
 
+test('a reload that sends a row again with the same values leaves it in the target with its commit and its loaded_at, and the history keeps only the rows that left', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = client(database.connectionString, clients);
+  const { destination, connection } = warehouse(database.connectionString);
+  await connection({
+    notes: [
+      note('notes', 'n1', 1),
+      note('notes', 'n2', 1),
+      checkpoint('notes', 1),
+    ],
+  }).run();
+  const before = await newest(destination);
+  const rows = await asOf(
+    destination,
+    'SELECT * FROM marts.raw_notes ORDER BY id',
+  );
+  const [first] = await sql<{ committed_in: number; loaded_at: Date }[]>`
+    SELECT committed_in, loaded_at FROM raw.notes WHERE id = 'n1'`;
+
+  await connection({
+    notes: [
+      { type: 'RESET', stream: 'notes' },
+      note('notes', 'n1', 1),
+      note('notes', 'n3', 1),
+      checkpoint('notes', 2),
+    ],
+  }).run();
+
+  const reload = await lastCommit(sql);
+  assert.deepEqual(
+    (
+      await sql`SELECT id, committed_in, loaded_at FROM raw.notes ORDER BY id`
+    ).map((row) => ({ ...row })),
+    [
+      { id: 'n1', ...first },
+      { id: 'n3', committed_in: reload.number, loaded_at: reload.opened_at },
+    ],
+  );
+  assert.deepEqual(
+    (await replaced(sql)).map(({ id }) => id),
+    ['n2'],
+  );
+  assert.deepEqual(
+    await asOf(
+      destination,
+      'SELECT * FROM marts.raw_notes ORDER BY id',
+      before,
+    ),
+    rows,
+  );
+});
+
+test('a reload of a table that keeps its shape changes it in place, so an index and a view of its own that depend on it stay and read the reloaded rows', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = client(database.connectionString, clients);
+  const { destination, connection } = warehouse(database.connectionString);
+  await connection({
+    notes: [
+      note('notes', 'n1', 1),
+      note('notes', 'n2', 1),
+      checkpoint('notes', 1),
+    ],
+  }).run();
+  await sql`CREATE INDEX notes_by_body ON raw.notes (body)`;
+  await sql`CREATE SCHEMA mine`;
+  await sql`CREATE VIEW mine.bodies AS SELECT id, body FROM raw.notes`;
+
+  await connection({
+    notes: [
+      { type: 'RESET', stream: 'notes' },
+      note('notes', 'n1', 1),
+      note('notes', 'n3', 1, 'new'),
+      checkpoint('notes', 2),
+    ],
+  }).run();
+
+  assert.deepEqual(
+    (
+      await sql`SELECT indexname FROM pg_indexes WHERE schemaname = 'raw' AND indexname = 'notes_by_body'`
+    ).map((row) => ({ ...row })),
+    [{ indexname: 'notes_by_body' }],
+  );
+  assert.deepEqual(
+    (await sql`SELECT * FROM mine.bodies ORDER BY id`).map((row) => ({
+      ...row,
+    })),
+    [
+      { id: 'n1', body: 'n1' },
+      { id: 'n3', body: 'new' },
+    ],
+  );
+  assert.deepEqual(
+    await asOf(destination, 'SELECT id FROM marts.raw_notes ORDER BY id'),
+    [{ id: 'n1' }, { id: 'n3' }],
+  );
+});
+
 test('a stream whose field changes type, or that drops a field, evolves the table in a commit of its own, and the rows it changed read as they were as of the position before it', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
