@@ -1,5 +1,7 @@
 # eca keeps no state across restarts
 
+Superseded on 2026-11-13 (#4253) by [ADR 0010](./0010-eca-is-a-stateless-reader-over-warehouse-positions.md): eca still keeps no state, but a rule no longer starts again from a baseline after a restart. The host keeps the rule's cursor, and the next evaluation walks from it over each position that the restart covered.
+
 The first version of eca kept the matches of each rule in a SQLite store file. After a restart, a rule then took no new baseline, so the host did not hear of a key again, and it did not miss a key that started to match while it was down. The user decided that this is the concern of the host that uses eca, not of eca.
 
 Thus eca keeps the keys of each rule in memory only. When the host starts again and adds its rules again, each rule takes a new baseline.

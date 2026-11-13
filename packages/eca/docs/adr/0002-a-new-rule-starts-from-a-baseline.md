@@ -1,5 +1,7 @@
 # A new rule starts from a baseline
 
+Superseded on 2026-11-13 (#4253) by [ADR 0010](./0010-eca-is-a-stateless-reader-over-warehouse-positions.md): `start()` gives a new rule the cursor of the newest position, now, so the rule still matches only what becomes true after it, with no baseline of keys. A condition that judges a window by event time reads both sides at positions after the rule started, so October, true at both, does not match.
+
 A user adds the rule "when my card purchases in days 1 to 10 of a month pass 200 JOD, tell me" on 15 October. October passed 200 JOD on 2 October. The user said that the rule must not report October, and that the rule is added all the same.
 
 An import can be late. A host that did not run for some days imports the SMS of 2 October on 12 October. The user still wants to hear of October then. Thus the condition must judge the window by the time of the purchase (event time), not by the time of the evaluation (processing time). But a condition that uses event time finds October true on 15 October, and reports it.

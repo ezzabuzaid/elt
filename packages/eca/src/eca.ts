@@ -1,73 +1,161 @@
-import type { Failure, NewMatch, Rule } from './rule.ts';
-import type { Warehouse } from './warehouse.ts';
+import type { Outcome, Rule } from './rule.ts';
+import type { Reading, Warehouse } from './warehouse.ts';
 
-type Watched<Sql, Data> = {
-  readonly rule: Rule<Sql, Data>;
-  // The keys the condition matched when the host last moved past its matches.
-  keys: ReadonlySet<string>;
+/**
+ * The time of an evaluation. A host gives `globalThis`; a test can give a
+ * clock it moves.
+ */
+export type Clock = {
+  readonly Temporal: { readonly Now: { instant(): Temporal.Instant } };
 };
 
+// Where a rule is: the position its last evaluation read, and the time that
+// evaluation stood for.
+type Cursor = { readonly position: string; readonly at: Temporal.Instant };
+
+// A reading that the walk holds open until it disposes it.
+type Open<Sql> = Reading<Sql> & (AsyncDisposable | Disposable);
+
+/**
+ * Evaluates rules over the warehouse. It keeps nothing: each rule's cursor is
+ * the host's, which gives it to each evaluation and saves the one it gets
+ * back. A rule the host does not give is not evaluated, so a host removes,
+ * pauses and resumes a rule by what it keeps.
+ */
 export class Eca<Sql, Data> {
   readonly #warehouse: Warehouse<Sql>;
-  readonly #rules: Watched<Sql, Data>[] = [];
+  readonly #clock: Clock;
 
-  constructor(options: { readonly warehouse: Warehouse<Sql> }) {
-    this.#warehouse = options.warehouse;
+  constructor({
+    warehouse,
+    clock,
+  }: {
+    readonly warehouse: Warehouse<Sql>;
+    readonly clock: Clock;
+  }) {
+    this.#warehouse = warehouse;
+    this.#clock = clock;
   }
 
-  // A rule starts from what its condition matches now, so it yields only keys
-  // that start to match after it was added. A host that saved the rule's keys
-  // before a restart gives them back instead, so the rule yields a key that
-  // started to match while the host was down.
-  async add(
-    rule: Rule<Sql, Data>,
-    options?: { readonly keys?: Iterable<string> },
-  ): Promise<void> {
-    this.#rules.push({
-      rule,
-      keys: new Set(options?.keys ?? (await this.#evaluate(rule)).keys()),
+  /**
+   * The cursor of a new rule: the newest position, now. The rule matches only
+   * what becomes true after it. A warehouse with no position yet throws: load
+   * it first.
+   */
+  async start(): Promise<string> {
+    const reading = await this.#warehouse.read();
+    if ('expired' in reading) throw new Error(reading.expired);
+    await using _reading = reading;
+    return encode({
+      position: reading.position,
+      at: this.#clock.Temporal.Now.instant(),
     });
   }
 
-  // The keys a host saves to give the rule back after a restart. They hold a
-  // new match only once the host moved past it, so a host that stops while it
-  // acts on a match hears of it again.
-  keys(rule: Rule<Sql, Data>): ReadonlySet<string> {
-    const watched = this.#rules.find((candidate) => candidate.rule === rule);
-    if (watched === undefined)
-      throw new TypeError('This rule was not added to this eca.');
-    return watched.keys;
+  /**
+   * One outcome for each rule, in order. Each rule walks from its cursor over
+   * each position after it, and in each step its condition evaluates two
+   * readings in which one thing moved: time, with the data as it was, up to
+   * the commit of the next position; then the data, at that time; and last,
+   * time up to now. So a key that stops matching and matches again between
+   * two evaluations matches again, and a time that passes is read with the
+   * data current then. Every rule of one call ends at the same time.
+   */
+  async *evaluate(
+    rules: Iterable<{
+      readonly rule: Rule<Sql, Data>;
+      readonly cursor: string;
+    }>,
+  ): AsyncGenerator<Outcome<Sql, Data>> {
+    const now = this.#clock.Temporal.Now.instant();
+    for (const { rule, cursor } of rules)
+      yield await this.#walk(rule, decode(cursor), now);
   }
 
-  // Each commit to the warehouse evaluates every rule. A rule moves on to its
-  // new keys only when the host pulls past its last new match, so a match the
-  // host stopped at comes again to its next watch. A rule whose condition
-  // throws is yielded as a failure, and the other rules still run.
-  async *watch({
-    signal,
-  }: {
-    readonly signal: AbortSignal;
-  }): AsyncGenerator<NewMatch<Sql, Data> | Failure<Sql, Data>> {
-    for await (const _ of this.#warehouse.commits(signal))
-      for (const watched of this.#rules) {
-        let matches: ReadonlyMap<string, Data>;
-        try {
-          matches = await this.#evaluate(watched.rule);
-        } catch (error) {
-          yield { rule: watched.rule, error };
-          continue;
-        }
-        for (const [key, data] of matches)
-          if (!watched.keys.has(key)) yield { rule: watched.rule, key, data };
-        watched.keys = new Set(matches.keys());
+  // At most two readings are open: a step's before and its after. The before
+  // closes once its step has evaluated, so a long pause holds no more.
+  async #walk(
+    rule: Rule<Sql, Data>,
+    from: Cursor,
+    now: Temporal.Instant,
+  ): Promise<Outcome<Sql, Data>> {
+    const positions = await this.#warehouse.stable(from.position);
+    if ('expired' in positions) return { rule, expired: positions.expired };
+    const opened = await this.#warehouse.read(from.position);
+    if ('expired' in opened) return { rule, expired: opened.expired };
+    let held: Open<Sql> = opened;
+    let before: Reading<Sql> = { sql: opened.sql, ...from };
+    const matches: Data[] = [];
+    // Evaluates one step, or gives the outcome of its failure: the cursor
+    // stays after the last step that evaluated.
+    const step = async (after: Reading<Sql>) => {
+      try {
+        matches.push(...(await rule.condition.evaluate(before, after)));
+      } catch (error) {
+        return { rule, matches, error, cursor: encode(before) };
       }
+      before = after;
+      return undefined;
+    };
+    // A step in which time does not move changes nothing.
+    const until = (at: Temporal.Instant) =>
+      Temporal.Instant.compare(at, before.at) > 0
+        ? step({ ...before, at })
+        : undefined;
+    try {
+      for (const position of positions) {
+        const reading = await this.#warehouse.read(position);
+        if ('expired' in reading) return { rule, expired: reading.expired };
+        try {
+          const at = latest(reading.at, before.at, now);
+          const failed =
+            (await until(at)) ??
+            (await step({ sql: reading.sql, position, at }));
+          if (failed !== undefined) return failed;
+        } finally {
+          await dispose(held);
+          held = reading;
+        }
+      }
+      return (await until(now)) ?? { rule, matches, cursor: encode(before) };
+    } finally {
+      await dispose(held);
+    }
   }
+}
 
-  async #evaluate(rule: Rule<Sql, Data>): Promise<ReadonlyMap<string, Data>> {
-    return new Map(
-      (await rule.condition.evaluate(this.#warehouse.sql)).map(
-        ({ key, data }) => [key, data],
-      ),
-    );
+async function dispose(resource: AsyncDisposable | Disposable): Promise<void> {
+  if (Symbol.asyncDispose in resource) await resource[Symbol.asyncDispose]();
+  else resource[Symbol.dispose]();
+}
+
+// The commit time of a position, kept within the walk: never before the step
+// it follows, as a position can become stable after an evaluation that came
+// later than its commit, and never past the evaluation's time.
+function latest(
+  at: Temporal.Instant,
+  floor: Temporal.Instant,
+  ceiling: Temporal.Instant,
+): Temporal.Instant {
+  if (Temporal.Instant.compare(at, floor) < 0) return floor;
+  if (Temporal.Instant.compare(at, ceiling) > 0) return ceiling;
+  return at;
+}
+
+function encode({ position, at }: Cursor): string {
+  return JSON.stringify({ position, at: at.toString() });
+}
+
+function decode(cursor: string): Cursor {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cursor);
+  } catch {
+    parsed = undefined;
   }
+  const position: unknown = Reflect.get(Object(parsed), 'position');
+  const at: unknown = Reflect.get(Object(parsed), 'at');
+  if (typeof position !== 'string' || typeof at !== 'string')
+    throw new TypeError(`${cursor} is not a cursor that eca made`);
+  return { position, at: Temporal.Instant.from(at) };
 }

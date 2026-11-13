@@ -1,545 +1,444 @@
 import assert from 'node:assert/strict';
-import { EventEmitter, on } from 'node:events';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { DatabaseSync, SQLTagStore } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { setImmediate } from 'node:timers/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 
-import { PersistentWriteAheadLog, open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { type Condition, Eca, type Match, type Warehouse } from './index.ts';
+import {
+  Catalog,
+  type ChangeSignal,
+  Connection,
+  Copy,
+  type CopyConfiguration,
+  Gauge,
+  Pipeline,
+  Source,
+  type SourceMessage,
+  Stream,
+} from '@eltjs/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+  SQLiteSyncHistory,
+} from '@eltjs/elt-sqlite';
 
-type Sms = { guid: string; handle: string; text: string; date: string };
+import {
+  type Condition,
+  Eca,
+  type Outcome,
+  type Rule,
+  type Warehouse,
+} from './index.ts';
 
-// A Messages import as elt's SQLite destination writes one: a STRICT
-// raw_messages table with loaded_at and a reader view over every column.
-function writeImport(path: string, messages: readonly Sms[]): void {
-  using database = open(path, { journal: new PersistentWriteAheadLog() });
-  database.exec(
-    `CREATE TABLE "raw_messages" ("guid" TEXT NOT NULL, "handle" TEXT, "text" TEXT, "date" TEXT, "loaded_at" TEXT NOT NULL) STRICT;
-     CREATE VIEW "messages" AS SELECT "guid", "handle", "text", "date", "loaded_at" FROM "raw_messages";`,
-  );
-  load(path, messages);
-}
-
-function load(path: string, messages: readonly Sms[]): void {
-  using database = open(path, { journal: new PersistentWriteAheadLog() });
-  const insert = database.prepare(
-    'INSERT INTO raw_messages (guid, handle, text, date, loaded_at) VALUES (?, ?, ?, ?, ?)',
-  );
-  for (const { guid, handle, text, date } of messages)
-    insert.run(guid, handle, text, date, new Date().toISOString());
-}
-
-// elt deletes a record its source no longer has.
-function remove(path: string, guid: string): void {
-  using database = open(path, { journal: new PersistentWriteAheadLog() });
-  database.prepare('DELETE FROM raw_messages WHERE guid = ?').run(guid);
-}
-
-// The warehouse a host gives eca: the import opened read-only, and a commit
-// signal the host raises after each elt pass writes to it.
-class ImportWarehouse implements Warehouse<SQLTagStore>, Disposable {
-  readonly sql: SQLTagStore;
-  readonly #database: DatabaseSync;
-  readonly #commits = new EventEmitter();
-
-  constructor(path: string) {
-    this.#database = open(path, { readOnly: true });
-    this.sql = this.#database.createTagStore();
-  }
-
-  commit(): void {
-    this.#commits.emit('commit');
-  }
-
-  commits(signal: AbortSignal): AsyncIterable<unknown> {
-    return on(this.#commits, 'commit', { signal });
-  }
-
-  [Symbol.dispose](): void {
-    this.#database.close();
+// The upstream of a test source, which the test fills before it reads.
+class Filled extends Gauge<number> {
+  protected async read(): Promise<number> {
+    return 0;
   }
 }
 
-// An Arab Bank card purchase SMS, in the bank's own template.
-const purchase = (guid: string, date: string, amount: string): Sms => ({
-  guid,
-  handle: 'Arab Bank',
-  text: `JO\nتم قيد حركة شراء من حسابكم 500*0000 من Careem Food بمبلغ JOD ${amount} بتاريخ 01/10/2026 12:00 .الرصيد 1000.000 دينار اردني.`,
-  date,
+// A step of a test source's read: a message, or a wait the test ends.
+type Step = SourceMessage | (() => Promise<void>);
+
+// Reads the steps a test scripts for its one stream.
+class Scripted extends Source {
+  readonly identity = 'scripted';
+  protected readonly catalog: Catalog;
+  readonly #steps: readonly Step[];
+
+  constructor(stream: Stream, steps: readonly Step[]) {
+    super();
+    this.catalog = new Catalog([stream]);
+    this.#steps = steps;
+  }
+
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
+  override async currentAsOf() {
+    return null;
+  }
+
+  protected override async open() {
+    return new AsyncDisposableStack();
+  }
+
+  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+    return [{ gauge: new Filled(), streams, interval: 1000, timeout: 1000 }];
+  }
+
+  protected override async *extract(_configuration: CopyConfiguration) {
+    for (const step of this.#steps)
+      if (typeof step === 'function') await step();
+      else yield step;
+  }
+}
+
+// Tasks keyed by id; a newer copy of a task has a greater version.
+const tasks = new Stream({
+  name: 'tasks',
+  jsonSchema: {
+    type: 'object',
+    description: 'A task.',
+    properties: {
+      id: { type: 'string', description: 'Task id.' },
+      version: { type: 'integer', description: 'Version of the task.' },
+      status: { type: 'string', description: 'open or done.' },
+      due: { type: 'string', description: 'When the task is due.' },
+    },
+    required: ['id', 'version'],
+  },
+  primaryKey: ['id'],
+  supportedSyncModes: ['incremental'],
 });
 
-// What an agent would write for "when I spend over 200 in the first 10 days
-// of a month": card purchases by the SMS's own date, on the user's clock.
-class EarlyMonthSpend implements Condition<SQLTagStore, { spent: number }> {
-  async evaluate(sql: SQLTagStore) {
-    const fils = new Map<string, number>();
-    for (const {
-      text,
-      date,
-    } of sql.all`SELECT text, date FROM messages WHERE handle = 'Arab Bank'`) {
-      if (typeof text !== 'string' || typeof date !== 'string') continue;
-      const amount =
-        /تم قيد حركة شراء من حسابكم .* بمبلغ JOD (\d+)\.(\d{3}) /u.exec(text);
-      if (amount === null) continue;
-      const day = Temporal.Instant.from(date).toZonedDateTimeISO('Asia/Amman');
-      if (day.day > 10) continue;
-      const month = day.toPlainDate().toPlainYearMonth().toString();
-      fils.set(
-        month,
-        (fils.get(month) ?? 0) + Number(`${amount[1]}${amount[2]}`),
-      );
-    }
-    return [...fils]
-      .filter(([, spent]) => spent > 200_000)
-      .map(([month, spent]) => ({ key: month, data: { spent: spent / 1000 } }));
-  }
-}
-
-const october = [
-  purchase('a', '2026-10-01T09:00:00.000Z', '174.495'),
-  // 2 Oct 00:01:58 in Amman
-  purchase('b', '2026-10-01T21:01:58.000Z', '46.312'),
-];
-const november = [
-  purchase('c', '2026-11-02T09:00:00.000Z', '120.000'),
-  purchase('d', '2026-11-05T09:00:00.000Z', '85.000'),
-];
-
-// The test condition reads SQLite synchronously, so eca's evaluation of every
-// commit raised so far settles once pending callbacks have run.
-const evaluated = () => setImmediate();
-
-test('a crossing yields its month once: a commit that changes nothing, or more spend in that month, yields nothing more', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-once-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  const spend = { condition: new EarlyMonthSpend() };
-  await eca.add(spend);
-  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
-
-  const first = matches.next();
-  load(path, october);
-  warehouse.commit();
-  const crossed = await first;
-  const second = matches.next();
-  warehouse.commit();
-  await evaluated();
-  load(path, [purchase('e', '2026-10-03T08:00:00.000Z', '10.000')]);
-  warehouse.commit();
-  await evaluated();
-  load(path, november);
-  warehouse.commit();
-
-  assert.deepEqual(
-    [crossed.value, (await second).value],
-    [
-      { rule: spend, key: '2026-10', data: { spent: 220.807 } },
-      { rule: spend, key: '2026-11', data: { spent: 205 } },
-    ],
-  );
+const task = (
+  id: string,
+  version: number,
+  status: 'open' | 'done',
+  due?: Temporal.Instant,
+) => ({
+  stream: 'tasks',
+  data: {
+    id,
+    version,
+    status,
+    ...(due === undefined ? {} : { due: `${due}` }),
+  },
+});
+const checkpoint = (read: number) => ({
+  type: 'STATE' as const,
+  stream: 'tasks',
+  state: { read },
 });
 
-test('a rule added when October already passed 200 stays quiet about October, and a later November crossing still yields', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-baseline-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, october);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  const spend = { condition: new EarlyMonthSpend() };
-
-  await eca.add(spend);
-  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
-  const first = matches.next();
-  load(path, november);
-  warehouse.commit();
-
-  assert.deepEqual((await first).value, {
-    rule: spend,
-    key: '2026-11',
-    data: { spent: 205 },
+// A SQLite file of tasks, a pass that loads the steps a test scripts into it,
+// and an eca over it, as a host wires them.
+function warehouse(directory: string, retention?: Temporal.Duration) {
+  const destination = new SQLiteDestination({
+    path: join(directory, 'data.sqlite'),
+    ...(retention === undefined ? {} : { retention }),
   });
-});
-
-test('a month that drops under 200 and crosses again yields again', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-again-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  const spend = { condition: new EarlyMonthSpend() };
-  await eca.add(spend);
-  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
-
-  const first = matches.next();
-  load(path, october);
-  warehouse.commit();
-  const crossed = await first;
-  const second = matches.next();
-  remove(path, 'b');
-  warehouse.commit();
-  await evaluated();
-  load(path, [purchase('f', '2026-10-04T08:00:00.000Z', '30.000')]);
-  warehouse.commit();
-
-  assert.deepEqual(
-    [crossed.value, (await second).value],
-    [
-      { rule: spend, key: '2026-10', data: { spent: 220.807 } },
-      { rule: spend, key: '2026-10', data: { spent: 204.495 } },
-    ],
-  );
-});
-
-test('two rules over the same purchases each yield their own match', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-rules-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  const alert = { condition: new EarlyMonthSpend() };
-  const log = { condition: new EarlyMonthSpend() };
-  await eca.add(alert);
-  await eca.add(log);
-  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
-
-  const first = matches.next();
-  load(path, october);
-  warehouse.commit();
-  const fromAlert = await first;
-  const fromLog = await matches.next();
-
-  assert.equal(fromAlert.value?.rule, alert);
-  assert.equal(fromLog.value?.rule, log);
-});
-
-test('matches the host stopped before pulling past come again to its next watch, for every rule that had not moved on', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-stop-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  const alert = { condition: new EarlyMonthSpend() };
-  const log = { condition: new EarlyMonthSpend() };
-  await eca.add(alert);
-  await eca.add(log);
-  {
-    await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
-    const first = matches.next();
-    load(path, october);
-    warehouse.commit();
-    await first;
-  }
-
-  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
-  const again = matches.next();
-  warehouse.commit();
-
-  assert.equal((await again).value?.rule, alert);
-  assert.equal((await matches.next()).value?.rule, log);
-});
-
-test('a rule the host moved past keeps its new matches when the host stops inside the next rule', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-past-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  const alert = { condition: new EarlyMonthSpend() };
-  const log = { condition: new EarlyMonthSpend() };
-  await eca.add(alert);
-  await eca.add(log);
-  {
-    await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
-    const first = matches.next();
-    load(path, october);
-    warehouse.commit();
-    await first;
-    await matches.next();
-  }
-
-  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
-  const again = matches.next();
-  warehouse.commit();
-
-  assert.equal((await again).value?.rule, log);
-});
-
-test('a rule added while a watch runs stays quiet about what matched before it was added, even when its baseline answers last', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-late-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, october);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
-  const first = matches.next();
-  // The baseline answers only when the test says so, as a slow warehouse might.
-  const baseline = Promise.withResolvers<readonly Match<{ spent: number }>[]>();
-  let evaluations = 0;
-  const spend = {
-    condition: {
-      evaluate: (sql: SQLTagStore) =>
-        evaluations++ === 0
-          ? baseline.promise
-          : new EarlyMonthSpend().evaluate(sql),
-    },
-  };
-
-  const adding = eca.add(spend);
-  warehouse.commit();
-  await evaluated();
-  baseline.resolve(await new EarlyMonthSpend().evaluate(warehouse.sql));
-  await adding;
-  load(path, november);
-  warehouse.commit();
-
-  assert.deepEqual((await first).value, {
-    rule: spend,
-    key: '2026-11',
-    data: { spent: 205 },
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(directory, 'state.sqlite'),
   });
-});
-
-test('a condition that throws yields its failure, the other rules still yield, and the failing rule tries again at the next commit', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-fail-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  // Fails only on its second evaluation, the first commit after its baseline.
-  let evaluations = 0;
-  const flaky = {
-    condition: {
-      evaluate: (sql: SQLTagStore) =>
-        ++evaluations === 2
-          ? Promise.reject(new Error('no such table: messages.mesages'))
-          : new EarlyMonthSpend().evaluate(sql),
-    },
+  const copy = new Copy(tasks, destination.table('tasks'), {
+    id: 'tasks',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    cursorField: 'version',
+  });
+  const pass = (steps: readonly Step[]) =>
+    new Pipeline({
+      clock: globalThis,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'tasks',
+          source: new Scripted(tasks, steps),
+          destination,
+          checkpoints,
+          steps: [copy],
+        }),
+      ],
+    }).run();
+  const port: Warehouse<DatabaseSync> = {
+    stable: async (after) => destination.positions(after),
+    read: async (position) => destination.reading(position),
   };
-  const spend = { condition: new EarlyMonthSpend() };
-  await eca.add(flaky);
-  await eca.add(spend);
-  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
+  return {
+    destination,
+    pass,
+    eca: () =>
+      new Eca<DatabaseSync, string>({ warehouse: port, clock: globalThis }),
+  };
+}
 
-  const first = matches.next();
-  load(path, october);
-  warehouse.commit();
-  const failed = await first;
-  const crossed = await matches.next();
-  const third = matches.next();
-  warehouse.commit();
-  const retried = await third;
-
-  assert.ok(failed.value !== undefined && 'error' in failed.value);
-  assert.equal(failed.value.rule, flaky);
-  assert.ok(Error.isError(failed.value.error));
-  assert.equal(failed.value.error.message, 'no such table: messages.mesages');
-  assert.deepEqual(
-    [crossed.value, retried.value],
-    [
-      { rule: spend, key: '2026-10', data: { spent: 220.807 } },
-      { rule: flaky, key: '2026-10', data: { spent: 220.807 } },
-    ],
+// The ids of the open tasks of a reading.
+function open(sql: DatabaseSync): Set<string> {
+  return new Set(
+    sql
+      .prepare(`SELECT id FROM tasks WHERE status = 'open'`)
+      .all()
+      .map(({ id }) => String(id)),
   );
+}
+
+// A task that is open now and was not before.
+const opened: Rule<DatabaseSync, string> = {
+  condition: {
+    async evaluate(before, after) {
+      const was = open(before.sql);
+      return [...open(after.sql)].filter((id) => !was.has(id)).sort();
+    },
+  },
+};
+
+// An open task whose deadline passed between the two readings.
+const overdue: Rule<DatabaseSync, string> = {
+  condition: {
+    async evaluate(before, after) {
+      return after.sql
+        .prepare(`SELECT id, due FROM tasks WHERE status = 'open'`)
+        .all()
+        .filter(({ due }) => {
+          const at = Temporal.Instant.from(String(due));
+          return (
+            Temporal.Instant.compare(at, before.at) > 0 &&
+            Temporal.Instant.compare(at, after.at) <= 0
+          );
+        })
+        .map(({ id }) => String(id));
+    },
+  },
+};
+
+// The one outcome of evaluating one rule.
+async function outcome(
+  eca: Eca<DatabaseSync, string>,
+  rule: Rule<DatabaseSync, string>,
+  cursor: string,
+): Promise<Outcome<DatabaseSync, string>> {
+  const outcomes = await Array.fromAsync(eca.evaluate([{ rule, cursor }]));
+  assert.equal(outcomes.length, 1);
+  const [only] = outcomes;
+  if (only === undefined) assert.fail('no outcome');
+  return only;
+}
+
+// The matches and the cursor of an evaluation that ended its walk.
+async function walked(
+  eca: Eca<DatabaseSync, string>,
+  rule: Rule<DatabaseSync, string>,
+  cursor: string,
+) {
+  const result = await outcome(eca, rule, cursor);
+  if ('expired' in result) assert.fail(result.expired);
+  if ('error' in result) throw result.error;
+  return result;
+}
+
+test('a rule matches what becomes true after the cursor that start gave, and the cursor it gets back does not match it again', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { pass, eca } = warehouse(scratch.path);
+  await pass([task('t1', 1, 'done'), checkpoint(1)]);
+  const cursor = await eca().start();
+  await pass([task('t1', 2, 'open'), checkpoint(2)]);
+
+  const first = await walked(eca(), opened, cursor);
+  const second = await walked(eca(), opened, first.cursor);
+
+  assert.deepEqual(first.matches, ['t1']);
+  assert.deepEqual(second.matches, []);
 });
 
-test('a failing rule keeps the matches it already reported, so after the failure only what is new yields', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-kept-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  // Fails only on its third evaluation, after it reported October.
-  let evaluations = 0;
-  const flaky = {
+test('a key that stops matching and matches again between two evaluations matches again, for an eca made after a restart', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { pass, eca } = warehouse(scratch.path);
+  await pass([task('t1', 1, 'open'), checkpoint(1)]);
+  const cursor = await eca().start();
+  await pass([task('t1', 2, 'done'), checkpoint(2)]);
+  await pass([task('t1', 3, 'open'), checkpoint(3)]);
+
+  const { matches } = await walked(eca(), opened, cursor);
+
+  assert.deepEqual(matches, ['t1']);
+});
+
+test('an evaluation that only moves time matches a deadline once, when it passes', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { pass, eca } = warehouse(scratch.path);
+  // Far enough ahead that the pass, the start and the first evaluation end
+  // before it, also on a busy machine.
+  const due = Temporal.Now.instant().add({ milliseconds: 1500 });
+  await pass([task('t1', 1, 'open', due), checkpoint(1)]);
+  const cursor = await eca().start();
+
+  const early = await walked(eca(), overdue, cursor);
+  await delay(due.epochMilliseconds - Date.now() + 200);
+  const passed = await walked(eca(), overdue, early.cursor);
+  const later = await walked(eca(), overdue, passed.cursor);
+
+  assert.deepEqual(early.matches, []);
+  assert.deepEqual(passed.matches, ['t1']);
+  assert.deepEqual(later.matches, []);
+});
+
+test('a deadline that passes while its task is open matches, read with the data of that time, though a later position closed the task', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { pass, eca } = warehouse(scratch.path);
+  const due = Temporal.Now.instant().add({ milliseconds: 1500 });
+  await pass([task('t1', 1, 'open', due), checkpoint(1)]);
+  const cursor = await eca().start();
+  await delay(due.epochMilliseconds - Date.now() + 200);
+  await pass([task('t1', 2, 'done', due), checkpoint(2)]);
+
+  const { matches } = await walked(eca(), overdue, cursor);
+
+  assert.deepEqual(matches, ['t1']);
+});
+
+test('a cursor older than the retention of the warehouse is expired, and the host hears why', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { pass, eca } = warehouse(
+    scratch.path,
+    Temporal.Duration.from({ seconds: 1 }),
+  );
+  await pass([task('t1', 1, 'done'), checkpoint(1)]);
+  const cursor = await eca().start();
+  await pass([task('t1', 2, 'open'), checkpoint(2)]);
+  await delay(1500);
+  await pass([task('t1', 3, 'done'), checkpoint(3)]);
+
+  const result = await outcome(eca(), opened, cursor);
+
+  assert.ok('expired' in result, JSON.stringify(result));
+  assert.equal(result.rule, opened);
+  assert.match(result.expired, /retention/);
+});
+
+test('a cursor of a warehouse that a fresh run made again is expired', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const first = warehouse(scratch.path);
+  await first.pass([task('t1', 1, 'done'), checkpoint(1)]);
+  const cursor = await first.eca().start();
+  // The write-ahead log persists beside each file, so it goes with it.
+  for (const file of ['data.sqlite', 'state.sqlite'])
+    for (const suffix of ['', '-wal', '-shm'])
+      await rm(join(scratch.path, `${file}${suffix}`), { force: true });
+  const again = warehouse(scratch.path);
+  await again.pass([task('t1', 1, 'open'), checkpoint(1)]);
+
+  const result = await outcome(again.eca(), opened, cursor);
+
+  assert.ok('expired' in result, JSON.stringify(result));
+  assert.match(result.expired, /earlier numbering/);
+});
+
+test('a condition that throws at a step gives the matches of the steps before it and a cursor after the last good step, and the next evaluation goes on from there', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { destination, pass, eca } = warehouse(scratch.path);
+  await pass([task('t1', 1, 'done'), checkpoint(1)]);
+  const cursor = await eca().start();
+  await pass([task('t1', 2, 'open'), checkpoint(2)]);
+  await pass([task('t2', 1, 'open'), checkpoint(3)]);
+  const third = destination.positions();
+  if ('expired' in third) assert.fail(third.expired);
+  const broken = third.at(-1);
+  await pass([task('t3', 1, 'open'), checkpoint(4)]);
+  const failing: Rule<DatabaseSync, string> = {
     condition: {
-      evaluate: (sql: SQLTagStore) =>
-        ++evaluations === 3
-          ? Promise.reject(new Error('connection reset'))
-          : new EarlyMonthSpend().evaluate(sql),
+      async evaluate(before, after) {
+        if (after.position === broken) throw new Error('the condition broke');
+        return opened.condition.evaluate(before, after);
+      },
     },
   };
-  await eca.add(flaky);
-  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
 
-  const first = matches.next();
-  load(path, october);
-  warehouse.commit();
-  const reported = await first;
-  const second = matches.next();
-  warehouse.commit();
-  const failed = await second;
-  const third = matches.next();
-  load(path, november);
-  warehouse.commit();
-  const after = await third;
-  // Whatever yields next must be December's crossing, so October was not
-  // queued again behind November.
-  const fourth = matches.next();
-  load(path, [
-    purchase('g', '2026-12-02T09:00:00.000Z', '150.000'),
-    purchase('h', '2026-12-03T09:00:00.000Z', '60.000'),
+  const failed = await outcome(eca(), failing, cursor);
+  if (!('error' in failed)) assert.fail(JSON.stringify(failed));
+  const resumed = await walked(eca(), opened, failed.cursor);
+
+  assert.deepEqual(failed.matches, ['t1']);
+  assert.match(String(failed.error), /the condition broke/);
+  assert.deepEqual(resumed.matches, ['t2', 't3']);
+});
+
+test('a rule that the host pauses and resumes matches, at resume, what each position it missed made true', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { pass, eca } = warehouse(scratch.path);
+  await pass([task('t1', 1, 'done'), task('t2', 1, 'done'), checkpoint(1)]);
+  const paused = await eca().start();
+  await pass([task('t1', 2, 'open'), checkpoint(2)]);
+  await pass([task('t2', 2, 'open'), checkpoint(3)]);
+  await pass([task('t1', 3, 'done'), checkpoint(4)]);
+
+  const { matches } = await walked(eca(), opened, paused);
+
+  assert.deepEqual(matches, ['t1', 't2']);
+});
+
+test('an evaluation while a pass is half done reads up to the position before that pass, and the next one reads the pass once it ends', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { pass, eca } = warehouse(scratch.path);
+  await pass([task('t1', 1, 'done'), checkpoint(1)]);
+  const cursor = await eca().start();
+  const reached = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  const running = pass([
+    task('t1', 2, 'open'),
+    checkpoint(2),
+    async () => {
+      reached.resolve();
+      await released.promise;
+    },
+    task('t2', 1, 'open'),
+    checkpoint(3),
   ]);
-  warehouse.commit();
-  const next = await fourth;
+  await reached.promise;
 
-  assert.deepEqual(reported.value, {
-    rule: flaky,
-    key: '2026-10',
-    data: { spent: 220.807 },
-  });
-  assert.ok(failed.value !== undefined && 'error' in failed.value);
+  const during = await walked(eca(), opened, cursor);
+  released.resolve();
+  await running;
+  const after = await walked(eca(), opened, during.cursor);
+
+  assert.deepEqual(during.matches, []);
+  assert.deepEqual(after.matches, ['t1', 't2']);
+});
+
+test('each rule of an evaluation gives its own outcome, in order, and one whose condition throws stops no other', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { pass, eca } = warehouse(scratch.path);
+  await pass([task('t1', 1, 'done'), checkpoint(1)]);
+  const cursor = await eca().start();
+  await pass([task('t1', 2, 'open'), checkpoint(2)]);
+  const throwing: Rule<DatabaseSync, string> = {
+    condition: {
+      async evaluate() {
+        throw new Error('broken');
+      },
+    } satisfies Condition<DatabaseSync, string>,
+  };
+
+  const outcomes = await Array.fromAsync(
+    eca().evaluate([
+      { rule: throwing, cursor },
+      { rule: opened, cursor },
+    ]),
+  );
+
   assert.deepEqual(
-    [after.value, next.value],
+    outcomes.map((result) => [result.rule, 'error' in result]),
     [
-      { rule: flaky, key: '2026-11', data: { spent: 205 } },
-      { rule: flaky, key: '2026-12', data: { spent: 210 } },
+      [throwing, true],
+      [opened, false],
     ],
   );
+  const [failed, matched] = outcomes;
+  assert.ok(failed !== undefined && 'cursor' in failed);
+  assert.equal(failed.cursor, cursor);
+  assert.ok(matched !== undefined && 'matches' in matched);
+  assert.deepEqual(matched.matches, ['t1']);
 });
 
-test('a rule added again with the keys its host saved yields a key that started to match while the host was down', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-restart-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const spend = { condition: new EarlyMonthSpend() };
-  const before = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  await before.add(spend);
-  const saved = before.keys(spend);
-  // October crosses 200 while the host is down.
-  load(path, october);
-  const after = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  await after.add(spend, { keys: saved });
-  await using matches = after.watch({ signal: AbortSignal.timeout(10_000) });
+test('a cursor that eca did not make is a TypeError', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { pass, eca } = warehouse(scratch.path);
+  await pass([task('t1', 1, 'done'), checkpoint(1)]);
 
-  const first = matches.next();
-  warehouse.commit();
-
-  assert.deepEqual((await first).value, {
-    rule: spend,
-    key: '2026-10',
-    data: { spent: 220.807 },
-  });
-});
-
-test('a rule added again with the keys its host saved stays quiet about those keys, and still yields a later one', async () => {
-  await using scratch = await new TemporaryFiles().directory(
-    'eca-restart-quiet-',
-  );
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, october);
-  using warehouse = new ImportWarehouse(path);
-  const spend = { condition: new EarlyMonthSpend() };
-  const before = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  await before.add(spend);
-  const saved = before.keys(spend);
-  const after = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  await after.add(spend, { keys: saved });
-  await using matches = after.watch({ signal: AbortSignal.timeout(10_000) });
-
-  const first = matches.next();
-  warehouse.commit();
-  await evaluated();
-  load(path, november);
-  warehouse.commit();
-
-  assert.deepEqual([...saved], ['2026-10']);
-  assert.deepEqual((await first).value, {
-    rule: spend,
-    key: '2026-11',
-    data: { spent: 205 },
-  });
-});
-
-test('the keys a host reads to save hold a new match only once the host moved past it', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-keys-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  const spend = { condition: new EarlyMonthSpend() };
-  await eca.add(spend);
-  const watching = new AbortController();
-  await using matches = eca.watch({ signal: watching.signal });
-  const first = matches.next();
-  load(path, october);
-  warehouse.commit();
-  await first;
-
-  const handling = eca.keys(spend);
-  const pulled = matches.next();
-  await evaluated();
-  const movedPast = eca.keys(spend);
-  watching.abort();
-
-  await assert.rejects(pulled, { name: 'AbortError' });
-  assert.deepEqual([...handling], []);
-  assert.deepEqual([...movedPast], ['2026-10']);
-});
-
-test('a host that saves the keys before it moved past a new match hears of the match again after a restart', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-keys-again-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const spend = { condition: new EarlyMonthSpend() };
-  const before = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  await before.add(spend);
-  const watching = new AbortController();
-  const matches = before.watch({ signal: watching.signal });
-  const first = matches.next();
-  load(path, october);
-  warehouse.commit();
-  await first;
-  // The host saves while it still acts on October, then stops.
-  const saved = before.keys(spend);
-  watching.abort();
-  await assert.rejects(matches.next(), { name: 'AbortError' });
-  const after = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  await after.add(spend, { keys: saved });
-  await using again = after.watch({ signal: AbortSignal.timeout(10_000) });
-
-  const next = again.next();
-  warehouse.commit();
-
-  assert.deepEqual((await next).value, {
-    rule: spend,
-    key: '2026-10',
-    data: { spent: 220.807 },
-  });
-});
-
-test('the keys of a rule that was never added are refused, so a host never saves an empty list in their place', async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-unknown-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-
-  assert.throws(
-    () => eca.keys({ condition: new EarlyMonthSpend() }),
+  await assert.rejects(
+    Array.fromAsync(eca().evaluate([{ rule: opened, cursor: 'tasks:1' }])),
     TypeError,
   );
 });
 
-// A watch that never ends would hang the run, so this test has its own deadline.
-test('aborting the signal ends the watch', { timeout: 5_000 }, async () => {
-  await using scratch = await new TemporaryFiles().directory('eca-abort-');
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  await eca.add({ condition: new EarlyMonthSpend() });
-  const controller = new AbortController();
-  await using matches = eca.watch({ signal: controller.signal });
+test('start on a warehouse that has no position yet throws, with the reason the warehouse gives', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { eca } = warehouse(scratch.path);
 
-  const next = matches.next();
-  controller.abort();
-
-  await assert.rejects(next, { name: 'AbortError' });
+  await assert.rejects(eca().start(), /no load has committed|no position/i);
 });

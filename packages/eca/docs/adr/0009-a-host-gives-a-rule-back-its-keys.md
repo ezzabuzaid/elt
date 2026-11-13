@@ -1,5 +1,7 @@
 # A host gives a rule back its keys
 
+Superseded on 2026-11-13 (#4253) by [ADR 0010](./0010-eca-is-a-stateless-reader-over-warehouse-positions.md): keys tell only what matched at the last evaluation, so a key that stopped and matched again while the host was down was missed. The host now saves one cursor for each rule, and the walk from it reads each position that it missed.
+
 The Context Compiler plugin is a host whose server stops when a chat closes or ChatGPT restarts. Its rule "when a new Careem receipt arrives, log the calories" must not miss a receipt. The server stops at 10:00. A receipt arrives at 11:00. The user syncs at 12:00, and a new server adds the rule again. With a new baseline, the 11:00 receipt is in the baseline, and the rule never yields it. The meal is not logged.
 
 [ADR 0006](./0006-eca-keeps-no-state-across-restarts.md) kept eca without a store and said that eca gets a way to accept the keys when the first such host needs it. The plugin is that host.

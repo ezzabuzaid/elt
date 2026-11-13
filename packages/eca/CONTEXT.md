@@ -1,61 +1,53 @@
 # eca
 
-A user wants to know when the data in a warehouse starts to match a condition, for example: "when my card purchases in the first 10 days of a month pass 200 JOD, tell me". An agent writes that condition as code. A host gives eca the warehouse and acts on what eca yields. eca evaluates the conditions at each commit to the warehouse, and it yields each new match.
+A user wants to know when the data in a warehouse starts to match a condition, for example: "when my card purchases in the first 10 days of a month pass 200 JOD, tell me". An agent writes that condition as code. A host gives eca the warehouse, keeps a cursor for each rule, and acts on what eca gives. eca reads the warehouse at two positions for each step and keeps nothing.
 
 ## Language
 
 **Rule**:
-The host's own object with a condition. A new match carries the rule back, so the host knows which rule matched.
+The host's own object with a condition. An outcome carries the rule back, so the host knows which rule it is about.
 _Avoid_: Alert, monitor, automation, trigger (a SQL trigger is one form of an event)
 
-**Event**:
-A commit to the warehouse. Each event makes eca evaluate every rule. eca has no time events.
-_Avoid_: Trigger, signal, change
-
 **Warehouse**:
-The data that the conditions read, as the host gives it to eca: a read-only handle for the conditions, and its commits. eca does not know where the data is or what holds it.
+The data that the conditions read, as the host gives it to eca: its positions, and a reading as of each one. eca does not know where the data is or what holds it.
 _Avoid_: Database, store, import (an import is one way a host keeps its data)
 
-**Commit**:
-New data that is made durable in the warehouse. The warehouse reports each commit to eca.
-_Avoid_: Sync, update, load, pass (an elt pass can make many commits), acknowledgement
+**Position**:
+A commit of the warehouse where no pass is half done, as the warehouse names it, for example `<epoch>:<number>`. A position that the warehouse can no longer read is expired.
+_Avoid_: Offset, version, commit (a commit inside a pass is not a position), checkpoint
+
+**Reading**:
+The warehouse as of one position, with `sql`, its handle, and `at`, the time that the reading stands for.
+_Avoid_: Snapshot (a reading has one, but a snapshot alone can show half a pass), query, connection
+
+**Cursor**:
+One string that eca makes for each rule: the position that the rule's last evaluation read, and the time that it stood for. The host saves it with the matches, and gives it to the next evaluation.
+_Avoid_: Offset, bookmark, state, keys
 
 **Condition**:
-Code that reads the warehouse and returns the matches that are true now. The agent writes it. SQL is one part of a condition, not all of it.
+Code that reads two readings, before and after, and gives what matches in after that did not match in before. The agent writes it. SQL is one part of a condition, not all of it.
 _Avoid_: Query, filter, check, predicate
 
+**Step**:
+One pair of readings that a condition evaluates. In a step, only time moves, or only the data moves.
+_Avoid_: Tick, diff, delta
+
 **Evaluation**:
-One run of a condition.
+One walk of a rule, from its cursor over each position after it, step by step.
 _Avoid_: Check, poll, tick, run (a rule does not run; its condition is evaluated)
 
 **Match**:
-One thing that a condition found true in an evaluation: a key and its data.
-_Avoid_: Alert, instance, result, row
+One thing that a condition gives for a step: something that became true. The condition chooses its shape.
+_Avoid_: Alert, instance, result, row, new match
 
-**Key**:
-The name of a match across evaluations. The host hears of a key one time while the condition keeps matching it. When the key stops matching and later matches again, the host hears of it again. The condition chooses the key, for example the month.
-_Avoid_: Id, dedup key, fingerprint
+**Outcome**:
+What an evaluation gives for one rule: its matches and its new cursor; or the matches before a failure, the error and the cursor after the last good step; or the reason that its cursor expired.
+_Avoid_: Event, result, report
 
-**New match**:
-A key that a rule's condition matches in this evaluation and did not match in the previous one. eca yields it with its rule and its data. It is the moment the host acts.
-_Avoid_: Change, started, alert, firing, event (an event makes eca evaluate)
-
-**Failure**:
-A rule whose condition threw in an evaluation, with what it threw. eca yields it beside the new matches. The rule keeps its keys, so the next commit evaluates it again.
-_Avoid_: Error event, crash, alert
-
-**Baseline**:
-The first evaluation of a rule, when the host adds it. eca keeps its keys and yields no new match. Thus a rule yields only keys that start to match after it was added. The keys are in memory. A host that saved the keys of a rule gives them back when it adds the rule again, and the rule then takes no baseline.
-_Avoid_: Seed, snapshot (elt uses snapshot for a full read), initial run
-
-**Watch**:
-The host's loop over the new matches: eca yields each new match, and the host asks for the next one.
-_Avoid_: Subscribe, listen, observe (an elt source observes its upstream)
-
-**Move past**:
-The host asks for the next new match. A rule takes its new keys only after the host moved past its last new match. A new match that the host did not move past comes again to its next watch.
-_Avoid_: Acknowledge, ack, commit (a commit is new data in the warehouse)
+**Expired**:
+A cursor whose position the warehouse can no longer read, because it is older than the warehouse's retention or because a fresh run made the warehouse again. The host decides what to do.
+_Avoid_: Stale, invalid, lost
 
 **Host**:
-The app that gives eca the warehouse, adds the rules, watches the new matches, and acts on them.
+The app that gives eca the warehouse, keeps the cursor of each rule, decides when to evaluate, and acts on the outcomes.
 _Avoid_: Runner, server, app (in Context Compiler's hosts, app means the macOS application)

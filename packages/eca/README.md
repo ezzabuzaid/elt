@@ -1,210 +1,201 @@
 # @eltjs/eca
 
-A user wants to know when the data in a warehouse starts to match a condition. For example: "when my card purchases in the first 10 days of a month pass 200 JOD, tell me". An agent writes the condition as code with SQL in it. The host gives eca the warehouse, and it acts on what eca yields. eca evaluates every condition at each commit to the warehouse, and it yields each new match: a key that starts to match. The model is Event–Condition–Action (ECA), from active databases: a commit is the event, and the host does the action.
+A user wants to know when the data in a warehouse starts to match a condition. For example: "when my card purchases in the first 10 days of a month pass 200 JOD, tell me". An agent writes the condition as code with SQL in it. A condition reads the warehouse at two positions, before and after, and it gives what became true between them. The host keeps one cursor for each rule, gives it to each evaluation, and saves the cursor that it gets back with the matches. eca keeps nothing. The model is Event–Condition–Action (ECA), from active databases: a new position of the warehouse is the event, and the host does the action.
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
 ## Use it
 
-The host makes one `Eca` with its warehouse, adds the rules, and watches the new matches:
+The host makes one `Eca` with its warehouse and a clock. It starts each new rule, and then evaluates its rules when it wants:
 
 ```ts
 import { Eca } from '@eltjs/eca';
 
-const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+const eca = new Eca<DatabaseSync, { month: string; spent: number }>({
+  warehouse,
+  clock: globalThis,
+});
 const spend = { condition: new EarlyMonthSpend() };
-await eca.add(spend);
+cursors.set(spend, await eca.start());
 
-for await (const match of eca.watch({ signal }))
-  if (match.rule === spend)
-    await notify(
-      `You spent ${match.data.spent} JOD in the first 10 days of ${match.key}.`,
-    );
+for await (const outcome of eca.evaluate(
+  [...cursors].map(([rule, cursor]) => ({ rule, cursor })),
+)) {
+  if ('expired' in outcome) continue; // the host decides; see below
+  await transaction(async (tx) => {
+    for (const { month, spent } of outcome.matches)
+      await outbox(
+        tx,
+        `You spent ${spent} JOD in the first 10 days of ${month}.`,
+      );
+    await saveCursor(tx, outcome.rule, outcome.cursor);
+  });
+}
 ```
 
-- A rule is the host's own object with a `condition`. Each new match carries it back as `match.rule`, so the host knows which rule matched.
-- `add` evaluates the condition one time, for its baseline, and resolves when the baseline is kept. It yields nothing.
-- `watch` evaluates every rule at each commit to the warehouse, and it yields each new match.
-- The two type parameters are the handle of the warehouse and the data of the matches. Give a union when the rules have different data.
+- A rule is the host's own object with a `condition`. Each outcome carries it back as `outcome.rule`.
+- `start()` gives the cursor of a new rule: the newest position of the warehouse, now. The rule matches only what becomes true after it.
+- `evaluate(rules)` gives one outcome for each rule, in order. The host saves its matches and its cursor in one transaction of its own, so a stop between them loses no match and repeats none.
+- The two type parameters are the handle of the warehouse and the data of a match. Give a union when the rules have different data.
+- The host decides when to evaluate: after each pass, on a timer, or when a user asks. See [ADR 0001](./docs/adr/0001-the-host-decides-when-a-rule-is-evaluated.md).
 
 ## Give eca the warehouse
 
-eca does not open the warehouse, and it does not know what holds it. The host gives a `Warehouse`: `sql`, the read-only handle that the conditions query, and `commits(signal)`, an async iterable with one item for each commit. This adapter reads one SQLite import of elt, and the host raises a commit after each elt pass:
+eca does not open the warehouse, and it does not know what holds it. The host gives a `Warehouse` with two methods:
+
+- `stable(after)` gives the positions after a position, in ascending order, or `{ expired }`. A position names a commit where no pass is half done.
+- `read(position?)` gives a reading of the warehouse as of a position, or as of its newest one: `{ sql, position, at }`, which eca disposes, or `{ expired }`.
+
+elt's SQLite and Postgres destinations give both. The adapter is two lines:
 
 ```ts
-import { EventEmitter, on } from 'node:events';
-import type { SQLTagStore } from 'node:sqlite';
-
-import { open } from '@zukhruf/sqlite-open';
+import type { DatabaseSync } from 'node:sqlite';
 
 import type { Warehouse } from '@eltjs/eca';
 
-class ImportWarehouse implements Warehouse<SQLTagStore> {
-  readonly sql: SQLTagStore;
-  readonly #commits = new EventEmitter();
-
-  constructor(path: string) {
-    this.sql = open(path, { readOnly: true }).createTagStore();
-  }
-
-  commit(): void {
-    this.#commits.emit('commit');
-  }
-
-  commits(signal: AbortSignal): AsyncIterable<unknown> {
-    return on(this.#commits, 'commit', { signal });
-  }
-}
+const warehouse: Warehouse<DatabaseSync> = {
+  stable: async (after) => destination.positions(after),
+  read: async (position) => destination.reading(position),
+};
 ```
 
-The adapter decides what read-only means and how it learns of a commit. A SQLite adapter can also read `PRAGMA data_version`, and a Postgres adapter can listen with `LISTEN`. See [ADR 0005](./docs/adr/0005-eca-reads-the-warehouse-through-a-port.md).
+A Postgres destination gives a `postgres.Sql` reading, whose reader views read the database as of the position. See [ADR 0005](./docs/adr/0005-eca-reads-the-warehouse-through-a-port.md).
 
 ## Write a condition
 
-A condition has one method: `evaluate(sql)`. It gets the handle of the warehouse, and it resolves to the matches that are true now. It is async, because a warehouse such as Postgres answers a query asynchronously; a condition over a synchronous handle, such as `node:sqlite`, is `async` too. Each match has a key and data:
+A condition has one method: `evaluate(before, after)`. Each argument is a reading: `sql`, the handle of the warehouse as of a position, and `at`, the time that the reading stands for. It resolves to what matches in `after` that did not match in `before`:
 
 ```ts
-import type { SQLTagStore } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 
-import type { Condition } from '@eltjs/eca';
+import type { Condition, Reading } from '@eltjs/eca';
 
-// Card purchases of Arab Bank in days 1 to 10 of each month, on the clock of
-// the user, by the time of the SMS.
-class EarlyMonthSpend implements Condition<SQLTagStore, { spent: number }> {
-  async evaluate(sql: SQLTagStore) {
-    const fils = new Map<string, number>();
-    for (const {
-      text,
-      date,
-    } of sql.all`SELECT text, date FROM messages WHERE handle = 'Arab Bank'`) {
-      if (typeof text !== 'string' || typeof date !== 'string') continue;
-      const amount =
-        /تم قيد حركة شراء من حسابكم .* بمبلغ JOD (\d+)\.(\d{3}) /u.exec(text);
-      if (amount === null) continue;
-      const day = Temporal.Instant.from(date).toZonedDateTimeISO('Asia/Amman');
-      if (day.day > 10) continue;
-      const month = day.toPlainDate().toPlainYearMonth().toString();
-      fils.set(
-        month,
-        (fils.get(month) ?? 0) + Number(`${amount[1]}${amount[2]}`),
-      );
-    }
-    return [...fils]
-      .filter(([, spent]) => spent > 200_000)
-      .map(([month, spent]) => ({ key: month, data: { spent: spent / 1000 } }));
+// The months whose card purchases of Arab Bank in days 1 to 10 pass 200 JOD,
+// on the clock of the user, by the time of the SMS, in fils.
+function overLimit(sql: DatabaseSync): Map<string, number> {
+  const fils = new Map<string, number>();
+  for (const { text, date } of sql
+    .prepare(`SELECT text, date FROM messages WHERE handle = 'Arab Bank'`)
+    .all()) {
+    if (typeof text !== 'string' || typeof date !== 'string') continue;
+    const amount =
+      /تم قيد حركة شراء من حسابكم .* بمبلغ JOD (\d+)\.(\d{3}) /u.exec(text);
+    if (amount === null) continue;
+    const day = Temporal.Instant.from(date).toZonedDateTimeISO('Asia/Amman');
+    if (day.day > 10) continue;
+    const month = day.toPlainDate().toPlainYearMonth().toString();
+    fils.set(
+      month,
+      (fils.get(month) ?? 0) + Number(`${amount[1]}${amount[2]}`),
+    );
+  }
+  return new Map([...fils].filter(([, spent]) => spent > 200_000));
+}
+
+class EarlyMonthSpend implements Condition<
+  DatabaseSync,
+  { month: string; spent: number }
+> {
+  async evaluate(before: Reading<DatabaseSync>, after: Reading<DatabaseSync>) {
+    const was = overLimit(before.sql);
+    return [...overLimit(after.sql)]
+      .filter(([month]) => !was.has(month))
+      .map(([month, spent]) => ({ month, spent: spent / 1000 }));
   }
 }
 ```
 
+- The pattern is "true after, and not true before". What to compare is the condition's own choice: here a month, or an id, a day, or one text.
 - The condition parses its own data. SQL reads the rows, and the code reads the text. See [ADR 0004](./docs/adr/0004-each-condition-parses-its-own-data.md).
+- A condition on time reads `before.at` and `after.at`: a deadline that passes is one with `before.at < due <= after.at`. Each evaluation starts at the `at` where the last one ended, so it matches once.
 - Judge a window by the time in the data, not by the time of the evaluation. A commit can be late.
 
-## New matches
+## The walk
 
-A new match is `{ rule, key, data }`: a key that the condition matches now and did not match in the previous evaluation. The condition chooses the key, and the key sets how often the host hears of a match:
+`evaluate` walks each rule from its cursor over each position after it. In each step, one thing moves between `before` and `after`:
 
-| Key       | The host hears                                  |
-| --------- | ----------------------------------------------- |
-| the month | one time for each month                         |
-| the day   | one time for each day                           |
-| one text  | one time, until the condition stops matching it |
-| an id     | one time for each id                            |
+1. Time moves up to the commit of the next position, with the data as it was.
+2. The data moves to the next position, at that time.
+3. After the last position, time moves up to now.
 
-- A key that keeps matching gives nothing, also when its data changes. More spend in October after the crossing gives nothing.
-- A key that stops matching gives nothing. When it matches again later, it is a new match again: October dropped under 200 and passed it again.
+Thus:
 
-See [ADR 0007](./docs/adr/0007-eca-yields-only-new-matches.md).
+- A key that stops matching and matches again between two evaluations matches again. A rule that the host evaluates once a day hears of each crossing of the day.
+- A deadline that passes while a task is open matches, also when a later position closed the task, because it is read with the data of that time.
+- A step in which nothing moves is skipped. With no new position, the walk is one step: time, from the cursor up to now.
+- At most two readings are open at once.
 
-## Watch the new matches
+See [ADR 0010](./docs/adr/0010-eca-is-a-stateless-reader-over-warehouse-positions.md).
 
-The host pulls each new match. eca evaluates the next commit only when the host asks for the next new match, so a slow host never gets a pile of evaluations. See [ADR 0003](./docs/adr/0003-the-host-acts-on-each-new-match.md).
+## Outcomes
 
-- **Move past a new match.** A rule takes its new keys only when the host moved past its last new match: it asked for the next one. A new match that the host stopped at comes again to its next watch, with the later new matches of that rule from that commit.
-- **Stop the watch.** Abort the signal. eca gives the signal to `commits`, and `watch` ends the way `commits` ends. With `events.on`, it rejects with an `AbortError`. A `break` out of the loop also stops it, and the new match of that turn was not moved past.
+| Outcome                            | When                                                   | The cursor                  |
+| ---------------------------------- | ------------------------------------------------------ | --------------------------- |
+| `{ rule, matches, cursor }`        | The walk ended                                         | At the newest position, now |
+| `{ rule, matches, error, cursor }` | The condition threw at a step                          | After the last good step    |
+| `{ rule, expired }`                | The warehouse can no longer read the cursor's position | None                        |
 
-## A new rule starts from a baseline
+- A failure keeps the matches of the steps before it. The next evaluation goes on from the last good step, so a failure that passes, such as a lock, loses nothing. The other rules of the call still run. See [ADR 0008](./docs/adr/0008-a-failing-condition-is-yielded-with-the-matches-before-it.md).
+- A position expires when it is older than the retention of the warehouse, or when a fresh run made the warehouse again. The reason says which. The host decides what to do: start the rule again with `start()`, or tell the user. eca never skips it silently.
+- A cursor that eca did not make is a `TypeError`. A warehouse with no position yet makes `start()` throw: load it first.
 
-A rule yields only keys that start to match after it was added. `add` keeps the keys of its first evaluation and yields nothing. A rule added on 15 October, after October passed 200 JOD, never yields October. See [ADR 0002](./docs/adr/0002-a-new-rule-starts-from-a-baseline.md).
+## Remove, pause and resume a rule
 
-The keys are in memory. eca keeps no store: restarts are the concern of the host. See [ADR 0006](./docs/adr/0006-eca-keeps-no-state-across-restarts.md).
+eca keeps nothing, so these need no API:
 
-## Keep the keys across a restart
-
-A host that stops and starts again must not miss a key that started to match while it was down. Save the keys of each rule, and give them back when you add the rule again:
-
-```ts
-const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-await eca.add(spend, { keys: saved.get('spend') });
-
-for await (const match of eca.watch({ signal })) await notify(match);
-
-saved.set('spend', eca.keys(spend));
-```
-
-- `add` with `keys` takes no baseline. The rule starts from the keys you give, so a key that started to match while the host was down is a new match.
-- `keys(rule)` holds a new match only after the host moved past it. Act on a new match before you save the keys: a host that stops after it acted and before it saved hears of the match again, and it never loses one.
-
-See [ADR 0009](./docs/adr/0009-a-host-gives-a-rule-back-its-keys.md).
-
-## When something fails
-
-- **A condition throws in `add`.** `add` throws, and the rule is not added.
-- **A condition throws in `watch`.** `watch` yields a failure, `{ rule, error }`, beside the new matches, and the other rules of that commit still run. The failing rule keeps its keys, so the next commit evaluates it again and none of its matches is lost. Tell a failure from a new match with `'error' in item`. See [ADR 0008](./docs/adr/0008-a-failing-condition-is-yielded-beside-the-new-matches.md).
-- **`commits` rejects.** `watch` rejects with the same error.
-- **The host fails to act on a new match.** Stop the watch before you ask for the next one. The new match comes again at the next commit of a new watch. eca retries nothing.
+- **Remove** a rule: stop giving its cursor, and delete it.
+- **Pause** a rule: keep its cursor, and do not give it.
+- **Resume** a rule: give its cursor again. The walk covers each position that it missed, within the retention of the warehouse.
 
 ## What eca does not do
 
-- No time events. A window that closes with no new data ends at the next commit. A rule about data that did not come ("I did not spend 200 JOD by day 10") cannot be written.
-- A rule whose window is fixed in time and already over is added, and it never yields.
-- No news of a match whose data changed, or of a match that stopped. See [ADR 0007](./docs/adr/0007-eca-yields-only-new-matches.md).
-- No store. The host saves the keys of each rule, and it gives them back after a restart.
-- No routing. Each commit evaluates every rule. See [ADR 0001](./docs/adr/0001-each-commit-evaluates-every-rule.md).
+- No store. The host saves the cursor of each rule, with its matches.
+- No schedule. The host evaluates when it wants; a condition on time matches when the host evaluates after the time passed.
+- No news of a match whose data changed, or of a match that stopped, unless the condition asks for it. "True after and not before" is the condition's own choice.
+- No routing. Each evaluation evaluates the rules that the host gives. A condition can read the whole warehouse.
 
 ## The same concepts in other systems
 
-| This package                          | Other systems                                                                                       |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Rule: event, condition, action        | ECA rules of active databases (HiPAC, 1988); Home Assistant automations: trigger, condition, action |
-| Event: a commit                       | SQL `CREATE TRIGGER … AFTER INSERT`                                                                 |
-| Key                                   | PagerDuty Events API `dedup_key`; the labels of a Prometheus alert instance                         |
-| New match                             | A Prometheus alert goes from inactive to firing                                                     |
-| Baseline                              | A SQL trigger does not fire for older rows; a Kafka consumer group with `auto.offset.reset=latest`  |
-| Move past a new match                 | A Kafka consumer commits its offset after it processed a message                                    |
-| Keys given back to `add`              | A Kafka consumer group resumes from its committed offset after a restart                            |
-| `watch`, pulled with `for await`      | `Pipeline.watch` of elt; `events.on` of Node                                                        |
-| Warehouse port and the host's adapter | Ports and adapters; the `Dialect` of Kysely                                                         |
-| A threshold over a period             | AWS Budgets: one alert for each threshold in each budget period                                     |
+| This package                          | Other systems                                                                                                      |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Rule: event, condition, action        | ECA rules of active databases (HiPAC, 1988); Home Assistant automations: trigger, condition, action                |
+| Position, `stable(after)`             | SQL Server change tracking: `CHANGE_TRACKING_CURRENT_VERSION`, `CHANGETABLE(… @since)`; Kafka's last stable offset |
+| Reading as of a position              | SQL:2011 system-versioned tables, `FOR SYSTEM_TIME AS OF`                                                          |
+| Expired position                      | `CHANGE_TRACKING_MIN_VALID_VERSION`; a Kafka offset older than the log's retention                                 |
+| Cursor that the host saves            | A Kafka consumer's committed offset, saved with its output in one transaction                                      |
+| Matches and cursor in one transaction | The transactional outbox                                                                                           |
+| Warehouse port and the host's adapter | Ports and adapters; the `Dialect` of Kysely                                                                        |
 
 ## Documentation
 
-- [ADR 0001: Each commit evaluates every rule](./docs/adr/0001-each-commit-evaluates-every-rule.md)
-- [ADR 0002: A new rule starts from a baseline](./docs/adr/0002-a-new-rule-starts-from-a-baseline.md)
-- [ADR 0003: The host acts on each new match](./docs/adr/0003-the-host-acts-on-each-new-match.md)
+- [ADR 0001: The host decides when a rule is evaluated](./docs/adr/0001-the-host-decides-when-a-rule-is-evaluated.md)
+- [ADR 0002: A new rule starts from a baseline](./docs/adr/0002-a-new-rule-starts-from-a-baseline.md) (superseded)
+- [ADR 0003: The host acts on each outcome](./docs/adr/0003-the-host-acts-on-each-outcome.md)
 - [ADR 0004: Each condition parses its own data](./docs/adr/0004-each-condition-parses-its-own-data.md)
 - [ADR 0005: eca reads the warehouse through a port](./docs/adr/0005-eca-reads-the-warehouse-through-a-port.md)
-- [ADR 0006: eca keeps no state across restarts](./docs/adr/0006-eca-keeps-no-state-across-restarts.md)
-- [ADR 0007: eca yields only new matches](./docs/adr/0007-eca-yields-only-new-matches.md)
-- [ADR 0008: A failing condition is yielded beside the new matches](./docs/adr/0008-a-failing-condition-is-yielded-beside-the-new-matches.md)
-- [ADR 0009: A host gives a rule back its keys](./docs/adr/0009-a-host-gives-a-rule-back-its-keys.md)
+- [ADR 0006: eca keeps no state across restarts](./docs/adr/0006-eca-keeps-no-state-across-restarts.md) (superseded)
+- [ADR 0007: eca yields only new matches](./docs/adr/0007-eca-yields-only-new-matches.md) (superseded)
+- [ADR 0008: A failing condition is yielded with the matches before it](./docs/adr/0008-a-failing-condition-is-yielded-with-the-matches-before-it.md)
+- [ADR 0009: A host gives a rule back its keys](./docs/adr/0009-a-host-gives-a-rule-back-its-keys.md) (superseded)
+- [ADR 0010: eca is a stateless reader over warehouse positions](./docs/adr/0010-eca-is-a-stateless-reader-over-warehouse-positions.md)
 
 ## Development
 
 Run the commands from the workspace root.
 
 ```sh
-npx nx run eca:test        # builds, then runs the tests in dist/
+npx nx run eca:test        # builds, then runs the tests
 npx nx run eca:typecheck   # formats, lints, then type checks
 npx nx run eca:build       # compiles src/ to dist/
 ```
 
-The tests have their own warehouse over a SQLite import that they write as elt writes it.
+The tests run a real elt `Pipeline` into a real SQLite destination, and read it through the destination's positions and readings.
 
 ```
 src/
-  eca.ts         Eca: add, watch, keys, and the comparison of keys
-  rule.ts        Rule, Condition, Match, NewMatch
-  warehouse.ts   the Warehouse port
+  eca.ts         Eca: start, evaluate, and the walk
+  rule.ts        Rule, Condition, Outcome
+  warehouse.ts   the Warehouse port and Reading
   index.ts       the public exports
   eca.test.ts    the tests
 ```

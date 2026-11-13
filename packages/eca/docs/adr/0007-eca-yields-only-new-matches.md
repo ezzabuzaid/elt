@@ -1,5 +1,7 @@
 # eca yields only new matches
 
+Superseded on 2026-11-13 (#4253) by [ADR 0010](./0010-eca-is-a-stateless-reader-over-warehouse-positions.md): a condition reads two readings and gives what matches in after and not in before. "Only new matches" is the condition's own choice now, not a comparison of keys that eca makes, and `watch` is gone.
+
 The user asked: "when I spend over 200 in the first 10 days, do X". X happens at one moment: when the condition starts to match a key, for example October. An earlier design yielded three kinds of change, as alerting systems do: `started` when a key starts to match, `changed` when the data of a matched key changes, and `ended` when a key stops matching. Prometheus goes from inactive to firing, and Alertmanager sends resolved. Only `started` came from the request. `changed` and `ended` told the host things that it did not ask about.
 
 Thus `watch` yields only new matches: a key that the condition matches now and did not match in the previous evaluation, with its rule and its data. A key that keeps matching gives nothing, also when its data changes. A key that stops matching gives nothing. When it matches again later, it is a new match again.

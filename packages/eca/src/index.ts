@@ -1,3 +1,3 @@
-export { Eca } from './eca.ts';
-export type { Condition, Failure, Match, NewMatch, Rule } from './rule.ts';
-export type { Warehouse } from './warehouse.ts';
+export { type Clock, Eca } from './eca.ts';
+export type { Condition, Outcome, Rule } from './rule.ts';
+export type { Reading, Warehouse } from './warehouse.ts';

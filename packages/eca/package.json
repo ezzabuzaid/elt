@@ -11,6 +11,8 @@
     }
   },
   "devDependencies": {
+    "@eltjs/elt": "*",
+    "@eltjs/elt-sqlite": "*",
     "@zukhruf/sqlite-open": "^0.8.10",
     "@zukhruf/testing": "^0.8.10"
   }

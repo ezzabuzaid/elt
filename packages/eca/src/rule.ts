@@ -1,27 +1,42 @@
-// One thing a condition matched. Its key names it across evaluations, so the
-// host hears of it once while the condition keeps matching it.
-export type Match<Data> = { readonly key: string; readonly data: Data };
+import type { Reading } from './warehouse.ts';
 
-// What is true now, read from the warehouse through sql. The agent writes it
-// as code, with SQL in it. It is async, because a warehouse such as Postgres
-// answers a query asynchronously.
+/**
+ * What became true between two readings of the warehouse: the agent writes it
+ * as code, with SQL in it, and it gives what matches in `after` that did not
+ * in `before`. `before.at` and `after.at` bound the time it covers, so a
+ * condition on time, such as a deadline that passes, matches once.
+ */
 export interface Condition<Sql, Data> {
-  evaluate(sql: Sql): Promise<readonly Match<Data>[]>;
+  evaluate(before: Reading<Sql>, after: Reading<Sql>): Promise<readonly Data[]>;
 }
 
-// The host's own object: a new match carries it back, so the host knows which
-// rule matched.
+/**
+ * The host's own object: an outcome carries it back, so the host knows which
+ * rule it is about.
+ */
 export type Rule<Sql, Data> = { readonly condition: Condition<Sql, Data> };
 
-// A key the rule's condition matched that it did not match in the previous
-// evaluation: the moment the host acts.
-export type NewMatch<Sql, Data> = Match<Data> & {
-  readonly rule: Rule<Sql, Data>;
-};
-
-// A rule whose condition threw in an evaluation, and what it threw. The rule
-// keeps the keys it had, so the next commit evaluates it again.
-export type Failure<Sql, Data> = {
-  readonly rule: Rule<Sql, Data>;
-  readonly error: unknown;
-};
+/**
+ * What one evaluation of a rule gives. The host saves the matches and the new
+ * cursor together, in one transaction of its own, and gives that cursor back
+ * at the next evaluation.
+ * - The walk ended: each match of each step, and the cursor at the newest
+ *   position.
+ * - The condition threw at a step: the matches of the steps before it, the
+ *   error, and the cursor after the last good step.
+ * - The cursor names a position that the warehouse can no longer read, such
+ *   as one older than its retention or of a warehouse made again.
+ */
+export type Outcome<Sql, Data> =
+  | {
+      readonly rule: Rule<Sql, Data>;
+      readonly matches: readonly Data[];
+      readonly cursor: string;
+    }
+  | {
+      readonly rule: Rule<Sql, Data>;
+      readonly matches: readonly Data[];
+      readonly error: unknown;
+      readonly cursor: string;
+    }
+  | { readonly rule: Rule<Sql, Data>; readonly expired: string };
