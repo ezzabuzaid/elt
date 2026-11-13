@@ -78,20 +78,28 @@ async function chromiumImport(source: Source, directory: string) {
       // An int64 column holds integers past what a JavaScript number holds;
       // such a value reads as its decimal text, as the stream declares it.
       statement.setReadBigInts(true);
-      // The view's loaded_at says when a row loaded, not what it holds.
+      // The destination adds three columns to each row (when it loaded the
+      // row, in which commit, and the hash of the row's values); they do not
+      // say what the row holds.
       return statement
         .all()
-        .map(({ loaded_at: _loaded, ...row }) =>
-          Object.fromEntries(
-            Object.entries(row).map(([field, value]) => [
-              field,
-              typeof value !== 'bigint'
-                ? value
-                : Number.isSafeInteger(Number(value))
-                  ? Number(value)
-                  : String(value),
-            ]),
-          ),
+        .map(
+          ({
+            loaded_at: _loaded,
+            committed_in: _commit,
+            _elt_row_hash: _hash,
+            ...row
+          }) =>
+            Object.fromEntries(
+              Object.entries(row).map(([field, value]) => [
+                field,
+                typeof value !== 'bigint'
+                  ? value
+                  : Number.isSafeInteger(Number(value))
+                    ? Number(value)
+                    : String(value),
+              ]),
+            ),
         );
     },
   };

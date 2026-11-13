@@ -635,7 +635,15 @@ test('Activity reads every Biome stream, knowledgeC and the device list as docum
   const view = (name: string) =>
     activity
       .read(`SELECT * FROM ${name} ORDER BY 1, 2, 3`)
-      .map(({ payload: _, loaded_at: __, ...row }) => row);
+      .map(
+        ({
+          payload: _,
+          loaded_at: __,
+          committed_in: ___,
+          _elt_row_hash: ____,
+          ...row
+        }) => row,
+      );
   assert.deepEqual(view('app_focus'), [
     {
       ...address('PHONE-1'),
