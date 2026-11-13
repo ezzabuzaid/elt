@@ -2775,7 +2775,7 @@ test(
 );
 
 test(
-  'Calendar attachment downloads fail on a disabled API, a missing scope or a server error',
+  'Calendar attachment downloads fail on a disabled API, a missing scope or a server error, and the failure names the attachment and the reason Google gave',
   {
     concurrency: false,
   },
@@ -2796,18 +2796,21 @@ test(
           googleError(403, {
             error: { errors: [{ reason: 'accessNotConfigured' }] },
           }),
-          /403/,
+          /403 \(accessNotConfigured\).*drive\.google\.com\/file\/d\/abc\/view/,
         ],
         [
           googleError(403, {
             error: {
               status: 'PERMISSION_DENIED',
+              message: 'Request had insufficient authentication scopes.',
               details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }],
             },
           }),
-          /403/,
+          /403 \(ACCESS_TOKEN_SCOPE_INSUFFICIENT\).*drive\.google\.com\/file\/d\/abc\/view: Request had insufficient authentication scopes\./,
         ],
-        [googleError(500), /500/],
+        [googleError(500), /500.*drive\.google\.com\/file\/d\/abc\/view/],
+        // A request that Google did not answer keeps its own error.
+        [new Error('socket hang up'), /^socket hang up$/],
       ] as const
     ).entries()) {
       const { requester } = googleRecorder(() => {
@@ -2860,6 +2863,59 @@ test(
           /403/.test(failure.cause.message),
       );
     }
+  },
+);
+
+test(
+  'a Drive file whose owner turned off downloads loads with no file, and the attachment after it downloads',
+  {
+    concurrency: false,
+  },
+  async () => {
+    await using stub = await StubEventKitHelper.create();
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer;
+    const { requester } = googleRecorder(({ url }) => {
+      // What Drive answered on 2026-11-13 for a meeting recording that its
+      // owner shares with downloads off: the metadata reads, and the download
+      // is refused.
+      if (url.includes('/files/recording?fields'))
+        return { mimeType: 'video/mp4' };
+      if (url.includes('/files/recording?alt=media'))
+        throw googleError(403, {
+          error: {
+            errors: [
+              {
+                domain: 'global',
+                reason: 'cannotDownloadFile',
+                message: 'This file cannot be downloaded by the user.',
+              },
+            ],
+            code: 403,
+            message: 'This file cannot be downloaded by the user.',
+          },
+        });
+      if (url.includes('/files/image?fields')) return { mimeType: 'image/png' };
+      if (url.includes('/files/image?alt=media')) return png;
+      throw new Error(`unexpected ${url}`);
+    });
+    const expected = {
+      'https://drive.google.com/file/d/recording/view': null,
+      'https://drive.google.com/file/d/image/view': new Uint8Array(png),
+    };
+    stub.answer(eventsRead(january, true), {
+      documents: [
+        icsItem('google', googleAttachmentsICS(Object.keys(expected))),
+      ],
+    });
+    await using scratch = await new TemporaryFiles().directory('gcal-off-');
+
+    const saved = await googleAttachmentFiles(
+      new CalendarStore(stub.path, { env: process.env }),
+      requester,
+      scratch.path,
+    );
+
+    assert.deepEqual(saved, expected);
   },
 );
 

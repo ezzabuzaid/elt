@@ -1,6 +1,11 @@
 import { writeFile } from 'node:fs/promises';
 
-import { type GoogleRequester, reasonsOf, statusOf } from '@eltjs/google-auth';
+import {
+  type GoogleRequester,
+  messageOf,
+  reasonsOf,
+  statusOf,
+} from '@eltjs/google-auth';
 
 import type { CalendarAttachmentFetcher } from './apple-calendar-source.ts';
 
@@ -16,6 +21,8 @@ const NO_ACCESS = new Set([
   'appNotAuthorizedToFile',
   'domainPolicy',
   'cannotDownloadAbusiveFile',
+  // The owner shares the file with downloads off for its readers.
+  'cannotDownloadFile',
   // Drive exports a Google Docs file only up to 10 MB, and exports no folder.
   'exportSizeLimitExceeded',
   'cannotExportFile',
@@ -48,12 +55,19 @@ export function googleCalendarAttachments(
           : await gmailAttachment(requester, attachment.id, attachment.partId);
     } catch (error) {
       const status = statusOf(error);
+      const reasons = reasonsOf(error);
       if (
         status === 404 ||
-        (status === 403 && reasonsOf(error).some((r) => NO_ACCESS.has(r)))
+        (status === 403 && reasons.some((r) => NO_ACCESS.has(r)))
       )
         return false;
-      throw error;
+      if (status === undefined) throw error;
+      // The text of a failed download is only its status, because gaxios
+      // reads the error body of a binary request after it wrote the message.
+      throw new Error(
+        `Google answered ${status}${reasons.length > 0 ? ` (${reasons.join(', ')})` : ''} for the attachment ${uri}: ${messageOf(error)}`,
+        { cause: error },
+      );
     }
     if (bytes === undefined) return false;
     await writeFile(path, bytes);

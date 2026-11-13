@@ -135,7 +135,7 @@ Apple documents [EventKit retrieval](https://developer.apple.com/documentation/e
 - Drive files: native Docs, Sheets and Slides as PDF, shortcuts followed to their target, and link-shared files with their resource key;
 - Gmail message attachments.
 
-It needs a `googleSession` from `google-auth` whose grant has `drive.readonly` and `gmail.readonly`, from an OAuth client whose project enables the Drive and Gmail APIs. It resolves false for other URLs and for files that the account cannot open, also for Google files that are too large to export as PDF (10 MB). A file that the account cannot open (HTTP 404, or a 403 that Drive or Gmail gives because the account may not open the file) loads with a `null` file. A rate limit, a disabled API, a missing scope or any other failure fails the copy, and the next run continues it. Connect the fetcher in this way:
+It needs a `googleSession` from `google-auth` whose grant has `drive.readonly` and `gmail.readonly`, from an OAuth client whose project enables the Drive and Gmail APIs. It resolves false for other URLs and for files that the account cannot open, also for Google files that are too large to export as PDF (10 MB). A file that the account cannot open (HTTP 404, or a 403 that Drive or Gmail gives because the account may not open the file or may not download it, as when the owner of a shared recording turns off downloads) loads with a `null` file. A rate limit, a disabled API, a missing scope or any other failure fails the copy, and the next run continues it. The failure names the attachment, the status and the reason that Google gave. Connect the fetcher in this way:
 
 ```ts
 const requester = await googleSession({
