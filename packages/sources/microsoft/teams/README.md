@@ -52,7 +52,7 @@ The same codecs as the [Slack desktop source](../../slack/desktop/README.md) rea
 | Manager and object store                             | Streams                                                                                                                                                                                 |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `conversation-manager/conversations`                 | `conversations`, `conversationMembers`, `pins`, and each conversation's newest messages                                                                                                 |
-| `replychain-manager/replychains`                     | `messages` and their parts; the client's own feeds `48:calllogs`, `48:notifications`, `48:annotations`, `48:starred` give `callLogs`, `callParticipants`, `activities`, `savedMessages` |
+| `replychain-manager/replychains`, newest generation  | `messages` and their parts; the client's own feeds `48:calllogs`, `48:notifications`, `48:annotations`, `48:starred` give `callLogs`, `callParticipants`, `activities`, `savedMessages` |
 | `streams-replychain-manager/saved`                   | `savedMessages` from `48:saved`                                                                                                                                                         |
 | `syncstate-manager/syncstates`                       | which part of each conversation, channel thread and feed the client holds                                                                                                               |
 | `activity-manager/feed-items`                        | whether the user has read an activity                                                                                                                                                   |
@@ -170,9 +170,10 @@ Checked on 2026-10-12 against Microsoft Teams 26163.407 (Edge WebView2 149) on m
   - Deleting the message loaded the same row with `deletedAt` and no content.
 - The pin got to `threadProperties.pinnedItems` at once, while the conversation's own copy, `pinnedItems`, stayed empty. In every other conversation the two lists were the same. `pins` reads the thread's list.
 
-Checked on 2026-11-13 on macOS 27.2, when the store held 6 messages:
+Checked on 2026-11-13 on macOS 27.2:
 
-- The number of one mention (`itemid`) was the number `0`, and of another the text `"0"`. The reader takes both.
+- Teams keeps its reply chains in generations of one object store: `replychains`, then `replychains-2`. On 2026-11-11 the app moved each chain to `replychains-2`, and it writes there from then on: that store held 4,995 chains with 5,745 messages, from 2021 to the day of the check. `replychains` kept 4 chains as they were at the move, two of them messages that the app never sent. The reader reads the newest generation only. A read of `replychains` alone loaded 430 messages, almost all of them the newest message of a conversation. No other object store that the reader reads has a second generation.
+- The number of one mention (`itemid`) was the number `0`, and of another the text `"0"`. The reader takes both. Each of the 1,828 mentions in the reply chains had its number, so a mention without one fails as a shape that the reader does not read. It gets no number from its place in the list, which can be the number of another mention of the message.
 - One reply held its quoted messages (`qtdMsgs`) as JSON text, where the store of 2026-10-12 held a list. The reader takes both, as it does for mentions, files and links.
 
 ## Decisions

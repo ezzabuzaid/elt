@@ -2487,6 +2487,42 @@ test('a mention whose number the app wrote as its digits loads at that number, a
   );
 });
 
+test('a mention with no number fails as a shape the reader does not read, and gets no number from its place in the list', async () => {
+  const { dir, app } = await scratch();
+  await using _ = dir;
+  // No mention of a live store's reply chains was without its number: 1,828
+  // of 1,828 on 2026-11-13. A number taken from the place in the list can be
+  // the number of another mention of the message.
+  const withoutNumber = (c: Chain): Chain =>
+    chain(
+      Object.values(c.messageMap).map((m) => {
+        if (m.id !== ids.hello) return m;
+        const [mention]: Record<string, unknown>[] = JSON.parse(
+          String(m.properties.mentions),
+        );
+        const { itemid: _itemid, ...rest } = mention ?? {};
+        return {
+          ...m,
+          properties: { ...m.properties, mentions: JSON.stringify([rest]) },
+        };
+      }),
+    );
+  const base = account();
+  await app.save({ ...base, chains: base.chains.map(withoutNumber) });
+  const source = new TeamsSource({ directory: app.directory });
+  const run = await pipeline(source, dir.path, globalThis);
+
+  await assert.rejects(run.run(), (error) => {
+    assert.ok(error instanceof PipelineError);
+    assert.notEqual(error.errors.length, 0);
+    for (const cause of error.errors) {
+      assert.ok(cause instanceof TeamsFormatError);
+      assert.match(cause.message, /mentions\[0\]\.itemid is not a number/);
+    }
+    return true;
+  });
+});
+
 test('a reply whose quoted messages the app wrote as JSON text loads its quote, and takes no stream down', async () => {
   const { dir, app, out } = await scratch();
   await using _ = dir;
@@ -2526,6 +2562,61 @@ test('a reply whose quoted messages the app wrote as JSON text loads its quote, 
     ),
     [{ messageId: ids.reply, quotedMessageId: ids.hello, quotedSenderId: ada }],
   );
+});
+
+test('an app that moved its reply chains to the next generation of their store loads the messages of that one, and nothing that it left in the old one', async () => {
+  const moved = await scratch();
+  await using _ = moved.dir;
+  const control = await scratch();
+  await using __ = control.dir;
+  // As a live store on 2026-11-13: the app moved each chain to replychains-2
+  // and writes there from then on. It left in replychains a chain as it was
+  // at the move and a message that it never sent.
+  const base = account();
+  const database = databaseName('replychain-manager', base);
+  const leftBehind = [
+    chain([
+      message({
+        conversationId: chat,
+        id: ids.hello,
+        content: '<p>as it was at the move</p>',
+      }),
+    ]),
+    chain([
+      message({
+        conversationId: chat,
+        id: id('2026-09-26T09:00:00.000Z'),
+        creator: me,
+        name: 'Ezz',
+        content: '<p>never sent</p>',
+      }),
+    ]),
+  ];
+  await moved.app.write([
+    ...writes(base).map((write) =>
+      write.database === database && write.objectStore === 'replychains'
+        ? { ...write, objectStore: 'replychains-2' }
+        : write,
+    ),
+    ...leftBehind.map((value) => ({
+      database,
+      objectStore: 'replychains',
+      key: `${value.conversationId}/${value.replyChainId}`,
+      value,
+    })),
+  ]);
+  await control.app.save(base);
+  const messages = 'SELECT id, content FROM messages ORDER BY id';
+
+  for (const { app, dir } of [moved, control]) {
+    const source = new TeamsSource({ directory: app.directory });
+    const run = await pipeline(source, dir.path, globalThis);
+    await run.run();
+  }
+
+  const loaded = rows(moved.out, messages);
+  assert.deepEqual(loaded, rows(control.out, messages));
+  assert.ok(loaded.length > 5, 'the chains of the account load');
 });
 
 test('an import scope keeps the selected accounts, conversations and dates, and keeps what belongs to the account alone', async () => {

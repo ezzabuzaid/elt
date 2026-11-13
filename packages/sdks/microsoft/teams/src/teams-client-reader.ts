@@ -54,7 +54,7 @@ export function readTeamsClient(
   const activities: TeamsActivity[] = [];
   const savedMessages: TeamsSavedMessage[] = [];
   const chains = [
-    ...records('replychain-manager', 'replychains'),
+    ...replyChains(databases.get('replychain-manager')),
     ...records('streams-replychain-manager', 'saved'),
   ];
   for (const chain of chains) {
@@ -149,6 +149,26 @@ export function readTeamsClient(
       windows.holds(conversationId, threadId, messageId),
     holdsApps: (scope, scopeId) => appScopes.has(`${scope}\n${scopeId}`),
   };
+}
+
+// The object stores that hold the reply chains: replychains, and each later
+// generation of it, such as replychains-2.
+const replyChainStore = /^replychains(?:-(\d+))?$/;
+
+// The reply chains of the newest generation of their object store. Teams
+// moves each chain to the next generation and writes there from then on, and
+// it leaves in the old one what that held at the move, also messages that it
+// never sent.
+function replyChains(database: IndexedDBDatabase | undefined): Fields[] {
+  const [newest] = (database?.objectStores ?? [])
+    .flatMap(({ name }) => {
+      const generation = replyChainStore.exec(name);
+      return generation === null
+        ? []
+        : [{ name, number: Number(generation[1] ?? 1) }];
+    })
+    .toSorted((a, b) => b.number - a.number);
+  return newest === undefined ? [] : stored(database, newest.name);
 }
 
 function stored(

@@ -94,9 +94,9 @@ function reactions(emotion: Fields): TeamsReaction[] {
   }));
 }
 
-function mention(mention: Fields, index: number): TeamsMention {
+function mention(mention: Fields): TeamsMention {
   return {
-    position: mention.wholeNumber('itemid') ?? index,
+    position: mention.requiredWholeNumber('itemid'),
     mentionedId: mention.requiredString('mri'),
     kind: mention.string('mentionType'),
     displayName: mention.string('displayName'),

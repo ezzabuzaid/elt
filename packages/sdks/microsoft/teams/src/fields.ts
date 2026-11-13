@@ -56,11 +56,10 @@ export class Fields {
 
   // A whole number Teams writes as a number in some records and as its
   // digits in others.
-  wholeNumber(name: string): number | null {
+  requiredWholeNumber(name: string): number {
     const value = this.#value[name];
-    return typeof value === 'string' && /^\d+$/.test(value)
-      ? Number(value)
-      : this.number(name);
+    if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
+    return this.number(name) ?? this.#fail(name, 'a number');
   }
 
   boolean(name: string): boolean | null {
