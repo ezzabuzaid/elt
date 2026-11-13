@@ -1,7 +1,6 @@
 import type postgres from 'postgres';
 
-import type { Match } from '@eltjs/eca';
-
+import type { Match } from './automation.ts';
 import { NotifyAutomation } from './notify-automation.ts';
 
 // "When the mid-month credit has not arrived by day 18, tell me": an Arab

@@ -4,12 +4,26 @@ import { test } from 'node:test';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
-import { Eca } from '@eltjs/eca';
-
+import type { Automation } from './automation.ts';
 import { ClayBdAgentMessages } from './clay-bd-agent-messages.ts';
 import { ClayDataHubMcpMessages } from './clay-data-hub-mcp-messages.ts';
 
 const postgresql = new Postgres({ environment: process.env });
+
+// What the user hears of an automation at each evaluation: the keys it
+// matches now and did not match at the one before, as Automations tells them
+// between two readings. The first evaluation is the baseline.
+async function teller<Data>(automation: Automation<Data>, sql: postgres.Sql) {
+  const keys = async () =>
+    await automation.evaluate(sql, Temporal.Now.instant());
+  let seen = new Set((await keys()).map(({ key }) => key));
+  return async () => {
+    const matches = await keys();
+    const told = matches.filter(({ key }) => !seen.has(key));
+    seen = new Set(matches.map(({ key }) => key));
+    return told;
+  };
+}
 
 test('only Clay messages about the BD agent or Data Hub MCP match, with conversation context', async () => {
   await using database = await postgresql.database();
@@ -58,11 +72,11 @@ test('only Clay messages about the BD agent or Data Hub MCP match, with conversa
     ('T20H06JTC', 'C0BH287LC4R', '1030030.000001', 'U03CUQ5SCRY', 'ahh ok will check it', '1000220.000001'),
     ('T20H06JTC', 'C0BH287LC4R', '1030040.000001', 'U03CUQ5SCRY', 'Lunch tomorrow?', '1000000.000001')`;
 
-  const bd = { condition: new ClayBdAgentMessages() };
-  const mcp = { condition: new ClayDataHubMcpMessages() };
+  const bd = new ClayBdAgentMessages();
+  const mcp = new ClayDataHubMcpMessages();
   const keys = (timestamps: string[]) =>
     timestamps.map((ts) => `T20H06JTC/C0BH287LC4R/${ts}`).sort();
-  const bdMatches = await bd.condition.evaluate(sql);
+  const bdMatches = await bd.evaluate(sql);
   assert.deepEqual(
     bdMatches.map(({ key }) => key).sort(),
     keys([
@@ -72,7 +86,7 @@ test('only Clay messages about the BD agent or Data Hub MCP match, with conversa
       '1030030.000001',
     ]),
   );
-  const mcpMatches = await mcp.condition.evaluate(sql);
+  const mcpMatches = await mcp.evaluate(sql);
   assert.deepEqual(
     mcpMatches.map(({ key }) => key).sort(),
     [
@@ -102,19 +116,9 @@ test('only Clay messages about the BD agent or Data Hub MCP match, with conversa
     'slack://channel?team=T20H06JTC&id=C0BH287LC4R&message=1000000.000001',
   );
 
-  const eca = new Eca<postgres.Sql, { text: string; url: string }>({
-    warehouse: {
-      sql,
-      async *commits() {
-        yield;
-      },
-    },
-  });
-  await eca.add(bd);
-  await eca.add(mcp);
-  const watch = () =>
-    Array.fromAsync(eca.watch({ signal: new AbortController().signal }));
-  assert.deepEqual(await watch(), [], 'old messages form the baseline');
+  const tellBd = await teller(bd, sql);
+  const tellMcp = await teller(mcp, sql);
+  const watch = async () => ({ bd: await tellBd(), mcp: await tellMcp() });
   await sql`INSERT INTO marts.slack_messages
     ("workspaceId", "channelId", ts, "userId", text) VALUES
     ('T20H06JTC', 'C0BH287LC4R', '1040000.000001', 'U03CUQ5SCRY', 'The MCP is ready'),
@@ -122,26 +126,24 @@ test('only Clay messages about the BD agent or Data Hub MCP match, with conversa
     ('T20H06JTC', 'OTHER', '1040001.000001', 'U03CUQ5SCRY', 'Lunch?'),
     ('T20H06JTC', 'OTHER', '1040002.000001', 'OTHER_USER', 'The BD agent is ready')`;
   const matches = await watch();
-  assert.equal(
-    matches.length,
-    2,
-    'one BD and one MCP notification, only from Clay',
+  assert.equal(matches.bd.length, 1, 'one BD notification, only from Clay');
+  assert.equal(matches.mcp.length, 1, 'one MCP notification, only from Clay');
+  assert.deepEqual(
+    await watch(),
+    { bd: [], mcp: [] },
+    'unchanged messages do not notify again',
   );
-  assert.equal(matches.filter(({ rule }) => rule === bd).length, 1);
-  assert.equal(matches.filter(({ rule }) => rule === mcp).length, 1);
-  assert.deepEqual(await watch(), [], 'unchanged messages do not notify again');
   await sql`INSERT INTO marts.slack_thread_replies
     ("workspaceId", "channelId", ts, "userId", text, loaded_at) VALUES
     ('T20H06JTC', 'C0BH287LC4R', '1040000.000001', 'U03CUQ5SCRY', 'The MCP is ready, edited', now() + interval '1 second')`;
   assert.deepEqual(
     await watch(),
-    [],
+    { bd: [], mcp: [] },
     'a later edited broadcast is the same message',
   );
   assert.equal(
-    (await mcp.condition.evaluate(sql)).find(({ key }) =>
-      key.endsWith('/1040000.000001'),
-    )?.data.text,
+    (await mcp.evaluate(sql)).find(({ key }) => key.endsWith('/1040000.000001'))
+      ?.data.text,
     'Clay · Data Hub MCP: The MCP is ready, edited',
   );
 });

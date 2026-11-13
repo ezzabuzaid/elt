@@ -8,12 +8,30 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
-import { Eca } from '@eltjs/eca';
-
+import type { Automation } from './automation.ts';
 import { MeetingBriefWriter } from './meeting-brief-writer.ts';
 import { type MeetingBrief, PlanningMeetings } from './planning-meetings.ts';
 
 const postgresql = new Postgres({ environment: process.env });
+
+// What the user hears of an automation at each evaluation at the time at:
+// the keys it matches now and did not match at the one before, as
+// Automations tells them between two readings. The first evaluation is the
+// baseline.
+async function teller<Data>(
+  automation: Automation<Data>,
+  sql: postgres.Sql,
+  at: Temporal.Instant,
+) {
+  const keys = async () => await automation.evaluate(sql, at);
+  let seen = new Set((await keys()).map(({ key }) => key));
+  return async () => {
+    const matches = await keys();
+    const told = matches.filter(({ key }) => !seen.has(key));
+    seen = new Set(matches.map(({ key }) => key));
+    return told;
+  };
+}
 
 test('planning briefs follow new meetings and related evidence, without retriggering on imports', async () => {
   await using database = await postgresql.database();
@@ -60,22 +78,11 @@ test('planning briefs follow new meetings and related evidence, without retrigge
     ('past', 'own', 'Atlas planning', '2026-10-10T09:00Z', '2026-10-10T10:00Z'),
     ('subscription', 'holidays', 'Atlas planning', '2026-10-12T09:00Z', '2026-10-12T10:00Z'),
     ('ordinary', 'own', 'Dentist', '2026-10-12T09:00Z', '2026-10-12T10:00Z')`;
-  const condition = new PlanningMeetings(
-    new MeetingBriefWriter(tmpdir()),
-    () => new Date('2026-10-11T12:00Z'),
+  const watch = await teller(
+    new PlanningMeetings(new MeetingBriefWriter(tmpdir()), sql),
+    sql,
+    Temporal.Instant.from('2026-10-11T12:00Z'),
   );
-  const eca = new Eca<postgres.Sql, MeetingBrief>({
-    warehouse: {
-      sql,
-      async *commits() {
-        yield;
-      },
-    },
-  });
-  await eca.add({ condition });
-  const watch = () =>
-    Array.fromAsync(eca.watch({ signal: new AbortController().signal }));
-  assert.deepEqual(await watch(), [], 'existing meetings are the baseline');
   await sql`INSERT INTO marts.calendar_events ("eventId", "calendarId", name, "startAt", "endAt", url) VALUES
     ('new', 'own', 'Atlas planning', '2026-10-12T09:00Z', '2026-10-12T10:00Z', 'https://meet.example/atlas')`;
   await sql`INSERT INTO marts.calendar_attendees (id, "eventId", name, url, status) VALUES
@@ -229,7 +236,16 @@ await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1],
   );
 });
 
-test('a new planning match writes its brief and tells the user where it is', async () => {
+test('a new planning match writes its brief, with how fresh each source is now, and tells the user where it is', async () => {
+  await using database = await postgresql.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  await sql`CREATE SCHEMA marts`;
+  await sql`CREATE TABLE marts.sync_status (connector text, status text, last_successful_sync_at timestamptz)`;
+  await sql`INSERT INTO marts.sync_status VALUES ('apple-calendar', 'succeeded', now()), ('whatsapp', 'succeeded', now())`;
   await using directory = await new TemporaryFiles().directory(
     'proactive-test-',
   );
@@ -243,36 +259,42 @@ import { writeFile } from 'node:fs/promises';
 let prompt = '';
 for await (const chunk of process.stdin) prompt += chunk;
 const brief = JSON.parse(prompt.slice(prompt.indexOf('\\n{') + 1));
-await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1], '# ' + brief.meeting.name);
+await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1], '# ' + brief.meeting.name + ' from ' + brief.coverage.map(({ connector }) => connector).join(', '));
 `,
     { mode: 0o700 },
   );
   const outputs = join(directory.path, 'briefs');
   const planning = new PlanningMeetings(
     new MeetingBriefWriter(outputs, executable),
+    sql,
   );
-  const brief: MeetingBrief = {
-    meeting: {
-      eventId: 'atlas',
-      name: 'Atlas planning',
-      startAt: new Date('2026-10-12T09:00Z'),
-      endAt: new Date('2026-10-12T10:00Z'),
-      body: null,
-      location: null,
-      url: null,
-      attendees: [],
-    },
-    conversations: [],
-    coverage: [],
-  };
 
   const receipt = await planning.act(
-    { key: 'atlas', data: brief },
+    {
+      key: 'atlas',
+      data: {
+        meeting: {
+          eventId: 'atlas',
+          name: 'Atlas planning',
+          startAt: new Date('2026-10-12T09:00Z'),
+          endAt: new Date('2026-10-12T10:00Z'),
+          body: null,
+          location: null,
+          url: null,
+          attendees: [],
+        },
+        conversations: [],
+      },
+    },
     new AbortController().signal,
   );
 
   const [title, path = ''] = receipt.split('\n');
   assert.equal(title, 'Planning brief ready: Atlas planning');
   assert.ok(path.startsWith(outputs));
-  assert.equal(await readFile(path, 'utf8'), '# Atlas planning');
+  assert.equal(
+    await readFile(path, 'utf8'),
+    '# Atlas planning from apple-calendar',
+    'the brief reads the coverage of its sources when it is written',
+  );
 });

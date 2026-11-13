@@ -4,9 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import type { Match } from '@eltjs/eca';
-
-import { Automation } from './automation.ts';
+import { Automation, type Match } from './automation.ts';
 
 // An automation whose action is an instruction to an agent. Codex works out
 // how, with write access to one folder only, and its last message is the

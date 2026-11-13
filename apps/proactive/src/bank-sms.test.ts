@@ -5,8 +5,7 @@ import { test } from 'node:test';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
-import { Eca } from '@eltjs/eca';
-
+import type { Automation } from './automation.ts';
 import { MissingMidMonthCredit } from './missing-mid-month-credit.ts';
 import { SpendSpike } from './spend-spike.ts';
 
@@ -18,6 +17,21 @@ async function createMessagesSchema(sql: postgres.Sql): Promise<void> {
     guid text PRIMARY KEY, handle text, text text, "isFromMe" boolean,
     date timestamptz
   )`;
+}
+
+// What the user hears of an automation at each evaluation: the keys it
+// matches now and did not match at the one before, as Automations tells them
+// between two readings. The first evaluation is the baseline.
+async function teller<Data>(automation: Automation<Data>, sql: postgres.Sql) {
+  const keys = async () =>
+    await automation.evaluate(sql, Temporal.Now.instant());
+  let seen = new Set((await keys()).map(({ key }) => key));
+  return async () => {
+    const matches = await keys();
+    const told = matches.filter(({ key }) => !seen.has(key));
+    seen = new Set(matches.map(({ key }) => key));
+    return told;
+  };
 }
 
 // Writes received SMS the way the Messages load does: one row each, and
@@ -129,22 +143,11 @@ test('the commit that reaches day 18 without the credit tells its month once, an
     ['Arab Bank', credit('1500.000'), '2026-02-14T09:00:00Z'],
     ['Mom', other, '2026-03-17T20:00:00Z'],
   );
-  const rule = { condition: new MissingMidMonthCredit() };
-  const eca = new Eca<postgres.Sql, { due: string }>({
-    warehouse: {
-      sql,
-      async *commits() {
-        yield;
-      },
-    },
-  });
-  await eca.add(rule);
-  const watch = () =>
-    Array.fromAsync(eca.watch({ signal: new AbortController().signal }));
+  const watch = await teller(new MissingMidMonthCredit(), sql);
 
   await receive(sql, ['Mom', other, '2026-03-18T09:00:00Z']);
   assert.deepEqual(await watch(), [
-    { rule, key: '2026-03', data: { due: '2026-03-17' } },
+    { key: '2026-03', data: { due: '2026-03-17' } },
   ]);
   assert.deepEqual(await watch(), [], 'a missing credit is told once');
 
@@ -253,18 +256,7 @@ test('a commit that takes a week past twice its usual spend tells the week once,
   );
   await createMessagesSchema(sql);
   await receive(sql, ...eightUsualWeeks);
-  const rule = { condition: new SpendSpike() };
-  const eca = new Eca<postgres.Sql, { spent: number; usual: number }>({
-    warehouse: {
-      sql,
-      async *commits() {
-        yield;
-      },
-    },
-  });
-  await eca.add(rule);
-  const watch = () =>
-    Array.fromAsync(eca.watch({ signal: new AbortController().signal }));
+  const watch = await teller(new SpendSpike(), sql);
 
   await receive(sql, [
     'Arab Bank',
@@ -275,7 +267,7 @@ test('a commit that takes a week past twice its usual spend tells the week once,
 
   await receive(sql, ['Arab Bank', purchase('0.001'), '2026-03-04T10:00:00Z']);
   assert.deepEqual(await watch(), [
-    { rule, key: '2026-W10', data: { spent: 200.001, usual: 100 } },
+    { key: '2026-W10', data: { spent: 200.001, usual: 100 } },
   ]);
 
   await receive(sql, ['Arab Bank', purchase('50.000'), '2026-03-05T09:00:00Z']);

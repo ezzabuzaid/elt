@@ -2,9 +2,7 @@ import { hash } from 'node:crypto';
 
 import type postgres from 'postgres';
 
-import type { Match } from '@eltjs/eca';
-
-import { Automation } from './automation.ts';
+import { Automation, type Match } from './automation.ts';
 import type { MeetingBriefWriter } from './meeting-brief-writer.ts';
 
 type Meeting = {
@@ -27,9 +25,14 @@ type Conversation = {
   url: string | null;
 };
 
-export type MeetingBrief = {
+// A planning meeting and the conversations about it: what the condition
+// matches.
+export type PlanningMeeting = {
   meeting: Meeting;
   conversations: Conversation[];
+};
+
+export type MeetingBrief = PlanningMeeting & {
   coverage: {
     connector: string;
     status: string;
@@ -38,25 +41,34 @@ export type MeetingBrief = {
 };
 
 // A revision is a new match: changing a meeting or one of its conversations
-// refreshes its one brief, without changing Eca's new-key semantics.
-export class PlanningMeetings extends Automation<MeetingBrief> {
+// refreshes its one brief. The brief also tells how fresh each source is.
+// That is the state of the imports now, which the sync history keeps with
+// no versions, so the action reads it from current, not the condition.
+export class PlanningMeetings extends Automation<PlanningMeeting> {
   readonly #briefs: MeetingBriefWriter;
-  readonly #now: () => Date;
+  readonly #current: postgres.Sql;
 
-  constructor(briefs: MeetingBriefWriter, now: () => Date = () => new Date()) {
+  constructor(briefs: MeetingBriefWriter, current: postgres.Sql) {
     super();
     this.#briefs = briefs;
-    this.#now = now;
+    this.#current = current;
   }
 
-  async act({ data }: Match<MeetingBrief>, signal: AbortSignal) {
-    const path = await this.#briefs.write(data, signal);
+  async act({ data }: Match<PlanningMeeting>, signal: AbortSignal) {
+    const coverage = await this.#current<MeetingBrief['coverage']>`
+      SELECT connector, status, last_successful_sync_at::text AS "lastSuccessfulSyncAt"
+      FROM marts.sync_status WHERE connector IN ('apple-calendar', 'apple-mail', 'apple-messages', 'slack')
+      ORDER BY connector`;
+    const path = await this.#briefs.write({ ...data, coverage }, signal);
     process.stdout.write(`Meeting brief: ${path}\n`);
     return `Planning brief ready: ${data.meeting.name}\n${path}`;
   }
 
-  async evaluate(sql: postgres.Sql): Promise<Match<MeetingBrief>[]> {
-    const now = this.#now();
+  async evaluate(
+    sql: postgres.Sql,
+    at: Temporal.Instant,
+  ): Promise<Match<PlanningMeeting>[]> {
+    const now = new Date(at.epochMilliseconds);
     const meetings = (
       await sql<Meeting[]>`
       SELECT e."eventId", e.name, e."startAt", e."endAt", e.body, e.location, e.url,
@@ -127,10 +139,6 @@ export class PlanningMeetings extends Automation<MeetingBrief> {
     const conversations = [...slack, ...messages, ...mail].sort(
       (a, b) => a.at.getTime() - b.at.getTime() || a.id.localeCompare(b.id),
     );
-    const coverage = await sql<MeetingBrief['coverage']>`
-      SELECT connector, status, last_successful_sync_at::text AS "lastSuccessfulSyncAt"
-      FROM marts.sync_status WHERE connector IN ('apple-calendar', 'apple-mail', 'apple-messages', 'slack')
-      ORDER BY connector`;
     return meetings.map((meeting) => {
       // Keep distinctive title words. A generic "Planning meeting" can
       // still be briefed from Calendar, but must not match every conversation.
@@ -165,9 +173,7 @@ export class PlanningMeetings extends Automation<MeetingBrief> {
       const revision = hash('sha256', JSON.stringify([meeting, evidence]));
       return {
         key: `${meeting.eventId}/${revision}`,
-        // Sync timestamps describe coverage, but never change a revision on
-        // their own: a successful import with no source changes is quiet.
-        data: { meeting, conversations: evidence, coverage },
+        data: { meeting, conversations: evidence },
       };
     });
   }

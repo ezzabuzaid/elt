@@ -1,6 +1,4 @@
-import type { Match } from '@eltjs/eca';
-
-import { Automation } from './automation.ts';
+import { Automation, type Match } from './automation.ts';
 
 // An automation whose only action is to tell the user.
 export abstract class NotifyAutomation<Data> extends Automation<Data> {

@@ -24,7 +24,9 @@ if (process.platform !== 'darwin')
     'proactive reads Calendar, Mail, Messages, Slack and WhatsApp on a Mac.',
   );
 
-const warehouseUrl = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
+// The loading role, which owns the raw schemas, _warehouse and the marts.
+export const warehouseUrl =
+  'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
 const schema = 'apple_messages';
 
 // Messages, every stream, loaded into its raw schema; readers see each stream

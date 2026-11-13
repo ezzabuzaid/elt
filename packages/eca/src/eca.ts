@@ -61,12 +61,9 @@ export class Eca<Sql, Data> {
    * two evaluations matches again, and a time that passes is read with the
    * data current then. Every rule of one call ends at the same time.
    */
-  async *evaluate(
-    rules: Iterable<{
-      readonly rule: Rule<Sql, Data>;
-      readonly cursor: string;
-    }>,
-  ): AsyncGenerator<Outcome<Sql, Data>> {
+  async *evaluate<R extends Rule<Sql, Data>>(
+    rules: Iterable<{ readonly rule: R; readonly cursor: string }>,
+  ): AsyncGenerator<Outcome<Sql, Data, R>> {
     const now = this.#clock.Temporal.Now.instant();
     for (const { rule, cursor } of rules)
       yield await this.#walk(rule, decode(cursor), now);
@@ -74,11 +71,11 @@ export class Eca<Sql, Data> {
 
   // At most two readings are open: a step's before and its after. The before
   // closes once its step has evaluated, so a long pause holds no more.
-  async #walk(
-    rule: Rule<Sql, Data>,
+  async #walk<R extends Rule<Sql, Data>>(
+    rule: R,
     from: Cursor,
     now: Temporal.Instant,
-  ): Promise<Outcome<Sql, Data>> {
+  ): Promise<Outcome<Sql, Data, R>> {
     const positions = await this.#warehouse.stable(from.position);
     if ('expired' in positions) return { rule, expired: positions.expired };
     const opened = await this.#warehouse.read(from.position);

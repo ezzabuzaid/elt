@@ -7,7 +7,7 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
-import { Automations } from './automations.ts';
+import type { Automation } from './automation.ts';
 import { CareemCalories } from './careem-calories.ts';
 
 const postgresql = new Postgres({ environment: process.env });
@@ -27,6 +27,21 @@ async function createMailSchema(sql: postgres.Sql): Promise<void> {
     "messageId" text, "partId" text, "parentPartId" text, "contentType" text,
     "isAttachment" boolean, text text, PRIMARY KEY ("messageId", "partId")
   )`;
+}
+
+// What the user hears of an automation at each evaluation: the keys it
+// matches now and did not match at the one before, as Automations tells them
+// between two readings. The first evaluation is the baseline.
+async function teller<Data>(automation: Automation<Data>, sql: postgres.Sql) {
+  const keys = async () =>
+    await automation.evaluate(sql, Temporal.Now.instant());
+  let seen = new Set((await keys()).map(({ key }) => key));
+  return async () => {
+    const matches = await keys();
+    const told = matches.filter(({ key }) => !seen.has(key));
+    seen = new Set(matches.map(({ key }) => key));
+    return told;
+  };
 }
 
 // A Careem receipt as Mail keeps it, with the numbers changed. Receipts before
@@ -135,22 +150,10 @@ test('a receipt whose body Mail downloads after the baseline makes the agent act
   await using directory = await new TemporaryFiles().directory(
     'proactive-test-',
   );
-  const shown = join(directory.path, 'shown.jsonl');
   const asked = join(directory.path, 'asked.jsonl');
-  await writeFile(shown, '');
   await writeFile(asked, '');
-  // macOS shows a notification for real, on the user's screen, and the real
-  // Codex service needs an authenticated, paid request. These executables
-  // stand in for /usr/bin/osascript and codex and record what they were given.
-  const osascript = join(directory.path, 'osascript');
-  await writeFile(
-    osascript,
-    `#!${process.execPath}
-import { appendFile } from 'node:fs/promises';
-await appendFile(${JSON.stringify(shown)}, JSON.stringify(process.argv.at(-1)) + '\\n');
-`,
-    { mode: 0o700 },
-  );
+  // The real Codex service needs an authenticated, paid request. This
+  // executable stands in for codex and records the order it was given.
   const codex = join(directory.path, 'codex');
   await writeFile(
     codex,
@@ -164,8 +167,8 @@ await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1],
 `,
     { mode: 0o700 },
   );
-  const lines = async (path: string) =>
-    (await readFile(path, 'utf8'))
+  const orders = async () =>
+    (await readFile(asked, 'utf8'))
       .split('\n')
       .filter((line) => line !== '')
       .map((line): unknown => JSON.parse(line));
@@ -175,31 +178,27 @@ await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1],
   await sql`INSERT INTO marts.mail_subjects VALUES ('1', 'Your Delivery  From Al Hanaa Butchery & Grills')`;
   await sql`INSERT INTO marts.mail_messages (id, sender, subject, "dateReceived") VALUES
     ('40465', '1', '1', '2026-10-09T11:13:22Z')`;
-  const automations = new Automations({
-    warehouse: {
-      sql,
-      async *commits() {
-        yield;
-      },
-    },
-    osascript,
-  });
-  await automations.add(
-    new CareemCalories(join(directory.path, 'agent'), codex),
-  );
+  const automation = new CareemCalories(join(directory.path, 'agent'), codex);
+  const tell = await teller(automation, sql);
+  const signal = new AbortController().signal;
 
   await sql`INSERT INTO marts.mail_message_parts
     ("messageId", "partId", "parentPartId", "contentType", "isAttachment", text) VALUES
     ('40465', '1', NULL, 'text/plain', false, ${plainReceipt})`;
 
-  assert.equal(await automations.run(new AbortController().signal), 0);
-  assert.deepEqual(await lines(asked), ['100000001']);
-  assert.deepEqual(await lines(shown), ['Logged order 100000001']);
-
-  assert.equal(await automations.run(new AbortController().signal), 0);
+  const told = await tell();
   assert.deepEqual(
-    await lines(asked),
+    told.map(({ key }) => key),
     ['100000001'],
-    'the order is logged once while its receipt stays',
+  );
+  assert.deepEqual(
+    await Promise.all(told.map((match) => automation.act(match, signal))),
+    ['Logged order 100000001'],
+  );
+  assert.deepEqual(await orders(), ['100000001']);
+  assert.deepEqual(
+    await tell(),
+    [],
+    'the order is told once while its receipt stays',
   );
 });

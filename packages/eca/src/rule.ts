@@ -11,8 +11,8 @@ export interface Condition<Sql, Data> {
 }
 
 /**
- * The host's own object: an outcome carries it back, so the host knows which
- * rule it is about.
+ * The host's own object: an outcome carries it back, with the host's own type,
+ * so the host knows which rule it is about.
  */
 export type Rule<Sql, Data> = { readonly condition: Condition<Sql, Data> };
 
@@ -27,16 +27,16 @@ export type Rule<Sql, Data> = { readonly condition: Condition<Sql, Data> };
  * - The cursor names a position that the warehouse can no longer read, such
  *   as one older than its retention or of a warehouse made again.
  */
-export type Outcome<Sql, Data> =
+export type Outcome<Sql, Data, R extends Rule<Sql, Data> = Rule<Sql, Data>> =
   | {
-      readonly rule: Rule<Sql, Data>;
+      readonly rule: R;
       readonly matches: readonly Data[];
       readonly cursor: string;
     }
   | {
-      readonly rule: Rule<Sql, Data>;
+      readonly rule: R;
       readonly matches: readonly Data[];
       readonly error: unknown;
       readonly cursor: string;
     }
-  | { readonly rule: Rule<Sql, Data>; readonly expired: string };
+  | { readonly rule: R; readonly expired: string };

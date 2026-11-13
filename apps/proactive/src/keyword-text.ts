@@ -1,7 +1,6 @@
 import type postgres from 'postgres';
 
-import type { Match } from '@eltjs/eca';
-
+import type { Match } from './automation.ts';
 import { NotifyAutomation } from './notify-automation.ts';
 
 // "Tell me when a text says proactive:": every received message that carries

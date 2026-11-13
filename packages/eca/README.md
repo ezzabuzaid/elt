@@ -33,7 +33,7 @@ for await (const outcome of eca.evaluate(
 }
 ```
 
-- A rule is the host's own object with a `condition`. Each outcome carries it back as `outcome.rule`.
+- A rule is the host's own object with a `condition`. Each outcome carries it back as `outcome.rule`, with the host's own type, so a rule can hold what the host needs, such as the name its cursor is saved under.
 - `start()` gives the cursor of a new rule: the newest position of the warehouse, now. The rule matches only what becomes true after it.
 - `evaluate(rules)` gives one outcome for each rule, in order. The host saves its matches and its cursor in one transaction of its own, so a stop between them loses no match and repeats none.
 - The two type parameters are the handle of the warehouse and the data of a match. Give a union when the rules have different data.

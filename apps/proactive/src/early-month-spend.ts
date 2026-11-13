@@ -1,7 +1,6 @@
 import type postgres from 'postgres';
 
-import type { Match } from '@eltjs/eca';
-
+import type { Match } from './automation.ts';
 import { NotifyAutomation } from './notify-automation.ts';
 
 // "When I spend over 200 JOD in the first 10 days of a month, tell me": the

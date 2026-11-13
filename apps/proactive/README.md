@@ -2,11 +2,12 @@
 
 `npx nx run proactive:start` imports Calendar, Mail, Messages, Slack and WhatsApp into
 the local Postgres warehouse, evaluates the rules once, acts on new matches, and exits.
-It is not a background watcher. The first successful import establishes a
-baseline without acting on historical messages.
+It is not a background watcher. A rule that has no saved cursor starts from
+the newest position of the warehouse, so it does not act on historical
+messages.
 
-Each rule is an automation (`automation.ts`): `evaluate` reads the warehouse,
-and `act` does the work for one new match and returns a short receipt, which
+Each rule is an automation (`automation.ts`): `evaluate` reads the warehouse
+at a time and gives the keys that are true, and `act` does the work for one new match and returns a short receipt, which
 `Automations` shows as a macOS notification. A `NotifyAutomation` only tells
 the user. An `AgentAutomation` gives its instruction and the match to Codex
 (its default model for the signed-in account, no user configuration), which may write only in
@@ -44,8 +45,10 @@ Generation uses the installed, signed-in `codex` CLI with its default model,
 a read-only sandbox and no user configuration. The prompt asks
 for source citations and coverage gaps. An empty or failed generation leaves
 the previous file intact and fails the run. Cancelled or past meetings stop
-refreshing; existing brief files remain as snapshots. Existing meetings on the
-first import form the baseline, so this does not backfill every future meeting.
+refreshing; existing brief files remain as snapshots. Meetings that exist when
+the rule starts are not new, so this does not backfill every future meeting.
+The brief tells how fresh each source is at the time it is written: the sync
+history keeps no versions, so the action reads it, not the condition.
 Calendar access and Full Disk Access for Mail and Messages must already be
 granted to the host running the app.
 
@@ -97,9 +100,17 @@ message by workspace, conversation and exact Slack timestamp; a reply present
 in both streams or a later edit does not create a second alert for that rule.
 Matches carry the Slack link as well as the message text.
 
-Rules keep their keys only during one run. A restart takes a new baseline from
-the warehouse before refreshing. No schedule or persistent background process
-is installed.
+`Automations` gives each automation to eca as a rule whose condition is "a key
+true after and not before", and eca walks it from its saved cursor over each
+position of the warehouse since the last run. So a run after a pause tells each
+key that became true meanwhile, also one that stopped and became true again.
+The cursors are in `proactive.cursors`, by the name each automation is added
+with, and a cursor is saved after the actions of its run: a run that stops
+between them acts again rather than not at all. A cursor older than the
+warehouse's retention starts again from now, and the run counts it as a
+failure, so the gap is not silent. Conditions read as `agent_reader`, which the
+run grants read access to the numbering in `_warehouse` and nothing else of it.
+No schedule or persistent background process is installed.
 
 Run `npx nx run proactive:typecheck` and `npx nx run proactive:test`. Tests require
 Docker and use `new Postgres({ environment: process.env })` from
@@ -109,4 +120,5 @@ run and cleans up a killed run. Each test closes its clients and drops its
 database when done. The generator and
 agent tests use a local executable in place of the authenticated Codex
 service, and the automations test one in place of `osascript`; they make no AI
-request and show no notification.
+request and show no notification. The automations test loads a real pipeline
+into a real Postgres destination and reads it as of its positions.
