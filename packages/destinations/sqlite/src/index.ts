@@ -5,7 +5,12 @@ export { SQLiteCheckpointStore } from './sqlite-checkpoint-store.ts';
 export { SQLiteColumn } from './sqlite-column.ts';
 export { SQLiteColumns } from './sqlite-columns.ts';
 export { SQLiteDestination } from './sqlite-destination.ts';
-export { type SQLiteReading, asOfSelect } from './sqlite-as-of.ts';
+export { asOfDefinitions } from './sqlite-as-of-definitions.ts';
+export {
+  type SQLiteReading,
+  asOfFunctions,
+  asOfSelect,
+} from './sqlite-as-of.ts';
 export {
   type PassState,
   type PassStatus,

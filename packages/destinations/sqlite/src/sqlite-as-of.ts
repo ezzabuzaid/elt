@@ -1,4 +1,4 @@
-import { type DatabaseSync, constants } from 'node:sqlite';
+import { type DatabaseSync, type SQLInputValue, constants } from 'node:sqlite';
 
 import { UnavailableError, open } from '@zukhruf/sqlite-open';
 
@@ -14,10 +14,45 @@ import {
   readNumbering,
 } from './sqlite-loads.ts';
 import { attempts, checks, coverage } from './sqlite-sync-history-schema.ts';
+import { version as rowHash } from './sqlite-writer.ts';
 
 type Versioned = { readonly target: string; readonly history: string };
 
-const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
+export const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
+
+/**
+ * The SQL functions that views of a position call to fail, by name: a host
+ * registers each one on the connection that reads the views, as
+ * `database.function(name, implementation)`. `_elt_unversioned` refuses a
+ * read of what keeps no row versions; `_elt_readable` refuses a read of a
+ * position that the attached file no longer reads exactly.
+ */
+export const asOfFunctions = {
+  _elt_unversioned(reason: SQLInputValue): never {
+    throw new Error(String(reason));
+  },
+  // The guard knows the epoch and min_valid of the file only, so it gives
+  // the position as the newest commit: a file made again has another epoch.
+  _elt_readable(
+    schema: SQLInputValue,
+    position: SQLInputValue,
+    epoch: SQLInputValue,
+    minValid: SQLInputValue,
+  ): 1 {
+    const asked = parsePosition(String(position));
+    const expired = expiry(
+      {
+        epoch: String(epoch),
+        minValid: Number(minValid),
+        newest: asked.number,
+        ends: [],
+      },
+      asked,
+    );
+    if (expired === undefined) return 1;
+    throw new Error(`${expired} (the file attached as ${String(schema)})`);
+  },
+};
 
 /**
  * The SQLite file as of one position: `sql` reads in one read transaction,
@@ -101,8 +136,10 @@ function shadow(database: DatabaseSync, number: number): void {
     database.exec(
       `CREATE TEMP VIEW ${quote(version.target)} AS ${selectAsOf(database, version, number, 'main')}`,
     );
-  shadowSyncHistory(database);
-  const views = storedViews(database);
+  database.function('_elt_unversioned', asOfFunctions._elt_unversioned);
+  for (const view of syncHistoryViews(database, 'main', (table) => table))
+    database.exec(view);
+  const views = storedViews(database, 'main');
   for (const { sql } of views)
     database.exec(sql.replace(/^CREATE VIEW /, 'CREATE TEMP VIEW '));
   refuseQualified(
@@ -128,6 +165,22 @@ export function asOfSelect(
   position: string,
   { schema = 'main' }: { readonly schema?: string } = {},
 ): string | { readonly expired: string } {
+  const asked = readable(database, position, schema);
+  if ('expired' in asked) return asked;
+  const version = versioned(database, schema).find(
+    (version) => identifiers.key(version.target) === identifiers.key(target),
+  );
+  if (version === undefined)
+    throw new TypeError(`${quote(target)} is not a target of ${schema}`);
+  return selectAsOf(database, version, asked.number, schema);
+}
+
+// The position, when the file attached as schema reads it now.
+export function readable(
+  database: DatabaseSync,
+  position: string,
+  schema: string,
+): Position | { readonly expired: string } {
   const asked = parsePosition(position);
   const numbered = readNumbering(database, schema);
   const expired = expiry(numbered, asked);
@@ -137,64 +190,80 @@ export function asOfSelect(
     asked,
     schema === 'main' ? 'the file' : `the file attached as ${schema}`,
   );
-  const version = versioned(database, schema).find(
-    (version) => identifiers.key(version.target) === identifiers.key(target),
-  );
-  if (version === undefined)
-    throw new TypeError(`${quote(target)} is not a target of ${schema}`);
-  return selectAsOf(database, version, asked.number, schema);
+  return asked;
 }
 
 // A target as of commit number: its current rows that the commit had made,
 // and the history rows that the commit had made and a later commit replaced.
-// A column that the history lacks reads as NULL there.
-function selectAsOf(
+// A column that the history lacks reads as NULL there. A guarded select is
+// for a view that outlives the read transaction: each read first checks, in
+// the same statement, that the file still reads the position exactly, and
+// it leaves out the row hash of the writers.
+export function selectAsOf(
   database: DatabaseSync,
   { target, history }: Versioned,
   number: number,
   schema: string,
+  guard?: Position,
 ): string {
-  const columns = columnsOf(database, quote(target), schema);
+  const columns = columnsOf(database, quote(target), schema).filter(
+    (column) => guard === undefined || quote(column) !== rowHash,
+  );
   const kept = new Set(
     columnsOf(database, quote(history), schema).map((column) =>
       identifiers.key(column),
     ),
   );
-  const current = columns.map(quote).join(', ');
+  const current = columns.map((column) => `"r".${quote(column)}`).join(', ');
   const replaced = columns
     .map((column) =>
       kept.has(identifiers.key(column))
-        ? quote(column)
+        ? `"r".${quote(column)}`
         : `NULL AS ${quote(column)}`,
     )
     .join(', ');
   const file = quote(schema);
-  return `SELECT ${current} FROM ${file}.${quote(target)} WHERE "committed_in" <= ${number} UNION ALL SELECT ${replaced} FROM ${file}.${quote(history)} WHERE "committed_in" <= ${number} AND "replaced_in" > ${number}`;
+  // The guard is the outer loop of a CROSS JOIN, which SQLite keeps in
+  // place, so it runs once and also when the target holds no row.
+  const from =
+    guard === undefined
+      ? (table: string) => `FROM ${file}.${quote(table)} AS "r" WHERE`
+      : (table: string) =>
+          `FROM ${file}."_elt_epoch" AS "e" CROSS JOIN ${file}.${quote(table)} AS "r" WHERE "_elt_readable"(${literal(schema)}, ${literal(`${guard.epoch}:${guard.number}`)}, "e"."epoch", "e"."min_valid") AND`;
+  return `SELECT ${current} ${from(target)} "r"."committed_in" <= ${number} UNION ALL SELECT ${replaced} ${from(history)} "r"."committed_in" <= ${number} AND "r"."replaced_in" > ${number}`;
 }
 
-// The sync history keeps no versions, so each of its tables reads as a view
-// that fails, and so does each view over them.
-function shadowSyncHistory(database: DatabaseSync): void {
-  database.function('_elt_unversioned', { deterministic: false }, () => {
-    throw new Error(
-      'The sync history cannot be read as of a position: it keeps no row versions',
-    );
-  });
-  for (const table of [attempts, coverage, checks]) {
-    const columns = columnsOf(database, table);
-    if (columns.length > 0)
-      database.exec(
-        `CREATE TEMP VIEW ${table} AS SELECT ${columns.map((column) => `NULL AS ${quote(column)}`).join(', ')} WHERE "_elt_unversioned"()`,
-      );
-  }
-}
+export const literal = (text: string) => `'${text.replaceAll("'", "''")}'`;
 
-function storedViews(
+// The tables of the sync history, unquoted.
+export const syncHistoryTables = [attempts, coverage, checks].map((table) =>
+  table.slice(1, -1),
+);
+
+// The sync history keeps no versions, so each of its tables of schema reads
+// as a TEMP view, named by name, that fails, and so does each view over them.
+export function syncHistoryViews(
   database: DatabaseSync,
+  schema: string,
+  name: (table: string) => string,
+): string[] {
+  return syncHistoryTables.flatMap((table) => {
+    const columns = columnsOf(database, quote(table), schema);
+    return columns.length === 0
+      ? []
+      : [
+          `CREATE TEMP VIEW ${quote(name(table))} AS SELECT ${columns.map((column) => `NULL AS ${quote(column)}`).join(', ')} WHERE "_elt_unversioned"('The sync history cannot be read as of a position: it keeps no row versions')`,
+        ];
+  });
+}
+
+export function storedViews(
+  database: DatabaseSync,
+  schema: string,
 ): { readonly name: string; readonly sql: string }[] {
   return database
     .prepare(
-      String.raw`SELECT "name", "sql" FROM main.sqlite_schema WHERE "type" = 'view' AND "name" NOT LIKE 'sqlite\_%' ESCAPE '\'`,
+      String.raw`SELECT "name", "sql" FROM ${quote(schema)}.sqlite_schema WHERE "type" = 'view' AND "name" NOT LIKE 'sqlite\_%' ESCAPE '\'`,
     )
     .all()
     .map(({ name, sql }) => ({ name: String(name), sql: String(sql) }));
@@ -239,7 +308,7 @@ function refuseQualified(
 }
 
 // Each target with its history, as the file attached as schema records them.
-function versioned(database: DatabaseSync, schema: string): Versioned[] {
+export function versioned(database: DatabaseSync, schema: string): Versioned[] {
   const file = quote(schema);
   if (
     database
@@ -261,7 +330,7 @@ function versioned(database: DatabaseSync, schema: string): Versioned[] {
 }
 
 // The columns of a table of schema, named as SQL quotes it.
-function columnsOf(
+export function columnsOf(
   database: DatabaseSync,
   table: string,
   schema = 'main',

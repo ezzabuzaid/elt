@@ -120,6 +120,12 @@ Each commit in the SQLite file has a number. A reader that compares the file at 
 - As of a position before the newest commit, each table, its reader view and each view of the file show the rows that the commit of the position left. A column that a later commit added is `NULL`. The sync history keeps no versions, and a read of it fails. A stored view that names a table as `main.<table>` makes the reading fail, because that name shows the table as it is now.
 
 - `asOfSelect(database, table, position, { schema })` gives the `SELECT` that reads one table as of a position: the rows of the table with `committed_in ≤ P`, and the rows of its history with `committed_in ≤ P < replaced_in`. A reading uses the same `SELECT` for its `TEMP` views. `schema` names the SQLite file where `database` attached it, `main` by default. Thus a reader can copy a table as of a position into a database of its own. It checks the position as `reading` does, so run the `SELECT` in the same read transaction. See [Read the file as of a position](./docs/recipes/read-the-file-as-of-a-position.md).
+- `asOfDefinitions(database, { schema, position, prefix })` gives the `CREATE TEMP VIEW` statements of the [views of a position](./CONTEXT.md) of the file that `database` attached as `schema`, or `{ expired }` as `asOfSelect` does. Thus one connection reads several files as of a position each, with no copy. Each table, reader view, view and table of the sync history is the view `<prefix>_<name>`, for example `mail_messages`:
+  - A table reads as `asOfSelect` reads it, without `_elt_row_hash`.
+  - A stored view names the views of the position in place of its tables and views. SQLite's own `ALTER TABLE … RENAME` maps the names, in a database of its own with a table of the same columns for each name. A stored view that reads a table with no view of the position, for example `catalog`, fails when it is read.
+  - A table of the sync history fails when it is read, and so does each view over it.
+  - A view reads the file when it is read, so a later commit changes nothing in it. When the retention deletes history that the position reads, or the file is made again, each read of a table fails with the reason: in the same statement, the view compares the epoch and min valid of the file with the position.
+  - The views fail through the SQL functions of `asOfFunctions`. Register each one on the connection: `database.function(name, implementation)`.
 
 ### Retention
 
@@ -297,7 +303,8 @@ src/
   sqlite-writer.ts           the stage, the commit, evolve, reload and the difference of a table
   sqlite-loads.ts            SQLiteLoad: the loads and commit numbers of a file, its positions and its retention
   sqlite-history.ts          SQLiteHistory: the history of a table, and the rows that the retention deletes
-  sqlite-as-of.ts            readings and asOfSelect: the file as of a position
+  sqlite-as-of.ts            readings, asOfSelect and asOfFunctions: the file as of a position
+  sqlite-as-of-definitions.ts asOfDefinitions: the views of a position of an attached file
   sqlite-checkpoint-store.ts SQLiteCheckpointStore
   sqlite-sync-history.ts     SQLiteSyncHistory
   sqlite-catalog.ts          installSQLiteCatalog

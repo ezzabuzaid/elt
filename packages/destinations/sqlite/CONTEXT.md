@@ -96,6 +96,10 @@ _Avoid_: Audit log, archive, changelog
 A read-only connection to the SQLite file as of one position. Each raw table, reader view and view shows the rows that the commit of the position left. The sync history cannot be read in it.
 _Avoid_: Snapshot (SQLite gives each read transaction a snapshot), time travel, version
 
+**Views of a position**:
+The `TEMP` views `<prefix>_<name>` that show an attached SQLite file as of one position in a connection of the reader, as `asOfDefinitions` gives them. They read the file when they are read. When the file no longer reads the position exactly, each read fails.
+_Avoid_: Copy, snapshot, mirror
+
 **Retention**:
 How long the history keeps a position readable after its commit: 30 days by default, set on the `SQLiteDestination`. Each commit deletes the history rows that only positions older than the retention read, the commits before min valid, and the closed loads that have no commit left.
 _Avoid_: TTL, expiry (an expired position is the result), vacuum
