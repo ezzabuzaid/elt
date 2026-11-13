@@ -62,7 +62,7 @@ A Context Compiler import loads every stream incrementally into its `data.sqlite
 
 The SDK `sdk-apple-biome` reads the Biome streams and `sync.db`. The SDK `sdk-apple-knowledge` reads knowledgeC. A run opens only the stores that its selected streams read. It pins each database in one read transaction, and it opens each database read-only, never as `immutable`.
 
-A store that the source cannot open fails only its own streams, with `StoreUnavailableError`, which names the store and Full Disk Access. A knowledgeC layout that does not have a column fails only the streams that read that column, with `MissingColumnsError`.
+A store that the source cannot open fails only its own streams, with `StoreUnavailableError`, which names the store: a missing store says that it is not there, and a store that macOS keeps from the process names Full Disk Access for the program that runs the pipeline. A knowledgeC layout that does not have a column fails only the streams that read that column, with `MissingColumnsError`.
 
 ## Access
 

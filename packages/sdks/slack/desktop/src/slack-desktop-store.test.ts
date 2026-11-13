@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, symlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
@@ -7,7 +7,7 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   SlackDesktopStore,
-  SlackDesktopUnavailableError,
+  StoreUnavailableError,
   slackDesktopDirectory,
 } from './index.ts';
 
@@ -71,26 +71,33 @@ test('an explicit directory reads only that store', async () => {
   assert.equal((await read(home.path, directory)).downloads[0]?.fileId, 'F2');
 });
 
-test('an inaccessible leftover folder does not hide a readable installation', async () => {
-  await using home = await new TemporaryFiles().directory('slack-location-');
-  const leftover = join(home.path, locations.appStore);
-  await mkdir(leftover, { recursive: true });
-  await save(join(home.path, locations.direct), 'F1');
-  // A real filesystem denial stands in for macOS withholding an old
-  // sandboxed container while the direct-download installation is readable.
-  await chmod(leftover, 0o000);
-  try {
-    assert.equal((await read(home.path)).downloads[0]?.fileId, 'F1');
-  } finally {
-    await chmod(leftover, 0o700);
-  }
-});
+test(
+  'an inaccessible leftover folder does not hide a readable installation',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using home = await new TemporaryFiles().directory('slack-location-');
+    const leftover = join(home.path, locations.appStore);
+    await mkdir(leftover, { recursive: true });
+    await save(join(home.path, locations.direct), 'F1');
+    // A real filesystem denial stands in for macOS withholding an old
+    // sandboxed container while the direct-download installation is readable.
+    await chmod(leftover, 0o000);
+    try {
+      assert.equal((await read(home.path)).downloads[0]?.fileId, 'F1');
+    } finally {
+      await chmod(leftover, 0o700);
+    }
+  },
+);
 
 test('a missing store asks for saved Slack data without requiring the App Store', async () => {
   await using home = await new TemporaryFiles().directory('slack-location-');
   await assert.rejects(read(home.path), (error) => {
-    assert.ok(error instanceof SlackDesktopUnavailableError);
-    assert.match(error.message, /Open Slack, sign in/);
+    assert.ok(error instanceof StoreUnavailableError);
+    assert.match(error.message, /is not there\. Open Slack, sign in/);
     assert.doesNotMatch(error.message, /Install Slack from the Mac App Store/);
     return true;
   });
@@ -164,11 +171,131 @@ test('the store was last written when the app last saved its own state, if that 
   assert.equal(written.getTime(), 1_800_000_600_000);
 });
 
-test('a store that is not there is unavailable, not a time', async () => {
+test('a store that is not there is unavailable, not a time, and says how to make it', async () => {
   await using dir = await new TemporaryFiles().directory('slack-written-');
+  const directory = join(dir.path, 'Slack');
 
   assert.throws(
-    () => new SlackDesktopStore(join(dir.path, 'Slack')).lastWrite(),
-    SlackDesktopUnavailableError,
+    () => new SlackDesktopStore(directory).lastWrite(),
+    (error) => {
+      assert.ok(error instanceof StoreUnavailableError);
+      assert.equal(error.missing, true);
+      assert.equal(
+        error.message,
+        `The Slack app's store at ${directory} is not there. Open Slack, sign in and let it save its workspaces.`,
+      );
+      return true;
+    },
   );
+});
+
+test('a database folder that holds no file is a store that is not there', async () => {
+  await using dir = await new TemporaryFiles().directory('slack-written-');
+  await mkdir(join(dir.path, indexedDB), { recursive: true });
+
+  assert.throws(
+    () => new SlackDesktopStore(dir.path).lastWrite(),
+    (error) => {
+      assert.ok(error instanceof StoreUnavailableError);
+      assert.match(error.message, /is not there\. Open Slack, sign in/);
+      return true;
+    },
+  );
+});
+
+test(
+  'a store that the system keeps from this process cannot be read, and names Full Disk Access',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using dir = await new TemporaryFiles().directory('slack-written-');
+    await save(dir.path, 'F1');
+    // chmod stands in for macOS withholding the app's container from a process
+    // without Full Disk Access: both fail the read with EACCES or EPERM.
+    await chmod(dir.path, 0o000);
+
+    try {
+      assert.throws(
+        () => new SlackDesktopStore(dir.path).lastWrite(),
+        (error) => {
+          assert.ok(error instanceof StoreUnavailableError);
+          assert.equal(error.missing, false);
+          assert.equal(
+            error.message,
+            `The Slack app's store at ${dir.path} cannot be read. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access.`,
+          );
+          return true;
+        },
+      );
+    } finally {
+      await chmod(dir.path, 0o700);
+    }
+  },
+);
+
+test('a store that fails to list for another reason fails as that error', async () => {
+  await using dir = await new TemporaryFiles().directory('slack-written-');
+  const database = join(dir.path, indexedDB);
+  await mkdir(join(database, '..'), { recursive: true });
+  // A link to itself: the folder is there and readable, but never resolves.
+  await symlink(database, database);
+
+  assert.throws(
+    () => new SlackDesktopStore(dir.path).lastWrite(),
+    (error) => {
+      assert.ok(!(error instanceof StoreUnavailableError));
+      assert.equal(Reflect.get(Object(error), 'code'), 'ELOOP');
+      return true;
+    },
+  );
+});
+
+test(
+  'a database folder that the system keeps from this process fails the read of the workspaces as one that cannot be read',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using dir = await new TemporaryFiles().directory('slack-read-');
+    await save(dir.path, 'F1');
+    const database = join(dir.path, indexedDB);
+    // chmod stands in for macOS withholding the app's container from a
+    // process without Full Disk Access: both fail the read with EACCES or
+    // EPERM.
+    await chmod(database, 0o000);
+
+    try {
+      await assert.rejects(
+        new SlackDesktopStore(dir.path).clients(),
+        (error) => {
+          assert.ok(error instanceof StoreUnavailableError);
+          assert.equal(error.missing, false);
+          assert.equal(
+            error.message,
+            `The Slack app's store at ${dir.path} cannot be read. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access.`,
+          );
+          return true;
+        },
+      );
+    } finally {
+      await chmod(database, 0o700);
+    }
+  },
+);
+
+test('a database folder that fails to read for another reason fails the read of the workspaces as that error', async () => {
+  await using dir = await new TemporaryFiles().directory('slack-read-');
+  const database = join(dir.path, indexedDB);
+  await mkdir(join(database, '..'), { recursive: true });
+  // A link to itself: the folder is there and readable, but never resolves.
+  await symlink(database, database);
+
+  await assert.rejects(new SlackDesktopStore(dir.path).clients(), (error) => {
+    assert.ok(!(error instanceof StoreUnavailableError));
+    assert.equal(Reflect.get(Object(error), 'code'), 'ELOOP');
+    return true;
+  });
 });

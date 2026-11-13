@@ -16,6 +16,8 @@ import { ChangeWatcher } from '@zukhruf/async';
 import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
+import { macOSAccess } from '@eltjs/sdk-macos-app-database';
+
 import {
   type AccountDocument,
   CalendarStore,
@@ -523,6 +525,42 @@ test('missing access fails reads and watches with the entity’s own error', asy
   await assert.rejects(
     reminders.watch(signal).next(),
     RemindersUnavailableError,
+  );
+});
+
+test('missing access names the program the host installed and the pane that grants it', async () => {
+  macOSAccess.install({ program: 'ChatGPT' });
+  const denied = (marker: string) =>
+    `${marker}: full access is required; status=2\n`;
+  await using calendarStub = await StubEventKitHelper.create();
+  await using remindersStub = await StubEventKitHelper.create();
+  calendarStub.answer(
+    { entity: 'events', ...january, ics: false },
+    { stderr: denied('CALENDAR_UNAVAILABLE') },
+  );
+  remindersStub.answer(remindersRead, {
+    stderr: denied('REMINDERS_UNAVAILABLE'),
+  });
+
+  await assert.rejects(
+    new CalendarStore(calendarStub.path, { env: process.env }).read(
+      { ...january, ics: false },
+      undefined,
+    ),
+    {
+      message:
+        'Calendar requires full Calendar access. Turn on ChatGPT in System Settings › Privacy & Security › Calendars. A sandbox can prevent access even when permission is granted.',
+    },
+  );
+  await assert.rejects(
+    new RemindersStore(remindersStub.path, { env: process.env }).read(
+      {},
+      undefined,
+    ),
+    {
+      message:
+        'Reminders requires full Reminders access. Turn on ChatGPT in System Settings › Privacy & Security › Reminders. A sandbox can prevent access even when permission is granted.',
+    },
   );
 });
 

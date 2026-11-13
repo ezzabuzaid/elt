@@ -28,6 +28,7 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@eltjs/elt-sqlite';
+import { ArcSidebar, StoreUnavailableError } from '@eltjs/sdk-arc-desktop';
 import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { ArcDesktopSource } from './arc-desktop-source.ts';
@@ -319,31 +320,85 @@ async function arcImport(
 const tree =
   'select id, profileId, spaceId, section, parentId, position, kind from sidebarItems order by id';
 
-test('a denied or missing sidebar fails every stream as a config failure and keeps the loaded rows', async () => {
-  await using dir = await new TemporaryFiles().directory('arc-missing-');
-  const file = await writeSidebar(dir.path, sidebar());
-  const { source, pipeline, read } = await arcImport(
-    dir.path,
-    dir.path,
-    globalThis,
-  );
-  await pipeline.run();
-
-  for (const take of [() => chmod(file, 0o000), () => rm(file)]) {
-    await take();
-    const failure = await pipeline.run().then(
-      () => assert.fail('the run succeeded without the file'),
-      (error: unknown) => error,
+test(
+  'a denied or missing sidebar fails every stream as a config failure and keeps the loaded rows',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using dir = await new TemporaryFiles().directory('arc-missing-');
+    const file = await writeSidebar(dir.path, sidebar());
+    const { source, pipeline, read } = await arcImport(
+      dir.path,
+      dir.path,
+      globalThis,
     );
+    await pipeline.run();
 
-    assert.ok(failure instanceof PipelineError);
-    assert.equal(failure.errors.length, 2);
-    for (const error of failure.errors) {
-      assert.equal(source.failureType(error), 'config');
-      assert.match(String(error), /StorableSidebar\.json.*cannot be read/);
+    for (const [take, reason] of [
+      [() => chmod(file, 0o000), /StorableSidebar\.json cannot be read\.$/],
+      [
+        () => rm(file),
+        /StorableSidebar\.json is not there\. Open Arc once so it saves its sidebar\.$/,
+      ],
+    ] as const) {
+      await take();
+      const failure = await pipeline.run().then(
+        () => assert.fail('the run succeeded without the file'),
+        (error: unknown) => error,
+      );
+
+      assert.ok(failure instanceof PipelineError);
+      assert.equal(failure.errors.length, 2);
+      for (const error of failure.errors) {
+        assert.equal(source.failureType(error), 'config');
+        assert.match(
+          String(error),
+          /^StoreUnavailableError: Arc's sidebar at /,
+        );
+        assert.match(String(error), reason);
+      }
+      assert.equal(read('select count(*) n from sidebarItems')[0]?.n, 11);
+      assert.equal(read('select count(*) n from spaces')[0]?.n, 2);
     }
-    assert.equal(read('select count(*) n from sidebarItems')[0]?.n, 11);
-    assert.equal(read('select count(*) n from spaces')[0]?.n, 2);
+  },
+);
+
+test('a read of a sidebar that is not there says so and how to make it, without its last write first', async () => {
+  await using dir = await new TemporaryFiles().directory('arc-missing-');
+  const sidebar = new ArcSidebar(dir.path);
+
+  await assert.rejects(sidebar.read(), (error) => {
+    assert.ok(error instanceof StoreUnavailableError);
+    assert.equal(error.missing, true);
+    assert.equal(
+      error.message,
+      `Arc's sidebar at ${sidebar.path} is not there. Open Arc once so it saves its sidebar.`,
+    );
+    return true;
+  });
+});
+
+test('a sidebar path that is a folder fails as a system failure with the file system’s own error', async () => {
+  await using dir = await new TemporaryFiles().directory('arc-folder-');
+  const file = await writeSidebar(dir.path, sidebar());
+  const { source, pipeline } = await arcImport(dir.path, dir.path, globalThis);
+  await pipeline.run();
+  await rm(file);
+  await mkdir(file);
+
+  const failure = await pipeline.run().then(
+    () => assert.fail('the run succeeded over a folder'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(failure instanceof PipelineError);
+  assert.equal(failure.errors.length, 2);
+  for (const error of failure.errors) {
+    assert.equal(source.failureType(error), 'system');
+    assert.ok(Error.isError(error) && 'code' in error, String(error));
+    assert.equal(error.code, 'EISDIR');
   }
 });
 

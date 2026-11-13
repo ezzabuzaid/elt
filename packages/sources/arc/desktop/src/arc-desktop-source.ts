@@ -13,7 +13,7 @@ import {
 import {
   ArcSidebar,
   type ArcSidebarContent,
-  ArcSidebarUnavailableError,
+  StoreUnavailableError,
 } from '@eltjs/sdk-arc-desktop';
 import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
@@ -70,7 +70,7 @@ export class ArcDesktopSource extends Source<SidebarRead> {
     return new SidebarRead(await this.#sidebar.read());
   }
 
-  protected override readonly configErrors = [ArcSidebarUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(): ExtractionCoverage {
     return {

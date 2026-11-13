@@ -228,6 +228,32 @@ test('failed Clock stores preserve rows and checkpoints while independent stores
   assert.equal(rows(dir.path, 'select count(*) n from alarms')[0]?.n, 1);
 });
 
+test('Clock fails the world clocks with the file system error itself when a folder is where their file belongs, and does not call it unavailable', async () => {
+  await using dir = await new TemporaryFiles().directory('clock-');
+  const location = await fixture(dir.path);
+  await rm(location.cities);
+  await mkdir(location.cities);
+  const source = new AppleClockSource(location);
+  const { streams } = await source.discover();
+  const run = await pipeline(
+    source,
+    dir.path,
+    streams.filter(({ name }) => name === 'worldClocks'),
+  );
+
+  await assert.rejects(run.run(), (error) => {
+    assert.ok(error instanceof PipelineError);
+    assert.deepEqual(
+      error.errors.map((cause) => [
+        cause instanceof StoreUnavailableError,
+        Error.isError(cause) && 'code' in cause ? cause.code : undefined,
+      ]),
+      [[false, 'EISDIR']],
+    );
+    return true;
+  });
+});
+
 test(
   'a Clock watch loads the world clocks once this process may read their file, without a new watch',
   {

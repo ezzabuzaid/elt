@@ -1,6 +1,8 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { UnavailableError } from '@zukhruf/sqlite-data-version';
+
 import { ProtobufMessage } from '@eltjs/codec-protobuf';
 import { readSegb, segbFingerprint } from '@eltjs/codec-segb';
 import { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
@@ -102,12 +104,17 @@ export async function segments<E>(
   ];
 }
 
+// A folder Biome has not made yet has no entries; one that is missing on a
+// path through a file, or denied, is unavailable, and any other failure fails
+// as itself.
 async function entries(directory: string) {
   try {
     return await readdir(directory, { withFileTypes: true });
   } catch (cause) {
     if (Error.isError(cause) && 'code' in cause && cause.code === 'ENOENT')
       return [];
-    throw new StoreUnavailableError(biomeStore, directory, cause);
+    const unavailable = UnavailableError.from(directory, cause);
+    if (unavailable === undefined) throw cause;
+    throw new StoreUnavailableError(biomeStore, directory, unavailable);
   }
 }

@@ -1,11 +1,20 @@
 import { readFileSync } from 'node:fs';
 
 import { FileStamp } from '@zukhruf/fs';
+import { UnavailableError } from '@zukhruf/sqlite-data-version';
 
 import { chromiumInstant } from '@eltjs/codec-chromium-time';
-import { AppFilesVersion } from '@eltjs/sdk-macos-app-database';
+import {
+  AppFilesVersion,
+  Store,
+  StoreUnavailableError,
+} from '@eltjs/sdk-macos-app-database';
 
-import { BookmarksFormatError, BookmarksUnavailableError } from './errors.ts';
+import { BookmarksFormatError } from './errors.ts';
+
+const bookmarksStore = new Store('The bookmarks', {
+  missing: 'Bookmark a page in the browser so it saves its bookmarks.',
+});
 
 // The three folders every Bookmarks file has, as BookmarkCodec names them:
 // the bookmarks bar, Other bookmarks, and Mobile bookmarks that sync brings
@@ -54,8 +63,11 @@ export class ChromiumBookmarks {
     let text: string;
     try {
       text = readFileSync(path, 'utf8');
-    } catch (cause) {
-      throw new BookmarksUnavailableError(path, { cause });
+    } catch (error) {
+      // Only a missing or denied file is unavailable; a folder at the path
+      // or any other failure is the file system's own error.
+      if (UnavailableError.from(path, error) === undefined) throw error;
+      throw new StoreUnavailableError(bookmarksStore, path, error);
     }
     let file: unknown;
     try {

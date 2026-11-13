@@ -69,6 +69,32 @@ test('a store whose version file is not there says so and names no grant, when i
   await assert.rejects(new MailStore(dir.path).lastWrite(), unavailable);
 });
 
+test('a store reached through a file says that it is not there and names no grant', async () => {
+  await using dir = await new TemporaryFiles().directory('mail-store-');
+  await writeFile(join(dir.path, 'Library'), '');
+  // A path through a file fails with ENOTDIR: a folder on it is not there.
+  const root = join(dir.path, 'Library/Mail');
+
+  await assert.rejects(new MailStore(root).open(), {
+    name: 'StoreUnavailableError',
+    message: `Mail's store at ${root} is not there.`,
+  });
+});
+
+test('a store with a folder where its version file belongs fails with the file system error itself, not as unavailable', async () => {
+  await using dir = await new TemporaryFiles().directory('mail-store-');
+  await mkdir(join(dir.path, 'PersistenceInfo.plist'));
+  const store = new MailStore(dir.path);
+
+  for (const read of [() => store.open(), () => store.lastWrite()])
+    await assert.rejects(read(), (error: unknown) => {
+      assert.ok(!(error instanceof StoreUnavailableError));
+      assert.ok(Error.isError(error) && 'code' in error);
+      assert.equal(error.code, 'EISDIR');
+      return true;
+    });
+});
+
 test(
   'a store whose version file or index the system keeps from this process says that it cannot be read and names the grant',
   {
@@ -86,7 +112,7 @@ test(
     const index = join(dir.path, 'V10/MailData/Envelope Index');
     open(index, { journal: new RollbackJournal() }).close();
     const grant =
-      'cannot be read. Grant the exporting process Full Disk Access in System Settings > Privacy & Security.';
+      'cannot be read. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access.';
     const store = new MailStore(dir.path);
 
     // chmod stands in for a privacy denial of macOS: the file is there in

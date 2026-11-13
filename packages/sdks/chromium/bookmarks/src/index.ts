@@ -1,7 +1,8 @@
+export { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
 export {
   type BookmarkRoot,
   type ChromiumBookmark,
   ChromiumBookmarks,
   bookmarkRoots,
 } from './chromium-bookmarks.ts';
-export { BookmarksFormatError, BookmarksUnavailableError } from './errors.ts';
+export { BookmarksFormatError } from './errors.ts';

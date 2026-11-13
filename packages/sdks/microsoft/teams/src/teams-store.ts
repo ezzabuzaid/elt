@@ -2,15 +2,20 @@ import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { FileStamps } from '@zukhruf/fs';
+import { MissingError, UnavailableError } from '@zukhruf/sqlite-data-version';
 
 import {
   type IndexedDBDatabase,
   IndexedDBFormatError,
   readIndexedDB,
 } from '@eltjs/codec-chromium-indexeddb';
-import { AppFilesVersion } from '@eltjs/sdk-macos-app-database';
+import {
+  AppFilesVersion,
+  StoreUnavailableError,
+} from '@eltjs/sdk-macos-app-database';
 
-import { TeamsFormatError, TeamsUnavailableError } from './errors.ts';
+import { teamsStore } from './app-database.ts';
+import { TeamsFormatError } from './errors.ts';
 import { Fields } from './fields.ts';
 import { readTeamsClient } from './teams-client-reader.ts';
 import type { TeamsAccount, TeamsClient } from './teams-client.ts';
@@ -31,9 +36,6 @@ const orgIdTokens = new Set(['8', 'orgid']);
 // LevelDB compacts its files into new ones and deletes the old while Teams
 // runs; a read that loses that race reads again.
 const attempts = 3;
-// What the file system answers for a store that is missing, or that macOS
-// keeps from a process without Full Disk Access.
-const unreadable = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM']);
 
 // The WebView profile of Teams in the given home folder.
 export function teamsDirectory(home: string): string {
@@ -64,10 +66,12 @@ export class TeamsStore {
   // the app runs, so a closed app's store stays as of then.
   lastWrite(): Date {
     const written = this.#saved().modifiedAt;
+    // The web client has not made its database yet.
     if (written === undefined)
-      throw new TeamsUnavailableError(
+      throw new StoreUnavailableError(
+        teamsStore,
         this.#directory,
-        new Error('Its database folder holds no file.'),
+        new MissingError(join(this.#directory, indexedDB), undefined),
       );
     return written;
   }
@@ -76,8 +80,17 @@ export class TeamsStore {
     try {
       return FileStamps.readSync(this.#files());
     } catch (error) {
-      throw new TeamsUnavailableError(this.#directory, error);
+      throw this.#unavailable(error);
     }
+  }
+
+  // A StoreUnavailableError for a store that is not there, or that macOS
+  // keeps from a process without Full Disk Access; any other error as it is.
+  #unavailable(error: unknown): unknown {
+    const unavailable = UnavailableError.from(this.#directory, error);
+    return unavailable === undefined
+      ? error
+      : new StoreUnavailableError(teamsStore, this.#directory, unavailable);
   }
 
   // The files of the web client's database. A file LevelDB removed after the
@@ -97,11 +110,13 @@ export class TeamsStore {
       } catch (error) {
         if (error instanceof IndexedDBFormatError)
           throw new TeamsFormatError('IndexedDB', error.message, error);
-        const code = errorCode(error);
-        if (code === 'ENOENT' && attempt < attempts && this.#exists()) continue;
-        if (typeof code === 'string' && unreadable.has(code))
-          throw new TeamsUnavailableError(this.#directory, error);
-        throw error;
+        if (
+          errorCode(error) === 'ENOENT' &&
+          attempt < attempts &&
+          this.#exists()
+        )
+          continue;
+        throw this.#unavailable(error);
       }
     }
   }

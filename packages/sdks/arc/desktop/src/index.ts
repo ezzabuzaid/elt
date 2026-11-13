@@ -1,3 +1,4 @@
+export { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
 export {
   type ArcFolder,
   type ArcNote,
@@ -10,4 +11,4 @@ export {
   type ArcSplitView,
   type ArcTab,
 } from './arc-sidebar.ts';
-export { ArcSidebarFormatError, ArcSidebarUnavailableError } from './errors.ts';
+export { ArcSidebarFormatError } from './errors.ts';

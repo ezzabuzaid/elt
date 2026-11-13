@@ -75,7 +75,7 @@ The source reads the folder that you give to the constructor: `new SlackDesktopS
 
 The Mac App Store build's container needs Full Disk Access (see [Full Disk Access](../../apple/messages/README.md#full-disk-access)), or the consent of macOS to read the data of another app.
 
-- Without the grant, or without the app, the read fails with `SlackDesktopUnavailableError`, which names the grant. Every stream fails.
+- Without the app, the read fails with `StoreUnavailableError`, which says that the store "is not there" and tells the user to open Slack, sign in and let it save its workspaces. A database folder that holds no file is also not there. Without the grant, the error says that the store "cannot be read" and names the program to turn on under Full Disk Access. Every stream fails. Any other error of the file system, such as `EISDIR`, fails as itself.
 - Bytes in a format that the reader does not know fail with `SlackDesktopFormatError`, which names the record and the field. Examples are a V8 format above 16, a log record whose checksum fails, and a slice of a different shape.
 - In both cases, the source deletes nothing.
 

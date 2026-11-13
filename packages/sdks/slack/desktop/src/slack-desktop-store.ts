@@ -3,18 +3,20 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { FileStamps } from '@zukhruf/fs';
+import { MissingError, UnavailableError } from '@zukhruf/sqlite-data-version';
 
 import {
   type IndexedDBDatabase,
   IndexedDBFormatError,
   readIndexedDB,
 } from '@eltjs/codec-chromium-indexeddb';
-import { AppFilesVersion } from '@eltjs/sdk-macos-app-database';
-
 import {
-  SlackDesktopFormatError,
-  SlackDesktopUnavailableError,
-} from './errors.ts';
+  AppFilesVersion,
+  StoreUnavailableError,
+} from '@eltjs/sdk-macos-app-database';
+
+import { slackStore } from './app-database.ts';
+import { SlackDesktopFormatError } from './errors.ts';
 import { readSlackClient } from './slack-client-record.ts';
 import type { SlackClient } from './slack-client.ts';
 import { type SlackDownload, readSlackDownloads } from './slack-downloads.ts';
@@ -31,9 +33,6 @@ const rootState = 'storage/root-state.json';
 // The app rewrites a record every few minutes into a new blob file and
 // deletes the old one; a read that loses that race reads again.
 const attempts = 3;
-// What the file system answers for a store that is missing, or that macOS
-// keeps from a process without Full Disk Access.
-const unreadable = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM']);
 
 // Both Slack builds use the same store format under Electron's userData in
 // the given home folder. An old installation can leave its folder behind: use
@@ -119,10 +118,12 @@ export class SlackDesktopStore {
   // stays as of then.
   lastWrite(): Date {
     const written = this.#saved().modifiedAt;
+    // The app has saved neither its database nor its own state yet.
     if (written === undefined)
-      throw new SlackDesktopUnavailableError(
+      throw new StoreUnavailableError(
+        slackStore,
         this.#directory,
-        new Error('Its database folder holds no file.'),
+        new MissingError(join(this.#directory, indexedDB), undefined),
       );
     return written;
   }
@@ -131,8 +132,17 @@ export class SlackDesktopStore {
     try {
       return FileStamps.readSync(this.#files());
     } catch (error) {
-      throw new SlackDesktopUnavailableError(this.#directory, error);
+      throw this.#unavailable(error);
     }
+  }
+
+  // A StoreUnavailableError for a store that is not there, or that macOS
+  // keeps from a process without Full Disk Access; any other error as it is.
+  #unavailable(error: unknown): unknown {
+    const unavailable = UnavailableError.from(this.#directory, error);
+    return unavailable === undefined
+      ? error
+      : new StoreUnavailableError(slackStore, this.#directory, unavailable);
   }
 
   // The files the app saves its state to. A file LevelDB removed after the
@@ -152,11 +162,8 @@ export class SlackDesktopStore {
     try {
       return await readFile(join(this.#directory, rootState), 'utf8');
     } catch (error) {
-      const code = errorCode(error);
-      if (code === 'ENOENT') return null;
-      if (typeof code === 'string' && unreadable.has(code))
-        throw new SlackDesktopUnavailableError(this.#directory, error);
-      throw error;
+      if (errorCode(error) === 'ENOENT') return null;
+      throw this.#unavailable(error);
     }
   }
 
@@ -167,11 +174,13 @@ export class SlackDesktopStore {
       } catch (error) {
         if (error instanceof IndexedDBFormatError)
           throw new SlackDesktopFormatError('IndexedDB', error.message, error);
-        const code = errorCode(error);
-        if (code === 'ENOENT' && attempt < attempts && this.#exists()) continue;
-        if (typeof code === 'string' && unreadable.has(code))
-          throw new SlackDesktopUnavailableError(this.#directory, error);
-        throw error;
+        if (
+          errorCode(error) === 'ENOENT' &&
+          attempt < attempts &&
+          this.#exists()
+        )
+          continue;
+        throw this.#unavailable(error);
       }
     }
   }

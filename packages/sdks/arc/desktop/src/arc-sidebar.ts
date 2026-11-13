@@ -2,11 +2,20 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { FileStamp } from '@zukhruf/fs';
+import { MissingError, UnavailableError } from '@zukhruf/sqlite-data-version';
 
 import { referenceDateInstant } from '@eltjs/codec-apple-reference-date';
-import { AppFilesVersion } from '@eltjs/sdk-macos-app-database';
+import {
+  AppFilesVersion,
+  Store,
+  StoreUnavailableError,
+} from '@eltjs/sdk-macos-app-database';
 
-import { ArcSidebarFormatError, ArcSidebarUnavailableError } from './errors.ts';
+import { ArcSidebarFormatError } from './errors.ts';
+
+const sidebarStore = new Store("Arc's sidebar", {
+  missing: 'Open Arc once so it saves its sidebar.',
+});
 
 // A Chromium profile of Arc, named by its folder in Arc/User Data, such as
 // Default or Profile 2: the same name Arc's History and Bookmarks are under.
@@ -126,8 +135,11 @@ export class ArcSidebar {
     let text: string;
     try {
       text = await readFile(this.path, 'utf8');
-    } catch (cause) {
-      throw new ArcSidebarUnavailableError(this.path, { cause });
+    } catch (error) {
+      // Only a missing or denied file is unavailable; a folder at the path
+      // or any other failure is the file system's own error.
+      if (UnavailableError.from(this.path, error) === undefined) throw error;
+      throw new StoreUnavailableError(sidebarStore, this.path, error);
     }
     let file: unknown;
     try {
@@ -148,8 +160,13 @@ export class ArcSidebar {
   // its last write.
   async lastWrite(): Promise<Date> {
     const { modifiedAt } = await FileStamp.read(this.path);
+    // No stamp time: no file is at the path.
     if (modifiedAt === undefined)
-      throw new ArcSidebarUnavailableError(this.path);
+      throw new StoreUnavailableError(
+        sidebarStore,
+        this.path,
+        new MissingError(this.path, undefined),
+      );
     return modifiedAt;
   }
 }

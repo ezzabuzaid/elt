@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  chmod,
   mkdir,
   readFile,
   rename,
@@ -31,7 +32,7 @@ import {
 } from '@eltjs/elt-sqlite';
 import {
   DiaArchiveFormatError,
-  DiaArchiveMissingError,
+  StoreUnavailableError,
   diaArchivePath,
 } from '@eltjs/sdk-dia-desktop';
 import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
@@ -254,8 +255,13 @@ test('a home without Dia’s archive fails as the user’s to fix and keeps what
   const missing = (error: unknown) => {
     assert.ok(error instanceof PipelineError);
     assert.ok(error.errors.length > 0);
-    for (const cause of error.errors)
-      assert.ok(cause instanceof DiaArchiveMissingError);
+    for (const cause of error.errors) {
+      assert.ok(cause instanceof StoreUnavailableError);
+      assert.equal(
+        cause.message,
+        `Dia's archive at ${diaArchivePath(dir.path)} is not there. Install Dia and open it once, or check the home folder.`,
+      );
+    }
     assert.deepEqual(failureTypes(error), ['config']);
     return true;
   };
@@ -267,6 +273,67 @@ test('a home without Dia’s archive fails as the user’s to fix and keeps what
   await assert.rejects(run.run(), missing);
 
   assert.deepEqual(ids(out), [`Profile 1/${page.id}`]);
+});
+
+test(
+  'an archive the system keeps from this process fails as the user’s to fix and keeps what loaded',
+  {
+    skip:
+      process.platform === 'win32' || process.getuid?.() === 0
+        ? 'chmod does not deny this user'
+        : false,
+  },
+  async () => {
+    await using dir = await new TemporaryFiles().directory('elt-dia-');
+    await writeArchive(dir.path, { 'Profile 1': [page] });
+    const run = await pipeline(
+      new DiaDesktopSource({ home: dir.path }),
+      dir.path,
+      globalThis,
+    );
+    await run.run();
+    const path = diaArchivePath(dir.path);
+
+    await chmod(path, 0o000);
+    try {
+      await assert.rejects(run.run(), (error) => {
+        assert.ok(error instanceof PipelineError);
+        const [cause, ...others] = error.errors;
+        assert.deepEqual(others, []);
+        assert.ok(cause instanceof StoreUnavailableError);
+        assert.equal(cause.message, `Dia's archive at ${path} cannot be read.`);
+        assert.deepEqual(failureTypes(error), ['config']);
+        return true;
+      });
+    } finally {
+      await chmod(path, 0o644);
+    }
+
+    assert.deepEqual(ids(join(dir.path, 'out.sqlite')), [
+      `Profile 1/${page.id}`,
+    ]);
+  },
+);
+
+test('an archive path that the system cannot read as a file fails as itself, the system’s to fix', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-dia-');
+  await mkdir(diaArchivePath(dir.path), { recursive: true });
+  const run = await pipeline(
+    new DiaDesktopSource({ home: dir.path }),
+    dir.path,
+    globalThis,
+  );
+
+  await assert.rejects(run.run(), (error) => {
+    assert.ok(error instanceof PipelineError);
+    const [cause, ...others] = error.errors;
+    assert.deepEqual(others, []);
+    assert.ok(!(cause instanceof StoreUnavailableError));
+    assert.ok(Error.isError(cause) && 'code' in cause);
+    assert.equal(cause.code, 'EISDIR');
+    assert.deepEqual(failureTypes(error), ['system']);
+    return true;
+  });
 });
 
 test('each archived tab loads every field Dia keeps, under its profile', async () => {
@@ -535,7 +602,9 @@ test('this Mac’s Dia archive loads every archived tab, and a second read write
   } catch (error) {
     if (
       error instanceof PipelineError &&
-      error.errors.every((cause) => cause instanceof DiaArchiveMissingError)
+      error.errors.every(
+        (cause) => cause instanceof StoreUnavailableError && cause.missing,
+      )
     )
       return t.skip('Dia keeps no archive on this Mac');
     throw error;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { hash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { chmod, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SQLInputValue } from 'node:sqlite';
@@ -1359,7 +1359,7 @@ test(
         assert.equal(error.cause.name, 'StoreUnavailableError');
         assert.match(
           error.cause.message,
-          /ACCOUNT-B.*Contacts access or Full Disk Access/,
+          /ACCOUNT-B.*Turn on the program that runs this process in System Settings › Privacy & Security › Contacts or › Full Disk Access\./,
         );
         assert.deepEqual(failureTypes(error), ['config']);
         return true;
@@ -1391,6 +1391,29 @@ test('Contacts says that an address book that is not there is not there, and doe
         error.message.includes(`${join(directory, 'Sources')} is not there.`),
       );
       assert.doesNotMatch(error.message, /Full Disk Access/);
+      return true;
+    },
+  );
+});
+
+test('Contacts fails with the file system error itself when its accounts folder fails for a reason other than access, and does not call it unavailable', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-contacts-');
+  const directory = join(scratch.path, 'AddressBook');
+  mkdirSync(directory);
+  // A link to itself: listing it fails with ELOOP, which neither a missing
+  // nor a denied folder gives.
+  symlinkSync('Sources', join(directory, 'Sources'));
+
+  await assert.rejects(
+    readFirst(
+      new AppleContactsSource({
+        directory,
+        preferences: preferencesFixture(scratch.path),
+      }),
+    ),
+    (error: Error) => {
+      assert.notEqual(error.name, 'StoreUnavailableError');
+      assert.equal('code' in error && error.code, 'ELOOP');
       return true;
     },
   );

@@ -59,7 +59,7 @@ Dia writes the archive only while it runs. Thus `currentAsOf` is the time of the
 
 ## Errors
 
-- No archive in the home folder: `DiaArchiveMissingError` from `@eltjs/sdk-dia-desktop`. Dia is not installed, or it did not archive a tab yet. The failure type is `config`, and the rows that loaded stay.
+- No archive in the home folder, or an archive that the system keeps from the process: `StoreUnavailableError` from `@eltjs/sdk-dia-desktop`. Without an archive, Dia is not installed, or it did not archive a tab yet. The failure type is `config`, and the rows that loaded stay.
 - An archive in a format that the SDK does not know: `DiaArchiveFormatError`. The message names the place in the file and what is wrong there, for example `containers[0].archivedTabs[1].archiveDate is not a number`. It never shows a title or a URL. The failure type is `system`, and the rows that loaded stay. A read during a write that is not a rename gives this error too. The next pass reads the file again.
 
 ## What the source does not read

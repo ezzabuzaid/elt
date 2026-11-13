@@ -9,7 +9,7 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@eltjs/elt';
-import { DiaArchive, DiaArchiveMissingError } from '@eltjs/sdk-dia-desktop';
+import { DiaArchive, StoreUnavailableError } from '@eltjs/sdk-dia-desktop';
 import {
   type ImportScope,
   selected,
@@ -110,7 +110,7 @@ export class DiaDesktopSource extends Source<AsyncDisposableStack> {
     return new AsyncDisposableStack();
   }
 
-  protected override readonly configErrors = [DiaArchiveMissingError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(): ExtractionCoverage {
     return {

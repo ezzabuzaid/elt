@@ -1,7 +1,5 @@
-export {
-  SlackDesktopFormatError,
-  SlackDesktopUnavailableError,
-} from './errors.ts';
+export { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
+export { SlackDesktopFormatError } from './errors.ts';
 export type {
   SlackApp,
   SlackAttachment,

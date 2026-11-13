@@ -1083,7 +1083,7 @@ test('Activity names Full Disk Access for unreadable Biome folders, refuses an u
     assert.equal(failed.devices, undefined);
     assert.match(
       failed.appMenuItems ?? '',
-      /restricted cannot be read\. Allow the process that reads it Full Disk Access/,
+      /restricted cannot be read\. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access\./,
     );
     assert.match(
       failed.displayBacklight ?? '',

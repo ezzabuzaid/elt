@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, renameSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -22,9 +22,11 @@ import {
   StoreUnavailableError,
 } from './index.ts';
 
+// No test in this file installs a program, so a denial names the program
+// generically, as it does for a plain script that uses an SDK.
 const store = new Store('The store', {
   missing: 'Open the app once.',
-  denied: 'Grant access.',
+  grant: 'full-disk-access',
 });
 
 function database(): AppDatabase {
@@ -80,7 +82,7 @@ test(
 
     try {
       assert.throws(() => database().snapshot(path), {
-        message: `The store at ${path} cannot be read. Grant access.`,
+        message: `The store at ${path} cannot be read. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access.`,
       });
     } finally {
       await chmod(path, 0o644);
@@ -107,7 +109,7 @@ test(
 
     try {
       assert.throws(() => database().snapshot(path), {
-        message: `The store at ${path} cannot be read. Grant access.`,
+        message: `The store at ${path} cannot be read. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access.`,
       });
     } finally {
       await chmod(folder, 0o755);
@@ -140,6 +142,60 @@ test('a store that is there says that it is not there when the file that failed 
     );
   }
 });
+
+test('a store error says that the store is missing, so a caller need not read its cause', async () => {
+  await using dir = await new TemporaryFiles().directory('app-database-');
+  const path = join(dir.path, 'store.sqlite');
+  // A path through a file, not a folder, is missing too (ENOTDIR).
+  const file = join(dir.path, 'file');
+  writeFileSync(file, '');
+  let throughFile: unknown;
+  try {
+    readFileSync(join(file, 'store.sqlite'));
+  } catch (error) {
+    throughFile = error;
+  }
+
+  assert.throws(
+    () => database().snapshot(path),
+    (error: unknown) => {
+      assert.ok(error instanceof StoreUnavailableError);
+      assert.equal(error.missing, true);
+      return true;
+    },
+  );
+  assert.equal(
+    new StoreUnavailableError(store, dir.path, throughFile).missing,
+    true,
+  );
+});
+
+test(
+  'a store error of a denial says that the store is not missing',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using dir = await new TemporaryFiles().directory('app-database-');
+    const path = join(dir.path, 'store.sqlite');
+    created(path);
+    await chmod(path, 0o000);
+
+    try {
+      assert.throws(
+        () => database().snapshot(path),
+        (error: unknown) => {
+          assert.ok(error instanceof StoreUnavailableError);
+          assert.equal(error.missing, false);
+          return true;
+        },
+      );
+    } finally {
+      await chmod(path, 0o644);
+    }
+  },
+);
 
 test('a store that lacks a column the reader reads is the package missing-columns error, naming the column', async () => {
   await using dir = await new TemporaryFiles().directory('app-database-');

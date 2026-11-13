@@ -72,7 +72,7 @@ All streams are [snapshot streams](../../../elt/README.md#snapshot-streams). Use
 
 Each store is in a folder that macOS guards with [Full Disk Access](../messages/README.md#full-disk-access). Give Full Disk Access to the process that runs the pipeline. Safari has no public API, and its AppleScript dictionary gets only the open windows and tabs.
 
-A store that is missing or that the process cannot read fails only its own streams, with `StoreUnavailableError`, which names Full Disk Access. A database that does not have a column that the reader uses fails with `MissingColumnsError`, which names the columns. A failure never reads as an empty store, because that would delete every row.
+A store that is missing or that the process cannot read fails only its own streams, with `StoreUnavailableError`. A missing store says that it is not there; a store that macOS keeps from the process says that it cannot be read and names Full Disk Access for the program that runs the pipeline. Any other failure, such as a folder where a file belongs, fails as the file system's own error. A database that does not have a column that the reader uses fails with `MissingColumnsError`, which names the columns. A failure never reads as an empty store, because that would delete every row.
 
 ## Profiles
 

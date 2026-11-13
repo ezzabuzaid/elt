@@ -27,16 +27,17 @@ Why: Teams keeps one value in more than one form between its records.
 **`slack-desktop-store.ts` → `teams-store.ts`.**
 Only these parts are copied:
 
-- `#read`: three attempts, a retry on `ENOENT` while the directory exists, `IndexedDBFormatError` changed to the SDK's format error, and the codes in `unreadable` changed to the SDK's access error.
-- `#exists`, the `unreadable` set and `errorCode`.
+- `#read`: three attempts, a retry on `ENOENT` while the directory exists, `IndexedDBFormatError` changed to the SDK's format error, and every other error given to `#unavailable`.
+- `#unavailable`: a `StoreUnavailableError` with the SDK's `Store` (`slackStore` and `teamsStore`, each in its SDK's `app-database.ts`) for each error that `UnavailableError.from` of `@zukhruf/sqlite-data-version` classifies, and any other error as it is.
+- `#exists` and `errorCode`.
 - `#files()`, without `storage/root-state.json`: Teams has no file of its own beside its IndexedDB.
 - `version()`: an `AppFilesVersion` of `@eltjs/sdk-macos-app-database` over `#files()`.
-- `#saved()` and `lastWrite()`: the files of the database with their stats, and the latest of their modification times.
+- `#saved()` and `lastWrite()`: the files of the database with their stats, and the latest of their modification times. A folder that holds no file is a store that is not there: its cause is a `MissingError`.
 
 The choice between two installations (`slackDesktopDirectory(home)`) is not copied: Teams has one location in a home folder, `teamsDirectory(home)`.
 
 **`errors.ts` → `errors.ts`.**
-The same two classes, `TeamsUnavailableError` and `TeamsFormatError`, with messages that name Microsoft Teams.
+The format error, `TeamsFormatError`, with a message that names Microsoft Teams.
 
 ## Not a copy
 

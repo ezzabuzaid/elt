@@ -1256,7 +1256,7 @@ test(
     assert.deepEqual(Object.keys(failed), ['readingGoal']);
     assert.match(
       failed.readingGoal ?? '',
-      /com\.apple\.iBooksX\.plist cannot be read\. Allow the process that runs the export Full Disk Access/,
+      /com\.apple\.iBooksX\.plist cannot be read\. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access\./,
     );
     assert.deepEqual(failedStreams(failure), { config: ['readingGoal'] });
     assert.deepEqual(
@@ -1290,6 +1290,34 @@ test(
     assert.ok(status.error instanceof StoreUnavailableError);
   },
 );
+
+test('Books fails readingGoal with the file system error itself when a folder is where a preference file belongs, and does not call it unavailable', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+  const location = await booksFixture(scratch.path);
+  await rm(location.files.appPreferences);
+  await mkdir(location.files.appPreferences);
+  const books = await appleImport(
+    new AppleBooksSource(location),
+    join(scratch.path, 'import'),
+  );
+
+  const failure = await books.load().then(
+    () => null,
+    (error: unknown) => error,
+  );
+
+  assert.ok(failure instanceof PipelineError);
+  assert.deepEqual(
+    failure.results.flatMap(({ copy, failures }) =>
+      failures.map(({ error }) => [
+        copy.configuration.stream.name,
+        error instanceof StoreUnavailableError,
+        Error.isError(error) && 'code' in error ? error.code : undefined,
+      ]),
+    ),
+    [['readingGoal', false, 'EISDIR']],
+  );
+});
 
 test('Books refuses a store in a layout it does not know and a reading history format it does not know, fails only their streams, and keeps the rows it had', async () => {
   await using scratch = await new TemporaryFiles().directory('books-');

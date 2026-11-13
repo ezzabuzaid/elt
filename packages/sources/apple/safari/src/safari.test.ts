@@ -41,7 +41,11 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@eltjs/elt-sqlite';
-import { safariContainer, safariDirectory } from '@eltjs/sdk-apple-safari';
+import {
+  StoreUnavailableError,
+  safariContainer,
+  safariDirectory,
+} from '@eltjs/sdk-apple-safari';
 import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AppleSafariSource } from './apple-safari-source.ts';
@@ -2096,7 +2100,7 @@ test(
     ]);
     assert.match(
       failed.bookmarks ?? '',
-      /Bookmarks\.plist cannot be read\. Allow the process that runs the export Full Disk Access/,
+      /Bookmarks\.plist cannot be read\. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access\./,
     );
     assert.deepEqual(failedStreams(failure), {
       config: ['bookmarks', 'readingListItems'],
@@ -2148,6 +2152,40 @@ test('Safari says Bookmarks.plist is not there, without naming Full Disk Access,
         (SELECT count(*) FROM cloud_tabs) AS cloud`),
     ),
     [{ bookmarks: 7, visits: 4, cloud: 1 }],
+  );
+});
+
+test('Safari fails the bookmark streams with the file system error itself when a folder is where Bookmarks.plist belongs, and does not call it unavailable', async () => {
+  await using scratch = await new TemporaryFiles().directory('safari-');
+  const location = await safariFixture(scratch.path);
+  const bookmarks = join(location.directory, 'Bookmarks.plist');
+  await rm(bookmarks);
+  await mkdir(bookmarks);
+  const safari = await appleImport(
+    new AppleSafariSource(location),
+    join(scratch.path, 'import'),
+  );
+
+  const failure = await safari.load().then(
+    () => null,
+    (error: unknown) => error,
+  );
+
+  assert.ok(failure instanceof PipelineError);
+  assert.deepEqual(
+    failure.results
+      .flatMap(({ copy, failures }) =>
+        failures.map(({ error }) => [
+          copy.configuration.stream.name,
+          error instanceof StoreUnavailableError,
+          Error.isError(error) && 'code' in error ? error.code : undefined,
+        ]),
+      )
+      .sort(),
+    [
+      ['bookmarks', false, 'EISDIR'],
+      ['readingListItems', false, 'EISDIR'],
+    ],
   );
 });
 
@@ -2808,6 +2846,80 @@ test('a malformed or missing Safari value fails only the streams that read it', 
   assert.deepEqual(profile, history);
   assert.deepEqual(limit, history);
 });
+
+test('Safari reads preferences on a path through a file as none written, and loads its history', async () => {
+  await using scratch = await new TemporaryFiles().directory('safari-');
+  const location = await safariFixture(scratch.path);
+  // A file where the Preferences folder belongs: the read fails with ENOTDIR,
+  // a folder on the path that is not there.
+  await rm(join(scratch.path, 'Preferences'), { recursive: true });
+  await writeFile(join(scratch.path, 'Preferences'), '');
+  const safari = await appleImport(
+    new AppleSafariSource(location),
+    join(scratch.path, 'import'),
+  );
+
+  await safari.load();
+
+  assert.deepEqual(
+    rows(safari.read('SELECT count(*) AS visits FROM history_visits')),
+    [{ visits: 4 }],
+  );
+});
+
+test(
+  'Safari fails the history streams, and does not read the preferences as none written, when it may not read com.apple.Safari.plist',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using scratch = await new TemporaryFiles().directory('safari-');
+    const location = await safariFixture(scratch.path);
+    // chmod stands in for macOS withholding Full Disk Access: the file is
+    // there, and its read is refused.
+    const preferences = join(
+      scratch.path,
+      'Preferences',
+      'com.apple.Safari.plist',
+    );
+    await using denial = new AsyncDisposableStack();
+    await chmod(preferences, 0o000);
+    denial.defer(() => chmod(preferences, 0o644));
+    const safari = await appleImport(
+      new AppleSafariSource(location),
+      join(scratch.path, 'import'),
+    );
+
+    const failure = await safari.load().then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    assert.ok(failure instanceof PipelineError);
+    const failed = failure.results.filter(
+      ({ failures }) => failures.length > 0,
+    );
+    assert.deepEqual(
+      failed.map(({ copy }) => copy.configuration.stream.name).sort(),
+      [
+        'historyItemTags',
+        'historyItems',
+        'historyTags',
+        'historyTombstones',
+        'historyVisits',
+      ],
+    );
+    for (const { error } of failed.flatMap(({ failures }) => failures)) {
+      assert.ok(error instanceof StoreUnavailableError);
+      assert.equal(error.missing, false);
+      assert.match(
+        error.message,
+        /com\.apple\.Safari\.plist cannot be read\. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access\./,
+      );
+    }
+  },
+);
 
 test('Safari keeps a year of history when it has written no preferences', async () => {
   await using scratch = await new TemporaryFiles().directory('safari-');

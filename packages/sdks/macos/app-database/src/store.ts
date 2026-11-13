@@ -1,18 +1,19 @@
-// A store that an SDK reads: the name its errors give it, and what the user
-// does for each reason that it cannot be read (empty when nothing helps).
+import type { Grant } from './macos-access.ts';
+
+// A store that an SDK reads: the name its errors give it, what makes its app
+// create it when it is not there (empty when nothing helps), and the grant
+// that opens it, when macOS keeps it behind one.
 export class Store {
   readonly name: string;
-  // The store is not there: what makes its app create it.
   readonly missing: string;
-  // The system keeps the process from the store: the grant to give.
-  readonly denied: string;
+  readonly grant: Grant | undefined;
 
   constructor(
     name: string,
-    remedies: { readonly missing: string; readonly denied: string },
+    remedies: { readonly missing: string; readonly grant?: Grant },
   ) {
     this.name = name;
     this.missing = remedies.missing;
-    this.denied = remedies.denied;
+    this.grant = remedies.grant;
   }
 }

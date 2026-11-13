@@ -10,7 +10,7 @@ import {
   type Stream,
   diffSnapshot,
 } from '@eltjs/elt';
-import { TeamsStore, TeamsUnavailableError } from '@eltjs/sdk-microsoft-teams';
+import { StoreUnavailableError, TeamsStore } from '@eltjs/sdk-microsoft-teams';
 import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AccountsStream } from './streams/accounts-stream.ts';
@@ -118,7 +118,7 @@ export class TeamsSource extends Source<TeamsScan> {
     return new TeamsScan(await this.#store.clients(), this.scope);
   }
 
-  protected override readonly configErrors = [TeamsUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return {

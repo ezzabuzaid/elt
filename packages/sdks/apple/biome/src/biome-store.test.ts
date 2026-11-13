@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir } from 'node:fs/promises';
+import { chmod, mkdir, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
@@ -7,7 +7,7 @@ import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
 import { TemporaryFiles } from '@zukhruf/testing/fs';
 
-import { BiomeStore, StoreUnavailableError } from './index.ts';
+import { AppInFocus, BiomeStore, StoreUnavailableError } from './index.ts';
 
 test('a Biome whose streams folder is not there fails with StoreUnavailableError saying so, and does not name Full Disk Access', async () => {
   await using scratch = await new TemporaryFiles().directory('biome-');
@@ -55,6 +55,44 @@ test(
     }
   },
 );
+
+test('a Biome whose streams folder fails for a reason other than access fails with the file system error itself', async () => {
+  await using scratch = await new TemporaryFiles().directory('biome-');
+  await mkdir(join(scratch.path, 'Biome/streams'), { recursive: true });
+  // A link to itself: listing it fails with ELOOP, which neither a missing
+  // nor a denied folder gives.
+  await symlink('restricted', join(scratch.path, 'Biome/streams/restricted'));
+
+  const failure = await new BiomeStore(join(scratch.path, 'Biome'))
+    .streams()
+    .then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+  assert.ok(Error.isError(failure));
+  assert.ok(!(failure instanceof StoreUnavailableError));
+  assert.equal('code' in failure && failure.code, 'ELOOP');
+});
+
+test('a stream whose segment folder fails for a reason other than access fails with the file system error itself, and one with no folder has no segments', async () => {
+  await using scratch = await new TemporaryFiles().directory('biome-');
+  const stream = join(scratch.path, 'Biome/streams/restricted/App.InFocus');
+  await mkdir(stream, { recursive: true });
+  const streams = await new BiomeStore(join(scratch.path, 'Biome')).streams();
+  const started = await streams.segments(new AppInFocus());
+  await symlink('local', join(stream, 'local'));
+
+  const failure = await streams.segments(new AppInFocus()).then(
+    () => null,
+    (error: unknown) => error,
+  );
+
+  assert.deepEqual(started, []);
+  assert.ok(Error.isError(failure));
+  assert.ok(!(failure instanceof StoreUnavailableError));
+  assert.equal('code' in failure && failure.code, 'ELOOP');
+});
 
 test('a device list without a column the reader needs fails with MissingColumnsError naming each missing column', async () => {
   await using scratch = await new TemporaryFiles().directory('biome-');

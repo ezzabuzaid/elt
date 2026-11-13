@@ -15,6 +15,7 @@
     "./eventkit-helper": "./dist/eventkit-helper"
   },
   "dependencies": {
+    "@eltjs/sdk-macos-app-database": "0.0.1",
     "@zukhruf/async": "^0.8.10"
   },
   "devDependencies": {

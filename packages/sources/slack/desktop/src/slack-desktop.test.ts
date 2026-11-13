@@ -42,7 +42,7 @@ import {
 import {
   SlackDesktopFormatError,
   SlackDesktopStore,
-  SlackDesktopUnavailableError,
+  StoreUnavailableError,
   slackDesktopDirectory,
 } from '@eltjs/sdk-slack-desktop';
 
@@ -1924,8 +1924,11 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
       assert.ok(error instanceof PipelineError);
       assert.equal(error.errors.length, streams.length);
       for (const cause of error.errors) {
-        assert.ok(cause instanceof SlackDesktopUnavailableError);
-        assert.match(cause.message, /Full Disk Access/);
+        assert.ok(cause instanceof StoreUnavailableError);
+        assert.match(
+          cause.message,
+          /store at .+ cannot be read\. Turn on .+ in System Settings › Privacy & Security › Full Disk Access\.$/,
+        );
       }
       assert.deepEqual(failureTypes(error), ['config']);
       return true;
@@ -2109,7 +2112,7 @@ test('a store that fails to read for another reason fails every stream as that e
   await assert.rejects(run.run(), (error) => {
     assert.ok(error instanceof PipelineError);
     for (const cause of error.errors) {
-      assert.ok(!(cause instanceof SlackDesktopUnavailableError));
+      assert.ok(!(cause instanceof StoreUnavailableError));
       assert.equal(Reflect.get(Object(cause), 'code'), 'EISDIR');
     }
     return true;
@@ -2301,9 +2304,7 @@ test('this Mac’s Slack app loads every workspace it keeps, and a second read w
   } catch (error) {
     if (
       error instanceof PipelineError &&
-      error.errors.every(
-        (cause) => cause instanceof SlackDesktopUnavailableError,
-      )
+      error.errors.every((cause) => cause instanceof StoreUnavailableError)
     )
       return t.skip(
         'the Slack app is not installed, or this process lacks Full Disk Access',

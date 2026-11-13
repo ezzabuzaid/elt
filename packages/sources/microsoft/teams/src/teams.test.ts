@@ -28,9 +28,9 @@ import {
   SQLiteSyncHistory,
 } from '@eltjs/elt-sqlite';
 import {
+  StoreUnavailableError,
   TeamsFormatError,
   TeamsStore,
-  TeamsUnavailableError,
   teamsDirectory,
 } from '@eltjs/sdk-microsoft-teams';
 
@@ -1142,8 +1142,11 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
       assert.ok(error instanceof PipelineError);
       assert.equal(error.errors.length, streams.length);
       for (const cause of error.errors) {
-        assert.ok(cause instanceof TeamsUnavailableError);
-        assert.match(cause.message, /Full Disk Access/);
+        assert.ok(cause instanceof StoreUnavailableError);
+        assert.match(
+          cause.message,
+          /store at .+ cannot be read\. Turn on .+ in System Settings › Privacy & Security › Full Disk Access\.$/,
+        );
       }
       assert.deepEqual(failureTypes(error), ['config']);
       return true;
@@ -1265,7 +1268,7 @@ test('a store in a shape this reader does not know, or that fails to read for an
   await assert.rejects(run.run(), (error) => {
     assert.ok(error instanceof PipelineError);
     for (const cause of error.errors) {
-      assert.ok(!(cause instanceof TeamsUnavailableError));
+      assert.ok(!(cause instanceof StoreUnavailableError));
       assert.equal(Reflect.get(cause, 'code'), 'EISDIR');
     }
     assert.deepEqual(failureTypes(error), ['system']);
@@ -2768,7 +2771,7 @@ test('this Mac’s Teams app loads every account it keeps, and a second read wit
   } catch (error) {
     if (
       error instanceof PipelineError &&
-      error.errors.every((cause) => cause instanceof TeamsUnavailableError)
+      error.errors.every((cause) => cause instanceof StoreUnavailableError)
     )
       return t.skip(
         'the Teams app is not installed, or this process lacks Full Disk Access',

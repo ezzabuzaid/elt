@@ -2,6 +2,7 @@ import { type Dirent, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { Gauge } from '@zukhruf/async';
+import { UnavailableError } from '@zukhruf/sqlite-data-version';
 
 import {
   type AppDatabaseVersion,
@@ -16,8 +17,9 @@ export const addressBookDirectory = (home: string): string =>
   join(home, 'Library/Application Support/AddressBook');
 
 // Contacts keeps one Core Data store per account under Sources/<id>, and the
-// On My Mac store at the root. A store that cannot be listed or opened throws:
-// an account read as empty would delete its contacts from every target.
+// On My Mac store at the root. A store that cannot be listed or opened throws,
+// as unavailable when it is missing or denied, else as itself: an account
+// read as empty would delete its contacts from every target.
 function storeDirectories(
   directory: string,
 ): { readonly source: string | null; readonly directory: string }[] {
@@ -26,7 +28,9 @@ function storeDirectories(
   try {
     entries = readdirSync(sources, { withFileTypes: true });
   } catch (cause) {
-    throw new StoreUnavailableError(contactsStore, sources, cause);
+    const unavailable = UnavailableError.from(sources, cause);
+    if (unavailable === undefined) throw cause;
+    throw new StoreUnavailableError(contactsStore, sources, unavailable);
   }
   return [
     { source: null, directory },

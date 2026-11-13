@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import { UnavailableError } from '@zukhruf/sqlite-data-version';
+
 import {
   type PlistValue,
   isBinaryPlist,
@@ -34,14 +36,17 @@ const preferences = ({ container }: SafariLocation) =>
 
 // One of Safari's property lists, whole: bookmarks, recently closed tabs or
 // downloads. Safari writes them binary; plutil converts any other kind. A
-// missing or unreadable file fails the read; it never reads as an empty list,
-// which would delete every exported row.
+// missing or denied file fails the read as unavailable, and any other failure
+// as itself; it never reads as an empty list, which would delete every
+// exported row.
 async function readSafariPlist(path: string): Promise<PlistValue> {
   let bytes: Uint8Array;
   try {
     bytes = await readFile(path);
   } catch (cause) {
-    throw new StoreUnavailableError(safariStore, path, cause);
+    const unavailable = UnavailableError.from(path, cause);
+    if (unavailable === undefined) throw cause;
+    throw new StoreUnavailableError(safariStore, path, unavailable);
   }
   return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readPlist(path);
 }
@@ -52,13 +57,7 @@ async function readSafariPreferences(path: string): Promise<PlistValue | null> {
   try {
     return await readSafariPlist(path);
   } catch (error) {
-    if (
-      error instanceof StoreUnavailableError &&
-      Error.isError(error.cause) &&
-      'code' in error.cause &&
-      error.cause.code === 'ENOENT'
-    )
-      return null;
+    if (error instanceof StoreUnavailableError && error.missing) return null;
     throw error;
   }
 }

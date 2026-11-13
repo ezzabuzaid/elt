@@ -12,7 +12,7 @@ import {
 } from '@eltjs/elt';
 import {
   SlackDesktopStore,
-  SlackDesktopUnavailableError,
+  StoreUnavailableError,
 } from '@eltjs/sdk-slack-desktop';
 import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
@@ -129,7 +129,7 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
     return new SlackDesktopScan(clients, downloads, this.scope);
   }
 
-  protected override readonly configErrors = [SlackDesktopUnavailableError];
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return {

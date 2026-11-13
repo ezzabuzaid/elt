@@ -22,6 +22,6 @@ console.log(tabs.length);
 
 ## Errors
 
-- `DiaArchiveMissingError`: no file is at the path, from `tabs()` or `lastWrite()`.
+- `StoreUnavailableError` of `@eltjs/sdk-macos-app-database`, which this package exports too: from `tabs()` or `lastWrite()`, when no file is at the path (`missing` is true, and the message says `is not there.` and to install and open Dia), or when the system keeps the file, or a folder on its path, from the process (the message says `cannot be read.`). macOS keeps no grant over Dia's folder, so the message names none.
 - `DiaArchiveFormatError`: the file is not JSON, its `version` is not 2, or a field has a different type. The message names the place in the file, for example `containers[2].id.profile`. The message never shows a value.
 - Each other error of the read reaches the caller.

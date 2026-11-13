@@ -11,10 +11,7 @@ import {
   type Stream,
   diffSnapshot,
 } from '@eltjs/elt';
-import {
-  BookmarksUnavailableError,
-  ChromiumBookmarks,
-} from '@eltjs/sdk-chromium-bookmarks';
+import { ChromiumBookmarks } from '@eltjs/sdk-chromium-bookmarks';
 import type { ChromiumBrowser } from '@eltjs/sdk-chromium-browser';
 import {
   StoreUnavailableError,
@@ -137,10 +134,8 @@ export class ChromiumSource extends Source<ChromiumScan> {
     );
   }
 
-  protected override readonly configErrors = [
-    StoreUnavailableError,
-    BookmarksUnavailableError,
-  ];
+  // The History and Bookmarks SDKs give the one StoreUnavailableError.
+  protected override readonly configErrors = [StoreUnavailableError];
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return {

@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
+import { UnavailableError } from '@zukhruf/sqlite-data-version';
+
 import { PlistDate, parseBinaryPlist } from '@eltjs/codec-plist';
 import { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
 
@@ -14,12 +16,16 @@ import {
   text,
 } from './values.ts';
 
+// A missing or denied file fails the read as unavailable, and any other
+// failure as itself.
 async function preferences(path: string) {
   let bytes: Uint8Array;
   try {
     bytes = await readFile(path);
   } catch (cause) {
-    throw new StoreUnavailableError(clockStore, path, cause);
+    const unavailable = UnavailableError.from(path, cause);
+    if (unavailable === undefined) throw cause;
+    throw new StoreUnavailableError(clockStore, path, unavailable);
   }
   return dictionary(parseBinaryPlist(bytes));
 }

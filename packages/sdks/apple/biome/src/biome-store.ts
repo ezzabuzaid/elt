@@ -1,6 +1,8 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { UnavailableError } from '@zukhruf/sqlite-data-version';
+
 import {
   type AppDatabaseVersion,
   StoreUnavailableError,
@@ -18,7 +20,8 @@ export const biomeDirectory = (home: string): string =>
   join(home, 'Library/Biome');
 
 // The folder of every stream, known to be readable: without that check a
-// missing or denied folder would list every stream as empty.
+// missing or denied folder would list every stream as empty. Any other
+// failure to list it fails as itself.
 export class BiomeStreams {
   readonly #path: string;
 
@@ -44,7 +47,9 @@ export class BiomeStore {
     try {
       await readdir(this.#streams);
     } catch (cause) {
-      throw new StoreUnavailableError(biomeStore, this.#streams, cause);
+      const unavailable = UnavailableError.from(this.#streams, cause);
+      if (unavailable === undefined) throw cause;
+      throw new StoreUnavailableError(biomeStore, this.#streams, unavailable);
     }
     return new BiomeStreams(this.#streams);
   }

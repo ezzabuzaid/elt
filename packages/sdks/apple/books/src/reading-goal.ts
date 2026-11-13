@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
+import { UnavailableError } from '@zukhruf/sqlite-data-version';
+
 import {
   type PlistValue,
   isBinaryPlist,
@@ -20,14 +22,17 @@ export type ReadingGoal = {
   readonly currentStreakDays: number | null;
 };
 
-// One of Books' preference files, whole. A missing or unreadable file fails
-// the read; it never reads as empty preferences.
+// One of Books' preference files, whole. A missing or denied file fails the
+// read as unavailable, and any other failure as itself; it never reads as
+// empty preferences.
 async function readBooksPlist(path: string): Promise<PlistValue> {
   let bytes: Uint8Array;
   try {
     bytes = await readFile(path);
   } catch (cause) {
-    throw new StoreUnavailableError(booksStore, path, cause);
+    const unavailable = UnavailableError.from(path, cause);
+    if (unavailable === undefined) throw cause;
+    throw new StoreUnavailableError(booksStore, path, unavailable);
   }
   if (!isBinaryPlist(bytes))
     throw new BooksSchemaError(path, ['binary property list']);

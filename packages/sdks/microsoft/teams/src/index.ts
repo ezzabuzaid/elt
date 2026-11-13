@@ -1,4 +1,5 @@
-export { TeamsFormatError, TeamsUnavailableError } from './errors.ts';
+export { StoreUnavailableError } from '@eltjs/sdk-macos-app-database';
+export { TeamsFormatError } from './errors.ts';
 export type {
   TeamsActivity,
   TeamsCallLog,

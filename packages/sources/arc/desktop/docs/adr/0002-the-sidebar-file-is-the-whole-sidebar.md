@@ -15,7 +15,7 @@ The file is about 2 MB with 900 items, and JSON must be parsed whole. Thus the S
 
 - A rerun with no change writes nothing.
 - A file that the SDK cannot decode fails the pass with `ArcSidebarFormatError`, and the diff deletes nothing. An item kind that the SDK does not know also fails the pass. Arc is in maintenance, so its format is not expected to change. The error names the item and its kind.
-- A missing file, or a file that the process cannot read, gives `ArcSidebarUnavailableError`, which is a configuration failure.
+- A file that is not there, or that the system denies, gives `StoreUnavailableError`, which is a configuration failure.
 - Arc writes the file only while it runs. Thus the stream is current as of the last write of the file. A watch polls the file stamp (`FileStamp` of `@zukhruf/fs`) each second.
 
 ## Sources

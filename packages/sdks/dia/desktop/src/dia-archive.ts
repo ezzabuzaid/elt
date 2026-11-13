@@ -1,12 +1,22 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { FileStamp, isErrno } from '@zukhruf/fs';
+import { UnavailableError } from '@zukhruf/sqlite-data-version';
 
 import { referenceDateInstant } from '@eltjs/codec-apple-reference-date';
-import { AppFilesVersion } from '@eltjs/sdk-macos-app-database';
+import {
+  AppFilesVersion,
+  Store,
+  StoreUnavailableError,
+} from '@eltjs/sdk-macos-app-database';
 
-import { DiaArchiveFormatError, DiaArchiveMissingError } from './errors.ts';
+import { DiaArchiveFormatError } from './errors.ts';
+
+// macOS keeps no grant over Dia's folder. The archive is not there when Dia
+// is not installed in this home folder or has not archived a tab yet.
+const diaStore = new Store("Dia's archive", {
+  missing: 'Install Dia and open it once, or check the home folder.',
+});
 
 // The format version this SDK reads, the `version` of the file.
 const knownVersion = 2;
@@ -50,14 +60,7 @@ export class DiaArchive {
 
   // Every archived tab of every profile, from one read of the file.
   async tabs(): Promise<ArchivedTab[]> {
-    let text: string;
-    try {
-      text = await readFile(this.#path, 'utf8');
-    } catch (error) {
-      if (isErrno(error, 'ENOENT') || isErrno(error, 'ENOTDIR'))
-        throw new DiaArchiveMissingError(this.#path, error);
-      throw error;
-    }
+    const text = await this.#read((path) => readFile(path, 'utf8'));
     let document: unknown;
     try {
       document = JSON.parse(text);
@@ -80,10 +83,19 @@ export class DiaArchive {
 
   // When Dia last wrote the file.
   async lastWrite(): Promise<Date> {
-    const { modifiedAt } = await FileStamp.read(this.#path);
-    if (modifiedAt === undefined)
-      throw new DiaArchiveMissingError(this.#path, undefined);
-    return modifiedAt;
+    return (await this.#read((path) => stat(path))).mtime;
+  }
+
+  // A read of the file that fails as unavailable when the file is not there
+  // or the system keeps it from this process, and as itself otherwise.
+  async #read<T>(read: (path: string) => Promise<T>): Promise<T> {
+    try {
+      return await read(this.#path);
+    } catch (error) {
+      const unavailable = UnavailableError.from(this.#path, error);
+      if (unavailable === undefined) throw error;
+      throw new StoreUnavailableError(diaStore, this.#path, unavailable);
+    }
   }
 }
 

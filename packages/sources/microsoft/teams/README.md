@@ -69,7 +69,7 @@ The other managers of the client hold Microsoft's own data or its bookkeeping: t
 
 The app's container needs Full Disk Access (see [Full Disk Access](../../apple/messages/README.md#full-disk-access)).
 
-- Without the grant, or without the app, the read fails with `TeamsUnavailableError`, which names the grant. Every stream fails.
+- Without the app, the read fails with `StoreUnavailableError`, which says that the store "is not there" and tells the user to open Teams, sign in and let it load the chats. A database folder that holds no file is also not there. Without the grant, the error says that the store "cannot be read" and names the program to turn on under Full Disk Access. Every stream fails. Any other error of the file system, such as `EISDIR`, fails as itself.
 - A record in a shape that the reader has not verified fails with `TeamsFormatError`, which names the database, the object store, the key and the field. Every stream fails, because one read makes all streams.
 
 ## Streams
