@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@eltjs/eca": "0.0.1",
+    "@eltjs/eca": "*",
     "@eltjs/elt": "*",
     "@eltjs/elt-postgresql": "0.0.1",
     "@eltjs/sdk-apple-accounts": "0.0.1",
