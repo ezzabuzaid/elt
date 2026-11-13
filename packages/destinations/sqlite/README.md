@@ -248,6 +248,7 @@ A refresh is a load in `_elt_loads`, so a [reading](#commit-numbers-and-position
 
 - Each transaction of the refresh that changes a row takes one commit number. A transaction that changes no row takes none. No commit inside a refresh that is open is a position.
 - The raw table has the columns `committed_in` and `_elt_row_hash` after the columns of the rule. The view `<name>` does not show them. `_elt_row_hash` is the SHA-256 of the values of the other columns, as for a copy.
+- A rule column cannot have the name of the key, of an engine column, of `committed_in` or of `_elt_row_hash`, in any ASCII case, as SQLite compares column names. The constructor of `ComputedDataset` refuses such a rule with a `TypeError` that names the column and the dataset.
 - When the rule makes a row again with the same values, for example a `failed` row that fails again with the same error, the row stays as it is, with its `committed_in`.
 - Before a commit changes or deletes an output row, it copies the row into the [history](./CONTEXT.md) of the raw table. When the declaration changes, the commit that makes the table again copies each row of the old table into the history. A column that the old table did not have is `NULL` as of a position before.
 

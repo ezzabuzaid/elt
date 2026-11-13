@@ -19,6 +19,7 @@ import {
   Gauge,
   Pipeline,
   PipelineError,
+  Rule,
   Source,
   Stream,
 } from '@eltjs/elt';
@@ -520,3 +521,52 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
     await watching.return(undefined);
   }
 });
+
+// A rule that only names its columns: the dataset checks them when it is
+// constructed, before any input reaches compute.
+class NamedColumns extends Rule<string, string> {
+  override readonly key = { name: 'ref', description: 'The input.' };
+  override readonly output: Rule<string, string>['output'];
+  override readonly batch = 1;
+  override readonly concurrency = 1;
+
+  constructor(output: readonly string[]) {
+    super();
+    this.output = Object.fromEntries(
+      output.map((name) => [name, { type: 'text', description: name }]),
+    );
+  }
+
+  override read() {
+    return null;
+  }
+
+  override async identity() {
+    return null;
+  }
+
+  override async compute() {
+    return [];
+  }
+}
+
+for (const [column, owner] of [
+  ['status', 'an engine column'],
+  ['Committed_In', 'a column the dataset writes itself, in another case'],
+  ['ref', 'the key column'],
+] as const)
+  test(`a rule output column named ${column}, ${owner}, is refused when the dataset is constructed, by name`, () => {
+    assert.throws(
+      () =>
+        new ComputedDataset({
+          into: new SQLiteDestination({ path: ':memory:' }),
+          name: 'file_text',
+          description: 'The text of each file a row names.',
+          from: [],
+          compute: new NamedColumns(['content', column]),
+        }),
+      new TypeError(
+        `Computed dataset file_text cannot have the column ${column}: the dataset already has the column ${column.toLowerCase()}`,
+      ),
+    );
+  });

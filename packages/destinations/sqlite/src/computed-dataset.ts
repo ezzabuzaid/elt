@@ -93,6 +93,24 @@ export class ComputedDataset<
       name: this.#table,
       location: identifiers.key(this.#table),
     });
+    // SQLite takes two names that differ only in ASCII case for one column,
+    // and would refuse the table at the first refresh.
+    const taken = new Map(
+      [
+        compute.key.name,
+        ...Object.keys(engineColumns),
+        'committed_in',
+        '_elt_row_hash',
+      ].map((column) => [identifiers.key(column), column]),
+    );
+    for (const column of Object.keys(compute.output)) {
+      const other = taken.get(identifiers.key(column));
+      if (other !== undefined)
+        throw new TypeError(
+          `Computed dataset ${name} cannot have the column ${column}: the dataset already has the column ${other}`,
+        );
+      taken.set(identifiers.key(column), column);
+    }
     this.#columns = Object.freeze([
       compute.key.name,
       ...Object.keys(engineColumns),
