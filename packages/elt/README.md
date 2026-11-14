@@ -810,6 +810,7 @@ try {
 ```
 
 - `PipelineError` is an `AggregateError`. `errors` holds each failure. `results` holds the committed `count` and `deleted` of each copy beside its `failures`, in the order of the connections, then of the copies. Each failure has its `partition`, `error` and [`failureType`](#failure-types).
+- The `message` of `PipelineError`, and the error that `passError` gives the sync history, names each distinct failure message once, with each copy and partition that failed with it. Thus a store that refuses five streams gives its remedy once: `The following copies did not load completely: calls, contacts: Turn on … Full Disk Access.; notes: The store is corrupt.`
 - A failure after rows committed, such as a checkpoint that the store could not save or a cleanup error after the publication, shows in the same way, with the committed counts. It does not mean a rollback.
 - A count of zero also covers an empty input that committed.
 - A `PipelineError` holds only failures that the sync history recorded. A pass that could not run, such as a pass whose sync history the pipeline could not write, is recorded nowhere. Thus `run()` rejects with that error itself, after each other pass ends.

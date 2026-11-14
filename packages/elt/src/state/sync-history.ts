@@ -152,7 +152,7 @@ export function passFailureType(
 export function passError(
   outcomes: readonly CopyOutcome<DestinationTarget>[],
 ): string | null {
-  const incomplete = outcomes.filter(({ failures }) => failures.length > 0);
-  if (incomplete.length === 0) return null;
-  return `The following copies did not load completely: ${incomplete.map(describeFailures).join('; ')}`;
+  return outcomes.some(({ failures }) => failures.length > 0)
+    ? describeFailures(outcomes)
+    : null;
 }

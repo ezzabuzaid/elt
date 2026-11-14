@@ -24,16 +24,25 @@ export type CopyOutcome<Target extends DestinationTarget> =
     readonly cancelled: boolean;
   };
 
-export function describeFailures<Target extends DestinationTarget>({
-  copy,
-  failures,
-}: CopyOutcome<Target>): string {
-  return failures
-    .map(
-      ({ partition, error }: LoadFailure) =>
-        `${copy.id ?? copy.from.name}${partition === null ? '' : ` ${JSON.stringify(partition)}`}: ${errorMessage(error)}`,
-    )
-    .join('; ');
+// What did not load, naming each distinct failure message once with every
+// copy and partition it failed, in order of first appearance, as a log
+// aggregator folds repeated lines: a store that refuses five streams gives
+// its remedy once.
+export function describeFailures<Target extends DestinationTarget>(
+  outcomes: readonly CopyOutcome<Target>[],
+): string {
+  const failed = new Map<string, string[]>();
+  for (const { copy, failures } of outcomes)
+    for (const { partition, error } of failures)
+      failed
+        .getOrInsertComputed(errorMessage(error), () => [])
+        .push(
+          `${copy.id ?? copy.from.name}${partition === null ? '' : ` ${JSON.stringify(partition)}`}`,
+        );
+  return `The following copies did not load completely: ${Array.from(
+    failed,
+    ([message, copies]) => `${copies.join(', ')}: ${message}`,
+  ).join('; ')}`;
 }
 
 // One configured transfer from a source stream to a destination declaration.

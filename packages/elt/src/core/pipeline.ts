@@ -76,15 +76,10 @@ export class PipelineError<
   override name = 'PipelineError';
   readonly results: readonly CopyOutcome<Target>[];
   constructor(results: readonly CopyOutcome<Target>[]) {
-    const incomplete = results.filter(({ failures }) => failures.length > 0);
-    const errors = incomplete.flatMap(({ failures }) =>
+    const errors = results.flatMap(({ failures }) =>
       failures.map(({ error }) => error),
     );
-    super(
-      errors,
-      `The following copies did not load completely: ${incomplete.map(describeFailures).join('; ')}`,
-      { cause: errors[0] },
-    );
+    super(errors, describeFailures(results), { cause: errors[0] });
     this.results = Object.freeze([...results]);
   }
 }

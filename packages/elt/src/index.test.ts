@@ -48,9 +48,11 @@ import {
   type Upkeep,
   type WriteOperation,
   Writer,
+  errorMessage,
   isCalendarDate,
   isTimestamp,
   passChannels,
+  passError,
   passStatus,
   validateRecords,
 } from './index.ts';
@@ -1686,6 +1688,67 @@ test('one connection failing leaves the others loaded, and every pass is recorde
     'finish broken failed',
     'finish steady succeeded',
   ]);
+});
+
+test('copies that failed with the same message name that message once, with each copy it failed, in the run error and the recorded pass', async () => {
+  const denied =
+    'Turn on node in System Settings › Privacy & Security › Full Disk Access.';
+  const source = new ContextSource({
+    left: [new Error(denied)],
+    middle: [new Error('The store is corrupt.')],
+    right: [new Error(denied)],
+  });
+  const recorded: (string | null)[] = [];
+  class ErrorHistory extends MemoryHistory {
+    override async begin(
+      connection: Connection<NamedTarget>,
+      copies: readonly DeclaredCopy<NamedTarget>[],
+    ): Promise<RecordedPass<NamedTarget>> {
+      const pass = await super.begin(connection, copies);
+      return {
+        ...pass,
+        finish: async (outcomes, upstream, at) => {
+          recorded.push(passError(outcomes));
+          await pass.finish(outcomes, upstream, at);
+        },
+      };
+    }
+  }
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new ErrorHistory(),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: new DrainingDestination(),
+        steps: [source.left, source.middle, source.right].map(
+          (stream) => new Copy(stream, new NamedTarget(stream.name)),
+        ),
+      }),
+    ],
+  });
+
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report the failed copies'),
+    (error: unknown) => error,
+  );
+
+  const message = `The following copies did not load completely: left, right: ${denied}; middle: The store is corrupt.`;
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.equal(error.message, message);
+  assert.deepEqual(recorded, [message]);
+  assert.deepEqual(
+    error.results.map(({ copy, failures }) => [
+      copy.from.name,
+      failures.map((failure) => errorMessage(failure.error)),
+    ]),
+    [
+      ['left', [denied]],
+      ['middle', ['The store is corrupt.']],
+      ['right', [denied]],
+    ],
+  );
 });
 
 test('a run its signal stops keeps each commit and checkpoint, drops what was staged, is recorded cancelled and rejects with the reason, which the extract sees', async () => {
