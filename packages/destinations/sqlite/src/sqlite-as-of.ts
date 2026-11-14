@@ -4,7 +4,7 @@ import { UnavailableError, open } from '@zukhruf/sqlite-open';
 
 import { busyTimeout } from './open-destination.ts';
 import { histories } from './sqlite-history.ts';
-import { identifiers, quote } from './sqlite-identifiers.ts';
+import { identifiers, internalColumns, quote } from './sqlite-identifiers.ts';
 import {
   type Numbering,
   type Position,
@@ -14,7 +14,6 @@ import {
   readNumbering,
 } from './sqlite-loads.ts';
 import { attempts, checks, coverage } from './sqlite-sync-history-schema.ts';
-import { version as rowHash } from './sqlite-writer.ts';
 
 type Versioned = { readonly target: string; readonly history: string };
 
@@ -101,7 +100,7 @@ export function readAsOf(
           ? `${path} has no position yet`
           : `Position ${position} names no commit of ${path}`,
     };
-  if (number < numbered.newest) shadow(database, number);
+  shadow(database, number, number < numbered.newest);
   stack.move();
   return {
     sql: database,
@@ -124,16 +123,21 @@ function refuseInsidePass(
     );
 }
 
-// Shadows, for this connection, each name a reader queries with a TEMP view
-// of what it showed as of commit number. A TEMP view takes the place of a
-// table or view of main for an unqualified name, and SQLite resolves the
+// Shadows, for this connection, each target with a TEMP view of what it
+// showed as of commit number, with the columns a reader sees, so a reading
+// shows the same columns at each position. Before the newest commit, each
+// other name a reader queries is shadowed too. A TEMP view takes the place of
+// a table or view of main for an unqualified name, and SQLite resolves the
 // names of a view when it is read, so the views can be made in any order.
-function shadow(database: DatabaseSync, number: number): void {
+function shadow(database: DatabaseSync, number: number, past: boolean): void {
   const targets = versioned(database, 'main');
   for (const version of targets)
     database.exec(
       `CREATE TEMP VIEW ${quote(version.target)} AS ${selectAsOf(database, version, number, 'main')}`,
     );
+  // At the newest commit, the views and the sync history read the file as
+  // it is.
+  if (!past) return;
   database.function('_elt_unversioned', asOfFunctions._elt_unversioned);
   for (const view of syncHistoryViews(database, 'main', (table) => table))
     database.exec(view);
@@ -151,7 +155,9 @@ function shadow(database: DatabaseSync, number: number): void {
  * The SELECT that reads one target of the file as of a position, for a reader
  * that copies the target, such as into a database of its own: the current
  * rows that the commit of the position had made, and the history rows that it
- * had made and a later commit replaced. `schema` names the file where
+ * had made and a later commit replaced, with the columns of the stream and
+ * `loaded_at`, or of a computed dataset, and none of the internal columns
+ * that only the destination reads. `schema` names the file where
  * `database` attached it, main by default. Run the SELECT in the read
  * transaction that this checks the position in, since a later commit can
  * expire the position. A position of another epoch, past the newest commit,
@@ -192,11 +198,11 @@ export function readable(
 }
 
 // A target as of commit number: its current rows that the commit had made,
-// and the history rows that the commit had made and a later commit replaced.
-// A column that the history lacks reads as NULL there. A guarded select is
-// for a view that outlives the read transaction: each read first checks, in
-// the same statement, that the file still reads the position exactly, and
-// it leaves out the row hash of the writers.
+// and the history rows that the commit had made and a later commit replaced,
+// with the columns a reader sees, none of the internal ones. A column
+// that the history lacks reads as NULL there. A guarded select is for a view
+// that outlives the read transaction: each read first checks, in the same
+// statement, that the file still reads the position exactly.
 export function selectAsOf(
   database: DatabaseSync,
   { target, history }: Versioned,
@@ -205,7 +211,7 @@ export function selectAsOf(
   guard?: Position,
 ): string {
   const columns = columnsOf(database, quote(target), schema).filter(
-    (column) => guard === undefined || quote(column) !== rowHash,
+    (column) => !internalColumns.includes(identifiers.key(column)),
   );
   const kept = new Set(
     columnsOf(database, quote(history), schema).map((column) =>

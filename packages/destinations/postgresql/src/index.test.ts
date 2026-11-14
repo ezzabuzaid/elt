@@ -2778,6 +2778,9 @@ test('every field name is sanitized as Airbyte does, around the names Postgres k
     ['a_b', 'a_b_1'],
     ['a_b_1', 'a_b_1_1'],
     ['loaded_at', 'loaded_at_1'],
+    ['committed_in', 'committed_in_1'],
+    ['replaced_in', 'replaced_in_1'],
+    ['_elt_row_hash', 'elt_row_hash'],
     ['_elt_seq', 'elt_seq'],
     ['_elt_op', 'elt_op'],
     ['_elt_rank', 'elt_rank'],
@@ -2856,19 +2859,24 @@ test('every field name is sanitized as Airbyte does, around the names Postgres k
   const view = await described('marts.odd');
   assert.deepEqual(
     view.map(({ name }) => name),
-    [...names.map(([, column]) => column), 'loaded_at', 'committed_in'],
+    [...names.map(([, column]) => column), 'loaded_at'],
   );
   assert.deepEqual(
-    view.slice(0, -2).map(({ description }) => description),
+    view.slice(0, -1).map(({ description }) => description),
     names.map(([field, column], index) =>
       field === column
         ? `Field ${index}.`
         : `Field ${index}. Source field: ${JSON.stringify(field)}.`,
     ),
   );
-  assert.match(String(view.at(-2)?.description), /^Start time of the load/);
+  assert.match(String(view.at(-1)?.description), /^Start time of the load/);
   assert.deepEqual(await described('raw.odd'), [
     ...view,
+    {
+      name: 'committed_in',
+      description:
+        'Number of the commit that last wrote this row: the row of _warehouse._elt_commits with this number tells when, and in which load.',
+    },
     { name: '_elt_row_hash', description: null },
   ]);
   const [row] = await sql.unsafe(
@@ -4689,10 +4697,15 @@ test('a reader view shows exactly the loaded columns and their descriptions, fol
   const viewColumns = await descriptions('marts.notes');
   assert.deepEqual(
     viewColumns.map(({ name }) => name),
-    ['id', 'title', 'ref', 'loaded_at', 'committed_in'],
+    ['id', 'title', 'ref', 'loaded_at'],
   );
   assert.deepEqual(await descriptions('raw.raw_notes'), [
     ...viewColumns,
+    {
+      name: 'committed_in',
+      description:
+        'Number of the commit that last wrote this row: the row of _warehouse._elt_commits with this number tells when, and in which load.',
+    },
     { name: '_elt_row_hash', description: null },
   ]);
   assert.equal(
@@ -4778,13 +4791,6 @@ test('a run publishes the catalog in marts, which lists each reader view and its
         description: (
           await sql`SELECT obj_description('marts.notes'::regclass) AS description`
         )[0]?.description,
-      },
-      {
-        kind: 'column',
-        name: 'notes.committed_in',
-        data_type: 'integer',
-        description:
-          'Number of the commit that last wrote this row: the row of _warehouse._elt_commits with this number tells when, and in which load.',
       },
       {
         kind: 'column',

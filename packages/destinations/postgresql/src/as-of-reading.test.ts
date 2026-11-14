@@ -255,6 +255,8 @@ async function asOf(
 
 test('a reading of a commit inside a pass is refused, as it would show half of that pass, and the commit that ends the pass reads', async () => {
   await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = client(database.connectionString, clients);
   const { destination, connection } = warehouse(database.connectionString);
   await connection({
     notes: [note('notes', 'n1', 1), checkpoint('notes', 1)],
@@ -269,10 +271,9 @@ test('a reading of a commit inside a pass is refused, as it would show half of t
     ],
   }).run();
   const end = await newest(destination);
-  const [written] = await asOf(
-    destination,
-    "SELECT committed_in FROM marts.raw_notes WHERE id = 'n2'",
-  );
+  // The commit is internal, so only the raw table shows it; this test proves it.
+  const [written] =
+    await sql`SELECT committed_in FROM raw.notes WHERE id = 'n2'`;
   const inside = `${before.split(':')[0]}:${written?.committed_in}`;
 
   assert.notEqual(inside, end);
@@ -396,6 +397,33 @@ test('a session that sets no position reads the reader view as it is now, with n
   );
 });
 
+test("a reader view shows the stream's fields and loaded_at, now and in a reading of an earlier position, and none of the destination's own columns", async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = client(database.connectionString, clients);
+  const { destination, connection } = warehouse(database.connectionString);
+  await connection({
+    notes: [note('notes', 'n1', 1), checkpoint('notes', 1)],
+  }).run();
+  const before = await newest(destination);
+  await connection({
+    notes: [note('notes', 'n1', 2, 'changed'), checkpoint('notes', 2)],
+  }).run();
+  const reading = await destination.reading(before);
+  if ('expired' in reading) assert.fail(reading.expired);
+  await using _reading = reading;
+  const columns = async (read: postgres.Sql) =>
+    (await read`SELECT * FROM marts.raw_notes`).columns.map(({ name }) => name);
+
+  assert.deepEqual(
+    { now: await columns(sql), before: await columns(reading.sql) },
+    {
+      now: ['id', 'version', 'body', 'loaded_at'],
+      before: ['id', 'version', 'body', 'loaded_at'],
+    },
+  );
+});
+
 test('a reading of a position of an earlier numbering, or past the newest commit, is expired', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
@@ -492,11 +520,11 @@ test('a deduplicated row whose values changed reads as it was at the position, f
     read.map((row) => ({ ...row })),
     rows,
   );
+  // The commit is internal, so only the raw table shows it; this test proves it.
   assert.deepEqual(
-    await asOf(
-      destination,
-      "SELECT body, committed_in, loaded_at FROM marts.raw_notes WHERE id = 'n1'",
-    ),
+    [
+      ...(await sql`SELECT body, committed_in, loaded_at FROM raw.notes WHERE id = 'n1'`),
+    ],
     [
       {
         body: 'second',
@@ -1115,13 +1143,12 @@ test('a stream whose field changes type, or that drops a field, evolves the tabl
   assert.deepEqual(
     await asOf(
       destination,
-      'SELECT id, version, committed_in, loaded_at FROM marts.raw_notes ORDER BY id',
+      'SELECT id, version, loaded_at FROM marts.raw_notes ORDER BY id',
       before,
     ),
-    rows.map(({ id, version, committed_in, loaded_at }) => ({
+    rows.map(({ id, version, loaded_at }) => ({
       id,
       version: String(version),
-      committed_in,
       loaded_at,
     })),
   );
@@ -1232,7 +1259,9 @@ test('one table name in two schemas keeps a history of its own in each, and each
 test('the file of a document that a later pass deletes reads with its own bytes as of the position before it, and a document sent again with the same file keeps its commit', async () => {
   await using database = await databases.database();
   await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+  await using clients = new AsyncDisposableStack();
   const url = database.connectionString;
+  const sql = client(url, clients);
   const documents = new Stream({
     name: 'documents',
     jsonSchema: {
@@ -1281,10 +1310,10 @@ test('the file of a document that a later pass deletes reads with its own bytes 
     copy,
   ).run();
   const before = await newest(destination);
-  const stored = await asOf(
-    destination,
-    'SELECT id, committed_in, bytes FROM marts.raw_documents ORDER BY id',
-  );
+  // The commit is internal, so only the raw table shows it; this test proves it.
+  const stored = [
+    ...(await sql`SELECT id, committed_in, bytes FROM raw.documents ORDER BY id`),
+  ];
 
   await connection(
     {
@@ -1319,11 +1348,11 @@ test('the file of a document that a later pass deletes reads with its own bytes 
     { id: 'd2', text: 'kept' },
     { id: 'd3', text: 'new' },
   ]);
+  // The commit is internal, so only the raw table shows it; this test proves it.
   assert.deepEqual(
-    await asOf(
-      destination,
-      "SELECT id, committed_in, bytes FROM marts.raw_documents WHERE id = 'd2'",
-    ),
+    [
+      ...(await sql`SELECT id, committed_in, bytes FROM raw.documents WHERE id = 'd2'`),
+    ],
     stored.filter(({ id }) => id === 'd2'),
   );
 });

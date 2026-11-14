@@ -158,7 +158,7 @@ The shape of a stream is its fields and their types, and its declarations. The f
   - `CheckpointStore.reset(id)` keeps the stored rows and loads again from no checkpoint. This is the refresh of Airbyte that keeps records.
   - `pipeline.clear()` drops the rows. This is the Clear of Airbyte.
 - **A cursor field that the stream does not describe now** fails the copy before it reads. The copy must select a different cursor. That changes its binding, so the host also resets it.
-- **Stored nullability.** A stored table is `NOT NULL` only on `loaded_at` and on the explicit primary key columns, because a field that is added later has no value on earlier rows. The Postgres destination of Airbyte also adds columns as nullable, because it does not "know what constitutes a reasonable default value for preexisting records" ([source](https://github.com/airbytehq/airbyte/blob/f847ad015360face1837f5a77c64325f104157f0/airbyte-integrations/connectors/destination-postgres/src/main/kotlin/io/airbyte/integrations/destination/postgres/sql/PostgresDirectLoadSqlGenerator.kt#L608-L615)). The destination still checks each record that it writes for its required fields, and a deduplicating load refuses a NULL key or cursor.
+- **Stored nullability.** A stored table is `NOT NULL` only on `loaded_at`, on `committed_in` and on the explicit primary key columns, because a field that is added later has no value on earlier rows. The Postgres destination of Airbyte also adds columns as nullable, because it does not "know what constitutes a reasonable default value for preexisting records" ([source](https://github.com/airbytehq/airbyte/blob/f847ad015360face1837f5a77c64325f104157f0/airbyte-integrations/connectors/destination-postgres/src/main/kotlin/io/airbyte/integrations/destination/postgres/sql/PostgresDirectLoadSqlGenerator.kt#L608-L615)). The destination still checks each record that it writes for its required fields, and a deduplicating load refuses a NULL key or cursor.
 
 ### Target ownership
 
@@ -248,7 +248,7 @@ A SQL destination gives each column, table and reader view a name that it can ho
 6. A name that starts with a digit gets a `_` in front (`1st` becomes `_1st`).
 
 - Columns get their names in the order of the fields. When an earlier column has the name, the field gets `_1`, then `_2` and so on, after it (`a b` becomes `a_b`, and a later `a_b` becomes `a_b_1`).
-- The names that the destination writes come first. `loaded_at` is one in the two destinations. Postgres also has the system column names `xmin`, `xmax`, `cmin`, `cmax`, `ctid` and `tableoid`. Thus a field `loaded_at` becomes `loaded_at_1`.
+- The names that the destination writes come first. In the two destinations they are `loaded_at`, `committed_in`, `_elt_row_hash` and `replaced_in`. SQLite also has `_rowid_`, and Postgres has the system column names `xmin`, `xmax`, `cmin`, `cmax`, `ctid` and `tableoid`. Thus a field `loaded_at` becomes `loaded_at_1`.
 - Postgres compares names with their case. SQLite compares names without ASCII case, so `Foo` and `foo` become `Foo` and `foo_1`.
 - A table or view does not see the names of other tables. When the rule changes its name, the name gets `_` and the first 8 hex digits of the SHA-256 of the requested name (`dbo.a b` becomes `dbo_a_b_<hash>`). Thus two requested names never share a table.
 - Postgres keeps only 63 bytes of a name. A longer name keeps its first 54 bytes, then `_` and the first 8 hex digits of the SHA-256 of the field or the requested name. SQLite has no length limit.
@@ -973,7 +973,7 @@ Each source tells its answer in its README. Most sources answer `null`. These an
 Four clocks have different meanings:
 
 - The modification fields of a source record tell of changes in the upstream.
-- `loaded_at` tells of the load that last wrote a row.
+- `loaded_at` tells of the load that last wrote a row. It is the one column of its own that a destination shows to readers: a reader view shows the columns of the stream and `loaded_at`, now and as of a position. The other columns of the destination are internal ([SQLite](../destinations/sqlite/README.md#columns), [Postgres](../destinations/postgresql/README.md#reader-views)).
 - `last_successful_sync_at` tells when a recorded pass ended.
 - `current_as_of` tells when a stream last agreed with its upstream: the start of its last successful pass, or a later watch check that found it unchanged. It is never later than when its source tells that the upstream itself was last current. Use it to judge freshness.
 

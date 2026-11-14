@@ -8,28 +8,32 @@ import type { PostgresReaderView } from './postgres-table.ts';
 // view shows the target as it is now and no row of its history.
 const position = `coalesce(nullif(current_setting('elt.position', true), '')::integer, 2147483647)`;
 
-// The view readers see a target through: exactly the target's columns,
-// loaded_at and committed_in, created with the target and described by the
-// same comments. It reads the target as of the position its reader set: the
-// rows that the target had then, and that it still has or its history kept.
+// The view readers see a target through: exactly the stream's columns and
+// loaded_at, none of the internal ones, created with the target and
+// described by the comments of those columns. It reads the target as of the
+// position its reader set: the rows that the target had then, and that it
+// still has or its history kept.
 export class TargetReaderView {
   readonly #view: PostgresReaderView;
   // The target's and its history's qualified names, and the columns the
-  // view lists.
+  // view lists, with their comments.
   readonly #target: string;
   readonly #history: string;
   readonly #columns: readonly string[];
+  readonly #comments: TargetComments;
 
   constructor(
     view: PostgresReaderView,
     target: string,
     history: string,
     columns: readonly string[],
+    comments: TargetComments,
   ) {
     this.#view = view;
     this.#target = target;
     this.#history = history;
     this.#columns = columns;
+    this.#comments = comments;
     Object.freeze(this);
   }
 
@@ -68,7 +72,7 @@ export class TargetReaderView {
   // Created only when absent and never replaced by a commit: replacing a view
   // readers can see would lock them out. prepare refused any view not this
   // load's own.
-  async describe(sql: Transaction, comments: TargetComments): Promise<void> {
+  async describe(sql: Transaction): Promise<void> {
     const view = this.qualifiedName;
     const [existing] = await sql.unsafe(
       'SELECT to_regclass($1) IS NOT NULL AS "exists"',
@@ -80,7 +84,7 @@ export class TargetReaderView {
         `CREATE VIEW ${view} AS SELECT ${columns.join(', ')} FROM ${this.#target} WHERE "committed_in" <= ${position} UNION ALL SELECT ${columns.join(', ')} FROM ${this.#history} AS "_elt_old" WHERE "_elt_old"."committed_in" <= ${position} AND "_elt_old"."replaced_in" > ${position}`,
       );
     }
-    await comments.write(sql, 'VIEW', this.#view.schema, this.#view.name);
+    await this.#comments.write(sql, 'VIEW', this.#view.schema, this.#view.name);
   }
 
   async drop(sql: Transaction): Promise<void> {

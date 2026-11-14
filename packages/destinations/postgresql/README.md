@@ -75,7 +75,7 @@ Inferred columns follow the stream schema. The [string formats](../../elt/README
 - ISO dates count years astronomically, and Postgres does not. Thus the year `0000` loads as `0001 BC`, which is the same day. Each other year is written as it is given.
 - Explicit columns are `columns.text`, `integer`, `real`, `boolean`, `date`, `timestamp` and `blob(field)`, with `.notNull()` and `.primaryKey()`.
 - A plain `blob()` stores `BYTEA`. `blob().from(file)` keeps the original file in chunk tables, and `text().from(file).parse(parser)` stores the parsed text as `TEXT`. See [file bytes in the database](#file-bytes-in-the-database).
-- Table, view and column names follow the [naming rule](../../elt/README.md#names). Postgres compares names with their case, keeps 63 bytes of a name, and reserves `loaded_at`, `committed_in` and the system column names `xmin`, `xmax`, `cmin`, `cmax`, `ctid` and `tableoid`.
+- Table, view and column names follow the [naming rule](../../elt/README.md#names). Postgres compares names with their case, keeps 63 bytes of a name, and reserves `loaded_at`, `committed_in`, `replaced_in` and the system column names `xmin`, `xmax`, `cmin`, `cmax`, `ctid` and `tableoid`. The naming rule turns a field `_elt_row_hash` into `elt_row_hash`, so no field takes that name.
 
 ## File bytes in the database
 
@@ -195,10 +195,12 @@ A reading as of a position:
 
 ## Reader views
 
-`table.withReaderView(schema, name)` returns the same target. A load also shows it as the view `schema.name`, with the columns of the table, `loaded_at` and `committed_in`, and with the comments of the table.
+`table.withReaderView(schema, name)` returns the same target. A load also shows it as the view `schema.name`, with the external schema of the stream, its columns and `loaded_at`, and with the comments of the table.
+
+- `committed_in`, `_elt_row_hash` and `replaced_in` are internal: only the SQL of the destination reads them, for the history, the retention, the readings and the difference. The reader view does not show them, now or as of a position. Thus a column that the destination adds for itself changes nothing that a reader sees, as SQL Server hides the period columns of a temporal table that it marks `HIDDEN`. The raw table shows them; readers do not query it.
 
 - The load makes the view in the same commit as its table, so the view exists when the table exists. It follows inserts, updates and deletes, and it is not made again for them.
-- The stream needs a JSON Schema `description`, and each column needs one too. File columns, `loaded_at` and `committed_in` bring their own. A missing description fails the declaration of the copy before a connection reads.
+- The stream needs a JSON Schema `description`, and each column needs one too. File columns and `loaded_at` bring their own, and so does `committed_in` of the raw table. A missing description fails the declaration of the copy before a connection reads.
 - The schema must exist. In the [warehouse](../../../infra/README.md), `marts` is part of the contract of the reader, and default privileges make the view readable.
 - A load never replaces a view that exists, because a replace of a view that readers can see would lock them out. It only writes the comments again, which does not block readers.
 - A relation with the name of the view that is not a view of the table, or that has different columns, is refused before the load reads. The error names it.

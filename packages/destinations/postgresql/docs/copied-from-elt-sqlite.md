@@ -25,5 +25,7 @@ Paths on the left are in `packages/destinations/sqlite/src`. Paths on the right 
 
 ## Knowledge in both, written apart
 
+- The external schema: a reader sees the columns of a stream and `loaded_at`, and never `committed_in`, `_elt_row_hash` or `replaced_in`. SQLite keeps it in `shown` of `sqlite-writer.ts` (the reader view) and in `selectAsOf` of `sqlite-as-of.ts` (each view of a reading, `asOfSelect` and `asOfDefinitions`), which leaves out `internalColumns` of `sqlite-identifiers.ts`. Postgres keeps it in the columns of `TargetReaderView` that `postgres-writer.ts` gives, which are also its view of a position. A field cannot take one of these names: the `ownColumns` list of `sqlite-identifiers.ts` reserves them all. The list of `postgres-identifiers.ts` reserves `loaded_at`, `committed_in` and `replaced_in`, and its system columns; the Postgres naming rule already turns a field `_elt_row_hash` into `elt_row_hash`.
+
 - A load of a connector that is still open when a new load of the connector opens is closed by the new load. A closed load cannot commit. SQLite checks `closed_at` in the `INSERT` of the commit, because it runs one write transaction at a time. Postgres locks the row of the load `FOR SHARE`.
 - A clear is a load of one commit, which does not close the open loads of its connector.

@@ -227,19 +227,19 @@ export abstract class SQLiteWriter extends Writer {
     return hash('sha256', this.table.location);
   }
 
-  // What a reader reads of each row.
-  protected get fields(): string[] {
+  // What a reader sees of each row, its reader view's columns: the stream's
+  // columns and loaded_at, none of the internal ones.
+  protected get shown(): string[] {
     return [
       ...this.table.columns.map((column) => column.quotedName),
       '"loaded_at"',
-      '"committed_in"',
     ];
   }
 
-  // What a commit writes into each row: its fields, and the hash of its
-  // values.
+  // What a commit writes into each row: what a reader sees, the commit's
+  // number, and the hash of its values.
   protected get written(): string[] {
-    return [...this.fields, version];
+    return [...this.shown, '"committed_in"', version];
   }
 
   protected encode(record: unknown): SQLInputValue[] {
@@ -367,7 +367,8 @@ export abstract class SQLiteWriter extends Writer {
   }
 
   // What the table, its reader view and their columns say to readers,
-  // rewritten with every load so they follow the stream's schema.
+  // rewritten with every load so they follow the stream's schema. The reader
+  // view describes only the columns it shows.
   private describe(database: DatabaseSync): void {
     const dataTypes = new Map([
       ...this.table.columns.map(
@@ -376,30 +377,39 @@ export abstract class SQLiteWriter extends Writer {
       ['loaded_at', 'timestamp'] as const,
       ['committed_in', 'integer'] as const,
     ]);
-    const columns = Object.fromEntries(
-      Object.entries({
-        ...this.#description.columns,
-        loaded_at:
-          'Start time of the load that wrote these values of the row. A deduplicating load, an overwrite or a reload that brings the same values leaves the row, and its loaded_at, as they are. Not the source modification time or the most recent successful sync.',
+    const described = (descriptions: Readonly<Record<string, string | null>>) =>
+      Object.fromEntries(
+        Object.entries(descriptions).map(([name, description]) => [
+          name,
+          { description, dataType: dataTypes.get(name) },
+        ]),
+      );
+    const shown = {
+      ...this.#description.columns,
+      loaded_at:
+        'Start time of the load that wrote these values of the row. A deduplicating load, an overwrite or a reload that brings the same values leaves the row, and its loaded_at, as they are. Not the source modification time or the most recent successful sync.',
+    };
+    describe(
+      database,
+      this.table.name,
+      this.#description.table,
+      described({
+        ...shown,
         committed_in:
           'Number of the commit that last wrote this row: the row of _elt_commits with this number tells when, and in which load.',
-      }).map(([name, description]) => [
-        name,
-        { description, dataType: dataTypes.get(name) },
-      ]),
+      }),
     );
-    describe(database, this.table.name, this.#description.table, columns);
     if (this.table.readerView !== undefined)
       describe(
         database,
         this.table.readerView,
         this.#description.table,
-        columns,
+        described(shown),
       );
   }
 
   #viewDefinition(view: string): string {
-    return `CREATE VIEW ${quote(view)} AS SELECT ${this.fields.join(', ')} FROM ${this.table.quotedName}`;
+    return `CREATE VIEW ${quote(view)} AS SELECT ${this.shown.join(', ')} FROM ${this.table.quotedName}`;
   }
 
   // Refuses, before anything is read, a view of other columns or another

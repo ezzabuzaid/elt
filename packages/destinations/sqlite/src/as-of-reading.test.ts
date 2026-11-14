@@ -308,8 +308,9 @@ test('a reading of a commit inside a pass is refused, as it would show half of t
   const end = newest(destination);
   // A reader that names the commit of a row it read, here the first
   // checkpoint of the second pass, which is not a position.
-  const [written] = asOf(
-    destination,
+  // The commit is internal, so only the raw table shows it; this test proves it.
+  const [written] = storedRows(
+    destination.path,
     "SELECT committed_in FROM notes WHERE id = 'n2'",
   );
   const inside = `${before.split(':')[0]}:${written?.committed_in}`;
@@ -441,9 +442,10 @@ test('a deduplicated row whose values changed reads as it was at the position, f
     `${reading.at} is not ${first.committed_at}`,
   );
   assert.deepEqual(read, rows);
+  // The commit is internal, so only the raw table shows it; this test proves it.
   assert.deepEqual(
-    asOf(
-      destination,
+    storedRows(
+      destination.path,
       "SELECT body, committed_in, loaded_at FROM notes WHERE id = 'n1'",
     ),
     [
@@ -748,6 +750,13 @@ test('a keyless overwrite that sends one more copy of a stored row inserts only 
   await connection({ readings: [sample('r1', 1)] }, overwrite).run();
   const before = newest(destination);
   const rows = asOf(destination, 'SELECT * FROM readings');
+  // The commit is internal, so only the raw table shows it; this test proves it.
+  const stored = () =>
+    storedRows(
+      destination.path,
+      'SELECT id, value, loaded_at, committed_in FROM readings ORDER BY committed_in',
+    );
+  const first = stored();
   await delay(5);
 
   await connection(
@@ -757,17 +766,14 @@ test('a keyless overwrite that sends one more copy of a stored row inserts only 
   const last = lastCommit(destination);
 
   assert.deepEqual(replaced(destination, 'readings'), []);
-  assert.deepEqual(
-    asOf(destination, 'SELECT * FROM readings ORDER BY committed_in'),
-    [
-      ...rows,
-      ...rows.map((row) => ({
-        ...row,
-        committed_in: last.number,
-        loaded_at: last.opened_at,
-      })),
-    ],
-  );
+  assert.deepEqual(stored(), [
+    ...first,
+    ...first.map((row) => ({
+      ...row,
+      committed_in: last.number,
+      loaded_at: last.opened_at,
+    })),
+  ]);
   assert.deepEqual(asOf(destination, 'SELECT * FROM readings', before), rows);
 });
 
@@ -856,6 +862,13 @@ test('a reload that keeps the shape of the table keeps only the row that left in
   }).run();
   const before = newest(destination);
   const rows = asOf(destination, 'SELECT * FROM notes ORDER BY id');
+  // The commit is internal, so only the raw table shows it; this test proves it.
+  const stored = () =>
+    storedRows(
+      destination.path,
+      'SELECT id, committed_in, loaded_at FROM notes ORDER BY id',
+    );
+  const first = stored();
   await delay(5);
 
   await connection({
@@ -880,22 +893,10 @@ test('a reload that keeps the shape of the table keeps only the row that left in
     ),
     [],
   );
-  assert.deepEqual(
-    asOf(
-      destination,
-      'SELECT id, committed_in, loaded_at FROM notes ORDER BY id',
-    ),
-    [
-      ...rows
-        .filter(({ id }) => id === 'n1')
-        .map(({ id, committed_in, loaded_at }) => ({
-          id,
-          committed_in,
-          loaded_at,
-        })),
-      { id: 'n3', committed_in: last.number, loaded_at: last.opened_at },
-    ],
-  );
+  assert.deepEqual(stored(), [
+    ...first.filter(({ id }) => id === 'n1'),
+    { id: 'n3', committed_in: last.number, loaded_at: last.opened_at },
+  ]);
   assert.deepEqual(
     asOf(destination, 'SELECT * FROM notes ORDER BY id', before),
     rows,
@@ -1273,7 +1274,7 @@ test('a reading sees none of the commits made after it opened', async () => {
   );
 });
 
-test('a reading at the newest commit reads the tables as they are, the sync history too, at the time of that commit, and disposing it closes it', async () => {
+test('a reading at the newest commit reads the rows of the tables as they are, with only the fields of the stream and loaded_at, the sync history too, at the time of that commit, and disposing it closes it', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-as-of-');
   const { destination, connection } = notesFile(scratch.path);
   await connection({
@@ -1283,16 +1284,22 @@ test('a reading at the newest commit reads the tables as they are, the sync hist
   const reading = destination.reading(newest(destination));
   if ('expired' in reading) assert.fail(reading.expired);
 
-  const temporary = reading.sql
-    .prepare('SELECT name FROM temp.sqlite_schema')
-    .all();
+  const shown = reading.sql
+    .prepare('SELECT * FROM notes')
+    .columns()
+    .map(({ name }) => name);
+  const rows = reading.sql
+    .prepare('SELECT id, version, body FROM notes')
+    .all()
+    .map((row) => ({ ...row }));
   const attempts = reading.sql
     .prepare('SELECT status FROM sync_attempts')
     .all()
     .map((row) => ({ ...row }));
   reading[Symbol.dispose]();
 
-  assert.deepEqual(temporary, []);
+  assert.deepEqual(shown, ['id', 'version', 'body', 'loaded_at']);
+  assert.deepEqual(rows, [{ id: 'n1', version: 1, body: 'n1' }]);
   assert.deepEqual(attempts, [{ status: 'succeeded' }]);
   assert.ok(
     reading.at.equals(Temporal.Instant.from(String(last.committed_at))),
@@ -1447,8 +1454,12 @@ test('a document whose file changed, or whose fields changed beside the same fil
   ).run();
   const last = lastCommit(destination);
 
+  // The commit is internal, so only the raw table shows it; this test proves it.
   assert.deepEqual(
-    asOf(destination, 'SELECT id, committed_in FROM documents ORDER BY id'),
+    storedRows(
+      destination.path,
+      'SELECT id, committed_in FROM documents ORDER BY id',
+    ),
     [
       { id: 'd1', committed_in: last.number },
       { id: 'd2', committed_in: last.number },

@@ -17,8 +17,12 @@ The table that a copy loads, for example `raw_documents`.
 _Avoid_: Staging table, source table
 
 **Reader view**:
-The view that a copy makes over its raw table with `withReaderView`, for example `documents`. Readers query it.
+The view that a copy makes over its raw table with `withReaderView`, for example `documents`. Readers query it. It shows the external schema of the stream.
 _Avoid_: View (a `View` is a derived dataset)
+
+**External schema**:
+The columns that a reader sees of a stream: its columns and `loaded_at`, or the key, the engine columns and the rule columns of a computed dataset. A reader view, a reading, `asOfSelect` and `asOfDefinitions` show exactly these. The internal columns `committed_in`, `_elt_row_hash`, `replaced_in` and `_rowid_` are for the SQL of the destination only.
+_Avoid_: Public columns, visible columns
 
 **Catalog**:
 The view `catalog` that lists each table, view and column of the SQLite file, with its description.
@@ -77,7 +81,7 @@ _Avoid_: Generation, version
 _Avoid_: Offset, cursor (eca keeps a cursor), checkpoint
 
 **Row hash**:
-`_elt_row_hash`: the SHA-256 of the values of the columns of a row. A file in the SQLite file counts by the SHA-256 of its bytes, not by its file id. It is null in a row that lost or changed a value when its table evolved, until a commit writes the row again. A deduplicating load that finds a stored row with the same row hash leaves that row as it is, and so does a difference.
+`_elt_row_hash`: the SHA-256 of the values of the columns of a row, an internal column. A file in the SQLite file counts by the SHA-256 of its bytes, not by its file id. It is null in a row that lost or changed a value when its table evolved, until a commit writes the row again. A deduplicating load that finds a stored row with the same row hash leaves that row as it is, and so does a difference.
 _Avoid_: Checksum, version, input hash (a computed dataset keeps an input hash)
 
 **File id**:
@@ -89,11 +93,11 @@ How an overwrite or a reload replaces the rows of a raw table. It compares the r
 _Avoid_: Diff, merge (a commit merges the stage), sync
 
 **History**:
-The table `_elt_history_<hash>` that keeps the rows of a raw table that commits changed or removed. Each row has `replaced_in`, the number of the commit that changed or removed it. The file of a row of the history stays, in the SQLite file and in a file storage.
+The table `_elt_history_<hash>` that keeps the rows of a raw table that commits changed or removed. Each row has `replaced_in`, an internal column, the number of the commit that changed or removed it. The file of a row of the history stays, in the SQLite file and in a file storage.
 _Avoid_: Audit log, archive, changelog
 
 **Reading**:
-A read-only connection to the SQLite file as of one position. Each raw table, reader view and view shows the rows that the commit of the position left. The sync history cannot be read in it.
+A read-only connection to the SQLite file as of one position. Each raw table, reader view and view shows the rows that the commit of the position left, with the external schema. The sync history cannot be read in it.
 _Avoid_: Snapshot (SQLite gives each read transaction a snapshot), time travel, version
 
 **Views of a position**:

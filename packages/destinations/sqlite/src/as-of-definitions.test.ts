@@ -210,9 +210,7 @@ test('the views of a position read each target, its reader view and a View over 
   const position = newest(destination);
   await pass([note('n1', 3, 'e'), note('n3', 1, 'f'), checkpoint(3)]);
   const expected = {
-    target: asOf(destination, 'SELECT * FROM raw_notes', position).map(
-      ({ _elt_row_hash: _, ...row }) => row,
-    ),
+    target: asOf(destination, 'SELECT * FROM raw_notes', position),
     reader: asOf(destination, 'SELECT * FROM notes ORDER BY id', position),
     list: asOf(destination, 'SELECT * FROM body_list', position),
   };

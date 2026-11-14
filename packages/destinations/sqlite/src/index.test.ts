@@ -217,7 +217,6 @@ test('the macOS sqlite3 shell reads the catalog of a loaded file: every describe
     rows.map(({ kind, name }: { kind: string; name: string }) => [kind, name]),
     [
       ['view', 'records'],
-      ['column', 'records.committed_in'],
       ['column', 'records.id'],
       ['column', 'records.loaded_at'],
       ['column', 'records.name'],
@@ -3097,7 +3096,6 @@ test('explicit int64 and local timestamp columns keep what the stream spells, wi
         .map(({ name, data_type }) => [name, data_type]),
     ),
     {
-      'bookings.committed_in': 'integer',
       'bookings.id': 'int64',
       'bookings.loaded_at': 'timestamp',
       'bookings.start': 'local_timestamp(7)',
@@ -6170,7 +6168,6 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
       'ledger.bytes': 'blob',
       'ledger.clock': 'local_time(0)',
       'ledger.id': 'int64',
-      'ledger.committed_in': 'integer',
       'ledger.loaded_at': 'timestamp',
       'ledger.local': 'local_timestamp(7)',
       'ledger.version': 'int64',

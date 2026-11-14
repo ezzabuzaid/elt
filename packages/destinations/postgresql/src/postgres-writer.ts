@@ -94,7 +94,8 @@ export abstract class PostgresWriter extends Writer {
         table.readerView,
         this.qualifiedName,
         this.#history.qualifiedName,
-        [...table.columns.map(({ name }) => name), 'loaded_at', 'committed_in'],
+        [...table.columns.map(({ name }) => name), 'loaded_at'],
+        new TargetComments(description.table, description.columns),
       );
     if (table.readerView === undefined) return;
     const { missing } = description;
@@ -300,7 +301,7 @@ export abstract class PostgresWriter extends Writer {
     await this.#history.create(sql, this.qualifiedName, change);
     await this.#comments.write(sql, 'TABLE', this.schema, this.table.name);
     if (this.#view === undefined) return;
-    await this.#view.describe(sql, this.#comments);
+    await this.#view.describe(sql);
   }
 
   // The field's values in each of the tables and in the history: while a

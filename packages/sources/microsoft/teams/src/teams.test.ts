@@ -1010,15 +1010,12 @@ function rows(path: string, sql: string) {
     .map((row) => ({ ...row }));
 }
 
-// A stream's rows as a consumer reads them: every column but the three that
-// the destination adds to each row (when it loaded the row, in which commit,
-// and the hash of the row's values).
-const added = new Set(['loaded_at', 'committed_in', '_elt_row_hash']);
-
+// A stream's rows as a consumer reads them, from its reader view: every
+// column but loaded_at, when the load wrote the row.
 function table(path: string, name: string, order: string) {
   const columns = rows(path, `SELECT name FROM pragma_table_info('${name}')`)
     .map((column) => String(column.name))
-    .filter((column) => !added.has(column));
+    .filter((column) => column !== 'loaded_at');
   return rows(
     path,
     `SELECT ${columns.map((column) => `"${column}"`).join(', ')} FROM "${name}" ORDER BY ${order}`,
@@ -1048,11 +1045,17 @@ async function pipeline(
         }),
         steps: streams.map(
           (stream: Stream) =>
-            new Copy(stream, destination.table(stream.name), {
-              id: stream.name,
-              syncMode: 'incremental',
-              destinationSyncMode: 'append_dedup',
-            }),
+            new Copy(
+              stream,
+              destination
+                .table(`raw_${stream.name}`)
+                .withReaderView(stream.name),
+              {
+                id: stream.name,
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+              },
+            ),
         ),
       }),
     ],

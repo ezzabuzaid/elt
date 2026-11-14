@@ -13,7 +13,7 @@ The table that a copy loads, for example `google_search_console.raw_sitemaps`. R
 _Avoid_: Staging table, source table
 
 **Reader view**:
-The view that a load keeps of a raw table in a different schema, with `withReaderView`, for example `marts.search_console_sitemaps`. It has the columns and the comments of the table.
+The view that a load keeps of a raw table in a different schema, with `withReaderView`, for example `marts.search_console_sitemaps`. It shows the external schema of the stream, its columns and `loaded_at`, with their comments. The internal columns `committed_in`, `_elt_row_hash` and `replaced_in` are for the SQL of the destination only.
 _Avoid_: Mart (a mart is the schema `marts`), documented view
 
 **Documented view**:
