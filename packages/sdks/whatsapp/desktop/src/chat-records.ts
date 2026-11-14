@@ -50,6 +50,8 @@ export type MessageKey = {
 // message has one of, holding its file, link preview, contact card or place
 // and its metadata.
 export type Message = MessageKey & {
+  // How many earlier rows hold the same key: 0 for the message's first row.
+  readonly copy: number;
   readonly fromJid: string | null;
   readonly toJid: string | null;
   readonly groupMemberJid: string | null;
@@ -100,6 +102,8 @@ export type MediaItem = {
 
 // A link or other item WhatsApp found in a message (ZWAMESSAGEDATAITEM).
 export type MessageDataItem = MessageKey & {
+  // The copy of the message the item is on, as Message.copy counts it.
+  readonly messageCopy: number;
   readonly index: number;
   readonly type: number | null;
   readonly date: string | null;

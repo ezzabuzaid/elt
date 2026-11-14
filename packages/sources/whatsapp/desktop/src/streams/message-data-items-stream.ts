@@ -23,6 +23,12 @@ const column = (what: string, name: string) =>
 
 const properties = {
   ...messageKeyFields,
+  messageCopy: {
+    ...integer,
+    minimum: 0,
+    description:
+      'The row of the message the link is on: 0 for the row messages loads, else messageCopies.copy.',
+  },
   index: {
     ...integer,
     minimum: 0,
@@ -94,11 +100,16 @@ export class MessageDataItemsStream extends WhatsAppStream<
   readonly store = 'chatStorage';
   // WhatsApp files several links of one message under one index, so the link
   // tells them apart.
-  readonly primaryKey = [...messageKeyColumns, 'index', 'content1'];
+  readonly primaryKey = [
+    ...messageKeyColumns,
+    'messageCopy',
+    'index',
+    'content1',
+  ];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per link WhatsApp found in a message, as its chat’s Links list shows them, with the linked page’s title and description. Primary key chatJid, messageIsFromMe, messageStanzaId, index, content1.',
+      'One record per link WhatsApp found in a message, as its chat’s Links list shows them, with the linked page’s title and description. Primary key chatJid, messageIsFromMe, messageStanzaId, messageCopy, index, content1.',
     properties,
     required: Object.keys(properties),
   } as const;

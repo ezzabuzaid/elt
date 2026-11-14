@@ -57,7 +57,7 @@ export class MessageReceiptsStream extends WhatsAppMessageStream<
   } as const;
 
   protected *messageRows(message: Message): Generator<OnMessage<Receipt>> {
-    if (message.receiptInfo !== null)
+    if (message.copy === 0 && message.receiptInfo !== null)
       for (const item of new ReceiptInfo(message.receiptInfo).receipts)
         yield { message, item };
   }

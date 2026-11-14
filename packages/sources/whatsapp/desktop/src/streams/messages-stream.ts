@@ -21,7 +21,8 @@ const {
 const media = (what: string, column: string) =>
   `${what} (ZWAMEDIAITEM.${column}); NULL when not stored.`;
 
-const properties = {
+// A message's columns, which messageCopies shares.
+export const messageProperties = {
   chatJid: {
     ...jid,
     description: 'The chat the message is in; refers to chats.jid.',
@@ -34,7 +35,7 @@ const properties = {
     ...text,
     minLength: 1,
     description:
-      'The ID its sender gave the message (ZSTANZAID); with chatJid and isFromMe, the primary key, as WhatsApp keys a message.',
+      'The ID its sender gave the message (ZSTANZAID); with chatJid and isFromMe, the key WhatsApp names a message by.',
   },
   senderJid: {
     ...nullableJid,
@@ -261,8 +262,62 @@ const properties = {
 const person = (jid: string | null) =>
   jid !== null && /@(s\.whatsapp\.net|lid)$/.test(jid) ? jid : null;
 
+// A message row as a record; messageCopies adds which copy it is.
+export function messageRecord({
+  copy: _copy,
+  media: item,
+  quoted,
+  receiptInfo,
+  groupMemberJid,
+  fromJid,
+  ...message
+}: Message): RecordDraft<typeof messageProperties> {
+  return {
+    ...message,
+    senderJid: message.isFromMe ? null : (groupMemberJid ?? person(fromJid)),
+    fromJid,
+    groupMemberJid,
+    quotedStanzaId: quoted?.stanzaId ?? null,
+    quotedSenderJid: quoted?.senderJid ?? null,
+    mediaLocalPath: item?.mediaLocalPath ?? null,
+    mediaAvailableLocally: (item?.mediaFile ?? null) !== null,
+    thumbnailLocalPath: item?.thumbnailLocalPath ?? null,
+    mediaUrl: item?.mediaUrl ?? null,
+    mediaUrlDate: item?.mediaUrlDate ?? null,
+    fileSize: item?.fileSize ?? null,
+    movieDuration: item?.movieDuration ?? null,
+    aspectRatio: item?.aspectRatio ?? null,
+    title: item?.title ?? null,
+    authorName: item?.authorName ?? null,
+    collectionName: item?.collectionName ?? null,
+    vCardName: item?.vCardName ?? null,
+    vCardString: item?.vCardString ?? null,
+    latitude: item?.latitude ?? null,
+    longitude: item?.longitude ?? null,
+    hAccuracy: item?.hAccuracy ?? null,
+    mediaOrigin: item?.mediaOrigin ?? null,
+    cloudStatus: item?.cloudStatus ?? null,
+    metadata: base64(item?.metadata ?? null),
+    receiptInfo: base64(receiptInfo),
+  };
+}
+
+// The original file, not a staged copy: WhatsApp media reaches gigabytes
+// and readers only read it.
+export function messageFile(
+  {
+    mediaLocalPath,
+    mediaAvailableLocally,
+  }: SchemaRecord<typeof messageProperties>,
+  scan: WhatsAppScan,
+): string | null {
+  return mediaAvailableLocally && mediaLocalPath !== null
+    ? messageMediaFile(scan.container, mediaLocalPath)
+    : null;
+}
+
 export class MessagesStream extends WhatsAppMessageStream<
-  typeof properties,
+  typeof messageProperties,
   Message
 > {
   readonly name = 'messages';
@@ -271,61 +326,23 @@ export class MessagesStream extends WhatsAppMessageStream<
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per WhatsApp message in a chat this Mac holds, with its media item: the file, link preview, contact card or place it carries. Primary key chatJid, isFromMe, stanzaId. WhatsApp writes the store only while it runs, so a message reaches it once WhatsApp has run since. A second copy of a message stands as the first; a message WhatsApp keeps with no chat belongs to no conversation and is not read.',
-    properties,
-    required: Object.keys(properties),
+      'One record per WhatsApp message in a chat this Mac holds, with its media item: the file, link preview, contact card or place it carries. Primary key chatJid, isFromMe, stanzaId. WhatsApp writes the store only while it runs, so a message reaches it once WhatsApp has run since. A message WhatsApp keeps on more than one row loads from its first row, and messageCopies holds the others; a message WhatsApp keeps with no chat belongs to no conversation and is not read.',
+    properties: messageProperties,
+    required: Object.keys(messageProperties),
   } as const;
 
   protected *messageRows(message: Message): Generator<Message> {
-    yield message;
+    if (message.copy === 0) yield message;
   }
 
-  protected record({
-    media: item,
-    quoted,
-    receiptInfo,
-    groupMemberJid,
-    fromJid,
-    ...message
-  }: Message): RecordDraft<typeof properties> {
-    return {
-      ...message,
-      senderJid: message.isFromMe ? null : (groupMemberJid ?? person(fromJid)),
-      fromJid,
-      groupMemberJid,
-      quotedStanzaId: quoted?.stanzaId ?? null,
-      quotedSenderJid: quoted?.senderJid ?? null,
-      mediaLocalPath: item?.mediaLocalPath ?? null,
-      mediaAvailableLocally: (item?.mediaFile ?? null) !== null,
-      thumbnailLocalPath: item?.thumbnailLocalPath ?? null,
-      mediaUrl: item?.mediaUrl ?? null,
-      mediaUrlDate: item?.mediaUrlDate ?? null,
-      fileSize: item?.fileSize ?? null,
-      movieDuration: item?.movieDuration ?? null,
-      aspectRatio: item?.aspectRatio ?? null,
-      title: item?.title ?? null,
-      authorName: item?.authorName ?? null,
-      collectionName: item?.collectionName ?? null,
-      vCardName: item?.vCardName ?? null,
-      vCardString: item?.vCardString ?? null,
-      latitude: item?.latitude ?? null,
-      longitude: item?.longitude ?? null,
-      hAccuracy: item?.hAccuracy ?? null,
-      mediaOrigin: item?.mediaOrigin ?? null,
-      cloudStatus: item?.cloudStatus ?? null,
-      metadata: base64(item?.metadata ?? null),
-      receiptInfo: base64(receiptInfo),
-    };
+  protected record(message: Message): RecordDraft<typeof messageProperties> {
+    return messageRecord(message);
   }
 
-  // The original file, not a staged copy: WhatsApp media reaches gigabytes
-  // and readers only read it.
   override file(
-    { mediaLocalPath, mediaAvailableLocally }: SchemaRecord<typeof properties>,
+    record: SchemaRecord<typeof messageProperties>,
     scan: WhatsAppScan,
   ): string | null {
-    return mediaAvailableLocally && mediaLocalPath !== null
-      ? messageMediaFile(scan.container, mediaLocalPath)
-      : null;
+    return messageFile(record, scan);
   }
 }

@@ -28,8 +28,8 @@ const messageId = ({ chatJid, isFromMe, stanzaId }: MessageKey) =>
   JSON.stringify([chatJid, isFromMe, stanzaId]);
 
 // The first of the rows sharing a key stands for all of them: WhatsApp keeps
-// a second copy of a few messages and group member changes, and a second,
-// empty session for a few chats.
+// a second copy of a few group member changes, and a second, empty session
+// for a few chats.
 export function* unique<T>(
   rows: Iterable<T>,
   key: (row: T) => string,
@@ -197,19 +197,16 @@ export class ChatStorageRecords {
     return selected(this.#scope.collectionIds, jid);
   }
 
-  #selected<T extends MessageKey & { readonly messageDate: string | null }>(
+  *#selected<T extends MessageKey & { readonly messageDate: string | null }>(
     rows: IteratorObject<T>,
   ): Generator<T> {
-    return unique(
-      rows.filter(
-        ({ chatJid, messageDate }) =>
-          this.#chat(chatJid) &&
-          withinDates(
-            this.#scope,
-            messageDate === null ? null : toMilliseconds(messageDate),
-          ),
-      ),
-      messageId,
+    yield* rows.filter(
+      ({ chatJid, messageDate }) =>
+        this.#chat(chatJid) &&
+        withinDates(
+          this.#scope,
+          messageDate === null ? null : toMilliseconds(messageDate),
+        ),
     );
   }
 }

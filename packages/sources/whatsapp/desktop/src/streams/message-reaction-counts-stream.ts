@@ -43,7 +43,7 @@ export class MessageReactionCountsStream extends WhatsAppMessageStream<
   protected *messageRows(
     message: Message,
   ): Generator<OnMessage<ReactionCount>> {
-    if (message.receiptInfo !== null)
+    if (message.copy === 0 && message.receiptInfo !== null)
       for (const item of new ReceiptInfo(message.receiptInfo).reactionCounts)
         yield { message, item };
   }

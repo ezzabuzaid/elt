@@ -55,6 +55,7 @@ const stores = {
       CREATE TABLE ZWAGROUPMEMBERSCHANGE ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZCHANGETYPE INTEGER, ZCHANGEDATE TIMESTAMP, ZGROUPJID VARCHAR, ZMEMBERJIDS VARCHAR, ZPHASHBEFORECHANGE VARCHAR );
       CREATE TABLE ZWAMEDIAITEM ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZCLOUDSTATUS INTEGER, ZFILESIZE INTEGER, ZMEDIAORIGIN INTEGER, ZMOVIEDURATION INTEGER, ZMESSAGE INTEGER, ZASPECTRATIO FLOAT, ZHACCURACY FLOAT, ZLATITUDE FLOAT, ZLONGITUDE FLOAT, ZMEDIAURLDATE TIMESTAMP, ZAUTHORNAME VARCHAR, ZCOLLECTIONNAME VARCHAR, ZMEDIALOCALPATH VARCHAR, ZMEDIAURL VARCHAR, ZTHUMBNAILLOCALPATH VARCHAR, ZTITLE VARCHAR, ZVCARDNAME VARCHAR, ZVCARDSTRING VARCHAR, ZXMPPTHUMBPATH VARCHAR, ZMEDIAKEY BLOB, ZMETADATA BLOB );
       CREATE TABLE ZWAMESSAGE ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZCHILDMESSAGESDELIVEREDCOUNT INTEGER, ZCHILDMESSAGESPLAYEDCOUNT INTEGER, ZCHILDMESSAGESREADCOUNT INTEGER, ZDATAITEMVERSION INTEGER, ZDOCID INTEGER, ZENCRETRYCOUNT INTEGER, ZFILTEREDRECIPIENTCOUNT INTEGER, ZFLAGS INTEGER, ZGROUPEVENTTYPE INTEGER, ZISFROMME INTEGER, ZMESSAGEERRORSTATUS INTEGER, ZMESSAGESTATUS INTEGER, ZMESSAGETYPE INTEGER, ZSORT INTEGER, ZSPOTLIGHTSTATUS INTEGER, ZSTARRED INTEGER, ZCHATSESSION INTEGER, ZGROUPMEMBER INTEGER, ZLASTSESSION INTEGER, ZMEDIAITEM INTEGER, ZMESSAGEINFO INTEGER, ZPARENTMESSAGE INTEGER, ZMESSAGEDATE TIMESTAMP, ZSENTDATE TIMESTAMP, ZFROMJID VARCHAR, ZMEDIASECTIONID VARCHAR, ZPHASH VARCHAR, ZPUSHNAME VARCHAR, ZSTANZAID VARCHAR, ZTEXT VARCHAR, ZTOJID VARCHAR );
+      CREATE INDEX Z_WAMessage_byStanzaIDIndex ON ZWAMESSAGE (ZSTANZAID COLLATE BINARY ASC);
       CREATE TABLE ZWAMESSAGEDATAITEM ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZINDEX INTEGER, ZOWNSTHUMBNAIL INTEGER, ZTYPE INTEGER, ZMESSAGE INTEGER, ZDATE TIMESTAMP, ZCHATJID VARCHAR, ZCONTENT1 VARCHAR, ZCONTENT2 VARCHAR, ZMATCHEDTEXT VARCHAR, ZSECTIONID VARCHAR, ZSENDERJID VARCHAR, ZSUMMARY VARCHAR, ZTHUMBNAILPATH VARCHAR, ZTITLE VARCHAR );
       CREATE TABLE ZWAMESSAGEINFO ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZMESSAGE INTEGER, ZRECEIPTINFO BLOB );
       CREATE TABLE ZWAPROFILEPICTUREITEM ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZREQUESTDATE TIMESTAMP, ZJID VARCHAR, ZPATH VARCHAR, ZPICTUREID VARCHAR );
@@ -145,6 +146,7 @@ const streamsOf: Record<Store, readonly string[]> = {
     'chats',
     'groupMembers',
     'groupMembersChanges',
+    'messageCopies',
     'messageDataItems',
     'messageReactionCounts',
     'messageReactions',
@@ -1655,6 +1657,7 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
       chatJid: group,
       messageIsFromMe: 1,
       messageStanzaId: 'G3',
+      messageCopy: 0,
       index: 0,
       type: 0,
       date: '2026-10-04T09:00:00.000000Z',
@@ -1819,6 +1822,82 @@ test('a group change WhatsApp keeps twice loads once, beside changes that differ
       { ...loaded, groupJid: '120363000000000002@g.us' },
       { ...loaded, changeType: 5 },
       { ...loaded, changeDate: '2026-09-01T08:00:01.000000Z' },
+    ],
+  );
+});
+
+test('a message WhatsApp keeps on two rows loads its first row in messages and the second in messageCopies, each with its own sort, receipts and links', async () => {
+  const { dir, whatsapp, out } = await scratch();
+  await using _ = dir;
+  // The fixture's photo G1 is on rows 4 and 5, as a live store keeps one
+  // message: the same key, type, date and media, a different sort and media
+  // row. Like the live pair, each row has its own message info with the same
+  // receipts; each also holds the same link.
+  whatsapp.exec(
+    'chatStorage',
+    `INSERT INTO ZWAMESSAGEINFO (Z_PK, Z_ENT, Z_OPT, ZMESSAGE, ZRECEIPTINFO)
+       SELECT 3, 11, 1, 4, ZRECEIPTINFO FROM ZWAMESSAGEINFO WHERE Z_PK = 1;
+     INSERT INTO ZWAMESSAGEINFO (Z_PK, Z_ENT, Z_OPT, ZMESSAGE, ZRECEIPTINFO)
+       SELECT 4, 11, 1, 5, ZRECEIPTINFO FROM ZWAMESSAGEINFO WHERE Z_PK = 1;
+     UPDATE ZWAMESSAGE SET ZMESSAGEINFO = Z_PK - 1 WHERE Z_PK IN (4, 5);`,
+  );
+  for (const pk of [4, 5])
+    whatsapp.insert('chatStorage', 'ZWAMESSAGEDATAITEM', {
+      Z_PK: pk,
+      Z_ENT: 10,
+      ZMESSAGE: pk,
+      ZINDEX: 0,
+      ZTYPE: 0,
+      ZCONTENT1: 'https://example.org/lake',
+    });
+
+  const results = await (
+    await pipeline(
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
+      dir.path,
+    )
+  ).run();
+
+  assert.deepEqual(counts(results).messageCopies, { count: 1, deleted: 0 });
+  const [first] = rows(out, "SELECT * FROM messages WHERE stanzaId = 'G1'");
+  assert.equal(first?.sort, 4);
+  assert.deepEqual(
+    table(out, 'messageCopies', 'copy').map(({ attachmentRef, ...row }) => ({
+      ...row,
+      attachmentRef: typeof attachmentRef,
+    })),
+    [
+      {
+        ...Object.fromEntries(
+          Object.entries(first ?? {}).filter(
+            ([column]) => column !== 'loaded_at',
+          ),
+        ),
+        attachmentRef: 'string',
+        sort: 40,
+        copy: 1,
+      },
+    ],
+  );
+  assert.ok(first?.receiptInfo instanceof Uint8Array);
+  assert.deepEqual(
+    rows(
+      out,
+      `SELECT count(*) AS n FROM messageReceipts WHERE messageStanzaId = 'G1'`,
+    ),
+    rows(
+      out,
+      `SELECT count(*) AS n FROM messageReceipts WHERE messageStanzaId = 'B1'`,
+    ),
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      `SELECT messageCopy, content1 FROM messageDataItems WHERE messageStanzaId = 'G1' ORDER BY messageCopy`,
+    ),
+    [
+      { messageCopy: 0, content1: 'https://example.org/lake' },
+      { messageCopy: 1, content1: 'https://example.org/lake' },
     ],
   );
 });
@@ -2441,6 +2520,7 @@ test('a blob this reader cannot decode fails the streams decoded from it and kee
       'UPDATE ZWAMEDIAITEM SET ZMETADATA = ?, Z_OPT = Z_OPT + 1 WHERE Z_PK = 2',
       { metadata: Uint8Array.from([0x2a, 0x10, 0x41]) },
       [
+        'messageCopies',
         'messageReactionCounts',
         'messageReactions',
         'messageReceipts',
@@ -3263,6 +3343,10 @@ test('this Mac’s WhatsApp loads every stream of each store it holds', async (t
         'SELECT count(*) AS n FROM (SELECT DISTINCT chat.ZCONTACTJID, message.ZISFROMME, message.ZSTANZAID FROM ZWAMESSAGE AS message JOIN ZWACHATSESSION AS chat ON chat.Z_PK = message.ZCHATSESSION)',
       ],
       [
+        'messageCopies',
+        'SELECT count(*) - count(DISTINCT json_array(chat.ZCONTACTJID, message.ZISFROMME, message.ZSTANZAID)) AS n FROM ZWAMESSAGE AS message JOIN ZWACHATSESSION AS chat ON chat.Z_PK = message.ZCHATSESSION',
+      ],
+      [
         'groupMembers',
         'SELECT count(*) AS n FROM ZWAGROUPMEMBER AS member JOIN ZWACHATSESSION AS chat ON chat.Z_PK = member.ZCHATSESSION',
       ],
@@ -3498,6 +3582,7 @@ test('a value WhatsApp always stores but left empty fails the streams read from 
       'chatStorage',
       'UPDATE ZWAMESSAGE SET ZMESSAGETYPE = NULL, Z_OPT = Z_OPT + 1 WHERE Z_PK = 1',
       [
+        'messageCopies',
         'messageReactionCounts',
         'messageReactions',
         'messageReceipts',
@@ -3518,6 +3603,7 @@ test('a value WhatsApp always stores but left empty fails the streams read from 
         'chatStorage',
         `UPDATE ${table} SET Z_OPT = NULL WHERE Z_PK = 1`,
         [
+          'messageCopies',
           'messageReactionCounts',
           'messageReactions',
           'messageReceipts',
@@ -3694,7 +3780,7 @@ test('shared metadata respects combined chat and date scopes, empty scopes and d
         startAt: '2026-10-03T08:00:00.000Z',
         endAt: '2026-10-04T09:00:00.000Z',
       },
-      ['4', '6'],
+      ['4', '5', '6'],
       0,
     ],
     [{ collectionIds: [] }, [], 0],
@@ -3796,7 +3882,7 @@ test('cancelling a metadata build or replay publishes no partial checkpoint and 
     }
     assert.deepEqual(
       [...recovered],
-      catalog.map(({ stream }) => [stream.name, 7]),
+      catalog.map(({ stream }) => [stream.name, 8]),
     );
     // Closing the consumer early also closes the underlying SQLite iterators.
     for await (const message of source.read(catalog, new Map(), {

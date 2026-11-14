@@ -84,6 +84,7 @@ The group container needs Full Disk Access (see [Full Disk Access](../../apple/m
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `chats`                 | chat: a person, a group, a community's group, a channel, a broadcast list, a contact's statuses, with a group's details |
 | `messages`              | message, with its media item: file, link preview, contact card or place                                                 |
+| `messageCopies`         | further row WhatsApp keeps a message on, with every column of `messages`                                                |
 | `messageReceipts`       | recipient a message's receipts name, with when it was delivered, read and played                                        |
 | `messageReactions`      | reaction to a message, a withdrawn one with no emoji                                                                    |
 | `messageReactionCounts` | emoji people reacted with to a channel post, with how many                                                              |
@@ -121,7 +122,8 @@ WhatsApp names a person by a JID: `<number>@s.whatsapp.net` by phone number, or 
 
 A message has the key that WhatsApp gives it: its chat's JID, whether this account sent it, and the stanza ID that its sender gave it.
 
-- WhatsApp keeps a second copy of a few messages (1 pair of 54,627 messages), and a second, empty session for a few chats (1 of 909). The first copy is used for both.
+- WhatsApp keeps a few messages on two rows (1 key of 82,077 rows). `messages` loads the first row, and `messageCopies` loads each later row with `copy`, the number of earlier rows. `messageDataItems` names the row of its link in `messageCopy`. The receipts and reactions are decoded from the first row; `messageCopies.receiptInfo` keeps those of the copy as stored.
+- WhatsApp keeps a second, empty session for a few chats (1 of 909). The first session is used.
 - A message whose chat WhatsApp removed belongs to no conversation that WhatsApp shows, and has no key. The source does not read it. One such message was found, a type 28 notice.
 - `senderJid` is the group member who sent a group message, or the person for a message from one person. It is NULL for the account's own messages, and for notices and channel posts, which name no person.
 
@@ -207,7 +209,8 @@ Checked on 2026-10-12 against WhatsApp for Mac 26.38.74 (model `WhatsAppChat_2.1
 - Statuses: 15 from 6 contacts, all within their day. Type 3 is a text post with styling, 4 a photo (`image/jpeg`), 5 a video (`video/mp4`), and 10 a link post whose text is its URL. The media item of a status is its only media item, with its file under `Message/` (5 of 11 downloaded, each with the same SHA-256 as its item).
 - Statuses expired live: at 11:51 UTC, WhatsApp deleted the four statuses posted 24 hours before (15 rows to 11), with their media, thumbnails and files. It archived none of them. A sync just after that deleted nothing and kept all 14 statuses that it had loaded.
 - The Context Compiler CLI, from a scratch working folder, loaded all 32 streams in 12 s, with 82 message files, 256 profile thumbnails, 173 stickers and 5 status photos. The next two syncs wrote and deleted nothing. The WhatsApp connection of `apps/proactive` loaded `marts.whatsapp_messages` (54,674 rows), and wrote nothing on its second pass.
-- Links (2026-11-14): all 5,055 `ZWAMESSAGEDATAITEM` rows have a link in `ZCONTENT1`, and no message holds one link twice. `ZINDEX` is usually the place of the link in the message, but one message holds four different links, all at index 0. Thus `messageDataItems` is keyed by the message, the index and the link.
+- Links (2026-11-14): all 5,055 `ZWAMESSAGEDATAITEM` rows have a link in `ZCONTENT1`, and no message holds one link twice. `ZINDEX` is usually the place of the link in the message, but one message holds four different links, all at index 0. Thus `messageDataItems` is keyed by the message, its row, the index and the link.
+- Message copies (2026-11-14): the one key on two `ZWAMESSAGE` rows (Z_PK 910 and 20094) is a group photo. The rows are equal in every column but `Z_PK`, `ZDOCID` (Spotlight), `ZSORT` (-1 and -4), `ZLASTSESSION` (set on the first only) and `ZMEDIAITEM` and `ZMESSAGEINFO`. Those point to rows of their own whose columns are byte-equal. Each row has its own children (`ZPARENTMESSAGE`): two on the first, one on the second. The second row is among rows of many chats and dates (2024 to 2026), which WhatsApp wrote in one batch. It is a second write of the message, not an edit, a revoke or a notice: its type (1), status, flags and date are those of the first.
 - `disappearing-mode` holds the default timer of each account, not of a chat: 3,832 LIDs against 908 chats, with durations 0, 86,400, 604,800 and 7,776,000 only.
 
 ## Decisions

@@ -190,6 +190,15 @@ export function profilePictureFile(container: string, path: string): string {
 const messageKey = `chat.ZCONTACTJID AS chatJid, message.ZISFROMME AS isFromMe,
   message.ZSTANZAID AS stanzaId`;
 
+// How many earlier rows hold the same message key. WhatsApp writes a few
+// messages a second time, with the same content on new rows of their own.
+const messageCopy = `(SELECT count(*) FROM ZWAMESSAGE AS earlier
+  JOIN ZWACHATSESSION AS earlierChat ON earlierChat.Z_PK = earlier.ZCHATSESSION
+  WHERE earlier.ZSTANZAID = message.ZSTANZAID
+    AND earlier.ZISFROMME = message.ZISFROMME
+    AND earlierChat.ZCONTACTJID = chat.ZCONTACTJID
+    AND earlier.Z_PK < message.Z_PK)`;
+
 // The small inputs of a joined message, without its text or blobs. Versions
 // belong to each row, not a store-wide cursor; related rows can change alone.
 export type MessageInput = MessageKey & {
@@ -291,7 +300,8 @@ export class ChatStorageSnapshot implements Disposable {
     return this.#database
       .iterate(
         `
-      SELECT ${messageKey}, message.Z_PK AS id, message.Z_OPT AS version,
+      SELECT ${messageKey}, ${messageCopy} AS copy,
+             message.Z_PK AS id, message.Z_OPT AS version,
              message.ZMESSAGEDATE AS messageDate,
              media.Z_PK AS mediaId, media.Z_OPT AS mediaVersion,
              media.ZMEDIALOCALPATH AS mediaLocalPath,
@@ -338,7 +348,8 @@ export class ChatStorageSnapshot implements Disposable {
   messages(id?: number): IteratorObject<Message, undefined> {
     return this.#database
       .iterate(
-        `SELECT ${messageKey}, message.ZFROMJID AS fromJid,
+        `SELECT ${messageKey}, ${messageCopy} AS copy,
+                message.ZFROMJID AS fromJid,
                 message.ZTOJID AS toJid, member.ZMEMBERJID AS groupMemberJid,
                 message.ZPUSHNAME AS pushName,
                 message.ZMESSAGEDATE AS messageDate,
@@ -384,6 +395,7 @@ export class ChatStorageSnapshot implements Disposable {
         const metadata = bytes(row.metadata);
         return {
           ...key(row),
+          copy: requiredNumber(row.copy, 'A WhatsApp message has no copy'),
           fromJid: text(row.fromJid),
           toJid: text(row.toJid),
           groupMemberJid: text(row.groupMemberJid),
@@ -416,7 +428,8 @@ export class ChatStorageSnapshot implements Disposable {
   dataItems(): IteratorObject<MessageDataItem, undefined> {
     return this.#database
       .iterate(
-        `SELECT ${messageKey}, item.ZINDEX AS "index", item.ZTYPE AS type,
+        `SELECT ${messageKey}, ${messageCopy} AS messageCopy,
+                item.ZINDEX AS "index", item.ZTYPE AS type,
                 item.ZDATE AS date, item.ZCONTENT1 AS content1,
                 item.ZCONTENT2 AS content2, item.ZTITLE AS title,
                 item.ZSUMMARY AS summary, item.ZMATCHEDTEXT AS matchedText,
@@ -430,6 +443,10 @@ export class ChatStorageSnapshot implements Disposable {
       )
       .map((row) => ({
         ...key(row),
+        messageCopy: requiredNumber(
+          row.messageCopy,
+          'A WhatsApp data item has no message copy',
+        ),
         index: requiredNumber(row.index, 'A WhatsApp data item has no index'),
         type: number(row.type),
         date: instant(row.date),
