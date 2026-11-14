@@ -47,15 +47,22 @@ export type PassStatus =
       readonly failureType: FailureType;
     });
 
+// Only a stream whose copies failed in its latest attempt has an error.
 export type StreamPassStatus = {
   readonly stream: string;
-  readonly state: PassState;
   readonly lastSucceededAt: string | null;
   readonly currentAsOf: string | null;
-};
+} & (
+  | {
+      readonly state: 'running' | 'succeeded' | 'cancelled';
+      readonly error: null;
+    }
+  | { readonly state: 'partial' | 'failed'; readonly error: string }
+);
 
 // The latest pass of a SQLite destination file and each stream's latest
-// outcome, as its sync history records them; null and empty until the history
+// outcome, with the errors of its failures in that attempt, one on each line,
+// as its sync history records them; null and empty until the history
 // recorded a pass, and while the history in the file is one another version
 // installed, and while no file is at the path. A file that several
 // connections load reads as one pass, made of the latest pass of each
@@ -77,16 +84,35 @@ export function readPassStatus(path: string): {
     pass: first === undefined ? null : combined([first, ...others]),
     streams: data
       .prepare(
-        'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status ORDER BY stream',
+        `SELECT s.stream, s.status, s.last_successful_sync_at, s.current_as_of,
+          (SELECT group_concat(json_extract(f.value, '$.error'), char(10) ORDER BY f.key)
+            FROM extraction_coverage c, json_each(c.failures) f
+            WHERE c.attempt_id = s.latest_attempt_id AND c.stream = s.stream) AS error
+        FROM stream_status s ORDER BY s.stream`,
       )
       .all()
-      .map((row) => ({
-        stream: String(row.stream),
-        state: passState(row.status),
-        lastSucceededAt: text(row.last_successful_sync_at),
-        currentAsOf: text(row.current_as_of),
-      })),
+      .map((row) => streamRecorded(row, passState(row.status))),
   };
+}
+
+// A stream_status row as the stream's latest outcome: only a copy that
+// failed has an error.
+function streamRecorded(
+  row: Record<string, SQLOutputValue>,
+  state: PassState,
+): StreamPassStatus {
+  const outcome = {
+    stream: String(row.stream),
+    lastSucceededAt: text(row.last_successful_sync_at),
+    currentAsOf: text(row.current_as_of),
+  };
+  switch (state) {
+    case 'partial':
+    case 'failed':
+      return { ...outcome, state, error: String(row.error) };
+    default:
+      return { ...outcome, state, error: null };
+  }
 }
 
 // A reader of the file, or null while no file is at the path.

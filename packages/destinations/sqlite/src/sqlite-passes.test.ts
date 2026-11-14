@@ -142,8 +142,8 @@ test('a pass and each of its streams read running while it runs and cancelled on
   assert.equal(after.pass?.state, 'cancelled');
   assert.match(after.pass?.error ?? '', /stopped by the test/);
   assert.deepEqual(
-    after.streams.map(({ stream, state }) => [stream, state]),
-    [['records', 'cancelled']],
+    after.streams.map(({ stream, state, error }) => [stream, state, error]),
+    [['records', 'cancelled', null]],
   );
 });
 
@@ -330,6 +330,74 @@ test("a pass that did not load says whether its failures are the user's to fix, 
       { status: 'succeeded', failure_type: null },
     ],
   );
+});
+
+test('each stream reads with the error of its latest attempt, which a later attempt that loads it clears', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-passes-');
+  class Failing extends LiveSource {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    readonly identity = 'failing';
+    readonly kept = stream('kept');
+    readonly broken = stream('broken');
+    protected readonly catalog = new Catalog([this.kept, this.broken]);
+    failure: Error | null = null;
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
+    }
+
+    protected override async *extract(configuration: CopyConfiguration) {
+      if (configuration.stream.name === 'broken' && this.failure !== null)
+        throw this.failure;
+      yield { stream: configuration.stream.name, data: { id: 'kept' } };
+    }
+  }
+  const source = new Failing();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    connections: [
+      new Connection({
+        name: 'failing',
+        source,
+        destination,
+        steps: [
+          new Copy(source.kept, destination.table('kept')),
+          new Copy(source.broken, destination.table('broken')),
+        ],
+      }),
+    ],
+    history: new SQLiteSyncHistory(),
+  });
+  const streams = async () => {
+    await pipeline.run().catch(() => {});
+    return readPassStatus(destination.path).streams.map(
+      ({ stream, state, error }) => [stream, state, error],
+    );
+  };
+
+  source.failure = new Error('The store is corrupt.');
+  const failed = await streams();
+  source.failure = null;
+  const loaded = await streams();
+
+  assert.deepEqual(failed, [
+    ['broken', 'failed', 'The store is corrupt.'],
+    ['kept', 'succeeded', null],
+  ]);
+  assert.deepEqual(loaded, [
+    ['broken', 'succeeded', null],
+    ['kept', 'succeeded', null],
+  ]);
 });
 
 test('each recorded failure keeps the causes its error chains, such as why a connection failed', async () => {
