@@ -159,7 +159,15 @@ export class ArcSidebar {
   // Arc writes the file only while it runs, so the sidebar is current as of
   // its last write.
   async lastWrite(): Promise<Date> {
-    const { modifiedAt } = await FileStamp.read(this.path);
+    let stamp: FileStamp;
+    try {
+      stamp = await FileStamp.read(this.path);
+    } catch (error) {
+      // A denied folder on the path is unavailable, as for the read.
+      if (UnavailableError.from(this.path, error) === undefined) throw error;
+      throw new StoreUnavailableError(sidebarStore, this.path, error);
+    }
+    const { modifiedAt } = stamp;
     // No stamp time: no file is at the path.
     if (modifiedAt === undefined)
       throw new StoreUnavailableError(

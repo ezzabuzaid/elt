@@ -8,7 +8,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
 import { createClock } from '@sinonjs/fake-timers';
@@ -379,6 +379,32 @@ test('a read of a sidebar that is not there says so and how to make it, without 
     return true;
   });
 });
+
+test(
+  'the last write of a sidebar behind a folder this process may not search fails as a config failure that says it cannot be read',
+  {
+    // chmod denies nothing on Windows, and nothing to root.
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  },
+  async () => {
+    await using dir = await new TemporaryFiles().directory('arc-denied-');
+    const file = await writeSidebar(dir.path, sidebar());
+    const folder = dirname(file);
+    const source = new ArcDesktopSource({ home: dir.path });
+    await chmod(folder, 0o000);
+    try {
+      await assert.rejects(source.currentAsOf(), (error) => {
+        assert.ok(error instanceof StoreUnavailableError, String(error));
+        assert.equal(error.missing, false);
+        assert.match(error.message, /StorableSidebar\.json cannot be read\.$/);
+        assert.equal(source.failureType(error), 'config');
+        return true;
+      });
+    } finally {
+      await chmod(folder, 0o755);
+    }
+  },
+);
 
 test('a sidebar path that is a folder fails as a system failure with the file system’s own error', async () => {
   await using dir = await new TemporaryFiles().directory('arc-folder-');
