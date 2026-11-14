@@ -1823,6 +1823,55 @@ test('a group change WhatsApp keeps twice loads once, beside changes that differ
   );
 });
 
+test('links WhatsApp files under one index of one message each load, beside the message’s other links', async () => {
+  const { dir, whatsapp, out } = await scratch();
+  await using _ = dir;
+  // The fixture's link (Z_PK 1) is index 0 of message 7. A live store keeps
+  // four different links of one message, all at index 0.
+  const link = {
+    Z_ENT: 10,
+    ZMESSAGE: 7,
+    ZTYPE: 0,
+    ZDATE: coreData('2026-10-04T09:00:00.000Z'),
+    ZCHATJID: 'p2',
+    ZSECTIONID: '2026-10',
+  };
+  for (const [pk, index, url] of [
+    [2, 0, 'https://example.org'],
+    [3, 0, 'https://example.net'],
+    [4, 1, 'https://example.com'],
+  ] as const)
+    whatsapp.insert('chatStorage', 'ZWAMESSAGEDATAITEM', {
+      ...link,
+      Z_PK: pk,
+      ZINDEX: index,
+      ZCONTENT1: url,
+      ZMATCHEDTEXT: url,
+    });
+
+  const results = await (
+    await pipeline(
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
+      dir.path,
+      ({ name }) => name === 'messageDataItems',
+    )
+  ).run();
+
+  assert.deepEqual(counts(results).messageDataItems, { count: 4, deleted: 0 });
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT "index", content1 FROM "messageDataItems" ORDER BY "index", content1',
+    ),
+    [
+      { index: 0, content1: 'https://example.com' },
+      { index: 0, content1: 'https://example.net' },
+      { index: 0, content1: 'https://example.org' },
+      { index: 1, content1: 'https://example.com' },
+    ],
+  );
+});
+
 test('contacts, users with the phone number behind each LID, and calls with their call-log entry and every participant the entry lists load', async () => {
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;

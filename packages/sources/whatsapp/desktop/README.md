@@ -207,6 +207,7 @@ Checked on 2026-10-12 against WhatsApp for Mac 26.38.74 (model `WhatsAppChat_2.1
 - Statuses: 15 from 6 contacts, all within their day. Type 3 is a text post with styling, 4 a photo (`image/jpeg`), 5 a video (`video/mp4`), and 10 a link post whose text is its URL. The media item of a status is its only media item, with its file under `Message/` (5 of 11 downloaded, each with the same SHA-256 as its item).
 - Statuses expired live: at 11:51 UTC, WhatsApp deleted the four statuses posted 24 hours before (15 rows to 11), with their media, thumbnails and files. It archived none of them. A sync just after that deleted nothing and kept all 14 statuses that it had loaded.
 - The Context Compiler CLI, from a scratch working folder, loaded all 32 streams in 12 s, with 82 message files, 256 profile thumbnails, 173 stickers and 5 status photos. The next two syncs wrote and deleted nothing. The WhatsApp connection of `apps/proactive` loaded `marts.whatsapp_messages` (54,674 rows), and wrote nothing on its second pass.
+- Links (2026-11-14): all 5,055 `ZWAMESSAGEDATAITEM` rows have a link in `ZCONTENT1`, and no message holds one link twice. `ZINDEX` is usually the place of the link in the message, but one message holds four different links, all at index 0. Thus `messageDataItems` is keyed by the message, the index and the link.
 - `disappearing-mode` holds the default timer of each account, not of a chat: 3,832 LIDs against 908 chats, with durations 0, 86,400, 604,800 and 7,776,000 only.
 
 ## Decisions

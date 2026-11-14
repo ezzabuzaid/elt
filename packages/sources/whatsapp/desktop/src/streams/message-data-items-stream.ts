@@ -11,6 +11,7 @@ import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
 
 const {
   integer,
+  text,
   nullableInteger,
   nullableText,
   nullableJid,
@@ -38,7 +39,7 @@ const properties = {
     ...nullableInstant,
     description: column('WhatsApp’s date of the item, UTC', 'ZDATE'),
   },
-  content1: { ...nullableText, description: column('The link', 'ZCONTENT1') },
+  content1: { ...text, description: column('The link', 'ZCONTENT1') },
   content2: {
     ...nullableText,
     description: column('WhatsApp’s second content value', 'ZCONTENT2'),
@@ -91,11 +92,13 @@ export class MessageDataItemsStream extends WhatsAppStream<
 > {
   readonly name = 'messageDataItems';
   readonly store = 'chatStorage';
-  readonly primaryKey = [...messageKeyColumns, 'index'];
+  // WhatsApp files several links of one message under one index, so the link
+  // tells them apart.
+  readonly primaryKey = [...messageKeyColumns, 'index', 'content1'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per link WhatsApp found in a message, as its chat’s Links list shows them, with the linked page’s title and description. Primary key chatJid, messageIsFromMe, messageStanzaId, index.',
+      'One record per link WhatsApp found in a message, as its chat’s Links list shows them, with the linked page’s title and description. Primary key chatJid, messageIsFromMe, messageStanzaId, index, content1.',
     properties,
     required: Object.keys(properties),
   } as const;

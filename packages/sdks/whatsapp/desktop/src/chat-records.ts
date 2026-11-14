@@ -103,7 +103,7 @@ export type MessageDataItem = MessageKey & {
   readonly index: number;
   readonly type: number | null;
   readonly date: string | null;
-  readonly content1: string | null;
+  readonly content1: string;
   readonly content2: string | null;
   readonly title: string | null;
   readonly summary: string | null;

@@ -433,7 +433,10 @@ export class ChatStorageSnapshot implements Disposable {
         index: requiredNumber(row.index, 'A WhatsApp data item has no index'),
         type: number(row.type),
         date: instant(row.date),
-        content1: text(row.content1),
+        content1: requiredText(
+          row.content1,
+          'A WhatsApp data item has no content',
+        ),
         content2: text(row.content2),
         title: text(row.title),
         summary: text(row.summary),
