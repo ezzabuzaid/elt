@@ -7,7 +7,7 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
-import type { Automation } from './automation.ts';
+import type { Automation } from '../../engine/automation.ts';
 import { CareemCalories } from './careem-calories.ts';
 
 const postgresql = new Postgres({ environment: process.env });

@@ -1,7 +1,7 @@
 import type postgres from 'postgres';
 
-import type { Match } from './automation.ts';
-import { NotifyAutomation } from './notify-automation.ts';
+import type { Match } from '../../engine/automation.ts';
+import { NotifyAutomation } from '../../engine/notify-automation.ts';
 
 // "When the mid-month credit has not arrived by day 18, tell me": an Arab
 // Bank credit of 1000 JOD or more is due on days 13 to 17 of each month, on

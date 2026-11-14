@@ -2,7 +2,7 @@ import { hash } from 'node:crypto';
 
 import type postgres from 'postgres';
 
-import { Automation, type Match } from './automation.ts';
+import { Automation, type Match } from '../../engine/automation.ts';
 import type { MeetingBriefWriter } from './meeting-brief-writer.ts';
 
 type Meeting = {

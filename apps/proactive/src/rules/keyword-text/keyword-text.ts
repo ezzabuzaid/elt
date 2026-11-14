@@ -1,7 +1,7 @@
 import type postgres from 'postgres';
 
-import type { Match } from './automation.ts';
-import { NotifyAutomation } from './notify-automation.ts';
+import type { Match } from '../../engine/automation.ts';
+import { NotifyAutomation } from '../../engine/notify-automation.ts';
 
 // "Tell me when a text says proactive:": every received message that carries
 // the marker, keyed by the message, so each one is told once. A text the user

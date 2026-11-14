@@ -1,6 +1,6 @@
 import type postgres from 'postgres';
 
-import { AgentAutomation } from './agent-automation.ts';
+import { AgentAutomation } from '../../engine/agent-automation.ts';
 
 type Order = {
   orderId: string;

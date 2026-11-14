@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
-import type { Automation } from './automation.ts';
+import type { Automation } from '../../engine/automation.ts';
 import { MissingMidMonthCredit } from './missing-mid-month-credit.ts';
 import { SpendSpike } from './spend-spike.ts';
 

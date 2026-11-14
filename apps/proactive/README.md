@@ -6,7 +6,15 @@ It is not a background watcher. A rule that has no saved cursor starts from
 the newest position of the warehouse, so it does not act on historical
 messages.
 
-Each rule is an automation (`automation.ts`): `evaluate` reads the warehouse
+## Layout
+
+- `src/main.ts` adds the rules that run. `src/pipeline.ts` sets what the warehouse imports.
+- `src/engine/` runs the rules: the `Automation` base, the `NotifyAutomation` and `AgentAutomation` actions, and the `Automations` runner.
+- `src/rules/` holds one folder for each rule, with its test. Rules that share a base class or a source share a folder: `bank-sms/` and `clay-topics/`. A new rule is a new folder. `src/rules/notifications.test.ts` checks the notification text of the four notifying rules.
+
+## Rules
+
+Each rule is an automation (`src/engine/automation.ts`): `evaluate` reads the warehouse
 at a time and gives the keys that are true, and `act` does the work for one new match and returns a short receipt, which
 `Automations` shows as a macOS notification. A `NotifyAutomation` only tells
 the user. An `AgentAutomation` gives its instruction and the match to Codex

@@ -1,7 +1,7 @@
 import type postgres from 'postgres';
 
-import type { Match } from './automation.ts';
-import { NotifyAutomation } from './notify-automation.ts';
+import type { Match } from '../../engine/automation.ts';
+import { NotifyAutomation } from '../../engine/notify-automation.ts';
 
 type Context = { readonly matches: boolean; readonly seconds: number };
 

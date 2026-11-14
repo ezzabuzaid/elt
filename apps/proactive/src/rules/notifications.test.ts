@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { EarlyMonthSpend } from './early-month-spend.ts';
-import { KeywordText } from './keyword-text.ts';
-import { MissingMidMonthCredit } from './missing-mid-month-credit.ts';
-import { SpendSpike } from './spend-spike.ts';
+import { EarlyMonthSpend } from './bank-sms/early-month-spend.ts';
+import { MissingMidMonthCredit } from './bank-sms/missing-mid-month-credit.ts';
+import { SpendSpike } from './bank-sms/spend-spike.ts';
+import { KeywordText } from './keyword-text/keyword-text.ts';
 
 test('each notifying automation tells the user its match in words', () => {
   assert.equal(

@@ -6,17 +6,17 @@ import postgres from 'postgres';
 import type { Warehouse } from '@eltjs/eca';
 import { PostgresDestination } from '@eltjs/elt-postgresql';
 
-import { Automations } from './automations.ts';
-import { CareemCalories } from './careem-calories.ts';
-import { ClayBdAgentMessages } from './clay-bd-agent-messages.ts';
-import { ClayDataHubMcpMessages } from './clay-data-hub-mcp-messages.ts';
-import { EarlyMonthSpend } from './early-month-spend.ts';
-import { KeywordText } from './keyword-text.ts';
-import { MeetingBriefWriter } from './meeting-brief-writer.ts';
-import { MissingMidMonthCredit } from './missing-mid-month-credit.ts';
+import { Automations } from './engine/automations.ts';
 import pipeline, { warehouseUrl } from './pipeline.ts';
-import { PlanningMeetings } from './planning-meetings.ts';
-import { SpendSpike } from './spend-spike.ts';
+import { EarlyMonthSpend } from './rules/bank-sms/early-month-spend.ts';
+import { MissingMidMonthCredit } from './rules/bank-sms/missing-mid-month-credit.ts';
+import { SpendSpike } from './rules/bank-sms/spend-spike.ts';
+import { CareemCalories } from './rules/careem-calories/careem-calories.ts';
+import { ClayBdAgentMessages } from './rules/clay-topics/clay-bd-agent-messages.ts';
+import { ClayDataHubMcpMessages } from './rules/clay-topics/clay-data-hub-mcp-messages.ts';
+import { KeywordText } from './rules/keyword-text/keyword-text.ts';
+import { MeetingBriefWriter } from './rules/planning-meetings/meeting-brief-writer.ts';
+import { PlanningMeetings } from './rules/planning-meetings/planning-meetings.ts';
 
 // Conditions read the marts as agent_reader, which can read nothing else.
 const readerUrl = 'postgres://agent_reader:agent@127.0.0.1:55432/warehouse';

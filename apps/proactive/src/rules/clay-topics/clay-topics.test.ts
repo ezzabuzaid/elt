@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
-import type { Automation } from './automation.ts';
+import type { Automation } from '../../engine/automation.ts';
 import { ClayBdAgentMessages } from './clay-bd-agent-messages.ts';
 import { ClayDataHubMcpMessages } from './clay-data-hub-mcp-messages.ts';
 

@@ -8,7 +8,7 @@ import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
-import type { Automation } from './automation.ts';
+import type { Automation } from '../../engine/automation.ts';
 import { MeetingBriefWriter } from './meeting-brief-writer.ts';
 import { type MeetingBrief, PlanningMeetings } from './planning-meetings.ts';
 

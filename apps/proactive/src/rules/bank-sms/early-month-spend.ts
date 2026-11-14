@@ -1,7 +1,7 @@
 import type postgres from 'postgres';
 
-import type { Match } from './automation.ts';
-import { NotifyAutomation } from './notify-automation.ts';
+import type { Match } from '../../engine/automation.ts';
+import { NotifyAutomation } from '../../engine/notify-automation.ts';
 
 // "When I spend over 200 JOD in the first 10 days of a month, tell me": the
 // card purchases Arab Bank texts about, by the time of each SMS on the user's
