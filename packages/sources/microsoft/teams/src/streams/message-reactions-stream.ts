@@ -6,12 +6,21 @@ import {
   MessageChildStream,
   type Part,
   messageKey,
+  messagePlaceKey,
 } from './message-child-stream.ts';
 
-const { id, nullableInstant } = teamsFields;
+const { id, position, nullableInstant } = teamsFields;
 
 const properties = {
   ...messageKey,
+  emojiPosition: {
+    ...position,
+    description: 'The emoji’s place among the message’s reactions, from 0.',
+  },
+  userPosition: {
+    ...position,
+    description: 'The user’s place among those who reacted so, from 0.',
+  },
   emoji: {
     ...id,
     description:
@@ -26,18 +35,11 @@ export class MessageReactionsStream extends MessageChildStream<
   TeamsReaction
 > {
   readonly name = 'messageReactions';
-  readonly primaryKey = [
-    'accountId',
-    'conversationId',
-    'threadId',
-    'messageId',
-    'emoji',
-    'userId',
-  ];
+  readonly primaryKey = [...messagePlaceKey, 'emojiPosition', 'userPosition'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per person’s reaction to a message. Primary key accountId, conversationId, threadId, messageId, emoji, userId. A reaction taken back from a message the app still holds is deleted; reactions of a message the app dropped from its cache stay.',
+      'One record per person’s reaction to a message. Primary key accountId, store, conversationId, recordId, entry (its message’s place), emojiPosition and userPosition. A reaction taken back from a message the app still holds is deleted; reactions of a message the app dropped from its cache stay.',
     properties,
     required: Object.keys(properties),
   } as const;

@@ -9,12 +9,18 @@ import {
   MessageChildStream,
   type Part,
   messageKey,
+  messagePlaceKey,
 } from './message-child-stream.ts';
 
-const { id, nullableText } = teamsFields;
+const { id, position, nullableText } = teamsFields;
 
 const properties = {
   ...messageKey,
+  position: {
+    ...position,
+    description:
+      'The file’s place among the message’s files, from 0: Teams can list one file several times.',
+  },
   fileId: { ...id, description: 'Teams’ ID for the file in the message.' },
   name: { ...nullableText, description: 'The file’s name.' },
   fileType: { ...nullableText, description: 'Its extension, such as pdf.' },
@@ -41,17 +47,11 @@ export class MessageFilesStream extends MessageChildStream<
   TeamsMessageFile
 > {
   readonly name = 'messageFiles';
-  readonly primaryKey = [
-    'accountId',
-    'conversationId',
-    'threadId',
-    'messageId',
-    'fileId',
-  ];
+  readonly primaryKey = [...messagePlaceKey, 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per file attached to a message; the file itself stays in OneDrive or SharePoint. Primary key accountId, conversationId, threadId, messageId, fileId. A file removed from a message the app still holds is deleted.',
+      'One record per file attached to a message; the file itself stays in OneDrive or SharePoint. Primary key accountId, store, conversationId, recordId, entry (its message’s place) and position. A file removed from a message the app still holds is deleted.',
     properties,
     required: Object.keys(properties),
   } as const;

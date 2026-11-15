@@ -1,15 +1,20 @@
-import type { KeyValue } from '@zukhruf/snapshot-differential';
+import type { VanishedRecord } from '@zukhruf/snapshot-differential';
 
 import type { RecordDraft } from '@eltjs/elt';
 
 import type { TeamsScan } from '../teams-scan.ts';
-import { TeamsStream, teamsFields } from '../teams-stream.ts';
+import { TeamsStream, feedPlace, teamsFields } from '../teams-stream.ts';
 
-const { id, accountId, nullableText } = teamsFields;
+const { id, accountId, position, nullableText } = teamsFields;
 
 const properties = {
   accountId,
-  callLogId: { ...id, description: 'The call (callLogs.id).' },
+  // The call's place (callLogs.store, recordId, entry).
+  ...feedPlace,
+  position: {
+    ...position,
+    description: 'The participant’s place in the call’s list, from 0.',
+  },
   participantId: {
     ...id,
     description: 'Who took part (people.mri), or a service such as call park.',
@@ -28,33 +33,27 @@ export class CallParticipantsStream extends TeamsStream<
   Row
 > {
   readonly name = 'callParticipants';
-  readonly primaryKey = ['accountId', 'callLogId', 'participantId'];
+  readonly primaryKey = ['accountId', 'store', 'recordId', 'entry', 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per participant Teams logged for a group call; a call between two has its people in callLogs. Primary key accountId, callLogId, participantId. Kept and deleted with its call.',
+      'One record per place in the list of participants Teams logged for a group call; a call between two has its people in callLogs. Primary key accountId, store, recordId, entry (its call’s place) and position. Kept and deleted with its call.',
     properties,
     required: Object.keys(properties),
   } as const;
 
-  override covers(
-    scan: TeamsScan,
-    key: Readonly<Record<string, KeyValue>>,
-  ): boolean {
-    return scan.holds(
-      key.accountId,
-      '48:calllogs',
-      key.callLogId,
-      key.callLogId,
-    );
+  override covers(scan: TeamsScan, { key }: VanishedRecord): boolean {
+    return scan.holds(key.accountId, '48:calllogs', key.recordId, key.recordId);
   }
 
   protected rows(scan: TeamsScan): readonly Row[] {
     return scan.clients.flatMap(({ account, callLogs }) =>
-      callLogs.flatMap(({ id, participants }) =>
+      callLogs.flatMap(({ place: { store, recordId, entry }, participants }) =>
         participants.map(({ id: participantId, ...participant }) => ({
           accountId: account.userId,
-          callLogId: id,
+          store,
+          recordId,
+          entry,
           participantId,
           ...participant,
         })),

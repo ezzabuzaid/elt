@@ -1,10 +1,10 @@
-import type { KeyValue } from '@zukhruf/snapshot-differential';
+import type { VanishedRecord } from '@zukhruf/snapshot-differential';
 
 import type { RecordDraft } from '@eltjs/elt';
 import type { TeamsActivity } from '@eltjs/sdk-microsoft-teams';
 
 import type { TeamsScan } from '../teams-scan.ts';
-import { TeamsStream, teamsFields } from '../teams-stream.ts';
+import { TeamsStream, feedPlace, teamsFields } from '../teams-stream.ts';
 
 const { id, accountId, instant, nullableText, nullableBoolean } = teamsFields;
 
@@ -15,6 +15,7 @@ const properties = {
     description:
       'notifications for the activity feed, annotations for reactions to the user’s messages.',
   },
+  ...feedPlace,
   id: {
     ...id,
     description:
@@ -66,20 +67,22 @@ type Row = { readonly accountId: string; readonly activity: TeamsActivity };
 
 export class ActivitiesStream extends TeamsStream<typeof properties, Row> {
   readonly name = 'activities';
-  readonly primaryKey = ['accountId', 'feed', 'id'];
+  readonly primaryKey = ['accountId', 'store', 'feed', 'recordId', 'entry'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per entry of the account’s activity feed, and of the reactions to the user’s messages, that the app holds. Primary key accountId, feed, id. An entry removed from the part of a feed the app still holds is deleted; one the app dropped from its cache stays.',
+      'One record per entry of the account’s activity feed, and of the reactions to the user’s messages, that the app holds. Primary key accountId, store, feed, recordId, entry. An entry removed from the part of a feed the app still holds is deleted; one the app dropped from its cache stays.',
     properties,
     required: Object.keys(properties),
   } as const;
 
-  override covers(
-    scan: TeamsScan,
-    key: Readonly<Record<string, KeyValue>>,
-  ): boolean {
-    return scan.holds(key.accountId, `48:${String(key.feed)}`, key.id, key.id);
+  override covers(scan: TeamsScan, { key }: VanishedRecord): boolean {
+    return scan.holds(
+      key.accountId,
+      `48:${String(key.feed)}`,
+      key.recordId,
+      key.recordId,
+    );
   }
 
   protected rows(scan: TeamsScan): readonly Row[] {
@@ -90,8 +93,11 @@ export class ActivitiesStream extends TeamsStream<typeof properties, Row> {
 
   protected records({
     accountId,
-    activity,
+    activity: {
+      place: { store, recordId, entry },
+      ...activity
+    },
   }: Row): RecordDraft<typeof properties>[] {
-    return [{ accountId, ...activity }];
+    return [{ accountId, store, recordId, entry, ...activity }];
   }
 }

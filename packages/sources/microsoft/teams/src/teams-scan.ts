@@ -1,3 +1,5 @@
+import type { KeyValue } from '@zukhruf/snapshot-differential';
+
 import type { TeamsClient, TeamsMessage } from '@eltjs/sdk-microsoft-teams';
 import {
   type ImportScope,
@@ -78,12 +80,38 @@ export class TeamsScan implements AsyncDisposable {
     );
   }
 
-  holdsApps(accountId: unknown, scope: unknown, scopeId: unknown): boolean {
+  // Whether the app holds the place of this message, sent at this time, so
+  // a message gone from it was deleted: a reply chain's message inside the
+  // part of the history the app holds, and a conversation's copy of its
+  // newest message wherever the app still keeps the account.
+  holdsMessage(
+    {
+      accountId,
+      store,
+      conversationId,
+      recordId,
+    }: Readonly<Record<string, KeyValue>>,
+    sentAt: string | undefined,
+  ): boolean {
+    return store === 'conversation-manager/conversations'
+      ? this.keeps(accountId)
+      : sentAt !== undefined &&
+          this.holds(
+            accountId,
+            conversationId,
+            recordId,
+            String(Date.parse(sentAt)),
+          );
+  }
+
+  // Whether the app still keeps this record of the apps entitled to a user,
+  // chat or team, so an app it no longer lists there was uninstalled.
+  holdsApps(accountId: unknown, store: unknown, cacheKey: unknown): boolean {
     return (
       typeof accountId === 'string' &&
-      typeof scope === 'string' &&
-      typeof scopeId === 'string' &&
-      (this.#kept.get(accountId)?.holdsApps(scope, scopeId) ?? false)
+      typeof store === 'string' &&
+      typeof cacheKey === 'string' &&
+      (this.#kept.get(accountId)?.holdsApps(store, cacheKey) ?? false)
     );
   }
 
@@ -93,8 +121,8 @@ export class TeamsScan implements AsyncDisposable {
 
   messages(client: TeamsClient): readonly TeamsMessage[] {
     return client.messages.filter(
-      ({ conversationId, sentAt }) =>
-        this.conversationSelected(conversationId) &&
+      ({ place, sentAt }) =>
+        this.conversationSelected(place.conversationId) &&
         withinDates(this.#scope, sentAt),
     );
   }

@@ -1,15 +1,16 @@
-import type { KeyValue } from '@zukhruf/snapshot-differential';
+import type { VanishedRecord } from '@zukhruf/snapshot-differential';
 
 import type { RecordDraft } from '@eltjs/elt';
 import type { TeamsCallLog } from '@eltjs/sdk-microsoft-teams';
 
 import type { TeamsScan } from '../teams-scan.ts';
-import { TeamsStream, teamsFields } from '../teams-stream.ts';
+import { TeamsStream, feedPlace, teamsFields } from '../teams-stream.ts';
 
 const { id, accountId, nullableText, nullablePreciseInstant } = teamsFields;
 
 const properties = {
   accountId,
+  ...feedPlace,
   id: {
     ...id,
     description:
@@ -59,20 +60,17 @@ type Row = { readonly accountId: string; readonly log: TeamsCallLog };
 
 export class CallLogsStream extends TeamsStream<typeof properties, Row> {
   readonly name = 'callLogs';
-  readonly primaryKey = ['accountId', 'id'];
+  readonly primaryKey = ['accountId', 'store', 'recordId', 'entry'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per call in the account’s Teams call history that the app holds. Primary key accountId, id. An entry removed from the part of the history the app still holds is deleted; one the app dropped from its cache stays.',
+      'One record per call in the account’s Teams call history that the app holds. Primary key accountId, store, recordId, entry. An entry removed from the part of the history the app still holds is deleted; one the app dropped from its cache stays.',
     properties,
     required: Object.keys(properties),
   } as const;
 
-  override covers(
-    scan: TeamsScan,
-    key: Readonly<Record<string, KeyValue>>,
-  ): boolean {
-    return scan.holds(key.accountId, '48:calllogs', key.id, key.id);
+  override covers(scan: TeamsScan, { key }: VanishedRecord): boolean {
+    return scan.holds(key.accountId, '48:calllogs', key.recordId, key.recordId);
   }
 
   protected rows(scan: TeamsScan): readonly Row[] {
@@ -83,8 +81,12 @@ export class CallLogsStream extends TeamsStream<typeof properties, Row> {
 
   protected records({
     accountId,
-    log: { participants: _participants, ...log },
+    log: {
+      place: { store, recordId, entry },
+      participants: _participants,
+      ...log
+    },
   }: Row): RecordDraft<typeof properties>[] {
-    return [{ accountId, ...log }];
+    return [{ accountId, store, recordId, entry, ...log }];
   }
 }

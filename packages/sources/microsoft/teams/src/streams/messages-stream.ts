@@ -1,24 +1,17 @@
-import type { KeyValue } from '@zukhruf/snapshot-differential';
+import type { VanishedRecord } from '@zukhruf/snapshot-differential';
 
 import type { RecordDraft } from '@eltjs/elt';
 import type { TeamsMessage } from '@eltjs/sdk-microsoft-teams';
 
 import type { TeamsScan } from '../teams-scan.ts';
 import { TeamsStream, teamsFields } from '../teams-stream.ts';
+import { messagePlace, messagePlaceKey } from './message-child-stream.ts';
 
-const {
-  id,
-  accountId,
-  conversationId,
-  instant,
-  nullableInstant,
-  nullableText,
-  nullableBoolean,
-} = teamsFields;
+const { id, instant, nullableInstant, nullableText, nullableBoolean } =
+  teamsFields;
 
 const properties = {
-  accountId,
-  conversationId,
+  ...messagePlace,
   threadId: {
     ...id,
     description:
@@ -27,7 +20,7 @@ const properties = {
   id: {
     ...id,
     description:
-      'Teams’ ID for the message within its conversation: when the service received it, in milliseconds since 1970.',
+      'Teams’ ID for the message within its conversation: when the service received it, in milliseconds since 1970. The app can keep one message in several places, each a record of its own.',
   },
   sentAt: { ...instant, description: 'When the service received it.' },
   senderId: {
@@ -86,20 +79,21 @@ type Row = { readonly accountId: string; readonly message: TeamsMessage };
 
 export class MessagesStream extends TeamsStream<typeof properties, Row> {
   readonly name = 'messages';
-  readonly primaryKey = ['accountId', 'conversationId', 'threadId', 'id'];
+  readonly primaryKey = messagePlaceKey;
+  readonly expiresBy = 'sentAt';
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per chat and channel message the app has held, and the newest message of every conversation: Teams keeps only the parts of each conversation it loaded, so older history is here only if it was loaded while this import ran. Primary key accountId, conversationId, threadId, id. A message the app no longer lists inside a part of the conversation it still holds was deleted and is deleted here; one the app dropped from its cache stays.',
+      'One record per place the app keeps a chat or channel message: each entry of a reply chain it has held, and each conversation’s copy of its newest message and of its newest that is not a change to the conversation. Teams keeps only the parts of each conversation it loaded, so older history is here only if it was loaded while this import ran. Primary key accountId, store, conversationId, recordId, entry; one message (conversationId, id) can have several records. A message the app no longer lists inside a part of the conversation it still holds was deleted and is deleted here; one the app dropped from its cache stays. A conversation’s copy is replaced when its newest message changes.',
     properties,
     required: Object.keys(properties),
   } as const;
 
   override covers(
     scan: TeamsScan,
-    key: Readonly<Record<string, KeyValue>>,
+    { key, expiresBy }: VanishedRecord,
   ): boolean {
-    return scan.holds(key.accountId, key.conversationId, key.threadId, key.id);
+    return scan.holdsMessage(key, expiresBy);
   }
 
   protected rows(scan: TeamsScan): readonly Row[] {
@@ -113,6 +107,7 @@ export class MessagesStream extends TeamsStream<typeof properties, Row> {
   protected records({
     accountId,
     message: {
+      place,
       reactions: _reactions,
       mentions: _mentions,
       files: _files,
@@ -121,6 +116,6 @@ export class MessagesStream extends TeamsStream<typeof properties, Row> {
       ...message
     },
   }: Row): RecordDraft<typeof properties>[] {
-    return [{ accountId, ...message }];
+    return [{ accountId, ...place, ...message }];
   }
 }

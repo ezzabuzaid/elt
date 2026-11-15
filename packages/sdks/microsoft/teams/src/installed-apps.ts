@@ -1,5 +1,5 @@
 import type { Fields } from './fields.ts';
-import type { TeamsInstalledApp } from './teams-client.ts';
+import type { TeamsAppDefinition, TeamsInstalledApp } from './teams-client.ts';
 
 // The client caches, for the user and for each chat and team, which apps are
 // entitled there: its key names the scope, <Scope>_general_<locale>_<id>.
@@ -26,24 +26,44 @@ export function readAppScope(entitlements: Fields): AppScope | null {
 
 export function readInstalledApps(
   entitlements: Fields,
+  store: string,
   { scope, scopeId }: AppScope,
-  names: ReadonlyMap<string, Fields>,
 ): TeamsInstalledApp[] {
-  return entitlements
-    .list('appEntitlements')
-    .filter((app) => app.requiredString('state').startsWith('Installed'))
-    .map((app) => {
-      const appId = app.requiredString('id');
-      const definition = names.get(appId);
-      return {
-        scope,
-        scopeId,
-        appId,
-        state: app.requiredString('state'),
-        version: app.string('installedVersion'),
-        installedBy: app.string('installedBy'),
-        name: definition?.string('name') ?? null,
-        developerName: definition?.string('developerName') ?? null,
+  const cacheKey = entitlements.requiredString('cacheKey');
+  return entitlements.list('appEntitlements').flatMap((app, position) => {
+    const state = app.requiredString('state');
+    return state.startsWith('Installed')
+      ? [
+          {
+            store,
+            cacheKey,
+            position,
+            scope,
+            scopeId,
+            appId: app.requiredString('id'),
+            state,
+            version: app.string('installedVersion'),
+            installedBy: app.string('installedBy'),
+          },
+        ]
+      : [];
+  });
+}
+
+// A definition the manager cached with no app in it defines nothing.
+export function readAppDefinition(
+  definition: Fields,
+  store: string,
+): TeamsAppDefinition | null {
+  const item = definition.object('item');
+  return item === null
+    ? null
+    : {
+        store,
+        cacheKey: definition.requiredString('cacheKey'),
+        appId: definition.requiredString('appId'),
+        version: item.string('version'),
+        name: item.string('name'),
+        developerName: item.string('developerName'),
       };
-    });
 }

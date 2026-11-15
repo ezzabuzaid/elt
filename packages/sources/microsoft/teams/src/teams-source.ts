@@ -15,6 +15,7 @@ import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AccountsStream } from './streams/accounts-stream.ts';
 import { ActivitiesStream } from './streams/activities-stream.ts';
+import { AppDefinitionsStream } from './streams/app-definitions-stream.ts';
 import { CallLogsStream } from './streams/call-logs-stream.ts';
 import { CallParticipantsStream } from './streams/call-participants-stream.ts';
 import { ConversationMembersStream } from './streams/conversation-members-stream.ts';
@@ -58,6 +59,7 @@ const readers = {
   folders: new FoldersStream(),
   folderConversations: new FolderConversationsStream(),
   installedApps: new InstalledAppsStream(),
+  appDefinitions: new AppDefinitionsStream(),
   searches: new SearchesStream(),
 } satisfies Record<string, TeamsReader>;
 const catalog = new Catalog(
@@ -94,6 +96,7 @@ export class TeamsSource extends Source<TeamsScan> {
   readonly folders = catalog.get(readers.folders.name);
   readonly folderConversations = catalog.get(readers.folderConversations.name);
   readonly installedApps = catalog.get(readers.installedApps.name);
+  readonly appDefinitions = catalog.get(readers.appDefinitions.name);
   readonly searches = catalog.get(readers.searches.name);
 
   readonly directory: string;
@@ -167,7 +170,7 @@ export class TeamsSource extends Source<TeamsScan> {
       state,
       stream.emitsDeletes
         ? {
-            policy: new Coverage(({ key }) => reader.covers(scan, key)),
+            policy: new Coverage((record) => reader.covers(scan, record)),
             signal,
           }
         : { signal },

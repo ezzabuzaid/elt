@@ -6,6 +6,7 @@ import {
   MessageChildStream,
   type Part,
   messageKey,
+  messagePlaceKey,
 } from './message-child-stream.ts';
 
 const { id, position, nullableText } = teamsFields;
@@ -14,6 +15,11 @@ const properties = {
   ...messageKey,
   position: {
     ...position,
+    description: 'The mention’s place among the message’s mentions, from 0.',
+  },
+  itemId: {
+    type: 'integer',
+    minimum: 0,
     description:
       'The mention’s number in the message, which its content refers to as itemid.',
   },
@@ -37,17 +43,11 @@ export class MessageMentionsStream extends MessageChildStream<
   TeamsMention
 > {
   readonly name = 'messageMentions';
-  readonly primaryKey = [
-    'accountId',
-    'conversationId',
-    'threadId',
-    'messageId',
-    'position',
-  ];
+  readonly primaryKey = [...messagePlaceKey, 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per mention in a message. Primary key accountId, conversationId, threadId, messageId, position. A mention edited out of a message the app still holds is deleted.',
+      'One record per mention in a message. Primary key accountId, store, conversationId, recordId, entry (its message’s place) and position. A mention edited out of a message the app still holds is deleted.',
     properties,
     required: Object.keys(properties),
   } as const;

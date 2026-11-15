@@ -4,14 +4,18 @@ import type {
   TeamsMessage,
   TeamsMessageFile,
   TeamsMessageLink,
+  TeamsMessagePlace,
   TeamsQuote,
   TeamsReaction,
 } from './teams-client.ts';
 
 // A message as the reply chain cache holds it.
-export function readMessage(message: Fields): TeamsMessage {
+export function readMessage(
+  message: Fields,
+  place: TeamsMessagePlace,
+): TeamsMessage {
   return {
-    conversationId: message.requiredString('conversationId'),
+    place,
     threadId: message.requiredString('parentMessageId'),
     id: message.requiredString('id'),
     sentAt: message.requiredMilliseconds('originalArrivalTime'),
@@ -24,17 +28,18 @@ export function readMessage(message: Fields): TeamsMessage {
   };
 }
 
-// The newest message of a conversation, which the conversation itself keeps
-// in other names, whether or not its reply chain is cached. A channel names
-// the message's thread in its link: conversation/<id>;messageid=<thread>.
+// A copy of a newest message of a conversation, which the conversation
+// itself keeps in other names, whether or not its reply chain is cached. A
+// channel names the message's thread in its link:
+// conversation/<id>;messageid=<thread>.
 export function readLastMessage(
   message: Fields,
-  conversationId: string,
+  place: TeamsMessagePlace,
 ): TeamsMessage {
   const id = message.requiredString('id');
   const link = message.string('conversationLink');
   return {
-    conversationId,
+    place,
     threadId: (link && /;messageid=(\d+)$/.exec(link)?.[1]) ?? id,
     id,
     sentAt: message.requiredInstant('originalarrivaltime', 3),
@@ -49,7 +54,7 @@ export function readLastMessage(
 
 type Body = Omit<
   TeamsMessage,
-  | 'conversationId'
+  | 'place'
   | 'threadId'
   | 'id'
   | 'sentAt'
@@ -77,7 +82,7 @@ function body(message: Fields): Body {
     cardsJson: properties?.json('cards') ?? null,
     reactions: properties?.list('emotions').flatMap(reactions) ?? [],
     mentions: properties?.parsedList('mentions').map(mention) ?? [],
-    files: files(properties),
+    files: properties?.parsedList('files').map(file) ?? [],
     links: properties?.parsedList('links').map(link) ?? [],
     quotes: properties?.parsedList('qtdMsgs').map(quote) ?? [],
     pinnedBy: pinnedAt === null ? null : (pinned?.string('creatorId') ?? null),
@@ -85,38 +90,31 @@ function body(message: Fields): Body {
   };
 }
 
-function reactions(emotion: Fields): TeamsReaction[] {
+function reactions(emotion: Fields, emojiPosition: number): TeamsReaction[] {
   const emoji = emotion.requiredString('key');
-  return emotion.list('users').map((user) => ({
+  return emotion.list('users').map((user, userPosition) => ({
+    emojiPosition,
+    userPosition,
     emoji,
     userId: user.requiredString('mri'),
     reactedAt: user.milliseconds('time'),
   }));
 }
 
-function mention(mention: Fields): TeamsMention {
+function mention(mention: Fields, position: number): TeamsMention {
   return {
-    position: mention.requiredWholeNumber('itemid'),
+    position,
+    itemId: mention.requiredWholeNumber('itemid'),
     mentionedId: mention.requiredString('mri'),
     kind: mention.string('mentionType'),
     displayName: mention.string('displayName'),
   };
 }
 
-// Teams can list one file several times in a message, each entry the same
-// byte for byte, so the message keeps it once. Entries that share an id but
-// differ stay apart.
-function files(properties: Fields | null): TeamsMessageFile[] {
-  if (properties === null) return [];
-  const entries = properties.parsedList('files').map(file);
-  return [
-    ...new Map(entries.map((entry) => [JSON.stringify(entry), entry])).values(),
-  ];
-}
-
-function file(file: Fields): TeamsMessageFile {
+function file(file: Fields, position: number): TeamsMessageFile {
   const info = file.object('fileInfo');
   return {
+    position,
     id: file.string('itemid') ?? file.requiredString('id'),
     name: file.string('fileName'),
     fileType: file.string('fileType'),
@@ -139,8 +137,9 @@ function link(link: Fields, position: number): TeamsMessageLink {
   };
 }
 
-function quote(quote: Fields): TeamsQuote {
+function quote(quote: Fields, position: number): TeamsQuote {
   return {
+    position,
     messageId: quote.requiredText('messageId'),
     senderId: quote.string('sender'),
     sentAt: quote.milliseconds('time'),

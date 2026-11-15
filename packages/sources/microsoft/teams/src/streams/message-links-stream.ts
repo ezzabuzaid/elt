@@ -9,6 +9,7 @@ import {
   MessageChildStream,
   type Part,
   messageKey,
+  messagePlaceKey,
 } from './message-child-stream.ts';
 
 const { id, position, nullableText } = teamsFields;
@@ -36,17 +37,11 @@ export class MessageLinksStream extends MessageChildStream<
   TeamsMessageLink
 > {
   readonly name = 'messageLinks';
-  readonly primaryKey = [
-    'accountId',
-    'conversationId',
-    'threadId',
-    'messageId',
-    'position',
-  ];
+  readonly primaryKey = [...messagePlaceKey, 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per link Teams found in a message, with the preview it shows. Primary key accountId, conversationId, threadId, messageId, position. A link edited out of a message the app still holds is deleted.',
+      'One record per link Teams found in a message, with the preview it shows. Primary key accountId, store, conversationId, recordId, entry (its message’s place) and position. A link edited out of a message the app still holds is deleted.',
     properties,
     required: Object.keys(properties),
   } as const;

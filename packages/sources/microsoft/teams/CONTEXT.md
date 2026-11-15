@@ -24,6 +24,10 @@ _Avoid_: Sync window (Teams' own word, used only for the raw fields), range (Sla
 A conversation of the client's own, such as `48:calllogs`, `48:notifications`, `48:annotations`, `48:saved` or `48:starred`. Call logs, activities and saved messages are the messages of feeds.
 _Avoid_: Channel, stream (a stream is elt's)
 
+**Place**:
+Where the client keeps a message: an entry (`entry`) of a record (`recordId`) of an object store (`store`), such as a reply chain's message or a conversation's copy of its newest message. The place is a message's identity in the store; one message can have several places.
+_Avoid_: Copy (a copy is one kind of place), duplicate, message ID
+
 **Account**:
 A work or school account signed in to the app. Its ID is the user's Entra object ID, `accountId`.
 _Avoid_: User, tenant (an account belongs to a tenant), workspace

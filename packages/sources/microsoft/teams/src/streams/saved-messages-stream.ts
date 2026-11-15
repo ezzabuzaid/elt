@@ -1,10 +1,10 @@
-import type { KeyValue } from '@zukhruf/snapshot-differential';
+import type { VanishedRecord } from '@zukhruf/snapshot-differential';
 
 import type { RecordDraft } from '@eltjs/elt';
 import type { TeamsSavedMessage } from '@eltjs/sdk-microsoft-teams';
 
 import type { TeamsScan } from '../teams-scan.ts';
-import { TeamsStream, teamsFields } from '../teams-stream.ts';
+import { TeamsStream, feedPlace, teamsFields } from '../teams-stream.ts';
 
 const { id, accountId, instant, nullableText } = teamsFields;
 
@@ -15,6 +15,7 @@ const properties = {
     description:
       'saved, or starred for a message saved before Teams named it so.',
   },
+  ...feedPlace,
   id: {
     ...id,
     description:
@@ -39,20 +40,22 @@ type Row = { readonly accountId: string; readonly saved: TeamsSavedMessage };
 
 export class SavedMessagesStream extends TeamsStream<typeof properties, Row> {
   readonly name = 'savedMessages';
-  readonly primaryKey = ['accountId', 'feed', 'id'];
+  readonly primaryKey = ['accountId', 'store', 'feed', 'recordId', 'entry'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per message the user saved, that the app holds. Primary key accountId, feed, id. A message unsaved inside the part of the list the app still holds is deleted.',
+      'One record per message the user saved, that the app holds. Primary key accountId, store, feed, recordId, entry. A message unsaved inside the part of the list the app still holds is deleted.',
     properties,
     required: Object.keys(properties),
   } as const;
 
-  override covers(
-    scan: TeamsScan,
-    key: Readonly<Record<string, KeyValue>>,
-  ): boolean {
-    return scan.holds(key.accountId, `48:${String(key.feed)}`, key.id, key.id);
+  override covers(scan: TeamsScan, { key }: VanishedRecord): boolean {
+    return scan.holds(
+      key.accountId,
+      `48:${String(key.feed)}`,
+      key.recordId,
+      key.recordId,
+    );
   }
 
   protected rows(scan: TeamsScan): readonly Row[] {
@@ -63,8 +66,11 @@ export class SavedMessagesStream extends TeamsStream<typeof properties, Row> {
 
   protected records({
     accountId,
-    saved,
+    saved: {
+      place: { store, recordId, entry },
+      ...saved
+    },
   }: Row): RecordDraft<typeof properties>[] {
-    return [{ accountId, ...saved }];
+    return [{ accountId, store, recordId, entry, ...saved }];
   }
 }

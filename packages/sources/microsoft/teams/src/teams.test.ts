@@ -1158,7 +1158,9 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
     await chmod(app.directory, 0o755);
   }
 
-  assert.deepEqual(rows(out, 'SELECT count(*) AS n FROM messages'), [{ n: 8 }]);
+  assert.deepEqual(rows(out, 'SELECT count(*) AS n FROM messages'), [
+    { n: 10 },
+  ]);
   assert.deepEqual(counts(await run.run()), await unchanged(source));
 });
 
@@ -1232,7 +1234,7 @@ test('a store in a shape this reader does not know, or that fails to read for an
   const run = await pipeline(source, dir.path, globalThis);
   await run.run();
   const { streams } = await source.discover();
-  // A message with no conversation, which Teams has never written.
+  // A message with no thread, which Teams has never written.
   await app.write(
     writes(account()).map((write) =>
       write.objectStore === 'replychains' &&
@@ -1256,7 +1258,7 @@ test('a store in a shape this reader does not know, or that fails to read for an
       assert.ok(cause instanceof TeamsFormatError);
       assert.match(
         cause.message,
-        /replychains.*conversationId is not a non-empty string/,
+        /replychains.*parentMessageId is not a non-empty string/,
       );
     }
     assert.deepEqual(failureTypes(error), ['system']);
@@ -1280,7 +1282,9 @@ test('a store in a shape this reader does not know, or that fails to read for an
 
   await rm(log, { recursive: true });
   await app.save(account());
-  assert.deepEqual(rows(out, 'SELECT count(*) AS n FROM messages'), [{ n: 8 }]);
+  assert.deepEqual(rows(out, 'SELECT count(*) AS n FROM messages'), [
+    { n: 10 },
+  ]);
   assert.deepEqual(counts(await run.run()), await unchanged(source));
 });
 
@@ -1347,16 +1351,35 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
     pinnedBy: null,
     pinnedAt: null,
   };
-  const keyOf = (
+  // Where the app keeps a message: a reply chain names each message by its
+  // sender and client id, and a conversation names its copies.
+  const chained = (
     conversationId: string,
-    threadId: string,
+    recordId: string,
+    creator: string,
     messageId: string,
+    store = 'replychain-manager/replychains',
   ) => ({
-    accountId: user,
+    store,
     conversationId,
-    threadId,
-    messageId,
+    recordId,
+    entry: `${creator}_9${messageId}`,
   });
+  const copy = (conversationId: string, entry: string) => ({
+    store: 'conversation-manager/conversations',
+    conversationId,
+    recordId: conversationId,
+    entry,
+  });
+  const partOf = (place: ReturnType<typeof chained>, sentAt: string) => ({
+    accountId: user,
+    ...place,
+    sentAt,
+  });
+  const helloPart = partOf(
+    chained(chat, ids.hello, ada, ids.hello),
+    '2026-09-01T09:00:00.000Z',
+  );
   const expected = {
     accounts: [
       {
@@ -1504,27 +1527,30 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       {
         accountId: user,
         conversationId: chat,
+        list: 'botMembers',
+        position: 0,
         memberId: bot,
         role: 'User',
-        isBot: 1,
         isReader: 0,
         shareHistoryAt: null,
       },
       {
         accountId: user,
         conversationId: chat,
+        list: 'members',
+        position: 0,
         memberId: me,
         role: 'Admin',
-        isBot: 0,
         isReader: 0,
         shareHistoryAt: null,
       },
       {
         accountId: user,
         conversationId: chat,
+        list: 'members',
+        position: 1,
         memberId: ada,
         role: 'Admin',
-        isBot: 0,
         isReader: 0,
         shareHistoryAt: '2026-08-20T10:00:00.000Z',
       },
@@ -1532,7 +1558,20 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
     messages: [
       {
         ...message,
-        conversationId: chat,
+        ...copy(chat, 'lastNonTMMessage'),
+        threadId: ids.hello,
+        id: ids.hello,
+        sentAt: '2026-09-01T09:00:00.000Z',
+        senderId: ada,
+        senderName: 'Ada Lovelace',
+        messageType: 'RichText/Html',
+        contentType: 'Text',
+        content: 'stale copy of hello',
+        isFromUser: null,
+      },
+      {
+        ...message,
+        ...chained(chat, ids.hello, ada, ids.hello),
         threadId: ids.hello,
         id: ids.hello,
         sentAt: '2026-09-01T09:00:00.000Z',
@@ -1549,7 +1588,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       },
       {
         ...message,
-        conversationId: chat,
+        ...chained(chat, ids.reply, me, ids.reply),
         threadId: ids.reply,
         id: ids.reply,
         sentAt: '2026-09-02T10:00:00.000Z',
@@ -1564,7 +1603,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       },
       {
         ...message,
-        conversationId: chat,
+        ...chained(chat, ids.deleted, ada, ids.deleted),
         threadId: ids.deleted,
         id: ids.deleted,
         sentAt: '2026-09-03T11:00:00.000Z',
@@ -1578,7 +1617,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       },
       {
         ...message,
-        conversationId: chat,
+        ...copy(chat, 'lastMessage'),
         threadId: ids.latest,
         id: ids.latest,
         sentAt: '2026-09-25T08:30:00.000Z',
@@ -1591,7 +1630,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       },
       {
         ...message,
-        conversationId: channel,
+        ...chained(channel, ids.post, ada, ids.post),
         threadId: ids.post,
         id: ids.post,
         sentAt: '2026-09-10T12:00:00.000Z',
@@ -1606,7 +1645,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       },
       {
         ...message,
-        conversationId: channel,
+        ...chained(channel, ids.post, me, ids.answer),
         threadId: ids.post,
         id: ids.answer,
         sentAt: '2026-09-10T12:30:00.000Z',
@@ -1619,7 +1658,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       },
       {
         ...message,
-        conversationId: channel,
+        ...copy(channel, 'lastMessage'),
         threadId: ids.post,
         id: later,
         sentAt: '2026-09-10T13:00:00.000Z',
@@ -1632,7 +1671,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       },
       {
         ...message,
-        conversationId: '48:calllogs',
+        ...chained('48:calllogs', ids.recording, me, ids.recording),
         threadId: ids.recording,
         id: ids.recording,
         sentAt: '2026-09-13T16:05:00.000Z',
@@ -1645,7 +1684,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       },
       {
         ...message,
-        conversationId: notes,
+        ...chained(notes, ids.note, me, ids.note),
         threadId: ids.note,
         id: ids.note,
         sentAt: '2026-09-15T07:00:00.000Z',
@@ -1659,7 +1698,9 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
     ],
     messageReactions: [
       {
-        ...keyOf(chat, ids.hello, ids.hello),
+        ...helloPart,
+        emojiPosition: 0,
+        userPosition: 0,
         emoji: 'like',
         userId: me,
         reactedAt: '2026-09-01T09:10:00.000Z',
@@ -1667,8 +1708,9 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
     ],
     messageMentions: [
       {
-        ...keyOf(chat, ids.hello, ids.hello),
+        ...helloPart,
         position: 0,
+        itemId: 0,
         mentionedId: me,
         kind: 'person',
         displayName: 'Ezz',
@@ -1676,7 +1718,8 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
     ],
     messageFiles: [
       {
-        ...keyOf(chat, ids.hello, ids.hello),
+        ...helloPart,
+        position: 0,
         fileId: 'file-1',
         name: 'spec.pdf',
         fileType: 'pdf',
@@ -1689,7 +1732,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
     ],
     messageLinks: [
       {
-        ...keyOf(chat, ids.hello, ids.hello),
+        ...helloPart,
         position: 0,
         url: 'https://example.com/spec',
         title: 'The spec\nversion 2',
@@ -1699,7 +1742,10 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
     ],
     messageQuotes: [
       {
-        ...keyOf(chat, ids.reply, ids.reply),
+        ...partOf(
+          chained(chat, ids.reply, me, ids.reply),
+          '2026-09-02T10:00:00.000Z',
+        ),
         position: 0,
         quotedMessageId: ids.hello,
         quotedSenderId: ada,
@@ -1718,6 +1764,9 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
     callLogs: [
       {
         accountId: user,
+        store: 'replychain-manager/replychains',
+        recordId: ids.call,
+        entry: `${me}_9${ids.call}`,
         id: ids.call,
         callId: 'call-1',
         startedAt: '2026-09-12T14:35:04.9634166Z',
@@ -1736,6 +1785,9 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       },
       {
         accountId: user,
+        store: 'replychain-manager/replychains',
+        recordId: ids.groupCall,
+        entry: `${me}_9${ids.groupCall}`,
         id: ids.groupCall,
         callId: 'call-2',
         startedAt: '2026-09-13T15:00:00.0000000Z',
@@ -1756,15 +1808,21 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
     callParticipants: [
       {
         accountId: user,
-        callLogId: ids.groupCall,
-        participantId: me,
+        store: 'replychain-manager/replychains',
+        recordId: ids.groupCall,
+        entry: `${me}_9${ids.groupCall}`,
+        position: 0,
+        participantId: ada,
         type: 'default',
         tenantId: tenant,
       },
       {
         accountId: user,
-        callLogId: ids.groupCall,
-        participantId: ada,
+        store: 'replychain-manager/replychains',
+        recordId: ids.groupCall,
+        entry: `${me}_9${ids.groupCall}`,
+        position: 1,
+        participantId: me,
         type: 'default',
         tenantId: tenant,
       },
@@ -1773,6 +1831,9 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       {
         accountId: user,
         feed: 'annotations',
+        store: 'replychain-manager/replychains',
+        recordId: ids.reaction,
+        entry: `48:orgid_9${ids.reaction}`,
         id: ids.reaction,
         activityId: '2867104311941161',
         type: 'reactionInChat',
@@ -1790,6 +1851,9 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       {
         accountId: user,
         feed: 'notifications',
+        store: 'replychain-manager/replychains',
+        recordId: ids.mention,
+        entry: `48:orgid_9${ids.mention}`,
         id: ids.mention,
         activityId: '2867104311941160',
         type: 'mentionInChat',
@@ -1809,6 +1873,9 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       {
         accountId: user,
         feed: 'saved',
+        store: 'streams-replychain-manager/saved',
+        recordId: ids.saved,
+        entry: `48:orgid_9${ids.saved}`,
         id: ids.saved,
         conversationId: chat,
         threadId: ids.hello,
@@ -1818,6 +1885,9 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       {
         accountId: user,
         feed: 'starred',
+        store: 'replychain-manager/replychains',
+        recordId: ids.starred,
+        entry: `${me}_9${ids.starred}`,
         id: ids.starred,
         conversationId: channel,
         threadId: ids.post,
@@ -1891,6 +1961,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       {
         accountId: user,
         meetingId: 'AAMkAD-occurrence-1',
+        position: 0,
         address: 'ada@contoso.com',
         name: 'Ada Lovelace',
         type: 'Required',
@@ -1915,6 +1986,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
       {
         accountId: user,
         folderId: 'folder-1',
+        position: 0,
         conversationId: chat,
         addedAt: '2026-07-02T09:00:00.000Z',
       },
@@ -1922,23 +1994,45 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
     installedApps: [
       {
         accountId: user,
+        store: 'team-installed-apps-manager/app-entitlements',
+        cacheKey: `Team_general_en-us_${team}`,
+        position: 0,
         scope: 'team',
         scopeId: team,
         appId: 'app-wiki',
         state: 'Installed',
         version: '2.1.0',
         installedBy: ada,
-        name: 'Wiki',
-        developerName: 'Contoso',
       },
       {
         accountId: user,
+        store: 'user-installed-apps-manager/user-app-entitlements',
+        cacheKey: `Personal_general_en-us_${user}`,
+        position: 0,
         scope: 'user',
         scopeId: user,
         appId: 'app-planner',
         state: 'InstalledAndPermanent',
         version: null,
         installedBy: null,
+      },
+    ],
+    appDefinitions: [
+      {
+        accountId: user,
+        store: 'team-installed-apps-manager/app-definitions',
+        cacheKey: 'app-wiki_2.1.0',
+        appId: 'app-wiki',
+        version: '2.1.0',
+        name: 'Wiki',
+        developerName: 'Contoso',
+      },
+      {
+        accountId: user,
+        store: 'user-installed-apps-manager/user-app-definitions',
+        cacheKey: 'app-planner_1.0.0',
+        appId: 'app-planner',
+        version: '1.0.0',
         name: 'Planner',
         developerName: 'Microsoft',
       },
@@ -1955,24 +2049,25 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
   const order: Record<string, string> = {
     accounts: 'id',
     conversations: 'id',
-    conversationMembers: 'conversationId, memberId',
-    messages: 'conversationId, id',
-    messageReactions: 'messageId, emoji, userId',
-    messageMentions: 'messageId, position',
-    messageFiles: 'messageId, fileId',
-    messageLinks: 'messageId, position',
-    messageQuotes: 'messageId, position',
+    conversationMembers: 'conversationId, list, position',
+    messages: 'conversationId, id, store',
+    messageReactions: 'recordId, entry, emojiPosition, userPosition',
+    messageMentions: 'recordId, entry, position',
+    messageFiles: 'recordId, entry, position',
+    messageLinks: 'recordId, entry, position',
+    messageQuotes: 'recordId, entry, position',
     pins: 'conversationId, position',
     callLogs: 'id',
-    callParticipants: 'callLogId, participantId',
+    callParticipants: 'recordId, position',
     activities: 'feed, id',
     savedMessages: 'feed, id',
     people: 'mri',
     meetings: 'id',
-    meetingAttendees: 'meetingId, address',
+    meetingAttendees: 'meetingId, position',
     folders: 'id',
-    folderConversations: 'folderId, conversationId',
-    installedApps: 'scope, scopeId, appId',
+    folderConversations: 'folderId, position',
+    installedApps: 'scope, scopeId, position',
+    appDefinitions: 'store, cacheKey',
     searches: 'id',
   };
   const { streams } = await source.discover();
@@ -2008,11 +2103,18 @@ test('a message or reaction gone from the history the app holds is deleted, and 
   const source = new TeamsSource({ directory: app.directory });
   const run = await pipeline(source, dir.path, globalThis);
   await run.run();
+  // The messages of the conversation's reply chains, and the conversation's
+  // copies of its newest messages.
   const messageIds = (conversationId: string) =>
     rows(
       out,
-      `SELECT id FROM messages WHERE conversationId = '${conversationId}' ORDER BY id`,
+      `SELECT id FROM messages WHERE conversationId = '${conversationId}' AND store = 'replychain-manager/replychains' ORDER BY id`,
     ).map(({ id }) => id);
+  const copies = (conversationId: string) =>
+    rows(
+      out,
+      `SELECT entry, id FROM messages WHERE conversationId = '${conversationId}' AND store = 'conversation-manager/conversations' ORDER BY entry`,
+    );
   const nothing = { count: 0, deleted: 0 };
 
   // Ada takes back the like on hello, and the deleted message's place goes,
@@ -2034,16 +2136,12 @@ test('a message or reaction gone from the history the app holds is deleted, and 
   const removed = counts(await run.run());
   assert.deepEqual(removed.messages, { count: 0, deleted: 1 });
   assert.deepEqual(removed.messageReactions, { count: 0, deleted: 1 });
-  assert.deepEqual(messageIds(chat), [ids.hello, ids.reply, ids.latest]);
+  assert.deepEqual(messageIds(chat), [ids.hello, ids.reply]);
 
   // The app prunes its cache: the span now starts after hello and the reply,
   // and their chains are gone. Nothing of theirs was deleted.
   const pruned = holding(
-    changing(
-      dropping(dropping(reacted, chat, ids.hello), chat, ids.reply),
-      chat,
-      ({ lastNonTMMessage: _last, ...conversation }) => conversation,
-    ),
+    dropping(dropping(reacted, chat, ids.hello), chat, ids.reply),
     chat,
     '2026-09-02T12:00:00Z',
     '2026-09-24T00:00:00Z',
@@ -2051,7 +2149,7 @@ test('a message or reaction gone from the history the app holds is deleted, and 
   await app.save(pruned);
   const afterPrune = counts(await run.run());
   assert.deepEqual(afterPrune, await unchanged(source));
-  assert.deepEqual(messageIds(chat), [ids.hello, ids.reply, ids.latest]);
+  assert.deepEqual(messageIds(chat), [ids.hello, ids.reply]);
   assert.deepEqual(
     ['messageMentions', 'messageFiles', 'messageLinks', 'messageQuotes'].map(
       (name) => rows(out, `SELECT count(*) AS n FROM ${name}`)[0]?.n,
@@ -2060,7 +2158,8 @@ test('a message or reaction gone from the history the app holds is deleted, and 
   );
 
   // A reply goes from a thread the app holds: it was deleted. The channel's
-  // newest message named it, so that goes too.
+  // copy of its newest message was the reply, and the channel keeps no copy
+  // now, so that goes too.
   const keeping = (state: Account, kept: readonly string[]): Account =>
     changing(
       {
@@ -2080,8 +2179,9 @@ test('a message or reaction gone from the history the app holds is deleted, and 
     );
   const answered = keeping(pruned, [ids.post, followUp.id]);
   await app.save(answered);
-  assert.deepEqual(counts(await run.run()).messages, { count: 0, deleted: 1 });
+  assert.deepEqual(counts(await run.run()).messages, { count: 0, deleted: 2 });
   assert.deepEqual(messageIds(channel), [ids.post, followUp.id]);
+  assert.deepEqual(copies(channel), []);
 
   // The follow-up goes once the app no longer holds its thread, though the
   // channel's own span covers its time: the app loads only a thread's latest
@@ -2107,8 +2207,8 @@ test('a message or reaction gone from the history the app holds is deleted, and 
   assert.deepEqual(messageIds(channel), [ids.post]);
 
   // The chat's newest message, later than the span the app loaded and in no
-  // cached chain, gives way to a newer one: it left the chat's newest place,
-  // not the chat, so it stays beside the new one.
+  // cached chain, gives way to a newer one: the chat keeps its copy of the
+  // newer one in the same place, which the newer one takes.
   const newer = id('2026-09-26T08:00:00.000Z');
   await app.save(
     changing(rethreaded, chat, (conversation) => ({
@@ -2127,7 +2227,11 @@ test('a message or reaction gone from the history the app holds is deleted, and 
     })),
   );
   assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 0 });
-  assert.deepEqual(messageIds(chat), [ids.hello, ids.reply, ids.latest, newer]);
+  assert.deepEqual(messageIds(chat), [ids.hello, ids.reply]);
+  assert.deepEqual(copies(chat), [
+    { entry: 'lastMessage', id: newer },
+    { entry: 'lastNonTMMessage', id: ids.hello },
+  ]);
 });
 
 test('a second account loads beside the first without rewriting it, and an account signed out of keeps every row', async () => {
@@ -2153,11 +2257,11 @@ test('a second account loads beside the first without rewriting it, and an accou
 
   await app.save(first, second);
   const added = counts(await run.run());
-  assert.deepEqual(added.messages, { count: 8, deleted: 0 });
+  assert.deepEqual(added.messages, { count: 10, deleted: 0 });
   assert.deepEqual(added.conversations, { count: 5, deleted: 0 });
   assert.deepEqual(perAccount('messages'), [
-    { accountId: second.user, n: 8 },
-    { accountId: user, n: 8 },
+    { accountId: second.user, n: 10 },
+    { accountId: user, n: 10 },
   ]);
   assert.deepEqual(
     rows(
@@ -2318,7 +2422,8 @@ test('an edit, a deletion, an unpin, a read, a chat left and a folder change rea
   );
   const changed = counts(await run.run());
 
-  assert.deepEqual(changed.messages, { count: 2, deleted: 0 });
+  // The channel left takes with it its copy of its newest message.
+  assert.deepEqual(changed.messages, { count: 2, deleted: 1 });
   assert.deepEqual(changed.messageQuotes, { count: 0, deleted: 1 });
   assert.deepEqual(changed.pins, { count: 0, deleted: 1 });
   assert.deepEqual(changed.conversations, { count: 1, deleted: 1 });
@@ -2328,7 +2433,7 @@ test('an edit, a deletion, an unpin, a read, a chat left and a folder change rea
   assert.deepEqual(
     rows(
       out,
-      `SELECT id, content, editedAt, deletedAt FROM messages WHERE conversationId = '${chat}' AND id IN ('${ids.hello}', '${ids.reply}') ORDER BY id`,
+      `SELECT id, content, editedAt, deletedAt FROM messages WHERE conversationId = '${chat}' AND store = 'replychain-manager/replychains' AND id IN ('${ids.hello}', '${ids.reply}') ORDER BY id`,
     ),
     [
       {
@@ -2417,11 +2522,11 @@ test('a call, activity or saved entry gone from the part of its feed the app hol
   );
 });
 
-test('a file the app lists several times in one message loads as one file of that message', async () => {
+test('a file the app lists several times in one message loads once for each place in the list', async () => {
   const { dir, app, out } = await scratch();
   await using _ = dir;
   // A live store held one channel post whose files list repeated the same
-  // entry twelve times, byte for byte.
+  // entry twelve times, byte for byte: 19 of its 83 entries on 2026-11-15.
   const repeated = (c: Chain): Chain =>
     chain(
       Object.values(c.messageMap).map((m) => {
@@ -2443,13 +2548,253 @@ test('a file the app lists several times in one message loads as one file of tha
 
   const loaded = counts(await run.run());
 
-  assert.deepEqual(loaded.messageFiles, { count: 1, deleted: 0 });
-  assert.deepEqual(rows(out, 'SELECT messageId, fileId FROM messageFiles'), [
-    { messageId: ids.hello, fileId: 'file-1' },
-  ]);
+  assert.deepEqual(loaded.messageFiles, { count: 3, deleted: 0 });
+  assert.deepEqual(
+    rows(out, 'SELECT position, fileId FROM messageFiles ORDER BY position'),
+    [0, 1, 2].map((position) => ({ position, fileId: 'file-1' })),
+  );
 });
 
-test('a mention whose number the app wrote as its digits loads at that number, and takes no stream down', async () => {
+test('a message the app keeps in several places loads once for each: twice in one reply chain, in both stores of reply chains, and as its conversation’s newest', async () => {
+  const { dir, app, out } = await scratch();
+  await using _ = dir;
+  // A live store named 75 of its 5,854 messages in their chains by another
+  // key than <sender>_<client id>, and its conversations kept 850 newest
+  // messages, 92 of them in a cached chain too, on 2026-11-15.
+  const base = account();
+  const [helloChain, ...others] = base.chains;
+  if (helloChain === undefined) throw new Error('the fixture holds hello');
+  const [hello] = Object.values(helloChain.messageMap);
+  if (hello === undefined) throw new Error('the chain holds hello');
+  await app.save({
+    ...base,
+    chains: [
+      {
+        ...helloChain,
+        messageMap: { ...helloChain.messageMap, [`${ada}_pending`]: hello },
+      },
+      ...others,
+    ],
+    saved: [...base.saved, helloChain],
+  });
+  const source = new TeamsSource({ directory: app.directory });
+  const run = await pipeline(source, dir.path, globalThis);
+
+  await run.run();
+
+  const places = (conversationId: string, messageId: string) =>
+    rows(
+      out,
+      `SELECT count(*) AS n FROM messages WHERE conversationId = '${conversationId}' AND id = '${messageId}'`,
+    );
+  // Two entries of its chain, the saved store's chain, and the chat's newest
+  // that is not a change to it.
+  assert.deepEqual(places(chat, ids.hello), [{ n: 4 }]);
+  // Its thread's chain, and the channel's newest.
+  assert.deepEqual(places(channel, ids.answer), [{ n: 2 }]);
+  assert.deepEqual(counts(await run.run()), await unchanged(source));
+});
+
+test('a member that a conversation lists among both its members and its bots loads once for each list', async () => {
+  const { dir, app, out } = await scratch();
+  await using _ = dir;
+  await app.save(
+    changing(account(), chat, (conversation) => ({
+      ...conversation,
+      botMembers: [{ id: ada, role: 'User', isReader: false }],
+    })),
+  );
+  const source = new TeamsSource({ directory: app.directory });
+  const run = await pipeline(source, dir.path, globalThis);
+
+  await run.run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      `SELECT count(*) AS n FROM conversationMembers WHERE conversationId = '${chat}' AND memberId = '${ada}'`,
+    ),
+    [{ n: 2 }],
+  );
+});
+
+test('a list whose entries repeat an id loads one record for each place in the list, and takes no stream down', async () => {
+  const { dir, app } = await scratch();
+  await using _ = dir;
+  // Teams keeps no list of a message, a call, a meeting, a folder or an app
+  // scope unique by the ids in its entries; only its place in the list is.
+  const base = account();
+  const repeated = (m: Message): Message => {
+    if (m.id === ids.hello) {
+      const [mention]: unknown[] = JSON.parse(String(m.properties.mentions));
+      const [like] = Array.isArray(m.properties.emotions)
+        ? m.properties.emotions
+        : [];
+      const users = like?.users ?? [];
+      return {
+        ...m,
+        properties: {
+          ...m.properties,
+          mentions: JSON.stringify([mention, mention]),
+          emotions: [{ ...like, users: [...users, ...users] }],
+        },
+      };
+    }
+    if (m.conversationId !== '48:calllogs' || m.id !== ids.groupCall) return m;
+    const log = JSON.parse(String(m.properties['call-log']));
+    return {
+      ...m,
+      properties: {
+        ...m.properties,
+        'call-log': JSON.stringify({
+          ...log,
+          participantList: [...log.participantList, log.participantList[0]],
+        }),
+      },
+    };
+  };
+  const chains = base.chains.map((c) => {
+    const entries = Object.values(c.messageMap).map(repeated);
+    const [first] = entries;
+    // The call log keeps the call twice, under two names.
+    return first?.id === ids.call
+      ? { ...chain(entries), messageMap: { a: first, b: first } }
+      : chain(entries);
+  });
+  const [meeting] = base.meetings;
+  const [folder] = base.folders;
+  await app.save({
+    ...changing({ ...base, chains }, chat, (conversation) => ({
+      ...conversation,
+      threadProperties: {
+        ...Object(conversation.threadProperties),
+        pinnedItems: JSON.stringify([
+          { itemType: 'Message', itemId: ids.hello },
+          { itemType: 'Message', itemId: ids.hello },
+        ]),
+      },
+    })),
+    meetings: [
+      {
+        ...meeting,
+        attendees: [...Object(meeting).attendees, ...Object(meeting).attendees],
+      },
+    ],
+    folders: [
+      {
+        ...folder,
+        conversations: [
+          ...Object(folder).conversations,
+          ...Object(folder).conversations,
+        ],
+      },
+    ],
+    apps: {
+      ...base.apps,
+      user: {
+        ...base.apps.user,
+        appEntitlements: [
+          { id: 'app-planner', state: 'InstalledAndPermanent' },
+          { id: 'app-planner', state: 'InstalledAndPermanent' },
+        ],
+      },
+    },
+  });
+  const source = new TeamsSource({ directory: app.directory });
+  const run = await pipeline(source, dir.path, globalThis);
+
+  const loaded = counts(await run.run());
+
+  assert.deepEqual(
+    Object.fromEntries(
+      [
+        'messageMentions',
+        'messageReactions',
+        'pins',
+        'callLogs',
+        'callParticipants',
+        'meetingAttendees',
+        'folderConversations',
+        'installedApps',
+      ].map((name) => [name, loaded[name]?.count]),
+    ),
+    {
+      messageMentions: 2,
+      messageReactions: 2,
+      pins: 2,
+      callLogs: 3,
+      callParticipants: 3,
+      meetingAttendees: 2,
+      folderConversations: 2,
+      installedApps: 3,
+    },
+  );
+  assert.deepEqual(counts(await run.run()), await unchanged(source));
+});
+
+test('an app that two managers define loads each definition, and an installation takes neither name', async () => {
+  const { dir, app, out } = await scratch();
+  await using _ = dir;
+  // A live store kept 244 definitions of 146 apps in the three managers on
+  // 2026-11-15, one app under two names.
+  const base = account();
+  await app.save({
+    ...base,
+    apps: {
+      ...base.apps,
+      teamDefinitions: [
+        ...base.apps.teamDefinitions,
+        {
+          cacheKey: 'app-planner_1.1.0',
+          appId: 'app-planner',
+          item: {
+            id: 'app-planner',
+            name: 'Planner and To Do',
+            developerName: 'Microsoft',
+            version: '1.1.0',
+          },
+          userLocale: 'en-us',
+        },
+      ],
+    },
+  });
+  const source = new TeamsSource({ directory: app.directory });
+  const run = await pipeline(source, dir.path, globalThis);
+
+  await run.run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT store, cacheKey, appId, version, name FROM appDefinitions ORDER BY store, cacheKey',
+    ),
+    [
+      {
+        store: 'team-installed-apps-manager/app-definitions',
+        cacheKey: 'app-planner_1.1.0',
+        appId: 'app-planner',
+        version: '1.1.0',
+        name: 'Planner and To Do',
+      },
+      {
+        store: 'team-installed-apps-manager/app-definitions',
+        cacheKey: 'app-wiki_2.1.0',
+        appId: 'app-wiki',
+        version: '2.1.0',
+        name: 'Wiki',
+      },
+      {
+        store: 'user-installed-apps-manager/user-app-definitions',
+        cacheKey: 'app-planner_1.0.0',
+        appId: 'app-planner',
+        version: '1.0.0',
+        name: 'Planner',
+      },
+    ],
+  );
+});
+
+test('a mention whose number the app wrote as its digits loads that number at its place in the list, and takes no stream down', async () => {
   const { dir, app, out } = await scratch();
   await using _ = dir;
   // A live store held the number of one mention as 0 and of another as "0".
@@ -2484,11 +2829,11 @@ test('a mention whose number the app wrote as its digits loads at that number, a
   assert.deepEqual(
     rows(
       out,
-      'SELECT position, mentionedId FROM messageMentions ORDER BY position',
+      'SELECT position, itemId, mentionedId FROM messageMentions ORDER BY position',
     ),
     [
-      { position: 0, mentionedId: ada },
-      { position: 1, mentionedId: me },
+      { position: 0, itemId: 1, mentionedId: me },
+      { position: 1, itemId: 0, mentionedId: ada },
     ],
   );
 });
@@ -2564,9 +2909,9 @@ test('a reply whose quoted messages the app wrote as JSON text loads its quote, 
   assert.deepEqual(
     rows(
       out,
-      'SELECT messageId, quotedMessageId, quotedSenderId FROM messageQuotes',
+      'SELECT recordId, quotedMessageId, quotedSenderId FROM messageQuotes',
     ),
-    [{ messageId: ids.reply, quotedMessageId: ids.hello, quotedSenderId: ada }],
+    [{ recordId: ids.reply, quotedMessageId: ids.hello, quotedSenderId: ada }],
   );
 });
 

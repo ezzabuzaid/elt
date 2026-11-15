@@ -3,11 +3,16 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { TeamsScan } from '../teams-scan.ts';
 import { TeamsStream, teamsFields } from '../teams-stream.ts';
 
-const { id, accountId, conversationId, nullableInstant } = teamsFields;
+const { id, accountId, position, conversationId, nullableInstant } =
+  teamsFields;
 
 const properties = {
   accountId,
   folderId: { ...id, description: 'The folder (folders.id).' },
+  position: {
+    ...position,
+    description: 'The conversation’s place in the folder’s list, from 0.',
+  },
   conversationId,
   addedAt: {
     ...nullableInstant,
@@ -22,11 +27,11 @@ export class FolderConversationsStream extends TeamsStream<
   Row
 > {
   readonly name = 'folderConversations';
-  readonly primaryKey = ['accountId', 'folderId', 'conversationId'];
+  readonly primaryKey = ['accountId', 'folderId', 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per conversation in a folder of the chat list. Primary key accountId, folderId, conversationId. A conversation taken out of a folder is deleted.',
+      'One record per place in the list of conversations of a folder of the chat list. Primary key accountId, folderId, position. A conversation taken out of a folder is deleted.',
     properties,
     required: Object.keys(properties),
   } as const;

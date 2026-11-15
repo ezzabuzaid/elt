@@ -51,7 +51,7 @@ The same codecs as the [Slack desktop source](../../slack/desktop/README.md) rea
 
 | Manager and object store                             | Streams                                                                                                                                                                                 |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `conversation-manager/conversations`                 | `conversations`, `conversationMembers`, `pins`, and each conversation's newest messages                                                                                                 |
+| `conversation-manager/conversations`                 | `conversations`, `conversationMembers`, `pins`, and each conversation's copies of its newest messages                                                                                   |
 | `replychain-manager/replychains`, newest generation  | `messages` and their parts; the client's own feeds `48:calllogs`, `48:notifications`, `48:annotations`, `48:starred` give `callLogs`, `callParticipants`, `activities`, `savedMessages` |
 | `streams-replychain-manager/saved`                   | `savedMessages` from `48:saved`                                                                                                                                                         |
 | `syncstate-manager/syncstates`                       | which part of each conversation, channel thread and feed the client holds                                                                                                               |
@@ -59,7 +59,7 @@ The same codecs as the [Slack desktop source](../../slack/desktop/README.md) rea
 | `profiles/profiles`                                  | `people`                                                                                                                                                                                |
 | `calendar/calendar`                                  | `meetings`, `meetingAttendees`                                                                                                                                                          |
 | `conversation-folder-manager/folders`                | `folders`, `folderConversations`                                                                                                                                                        |
-| `*-installed-apps-manager` entitlements, definitions | `installedApps`                                                                                                                                                                         |
+| `*-installed-apps-manager` entitlements, definitions | `installedApps`, `appDefinitions`                                                                                                                                                       |
 | `search-history-manager/searchhistory`               | `searches`                                                                                                                                                                              |
 | `tenant-manager/tenant`                              | the account's verified domains                                                                                                                                                          |
 
@@ -78,34 +78,39 @@ The app's container needs Full Disk Access (see [Full Disk Access](../../apple/m
 | --------------------- | ------------------------------------------------------------------------------------------------- |
 | `accounts`            | work or school account signed in to the app, with its organization and verified domains           |
 | `conversations`       | chat, meeting chat, team (its `Space`, the General channel) and channel, all of them              |
-| `conversationMembers` | member of a chat, meeting chat or team whose member list the app keeps                            |
-| `messages`            | chat and channel message the app has held, and the newest of every conversation                   |
+| `conversationMembers` | place in the member lists of a chat, meeting chat or team whose members the app keeps             |
+| `messages`            | place the app keeps a chat or channel message: a reply chain, or a conversation's copy            |
 | `messageReactions`    | person's reaction to a message, with when                                                         |
 | `messageMentions`     | mention in a message: a person, everyone, a channel, team or tag                                  |
-| `messageFiles`        | file attached to a message, metadata and its OneDrive or SharePoint addresses                     |
+| `messageFiles`        | place in a message's list of files, metadata and its OneDrive or SharePoint addresses             |
 | `messageLinks`        | link in a message, with the preview Teams shows                                                   |
 | `messageQuotes`       | earlier message a message replies to by quoting it                                                |
-| `pins`                | message pinned to a conversation, in its order                                                    |
+| `pins`                | place in a conversation's list of pinned messages                                                 |
 | `callLogs`            | call in the call history the app holds, its times to the ten-millionth of a second                |
-| `callParticipants`    | participant of a group call                                                                       |
+| `callParticipants`    | place in the list of participants of a group call                                                 |
 | `activities`          | entry of the activity feed, and of the reactions to the user's messages, with whether it was read |
 | `savedMessages`       | message the user saved, or starred before Teams called it saving                                  |
 | `people`              | person or bot the app has looked up in the directory                                              |
 | `meetings`            | meeting on the calendar the app holds                                                             |
-| `meetingAttendees`    | attendee of a meeting, with their answer                                                          |
+| `meetingAttendees`    | place in the list of attendees of a meeting, with their answer                                    |
 | `folders`             | folder of the chat list                                                                           |
-| `folderConversations` | conversation in a folder                                                                          |
+| `folderConversations` | place in the list of conversations of a folder                                                    |
 | `installedApps`       | app installed for the user, or in a chat or team whose apps the app has loaded                    |
+| `appDefinitions`      | definition of an app that a manager of the app cached, with its name and developer                |
 | `searches`            | search the user ran that the app kept                                                             |
 
 Every key has `accountId`, the user's Entra object ID.
 
-- **Message keys.** Teams names a message by the time at which the service received it, in milliseconds. Thus a message's key is its conversation, its thread and that ID. The thread is the message itself, except for a reply in a channel. `sentAt` is the same instant.
+- **Keys.** A key is an identity that the store keeps unique (elt [ADR 0022](../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md)). An object store keeps the key of its records unique, a record keeps the names of its entries unique, and a list keeps the places of its items unique. No ID in a record's value is unique: the source deduplicates nothing.
+- **Message keys.** A message's key is its place: `store`, `conversationId`, `recordId` and `entry`. A reply chain's record is keyed by its conversation and `replyChainId`, the ID of its first message (`recordId`), and it names each message (`entry`) by `<sender>_<client id>` or another key. A conversation keeps a copy of its newest message in `lastMessage`, and of its newest that is not a change to it in `lastNonTMMessage`: the copy's `recordId` is the conversation, and its `entry` is that name. The app can keep one message in several places, for example in a chain, in the saved store and in a copy. On 2026-11-15 one account's store held 6,097 places for 5,625 messages. Teams' ID for a message, `id`, is the time at which the service received it, in milliseconds, and `sentAt` is the same instant. Readers join on `conversationId` and `id` to compare places. The parts of a message (`messageReactions`, `messageMentions`, `messageFiles`, `messageLinks`, `messageQuotes`) are keyed by their message's place and their place in its list, and carry its `sentAt`.
+- **Feed keys.** `callLogs`, `activities` and `savedMessages` are keyed by the place of their message in its feed: `store`, `recordId`, `entry`, and `feed` for activities and saved messages. `callParticipants` are keyed by their call's place and `position`.
+- **List keys.** Each other record that the app keeps in a list is keyed by its owner and its place in the list: `conversationMembers` by `list` (`members` or `botMembers`) and `position`, and `pins`, `meetingAttendees`, `folderConversations` and `installedApps` by `position`. The IDs (`memberId`, `messageId`, `address`, `conversationId`, `appId`) are columns. A member that both lists name has two records.
+- **App definitions.** Each manager caches its own definitions of the apps it shows, and one manager can define an app in several versions: on 2026-11-15 the three managers held 244 definitions of 146 apps. `appDefinitions` keeps each, keyed by its `store` and `cacheKey`. Readers name an installed app by joining `installedApps.appId` to `appDefinitions.appId`.
 - **Content.** A message keeps its content as Teams holds it: HTML for rich text, and XML for calls and recordings. Adaptive cards stay JSON in `cardsJson`.
 - **Deleted messages.** A deleted message keeps its place, with `content` null and `deletedAt`, as Teams keeps it.
 - **Instants.** Instants that Teams writes as text keep their digits. A call's times keep 7 fraction digits. A meeting's change time moves from its offset to UTC.
 - **Read state.** `lastReadAt` is when the user last read a conversation.
-- **Files.** Teams can list one file several times in one message, each entry identical. `messageFiles` loads such a file one time.
+- **Files.** Teams can list one file several times in one message, each entry identical: 19 of 87 entries on 2026-11-15. `messageFiles` loads each entry, at its `position`.
 
 ## What the app holds, and deletions
 
@@ -119,8 +124,9 @@ The reads cover exactly those spans (see partly held upstreams in [elt](../../..
 - Only the span of its thread covers a channel reply.
 - A message outside all spans left the cache. It stays until a read covers it again.
 - A span with a gap in it covers nothing.
-- Reactions, mentions, files, links and quotes follow their message.
-- Call logs, activities and saved messages are messages of the client's own feeds. They follow the spans of those feeds in the same way.
+- Reactions, mentions, files, links and quotes follow their message. Each carries its message's `sentAt` for this check (`Stream.expiresBy`).
+- A conversation's copy of its newest message takes the newer message when that changes, in the same record. It is deleted with its conversation, or when the conversation keeps no such copy.
+- Call logs, activities and saved messages are messages of the client's own feeds. They follow the spans of those feeds in the same way. Each feed's reply chain holds one message, whose ID is the chain's (`recordId`).
 
 A record that disappears outside all spans is unknown. It stays in the snapshot, so a later read that covers its place judges it again. A reply that was deleted while the app did not hold its thread is deleted when the app loads the thread again. Slack's held ranges work in the same way.
 

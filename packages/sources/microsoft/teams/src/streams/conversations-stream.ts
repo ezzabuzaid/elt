@@ -115,11 +115,7 @@ export class ConversationsStream extends TeamsStream<typeof properties, Row> {
 
   protected records({
     accountId,
-    conversation: {
-      members: _members,
-      pinnedMessageIds: _pins,
-      ...conversation
-    },
+    conversation: { members: _members, pins: _pins, ...conversation },
   }: Row): RecordDraft<typeof properties>[] {
     return [{ accountId, ...conversation }];
   }

@@ -6,6 +6,7 @@ import {
   MessageChildStream,
   type Part,
   messageKey,
+  messagePlaceKey,
 } from './message-child-stream.ts';
 
 const { id, position, nullableText, nullableInstant } = teamsFields;
@@ -34,36 +35,28 @@ const properties = {
   },
 } as const;
 
-type Quote = { readonly position: number; readonly quote: TeamsQuote };
-
 export class MessageQuotesStream extends MessageChildStream<
   typeof properties,
-  Quote
+  TeamsQuote
 > {
   readonly name = 'messageQuotes';
-  readonly primaryKey = [
-    'accountId',
-    'conversationId',
-    'threadId',
-    'messageId',
-    'position',
-  ];
+  readonly primaryKey = [...messagePlaceKey, 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per earlier message a message quotes in reply. Primary key accountId, conversationId, threadId, messageId, position. A quote removed from a message the app still holds is deleted.',
+      'One record per earlier message a message quotes in reply. Primary key accountId, store, conversationId, recordId, entry (its message’s place) and position. A quote removed from a message the app still holds is deleted.',
     properties,
     required: Object.keys(properties),
   } as const;
 
-  protected children({ quotes }: TeamsMessage): readonly Quote[] {
-    return quotes.map((quote, position) => ({ position, quote }));
+  protected children({ quotes }: TeamsMessage): readonly TeamsQuote[] {
+    return quotes;
   }
 
   protected records({
     key,
-    child: { position, quote },
-  }: Part<Quote>): RecordDraft<typeof properties>[] {
+    child: { position, ...quote },
+  }: Part<TeamsQuote>): RecordDraft<typeof properties>[] {
     return [
       {
         ...key,

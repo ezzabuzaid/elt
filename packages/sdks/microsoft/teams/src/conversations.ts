@@ -40,9 +40,11 @@ export function readConversation(conversation: Fields): TeamsConversation {
     // The thread keeps the pins as JSON text; the conversation's own
     // pinnedItems copy can lag behind it, as it did on 2026-10-12 for a pin
     // just made in the notes chat.
-    pinnedMessageIds: (thread?.parsedList('pinnedItems') ?? [])
-      .filter((item) => item.string('itemType') === 'Message')
-      .map((item) => item.requiredString('itemId')),
+    pins: (thread?.parsedList('pinnedItems') ?? []).flatMap((item, position) =>
+      item.string('itemType') === 'Message'
+        ? [{ position, messageId: item.requiredString('itemId') }]
+        : [],
+    ),
   };
 }
 
@@ -58,20 +60,14 @@ function lastReadAt(horizon: string | null): string | null {
 function members(conversation: Fields): TeamsMember[] | null {
   if (!conversation.has('members') && !conversation.has('botMembers'))
     return null;
-  const byId = new Map<string, TeamsMember>();
-  for (const [list, isBot] of [
-    ['members', false],
-    ['botMembers', true],
-  ] as const)
-    for (const member of conversation.list(list)) {
-      const id = member.requiredString('id');
-      byId.set(id, {
-        id,
-        role: member.string('role'),
-        isBot,
-        isReader: member.boolean('isReader'),
-        shareHistoryAt: member.milliseconds('shareHistoryTime'),
-      });
-    }
-  return [...byId.values()];
+  return (['members', 'botMembers'] as const).flatMap((list) =>
+    conversation.list(list).map((member, position) => ({
+      list,
+      position,
+      id: member.requiredString('id'),
+      role: member.string('role'),
+      isReader: member.boolean('isReader'),
+      shareHistoryAt: member.milliseconds('shareHistoryTime'),
+    })),
+  );
 }

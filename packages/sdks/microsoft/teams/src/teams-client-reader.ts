@@ -7,7 +7,11 @@ import { readConversation } from './conversations.ts';
 import { readActivity, readCallLog, readSaved } from './feeds.ts';
 import { Fields } from './fields.ts';
 import { readFolder } from './folders.ts';
-import { readAppScope, readInstalledApps } from './installed-apps.ts';
+import {
+  readAppDefinition,
+  readAppScope,
+  readInstalledApps,
+} from './installed-apps.ts';
 import { readMeeting } from './meetings.ts';
 import { readLastMessage, readMessage } from './messages.ts';
 import { readPerson } from './people.ts';
@@ -49,87 +53,106 @@ export function readTeamsClient(
       item.boolean('isRead'),
     ]),
   );
-  const messages = new Map<string, TeamsMessage>();
+  const messages: TeamsMessage[] = [];
   const callLogs: TeamsCallLog[] = [];
   const activities: TeamsActivity[] = [];
   const savedMessages: TeamsSavedMessage[] = [];
   const chains = [
-    ...replyChains(databases.get('replychain-manager')),
-    ...records('streams-replychain-manager', 'saved'),
+    ...replyChains(databases.get('replychain-manager')).map((chain) => ({
+      store: 'replychain-manager/replychains',
+      chain,
+    })),
+    ...records('streams-replychain-manager', 'saved').map((chain) => ({
+      store: 'streams-replychain-manager/saved',
+      chain,
+    })),
   ];
-  for (const chain of chains) {
-    for (const [, fields] of chain.entries('messageMap')) {
-      const conversationId = fields.requiredString('conversationId');
-      const feed = conversationId.slice('48:'.length);
+  // A chain record's key is its conversation and its first message,
+  // [conversationId, replyChainId].
+  for (const { store, chain } of chains) {
+    const conversationId = chain.requiredString('conversationId');
+    const recordId = chain.requiredText('replyChainId');
+    const feed = conversationId.slice('48:'.length);
+    for (const [entry, fields] of chain.entries('messageMap')) {
+      const place = { store, conversationId, recordId, entry };
       let described = false;
       if (conversationId === '48:calllogs') {
-        described = push(callLogs, readCallLog(fields));
+        described = push(callLogs, readCallLog(fields, place));
       } else if (
         conversationId === '48:notifications' ||
         conversationId === '48:annotations'
       ) {
-        described = push(activities, readActivity(fields, feed, read));
+        described = push(activities, readActivity(fields, place, feed, read));
       } else if (
         conversationId === '48:saved' ||
         conversationId === '48:starred'
       ) {
-        described = push(savedMessages, readSaved(fields, feed));
+        described = push(savedMessages, readSaved(fields, place, feed));
       }
-      if (described) continue;
-      const message = readMessage(fields);
-      messages.set(key(message), message);
+      if (!described) messages.push(readMessage(fields, place));
     }
   }
-  // A conversation keeps its newest message, and its newest that is not a
-  // membership or topic change, whether or not their chains are cached. A
-  // Viva Engage community keeps a placeholder there, with no type, sender or
-  // content, for a post that Engage holds.
+  // A conversation keeps a copy of its newest message, and of its newest that
+  // is not a membership or topic change, whether or not their chains are
+  // cached. A Viva Engage community keeps a placeholder there, with no type,
+  // sender or content, for a post that Engage holds.
   const conversations = records('conversation-manager', 'conversations');
   for (const conversation of conversations) {
-    const id = conversation.requiredString('id');
-    if (feeds.has(id)) continue;
-    for (const name of ['lastMessage', 'lastNonTMMessage']) {
-      const last = conversation.object(name);
+    const conversationId = conversation.requiredString('id');
+    if (feeds.has(conversationId)) continue;
+    for (const entry of ['lastMessage', 'lastNonTMMessage']) {
+      const last = conversation.object(entry);
       if (last === null || !last.has('messagetype')) continue;
-      const message = readLastMessage(last, id);
-      if (!messages.has(key(message))) messages.set(key(message), message);
+      messages.push(
+        readLastMessage(last, {
+          store: 'conversation-manager/conversations',
+          conversationId,
+          recordId: conversationId,
+          entry,
+        }),
+      );
     }
   }
-  const definitions = new Map(
+  const managers = [
     [
-      ...records('user-installed-apps-manager', 'user-app-definitions'),
-      ...records('chat-installed-apps-manager', 'app-definitions'),
-      ...records('team-installed-apps-manager', 'app-definitions'),
-    ].flatMap((definition) => {
-      const item = definition.object('item');
-      return item === null
+      'user-installed-apps-manager',
+      'user-app-entitlements',
+      'user-app-definitions',
+    ],
+    ['chat-installed-apps-manager', 'app-entitlements', 'app-definitions'],
+    ['team-installed-apps-manager', 'app-entitlements', 'app-definitions'],
+  ] as const;
+  const entitlements = managers.flatMap(([manager, store]) =>
+    records(manager, store).flatMap((fields) => {
+      const scope = readAppScope(fields);
+      return scope === null
         ? []
-        : [[definition.requiredString('appId'), item] as const];
+        : [{ store: `${manager}/${store}`, fields, scope }];
     }),
   );
-  const entitlements = [
-    ...records('user-installed-apps-manager', 'user-app-entitlements'),
-    ...records('chat-installed-apps-manager', 'app-entitlements'),
-    ...records('team-installed-apps-manager', 'app-entitlements'),
-  ].flatMap((fields) => {
-    const scope = readAppScope(fields);
-    return scope === null ? [] : [{ fields, scope }];
-  });
   const appScopes = new Set(
-    entitlements.map(({ scope }) => `${scope.scope}\n${scope.scopeId}`),
+    entitlements.map(
+      ({ store, fields }) => `${store}\n${fields.requiredString('cacheKey')}`,
+    ),
   );
   return {
     account,
     conversations: conversations.map(readConversation),
-    messages: [...messages.values()],
+    messages,
     callLogs,
     activities,
     people: records('profiles', 'profiles').map(readPerson),
     meetings: records('calendar', 'calendar').map(readMeeting),
     folders: records('conversation-folder-manager', 'folders').map(readFolder),
     savedMessages,
-    installedApps: entitlements.flatMap(({ fields, scope }) =>
-      readInstalledApps(fields, scope, definitions),
+    installedApps: entitlements.flatMap(({ store, fields, scope }) =>
+      readInstalledApps(fields, store, scope),
+    ),
+    appDefinitions: managers.flatMap(([manager, , store]) =>
+      records(manager, store).flatMap((fields) => {
+        const definition = readAppDefinition(fields, `${manager}/${store}`);
+        return definition === null ? [] : [definition];
+      }),
     ),
     searches: records('search-history-manager', 'searchhistory')
       .filter((entry) => entry.string('entityType') === 'SEARCH')
@@ -147,7 +170,7 @@ export function readTeamsClient(
       }),
     holds: (conversationId, threadId, messageId) =>
       windows.holds(conversationId, threadId, messageId),
-    holdsApps: (scope, scopeId) => appScopes.has(`${scope}\n${scopeId}`),
+    holdsApps: (store, cacheKey) => appScopes.has(`${store}\n${cacheKey}`),
   };
 }
 
@@ -186,8 +209,4 @@ function push<T>(list: T[], item: T | null): boolean {
   if (item === null) return false;
   list.push(item);
   return true;
-}
-
-function key({ conversationId, id }: TeamsMessage): string {
-  return `${conversationId}\n${id}`;
 }

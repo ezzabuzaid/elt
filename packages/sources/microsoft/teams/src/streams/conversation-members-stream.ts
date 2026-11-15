@@ -1,4 +1,4 @@
-import type { KeyValue } from '@zukhruf/snapshot-differential';
+import type { VanishedRecord } from '@zukhruf/snapshot-differential';
 
 import type { RecordDraft } from '@eltjs/elt';
 import type { TeamsMember } from '@eltjs/sdk-microsoft-teams';
@@ -9,6 +9,7 @@ import { TeamsStream, teamsFields } from '../teams-stream.ts';
 const {
   id,
   accountId,
+  position,
   conversationId,
   nullableText,
   nullableBoolean,
@@ -18,13 +19,22 @@ const {
 const properties = {
   accountId,
   conversationId,
+  list: {
+    type: 'string',
+    enum: ['members', 'botMembers'],
+    description:
+      'The conversation’s list that names the member: members, or botMembers for a bot.',
+  },
+  position: {
+    ...position,
+    description: 'The member’s place in that list, from 0.',
+  },
   memberId: {
     ...id,
     description:
       'The member’s Teams ID: 8:orgid:<id> for a person (people.mri), 28:<id> for a bot.',
   },
   role: { ...nullableText, description: 'Admin or User.' },
-  isBot: { type: 'boolean', description: 'Whether the member is a bot.' },
   isReader: {
     ...nullableBoolean,
     description: 'Whether the member can only read.',
@@ -47,19 +57,16 @@ export class ConversationMembersStream extends TeamsStream<
   Row
 > {
   readonly name = 'conversationMembers';
-  readonly primaryKey = ['accountId', 'conversationId', 'memberId'];
+  readonly primaryKey = ['accountId', 'conversationId', 'list', 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per member of a chat, meeting chat or team, as Teams keeps them; a channel’s members are its team’s. Primary key accountId, conversationId, memberId. A member who left is deleted.',
+      'One record per place in the lists of members of a chat, meeting chat or team, as Teams keeps them; a channel’s members are its team’s. Primary key accountId, conversationId, list, position. A member who left is deleted.',
     properties,
     required: Object.keys(properties),
   } as const;
 
-  override covers(
-    scan: TeamsScan,
-    key: Readonly<Record<string, KeyValue>>,
-  ): boolean {
+  override covers(scan: TeamsScan, { key }: VanishedRecord): boolean {
     return scan.holdsMembers(key.accountId, key.conversationId);
   }
 

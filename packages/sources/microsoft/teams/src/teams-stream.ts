@@ -1,4 +1,4 @@
-import type { KeyValue } from '@zukhruf/snapshot-differential';
+import type { VanishedRecord } from '@zukhruf/snapshot-differential';
 
 import {
   type Properties,
@@ -38,11 +38,36 @@ export const teamsFields = {
   },
 } as const;
 
+// Where the Teams client keeps an entry of one of its feeds, such as its call
+// log: a message of a reply chain of the feed's conversation, 48:<feed>. Each
+// such chain holds one message, whose id is the chain's (574 of 574 entries of
+// a live store's feeds on 2026-11-15), so a feed entry is held where the
+// feed's span holds its chain.
+export const feedPlace = {
+  store: {
+    type: 'string',
+    minLength: 1,
+    description:
+      'The object store of the Teams client that keeps the entry: replychain-manager/replychains or streams-replychain-manager/saved.',
+  },
+  recordId: {
+    type: 'string',
+    minLength: 1,
+    description:
+      'The feed’s reply chain that keeps it, by the ID of the chain’s first message.',
+  },
+  entry: {
+    type: 'string',
+    minLength: 1,
+    description: 'The entry’s key in that reply chain.',
+  },
+} as const;
+
 export type TeamsReader = {
   readonly name: string;
   describe(): Stream;
   read(scan: TeamsScan): Record<string, unknown>[];
-  covers(scan: TeamsScan, key: Readonly<Record<string, KeyValue>>): boolean;
+  covers(scan: TeamsScan, record: VanishedRecord): boolean;
 };
 
 // A Teams stream: its description, and how its records come out of a run's
@@ -81,7 +106,7 @@ export abstract class TeamsStream<P extends Properties, Row> {
 
   // Whether the scan vouches for a row it no longer holds, so that it was
   // deleted: every row of an account the app still keeps.
-  covers(scan: TeamsScan, key: Readonly<Record<string, KeyValue>>): boolean {
+  covers(scan: TeamsScan, { key }: VanishedRecord): boolean {
     return scan.keeps(key.accountId);
   }
 

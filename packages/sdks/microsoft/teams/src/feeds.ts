@@ -2,6 +2,7 @@ import type { Fields } from './fields.ts';
 import type {
   TeamsActivity,
   TeamsCallLog,
+  TeamsMessagePlace,
   TeamsSavedMessage,
 } from './teams-client.ts';
 
@@ -9,12 +10,16 @@ import type {
 // its own, 48:<feed>, whose messages describe something elsewhere. Each reader
 // returns null for a message it does not describe, which stays a message.
 
-export function readCallLog(message: Fields): TeamsCallLog | null {
+export function readCallLog(
+  message: Fields,
+  place: TeamsMessagePlace,
+): TeamsCallLog | null {
   const log = message.object('properties')?.parsedObject('call-log');
   if (log === null || log === undefined) return null;
   const originator = log.object('originatorParticipant');
   const target = log.object('targetParticipant');
   return {
+    place,
     id: message.requiredString('id'),
     callId: log.requiredString('callId'),
     startedAt: log.instant('startTime', 7),
@@ -31,7 +36,8 @@ export function readCallLog(message: Fields): TeamsCallLog | null {
     messageId: log.string('messageId'),
     forwardedTo:
       log.object('forwardingInfo')?.string('forwardingDestinationType') ?? null,
-    participants: log.list('participantList').map((participant) => ({
+    participants: log.list('participantList').map((participant, position) => ({
+      position,
       id: participant.requiredString('id'),
       type: participant.string('type'),
       tenantId: participant.string('tenantId'),
@@ -44,6 +50,7 @@ export function readCallLog(message: Fields): TeamsCallLog | null {
 // message's id, comes from the feed's own index.
 export function readActivity(
   message: Fields,
+  place: TeamsMessagePlace,
   feed: string,
   read: ReadonlyMap<string, boolean | null>,
 ): TeamsActivity | null {
@@ -52,6 +59,7 @@ export function readActivity(
   const id = message.requiredString('id');
   return {
     feed,
+    place,
     id,
     activityId: activity.text('activityId'),
     type: activity.requiredString('activityType'),
@@ -74,6 +82,7 @@ export function readActivity(
 // is what Teams called saving before.
 export function readSaved(
   message: Fields,
+  place: TeamsMessagePlace,
   feed: string,
 ): TeamsSavedMessage | null {
   const properties = message.object('properties');
@@ -82,6 +91,7 @@ export function readSaved(
   if (activity !== null && activity !== undefined)
     return {
       feed,
+      place,
       id,
       conversationId: activity.string('sourceThreadId'),
       threadId: activity.text('sourceReplyChainId'),
@@ -94,6 +104,7 @@ export function readSaved(
   if (starred === null || starred === undefined) return null;
   return {
     feed,
+    place,
     id,
     conversationId: starred.string('threadId'),
     threadId: starred.string('parentMessageId'),

@@ -13,10 +13,14 @@ export type TeamsAccount = {
 };
 
 export type TeamsMember = {
+  // The conversation's list that names the member: members, or botMembers
+  // for a bot. Its place in that list is its identity: Teams keeps neither
+  // list unique by member, nor the two apart.
+  readonly list: 'members' | 'botMembers';
+  readonly position: number;
   // A person's or bot's Teams ID (TeamsPerson.mri).
   readonly id: string;
   readonly role: string | null;
-  readonly isBot: boolean;
   readonly isReader: boolean | null;
   // From when the member sees the conversation's history.
   readonly shareHistoryAt: string | null;
@@ -52,19 +56,50 @@ export type TeamsConversation = {
   // Null when the client keeps no member list for the conversation, as for
   // a channel, whose members are its team's.
   readonly members: readonly TeamsMember[] | null;
-  // The ids of the messages pinned to the conversation, in its order.
-  readonly pinnedMessageIds: readonly string[];
+  // The messages pinned to the conversation, each at its place in the
+  // conversation's list of pins.
+  readonly pins: readonly TeamsPin[];
+};
+
+type TeamsPin = {
+  readonly position: number;
+  readonly messageId: string;
+};
+
+// Where the web client keeps a message: an entry of one record of one of its
+// object stores. The store keeps the record's key unique and the record keeps
+// the entry's name unique, so this is the message's identity; Teams' own id
+// for the message is not: one message can be in several places.
+export type TeamsMessagePlace = {
+  // The manager and object store: replychain-manager/replychains (its newest
+  // generation), streams-replychain-manager/saved, or
+  // conversation-manager/conversations for the copies a conversation keeps of
+  // its newest messages.
+  readonly store: string;
+  readonly conversationId: string;
+  // The record's id within its conversation: its reply chain's
+  // (replyChainId), or for a conversation's copies the conversation's own.
+  readonly recordId: string;
+  // The message's name in its record: its key in the chain's messageMap, or
+  // lastMessage or lastNonTMMessage.
+  readonly entry: string;
 };
 
 export type TeamsReaction = {
+  // The emoji's place in the message's list of reactions, and the user's in
+  // the emoji's list of users.
+  readonly emojiPosition: number;
+  readonly userPosition: number;
   readonly emoji: string;
   readonly userId: string;
   readonly reactedAt: string | null;
 };
 
 export type TeamsMention = {
-  // The mention's place in the message, which its content refers to.
+  // The mention's place in the message's list of mentions.
   readonly position: number;
+  // The number the message's content refers to the mention by.
+  readonly itemId: number;
   readonly mentionedId: string;
   // person, everyone, channel, team or tag.
   readonly kind: string | null;
@@ -72,6 +107,9 @@ export type TeamsMention = {
 };
 
 export type TeamsMessageFile = {
+  // The file's place in the message's list of files, which can list one
+  // file several times.
+  readonly position: number;
   readonly id: string;
   readonly name: string | null;
   readonly fileType: string | null;
@@ -92,6 +130,7 @@ export type TeamsMessageLink = {
 };
 
 export type TeamsQuote = {
+  readonly position: number;
   readonly messageId: string;
   readonly senderId: string | null;
   readonly sentAt: string | null;
@@ -99,9 +138,9 @@ export type TeamsQuote = {
 };
 
 export type TeamsMessage = {
-  readonly conversationId: string;
-  // The thread's first message: the message itself, except for a reply in a
-  // channel.
+  readonly place: TeamsMessagePlace;
+  // The thread's first message (parentMessageId): the message itself, except
+  // for a reply in a channel.
   readonly threadId: string;
   // Teams' id for the message within its conversation: when the service
   // received it, in milliseconds.
@@ -130,13 +169,17 @@ export type TeamsMessage = {
 };
 
 type TeamsCallParticipant = {
+  // The participant's place in the call's list of participants.
+  readonly position: number;
   readonly id: string;
   readonly type: string | null;
   readonly tenantId: string | null;
 };
 
 export type TeamsCallLog = {
-  // The log's message in the client's call log feed.
+  // Where the client keeps the log's message, in its call log feed.
+  readonly place: TeamsMessagePlace;
+  // The log's message's id in that feed.
   readonly id: string;
   readonly callId: string;
   readonly startedAt: string | null;
@@ -160,6 +203,7 @@ export type TeamsCallLog = {
 export type TeamsActivity = {
   // The client feed the activity came from: notifications or annotations.
   readonly feed: string;
+  readonly place: TeamsMessagePlace;
   readonly id: string;
   readonly activityId: string | null;
   readonly type: string;
@@ -194,6 +238,8 @@ export type TeamsPerson = {
 };
 
 type TeamsAttendee = {
+  // The attendee's place in the meeting's list of attendees.
+  readonly position: number;
   readonly address: string;
   readonly name: string | null;
   readonly type: string | null;
@@ -225,6 +271,8 @@ export type TeamsMeeting = {
 };
 
 type TeamsFolderConversation = {
+  // The conversation's place in the folder's list.
+  readonly position: number;
   readonly conversationId: string;
   readonly addedAt: string | null;
 };
@@ -245,6 +293,7 @@ export type TeamsSavedMessage = {
   // The client feed that records it: 48:saved, or 48:starred from before
   // Teams named it saved.
   readonly feed: string;
+  readonly place: TeamsMessagePlace;
   readonly id: string;
   readonly conversationId: string | null;
   readonly threadId: string | null;
@@ -253,6 +302,11 @@ export type TeamsSavedMessage = {
 };
 
 export type TeamsInstalledApp = {
+  // The entitlements record that lists the app, by its manager and object
+  // store and its key, and the app's place in the record's list.
+  readonly store: string;
+  readonly cacheKey: string;
+  readonly position: number;
   // Where the app is installed: user, chat or team.
   readonly scope: string;
   readonly scopeId: string;
@@ -260,6 +314,16 @@ export type TeamsInstalledApp = {
   readonly state: string;
   readonly version: string | null;
   readonly installedBy: string | null;
+};
+
+// An app as one manager's cache defines it, by its manager and object store
+// and its key, <appId>_<version>. Managers define one app apart, and one
+// manager can define an app in several versions.
+export type TeamsAppDefinition = {
+  readonly store: string;
+  readonly cacheKey: string;
+  readonly appId: string;
+  readonly version: string | null;
   readonly name: string | null;
   readonly developerName: string | null;
 };
@@ -282,12 +346,13 @@ export type TeamsClient = {
   readonly folders: readonly TeamsFolder[];
   readonly savedMessages: readonly TeamsSavedMessage[];
   readonly installedApps: readonly TeamsInstalledApp[];
+  readonly appDefinitions: readonly TeamsAppDefinition[];
   readonly searches: readonly TeamsSearch[];
   // Whether the client holds this part of a conversation's or a channel
   // thread's history: a message there that the client no longer holds was
   // deleted, not dropped from its cache.
   holds(conversationId: string, threadId: string, messageId: string): boolean;
-  // Whether the client has loaded which apps are installed for this user,
-  // chat or team: an app it no longer lists there was uninstalled.
-  holdsApps(scope: string, scopeId: string): boolean;
+  // Whether the client keeps this entitlements record of a user, chat or
+  // team: an app it no longer lists there was uninstalled.
+  holdsApps(store: string, cacheKey: string): boolean;
 };

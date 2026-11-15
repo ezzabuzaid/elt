@@ -25,7 +25,8 @@ export function readMeeting(event: Fields): TeamsMeeting {
     isCancelled: event.boolean('isCancelled') ?? false,
     bodyPreview: event.string('bodyPreview'),
     modifiedAt: event.instant('lastModifiedTime', 7),
-    attendees: event.list('attendees').map((attendee) => ({
+    attendees: event.list('attendees').map((attendee, position) => ({
+      position,
       address: attendee.requiredString('address'),
       name: attendee.string('name'),
       type: attendee.string('type'),

@@ -1,4 +1,4 @@
-import type { KeyValue } from '@zukhruf/snapshot-differential';
+import type { VanishedRecord } from '@zukhruf/snapshot-differential';
 
 import type { RecordDraft } from '@eltjs/elt';
 import type { TeamsClient } from '@eltjs/sdk-microsoft-teams';
@@ -43,10 +43,7 @@ export class AccountsStream extends TeamsStream<
     required: Object.keys(properties),
   } as const;
 
-  override covers(
-    scan: TeamsScan,
-    key: Readonly<Record<string, KeyValue>>,
-  ): boolean {
+  override covers(scan: TeamsScan, { key }: VanishedRecord): boolean {
     return scan.keeps(key.id);
   }
 

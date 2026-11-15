@@ -23,11 +23,11 @@ type Row = RecordDraft<typeof properties>;
 
 export class PinsStream extends TeamsStream<typeof properties, Row> {
   readonly name = 'pins';
-  readonly primaryKey = ['accountId', 'conversationId', 'messageId'];
+  readonly primaryKey = ['accountId', 'conversationId', 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per message pinned to a conversation, as the conversation lists them. Primary key accountId, conversationId, messageId. An unpinned message is deleted.',
+      'One record per message pinned to a conversation, as the conversation lists them. Primary key accountId, conversationId, position. An unpinned message is deleted.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -36,12 +36,11 @@ export class PinsStream extends TeamsStream<typeof properties, Row> {
     return scan.clients.flatMap(({ account, conversations }) =>
       conversations
         .filter(({ id }) => scan.conversationSelected(id))
-        .flatMap(({ id, pinnedMessageIds }) =>
-          pinnedMessageIds.map((messageId, position) => ({
+        .flatMap(({ id, pins }) =>
+          pins.map((pin) => ({
             accountId: account.userId,
             conversationId: id,
-            messageId,
-            position,
+            ...pin,
           })),
         ),
     );

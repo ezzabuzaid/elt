@@ -13,9 +13,12 @@ export function readFolder(folder: Fields): TeamsFolder {
     isHidden: folder.boolean('isHidden'),
     isDeleted: folder.boolean('isDeleted'),
     createdAt: folder.milliseconds('createdTime'),
-    conversations: folder.list('conversations').map((conversation) => ({
-      conversationId: conversation.requiredString('id'),
-      addedAt: conversation.milliseconds('createdTime'),
-    })),
+    conversations: folder
+      .list('conversations')
+      .map((conversation, position) => ({
+        position,
+        conversationId: conversation.requiredString('id'),
+        addedAt: conversation.milliseconds('createdTime'),
+      })),
   };
 }
