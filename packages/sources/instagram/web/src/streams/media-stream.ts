@@ -141,7 +141,7 @@ export class MediaStream extends InstagramStream<typeof properties> {
           tagged: { ...scan.lanes.tagged, ended: false },
         };
       const images = new Map<string, string>();
-      const drafts = new Map<string, RecordDraft<typeof properties>>();
+      const drafts: RecordDraft<typeof properties>[] = [];
       for (const item of part.items.filter(inRange))
         slides(item).forEach((slide, position) => {
           const draft = {
@@ -155,18 +155,11 @@ export class MediaStream extends InstagramStream<typeof properties> {
             height: slide.image.height,
             description: slide.description,
           };
-          const key = this.keyOf(draft);
-          drafts.set(key, draft);
-          images.set(key, slide.image.url);
+          drafts.push(draft);
+          images.set(this.keyOf(draft), slide.image.url);
         });
       yield* this.withImages(
-        this.#part(
-          scan,
-          context.configuration,
-          [...drafts.values()],
-          ends,
-          context.signal,
-        ),
+        this.#part(scan, context.configuration, drafts, ends, context.signal),
         images,
         context,
       );

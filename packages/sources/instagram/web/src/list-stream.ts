@@ -60,13 +60,10 @@ export abstract class ListStream<
       signal,
       this.olderThan(range),
     )) {
-      const items = new Map(
+      const records = this.validated(
         part.items
           .filter((item) => this.inRange(item, range))
-          .map((item) => [reader.lane.id(item), item]),
-      );
-      const records = this.validated(
-        [...items.values()].map((item) => this.record(item, profileId)),
+          .map((item) => this.record(item, profileId)),
       );
       const lane = part.ends ? { ...part.lane, ended: false } : part.lane;
       for await (const message of diffSnapshot(configuration, records, diff, {

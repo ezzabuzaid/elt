@@ -1842,6 +1842,75 @@ test('comments load with their replies, are read again within a scan only when a
   ]);
 });
 
+test('a grid page that lists one post twice fails the posts, media and comments streams with twice in one scan', async () => {
+  await using mac = await signedInMac();
+  await using dir = await new TemporaryFiles().directory('instagram-load-');
+  const [repeated, other] = posts(2);
+  assert.ok(repeated !== undefined && other !== undefined);
+  using _wire = instagram({
+    profiles: [hive([repeated, repeated, other])],
+    following: [],
+  });
+  const run = await pipeline(
+    await InstagramWebSource.connect(
+      { home: mac.path, profileIds: ['44555906095'] },
+      globalThis,
+    ),
+    dir.path,
+  );
+
+  const failed = await failedRun(run.run());
+
+  assert.deepEqual(
+    Object.fromEntries(
+      ['posts', 'media', 'comments'].map((stream) => [
+        stream,
+        /twice in one scan/.test(String(failed[stream]?.[0]?.error)),
+      ]),
+    ),
+    { posts: true, media: true, comments: true },
+  );
+});
+
+test('a reels, reposts or tagged page that lists one post twice fails its stream and media with twice in one scan', async () => {
+  await using mac = await signedInMac();
+  await using dir = await new TemporaryFiles().directory('instagram-load-');
+  const twice = (pk: string) => {
+    const post = { pk, takenAt: day };
+    return [post, post, { pk: String(Number(pk) - 1), takenAt: day - 3600 }];
+  };
+  using _wire = instagram({
+    profiles: [
+      {
+        ...hive([]),
+        reels: twice('201'),
+        reposts: twice('301'),
+        tagged: twice('401'),
+      },
+    ],
+    following: [],
+  });
+  const run = await pipeline(
+    await InstagramWebSource.connect(
+      { home: mac.path, profileIds: ['44555906095'] },
+      globalThis,
+    ),
+    dir.path,
+  );
+
+  const failed = await failedRun(run.run());
+
+  assert.deepEqual(
+    Object.fromEntries(
+      ['reels', 'reposts', 'tagged_posts', 'media'].map((stream) => [
+        stream,
+        /twice in one scan/.test(String(failed[stream]?.[0]?.error)),
+      ]),
+    ),
+    { reels: true, reposts: true, tagged_posts: true, media: true },
+  );
+});
+
 test('the reels tab, reposts and tagged posts load for the profile, page after page', async () => {
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');

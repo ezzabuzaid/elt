@@ -95,10 +95,7 @@ export class CommentsStream extends InstagramStream<typeof properties> {
         ? undefined
         : (item) => instant(item.taken_at) < startAt,
     )) {
-      const posts = new Map(
-        part.items.filter(inRange).map((post) => [post.pk, post]),
-      );
-      const groups = [...posts.values()].map((post) => ({
+      const groups = part.items.filter(inRange).map((post) => ({
         key: post.pk,
         fingerprint: `${post.comment_count}@${scan}`,
         records: () => this.#comments(run.web, owner, post, signal),

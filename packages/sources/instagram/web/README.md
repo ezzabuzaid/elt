@@ -107,6 +107,7 @@ The recipe [Search the text of stored files with SQL](../../../destinations/sqli
   - Errors next to data are GraphQL field errors. Instagram sets the field to null and sends the rest, and the SDK reads it. Such an answer fails only when the field is one that the SDK reads. See [ADR 0002](./docs/adr/0002-an-answer-with-field-errors-next-to-its-data-is-read.md).
   - No browser session fails with `BrowserSessionNotFoundError`. A Safe Storage item that the keychain does not give fails with `SafeStorageUnavailableError`. The user must fix both.
   - A page cursor that Instagram gives two times fails the read of that profile. The read does not loop.
+  - A page of the grid, the reels tab, the reposts tab or the tagged tab that lists one post two times fails `posts`, `reels`, `reposts`, `tagged_posts`, `media` and `comments` with `twice in one scan`. The source does not drop the repeat. See ADR 0022 of [elt](../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md).
 
 ## Instagram's web API
 
