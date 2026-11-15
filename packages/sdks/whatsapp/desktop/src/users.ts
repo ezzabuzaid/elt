@@ -1,12 +1,20 @@
 import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { appDatabase } from './app-database.ts';
-import { bytes, instant, number, requiredText, text } from './values.ts';
+import {
+  bytes,
+  instant,
+  number,
+  requiredNumber,
+  requiredText,
+  text,
+} from './values.ts';
 
 // A WhatsApp user this account has seen, by the LID WhatsApp names them with
 // in place of a phone number (LID.sqlite's ZWAZACCOUNT): their phone number
 // when they share it, and the names they gave WhatsApp.
 export type User = {
+  readonly id: number;
   readonly lid: string;
   readonly phoneNumber: string | null;
   readonly countryCode: string | null;
@@ -48,7 +56,7 @@ export class UsersSnapshot implements Disposable {
   users(): IteratorObject<User, undefined> {
     return this.#database
       .iterate(
-        `SELECT ZIDENTIFIER AS lid, ZPHONENUMBER AS phoneNumber,
+        `SELECT Z_PK AS id, ZIDENTIFIER AS lid, ZPHONENUMBER AS phoneNumber,
                 ZCOUNTRYCODE AS countryCode, ZDISPLAYNAME AS displayName,
                 ZUSERNAME AS username, ZUSERTYPE AS userType, ZSTATE AS state,
                 ZCURRENTPHONENUMBERSHARINGSTATE AS phoneNumberSharingState,
@@ -57,6 +65,7 @@ export class UsersSnapshot implements Disposable {
          FROM ZWAZACCOUNT ORDER BY Z_PK`,
       )
       .map((row) => ({
+        id: requiredNumber(row.id, 'A WhatsApp user has no row ID'),
         lid: requiredText(row.lid, 'A WhatsApp user has no LID'),
         phoneNumber: text(row.phoneNumber),
         countryCode: text(row.countryCode),

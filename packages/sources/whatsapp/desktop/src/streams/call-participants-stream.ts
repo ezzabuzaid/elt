@@ -2,15 +2,16 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { CallParticipant } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
-const { text, jid, nullableInteger } = whatsappFields;
+const { jid, nullableInteger } = whatsappFields;
 
 const properties = {
-  callId: {
-    ...text,
-    minLength: 1,
-    description: 'The call; refers to calls.callId.',
+  id: rowId('ZWACDCALLEVENTPARTICIPANT'),
+  callLogId: {
+    ...nullableInteger,
+    description:
+      'The call-log entry the participant is on; refers to calls.callLogId, the entry of each call it holds. NULL when no entry holds the participant.',
   },
   jid: {
     ...jid,
@@ -19,7 +20,7 @@ const properties = {
   outcome: {
     ...nullableInteger,
     description:
-      'WhatsApp’s undocumented code for how the call went for them (ZOUTCOME).',
+      'WhatsApp’s undocumented code for how the entry’s calls went for them (ZOUTCOME).',
   },
 } as const;
 
@@ -29,11 +30,11 @@ export class CallParticipantsStream extends WhatsAppStream<
 > {
   readonly name = 'callParticipants';
   readonly store = 'calls';
-  readonly primaryKey = ['callId', 'jid'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per other party on a call. WhatsApp keeps participants on the call-log entry, so each call an entry holds lists them all. Primary key callId, jid. Not narrowed by an import’s chats or dates.',
+      'One record per other party on a call-log entry. WhatsApp keeps participants on the entry, not on each call: join calls on callLogId for the calls they were on. Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

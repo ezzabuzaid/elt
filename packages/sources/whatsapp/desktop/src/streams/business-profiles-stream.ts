@@ -2,7 +2,7 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { BusinessProfile } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const {
   jid,
@@ -17,9 +17,10 @@ const profile = (what: string, column: string) =>
   `${what} (ZWABIZPROFILEDATA.${column}).`;
 
 const properties = {
+  id: rowId('ZWABIZPROFILEDATA'),
   jid: {
     ...jid,
-    description: profile('The business, by phone JID; the primary key', 'ZJID'),
+    description: profile('The business, by phone JID', 'ZJID'),
   },
   description: {
     ...nullableText,
@@ -144,11 +145,11 @@ export class BusinessProfilesStream extends WhatsAppStream<
 > {
   readonly name = 'businessProfiles';
   readonly store = 'businesses';
-  readonly primaryKey = ['jid'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per business profile WhatsApp fetched for a chat with a business (Biz.sqlite), as the profile screen shows it. Primary key jid; a chat may name the business by its LID instead, which businessVerifiedNames maps. Not narrowed by an import’s chats or dates.',
+      'One record per business profile WhatsApp fetched for a chat with a business (Biz.sqlite), as the profile screen shows it. Primary key id; a chat may name the business by its LID instead, which businessVerifiedNames maps. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

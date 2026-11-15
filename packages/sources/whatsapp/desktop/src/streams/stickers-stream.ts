@@ -2,25 +2,30 @@ import type { RecordDraft, SchemaRecord } from '@eltjs/elt';
 import { type Sticker, stickerFile } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const { text, boolean, nullableText, nullableInteger } = whatsappFields;
 const sticker = (what: string, column: string) =>
   `${what} (ZWACDSTICKER.${column}).`;
 
 const properties = {
+  id: rowId('ZWACDSTICKER'),
   fileHash: {
     ...text,
     minLength: 1,
     description: sticker(
-      'The SHA-256 of the sticker file as WhatsApp’s servers hold it, base64; the primary key',
+      'The SHA-256 of the sticker file as WhatsApp’s servers hold it, base64',
       'ZFILEHASH',
     ),
   },
+  packId: {
+    ...nullableInteger,
+    description:
+      'The tray pack it belongs to; refers to stickerPacks.id; NULL for a sticker the account favorited or sent, which belongs to no pack.',
+  },
   stickerPackId: {
     ...nullableText,
-    description:
-      'The tray pack it belongs to; refers to stickerPacks; NULL for a sticker the account favorited or sent, which belongs to no pack.',
+    description: 'That pack’s stickerPackId; NULL with packId.',
   },
   sort: {
     ...nullableInteger,
@@ -90,12 +95,12 @@ const properties = {
 export class StickersStream extends WhatsAppStream<typeof properties, Sticker> {
   readonly name = 'stickers';
   readonly store = 'stickers';
-  readonly primaryKey = ['fileHash'];
+  readonly primaryKey = ['id'];
   readonly supportsFileTransfer = true;
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per sticker WhatsApp keeps: those of the tray’s packs, and those the account favorited or sent (see favoriteStickers and recentStickers). Primary key fileHash. Not narrowed by an import’s chats or dates.',
+      'One record per sticker WhatsApp keeps: those of the tray’s packs, and those the account favorited or sent (see favoriteStickers and recentStickers). Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

@@ -1,11 +1,14 @@
 import type { QuotedMessage } from './message-metadata.ts';
 
 // Each record carries WhatsApp's own codes as numbers: it publishes none of
-// them. Times are UTC to the microsecond.
+// them. Times are UTC to the microsecond. A record's id is its row's Z_PK,
+// the identity Core Data keeps unique within an entity; WhatsApp's own IDs,
+// such as a JID or a stanza ID, can repeat across rows.
 
 // A conversation: one person, a group, a community, a channel, a broadcast
 // list or a contact's statuses (ZWACHATSESSION, with its ZWAGROUPINFO).
 export type Chat = {
+  readonly id: number;
   readonly jid: string;
   readonly sessionType: number;
   readonly partnerName: string | null;
@@ -38,20 +41,16 @@ export type Group = {
   readonly state: number | null;
 };
 
-// What names a message across WhatsApp: its chat, whether this account sent
-// it, and the stanza ID its sender gave it.
-export type MessageKey = {
-  readonly chatJid: string;
-  readonly isFromMe: boolean;
-  readonly stanzaId: string;
-};
-
 // A message (ZWAMESSAGE) with its media item (ZWAMEDIAITEM), which every
 // message has one of, holding its file, link preview, contact card or place
 // and its metadata.
-export type Message = MessageKey & {
-  // How many earlier rows hold the same key: 0 for the message's first row.
-  readonly copy: number;
+export type Message = {
+  readonly id: number;
+  // The chat's id, and the JID WhatsApp names it by.
+  readonly chatId: number;
+  readonly chatJid: string;
+  readonly isFromMe: boolean;
+  readonly stanzaId: string;
   readonly fromJid: string | null;
   readonly toJid: string | null;
   readonly groupMemberJid: string | null;
@@ -101,13 +100,13 @@ export type MediaItem = {
 };
 
 // A link or other item WhatsApp found in a message (ZWAMESSAGEDATAITEM).
-export type MessageDataItem = MessageKey & {
-  // The copy of the message the item is on, as Message.copy counts it.
-  readonly messageCopy: number;
+export type MessageDataItem = {
+  readonly id: number;
+  readonly messageId: number;
   readonly index: number;
   readonly type: number | null;
   readonly date: string | null;
-  readonly content1: string;
+  readonly content1: string | null;
   readonly content2: string | null;
   readonly title: string | null;
   readonly summary: string | null;
@@ -119,6 +118,9 @@ export type MessageDataItem = MessageKey & {
 };
 
 export type GroupMember = {
+  readonly id: number;
+  // The group's chat id, and the JID WhatsApp names it by.
+  readonly chatId: number;
   readonly groupJid: string;
   readonly memberJid: string;
   readonly contactName: string | null;
@@ -130,6 +132,7 @@ export type GroupMember = {
 };
 
 export type GroupMembersChange = {
+  readonly id: number;
   readonly groupJid: string;
   readonly changeDate: string;
   readonly changeType: number;
@@ -137,11 +140,13 @@ export type GroupMembersChange = {
 };
 
 export type PushName = {
+  readonly id: number;
   readonly jid: string;
   readonly pushName: string | null;
 };
 
 export type ProfilePicture = {
+  readonly id: number;
   readonly jid: string;
   readonly pictureId: string | null;
   readonly path: string | null;
@@ -150,7 +155,13 @@ export type ProfilePicture = {
   readonly requestDate: string | null;
 };
 
+export type BlockedContact = {
+  readonly id: number;
+  readonly jid: string;
+};
+
 export type ChatPushConfig = {
+  readonly id: number;
   readonly jid: string;
   readonly alerts: number | null;
   readonly mutedUntil: string | null;

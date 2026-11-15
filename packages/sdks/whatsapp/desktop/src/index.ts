@@ -11,13 +11,13 @@ export {
 export type { Call, CallParticipant } from './calls.ts';
 export { CallsSnapshot } from './calls.ts';
 export type {
+  BlockedContact,
   Chat,
   ChatPushConfig,
   GroupMember,
   GroupMembersChange,
   Message,
   MessageDataItem,
-  MessageKey,
   ProfilePicture,
   PushName,
 } from './chat-records.ts';

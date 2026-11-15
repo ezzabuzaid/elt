@@ -2,13 +2,14 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { StickerPack } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const { text, boolean, nullableText, nullableInteger } = whatsappFields;
 const pack = (what: string, column: string) =>
   `${what} (ZWACDABSTRACTSTICKERPACK.${column}).`;
 
 const properties = {
+  id: rowId('ZWACDABSTRACTSTICKERPACK'),
   stickerPackId: {
     ...text,
     minLength: 1,
@@ -80,11 +81,11 @@ export class StickerPacksStream extends WhatsAppStream<
 > {
   readonly name = 'stickerPacks';
   readonly store = 'stickers';
-  readonly primaryKey = ['stickerPackId', 'inTray'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per sticker pack in the picker’s tray, and one per pack in the copy WhatsApp keeps of its sticker store’s catalog (Sticker.sqlite). Primary key stickerPackId, inTray. Not narrowed by an import’s chats or dates.',
+      'One record per sticker pack in the picker’s tray, and one per pack in the copy WhatsApp keeps of its sticker store’s catalog (Sticker.sqlite). Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

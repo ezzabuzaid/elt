@@ -146,7 +146,6 @@ const streamsOf: Record<Store, readonly string[]> = {
     'chats',
     'groupMembers',
     'groupMembersChanges',
-    'messageCopies',
     'messageDataItems',
     'messageReactionCounts',
     'messageReactions',
@@ -1147,73 +1146,40 @@ test('chats and messages load as a reader reads them: who sent each, when, what 
 
   await (await pipeline(source, dir.path)).run();
 
-  assert.deepEqual(table(out, 'chats', 'jid'), [
+  const chat = {
+    contactIdentifier: null,
+    contactAbId: null,
+    archived: 0,
+    hidden: null,
+    removed: null,
+    flags: null,
+    unreadCount: 0,
+    messageCounter: null,
+    identityVerificationState: null,
+    identityVerificationEpoch: null,
+    lastMessageDate: null,
+    lastMessageText: null,
+    locationSharingEndDate: null,
+    savedInput: null,
+    groupCreationDate: null,
+    groupCreatorJid: null,
+    groupOwnerJid: null,
+    groupSubjectTimestamp: null,
+    groupSubjectOwnerJid: null,
+    groupPictureId: null,
+    groupPicturePath: null,
+    groupSourceJid: null,
+    groupState: null,
+  };
+  assert.deepEqual(table(out, 'chats', 'id'), [
     {
-      jid: '120363000000000001@g.us',
-      sessionType: 1,
-      partnerName: 'Trip',
-      contactIdentifier: null,
-      contactAbId: null,
-      archived: 1,
-      hidden: null,
-      removed: null,
-      flags: null,
-      unreadCount: 0,
-      messageCounter: null,
-      identityVerificationState: null,
-      identityVerificationEpoch: null,
-      lastMessageDate: null,
-      lastMessageText: null,
-      locationSharingEndDate: null,
-      savedInput: null,
-      groupCreationDate: '2025-01-01T00:00:00.000000Z',
-      groupCreatorJid: bobLid,
-      groupOwnerJid: bobLid,
-      groupSubjectTimestamp: '2025-02-01T00:00:00.000000Z',
-      groupSubjectOwnerJid: aliceLid,
-      groupPictureId: 'G-PIC',
-      groupPicturePath: 'Media/Profile/group',
-      groupSourceJid: null,
-      groupState: 0,
-    },
-    ...[
-      ['120363000000000002@newsletter', 5, 'News'],
-      ['120363000000000003@g.us', 4, 'Neighbours'],
-    ].map(([jid, sessionType, partnerName]) => ({
-      jid,
-      sessionType,
-      partnerName,
-      contactIdentifier: null,
-      contactAbId: null,
-      archived: 0,
-      hidden: null,
-      removed: null,
-      flags: null,
-      unreadCount: 0,
-      messageCounter: null,
-      identityVerificationState: null,
-      identityVerificationEpoch: null,
-      lastMessageDate: null,
-      lastMessageText: null,
-      locationSharingEndDate: null,
-      savedInput: null,
-      groupCreationDate: null,
-      groupCreatorJid: null,
-      groupOwnerJid: null,
-      groupSubjectTimestamp: null,
-      groupSubjectOwnerJid: null,
-      groupPictureId: null,
-      groupPicturePath: null,
-      groupSourceJid: null,
-      groupState: null,
-    })),
-    {
+      ...chat,
+      id: 1,
       jid: alice,
       sessionType: 0,
       partnerName: 'Alice',
       contactIdentifier: 'A1B2:ABPerson',
       contactAbId: 42,
-      archived: 0,
       hidden: 0,
       removed: 0,
       flags: 256,
@@ -1223,48 +1189,38 @@ test('chats and messages load as a reader reads them: who sent each, when, what 
       identityVerificationEpoch: 1,
       lastMessageDate: '2026-10-01T10:00:00.000000Z',
       lastMessageText: 'agJCMQ==',
-      locationSharingEndDate: null,
       savedInput: 'see you',
-      groupCreationDate: null,
-      groupCreatorJid: null,
-      groupOwnerJid: null,
-      groupSubjectTimestamp: null,
-      groupSubjectOwnerJid: null,
-      groupPictureId: null,
-      groupPicturePath: null,
-      groupSourceJid: null,
-      groupState: null,
     },
-    ...[
-      ['1700000000@broadcast', 2],
-      ['9001@lid.status', 3],
-    ].map(([jid, sessionType]) => ({
+    {
+      ...chat,
+      id: 2,
+      jid: '120363000000000001@g.us',
+      sessionType: 1,
+      partnerName: 'Trip',
+      archived: 1,
+      groupCreationDate: '2025-01-01T00:00:00.000000Z',
+      groupCreatorJid: bobLid,
+      groupOwnerJid: bobLid,
+      groupSubjectTimestamp: '2025-02-01T00:00:00.000000Z',
+      groupSubjectOwnerJid: aliceLid,
+      groupPictureId: 'G-PIC',
+      groupPicturePath: 'Media/Profile/group',
+      groupState: 0,
+    },
+    ...(
+      [
+        [3, '120363000000000002@newsletter', 5, 'News'],
+        [4, '1700000000@broadcast', 2, null],
+        [5, '9001@lid.status', 3, null],
+        [6, '120363000000000003@g.us', 4, 'Neighbours'],
+        [7, alice, 0, 'Alice, again'],
+      ] as const
+    ).map(([id, jid, sessionType, partnerName]) => ({
+      ...chat,
+      id,
       jid,
       sessionType,
-      partnerName: null,
-      contactIdentifier: null,
-      contactAbId: null,
-      archived: 0,
-      hidden: null,
-      removed: null,
-      flags: null,
-      unreadCount: 0,
-      messageCounter: null,
-      identityVerificationState: null,
-      identityVerificationEpoch: null,
-      lastMessageDate: null,
-      lastMessageText: null,
-      locationSharingEndDate: null,
-      savedInput: null,
-      groupCreationDate: null,
-      groupCreatorJid: null,
-      groupOwnerJid: null,
-      groupSubjectTimestamp: null,
-      groupSubjectOwnerJid: null,
-      groupPictureId: null,
-      groupPicturePath: null,
-      groupSourceJid: null,
-      groupState: null,
+      partnerName,
     })),
   ]);
 
@@ -1306,23 +1262,32 @@ test('chats and messages load as a reader reads them: who sent each, when, what 
     receiptInfo: null,
     attachmentRef: null,
   };
-  const messages = table(out, 'messages', 'messageDate');
+  const messages = table(out, 'messages', 'id');
+  // WhatsApp keeps the photo G1 on two rows, each a message of its own.
   assert.deepEqual(
-    messages.map(({ chatJid, stanzaId }) => [chatJid, stanzaId]),
+    messages.map(({ id, chatJid, stanzaId }) => [id, chatJid, stanzaId]),
     [
-      [alice, 'A1'],
-      [alice, 'B1'],
-      [alice, 'A2'],
-      [group, 'G1'],
-      [group, 'G2'],
-      [group, 'G3'],
-      [channel, 'N1'],
+      [1, alice, 'A1'],
+      [2, alice, 'B1'],
+      [3, alice, 'A2'],
+      [4, group, 'G1'],
+      [5, group, 'G1'],
+      [6, group, 'G2'],
+      [7, group, 'G3'],
+      [8, channel, 'N1'],
     ],
   );
-  const [question, reply, document, photo, notice, link, post] = messages;
+  const [question, reply, document, photo, photoAgain, notice, link, post] =
+    messages;
+  assert.deepEqual(
+    { ...photoAgain, id: 4, sort: 4, attachmentRef: null },
+    { ...photo, attachmentRef: null },
+  );
   assert.deepEqual(question, {
     ...plain,
     ...noMedia,
+    id: 1,
+    chatId: 1,
     chatJid: alice,
     isFromMe: 0,
     stanzaId: 'A1',
@@ -1344,6 +1309,8 @@ test('chats and messages load as a reader reads them: who sent each, when, what 
     {
       ...plain,
       ...noMedia,
+      id: 2,
+      chatId: 1,
       chatJid: alice,
       isFromMe: 1,
       stanzaId: 'B1',
@@ -1372,6 +1339,8 @@ test('chats and messages load as a reader reads them: who sent each, when, what 
   assert.deepEqual(document, {
     ...plain,
     ...noMedia,
+    id: 3,
+    chatId: 1,
     chatJid: alice,
     isFromMe: 0,
     stanzaId: 'A2',
@@ -1396,6 +1365,8 @@ test('chats and messages load as a reader reads them: who sent each, when, what 
     {
       ...plain,
       ...noMedia,
+      id: 4,
+      chatId: 2,
       chatJid: group,
       isFromMe: 0,
       stanzaId: 'G1',
@@ -1428,6 +1399,8 @@ test('chats and messages load as a reader reads them: who sent each, when, what 
   assert.deepEqual(notice, {
     ...plain,
     ...noMedia,
+    id: 6,
+    chatId: 2,
     chatJid: group,
     isFromMe: 0,
     stanzaId: 'G2',
@@ -1445,6 +1418,8 @@ test('chats and messages load as a reader reads them: who sent each, when, what 
   assert.deepEqual(link, {
     ...plain,
     ...noMedia,
+    id: 7,
+    chatId: 2,
     chatJid: group,
     isFromMe: 1,
     stanzaId: 'G3',
@@ -1466,6 +1441,8 @@ test('chats and messages load as a reader reads them: who sent each, when, what 
     {
       ...plain,
       ...noMedia,
+      id: 8,
+      chatId: 3,
       chatJid: channel,
       isFromMe: 0,
       stanzaId: 'N1',
@@ -1495,24 +1472,26 @@ test('receipts, reactions and channel reaction counts decode from each message�
     )
   ).run();
 
-  const onReply = { chatJid: alice, messageIsFromMe: 1, messageStanzaId: 'B1' };
   assert.deepEqual(table(out, 'messageReceipts', 'recipientJid'), [
     {
-      ...onReply,
+      messageId: 2,
+      position: 2,
       recipientJid: '1313@bot',
       deliveredAt: null,
       readAt: null,
       playedAt: null,
     },
     {
-      ...onReply,
+      messageId: 2,
+      position: 1,
       recipientJid: alice,
       deliveredAt: '2026-10-01T10:00:00Z',
       readAt: null,
       playedAt: null,
     },
     {
-      ...onReply,
+      messageId: 2,
+      position: 0,
       recipientJid: aliceLid,
       deliveredAt: '2026-10-01T10:00:02Z',
       readAt: '2026-10-01T10:00:30Z',
@@ -1521,7 +1500,8 @@ test('receipts, reactions and channel reaction counts decode from each message�
   ]);
   assert.deepEqual(table(out, 'messageReactions', 'reactionStanzaId'), [
     {
-      ...onReply,
+      messageId: 2,
+      position: 0,
       reactionStanzaId: 'R1',
       senderJid: null,
       isFromMe: 1,
@@ -1529,7 +1509,8 @@ test('receipts, reactions and channel reaction counts decode from each message�
       reactedAt: '2026-10-01T10:00:05.123Z',
     },
     {
-      ...onReply,
+      messageId: 2,
+      position: 1,
       reactionStanzaId: 'R2',
       senderJid: aliceLid,
       isFromMe: 0,
@@ -1539,16 +1520,14 @@ test('receipts, reactions and channel reaction counts decode from each message�
   ]);
   assert.deepEqual(table(out, 'messageReactionCounts', 'emoji'), [
     {
-      chatJid: channel,
-      messageIsFromMe: 0,
-      messageStanzaId: 'N1',
+      messageId: 8,
+      position: 0,
       emoji: '❤️',
       count: 10,
     },
     {
-      chatJid: channel,
-      messageIsFromMe: 0,
-      messageStanzaId: 'N1',
+      messageId: 8,
+      position: 1,
       emoji: '😂',
       count: 1,
     },
@@ -1612,9 +1591,8 @@ test('outgoing reactions follow this account’s add, replacement and withdrawal
 
       assert.deepEqual(table(out, 'messageReactions', 'reactionStanzaId'), [
         {
-          chatJid: alice,
-          messageIsFromMe: 1,
-          messageStanzaId: 'B1',
+          messageId: 2,
+          position: 1,
           reactionStanzaId: stanzaId,
           senderJid: null,
           isFromMe: 1,
@@ -1622,9 +1600,8 @@ test('outgoing reactions follow this account’s add, replacement and withdrawal
           reactedAt,
         },
         {
-          chatJid: alice,
-          messageIsFromMe: 1,
-          messageStanzaId: 'B1',
+          messageId: 2,
+          position: 0,
           reactionStanzaId: 'R2',
           senderJid: aliceLid,
           isFromMe: 0,
@@ -1652,12 +1629,10 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
     )
   ).run();
 
-  assert.deepEqual(table(out, 'messageDataItems', '"index"'), [
+  assert.deepEqual(table(out, 'messageDataItems', 'id'), [
     {
-      chatJid: group,
-      messageIsFromMe: 1,
-      messageStanzaId: 'G3',
-      messageCopy: 0,
+      id: 1,
+      messageId: 7,
       index: 0,
       type: 0,
       date: '2026-10-04T09:00:00.000000Z',
@@ -1683,6 +1658,8 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
   ]);
   assert.deepEqual(table(out, 'groupMembers', 'groupJid, memberJid'), [
     {
+      id: 2,
+      chatId: 2,
       groupJid: group,
       memberJid: aliceLid,
       contactName: 'Alice',
@@ -1693,6 +1670,8 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
       isAdmin: 0,
     },
     {
+      id: 1,
+      chatId: 2,
       groupJid: group,
       memberJid: bobLid,
       contactName: 'Bob',
@@ -1703,6 +1682,8 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
       isAdmin: 1,
     },
     {
+      id: 3,
+      chatId: 6,
       groupJid: '120363000000000003@g.us',
       memberJid: '9003@lid',
       contactName: 'Carol',
@@ -1715,6 +1696,7 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
   ]);
   assert.deepEqual(table(out, 'groupMembersChanges', 'changeDate'), [
     {
+      id: 1,
       groupJid: group,
       changeDate: '2026-09-01T08:00:00.000000Z',
       changeType: 4,
@@ -1722,7 +1704,7 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
     },
   ]);
   assert.deepEqual(table(out, 'pushNames', 'jid'), [
-    { jid: bobLid, pushName: 'Bobby' },
+    { id: 1, jid: bobLid, pushName: 'Bobby' },
   ]);
   assert.deepEqual(
     table(out, 'profilePictures', 'jid').map(({ attachmentRef, ...row }) => ({
@@ -1731,6 +1713,7 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
     })),
     [
       {
+        id: 1,
         jid: aliceLid,
         pictureId: 'P-1',
         path: 'Media/Profile/9001-1',
@@ -1739,6 +1722,7 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
         file: true,
       },
       {
+        id: 2,
         jid: bobLid,
         pictureId: 'P-2',
         path: 'Media/Profile/9002-1',
@@ -1749,10 +1733,11 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
     ],
   );
   assert.deepEqual(table(out, 'blockedContacts', 'jid'), [
-    { jid: '15550006666@s.whatsapp.net' },
+    { id: 1, jid: '15550006666@s.whatsapp.net' },
   ]);
   assert.deepEqual(table(out, 'chatPushConfigs', 'jid'), [
     {
+      id: 1,
       jid: alice,
       alerts: 0,
       mutedUntil: '4001-01-01T00:00:00.000000Z',
@@ -1760,6 +1745,7 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
       ringtone: null,
     },
     {
+      id: 2,
       jid: '15550009999@s.whatsapp.net',
       alerts: 1,
       mutedUntil: null,
@@ -1769,70 +1755,78 @@ test('what ChatStorage keeps beside messages loads: links found in them, albums,
   ]);
 });
 
-test('a group change WhatsApp keeps twice loads once, beside changes that differ from it in one part, and every stream still loads', async () => {
+test('two chat sessions WhatsApp keeps for one JID both load in chats, each under its own id', async () => {
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
-  // The fixture's change (Z_PK 1).
-  const change = {
+  // The fixture keeps Alice's chat on sessions 1 and 7, as a live store keeps
+  // a second, empty session for a few JIDs.
+
+  await (
+    await pipeline(
+      new WhatsAppDesktopSource({ container: whatsapp.container }),
+      dir.path,
+      ({ name }) => name === 'chats',
+    )
+  ).run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      `SELECT id, jid, partnerName FROM chats WHERE jid = '${alice}' ORDER BY id`,
+    ),
+    [
+      { id: 1, jid: alice, partnerName: 'Alice' },
+      { id: 7, jid: alice, partnerName: 'Alice, again' },
+    ],
+  );
+});
+
+test('two group changes WhatsApp keeps with equal values both load, each under its own id', async () => {
+  const { dir, whatsapp, out } = await scratch();
+  await using _ = dir;
+  // The fixture's change (Z_PK 1), written a second time: only Z_PK differs,
+  // as with two rows of a live store.
+  whatsapp.insert('chatStorage', 'ZWAGROUPMEMBERSCHANGE', {
+    Z_PK: 2,
     Z_ENT: 7,
     ZGROUPJID: group,
     ZCHANGEDATE: coreData('2026-09-01T08:00:00.000Z'),
     ZCHANGETYPE: 4,
     ZMEMBERJIDS: aliceLid,
     ZPHASHBEFORECHANGE: '2:abc',
-  };
-  for (const row of [
-    // WhatsApp wrote it a second time: only Z_PK differs, as with two rows of
-    // a live store.
-    { ...change, Z_PK: 2 },
-    // Each of these differs from it in one part of the key, so none is a copy.
-    { ...change, Z_PK: 3, ZGROUPJID: '120363000000000002@g.us' },
-    { ...change, Z_PK: 4, ZCHANGEDATE: coreData('2026-09-01T08:00:01.000Z') },
-    { ...change, Z_PK: 5, ZCHANGETYPE: 5 },
-    { ...change, Z_PK: 6, ZMEMBERJIDS: bobLid },
-  ])
-    whatsapp.insert('chatStorage', 'ZWAGROUPMEMBERSCHANGE', row);
+  });
 
   const results = await (
     await pipeline(
       new WhatsAppDesktopSource({ container: whatsapp.container }),
       dir.path,
+      ({ name }) => name === 'groupMembersChanges',
     )
   ).run();
 
   assert.deepEqual(counts(results).groupMembersChanges, {
-    count: 5,
+    count: 2,
     deleted: 0,
   });
-  const loaded = {
-    groupJid: group,
-    changeDate: '2026-09-01T08:00:00.000000Z',
-    changeType: 4,
-    memberJids: aliceLid,
-  };
   assert.deepEqual(
-    table(
-      out,
-      'groupMembersChanges',
-      '"changeDate", "changeType", "groupJid", "memberJids"',
-    ),
-    [
-      loaded,
-      { ...loaded, memberJids: bobLid },
-      { ...loaded, groupJid: '120363000000000002@g.us' },
-      { ...loaded, changeType: 5 },
-      { ...loaded, changeDate: '2026-09-01T08:00:01.000000Z' },
-    ],
+    table(out, 'groupMembersChanges', 'id'),
+    [1, 2].map((id) => ({
+      id,
+      groupJid: group,
+      changeDate: '2026-09-01T08:00:00.000000Z',
+      changeType: 4,
+      memberJids: aliceLid,
+    })),
   );
 });
 
-test('a message WhatsApp keeps on two rows loads its first row in messages and the second in messageCopies, each with its own sort, receipts and links', async () => {
+test('two message rows WhatsApp keeps for one chat, side and stanza ID both load in messages under their own ids, each with its own links, receipts and reactions', async () => {
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
   // The fixture's photo G1 is on rows 4 and 5, as a live store keeps one
-  // message: the same key, type, date and media, a different sort and media
-  // row. Like the live pair, each row has its own message info with the same
-  // receipts; each also holds the same link.
+  // message: the same chat, side, stanza ID, type, date and media, a
+  // different sort and media row. Like the live pair, each row has its own
+  // message info with the same receipts; each also holds the same link.
   whatsapp.exec(
     'chatStorage',
     `INSERT INTO ZWAMESSAGEINFO (Z_PK, Z_ENT, Z_OPT, ZMESSAGE, ZRECEIPTINFO)
@@ -1851,62 +1845,59 @@ test('a message WhatsApp keeps on two rows loads its first row in messages and t
       ZCONTENT1: 'https://example.org/lake',
     });
 
-  const results = await (
+  await (
     await pipeline(
       new WhatsAppDesktopSource({ container: whatsapp.container }),
       dir.path,
     )
   ).run();
 
-  assert.deepEqual(counts(results).messageCopies, { count: 1, deleted: 0 });
-  const [first] = rows(out, "SELECT * FROM messages WHERE stanzaId = 'G1'");
-  assert.equal(first?.sort, 4);
   assert.deepEqual(
-    table(out, 'messageCopies', 'copy').map(({ attachmentRef, ...row }) => ({
-      ...row,
-      attachmentRef: typeof attachmentRef,
+    rows(
+      out,
+      `SELECT id, chatId, chatJid, isFromMe, stanzaId, sort, typeof(attachmentRef) AS file
+       FROM messages WHERE stanzaId = 'G1' ORDER BY id`,
+    ),
+    [4, 5].map((id) => ({
+      id,
+      chatId: 2,
+      chatJid: group,
+      isFromMe: 0,
+      stanzaId: 'G1',
+      sort: id === 4 ? 4 : 40,
+      file: 'text',
     })),
-    [
-      {
-        ...Object.fromEntries(
-          Object.entries(first ?? {}).filter(
-            ([column]) => column !== 'loaded_at',
-          ),
-        ),
-        attachmentRef: 'string',
-        sort: 40,
-        copy: 1,
-      },
-    ],
   );
-  assert.ok(first?.receiptInfo instanceof Uint8Array);
+  for (const stream of ['messageReceipts', 'messageReactions'])
+    assert.deepEqual(
+      rows(
+        out,
+        `SELECT messageId, group_concat(position ORDER BY position) AS positions FROM "${stream}"
+         GROUP BY messageId ORDER BY messageId`,
+      ),
+      [2, 4, 5].map((messageId) => ({
+        messageId,
+        positions: stream === 'messageReceipts' ? '0,1,2' : '0,1',
+      })),
+    );
   assert.deepEqual(
     rows(
       out,
-      `SELECT count(*) AS n FROM messageReceipts WHERE messageStanzaId = 'G1'`,
+      'SELECT id, messageId, content1 FROM messageDataItems WHERE messageId IN (4, 5) ORDER BY id',
     ),
-    rows(
-      out,
-      `SELECT count(*) AS n FROM messageReceipts WHERE messageStanzaId = 'B1'`,
-    ),
-  );
-  assert.deepEqual(
-    rows(
-      out,
-      `SELECT messageCopy, content1 FROM messageDataItems WHERE messageStanzaId = 'G1' ORDER BY messageCopy`,
-    ),
-    [
-      { messageCopy: 0, content1: 'https://example.org/lake' },
-      { messageCopy: 1, content1: 'https://example.org/lake' },
-    ],
+    [4, 5].map((id) => ({
+      id,
+      messageId: id,
+      content1: 'https://example.org/lake',
+    })),
   );
 });
 
-test('links WhatsApp files under one index of one message each load, beside the message’s other links', async () => {
+test('links WhatsApp files under one index of one message all load under their own ids, the same link twice included', async () => {
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
   // The fixture's link (Z_PK 1) is index 0 of message 7. A live store keeps
-  // four different links of one message, all at index 0.
+  // several links of one message at index 0, and one link can repeat.
   const link = {
     Z_ENT: 10,
     ZMESSAGE: 7,
@@ -1917,8 +1908,9 @@ test('links WhatsApp files under one index of one message each load, beside the 
   };
   for (const [pk, index, url] of [
     [2, 0, 'https://example.org'],
-    [3, 0, 'https://example.net'],
-    [4, 1, 'https://example.com'],
+    [3, 0, 'https://example.org'],
+    [4, 0, 'https://example.net'],
+    [5, 1, 'https://example.com'],
   ] as const)
     whatsapp.insert('chatStorage', 'ZWAMESSAGEDATAITEM', {
       ...link,
@@ -1936,22 +1928,23 @@ test('links WhatsApp files under one index of one message each load, beside the 
     )
   ).run();
 
-  assert.deepEqual(counts(results).messageDataItems, { count: 4, deleted: 0 });
+  assert.deepEqual(counts(results).messageDataItems, { count: 5, deleted: 0 });
   assert.deepEqual(
     rows(
       out,
-      'SELECT "index", content1 FROM "messageDataItems" ORDER BY "index", content1',
+      'SELECT id, messageId, "index", content1 FROM "messageDataItems" ORDER BY id',
     ),
     [
-      { index: 0, content1: 'https://example.com' },
-      { index: 0, content1: 'https://example.net' },
-      { index: 0, content1: 'https://example.org' },
-      { index: 1, content1: 'https://example.com' },
-    ],
+      [1, 0, 'https://example.com'],
+      [2, 0, 'https://example.org'],
+      [3, 0, 'https://example.org'],
+      [4, 0, 'https://example.net'],
+      [5, 1, 'https://example.com'],
+    ].map(([id, index, content1]) => ({ id, messageId: 7, index, content1 })),
   );
 });
 
-test('contacts, users with the phone number behind each LID, and calls with their call-log entry and every participant the entry lists load', async () => {
+test('contacts, users with the phone number behind each LID, and calls and the participants of their call-log entry load', async () => {
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
 
@@ -1964,6 +1957,7 @@ test('contacts, users with the phone number behind each LID, and calls with thei
 
   assert.deepEqual(table(out, 'contacts', 'uniqueId'), [
     {
+      id: 1,
       uniqueId: '0A1B2C3D-0000-4000-8000-000000000001',
       whatsappId: alice,
       lid: aliceLid,
@@ -1993,6 +1987,7 @@ test('contacts, users with the phone number behind each LID, and calls with thei
   ]);
   assert.deepEqual(table(out, 'users', 'lid'), [
     {
+      id: 1,
       lid: aliceLid,
       phoneNumber: '15550001001',
       countryCode: 'US',
@@ -2006,6 +2001,7 @@ test('contacts, users with the phone number behind each LID, and calls with thei
       additionalData: null,
     },
     {
+      id: 2,
       lid: bobLid,
       phoneNumber: null,
       countryCode: null,
@@ -2021,6 +2017,8 @@ test('contacts, users with the phone number behind each LID, and calls with thei
   ]);
   assert.deepEqual(table(out, 'calls', 'callId'), [
     {
+      id: 11,
+      callLogId: 2,
       callId: 'CALL-GROUP',
       date: '2026-09-11T18:00:00.000000Z',
       duration: 0,
@@ -2041,6 +2039,8 @@ test('contacts, users with the phone number behind each LID, and calls with thei
       linkToken: '',
     },
     {
+      id: 10,
+      callLogId: 1,
       callId: 'CALL-VIDEO',
       date: '2026-09-10T18:00:00.000000Z',
       duration: 125.5,
@@ -2061,10 +2061,10 @@ test('contacts, users with the phone number behind each LID, and calls with thei
       linkToken: '',
     },
   ]);
-  assert.deepEqual(table(out, 'callParticipants', 'callId, jid'), [
-    { callId: 'CALL-GROUP', jid: aliceLid, outcome: 1 },
-    { callId: 'CALL-GROUP', jid: bobLid, outcome: 4 },
-    { callId: 'CALL-VIDEO', jid: alice, outcome: 0 },
+  assert.deepEqual(table(out, 'callParticipants', 'id'), [
+    { id: 1, callLogId: 1, jid: alice, outcome: 0 },
+    { id: 2, callLogId: 2, jid: aliceLid, outcome: 1 },
+    { id: 3, callLogId: 2, jid: bobLid, outcome: 4 },
   ]);
   // The contact's device list is a key WhatsApp encrypts by; it stays out.
   assert.ok(
@@ -2086,6 +2086,7 @@ test('business profiles load with their websites, linked accounts, hours, catego
   const shop = '15550007777@s.whatsapp.net';
   assert.deepEqual(table(out, 'businessProfiles', 'jid'), [
     {
+      id: 1,
       jid: shop,
       description: 'Fresh bread',
       address: '1 Main St',
@@ -2120,7 +2121,7 @@ test('business profiles load with their websites, linked accounts, hours, catego
   assert.deepEqual(
     rows(
       out,
-      `SELECT lid, "phoneNumberJid", name, "verificationLevel", expires,
+      `SELECT id, lid, "phoneNumberJid", name, "verificationLevel", expires,
               CAST("certificateSerial" AS TEXT) AS "certificateSerial",
               "certificateIssuer", "certificateIssuedAt", "roleActor",
               "roleHostStorage", "roleUpdatedAt"
@@ -2128,6 +2129,7 @@ test('business profiles load with their websites, linked accounts, hours, catego
     ),
     [
       {
+        id: 1,
         lid: '7777@lid',
         phoneNumberJid: shop,
         name: 'The Shop',
@@ -2141,6 +2143,7 @@ test('business profiles load with their websites, linked accounts, hours, catego
         roleUpdatedAt: '2026-09-14T12:00:00Z',
       },
       {
+        id: 2,
         lid: '8888@lid',
         phoneNumberJid: null,
         name: 'No Profile',
@@ -2155,17 +2158,27 @@ test('business profiles load with their websites, linked accounts, hours, catego
       },
     ],
   );
+  const ofShop = { profileId: 1, jid: shop };
   assert.deepEqual(table(out, 'businessCategories', 'position'), [
-    { jid: shop, categoryId: '1600', position: 0, name: 'Bakery' },
-    { jid: shop, categoryId: '2250', position: 1, name: 'Grocery Store' },
+    { id: 2, ...ofShop, categoryId: '1600', position: 0, name: 'Bakery' },
+    {
+      id: 1,
+      ...ofShop,
+      categoryId: '2250',
+      position: 1,
+      name: 'Grocery Store',
+    },
   ]);
-  assert.deepEqual(table(out, 'businessHours', 'day'), [
-    { jid: shop, day: 2, openTime: 540, mode: 1, closeTime: 1020 },
-    { jid: shop, day: 3, openTime: 600, mode: 1, closeTime: 1080 },
+  // The profile lists Monday's hours twice; each entry is a record.
+  assert.deepEqual(table(out, 'businessHours', 'position'), [
+    { ...ofShop, position: 0, day: 2, openTime: 540, mode: 1, closeTime: 1020 },
+    { ...ofShop, position: 1, day: 2, openTime: 540, mode: 1, closeTime: 1020 },
+    { ...ofShop, position: 2, day: 3, openTime: 600, mode: 1, closeTime: 1080 },
   ]);
   assert.deepEqual(table(out, 'businessServiceAreas', 'position'), [
     {
-      jid: shop,
+      id: 1,
+      ...ofShop,
       position: 0,
       latitude: 31.9,
       longitude: 35.9,
@@ -2174,8 +2187,8 @@ test('business profiles load with their websites, linked accounts, hours, catego
     },
   ]);
   assert.deepEqual(table(out, 'businessBotPrompts', 'position'), [
-    { jid: shop, text: 'What is fresh?', position: 0, emoji: '🥖' },
-    { jid: shop, text: 'Is it open?', position: 1, emoji: null },
+    { id: 2, ...ofShop, text: 'What is fresh?', position: 0, emoji: '🥖' },
+    { id: 1, ...ofShop, text: 'Is it open?', position: 1, emoji: null },
   ]);
 });
 
@@ -2203,6 +2216,7 @@ test('sticker packs, stickers, favorites and recents load, and so do the privacy
   assert.deepEqual(table(out, 'stickerPacks', 'stickerPackId, inTray'), [
     {
       ...pack,
+      id: 2,
       stickerPackId: 'cuppy',
       inTray: 0,
       order: 4,
@@ -2212,6 +2226,7 @@ test('sticker packs, stickers, favorites and recents load, and so do the privacy
     },
     {
       ...pack,
+      id: 1,
       stickerPackId: 'cuppy',
       inTray: 1,
       order: 0,
@@ -2220,6 +2235,7 @@ test('sticker packs, stickers, favorites and recents load, and so do the privacy
       previewImageIds: '[]',
     },
     {
+      id: 3,
       stickerPackId: 'flump',
       inTray: 0,
       name: 'Flump',
@@ -2243,7 +2259,9 @@ test('sticker packs, stickers, favorites and recents load, and so do the privacy
     })),
     [
       {
+        id: 1,
         fileHash: 'HASH1',
+        packId: 1,
         stickerPackId: 'cuppy',
         sort: 0,
         mimeType: 'image/webp',
@@ -2259,7 +2277,9 @@ test('sticker packs, stickers, favorites and recents load, and so do the privacy
         file: true,
       },
       {
+        id: 2,
         fileHash: 'HASH2',
+        packId: null,
         stickerPackId: null,
         sort: 0,
         mimeType: 'image/webp',
@@ -2275,7 +2295,9 @@ test('sticker packs, stickers, favorites and recents load, and so do the privacy
         file: true,
       },
       {
+        id: 3,
         fileHash: 'HASH3',
+        packId: null,
         stickerPackId: null,
         sort: 0,
         mimeType: 'application/was',
@@ -2293,26 +2315,35 @@ test('sticker packs, stickers, favorites and recents load, and so do the privacy
     ],
   );
   assert.deepEqual(table(out, 'favoriteStickers', 'fileHash'), [
-    { fileHash: 'HASH2', favoritedAt: '2025-04-29T12:00:00.000000Z' },
+    { id: 1, fileHash: 'HASH2', favoritedAt: '2025-04-29T12:00:00.000000Z' },
   ]);
   assert.deepEqual(table(out, 'recentStickers', 'position'), [
-    { fileHash: 'HASH2', position: 0, score: 1.5, lastUsed: 1791702449217 },
-    { fileHash: 'HASH3', position: 1, score: 0.25, lastUsed: 1 },
+    {
+      elementId: 2,
+      fileHash: 'HASH2',
+      position: 0,
+      score: 1.5,
+      lastUsed: 1791702449217,
+    },
+    { elementId: 2, fileHash: 'HASH3', position: 1, score: 0.25, lastUsed: 1 },
   ]);
   assert.deepEqual(table(out, 'privacySettings', 'category'), [
-    { category: 'groupadd', value: 'contacts' },
-    { category: 'last', value: 'none' },
+    { id: 2, category: 'groupadd', value: 'contacts' },
+    { id: 1, category: 'last', value: 'none' },
   ]);
   assert.deepEqual(table(out, 'disappearingModes', 'lid'), [
     {
+      id: 3,
       lid: aliceLid,
       durationSeconds: 604800,
       setAt: '2026-03-13T10:00:00Z',
     },
-    { lid: bobLid, durationSeconds: 0, setAt: null },
+    { id: 4, lid: bobLid, durationSeconds: 0, setAt: null },
   ]);
   assert.deepEqual(table(out, 'linkedProfiles', 'lid'), [
     {
+      elementId: 5,
+      position: 0,
       lid: aliceLid,
       type: 'INSTAGRAM',
       username: 'alice.s',
@@ -2321,6 +2352,7 @@ test('sticker packs, stickers, favorites and recents load, and so do the privacy
   ]);
   assert.deepEqual(table(out, 'changedNumbers', 'oldJid'), [
     {
+      id: 6,
       oldJid: '15550001111@s.whatsapp.net',
       newJid: '15550002222@s.whatsapp.net',
       changedAt: '2026-08-01T00:00:00.000000Z',
@@ -2375,7 +2407,7 @@ test('a store WhatsApp has not created fails only the streams that read it, as t
     );
     assert.doesNotMatch(error.message, /Full Disk Access/);
   }
-  assert.equal(missing.messages, 7);
+  assert.equal(missing.messages, 8);
 });
 
 test(
@@ -2495,7 +2527,7 @@ test('a store lacking a column or table this reader reads fails only that store�
       assert.equal(error.name, name, store);
       assert.match(error.message, named);
     }
-    assert.equal(broken.messages, store === 'chatStorage' ? 0 : 7, store);
+    assert.equal(broken.messages, store === 'chatStorage' ? 0 : 8, store);
   }
 });
 
@@ -2520,7 +2552,6 @@ test('a blob this reader cannot decode fails the streams decoded from it and kee
       'UPDATE ZWAMEDIAITEM SET ZMETADATA = ?, Z_OPT = Z_OPT + 1 WHERE Z_PK = 2',
       { metadata: Uint8Array.from([0x2a, 0x10, 0x41]) },
       [
-        'messageCopies',
         'messageReactionCounts',
         'messageReactions',
         'messageReceipts',
@@ -2811,7 +2842,7 @@ test('compact message scans catch independent receipt and channel-count changes 
   assert.deepEqual(rows(out, 'SELECT emoji FROM messageReactionCounts'), []);
 });
 
-test('compact message scans follow joined rows, local files and the first duplicate, then reconcile revoked and vanished messages', async () => {
+test('compact message scans follow joined rows, local files and each row of a message WhatsApp keeps twice, then reconcile revoked and vanished messages', async () => {
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
   const run = await pipeline(
@@ -2825,19 +2856,26 @@ test('compact message scans follow joined rows, local files and the first duplic
     "UPDATE ZWAMEDIAITEM SET ZTITLE = 'New caption', Z_OPT = Z_OPT + 1 WHERE Z_PK = 4",
   );
   assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 0 });
+  // G1 is on rows 4 and 5, each with its own media row.
   assert.deepEqual(
-    rows(out, "SELECT title FROM messages WHERE stanzaId = 'G1'"),
-    [{ title: 'New caption' }],
+    rows(
+      out,
+      "SELECT id, title FROM messages WHERE stanzaId = 'G1' ORDER BY id",
+    ),
+    [
+      { id: 4, title: 'New caption' },
+      { id: 5, title: 'At the lake' },
+    ],
   );
-  // The joined member changes; the message's version does not.
+  // The joined member changes; the messages' versions do not.
   whatsapp.exec(
     'chatStorage',
     "UPDATE ZWAGROUPMEMBER SET ZMEMBERJID = '9009@lid' WHERE Z_PK = 1",
   );
-  assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 0 });
+  assert.deepEqual(counts(await run.run()).messages, { count: 2, deleted: 0 });
   assert.deepEqual(
     rows(out, "SELECT senderJid FROM messages WHERE stanzaId = 'G1'"),
-    [{ senderJid: '9009@lid' }],
+    [{ senderJid: '9009@lid' }, { senderJid: '9009@lid' }],
   );
   rmSync(
     join(
@@ -2845,30 +2883,30 @@ test('compact message scans follow joined rows, local files and the first duplic
       'Message/Media/120363000000000001@g.us/a/b/photo.jpg',
     ),
   );
-  assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 0 });
+  assert.deepEqual(counts(await run.run()).messages, { count: 2, deleted: 0 });
   assert.deepEqual(
     rows(
       out,
       "SELECT mediaAvailableLocally FROM messages WHERE stanzaId = 'G1'",
     ),
-    [{ mediaAvailableLocally: 0 }],
+    [{ mediaAvailableLocally: 0 }, { mediaAvailableLocally: 0 }],
   );
   whatsapp.file('Message/Media/120363000000000001@g.us/a/b/photo.jpg', 'jpeg');
-  assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 0 });
+  assert.deepEqual(counts(await run.run()).messages, { count: 2, deleted: 0 });
   // Replacing a related row with one at the same version must still reload it.
   whatsapp.exec(
     'chatStorage',
     `UPDATE ZWAMEDIAITEM SET Z_OPT = 2, ZTITLE = 'Replacement caption' WHERE Z_PK = 5;
     UPDATE ZWAMESSAGE SET ZMEDIAITEM = 5, Z_OPT = Z_OPT + 1 WHERE Z_PK = 4;`,
   );
-  assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 0 });
+  assert.deepEqual(counts(await run.run()).messages, { count: 2, deleted: 0 });
   assert.deepEqual(
     rows(out, "SELECT title FROM messages WHERE stanzaId = 'G1'"),
-    [{ title: 'Replacement caption' }],
+    [{ title: 'Replacement caption' }, { title: 'Replacement caption' }],
   );
-  // The second physical copy becomes the winner; the child loses its parent.
+  // Row 4 goes, row 5 stays; the child loses its parent.
   whatsapp.exec('chatStorage', 'DELETE FROM ZWAMESSAGE WHERE Z_PK = 4');
-  assert.deepEqual(counts(await run.run()).messages, { count: 2, deleted: 0 });
+  assert.deepEqual(counts(await run.run()).messages, { count: 1, deleted: 1 });
   assert.deepEqual(
     rows(out, "SELECT sort FROM messages WHERE stanzaId = 'G1'"),
     [{ sort: 40 }],
@@ -2882,7 +2920,8 @@ test('compact message scans follow joined rows, local files and the first duplic
     `UPDATE ZWAMESSAGE SET ZMESSAGETYPE = 14, ZTEXT = NULL, Z_OPT = Z_OPT + 1 WHERE Z_PK = 1;
     UPDATE ZWACHATSESSION SET ZCONTACTJID = 'renamed@g.us' WHERE Z_PK = 2;`,
   );
-  assert.deepEqual(counts(await run.run()).messages, { count: 4, deleted: 3 });
+  // A renamed chat changes its messages' chatJid, not their ids.
+  assert.deepEqual(counts(await run.run()).messages, { count: 4, deleted: 0 });
   assert.deepEqual(
     rows(out, "SELECT messageType, text FROM messages WHERE stanzaId = 'A1'"),
     [{ messageType: 14, text: null }],
@@ -3077,7 +3116,7 @@ test('an import narrowed to chats keeps those chats, their messages and what han
 
   assert.deepEqual(await load({ collectionIds: [group] }), {
     chats: [group],
-    messages: ['G1', 'G2', 'G3'],
+    messages: ['G1', 'G1', 'G2', 'G3'],
     hanging: {
       messageReceipts: 0,
       messageReactions: 0,
@@ -3102,10 +3141,11 @@ test('an import narrowed to chats keeps those chats, their messages and what han
         '120363000000000002@newsletter',
         '120363000000000003@g.us',
         alice,
+        alice,
         '1700000000@broadcast',
         '9001@lid.status',
       ],
-      messages: ['A2', 'B1', 'G1', 'G2'],
+      messages: ['A2', 'B1', 'G1', 'G1', 'G2'],
       hanging: {
         messageReceipts: 3,
         messageReactions: 2,
@@ -3153,6 +3193,7 @@ test('a downloaded photo, a profile picture’s thumbnail and sticker files load
       ['A2', null],
       ['B1', null],
       ['G1', 'jpeg'],
+      ['G1', 'jpeg'],
       ['G2', null],
       ['G3', null],
       ['N1', null],
@@ -3189,7 +3230,7 @@ test('a downloaded photo, a profile picture’s thumbnail and sticker files load
   );
 });
 
-test('a full refresh loads every stream as an incremental first pass does, its files and a change WhatsApp keeps twice included, and the next one leaves out a message WhatsApp lost', async () => {
+test('a full refresh loads every stream as an incremental first pass does, its files and a change WhatsApp keeps on two rows included, and the next one leaves out a message WhatsApp lost', async () => {
   const { dir, whatsapp, out } = await scratch();
   await using _ = dir;
   await using incremental = await new TemporaryFiles().directory(
@@ -3235,14 +3276,16 @@ test('a full refresh loads every stream as an incremental first pass does, its f
   };
 
   await refresh.run();
-  assert.deepEqual(table(out, 'groupMembersChanges', 'changeDate'), [
-    {
+  assert.deepEqual(
+    table(out, 'groupMembersChanges', 'id'),
+    [1, 2].map((id) => ({
+      id,
       groupJid: group,
       changeDate: '2026-09-01T08:00:00.000000Z',
       changeType: 4,
       memberJids: aliceLid,
-    },
-  ]);
+    })),
+  );
   await (
     await pipeline(
       new WhatsAppDesktopSource({ container: whatsapp.container }),
@@ -3264,14 +3307,14 @@ test('a full refresh loads every stream as an incremental first pass does, its f
 
   whatsapp.exec('chatStorage', "DELETE FROM ZWAMESSAGE WHERE ZSTANZAID = 'B1'");
   assert.deepEqual(counts(await refresh.run()).messages, {
-    count: 6,
+    count: 7,
     deleted: 0,
   });
   assert.deepEqual(
     rows(out, 'SELECT "stanzaId" FROM messages ORDER BY "stanzaId"').map(
       ({ stanzaId }) => stanzaId,
     ),
-    ['A1', 'A2', 'G1', 'G2', 'G3', 'N1'],
+    ['A1', 'A2', 'G1', 'G1', 'G2', 'G3', 'N1'],
   );
 });
 
@@ -3333,18 +3376,14 @@ test(
 // temporary folder, and no content is printed: it is the user's.
 test('this Mac’s WhatsApp loads every stream of each store it holds', async (t) => {
   if (process.platform !== 'darwin') return t.skip('WhatsApp runs on macOS');
-  // What each stream should count, read straight from its store: the keys
+  // What each stream should count, read straight from its store: the rows
   // the reader keeps, one per record.
   const expected: Record<Store, [string, string][]> = {
     chatStorage: [
-      ['chats', 'SELECT count(DISTINCT ZCONTACTJID) AS n FROM ZWACHATSESSION'],
+      ['chats', 'SELECT count(*) AS n FROM ZWACHATSESSION'],
       [
         'messages',
-        'SELECT count(*) AS n FROM (SELECT DISTINCT chat.ZCONTACTJID, message.ZISFROMME, message.ZSTANZAID FROM ZWAMESSAGE AS message JOIN ZWACHATSESSION AS chat ON chat.Z_PK = message.ZCHATSESSION)',
-      ],
-      [
-        'messageCopies',
-        'SELECT count(*) - count(DISTINCT json_array(chat.ZCONTACTJID, message.ZISFROMME, message.ZSTANZAID)) AS n FROM ZWAMESSAGE AS message JOIN ZWACHATSESSION AS chat ON chat.Z_PK = message.ZCHATSESSION',
+        'SELECT count(*) AS n FROM ZWAMESSAGE AS message JOIN ZWACHATSESSION AS chat ON chat.Z_PK = message.ZCHATSESSION',
       ],
       [
         'groupMembers',
@@ -3352,7 +3391,7 @@ test('this Mac’s WhatsApp loads every stream of each store it holds', async (t
       ],
       [
         'groupMembersChanges',
-        'SELECT count(*) AS n FROM (SELECT DISTINCT ZGROUPJID, ZCHANGEDATE, ZCHANGETYPE, ZMEMBERJIDS FROM ZWAGROUPMEMBERSCHANGE)',
+        'SELECT count(*) AS n FROM ZWAGROUPMEMBERSCHANGE',
       ],
       [
         'messageDataItems',
@@ -3365,7 +3404,13 @@ test('this Mac’s WhatsApp loads every stream of each store it holds', async (t
     ],
     contacts: [['contacts', 'SELECT count(*) AS n FROM ZWAADDRESSBOOKCONTACT']],
     users: [['users', 'SELECT count(*) AS n FROM ZWAZACCOUNT']],
-    calls: [['calls', 'SELECT count(*) AS n FROM ZWACDCALLEVENT']],
+    calls: [
+      ['calls', 'SELECT count(*) AS n FROM ZWACDCALLEVENT'],
+      [
+        'callParticipants',
+        'SELECT count(*) AS n FROM ZWACDCALLEVENTPARTICIPANT',
+      ],
+    ],
     messageAssociations: [
       [
         'messageAssociations',
@@ -3582,7 +3627,6 @@ test('a value WhatsApp always stores but left empty fails the streams read from 
       'chatStorage',
       'UPDATE ZWAMESSAGE SET ZMESSAGETYPE = NULL, Z_OPT = Z_OPT + 1 WHERE Z_PK = 1',
       [
-        'messageCopies',
         'messageReactionCounts',
         'messageReactions',
         'messageReceipts',
@@ -3603,7 +3647,6 @@ test('a value WhatsApp always stores but left empty fails the streams read from 
         'chatStorage',
         `UPDATE ${table} SET Z_OPT = NULL WHERE Z_PK = 1`,
         [
-          'messageCopies',
           'messageReactionCounts',
           'messageReactions',
           'messageReceipts',

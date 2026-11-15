@@ -2,7 +2,7 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { Chat } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const {
   jid,
@@ -16,10 +16,11 @@ const {
 const groupOnly = 'NULL for a chat that is not a group.';
 
 const properties = {
+  id: rowId('ZWACHATSESSION'),
   jid: {
     ...jid,
     description:
-      'The chat’s JID (ZWACHATSESSION.ZCONTACTJID): a person as <number>@s.whatsapp.net or <LID>@lid, a group as …@g.us, a channel as …@newsletter, a broadcast list as …@broadcast, a contact’s statuses as …@lid.status. The primary key.',
+      'The chat’s JID (ZWACHATSESSION.ZCONTACTJID): a person as <number>@s.whatsapp.net or <LID>@lid, a group as …@g.us, a channel as …@newsletter, a broadcast list as …@broadcast, a contact’s statuses as …@lid.status. WhatsApp keeps a second, empty session for a few JIDs, a record of its own.',
   },
   sessionType: {
     ...integer,
@@ -135,11 +136,11 @@ const properties = {
 export class ChatsStream extends WhatsAppStream<typeof properties, Chat> {
   readonly name = 'chats';
   readonly store = 'chatStorage';
-  readonly primaryKey = ['jid'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per WhatsApp chat: a person, a group, a channel, a broadcast list or a contact’s statuses, with the group’s details for a group. Primary key jid. WhatsApp keeps a second, empty session for a few JIDs; the first stands for both.',
+      'One record per WhatsApp chat: a person, a group, a channel, a broadcast list or a contact’s statuses, with the group’s details for a group. Primary key id.',
     properties,
     required: Object.keys(properties),
   } as const;

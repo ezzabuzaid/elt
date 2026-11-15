@@ -7,15 +7,20 @@ import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
 const { text, integer, nullableInteger, nullableNumber } = whatsappFields;
 
 const properties = {
+  elementId: {
+    ...integer,
+    description:
+      'The key-value entry the record is decoded from (ZWAKEYVALUEELEMENT.Z_PK).',
+  },
   fileHash: {
     ...text,
     minLength: 1,
-    description: 'The sticker; refers to stickers.fileHash; the primary key.',
+    description: 'The sticker; refers to stickers.fileHash.',
   },
   position: {
     ...integer,
     minimum: 0,
-    description: 'Its place in the picker’s recent list, by score.',
+    description: 'Its place in the picker’s recent list, by score, from 0.',
   },
   score: {
     ...nullableNumber,
@@ -34,11 +39,11 @@ export class RecentStickersStream extends WhatsAppStream<
 > {
   readonly name = 'recentStickers';
   readonly store = 'backedUpKeyValue';
-  readonly primaryKey = ['fileHash'];
+  readonly primaryKey = ['elementId', 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per sticker in the picker’s recent list (BackedUpKeyValue.sqlite’s rs.v2). Primary key fileHash. Not narrowed by an import’s chats or dates.',
+      'One record per sticker in the picker’s recent list (BackedUpKeyValue.sqlite’s rs.v2). Primary key elementId, position. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

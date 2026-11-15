@@ -2,14 +2,20 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { GroupMember } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
-const { jid, nullableText, nullableInteger, nullableBoolean } = whatsappFields;
+const { jid, integer, nullableText, nullableInteger, nullableBoolean } =
+  whatsappFields;
 
 const properties = {
+  id: rowId('ZWAGROUPMEMBER'),
+  chatId: {
+    ...integer,
+    description: 'The group’s chat; refers to chats.id.',
+  },
   groupJid: {
     ...jid,
-    description: 'The group; refers to chats.jid.',
+    description: 'The group’s JID (chats.jid).',
   },
   memberJid: {
     ...jid,
@@ -49,11 +55,11 @@ export class GroupMembersStream extends WhatsAppStream<
 > {
   readonly name = 'groupMembers';
   readonly store = 'chatStorage';
-  readonly primaryKey = ['groupJid', 'memberJid'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per person WhatsApp lists for a group, including those who left (isActive false). Primary key groupJid, memberJid.',
+      'One record per person WhatsApp lists for a group, including those who left (isActive false). Primary key id.',
     properties,
     required: Object.keys(properties),
   } as const;

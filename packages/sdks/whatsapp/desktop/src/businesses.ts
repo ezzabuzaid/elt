@@ -9,6 +9,7 @@ import {
   flag,
   instant,
   number,
+  requiredNumber,
   requiredText,
   text,
   unixSecondInstant,
@@ -18,6 +19,7 @@ import {
 // (ZWABIZPROFILEDATA), with its options, bot, cover photo and linked
 // Facebook and Instagram accounts.
 export type BusinessProfile = {
+  readonly id: number;
   readonly jid: string;
   readonly description: string | null;
   readonly address: string | null;
@@ -52,6 +54,7 @@ export type BusinessProfile = {
 // (ZWABIZVERIFIEDNAMEDATA), with how WhatsApp's servers host the business's
 // chats (ZWABIZROLEDATA) when it uses WhatsApp's business platform.
 export type BusinessVerifiedName = {
+  readonly id: number;
   readonly lid: string;
   readonly phoneNumberJid: string | null;
   readonly name: string | null;
@@ -66,15 +69,22 @@ export type BusinessVerifiedName = {
   readonly roleUpdatedAt: string | null;
 };
 
+// What a business profile lists names the profile by its id, and by the JID
+// WhatsApp names the business by.
 export type BusinessCategory = {
+  readonly id: number;
+  readonly profileId: number;
   readonly jid: string;
   readonly position: number;
   readonly categoryId: string;
   readonly name: string | null;
 };
 
-// The hours of one day; days a business is closed have none.
+// The hours of one day; days a business is closed have none. Decoded from the
+// profile's list, at its position there.
 export type BusinessHours = {
+  readonly profileId: number;
+  readonly position: number;
   readonly jid: string;
   // 1 is Sunday through 7, Saturday.
   readonly day: number;
@@ -85,6 +95,8 @@ export type BusinessHours = {
 };
 
 export type BusinessServiceArea = {
+  readonly id: number;
+  readonly profileId: number;
   readonly jid: string;
   readonly position: number;
   readonly latitude: number | null;
@@ -94,6 +106,8 @@ export type BusinessServiceArea = {
 };
 
 export type BusinessBotPrompt = {
+  readonly id: number;
+  readonly profileId: number;
   readonly jid: string;
   readonly position: number;
   readonly text: string;
@@ -195,7 +209,7 @@ export class BusinessesSnapshot implements Disposable {
   profiles(): IteratorObject<BusinessProfile, undefined> {
     return this.#database
       .iterate(
-        `SELECT profile.ZJID AS jid,
+        `SELECT profile.Z_PK AS id, profile.ZJID AS jid,
                 profile.ZBUSINESSDESCRIPTION AS description,
                 profile.ZADDRESS AS address, profile.ZLATITUDE AS latitude,
                 profile.ZLONGITUDE AS longitude, profile.ZEMAIL AS email,
@@ -229,6 +243,7 @@ export class BusinessesSnapshot implements Disposable {
         const facebook = linked?.message(1);
         const instagram = linked?.message(2);
         return {
+          id: requiredNumber(row.id, 'A WhatsApp business has no row ID'),
           jid: requiredText(row.jid, 'A WhatsApp business has no JID'),
           description: text(row.description),
           address: text(row.address),
@@ -264,7 +279,7 @@ export class BusinessesSnapshot implements Disposable {
   verifiedNames(): IteratorObject<BusinessVerifiedName, undefined> {
     return this.#database
       .iterate(
-        `SELECT name.ZJID AS lid, name.ZPHONENUMBERJID AS phoneNumberJid,
+        `SELECT name.Z_PK AS id, name.ZJID AS lid, name.ZPHONENUMBERJID AS phoneNumberJid,
                 name.ZNAME AS name,
                 name.ZVERIFICATIONLEVEL AS verificationLevel,
                 name.ZEXPIRES AS expires,
@@ -280,6 +295,7 @@ export class BusinessesSnapshot implements Disposable {
         // time in Unix seconds.
         const certificate = archivedProtobuf(row.certificate);
         return {
+          id: requiredNumber(row.id, 'A WhatsApp verified name has no row ID'),
           lid: requiredText(row.lid, 'A WhatsApp verified name has no LID'),
           phoneNumberJid: text(row.phoneNumberJid),
           name: text(row.name),
@@ -299,14 +315,15 @@ export class BusinessesSnapshot implements Disposable {
     const position = positions();
     return this.#database
       .iterate(
-        `SELECT profile.ZJID AS jid, category.ZCATEGORYID AS categoryId,
+        `SELECT category.Z_PK AS id, profile.Z_PK AS profileId,
+                profile.ZJID AS jid, category.ZCATEGORYID AS categoryId,
                 category.ZNAME AS name
          FROM ZWABIZCATEGORYDATA AS category
          JOIN ZWABIZPROFILEDATA AS profile ON profile.Z_PK = category.ZPROFILE
          ORDER BY profile.Z_PK, category.Z_FOK_PROFILE, category.Z_PK`,
       )
       .map((row) => ({
-        jid: requiredText(row.jid, 'A WhatsApp business has no JID'),
+        ...owned(row, 'A WhatsApp business category has no row ID'),
         position: position(row),
         categoryId: requiredText(
           row.categoryId,
@@ -319,15 +336,20 @@ export class BusinessesSnapshot implements Disposable {
   hours(): IteratorObject<BusinessHours, undefined> {
     return this.#database
       .iterate(
-        `SELECT ZJID AS jid, ZHOURSCONFIGS AS hours FROM ZWABIZPROFILEDATA
+        `SELECT Z_PK AS profileId, ZJID AS jid, ZHOURSCONFIGS AS hours
+         FROM ZWABIZPROFILEDATA
          WHERE ZHOURSCONFIGS IS NOT NULL ORDER BY Z_PK`,
       )
       .flatMap((row) => {
+        const profileId = requiredNumber(
+          row.profileId,
+          'A WhatsApp business has no row ID',
+        );
         const jid = requiredText(row.jid, 'A WhatsApp business has no JID');
         const configs = archived(row.hours);
         if (!Array.isArray(configs))
           throw new TypeError('WhatsApp business hours are not a list');
-        return configs.map((config) => {
+        return configs.map((config, position) => {
           if (!isDictionary(config))
             throw new TypeError('WhatsApp business hours are not a list');
           const { day, mode, openTime, closeTime } = config;
@@ -338,7 +360,7 @@ export class BusinessesSnapshot implements Disposable {
             typeof closeTime !== 'number'
           )
             throw new TypeError('WhatsApp business hours lack a field');
-          return { jid, day, mode, openTime, closeTime };
+          return { profileId, position, jid, day, mode, openTime, closeTime };
         });
       });
   }
@@ -347,7 +369,8 @@ export class BusinessesSnapshot implements Disposable {
     const position = positions();
     return this.#database
       .iterate(
-        `SELECT profile.ZJID AS jid, area.ZLATITUDE AS latitude,
+        `SELECT area.Z_PK AS id, profile.Z_PK AS profileId,
+                profile.ZJID AS jid, area.ZLATITUDE AS latitude,
                 area.ZLONGITUDE AS longitude,
                 area.ZAREARADIUSMETERS AS radiusMeters,
                 area.ZAREADESCRIPTION AS description
@@ -356,7 +379,7 @@ export class BusinessesSnapshot implements Disposable {
          ORDER BY profile.Z_PK, area.Z_PK`,
       )
       .map((row) => ({
-        jid: requiredText(row.jid, 'A WhatsApp business has no JID'),
+        ...owned(row, 'A WhatsApp business service area has no row ID'),
         position: position(row),
         latitude: number(row.latitude),
         longitude: number(row.longitude),
@@ -369,14 +392,15 @@ export class BusinessesSnapshot implements Disposable {
     const position = positions();
     return this.#database
       .iterate(
-        `SELECT profile.ZJID AS jid, prompt.ZTEXT AS text,
+        `SELECT prompt.Z_PK AS id, profile.Z_PK AS profileId,
+                profile.ZJID AS jid, prompt.ZTEXT AS text,
                 prompt.ZEMOJI AS emoji
          FROM ZWABIZBOTPROMPTDATA AS prompt
          JOIN ZWABIZPROFILEDATA AS profile ON profile.ZBOTDATA = prompt.ZBOTDATA
          ORDER BY profile.Z_PK, prompt.Z_FOK_BOTDATA, prompt.Z_PK`,
       )
       .map((row) => ({
-        jid: requiredText(row.jid, 'A WhatsApp business has no JID'),
+        ...owned(row, 'A WhatsApp business prompt has no row ID'),
         position: position(row),
         text: requiredText(row.text, 'A WhatsApp business prompt has no text'),
         emoji: text(row.emoji),
@@ -399,14 +423,26 @@ function websites(value: unknown): string[] {
   return decoded;
 }
 
-// Each row's place among the rows of its business, counted as the rows come
-// in business order, so no read needs the rows before it.
+// A row a business profile lists: its own id, and its profile's.
+function owned(row: Readonly<Record<string, unknown>>, missing: string) {
+  return {
+    id: requiredNumber(row.id, missing),
+    profileId: requiredNumber(
+      row.profileId,
+      'A WhatsApp business has no row ID',
+    ),
+    jid: requiredText(row.jid, 'A WhatsApp business has no JID'),
+  };
+}
+
+// Each row's place among the rows of its profile, counted as the rows come
+// in profile order, so no read needs the rows before it.
 function positions(): (row: Readonly<Record<string, unknown>>) => number {
-  let business: unknown;
+  let profile: unknown;
   let next = 0;
   return (row) => {
-    if (row.jid !== business) {
-      business = row.jid;
+    if (row.profileId !== profile) {
+      profile = row.profileId;
       next = 0;
     }
     return next++;

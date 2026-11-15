@@ -5,15 +5,13 @@ import {
 } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const { jid, boolean, nullableText, nullableInstant } = whatsappFields;
 
 const properties = {
-  jid: {
-    ...jid,
-    description: 'The person or group (ZJID); the primary key.',
-  },
+  id: rowId('ZWAPROFILEPICTUREITEM'),
+  jid: { ...jid, description: 'The person or group (ZJID).' },
   pictureId: {
     ...nullableText,
     description:
@@ -41,12 +39,12 @@ export class ProfilePicturesStream extends WhatsAppStream<
 > {
   readonly name = 'profilePictures';
   readonly store = 'chatStorage';
-  readonly primaryKey = ['jid'];
+  readonly primaryKey = ['id'];
   readonly supportsFileTransfer = true;
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per person or group whose profile picture WhatsApp has looked up (ZWAPROFILEPICTUREITEM), with the thumbnail it keeps, the only copy on this Mac. Primary key jid. Not narrowed by an import’s chats or dates.',
+      'One record per person or group whose profile picture WhatsApp has looked up (ZWAPROFILEPICTUREITEM), with the thumbnail it keeps, the only copy on this Mac. Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

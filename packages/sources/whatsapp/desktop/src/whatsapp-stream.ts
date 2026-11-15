@@ -33,6 +33,15 @@ export const whatsappFields = {
   nullableBase64: { ...nullableText, contentEncoding: 'base64' },
 } as const;
 
+// A record's key: its row's Z_PK, which Core Data keeps unique within an
+// entity. WhatsApp's own IDs, such as JIDs and stanza IDs, can repeat across
+// rows, so they are columns, not keys.
+export const rowId = (table: string) =>
+  ({
+    type: 'integer',
+    description: `The row ID (${table}.Z_PK); the primary key.`,
+  }) as const;
+
 // A blob as a record holds it.
 export const base64 = (bytes: Uint8Array | null): string | null =>
   bytes === null ? null : Buffer.from(bytes).toString('base64');

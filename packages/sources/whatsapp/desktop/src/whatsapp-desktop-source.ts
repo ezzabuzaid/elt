@@ -34,7 +34,6 @@ import { GroupMembersChangesStream } from './streams/group-members-changes-strea
 import { GroupMembersStream } from './streams/group-members-stream.ts';
 import { LinkedProfilesStream } from './streams/linked-profiles-stream.ts';
 import { MessageAssociationsStream } from './streams/message-associations-stream.ts';
-import { MessageCopiesStream } from './streams/message-copies-stream.ts';
 import { MessageDataItemsStream } from './streams/message-data-items-stream.ts';
 import { MessageReactionCountsStream } from './streams/message-reaction-counts-stream.ts';
 import { MessageReactionsStream } from './streams/message-reactions-stream.ts';
@@ -54,7 +53,6 @@ import type { WhatsAppReader } from './whatsapp-stream.ts';
 const readers = {
   chats: new ChatsStream(),
   messages: new MessagesStream(),
-  messageCopies: new MessageCopiesStream(),
   messageReceipts: new MessageReceiptsStream(),
   messageReactions: new MessageReactionsStream(),
   messageReactionCounts: new MessageReactionCountsStream(),
@@ -110,7 +108,6 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
   protected readonly catalog = catalog;
   readonly chats = catalog.get(readers.chats.name);
   readonly messages = catalog.get(readers.messages.name);
-  readonly messageCopies = catalog.get(readers.messageCopies.name);
   readonly messageReceipts = catalog.get(readers.messageReceipts.name);
   readonly messageReactions = catalog.get(readers.messageReactions.name);
   readonly messageReactionCounts = catalog.get(

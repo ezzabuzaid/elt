@@ -6,18 +6,14 @@ import {
 } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { OnMessage } from '../chat-storage-records.ts';
-import {
-  messageKeyColumns,
-  messageKeyFields,
-  messageKeyRecord,
-} from '../message-key-fields.ts';
+import { onMessageFields } from '../on-message-fields.ts';
 import { WhatsAppMessageStream } from '../whatsapp-message-stream.ts';
 import { whatsappFields } from '../whatsapp-stream.ts';
 
 const { text, integer } = whatsappFields;
 
 const properties = {
-  ...messageKeyFields,
+  ...onMessageFields,
   emoji: { ...text, minLength: 1, description: 'The reaction.' },
   count: {
     ...integer,
@@ -31,11 +27,11 @@ export class MessageReactionCountsStream extends WhatsAppMessageStream<
   OnMessage<ReactionCount>
 > {
   readonly name = 'messageReactionCounts';
-  readonly primaryKey = [...messageKeyColumns, 'emoji'];
+  readonly primaryKey = ['messageId', 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per emoji people reacted with to a channel post, which WhatsApp counts rather than naming who reacted; decoded from the post’s receipt info. Primary key chatJid, messageIsFromMe, messageStanzaId, emoji.',
+      'One record per emoji people reacted with to a channel post, which WhatsApp counts rather than naming who reacted; decoded from the post’s receipt info. Primary key messageId, position.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -43,15 +39,18 @@ export class MessageReactionCountsStream extends WhatsAppMessageStream<
   protected *messageRows(
     message: Message,
   ): Generator<OnMessage<ReactionCount>> {
-    if (message.copy === 0 && message.receiptInfo !== null)
-      for (const item of new ReceiptInfo(message.receiptInfo).reactionCounts)
-        yield { message, item };
+    if (message.receiptInfo !== null)
+      for (const [position, item] of new ReceiptInfo(
+        message.receiptInfo,
+      ).reactionCounts.entries())
+        yield { message, position, item };
   }
 
   protected record({
     message,
+    position,
     item,
   }: OnMessage<ReactionCount>): RecordDraft<typeof properties> {
-    return { ...messageKeyRecord(message), ...item };
+    return { messageId: message.id, position, ...item };
   }
 }

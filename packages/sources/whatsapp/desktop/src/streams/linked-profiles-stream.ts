@@ -4,9 +4,19 @@ import type { LinkedProfile } from '@eltjs/sdk-whatsapp-desktop';
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
 import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
 
-const { jid, text, nullableText } = whatsappFields;
+const { jid, text, integer, nullableText } = whatsappFields;
 
 const properties = {
+  elementId: {
+    ...integer,
+    description:
+      'The key-value entry the record is decoded from (ZWAKEYVALUEELEMENT.Z_PK).',
+  },
+  position: {
+    ...integer,
+    minimum: 0,
+    description: 'The account’s place in the entry’s list, from 0.',
+  },
   lid: { ...jid, description: 'The person, by LID; refers to users.lid.' },
   type: {
     ...text,
@@ -23,11 +33,11 @@ export class LinkedProfilesStream extends WhatsAppStream<
 > {
   readonly name = 'linkedProfiles';
   readonly store = 'localKeyValue';
-  readonly primaryKey = ['lid', 'type'];
+  readonly primaryKey = ['elementId', 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per account on another service a person links to their WhatsApp profile (LocalKeyValue.sqlite’s linked-profiles). Primary key lid, type. Not narrowed by an import’s chats or dates.',
+      'One record per account on another service a person links to their WhatsApp profile (LocalKeyValue.sqlite’s linked-profiles). Primary key elementId, position. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

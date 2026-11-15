@@ -6,12 +6,20 @@ import { decodeArchive } from '@eltjs/codec-plist';
 
 import { appDatabase } from './app-database.ts';
 import { WhatsAppSchemaError } from './errors.ts';
-import { bytes, number, onDisk, requiredText, text } from './values.ts';
+import {
+  bytes,
+  number,
+  onDisk,
+  requiredNumber,
+  requiredText,
+  text,
+} from './values.ts';
 
 // A sticker pack: one in the tray of the account's sticker picker, or one
 // WhatsApp's sticker store lists, which WhatsApp keeps a copy of its catalog
 // as (Sticker.sqlite's WACDStickerPack and WACDStoreStickerPack).
 export type StickerPack = {
+  readonly id: number;
   readonly stickerPackId: string;
   readonly inTray: boolean;
   readonly name: string | null;
@@ -31,7 +39,10 @@ export type StickerPack = {
 // A sticker WhatsApp keeps: one of a tray pack's, or one the account
 // favorited or sent, which belongs to no pack.
 export type Sticker = {
+  readonly id: number;
   readonly fileHash: string;
+  // The pack's row ID and stickerPackId; NULL for a sticker of no pack.
+  readonly packId: number | null;
   readonly stickerPackId: string | null;
   readonly sort: number | null;
   readonly mimeType: string | null;
@@ -113,7 +124,7 @@ export class StickersSnapshot implements Disposable {
   packs(): IteratorObject<StickerPack, undefined> {
     return this.#database
       .iterate(
-        `SELECT Z_ENT AS entity, ZSTICKERPACKID AS stickerPackId, ZNAME AS name,
+        `SELECT Z_PK AS id, Z_ENT AS entity, ZSTICKERPACKID AS stickerPackId, ZNAME AS name,
                 ZPUBLISHER AS publisher, ZPACKDESCRIPTION AS description,
                 ZFILESIZE AS fileSize, ZSTICKERCOUNT AS stickerCount,
                 ZPREMIUMSTICKERCOUNT AS premiumStickerCount, ZORDER AS "order",
@@ -128,6 +139,7 @@ export class StickersSnapshot implements Disposable {
       .map((row) => {
         const inTray = Number(row.entity) === this.#tray;
         return {
+          id: requiredNumber(row.id, 'A WhatsApp sticker pack has no row ID'),
           stickerPackId: requiredText(
             row.stickerPackId,
             'A WhatsApp sticker pack has no ID',
@@ -154,8 +166,8 @@ export class StickersSnapshot implements Disposable {
   stickers(): IteratorObject<Sticker, undefined> {
     return this.#database
       .iterate(
-        `SELECT sticker.ZFILEHASH AS fileHash,
-                pack.ZSTICKERPACKID AS stickerPackId, sticker.ZSORT AS sort,
+        `SELECT sticker.Z_PK AS id, sticker.ZFILEHASH AS fileHash,
+                pack.Z_PK AS packId, pack.ZSTICKERPACKID AS stickerPackId, sticker.ZSORT AS sort,
                 sticker.ZMIMETYPE AS mimeType, sticker.ZWIDTH AS width,
                 sticker.ZHEIGHT AS height, sticker.ZFILELENGTH AS fileLength,
                 sticker.ZFLAGS AS flags, sticker.ZEMOJIS AS emojis,
@@ -170,10 +182,12 @@ export class StickersSnapshot implements Disposable {
       .map((row) => {
         const relativeImagePath = text(row.relativeImagePath);
         return {
+          id: requiredNumber(row.id, 'A WhatsApp sticker has no row ID'),
           fileHash: requiredText(
             row.fileHash,
             'A WhatsApp sticker has no hash',
           ),
+          packId: number(row.packId),
           stickerPackId: text(row.stickerPackId),
           sort: number(row.sort),
           mimeType: text(row.mimeType),

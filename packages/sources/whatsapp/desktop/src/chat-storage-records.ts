@@ -1,4 +1,5 @@
 import {
+  type BlockedContact,
   type Chat,
   type ChatPushConfig,
   type ChatStorageSnapshot,
@@ -7,7 +8,6 @@ import {
   type Message,
   type MessageDataItem,
   type MessageInput,
-  type MessageKey,
   type ProfilePicture,
   type PushName,
 } from '@eltjs/sdk-whatsapp-desktop';
@@ -21,27 +21,13 @@ import {
 const groupBytes = 40;
 const groupsPerBlock = 4096;
 
-// A record decoded from a message's receipt info, with the message it is on.
-export type OnMessage<T> = { readonly message: MessageKey; readonly item: T };
-
-const messageId = ({ chatJid, isFromMe, stanzaId }: MessageKey) =>
-  JSON.stringify([chatJid, isFromMe, stanzaId]);
-
-// The first of the rows sharing a key stands for all of them: WhatsApp keeps
-// a second copy of a few group member changes, and a second, empty session
-// for a few chats.
-export function* unique<T>(
-  rows: Iterable<T>,
-  key: (row: T) => string,
-): Generator<T> {
-  const seen = new Set<string>();
-  for (const row of rows) {
-    const id = key(row);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    yield row;
-  }
-}
+// A record decoded from a message's receipt info, with the message it is on
+// and its place in the list it was decoded from.
+export type OnMessage<T> = {
+  readonly message: Message;
+  readonly position: number;
+  readonly item: T;
+};
 
 // A message date cut to the millisecond, the precision of an import's dates,
 // so it compares with them as text.
@@ -67,7 +53,7 @@ export class ChatStorageRecords {
   readonly #scope: ImportScope;
   readonly #narrowed: boolean;
   #chats?: Chat[];
-  #messageIds?: ReadonlySet<string>;
+  #messageIds?: ReadonlySet<number>;
   #stanzaIds?: ReadonlySet<string>;
   #messageGroups: Unscanned | Scanned = new Unscanned();
 
@@ -79,10 +65,7 @@ export class ChatStorageRecords {
 
   get chats(): readonly Chat[] {
     this.#chats ??= [
-      ...unique(
-        this.#snapshot.chats().filter(({ jid }) => this.#chat(jid)),
-        ({ jid }) => jid,
-      ),
+      ...this.#snapshot.chats().filter(({ jid }) => this.#chat(jid)),
     ];
     return this.#chats;
   }
@@ -135,7 +118,9 @@ export class ChatStorageRecords {
   }
 
   get dataItems(): Iterable<MessageDataItem> {
-    return this.#snapshot.dataItems().filter((item) => this.message(item));
+    return this.#snapshot
+      .dataItems()
+      .filter(({ messageId }) => this.message(messageId));
   }
 
   get groupMembers(): Iterable<GroupMember> {
@@ -145,13 +130,9 @@ export class ChatStorageRecords {
   }
 
   get groupMembersChanges(): Iterable<GroupMembersChange> {
-    return unique(
-      this.#snapshot
-        .groupMembersChanges()
-        .filter(({ groupJid }) => this.#chat(groupJid)),
-      ({ groupJid, changeDate, changeType, memberJids }) =>
-        JSON.stringify([groupJid, changeDate, changeType, memberJids]),
-    );
+    return this.#snapshot
+      .groupMembersChanges()
+      .filter(({ groupJid }) => this.#chat(groupJid));
   }
 
   get chatPushConfigs(): Iterable<ChatPushConfig> {
@@ -170,16 +151,15 @@ export class ChatStorageRecords {
     return this.#snapshot.profilePictures();
   }
 
-  get blockedJids(): Iterable<string> {
-    return this.#snapshot.blockedJids();
+  get blockedContacts(): Iterable<BlockedContact> {
+    return this.#snapshot.blockedContacts();
   }
 
-  // Whether the import keeps the message a record of the same chat hangs
-  // off, by its key.
-  message(key: MessageKey): boolean {
+  // Whether the import keeps the message a record hangs off, by its id.
+  message(id: number): boolean {
     if (!this.#narrowed) return true;
-    this.#messageIds ??= new Set(this.#messageInputs().map(messageId));
-    return this.#messageIds.has(messageId(key));
+    this.#messageIds ??= new Set(this.#messageInputs().map(({ id }) => id));
+    return this.#messageIds.has(id);
   }
 
   // The same for a record that names its message by chat and stanza ID only.
@@ -197,9 +177,9 @@ export class ChatStorageRecords {
     return selected(this.#scope.collectionIds, jid);
   }
 
-  *#selected<T extends MessageKey & { readonly messageDate: string | null }>(
-    rows: IteratorObject<T>,
-  ): Generator<T> {
+  *#selected<
+    T extends { readonly chatJid: string; readonly messageDate: string | null },
+  >(rows: IteratorObject<T>): Generator<T> {
     yield* rows.filter(
       ({ chatJid, messageDate }) =>
         this.#chat(chatJid) &&

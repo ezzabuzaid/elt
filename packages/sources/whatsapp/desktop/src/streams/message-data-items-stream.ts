@@ -1,17 +1,11 @@
 import type { RecordDraft } from '@eltjs/elt';
 import type { MessageDataItem } from '@eltjs/sdk-whatsapp-desktop';
 
-import {
-  messageKeyColumns,
-  messageKeyFields,
-  messageKeyRecord,
-} from '../message-key-fields.ts';
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const {
   integer,
-  text,
   nullableInteger,
   nullableText,
   nullableJid,
@@ -22,17 +16,18 @@ const column = (what: string, name: string) =>
   `${what} (ZWAMESSAGEDATAITEM.${name}).`;
 
 const properties = {
-  ...messageKeyFields,
-  messageCopy: {
+  id: rowId('ZWAMESSAGEDATAITEM'),
+  messageId: {
     ...integer,
-    minimum: 0,
-    description:
-      'The row of the message the link is on: 0 for the row messages loads, else messageCopies.copy.',
+    description: 'The message the item is in; refers to messages.id.',
   },
   index: {
     ...integer,
     minimum: 0,
-    description: column('The item’s place among the message’s items', 'ZINDEX'),
+    description: column(
+      'The item’s place among the message’s items; several links of one message can share it',
+      'ZINDEX',
+    ),
   },
   type: {
     ...nullableInteger,
@@ -45,7 +40,7 @@ const properties = {
     ...nullableInstant,
     description: column('WhatsApp’s date of the item, UTC', 'ZDATE'),
   },
-  content1: { ...text, description: column('The link', 'ZCONTENT1') },
+  content1: { ...nullableText, description: column('The link', 'ZCONTENT1') },
   content2: {
     ...nullableText,
     description: column('WhatsApp’s second content value', 'ZCONTENT2'),
@@ -98,18 +93,11 @@ export class MessageDataItemsStream extends WhatsAppStream<
 > {
   readonly name = 'messageDataItems';
   readonly store = 'chatStorage';
-  // WhatsApp files several links of one message under one index, so the link
-  // tells them apart.
-  readonly primaryKey = [
-    ...messageKeyColumns,
-    'messageCopy',
-    'index',
-    'content1',
-  ];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per link WhatsApp found in a message, as its chat’s Links list shows them, with the linked page’s title and description. Primary key chatJid, messageIsFromMe, messageStanzaId, messageCopy, index, content1.',
+      'One record per link WhatsApp found in a message, as its chat’s Links list shows them, with the linked page’s title and description. Primary key id.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -118,12 +106,7 @@ export class MessageDataItemsStream extends WhatsAppStream<
     return scan.chatStorage.dataItems;
   }
 
-  protected record({
-    chatJid,
-    isFromMe,
-    stanzaId,
-    ...item
-  }: MessageDataItem): RecordDraft<typeof properties> {
-    return { ...messageKeyRecord({ chatJid, isFromMe, stanzaId }), ...item };
+  protected record(item: MessageDataItem): RecordDraft<typeof properties> {
+    return { ...item };
   }
 }

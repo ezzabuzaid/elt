@@ -2,12 +2,22 @@ import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
 import { appDatabase } from './app-database.ts';
 import { WhatsAppSchemaError } from './errors.ts';
-import { flag, instant, number, requiredText, text } from './values.ts';
+import {
+  flag,
+  instant,
+  number,
+  requiredNumber,
+  requiredText,
+  text,
+} from './values.ts';
 
 // One WhatsApp call (ZWACDCALLEVENT) with the call-log entry that groups it
 // (ZWAAGGREGATECALLEVENT), whose direction, missed state and video apply to
 // every call in it.
 export type Call = {
+  readonly id: number;
+  // The call-log entry's row ID; NULL when no entry holds the call.
+  readonly callLogId: number | null;
   readonly callId: string;
   readonly date: string | null;
   readonly duration: number | null;
@@ -28,10 +38,11 @@ export type Call = {
   readonly linkToken: string | null;
 };
 
-// Another party on a call, and how the call ended for them. WhatsApp keeps
-// participants on the call-log entry, so each call of an entry has them all.
+// Another party on a call-log entry's calls, and how the calls ended for
+// them. WhatsApp keeps participants on the entry, not on each call.
 export type CallParticipant = {
-  readonly callId: string;
+  readonly id: number;
+  readonly callLogId: number | null;
   readonly jid: string;
   readonly outcome: number | null;
 };
@@ -87,7 +98,8 @@ export class CallsSnapshot implements Disposable {
   calls(): IteratorObject<Call, undefined> {
     return this.#database
       .iterate(
-        `SELECT call.ZCALLIDSTRING AS callId, call.ZDATE AS date,
+        `SELECT call.Z_PK AS id, log.Z_PK AS callLogId,
+                call.ZCALLIDSTRING AS callId, call.ZDATE AS date,
                 call.ZDURATION AS duration, call.ZOUTCOME AS outcome,
                 call.ZBYTESSENT AS bytesSent,
                 call.ZBYTESRECEIVED AS bytesReceived,
@@ -106,6 +118,8 @@ export class CallsSnapshot implements Disposable {
          ORDER BY call.Z_PK`,
       )
       .map((row) => ({
+        id: requiredNumber(row.id, 'A WhatsApp call has no row ID'),
+        callLogId: number(row.callLogId),
         callId: requiredText(row.callId, 'A WhatsApp call has no ID'),
         date: instant(row.date),
         duration: number(row.duration),
@@ -130,15 +144,13 @@ export class CallsSnapshot implements Disposable {
   participants(): IteratorObject<CallParticipant, undefined> {
     return this.#database
       .iterate(
-        `SELECT call.ZCALLIDSTRING AS callId, participant.ZJIDSTRING AS jid,
-                participant.ZOUTCOME AS outcome
-         FROM ZWACDCALLEVENTPARTICIPANT AS participant
-         JOIN ZWACDCALLEVENT AS call
-           ON call."${this.#callLog}" = participant."${this.#participantLog}"
-         ORDER BY participant.Z_PK, call.Z_PK`,
+        `SELECT Z_PK AS id, "${this.#participantLog}" AS callLogId,
+                ZJIDSTRING AS jid, ZOUTCOME AS outcome
+         FROM ZWACDCALLEVENTPARTICIPANT ORDER BY Z_PK`,
       )
       .map((row) => ({
-        callId: requiredText(row.callId, 'A WhatsApp call has no ID'),
+        id: requiredNumber(row.id, 'A WhatsApp call participant has no row ID'),
+        callLogId: number(row.callLogId),
         jid: requiredText(row.jid, 'A WhatsApp call participant has no JID'),
         outcome: number(row.outcome),
       }));

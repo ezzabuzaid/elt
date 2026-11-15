@@ -21,8 +21,12 @@ A number that WhatsApp gives a person in place of the phone number. `users` maps
 _Avoid_: User ID, alias
 
 **Stanza ID**:
-The ID that the sender of a message gives it. With the chat's JID and whether this account sent it, it is the key of a message.
-_Avoid_: Message ID (ambiguous with the Core Data row number)
+The ID that the sender of a message gives it. With the chat's JID and whether this account sent it, it is how WhatsApp names a message. ChatStorage can keep one message on more than one row, so it is a column, not a key.
+_Avoid_: Message ID (ambiguous with the row ID)
+
+**Row ID**:
+The `Z_PK` of a Core Data row, which Core Data keeps unique within an entity. It is the key of each stream: a stream whose records are rows is keyed by `id`, the row ID. A record that is decoded from a blob of a row is keyed by the row ID of that row and the record's `position` in the blob. A record names another record by its row ID, for example `messageId`, `chatId` and `profileId`. WhatsApp's own IDs, for example JIDs, stanza IDs and call IDs, can repeat across rows, so they are columns. The stores that are not Core Data, `Status.sqlite` and `ExtChatDatabase.sqlite`, are keyed by the unique key that their tables declare.
+_Avoid_: Key (for a JID or a stanza ID), Z_PK (in a reader's query: the column is `id`)
 
 **Media item**:
 The row of `ZWAMEDIAITEM` that a message carries. It holds different things for different kinds of message: a file, a link preview, a contact card or a place.

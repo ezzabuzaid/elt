@@ -2,20 +2,18 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { AddressBookContact } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const { text, nullableJid, nullableText, nullableInteger, nullableInstant } =
   whatsappFields;
 const column = (what: string, name: string) => `${what} (${name}).`;
 
 const properties = {
+  id: rowId('ZWAADDRESSBOOKCONTACT'),
   uniqueId: {
     ...text,
     minLength: 1,
-    description: column(
-      'WhatsApp’s ID of this record; the primary key',
-      'ZUNIQUEID',
-    ),
+    description: column('WhatsApp’s ID of this record', 'ZUNIQUEID'),
   },
   whatsappId: {
     ...nullableJid,
@@ -157,11 +155,11 @@ export class ContactsStream extends WhatsAppStream<
 > {
   readonly name = 'contacts';
   readonly store = 'contacts';
-  readonly primaryKey = ['uniqueId'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per phone number in the Mac’s address book that WhatsApp found on WhatsApp (ContactsV2.sqlite’s ZWAADDRESSBOOKCONTACT). Primary key uniqueId. Not narrowed by an import’s chats or dates.',
+      'One record per phone number in the Mac’s address book that WhatsApp found on WhatsApp (ContactsV2.sqlite’s ZWAADDRESSBOOKCONTACT). Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

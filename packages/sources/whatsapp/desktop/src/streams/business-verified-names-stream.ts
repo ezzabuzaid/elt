@@ -2,17 +2,17 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { BusinessVerifiedName } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const { jid, nullableJid, nullableText, nullableInteger, nullableInstant } =
   whatsappFields;
 const second = { ...nullableText, format: 'date-time', precision: 0 } as const;
 
 const properties = {
+  id: rowId('ZWABIZVERIFIEDNAMEDATA'),
   lid: {
     ...jid,
-    description:
-      'The business’s LID; the primary key (ZWABIZVERIFIEDNAMEDATA.ZJID).',
+    description: 'The business’s LID (ZWABIZVERIFIEDNAMEDATA.ZJID).',
   },
   phoneNumberJid: {
     ...nullableJid,
@@ -68,11 +68,11 @@ export class BusinessVerifiedNamesStream extends WhatsAppStream<
 > {
   readonly name = 'businessVerifiedNames';
   readonly store = 'businesses';
-  readonly primaryKey = ['lid'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per business WhatsApp holds a verified name for, by LID, with the platform role of a business on WhatsApp’s business platform (Biz.sqlite). Primary key lid. Not narrowed by an import’s chats or dates.',
+      'One record per business WhatsApp holds a verified name for, by LID, with the platform role of a business on WhatsApp’s business platform (Biz.sqlite). Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

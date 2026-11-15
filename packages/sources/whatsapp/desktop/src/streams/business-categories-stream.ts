@@ -2,12 +2,17 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { BusinessCategory } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const { jid, text, integer, nullableText } = whatsappFields;
 
 const properties = {
-  jid: { ...jid, description: 'The business; refers to businessProfiles.jid.' },
+  id: rowId('ZWABIZCATEGORYDATA'),
+  profileId: {
+    ...integer,
+    description: 'The business profile; refers to businessProfiles.id.',
+  },
+  jid: { ...jid, description: 'The business’s JID (businessProfiles.jid).' },
   categoryId: {
     ...text,
     minLength: 1,
@@ -27,11 +32,11 @@ export class BusinessCategoriesStream extends WhatsAppStream<
 > {
   readonly name = 'businessCategories';
   readonly store = 'businesses';
-  readonly primaryKey = ['jid', 'categoryId'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per category a business profile lists. Primary key jid, categoryId. Not narrowed by an import’s chats or dates.',
+      'One record per category a business profile lists. Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

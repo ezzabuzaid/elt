@@ -2,16 +2,17 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { PrivacySetting } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const { text } = whatsappFields;
 
 const properties = {
+  id: rowId('ZWAKEYVALUEELEMENT'),
   category: {
     ...text,
     minLength: 1,
     description:
-      'What the setting covers, as WhatsApp names it: last (last seen), online, profile (photo), status (About), groupadd, calladd, messages, stickers, linked_profiles, cover_photo, defense; the primary key.',
+      'What the setting covers, as WhatsApp names it: last (last seen), online, profile (photo), status (About), groupadd, calladd, messages, stickers, linked_profiles, cover_photo, defense.',
   },
   value: {
     ...text,
@@ -26,11 +27,11 @@ export class PrivacySettingsStream extends WhatsAppStream<
 > {
   readonly name = 'privacySettings';
   readonly store = 'localKeyValue';
-  readonly primaryKey = ['category'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per privacy setting of this account, as WhatsApp last fetched them (LocalKeyValue.sqlite’s privacy-settings-values). Read receipts are a preference WhatsApp keeps elsewhere and are not here. Primary key category. Not narrowed by an import’s chats or dates.',
+      'One record per privacy setting of this account, as WhatsApp last fetched them (LocalKeyValue.sqlite’s privacy-settings-values). Read receipts are a preference WhatsApp keeps elsewhere and are not here. Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

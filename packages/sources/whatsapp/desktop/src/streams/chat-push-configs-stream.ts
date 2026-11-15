@@ -2,11 +2,12 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { ChatPushConfig } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const { jid, nullableInteger, nullableText, nullableInstant } = whatsappFields;
 
 const properties = {
+  id: rowId('ZWACHATPUSHCONFIG'),
   jid: {
     ...jid,
     description:
@@ -38,11 +39,11 @@ export class ChatPushConfigsStream extends WhatsAppStream<
 > {
   readonly name = 'chatPushConfigs';
   readonly store = 'chatStorage';
-  readonly primaryKey = ['jid'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per chat with its own notification settings, such as a mute (ZWACHATPUSHCONFIG). Primary key jid.',
+      'One record per chat with its own notification settings, such as a mute (ZWACHATPUSHCONFIG). Primary key id.',
     properties,
     required: Object.keys(properties),
   } as const;

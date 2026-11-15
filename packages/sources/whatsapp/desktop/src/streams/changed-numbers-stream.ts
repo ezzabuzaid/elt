@@ -2,15 +2,13 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { ChangedNumber } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const { jid, nullableInstant } = whatsappFields;
 
 const properties = {
-  oldJid: {
-    ...jid,
-    description: 'The person’s old phone JID; the primary key.',
-  },
+  id: rowId('ZWAKEYVALUEELEMENT'),
+  oldJid: { ...jid, description: 'The person’s old phone JID.' },
   newJid: { ...jid, description: 'Their new phone JID.' },
   changedAt: {
     ...nullableInstant,
@@ -24,11 +22,11 @@ export class ChangedNumbersStream extends WhatsAppStream<
 > {
   readonly name = 'changedNumbers';
   readonly store = 'localKeyValue';
-  readonly primaryKey = ['oldJid'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per person WhatsApp saw move to a new phone number (LocalKeyValue.sqlite’s changenumber-oldtonew). Primary key oldJid. Not narrowed by an import’s chats or dates.',
+      'One record per person WhatsApp saw move to a new phone number (LocalKeyValue.sqlite’s changenumber-oldtonew). Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

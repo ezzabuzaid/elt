@@ -2,7 +2,7 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { Call } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const {
   text,
@@ -19,10 +19,16 @@ const log = (what: string, name: string) =>
   `${what}, from the call-log entry holding the call (ZWAAGGREGATECALLEVENT.${name}).`;
 
 const properties = {
+  id: rowId('ZWACDCALLEVENT'),
+  callLogId: {
+    ...nullableInteger,
+    description:
+      'The call-log entry that holds the call (ZWAAGGREGATECALLEVENT.Z_PK); callParticipants.callLogId names the same entry. NULL when no entry holds it.',
+  },
   callId: {
     ...text,
     minLength: 1,
-    description: call('The call’s ID; the primary key', 'ZCALLIDSTRING'),
+    description: call('The call’s ID', 'ZCALLIDSTRING'),
   },
   date: {
     ...nullableInstant,
@@ -110,11 +116,11 @@ const properties = {
 export class CallsStream extends WhatsAppStream<typeof properties, Call> {
   readonly name = 'calls';
   readonly store = 'calls';
-  readonly primaryKey = ['callId'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per WhatsApp call (CallHistory.sqlite), with the call-log entry that holds it. Primary key callId. Not narrowed by an import’s chats or dates.',
+      'One record per WhatsApp call (CallHistory.sqlite), with the call-log entry that holds it. Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

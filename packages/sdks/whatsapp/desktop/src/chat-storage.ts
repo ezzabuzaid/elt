@@ -6,6 +6,7 @@ import { type Snapshot, type SnapshotColumns } from '@zukhruf/sqlite-snapshot';
 
 import { appDatabase } from './app-database.ts';
 import type {
+  BlockedContact,
   Chat,
   ChatPushConfig,
   GroupMember,
@@ -13,7 +14,6 @@ import type {
   MediaItem,
   Message,
   MessageDataItem,
-  MessageKey,
   ProfilePicture,
   PushName,
 } from './chat-records.ts';
@@ -120,6 +120,7 @@ const requiredColumns = {
   ],
   ZWAMESSAGEINFO: ['Z_PK', 'Z_OPT', 'ZRECEIPTINFO'],
   ZWAMESSAGEDATAITEM: [
+    'Z_PK',
     'ZMESSAGE',
     'ZINDEX',
     'ZTYPE',
@@ -185,31 +186,19 @@ export function profilePictureFile(container: string, path: string): string {
   return join(container, `${path}.thumb`);
 }
 
-// The key columns of a message joined to its chat, which every query on a
-// message's children selects the same way.
-const messageKey = `chat.ZCONTACTJID AS chatJid, message.ZISFROMME AS isFromMe,
-  message.ZSTANZAID AS stanzaId`;
-
-// How many earlier rows hold the same message key. WhatsApp writes a few
-// messages a second time, with the same content on new rows of their own.
-const messageCopy = `(SELECT count(*) FROM ZWAMESSAGE AS earlier
-  JOIN ZWACHATSESSION AS earlierChat ON earlierChat.Z_PK = earlier.ZCHATSESSION
-  WHERE earlier.ZSTANZAID = message.ZSTANZAID
-    AND earlier.ZISFROMME = message.ZISFROMME
-    AND earlierChat.ZCONTACTJID = chat.ZCONTACTJID
-    AND earlier.Z_PK < message.Z_PK)`;
-
 // The small inputs of a joined message, without its text or blobs. Versions
 // belong to each row, not a store-wide cursor; related rows can change alone.
-export type MessageInput = MessageKey & {
+export type MessageInput = {
   readonly id: number;
+  readonly chatJid: string;
+  readonly stanzaId: string;
   readonly messageDate: string | null;
   readonly fingerprint: string;
 };
 
 // ChatStorage.sqlite as of one moment, so a message, its chat and its sender
 // agree. A message whose chat WhatsApp removed belongs to no conversation it
-// shows, and has no key; it is not read. Hold it only while reading: an open
+// shows; it is not read. Hold it only while reading: an open
 // read stops WhatsApp checkpointing its WAL.
 export class ChatStorageSnapshot implements Disposable {
   readonly #database: Snapshot;
@@ -231,7 +220,8 @@ export class ChatStorageSnapshot implements Disposable {
   chats(): IteratorObject<Chat, undefined> {
     return this.#database
       .iterate(
-        `SELECT chat.ZCONTACTJID AS jid, chat.ZSESSIONTYPE AS sessionType,
+        `SELECT chat.Z_PK AS id, chat.ZCONTACTJID AS jid,
+                chat.ZSESSIONTYPE AS sessionType,
                 chat.ZPARTNERNAME AS partnerName,
                 chat.ZCONTACTIDENTIFIER AS contactIdentifier,
                 chat.ZCONTACTABID AS contactAbId, chat.ZARCHIVED AS archived,
@@ -255,6 +245,7 @@ export class ChatStorageSnapshot implements Disposable {
          ORDER BY chat.Z_PK`,
       )
       .map((row) => ({
+        id: requiredNumber(row.id, 'A WhatsApp chat has no row ID'),
         jid: requiredText(row.jid, 'A WhatsApp chat has no JID'),
         sessionType: requiredNumber(
           row.sessionType,
@@ -300,8 +291,8 @@ export class ChatStorageSnapshot implements Disposable {
     return this.#database
       .iterate(
         `
-      SELECT ${messageKey}, ${messageCopy} AS copy,
-             message.Z_PK AS id, message.Z_OPT AS version,
+      SELECT message.Z_PK AS id, chat.ZCONTACTJID AS chatJid,
+             message.ZSTANZAID AS stanzaId, message.Z_OPT AS version,
              message.ZMESSAGEDATE AS messageDate,
              media.Z_PK AS mediaId, media.Z_OPT AS mediaVersion,
              media.ZMEDIALOCALPATH AS mediaLocalPath,
@@ -325,8 +316,9 @@ export class ChatStorageSnapshot implements Disposable {
           throw new TypeError('A WhatsApp message input has no row version');
         const path = text(row.mediaLocalPath);
         return {
-          ...key(row),
           id: requiredNumber(row.id, 'A WhatsApp message has no row ID'),
+          chatJid: requiredText(row.chatJid, 'A WhatsApp chat has no JID'),
+          stanzaId: stanzaId(row),
           messageDate: instant(row.messageDate),
           fingerprint: hash(
             'sha256',
@@ -348,8 +340,9 @@ export class ChatStorageSnapshot implements Disposable {
   messages(id?: number): IteratorObject<Message, undefined> {
     return this.#database
       .iterate(
-        `SELECT ${messageKey}, ${messageCopy} AS copy,
-                message.ZFROMJID AS fromJid,
+        `SELECT message.Z_PK AS id, chat.Z_PK AS chatId,
+                chat.ZCONTACTJID AS chatJid, message.ZISFROMME AS isFromMe,
+                message.ZSTANZAID AS stanzaId, message.ZFROMJID AS fromJid,
                 message.ZTOJID AS toJid, member.ZMEMBERJID AS groupMemberJid,
                 message.ZPUSHNAME AS pushName,
                 message.ZMESSAGEDATE AS messageDate,
@@ -394,8 +387,14 @@ export class ChatStorageSnapshot implements Disposable {
       .map((row) => {
         const metadata = bytes(row.metadata);
         return {
-          ...key(row),
-          copy: requiredNumber(row.copy, 'A WhatsApp message has no copy'),
+          id: requiredNumber(row.id, 'A WhatsApp message has no row ID'),
+          chatId: requiredNumber(row.chatId, 'A WhatsApp chat has no row ID'),
+          chatJid: requiredText(row.chatJid, 'A WhatsApp chat has no JID'),
+          isFromMe: requiredFlag(
+            row.isFromMe,
+            'A WhatsApp message has no sender side',
+          ),
+          stanzaId: stanzaId(row),
           fromJid: text(row.fromJid),
           toJid: text(row.toJid),
           groupMemberJid: text(row.groupMemberJid),
@@ -428,7 +427,7 @@ export class ChatStorageSnapshot implements Disposable {
   dataItems(): IteratorObject<MessageDataItem, undefined> {
     return this.#database
       .iterate(
-        `SELECT ${messageKey}, ${messageCopy} AS messageCopy,
+        `SELECT item.Z_PK AS id, item.ZMESSAGE AS messageId,
                 item.ZINDEX AS "index", item.ZTYPE AS type,
                 item.ZDATE AS date, item.ZCONTENT1 AS content1,
                 item.ZCONTENT2 AS content2, item.ZTITLE AS title,
@@ -439,21 +438,18 @@ export class ChatStorageSnapshot implements Disposable {
          FROM ZWAMESSAGEDATAITEM AS item
          JOIN ZWAMESSAGE AS message ON message.Z_PK = item.ZMESSAGE
          JOIN ZWACHATSESSION AS chat ON chat.Z_PK = message.ZCHATSESSION
-         ORDER BY message.Z_PK, item.ZINDEX`,
+         ORDER BY item.Z_PK`,
       )
       .map((row) => ({
-        ...key(row),
-        messageCopy: requiredNumber(
-          row.messageCopy,
-          'A WhatsApp data item has no message copy',
+        id: requiredNumber(row.id, 'A WhatsApp data item has no row ID'),
+        messageId: requiredNumber(
+          row.messageId,
+          'A WhatsApp data item has no message',
         ),
         index: requiredNumber(row.index, 'A WhatsApp data item has no index'),
         type: number(row.type),
         date: instant(row.date),
-        content1: requiredText(
-          row.content1,
-          'A WhatsApp data item has no content',
-        ),
+        content1: text(row.content1),
         content2: text(row.content2),
         title: text(row.title),
         summary: text(row.summary),
@@ -468,7 +464,8 @@ export class ChatStorageSnapshot implements Disposable {
   groupMembers(): IteratorObject<GroupMember, undefined> {
     return this.#database
       .iterate(
-        `SELECT chat.ZCONTACTJID AS groupJid, member.ZMEMBERJID AS memberJid,
+        `SELECT member.Z_PK AS id, chat.Z_PK AS chatId,
+                chat.ZCONTACTJID AS groupJid, member.ZMEMBERJID AS memberJid,
                 member.ZCONTACTNAME AS contactName,
                 member.ZFIRSTNAME AS firstName,
                 member.ZCONTACTIDENTIFIER AS contactIdentifier,
@@ -479,6 +476,8 @@ export class ChatStorageSnapshot implements Disposable {
          ORDER BY member.Z_PK`,
       )
       .map((row) => ({
+        id: requiredNumber(row.id, 'A WhatsApp group member has no row ID'),
+        chatId: requiredNumber(row.chatId, 'A WhatsApp chat has no row ID'),
         groupJid: requiredText(row.groupJid, 'A WhatsApp group has no JID'),
         memberJid: requiredText(
           row.memberJid,
@@ -496,7 +495,7 @@ export class ChatStorageSnapshot implements Disposable {
   groupMembersChanges(): IteratorObject<GroupMembersChange, undefined> {
     return this.#database
       .iterate(
-        `SELECT ZGROUPJID AS groupJid, ZCHANGEDATE AS changeDate,
+        `SELECT Z_PK AS id, ZGROUPJID AS groupJid, ZCHANGEDATE AS changeDate,
                 ZCHANGETYPE AS changeType, ZMEMBERJIDS AS memberJids
          FROM ZWAGROUPMEMBERSCHANGE ORDER BY Z_PK`,
       )
@@ -505,6 +504,7 @@ export class ChatStorageSnapshot implements Disposable {
         if (changeDate === null)
           throw new TypeError('A WhatsApp group change has no date');
         return {
+          id: requiredNumber(row.id, 'A WhatsApp group change has no row ID'),
           groupJid: requiredText(row.groupJid, 'A WhatsApp group has no JID'),
           changeDate,
           changeType: requiredNumber(
@@ -522,9 +522,10 @@ export class ChatStorageSnapshot implements Disposable {
   pushNames(): IteratorObject<PushName, undefined> {
     return this.#database
       .iterate(
-        'SELECT ZJID AS jid, ZPUSHNAME AS pushName FROM ZWAPROFILEPUSHNAME ORDER BY Z_PK',
+        'SELECT Z_PK AS id, ZJID AS jid, ZPUSHNAME AS pushName FROM ZWAPROFILEPUSHNAME ORDER BY Z_PK',
       )
       .map((row) => ({
+        id: requiredNumber(row.id, 'A WhatsApp push name has no row ID'),
         jid: requiredText(row.jid, 'A WhatsApp push name has no JID'),
         pushName: text(row.pushName),
       }));
@@ -533,13 +534,17 @@ export class ChatStorageSnapshot implements Disposable {
   profilePictures(): IteratorObject<ProfilePicture, undefined> {
     return this.#database
       .iterate(
-        `SELECT ZJID AS jid, ZPICTUREID AS pictureId, ZPATH AS path,
+        `SELECT Z_PK AS id, ZJID AS jid, ZPICTUREID AS pictureId, ZPATH AS path,
                 ZREQUESTDATE AS requestDate
          FROM ZWAPROFILEPICTUREITEM ORDER BY Z_PK`,
       )
       .map((row) => {
         const path = text(row.path);
         return {
+          id: requiredNumber(
+            row.id,
+            'A WhatsApp profile picture has no row ID',
+          ),
           jid: requiredText(row.jid, 'A WhatsApp profile picture has no JID'),
           pictureId: text(row.pictureId),
           path,
@@ -552,22 +557,27 @@ export class ChatStorageSnapshot implements Disposable {
       });
   }
 
-  blockedJids(): IteratorObject<string, undefined> {
+  blockedContacts(): IteratorObject<BlockedContact, undefined> {
     return this.#database
-      .iterate('SELECT ZJID AS jid FROM ZWABLACKLISTITEM ORDER BY Z_PK')
-      .map((row) =>
-        requiredText(row.jid, 'A blocked WhatsApp contact has no JID'),
-      );
+      .iterate(
+        'SELECT Z_PK AS id, ZJID AS jid FROM ZWABLACKLISTITEM ORDER BY Z_PK',
+      )
+      .map((row) => ({
+        id: requiredNumber(row.id, 'A blocked WhatsApp contact has no row ID'),
+        jid: requiredText(row.jid, 'A blocked WhatsApp contact has no JID'),
+      }));
   }
 
   chatPushConfigs(): IteratorObject<ChatPushConfig, undefined> {
     return this.#database
       .iterate(
-        `SELECT ZJID AS jid, ZALERTS AS alerts, ZMUTEDUNTIL AS mutedUntil,
+        `SELECT Z_PK AS id, ZJID AS jid, ZALERTS AS alerts,
+                ZMUTEDUNTIL AS mutedUntil,
                 ZSOUND AS sound, ZRINGTONE AS ringtone
          FROM ZWACHATPUSHCONFIG ORDER BY Z_PK`,
       )
       .map((row) => ({
+        id: requiredNumber(row.id, 'A WhatsApp chat setting has no row ID'),
         jid: requiredText(row.jid, 'A WhatsApp chat setting has no JID'),
         alerts: number(row.alerts),
         mutedUntil: instant(row.mutedUntil),
@@ -609,13 +619,5 @@ export class ChatStorageSnapshot implements Disposable {
   }
 }
 
-function key(row: Record<string, unknown>) {
-  return {
-    chatJid: requiredText(row.chatJid, 'A WhatsApp chat has no JID'),
-    isFromMe: requiredFlag(
-      row.isFromMe,
-      'A WhatsApp message has no sender side',
-    ),
-    stanzaId: requiredText(row.stanzaId, 'A WhatsApp message has no stanza ID'),
-  };
-}
+const stanzaId = (row: Record<string, unknown>) =>
+  requiredText(row.stanzaId, 'A WhatsApp message has no stanza ID');

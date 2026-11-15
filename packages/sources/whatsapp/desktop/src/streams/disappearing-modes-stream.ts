@@ -2,14 +2,15 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { DisappearingMode } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const { jid, integer, nullableText } = whatsappFields;
 
 const properties = {
+  id: rowId('ZWAKEYVALUEELEMENT'),
   lid: {
     ...jid,
-    description: 'The account, by LID; refers to users.lid; the primary key.',
+    description: 'The account, by LID; refers to users.lid.',
   },
   durationSeconds: {
     ...integer,
@@ -32,11 +33,11 @@ export class DisappearingModesStream extends WhatsAppStream<
 > {
   readonly name = 'disappearingModes';
   readonly store = 'localKeyValue';
-  readonly primaryKey = ['lid'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per account whose default disappearing-message timer WhatsApp knows, this account’s own among them (LocalKeyValue.sqlite’s disappearing-mode). Primary key lid. Not narrowed by an import’s chats or dates.',
+      'One record per account whose default disappearing-message timer WhatsApp knows, this account’s own among them (LocalKeyValue.sqlite’s disappearing-mode). Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

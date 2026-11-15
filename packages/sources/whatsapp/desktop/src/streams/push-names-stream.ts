@@ -2,12 +2,13 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { PushName } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const { jid, nullableText } = whatsappFields;
 
 const properties = {
-  jid: { ...jid, description: 'The person (ZJID); the primary key.' },
+  id: rowId('ZWAPROFILEPUSHNAME'),
+  jid: { ...jid, description: 'The person (ZJID).' },
   pushName: {
     ...nullableText,
     description:
@@ -21,11 +22,11 @@ export class PushNamesStream extends WhatsAppStream<
 > {
   readonly name = 'pushNames';
   readonly store = 'chatStorage';
-  readonly primaryKey = ['jid'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per person whose own WhatsApp name this account has seen (ZWAPROFILEPUSHNAME). Primary key jid. Not narrowed by an import’s chats or dates.',
+      'One record per person whose own WhatsApp name this account has seen (ZWAPROFILEPUSHNAME). Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

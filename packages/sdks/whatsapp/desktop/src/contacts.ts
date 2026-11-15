@@ -1,11 +1,18 @@
 import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { appDatabase } from './app-database.ts';
-import { instant, number, requiredText, text } from './values.ts';
+import {
+  instant,
+  number,
+  requiredNumber,
+  requiredText,
+  text,
+} from './values.ts';
 
 // A person in the Mac's address book whom WhatsApp found on WhatsApp, one per
 // phone number (ZWAADDRESSBOOKCONTACT).
 export type AddressBookContact = {
+  readonly id: number;
   readonly uniqueId: string;
   readonly whatsappId: string | null;
   readonly lid: string | null;
@@ -78,7 +85,7 @@ export class ContactsSnapshot implements Disposable {
   contacts(): IteratorObject<AddressBookContact, undefined> {
     return this.#database
       .iterate(
-        `SELECT ZUNIQUEID AS uniqueId, ZWHATSAPPID AS whatsappId, ZLID AS lid,
+        `SELECT Z_PK AS id, ZUNIQUEID AS uniqueId, ZWHATSAPPID AS whatsappId, ZLID AS lid,
                 ZINTEROPJID AS interopJid, ZIDENTIFIER AS identifier,
                 ZFULLNAME AS fullName, ZGIVENNAME AS givenName,
                 ZLASTNAME AS lastName, ZBUSINESSNAME AS businessName,
@@ -97,6 +104,7 @@ export class ContactsSnapshot implements Disposable {
          FROM ZWAADDRESSBOOKCONTACT ORDER BY Z_PK`,
       )
       .map((row) => ({
+        id: requiredNumber(row.id, 'A WhatsApp contact has no row ID'),
         uniqueId: requiredText(row.uniqueId, 'A WhatsApp contact has no ID'),
         whatsappId: text(row.whatsappId),
         lid: text(row.lid),

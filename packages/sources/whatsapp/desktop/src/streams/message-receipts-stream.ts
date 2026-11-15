@@ -6,11 +6,7 @@ import {
 } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { OnMessage } from '../chat-storage-records.ts';
-import {
-  messageKeyColumns,
-  messageKeyFields,
-  messageKeyRecord,
-} from '../message-key-fields.ts';
+import { onMessageFields } from '../on-message-fields.ts';
 import { WhatsAppMessageStream } from '../whatsapp-message-stream.ts';
 import { whatsappFields } from '../whatsapp-stream.ts';
 
@@ -19,7 +15,7 @@ const second = { ...text, format: 'date-time', precision: 0 } as const;
 const nullableSecond = { ...second, type: ['string', 'null'] } as const;
 
 const properties = {
-  ...messageKeyFields,
+  ...onMessageFields,
   recipientJid: {
     ...jid,
     description:
@@ -47,25 +43,28 @@ export class MessageReceiptsStream extends WhatsAppMessageStream<
   OnMessage<Receipt>
 > {
   readonly name = 'messageReceipts';
-  readonly primaryKey = [...messageKeyColumns, 'recipientJid'];
+  readonly primaryKey = ['messageId', 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per recipient WhatsApp holds receipts from for a message, decoded from the message’s receipt info (ZWAMESSAGEINFO.ZRECEIPTINFO): WhatsApp keeps them for the messages this account sent and for some it received. Primary key chatJid, messageIsFromMe, messageStanzaId, recipientJid.',
+      'One record per recipient WhatsApp holds receipts from for a message, decoded from the message’s receipt info (ZWAMESSAGEINFO.ZRECEIPTINFO): WhatsApp keeps them for the messages this account sent and for some it received. Primary key messageId, position.',
     properties,
     required: Object.keys(properties),
   } as const;
 
   protected *messageRows(message: Message): Generator<OnMessage<Receipt>> {
-    if (message.copy === 0 && message.receiptInfo !== null)
-      for (const item of new ReceiptInfo(message.receiptInfo).receipts)
-        yield { message, item };
+    if (message.receiptInfo !== null)
+      for (const [position, item] of new ReceiptInfo(
+        message.receiptInfo,
+      ).receipts.entries())
+        yield { message, position, item };
   }
 
   protected record({
     message,
+    position,
     item,
   }: OnMessage<Receipt>): RecordDraft<typeof properties> {
-    return { ...messageKeyRecord(message), ...item };
+    return { messageId: message.id, position, ...item };
   }
 }

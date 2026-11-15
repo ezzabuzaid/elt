@@ -2,12 +2,17 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { BusinessBotPrompt } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, whatsappFields } from '../whatsapp-stream.ts';
+import { WhatsAppStream, rowId, whatsappFields } from '../whatsapp-stream.ts';
 
 const { jid, text, integer, nullableText } = whatsappFields;
 
 const properties = {
-  jid: { ...jid, description: 'The business; refers to businessProfiles.jid.' },
+  id: rowId('ZWABIZBOTPROMPTDATA'),
+  profileId: {
+    ...integer,
+    description: 'The business profile; refers to businessProfiles.id.',
+  },
+  jid: { ...jid, description: 'The business’s JID (businessProfiles.jid).' },
   text: {
     ...text,
     minLength: 1,
@@ -28,11 +33,11 @@ export class BusinessBotPromptsStream extends WhatsAppStream<
 > {
   readonly name = 'businessBotPrompts';
   readonly store = 'businesses';
-  readonly primaryKey = ['jid', 'text'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per suggested question a business’s automated agent offers in its chat. Primary key jid, text. Not narrowed by an import’s chats or dates.',
+      'One record per suggested question a business’s automated agent offers in its chat. Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;

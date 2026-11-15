@@ -80,51 +80,54 @@ The group container needs Full Disk Access (see [Full Disk Access](../../apple/m
 
 ## Streams
 
-| Stream                  | One record per                                                                                                          |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `chats`                 | chat: a person, a group, a community's group, a channel, a broadcast list, a contact's statuses, with a group's details |
-| `messages`              | message, with its media item: file, link preview, contact card or place                                                 |
-| `messageCopies`         | further row WhatsApp keeps a message on, with every column of `messages`                                                |
-| `messageReceipts`       | recipient a message's receipts name, with when it was delivered, read and played                                        |
-| `messageReactions`      | reaction to a message, a withdrawn one with no emoji                                                                    |
-| `messageReactionCounts` | emoji people reacted with to a channel post, with how many                                                              |
-| `messageDataItems`      | link WhatsApp found in a message, with the page's title and description                                                 |
-| `messageAssociations`   | message shown as part of another, such as an album's photo                                                              |
-| `groupMembers`          | person WhatsApp lists for a group, including those who left                                                             |
-| `groupMembersChanges`   | change to a group's members WhatsApp keeps                                                                              |
-| `chatPushConfigs`       | chat with its own notification settings, such as a mute                                                                 |
-| `pushNames`             | person whose own WhatsApp name the account has seen                                                                     |
-| `profilePictures`       | person or group whose picture WhatsApp looked up, with the thumbnail it keeps                                           |
-| `blockedContacts`       | person the account blocked                                                                                              |
-| `contacts`              | address book phone number WhatsApp found on WhatsApp                                                                    |
-| `users`                 | WhatsApp user by LID, with the phone number when they share it                                                          |
-| `calls`                 | call, with the direction, missed state and video of the call-log entry holding it                                       |
-| `callParticipants`      | other party on a call                                                                                                   |
-| `businessProfiles`      | business profile, with its websites, Facebook page and Instagram account                                                |
-| `businessVerifiedNames` | business with a verified name, by LID, with its business-platform role                                                  |
-| `businessCategories`    | category a business profile lists, in order                                                                             |
-| `businessHours`         | opening a business lists for a day of the week                                                                          |
-| `businessServiceAreas`  | area a business says it serves                                                                                          |
-| `businessBotPrompts`    | question a business's automated agent offers to start a chat with                                                       |
-| `statuses`              | status a contact or the account posted, with its text styling or link preview and its photo or video                    |
-| `stickerPacks`          | sticker pack in the picker's tray, and pack in the copy WhatsApp keeps of its store                                     |
-| `stickers`              | sticker WhatsApp keeps: a tray pack's, or one the account favorited or sent                                             |
-| `favoriteStickers`      | sticker the account favorited, with when                                                                                |
-| `recentStickers`        | sticker in the picker's recent list, in its order                                                                       |
-| `privacySettings`       | privacy setting of the account, such as who sees its last seen                                                          |
-| `disappearingModes`     | account's default timer for messages in new chats, the account's own among them                                         |
-| `linkedProfiles`        | account on another service a person links to their profile                                                              |
-| `changedNumbers`        | person WhatsApp saw move to a new phone number                                                                          |
+| Stream                  | One record per                                                                                                                  | Key                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `chats`                 | chat session: a person, a group, a community's group, a channel, a broadcast list, a contact's statuses, with a group's details | `id`                          |
+| `messages`              | message row, with its media item: file, link preview, contact card or place                                                     | `id`                          |
+| `messageReceipts`       | recipient a message's receipts name, with when it was delivered, read and played                                                | `messageId`, `position`       |
+| `messageReactions`      | reaction to a message, a withdrawn one with no emoji                                                                            | `messageId`, `position`       |
+| `messageReactionCounts` | emoji people reacted with to a channel post, with how many                                                                      | `messageId`, `position`       |
+| `messageDataItems`      | link WhatsApp found in a message, with the page's title and description                                                         | `id`                          |
+| `messageAssociations`   | message shown as part of another, such as an album's photo                                                                      | `chatJid`, `stanzaId`, `type` |
+| `groupMembers`          | person WhatsApp lists for a group, including those who left                                                                     | `id`                          |
+| `groupMembersChanges`   | change to a group's members WhatsApp keeps                                                                                      | `id`                          |
+| `chatPushConfigs`       | chat with its own notification settings, such as a mute                                                                         | `id`                          |
+| `pushNames`             | person whose own WhatsApp name the account has seen                                                                             | `id`                          |
+| `profilePictures`       | person or group whose picture WhatsApp looked up, with the thumbnail it keeps                                                   | `id`                          |
+| `blockedContacts`       | person the account blocked                                                                                                      | `id`                          |
+| `contacts`              | address book phone number WhatsApp found on WhatsApp                                                                            | `id`                          |
+| `users`                 | WhatsApp user by LID, with the phone number when they share it                                                                  | `id`                          |
+| `calls`                 | call, with the direction, missed state and video of the call-log entry holding it                                               | `id`                          |
+| `callParticipants`      | other party on a call-log entry; join `calls` on `callLogId`                                                                    | `id`                          |
+| `businessProfiles`      | business profile, with its websites, Facebook page and Instagram account                                                        | `id`                          |
+| `businessVerifiedNames` | business with a verified name, by LID, with its business-platform role                                                          | `id`                          |
+| `businessCategories`    | category a business profile lists, in order                                                                                     | `id`                          |
+| `businessHours`         | opening a business lists for a day of the week                                                                                  | `profileId`, `position`       |
+| `businessServiceAreas`  | area a business says it serves                                                                                                  | `id`                          |
+| `businessBotPrompts`    | question a business's automated agent offers to start a chat with                                                               | `id`                          |
+| `statuses`              | status a contact or the account posted, with its text styling or link preview and its photo or video                            | `senderJid`, `uuid`           |
+| `stickerPacks`          | sticker pack in the picker's tray, and pack in the copy WhatsApp keeps of its store                                             | `id`                          |
+| `stickers`              | sticker WhatsApp keeps: a tray pack's, or one the account favorited or sent                                                     | `id`                          |
+| `favoriteStickers`      | sticker the account favorited, with when                                                                                        | `id`                          |
+| `recentStickers`        | sticker in the picker's recent list, in its order                                                                               | `elementId`, `position`       |
+| `privacySettings`       | privacy setting of the account, such as who sees its last seen                                                                  | `id`                          |
+| `disappearingModes`     | account's default timer for messages in new chats, the account's own among them                                                 | `id`                          |
+| `linkedProfiles`        | account on another service a person links to their profile                                                                      | `elementId`, `position`       |
+| `changedNumbers`        | person WhatsApp saw move to a new phone number                                                                                  | `id`                          |
 
 ## Identities and values
 
 WhatsApp names a person by a JID: `<number>@s.whatsapp.net` by phone number, or `<LID>@lid`. A LID is a number that WhatsApp gives in place of the phone number. WhatsApp is moving chats from the first form to the second, so one person can have both. `users` maps each LID to the phone number when the person shares it. `contacts` gives both for the people of the address book. A one-person chat keeps the person's other JID in `contactIdentifier`: a chat keyed by phone number holds the LID, and a chat keyed by LID holds the phone JID. `contacts.phoneNumber` keeps its `+`, and `users.phoneNumber` is digits only. Groups are `…@g.us`, and channels are `…@newsletter`.
 
-A message has the key that WhatsApp gives it: its chat's JID, whether this account sent it, and the stanza ID that its sender gave it.
+Each stream is keyed by an identity that its store keeps unique (see Row ID in [CONTEXT.md](./CONTEXT.md)):
 
-- WhatsApp keeps a few messages on two rows (1 key of 82,077 rows). `messages` loads the first row, and `messageCopies` loads each later row with `copy`, the number of earlier rows. `messageDataItems` names the row of its link in `messageCopy`. The receipts and reactions are decoded from the first row; `messageCopies.receiptInfo` keeps those of the copy as stored.
-- WhatsApp keeps a second, empty session for a few chats (1 of 909). The first session is used.
-- A message whose chat WhatsApp removed belongs to no conversation that WhatsApp shows, and has no key. The source does not read it. One such message was found, a type 28 notice.
+- A record that is a Core Data row is keyed by `id`, the row's `Z_PK`.
+- A record decoded from a blob of a row is keyed by that row's ID and the record's `position` in the blob: receipts and reactions by `messageId` and `position`, hours by `profileId` and `position`, linked profiles and recent stickers by `elementId` and `position`.
+- A record names another record by its ID: `messages.chatId` and `groupMembers.chatId` name `chats.id`, the children of a message name `messages.id` in `messageId`, the rows of a business profile name `businessProfiles.id` in `profileId`, `stickers.packId` names `stickerPacks.id`, and `calls` and `callParticipants` name their call-log entry in `callLogId`.
+- WhatsApp's own IDs are columns. A message keeps the chat's JID, whether this account sent it and its stanza ID, the three by which WhatsApp names it; `messageAssociations`, which WhatsApp links by stanza ID, keeps the stanza IDs.
+
+WhatsApp's own IDs can repeat across rows, and each row is a record of its own. On the test Mac (2026-11-15), one message is on two rows (82,077 rows, 82,076 message names), two JIDs have a second, empty chat session (778 sessions, 776 JIDs), one group change is on two rows (329 rows), and three messages keep two links at one index (5,055 links). A message whose chat WhatsApp removed belongs to no conversation that WhatsApp shows. The source does not read it. One such message was found, a type 28 notice.
+
 - `senderJid` is the group member who sent a group message, or the person for a message from one person. It is NULL for the account's own messages, and for notices and channel posts, which name no person.
 
 Each record keeps WhatsApp's codes (chat and message kinds, statuses, flags) as numbers, because WhatsApp documents none of them. The stream descriptions name the values seen.
@@ -201,7 +204,7 @@ Checked on 2026-10-12 against WhatsApp for Mac 26.38.74 (model `WhatsAppChat_2.1
 - The container held 54,627 messages in 909 chats (772 with one person, 113 groups, 14 of session type 4, 5 status, 4 channels, 1 broadcast list), 8,424 group members, 4,792 LID users, 325 contacts, 190 calls, 171 business profiles, 15 statuses and 246 stickers. Every stream loaded in 1.6 s. The main stream of each store counted what the store holds (the live test for each store).
 - Message kinds were read from the media items that they carry: kind 1 `image/jpeg`, 2 `video/mp4`, 3 `audio/ogg; codecs=opus`, 4 a vCard, 5 coordinates within 25–32° N, 7 a URL found in the text, 8 a file name with its extension (201 of 202), and 15 `image/webp`. For 5 photos on disk, `vCardName` was the same as the file's SHA-256, and `latitude` × `longitude` was its height × width. A photo's caption is its `title`: photos never have `ZTEXT`, and all 128 links that WhatsApp found in photo messages (`ZWAMESSAGEDATAITEM`) are in the photo's title.
 - A live `sync watch` through the Context Compiler CLI woke only the streams of the store that WhatsApp committed to (12, 16 or 17 of 32), and wrote only what changed. A message sent to the account's own chat got to `ChatStorage.sqlite` at once. When the user deleted it in WhatsApp, its row disappeared, and the next pass deleted it and its receipt from the import.
-- Edits and deletions were read from the copies that replies keep of what they quote. 59 replies quote a text that is different from the current text of their target, and not a shorter prefix of it. Thus an edit writes `ZTEXT` again in place, under the same key, and the import writes the message again. A message deleted for everyone stays as a type 14 row: all 350 such rows have their content removed, and in 36 group messages `ZTEXT` names the admin who deleted the message. No reply quotes a type 14 row.
+- Edits and deletions were read from the copies that replies keep of what they quote. 59 replies quote a text that is different from the current text of their target, and not a shorter prefix of it. Thus an edit writes `ZTEXT` again in place, on the same row, and the import writes the message again. A message deleted for everyone stays as a type 14 row: all 350 such rows have their content removed, and in 36 group messages `ZTEXT` names the admin who deleted the message. No reply quotes a type 14 row.
 - Receipts: of 13,638 messages that the account sent to one person, each message with status 8 had a read time, and each voice note with status 5 had a played time. 186,320 recipient JIDs unpacked, all with a known first byte, and 180,810 of them named a JID that the store holds in a different place.
 - Reactions: in all 14,575, the sender was absent exactly when field 6 was 1, and was never the account's own JID or LID. Each sender held a maximum of one reaction for each message. None of the 91 reactions with no emoji was next to an emoji from the same sender. Thus WhatsApp keeps the latest reaction of each person, empty after the person withdraws it.
 - Calls: `ZWACDCALLEVENTPARTICIPANT.Z1PARTICIPANTS` names the call-log entry (`WAAggregateCallEvent`, entity 1), not the call. The entry of a group call held its 3 and 4 participants, where a join on the row number of the call gave 1.
@@ -209,8 +212,8 @@ Checked on 2026-10-12 against WhatsApp for Mac 26.38.74 (model `WhatsAppChat_2.1
 - Statuses: 15 from 6 contacts, all within their day. Type 3 is a text post with styling, 4 a photo (`image/jpeg`), 5 a video (`video/mp4`), and 10 a link post whose text is its URL. The media item of a status is its only media item, with its file under `Message/` (5 of 11 downloaded, each with the same SHA-256 as its item).
 - Statuses expired live: at 11:51 UTC, WhatsApp deleted the four statuses posted 24 hours before (15 rows to 11), with their media, thumbnails and files. It archived none of them. A sync just after that deleted nothing and kept all 14 statuses that it had loaded.
 - The Context Compiler CLI, from a scratch working folder, loaded all 32 streams in 12 s, with 82 message files, 256 profile thumbnails, 173 stickers and 5 status photos. The next two syncs wrote and deleted nothing. The WhatsApp connection of `apps/proactive` loaded `marts.whatsapp_messages` (54,674 rows), and wrote nothing on its second pass.
-- Links (2026-11-14): all 5,055 `ZWAMESSAGEDATAITEM` rows have a link in `ZCONTENT1`, and no message holds one link twice. `ZINDEX` is usually the place of the link in the message, but one message holds four different links, all at index 0. Thus `messageDataItems` is keyed by the message, its row, the index and the link.
-- Message copies (2026-11-14): the one key on two `ZWAMESSAGE` rows (Z_PK 910 and 20094) is a group photo. The rows are equal in every column but `Z_PK`, `ZDOCID` (Spotlight), `ZSORT` (-1 and -4), `ZLASTSESSION` (set on the first only) and `ZMEDIAITEM` and `ZMESSAGEINFO`. Those point to rows of their own whose columns are byte-equal. Each row has its own children (`ZPARENTMESSAGE`): two on the first, one on the second. The second row is among rows of many chats and dates (2024 to 2026), which WhatsApp wrote in one batch. It is a second write of the message, not an edit, a revoke or a notice: its type (1), status, flags and date are those of the first.
+- Links (2026-11-14): all 5,055 `ZWAMESSAGEDATAITEM` rows have a link in `ZCONTENT1`. `ZINDEX` is usually the place of the link in the message, but one message holds four different links, all at index 0.
+- A message on two rows (2026-11-14): the one message that WhatsApp names on two `ZWAMESSAGE` rows (Z_PK 910 and 20094) is a group photo. The rows are equal in every column but `Z_PK`, `ZDOCID` (Spotlight), `ZSORT` (-1 and -4), `ZLASTSESSION` (set on the first only) and `ZMEDIAITEM` and `ZMESSAGEINFO`. Those point to rows of their own whose columns are byte-equal. Each row has its own children (`ZPARENTMESSAGE`): two on the first, one on the second. The second row is among rows of many chats and dates (2024 to 2026), which WhatsApp wrote in one batch. It is a second write of the message, not an edit, a revoke or a notice: its type (1), status, flags and date are those of the first.
 - `disappearing-mode` holds the default timer of each account, not of a chat: 3,832 LIDs against 908 chats, with durations 0, 86,400, 604,800 and 7,776,000 only.
 
 ## Decisions

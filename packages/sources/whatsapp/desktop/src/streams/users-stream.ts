@@ -2,17 +2,23 @@ import type { RecordDraft } from '@eltjs/elt';
 import type { User } from '@eltjs/sdk-whatsapp-desktop';
 
 import type { WhatsAppScan } from '../whatsapp-scan.ts';
-import { WhatsAppStream, base64, whatsappFields } from '../whatsapp-stream.ts';
+import {
+  WhatsAppStream,
+  base64,
+  rowId,
+  whatsappFields,
+} from '../whatsapp-stream.ts';
 
 const { jid, nullableText, nullableInteger, nullableInstant, nullableBase64 } =
   whatsappFields;
 const column = (what: string, name: string) => `${what} (ZWAZACCOUNT.${name}).`;
 
 const properties = {
+  id: rowId('ZWAZACCOUNT'),
   lid: {
     ...jid,
     description: column(
-      'The user’s LID, the JID WhatsApp names them with in place of a phone number; the primary key',
+      'The user’s LID, the JID WhatsApp names them with in place of a phone number',
       'ZIDENTIFIER',
     ),
   },
@@ -76,11 +82,11 @@ const properties = {
 export class UsersStream extends WhatsAppStream<typeof properties, User> {
   readonly name = 'users';
   readonly store = 'users';
-  readonly primaryKey = ['lid'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per WhatsApp user this account has seen, by LID, with the phone number when they share it (LID.sqlite). Join messages’ and members’ @lid JIDs here to reach a phone number. Primary key lid. Not narrowed by an import’s chats or dates.',
+      'One record per WhatsApp user this account has seen, by LID, with the phone number when they share it (LID.sqlite). Join messages’ and members’ @lid JIDs here to reach a phone number. Primary key id. Not narrowed by an import’s chats or dates.',
     properties,
     required: Object.keys(properties),
   } as const;
