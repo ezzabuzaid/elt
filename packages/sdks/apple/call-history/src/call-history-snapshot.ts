@@ -6,9 +6,12 @@ import { appDatabase } from './app-database.ts';
 import { type Call, type Handle, callCategory, callKind } from './call.ts';
 import { CallHistorySchemaError } from './errors.ts';
 
-// A party to one call, other than this device's user.
+// A party to one call, other than this device's user: one row of the
+// call-to-handle join table, whose primary key is the call and the handle.
 export type Participant = {
   readonly callId: string;
+  // The handle row's Z_PK, its identity in the store.
+  readonly handleId: number;
   readonly handle: Handle;
 };
 
@@ -237,7 +240,8 @@ export class CallHistorySnapshot implements Disposable {
     const { table, call, handle: other } = this.#participantLinks();
     return this.#database
       .iterate(
-        `SELECT record.ZUNIQUE_ID AS callId, handle.ZTYPE AS type,
+        `SELECT record.ZUNIQUE_ID AS callId, handle.Z_PK AS handleId,
+                handle.ZTYPE AS type,
                 handle.ZVALUE AS value, handle.ZNORMALIZEDVALUE AS normalizedValue
          FROM "${table}" AS link
          JOIN ZCALLRECORD AS record ON record.Z_PK = link."${call}"
@@ -246,6 +250,7 @@ export class CallHistorySnapshot implements Disposable {
       )
       .map((row) => ({
         callId: required(row.callId, 'A call has no unique ID'),
+        handleId: Number(row.handleId),
         handle: handle(row.type, row.value, row.normalizedValue),
       }));
   }

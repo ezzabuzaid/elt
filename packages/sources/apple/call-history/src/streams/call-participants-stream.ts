@@ -12,7 +12,13 @@ const { id, text, integer, nullableText } = callHistoryFields;
 const properties = {
   callId: {
     ...id,
-    description: 'The call; refers to calls.id within this source.',
+    description:
+      'The call; refers to calls.id within this source. Part of the primary key.',
+  },
+  handleId: {
+    ...integer,
+    description:
+      'The store’s row number for the participant’s handle (ZHANDLE.Z_PK). Part of the primary key: CallHistory keeps one handle row for each party to a call, and two rows on one call can hold the same value.',
   },
   type: {
     ...integer,
@@ -36,11 +42,11 @@ export class CallParticipantsStream extends AppleCallHistoryStream<
   Participant
 > {
   readonly name = 'callParticipants';
-  readonly primaryKey = ['callId', 'type', 'value'];
+  readonly primaryKey = ['callId', 'handleId'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per other party on a call (the call’s remote participant handles): one for a one-to-one call, several for a group FaceTime call, none when the number was withheld. Primary key callId, type, value. CallHistory keeps a copy of each handle per call, so a participant names a party to that call, not a contact.',
+      'One record per other party on a call (the call’s remote participant handles): one for a one-to-one call, several for a group FaceTime call, none when the number was withheld. Primary key callId, handleId: the primary key of the store’s call-to-handle join table. CallHistory keeps a copy of each handle per call, so a participant names a party to that call, not a contact, and two participants of one call can have the same type and value.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -55,6 +61,7 @@ export class CallParticipantsStream extends AppleCallHistoryStream<
     return [
       {
         callId: participant.callId,
+        handleId: participant.handleId,
         type: participant.handle.type,
         value: participant.handle.value,
         normalizedValue: participant.handle.normalizedValue,

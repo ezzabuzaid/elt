@@ -590,7 +590,7 @@ test('every Call History stream loads the store decoded, and a second run writes
   assert.deepEqual(counts(second), unchanged);
 });
 
-test('a call linked twice to the same handle loads one participant, and the next run diffs cleanly', async () => {
+test('two handle rows with one value on a call load as two participants, each with its own handle id', async () => {
   await using dir = await new TemporaryFiles().directory('elt-calls-');
   const path = join(dir.path, 'CallHistory.storedata');
   callHistoryFixture(path);
@@ -616,7 +616,17 @@ test('a call linked twice to the same handle loads one participant, and the next
       out,
       "SELECT callId, value FROM callParticipants WHERE callId = 'CALL-PHONE'",
     ),
-    [{ callId: 'CALL-PHONE', value: '+1 (555) 010-0100' }],
+    [
+      { callId: 'CALL-PHONE', value: '+1 (555) 010-0100' },
+      { callId: 'CALL-PHONE', value: '+1 (555) 010-0100' },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      "SELECT handleId FROM callParticipants WHERE callId = 'CALL-PHONE' ORDER BY handleId",
+    ),
+    [{ handleId: 1 }, { handleId: 6 }],
   );
   assert.deepEqual(counts(second), unchanged);
 });
@@ -965,9 +975,7 @@ test('this Mac’s call history loads every stream, one row per stored record', 
   // The join table's name is this macOS version's (Z_2…).
   assert.equal(
     loaded('SELECT count(*) AS n FROM callParticipants'),
-    stored(
-      'SELECT count(*) AS n FROM (SELECT DISTINCT link.Z_2REMOTEPARTICIPANTCALLS, handle.ZTYPE, handle.ZVALUE FROM Z_2REMOTEPARTICIPANTHANDLES AS link JOIN ZHANDLE AS handle ON handle.Z_PK = link.Z_4REMOTEPARTICIPANTHANDLES)',
-    ),
+    stored('SELECT count(*) AS n FROM Z_2REMOTEPARTICIPANTHANDLES'),
   );
   assert.equal(
     loaded('SELECT count(*) AS n FROM callTimers'),

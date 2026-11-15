@@ -497,13 +497,7 @@ function addressBookFixture(directory: string): string {
         ZURL: 'https://contacts.example.com/',
       },
     ],
-    // Contacts may keep the same unknown vCard line twice; it is one fact.
     ZABCDUNKNOWNPROPERTY: [
-      {
-        ZOWNER: 4,
-        ZPROPERTYNAME: 'X-ODD',
-        ZORIGINALLINE: Buffer.from('X-ODD:1'),
-      },
       {
         ZOWNER: 4,
         ZPROPERTYNAME: 'X-ODD',
@@ -831,6 +825,96 @@ test('Contacts reads subscribed records, every custom value type, archived vCard
   assert.deepEqual(rows(scoped, 'SELECT id FROM contacts'), [
     { id: 'SUBSCRIBED:ABPerson' },
   ]);
+});
+
+test('Contacts loads each unknown vCard line row, two equal lines on one record and the same row number in another store included', async () => {
+  await using scratch = await new TemporaryFiles().directory('contacts-odd-');
+  const directory = join(scratch.path, 'AddressBook');
+  const line = {
+    ZPROPERTYNAME: 'X-ODD',
+    ZORIGINALLINE: Buffer.from('X-ODD:1'),
+  };
+  createStore(directory, {
+    ZABCDRECORD: [
+      { Z_PK: 1, Z_ENT: container, ZUNIQUEID: 'LOCAL:ABContainer' },
+      {
+        Z_PK: 2,
+        Z_ENT: contact,
+        ZUNIQUEID: 'ADA:ABPerson',
+        ZCONTAINER1: 1,
+      },
+    ],
+    ZABCDUNKNOWNPROPERTY: [
+      { Z_PK: 1, ZOWNER: 2, ...line },
+      { Z_PK: 2, ZOWNER: 2, ...line },
+    ],
+  });
+  createStore(join(directory, 'Sources/ACCOUNT-A'), {
+    ZABCDRECORD: [
+      { Z_PK: 1, Z_ENT: container, ZUNIQUEID: 'A:ABContainer' },
+      {
+        Z_PK: 2,
+        Z_ENT: contact,
+        ZUNIQUEID: 'GRACE:ABPerson',
+        ZCONTAINER1: 1,
+      },
+    ],
+    ZABCDUNKNOWNPROPERTY: [{ Z_PK: 1, ZOWNER: 2, ...line }],
+  });
+  const source = new AppleContactsSource({
+    directory,
+    preferences: preferencesFixture(scratch.path),
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'odd',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: await copies(source, destination),
+      }),
+    ],
+  });
+
+  await pipeline.run();
+  const second = await pipeline.run();
+
+  assert.deepEqual(
+    rows(
+      destination.path,
+      'SELECT recordId, propertyName FROM unknownProperties ORDER BY recordId',
+    ),
+    [
+      { recordId: 'ADA:ABPerson', propertyName: 'X-ODD' },
+      { recordId: 'ADA:ABPerson', propertyName: 'X-ODD' },
+      { recordId: 'GRACE:ABPerson', propertyName: 'X-ODD' },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      destination.path,
+      'SELECT recordId, id FROM unknownProperties ORDER BY recordId, id',
+    ),
+    [
+      { recordId: 'ADA:ABPerson', id: 1 },
+      { recordId: 'ADA:ABPerson', id: 2 },
+      { recordId: 'GRACE:ABPerson', id: 1 },
+    ],
+  );
+  assert.deepEqual(
+    second
+      .filter(({ count, deleted }) => count > 0 || deleted > 0)
+      .map(({ copy }) => copy.from.name),
+    [],
+  );
 });
 
 test('Contacts exports every stream of every account store by identifier', async () => {

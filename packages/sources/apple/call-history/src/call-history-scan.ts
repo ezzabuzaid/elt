@@ -42,20 +42,10 @@ export class CallHistoryScan implements AsyncDisposable {
       );
   }
 
-  // Each call keeps its own copy of a handle, and nothing stops two copies of
-  // one handle on a call; the first stands for both.
-  *participants(): Generator<Participant> {
-    const seen = new Set<string>();
-    for (const participant of this.#snapshot.participants()) {
-      const key = JSON.stringify([
-        participant.callId,
-        participant.handle.type,
-        participant.handle.value,
-      ]);
-      if (seen.has(key) || !this.#selected(participant.callId)) continue;
-      seen.add(key);
-      yield participant;
-    }
+  participants(): IteratorObject<Participant, undefined> {
+    return this.#snapshot
+      .participants()
+      .filter(({ callId }) => this.#selected(callId));
   }
 
   timers(): IteratorObject<CallTimers, undefined> {

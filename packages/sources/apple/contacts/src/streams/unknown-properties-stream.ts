@@ -10,13 +10,15 @@ import type { ContactSelection } from '../contacts-scan.ts';
 
 const properties = explained(
   {
+    id: eventKitFields.integer,
     recordId: eventKitFields.id,
     propertyName: eventKitFields.text,
     originalLine: eventKitFields.text,
   },
   {
+    id: "The line's row number in its store (ZABCDUNKNOWNPROPERTY.Z_PK); with recordId, the primary key. It is unique only within one store, and recordId names the store.",
     recordId:
-      'Owning record identifier (ZABCDRECORD.ZUNIQUEID of ZABCDUNKNOWNPROPERTY.ZOWNER). Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export.',
+      'Owning record identifier (ZABCDRECORD.ZUNIQUEID of ZABCDUNKNOWNPROPERTY.ZOWNER); with id, the primary key. Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export.',
     propertyName:
       'vCard property name as stored in AddressBook ZABCDUNKNOWNPROPERTY.ZPROPERTYNAME.',
     originalLine:
@@ -24,14 +26,13 @@ const properties = explained(
   },
 );
 
-// vCard lines Contacts kept without understanding them. They have no
-// identifier, so the line itself is part of the key.
+// vCard lines Contacts kept without understanding them, one record per row.
 export class UnknownPropertiesStream extends AppleContactsStream<UnknownPropertyRow> {
   readonly name = 'unknownProperties';
-  readonly primaryKey = ['recordId', 'propertyName', 'originalLine'];
+  readonly primaryKey = ['recordId', 'id'];
   readonly jsonSchema = {
     type: 'object',
-    description: `One row per distinct vCard line that Contacts kept without interpreting it, from the AddressBook table ZABCDUNKNOWNPROPERTY. The native rows have no identifier, so the primary key is (recordId, propertyName, originalLine); the same line stored twice on one record is one row. recordId refers to contacts.id, groups.id or containers.id within this source, or to a record kind this source does not export. ${localStores}`,
+    description: `One row per row of the AddressBook table ZABCDUNKNOWNPROPERTY: a vCard line that Contacts kept without interpreting it. The primary key is (recordId, id): id is the row's Z_PK, unique within its store, and recordId names the store. The same line stored twice on one record is two rows. recordId refers to contacts.id, groups.id or containers.id within this source, or to a record kind this source does not export. ${localStores}`,
     properties,
     required: Object.keys(properties),
   } as const;
@@ -50,6 +51,7 @@ export class UnknownPropertiesStream extends AppleContactsStream<UnknownProperty
   protected records(row: UnknownPropertyRow): Record<string, unknown>[] {
     return [
       {
+        id: row.id,
         recordId: row.recordId,
         propertyName: encode(row.propertyName),
         originalLine: encode(row.originalLine),

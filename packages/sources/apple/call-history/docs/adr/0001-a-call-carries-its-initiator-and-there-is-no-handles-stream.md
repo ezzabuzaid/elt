@@ -2,7 +2,7 @@
 
 The store keeps the parties of a call as rows of `ZHANDLE`. callhistoryd copies each handle for each call: on 2026-10-06, 3,448 handle rows held 500 different addresses, and no handle was on two calls. Thus a handle does not identify a person or a contact. It belongs to one call.
 
-A handles stream would repeat each address once for each call, and its keys would be Core Data row numbers. Thus the source has no handles stream. `calls` carries the initiator of the call. `callParticipants` holds the other parties, keyed by the call, the handle type and the value.
+A handles stream would repeat each address once for each call, and its keys would be Core Data row numbers. Thus the source has no handles stream. `calls` carries the initiator of the call. `callParticipants` holds the other parties, one record for each row of the join table, keyed by the primary key of that table: the call and the `Z_PK` of the handle row.
 
 ## Considered Options
 
@@ -12,6 +12,7 @@ A handles stream would repeat each address once for each call, and its keys woul
 ## Consequences
 
 - A participant is a party to one call, not a contact. A reader joins participants to contacts by value.
+- Two handles with the same value on one call are two participants. The store does not make the type and the value unique, so they are not the key.
 - `ZHANDLE` rows that no call refers to do not load. They are the initiators of deleted calls, because the model clears the call from its initiator but does not delete the handle.
 
 Sources: commit 0e07d451.

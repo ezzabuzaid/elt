@@ -151,6 +151,8 @@ export type GroupSubgroupRow = {
 // A vCard line Contacts kept without interpreting it; the store keeps the
 // line as bytes.
 export type UnknownPropertyRow = {
+  // The row's Z_PK, unique within its store.
+  readonly id: number;
   readonly recordId: string | null;
   readonly propertyName: ContactsValue;
   readonly originalLine: ContactsValue;
@@ -324,14 +326,13 @@ export class AddressBookStore implements Disposable {
     return this.#valueRows('l', remoteLocationView);
   }
 
-  // The native rows have no identifier, and the same line stored twice on
-  // one record is one fact.
   unknownProperties(): IteratorObject<UnknownPropertyRow, undefined> {
     return this.#database
       .iterate(
-        'SELECT DISTINCT r.ZUNIQUEID AS "@recordId", u.ZPROPERTYNAME AS "@propertyName", u.ZORIGINALLINE AS "@originalLine" FROM ZABCDUNKNOWNPROPERTY u JOIN ZABCDRECORD r ON r.Z_PK = u.ZOWNER',
+        'SELECT u.Z_PK AS "@id", r.ZUNIQUEID AS "@recordId", u.ZPROPERTYNAME AS "@propertyName", u.ZORIGINALLINE AS "@originalLine" FROM ZABCDUNKNOWNPROPERTY u JOIN ZABCDRECORD r ON r.Z_PK = u.ZOWNER',
       )
       .map((row) => ({
+        id: Number(row['@id']),
         recordId: text(row['@recordId']),
         propertyName: attributeValue('text', row['@propertyName']),
         originalLine: attributeValue('text', row['@originalLine']),

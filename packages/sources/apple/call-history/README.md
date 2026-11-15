@@ -70,6 +70,8 @@ The column meanings come from the model of Apple, `CallHistory 46.mom` in `CallH
 
 The `id` of a call is `ZUNIQUE_ID`. It is unique in the store, and it is the same on each device that syncs the call. callhistoryd copies each handle for each call: on 2026-10-06, 3,448 `ZHANDLE` rows held 500 different addresses, and no handle was on two calls. Thus a participant is a party to one call, not a contact, and `calls` carries the initiator. There is no stream for handles ([ADR 0001](./docs/adr/0001-a-call-carries-its-initiator-and-there-is-no-handles-stream.md)). Core Data names the participant join table after entity numbers (`Z_2REMOTEPARTICIPANTHANDLES` on macOS 27), so the SDK finds it by the end of its name.
 
+The key of `callParticipants` is `callId` and `handleId`, the `Z_PK` of the handle row. These are the primary key of the join table, so the store makes them unique. The type and the value of a handle are not a key: the store does not stop two handles with the same value on one call, and the source loads each of them. On 2026-11-15, this Mac had 2,369 participant links and no call with two handles of the same type and value.
+
 The source decodes only the codes that Apple names, and it keeps each raw value next to the decoded value:
 
 - `kind`, from `kindCode` (`ZCALLTYPE`): `phone` (1), `faceTimeVideo` (8) and `faceTimeAudio` (16), after `kCHCallTypeTelephony`, `kCHCallTypeFaceTimeVideo` and `kCHCallTypeFaceTimeAudio`.
