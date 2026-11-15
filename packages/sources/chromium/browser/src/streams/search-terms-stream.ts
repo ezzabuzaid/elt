@@ -6,10 +6,15 @@ import { ChromiumStream, chromiumFields } from '../chromium-stream.ts';
 
 const properties = {
   profileId: chromiumFields.profileId,
+  id: {
+    ...chromiumFields.integer,
+    description:
+      "The keyword_search_terms row's rowid, the only identity History keeps for a search; a VACUUM can renumber it.",
+  },
   keywordId: {
     ...chromiumFields.integer,
     description:
-      'The search engine the user searched with, as the browser numbers it in its Web Data.',
+      'The search engine the user searched with, as the browser numbers it in its Web Data. The browser keeps one row for each search engine and results page, but History does not enforce it.',
   },
   urlId: {
     ...chromiumFields.integer,
@@ -35,7 +40,7 @@ export class SearchTermsStream extends ChromiumStream<
   readonly description =
     'Each search the user made from the address bar, with the results page it opened. A search goes with its results page.';
   readonly properties = properties;
-  readonly primaryKey = ['profileId', 'keywordId', 'urlId'];
+  readonly primaryKey = ['profileId', 'id'];
 
   // expires: whether the browser removes old history.
   constructor(expires: boolean) {
@@ -52,6 +57,7 @@ export class SearchTermsStream extends ChromiumStream<
   }: Profiled<HistorySearchTerm>): RecordDraft<typeof properties> {
     return {
       profileId,
+      id: row.id,
       keywordId: row.keywordId,
       urlId: row.urlId,
       term: row.term,

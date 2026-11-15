@@ -613,6 +613,7 @@ test('a Chromium browser loads each profile’s history, downloads, searches and
   assert.deepEqual(chromium.read('SELECT * FROM search_terms'), [
     {
       profileId: 'Default',
+      id: 1,
       keywordId: 2,
       urlId: 2,
       term: 'ELT  Pipelines',
@@ -773,6 +774,37 @@ const written = (
       { count, deleted },
     ]),
   );
+
+// keyword_search_terms declares no key, so its rowid is the only identity
+// History keeps (ADR 0022); Chromium's code, not a constraint, keeps
+// (keyword_id, url_id) unique.
+test('a Chromium browser loads each search term row by its rowid, also two rows with one search engine and results page', async () => {
+  await using scratch = await new TemporaryFiles().directory('chromium-');
+  const folder = join(dia.root(scratch.path), 'Default');
+  await mkdir(folder, { recursive: true });
+  {
+    using database = createHistory(join(folder, 'History'));
+    addUrl(database, 1, 'https://search.example/?q=elt', t1);
+    database.exec(`INSERT INTO keyword_search_terms (keyword_id, url_id, term, normalized_term)
+      VALUES (2, 1, 'ELT', 'elt'), (2, 1, 'Elt', 'elt')`);
+  }
+  const chromium = await chromiumImport(
+    new ChromiumSource({ browser: dia, home: scratch.path }),
+    join(scratch.path, 'import'),
+  );
+
+  await chromium.load();
+
+  assert.deepEqual(
+    chromium.read(
+      'SELECT profileId, id, keywordId, urlId, term FROM search_terms ORDER BY id',
+    ),
+    [
+      { profileId: 'Default', id: 1, keywordId: 2, urlId: 1, term: 'ELT' },
+      { profileId: 'Default', id: 2, keywordId: 2, urlId: 1, term: 'Elt' },
+    ],
+  );
+});
 
 test('a Chromium rerun writes nothing, and edits and deletions in each store land', async () => {
   await using scratch = await new TemporaryFiles().directory('chromium-');

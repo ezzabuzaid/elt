@@ -113,6 +113,9 @@ export type HistoryDownload = {
 };
 
 export type HistorySearchTerm = {
+  // The row's rowid: keyword_search_terms declares no key, so this is the
+  // only identity History keeps; a VACUUM can renumber it.
+  readonly id: number;
   readonly keywordId: number;
   readonly urlId: number;
   readonly term: string;
@@ -319,12 +322,13 @@ class StoredHistory implements ChromiumHistory {
   searchTerms() {
     return this.#snapshot
       .iterate(
-        `SELECT k.keyword_id, k.url_id, k.term, k.normalized_term,
+        `SELECT k.rowid, k.keyword_id, k.url_id, k.term, k.normalized_term,
            CAST(u.last_visit_time AS TEXT) AS last_visit_time
          FROM keyword_search_terms k LEFT JOIN urls u ON u.id = k.url_id
-         ORDER BY k.keyword_id, k.url_id`,
+         ORDER BY k.rowid`,
       )
       .map((row): HistorySearchTerm => ({
+        id: integer(row.rowid),
         keywordId: integer(row.keyword_id),
         urlId: integer(row.url_id),
         term: text(row.term),

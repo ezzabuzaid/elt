@@ -45,14 +45,16 @@ await new Pipeline({
 
 ## Streams
 
-| Stream          | Store       | Key                               | Holds                                                                                         |
-| --------------- | ----------- | --------------------------------- | --------------------------------------------------------------------------------------------- |
-| `profiles`      | Local State | `id`                              | Each profile folder that holds a History or Bookmarks file, with the name from Local State    |
-| `historyItems`  | History     | `profileId`, `id`                 | Each URL, with its title and visit counts                                                     |
-| `historyVisits` | History     | `profileId`, `id`                 | Each visit: its time, its transition, its source, what led to it, and its context annotations |
-| `downloads`     | History     | `profileId`, `id`                 | Each download in the list of the browser, with its chain of URLs                              |
-| `searchTerms`   | History     | `profileId`, `keywordId`, `urlId` | Each search from the address bar, with its results page                                       |
-| `bookmarks`     | Bookmarks   | `profileId`, `guid`               | Each bookmark and folder, with its root folder, its parent and its position                   |
+| Stream          | Store       | Key                 | Holds                                                                                         |
+| --------------- | ----------- | ------------------- | --------------------------------------------------------------------------------------------- |
+| `profiles`      | Local State | `id`                | Each profile folder that holds a History or Bookmarks file, with the name from Local State    |
+| `historyItems`  | History     | `profileId`, `id`   | Each URL, with its title and visit counts                                                     |
+| `historyVisits` | History     | `profileId`, `id`   | Each visit: its time, its transition, its source, what led to it, and its context annotations |
+| `downloads`     | History     | `profileId`, `id`   | Each download in the list of the browser, with its chain of URLs                              |
+| `searchTerms`   | History     | `profileId`, `id`   | Each search from the address bar, with its results page                                       |
+| `bookmarks`     | Bookmarks   | `profileId`, `guid` | Each bookmark and folder, with its root folder, its parent and its position                   |
+
+`keyword_search_terms` in History declares no `PRIMARY KEY` and no `UNIQUE` index, so `searchTerms` is keyed by `id`, the rowid of the row: the only identity that the store keeps ([elt ADR 0022](../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md)). The browser keeps one row for each `keywordId` and `urlId`, but History does not enforce it, so two such rows each load. A `VACUUM` can renumber the rowids, and then the next run deletes the old rows and inserts the new ones.
 
 The description of each field in the schema tells readers what the field holds. Times are UTC instants to the microsecond, as the browser keeps them. A random 64-bit task ID is `int64` text, because a JSON number cannot hold it. `transition` keeps the number that the browser stores, and `transitionType` and `transitionQualifiers` decode it. `source` keeps the number of `visit_source`: no row is 1 (browsed on this Mac), and Dia writes 6 on the visits that it imported from Arc.
 
