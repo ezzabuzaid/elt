@@ -12,7 +12,7 @@ const properties = {
     ...booksFields.rowId,
     description: 'The annotation row; Books does not keep uuid unique.',
   },
-  uuid: { ...booksFields.id, description: 'Annotation UUID.' },
+  uuid: { ...booksFields.nullableId, description: 'Annotation UUID.' },
   assetId: {
     ...booksFields.nullableId,
     description:

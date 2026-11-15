@@ -11,7 +11,7 @@ const properties = {
     ...booksFields.rowId,
     description: 'The theme row; Books does not keep identifier unique.',
   },
-  identifier: { ...booksFields.id, description: 'Theme identifier.' },
+  identifier: { ...booksFields.nullableId, description: 'Theme identifier.' },
   hasCustomLayout: {
     ...nullableBoolean,
     description: 'Uses custom spacing rather than the theme default.',

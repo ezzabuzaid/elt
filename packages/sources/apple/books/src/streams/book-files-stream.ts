@@ -17,7 +17,7 @@ const properties = {
     ...booksFields.rowId,
     description: 'The asset whose file this is; refers to libraryAssets.id.',
   },
-  assetId: booksFields.assetId,
+  assetId: booksFields.nullableAssetId,
   path: {
     ...booksFields.text,
     description:

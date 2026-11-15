@@ -9,7 +9,7 @@ export type BookFileFormat = (typeof bookFileFormats)[number];
 export type BookFile = {
   // The Z_PK of the library asset whose file this is.
   readonly libraryAssetId: number;
-  readonly assetId: string;
+  readonly assetId: string | null;
   readonly path: string;
   readonly format: BookFileFormat;
   // Whether its exportable form is on this Mac.
@@ -34,7 +34,7 @@ function exportable(
 
 export async function bookFile(
   libraryAssetId: number,
-  assetId: string,
+  assetId: string | null,
   path: string,
 ): Promise<BookFile> {
   const listed = await localFiles(path).catch(

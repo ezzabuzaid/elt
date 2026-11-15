@@ -46,6 +46,14 @@ export const booksFields = {
     description:
       'Books asset identifier (a 32-character hex string for books added from files); matches libraryAssets.assetId within this source. Books does not keep it unique.',
   },
+  // Books' asset identifier as a column of a row keyed by its Z_PK: Books
+  // may leave it NULL (ADR 0022 of elt).
+  nullableAssetId: {
+    ...nullableText,
+    minLength: 1,
+    description:
+      'Books asset identifier (a 32-character hex string for books added from files); matches libraryAssets.assetId within this source. Books does not keep it unique, and may leave it NULL.',
+  },
 } as const;
 
 // What the source needs from any Books stream, whatever its record type.

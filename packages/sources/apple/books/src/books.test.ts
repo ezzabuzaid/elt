@@ -1771,6 +1771,136 @@ test('Books loads every theme when two rows hold one theme identifier', async ()
   );
 });
 
+// A business identifier is a column, not a key (ADR 0022 of elt), so a row
+// that lacks one is a row like any other.
+test('Books loads a library asset and its book file that have no asset identifier', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+
+  const books = await loadedAfter(
+    scratch.path,
+    'library',
+    `INSERT INTO ZBKLIBRARYASSET (Z_PK, Z_ENT, Z_OPT, ZASSETID, ZTITLE, ZCONTENTTYPE, ZPATH)
+       SELECT 5, Z_ENT, Z_OPT, NULL, 'Design, unnamed', ZCONTENTTYPE, ZPATH FROM ZBKLIBRARYASSET WHERE Z_PK = 1`,
+  );
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "id", "assetId", "title" FROM library_assets WHERE "id" = 5`,
+      ),
+    ),
+    [{ id: 5, assetId: null, title: 'Design, unnamed' }],
+  );
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "libraryAssetId", "assetId", "attachmentRef" IS NOT NULL AS stored FROM book_files WHERE "libraryAssetId" = 5`,
+      ),
+    ),
+    [{ libraryAssetId: 5, assetId: null, stored: 1 }],
+  );
+});
+
+test('Books loads a collection that has no collection identifier', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+
+  const books = await loadedAfter(
+    scratch.path,
+    'library',
+    `INSERT INTO ZBKCOLLECTION (Z_PK, Z_ENT, Z_OPT, ZCOLLECTIONID, ZTITLE, ZDELETEDFLAG, ZHIDDEN, ZPLACEHOLDER)
+       VALUES (3, 2, 1, NULL, 'Unnamed', 0, 0, 0)`,
+  );
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "id", "identifier", "title" FROM collections WHERE "id" = 3`,
+      ),
+    ),
+    [{ id: 3, identifier: null, title: 'Unnamed' }],
+  );
+});
+
+test('Books loads a collection member that has no asset identifier', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+
+  const books = await loadedAfter(
+    scratch.path,
+    'library',
+    `INSERT INTO ZBKCOLLECTIONMEMBER (Z_PK, Z_ENT, Z_OPT, ZCOLLECTION, ZASSET, ZASSETID, ZSORTKEY)
+       VALUES (3, 3, 1, 1, 2, NULL, 3)`,
+  );
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "id", "collectionId", "libraryAssetId", "assetId" FROM collection_members WHERE "id" = 3`,
+      ),
+    ),
+    [{ id: 3, collectionId: 1, libraryAssetId: 2, assetId: null }],
+  );
+});
+
+test('Books loads an annotation that has no annotation UUID', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+
+  const books = await loadedAfter(
+    scratch.path,
+    'annotations',
+    `INSERT INTO ZAEANNOTATION (Z_PK, Z_ENT, Z_OPT, ZANNOTATIONUUID, ZANNOTATIONASSETID, ZANNOTATIONTYPE, ZANNOTATIONISUNDERLINE, ZANNOTATIONDELETED, ZANNOTATIONSELECTEDTEXT)
+       VALUES (5, 1, 1, NULL, 'A1', 2, 0, 0, 'Grids, unnamed')`,
+  );
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "id", "uuid", "selectedText" FROM annotations WHERE "id" = 5`,
+      ),
+    ),
+    [{ id: 5, uuid: null, selectedText: 'Grids, unnamed' }],
+  );
+});
+
+test('Books loads a purchase that has no store ID', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+
+  const books = await loadedAfter(
+    scratch.path,
+    'purchases',
+    `INSERT INTO ZBLJALISCOSERVERITEM (Z_PK, Z_ENT, Z_OPT, ZSTOREID, ZTITLE)
+       VALUES (2, 4, 1, NULL, 'Bought, unnamed')`,
+  );
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "id", "storeId", "title" FROM purchases WHERE "id" = 2`,
+      ),
+    ),
+    [{ id: 2, storeId: null, title: 'Bought, unnamed' }],
+  );
+});
+
+test('Books loads a theme that has no theme identifier', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+
+  const books = await loadedAfter(
+    scratch.path,
+    'themes',
+    `INSERT INTO ZBOOKTHEME (Z_PK, Z_ENT, Z_OPT, ZIDENTIFIER, ZLINEHEIGHT)
+       VALUES (2, 1, 1, NULL, 1.6)`,
+  );
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "id", "identifier", "lineHeight" FROM themes WHERE "id" = 2`,
+      ),
+    ),
+    [{ id: 2, identifier: null, lineHeight: 1.6 }],
+  );
+});
+
 test('a malformed or missing Books store, column or value fails only the streams that read it', async () => {
   await using scratch = await new TemporaryFiles().directory('books-');
   // The failures one load has after running sql on one store of a fresh

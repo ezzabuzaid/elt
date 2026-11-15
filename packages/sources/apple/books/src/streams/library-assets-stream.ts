@@ -18,7 +18,7 @@ const properties = {
     ...booksFields.rowId,
     description: 'The asset row; Books does not keep assetId unique.',
   },
-  assetId: booksFields.assetId,
+  assetId: booksFields.nullableAssetId,
   title: { ...nullableText, description: 'Title.' },
   sortTitle: { ...nullableText, description: 'Title Books sorts by.' },
   author: { ...nullableText, description: 'Author as displayed.' },

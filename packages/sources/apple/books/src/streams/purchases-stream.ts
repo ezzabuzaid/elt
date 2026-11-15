@@ -13,7 +13,7 @@ const properties = {
     description: 'The purchase row; Books does not keep storeId unique.',
   },
   storeId: {
-    ...booksFields.id,
+    ...booksFields.nullableId,
     description:
       'Apple Books store item ID; refers to libraryAssets.storeId when the purchase is in the library on this Mac.',
   },

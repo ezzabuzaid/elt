@@ -45,9 +45,7 @@ export class BooksThemes implements Disposable {
   // Read as the caller iterates, so no read holds the whole table.
   themes(): IteratorObject<Theme, undefined> {
     return this.#database
-      .iterate(
-        'SELECT * FROM ZBOOKTHEME WHERE ZIDENTIFIER IS NOT NULL ORDER BY Z_PK',
-      )
+      .iterate('SELECT * FROM ZBOOKTHEME ORDER BY Z_PK')
       .map((row) => ({
         id: Number(row.Z_PK),
         identifier: stored(row.ZIDENTIFIER),

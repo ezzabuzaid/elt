@@ -1,7 +1,13 @@
 import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { appDatabase } from './app-database.ts';
-import { coreDataTime, integer, nullableFlag, text } from './books-values.ts';
+import {
+  coreDataTime,
+  integer,
+  nullableFlag,
+  stored,
+  text,
+} from './books-values.ts';
 
 // The Jalisco columns this reader reads; opening the store checks them.
 const purchasesColumns = {
@@ -35,7 +41,7 @@ const purchasesColumns = {
 // unique, and each row belongs to one of its purchase databases (ZDATABASE).
 export type Purchase = {
   readonly id: number;
-  readonly storeId: string;
+  readonly storeId: string | null;
   readonly title: string | null;
   readonly sortTitle: string | null;
   readonly artist: string | null;
@@ -68,12 +74,10 @@ export class BooksPurchases implements Disposable {
   // Read as the caller iterates, so no read holds the whole table.
   purchases(): IteratorObject<Purchase, undefined> {
     return this.#database
-      .iterate(
-        'SELECT * FROM ZBLJALISCOSERVERITEM WHERE ZSTOREID IS NOT NULL ORDER BY Z_PK',
-      )
+      .iterate('SELECT * FROM ZBLJALISCOSERVERITEM ORDER BY Z_PK')
       .map((row) => ({
         id: Number(row.Z_PK),
-        storeId: String(row.ZSTOREID),
+        storeId: stored(row.ZSTOREID),
         title: text(row.ZTITLE),
         sortTitle: text(row.ZSORTEDTITLE),
         artist: text(row.ZARTIST),

@@ -9,7 +9,7 @@ One place where Books or `bookdatastored` keeps data: a Core Data database, or t
 _Avoid_: Database (the preferences store is two property list files), library (the library is one store)
 
 **Asset**:
-One item in the library of this Mac: a book, a PDF, an audiobook or a series. Its row's `id` identifies it. Its `assetId` names it across the stores of Books, but Books does not keep `assetId` unique.
+One item in the library of this Mac: a book, a PDF, an audiobook or a series. Its row's `id` identifies it. Its `assetId` names it across the stores of Books, but Books does not keep `assetId` unique and may leave it NULL.
 _Avoid_: Book (a PDF and a series are assets too), title
 
 **Annotation**:

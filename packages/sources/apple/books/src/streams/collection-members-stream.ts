@@ -20,7 +20,7 @@ const properties = {
       'The member; refers to libraryAssets.id. NULL when the asset is no longer in the library.',
   },
   assetId: {
-    ...booksFields.assetId,
+    ...booksFields.nullableAssetId,
     description:
       'Identifier of the member asset; matches libraryAssets.assetId, and stays after the asset leaves the library.',
   },

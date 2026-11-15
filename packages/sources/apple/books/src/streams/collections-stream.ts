@@ -13,7 +13,7 @@ const properties = {
     description: 'The collection row; Books does not keep identifier unique.',
   },
   identifier: {
-    ...booksFields.id,
+    ...booksFields.nullableId,
     description:
       'Collection identifier: a fixed name such as Finished_Collection_ID for a built-in collection, a UUID for one the user made.',
   },

@@ -144,13 +144,11 @@ const assetsQuery = `
       FROM ZBKLIBRARYASSET asset
       LEFT JOIN ZBKLIBRARYASSET container ON container.Z_PK = asset.ZSERIESCONTAINER
       LEFT JOIN ZBKLIBRARYASSET parent ON parent.Z_PK = asset.ZSUPPLEMENTALCONTENTPARENT
-      WHERE asset.ZASSETID IS NOT NULL
       ORDER BY asset.Z_PK`;
 
 const collectionMembersQuery = `
       SELECT Z_PK, ZCOLLECTION, ZASSET, ZASSETID, ZSORTKEY, ZLOCALMODDATE
       FROM ZBKCOLLECTIONMEMBER
-      WHERE ZASSETID IS NOT NULL
       ORDER BY Z_PK`;
 
 export const contentTypes = ['epub', 'pdf'] as const;
@@ -394,9 +392,7 @@ export class BooksLibrary implements Disposable {
 
   collections(): IteratorObject<Collection, undefined> {
     return this.#database
-      .iterate(
-        'SELECT * FROM ZBKCOLLECTION WHERE ZCOLLECTIONID IS NOT NULL ORDER BY Z_PK',
-      )
+      .iterate('SELECT * FROM ZBKCOLLECTION ORDER BY Z_PK')
       .map((row) => ({
         id: Number(row.Z_PK),
         identifier: stored(row.ZCOLLECTIONID),
@@ -428,12 +424,13 @@ export class BooksLibrary implements Disposable {
   // iCloud's file flags so no placeholder is downloaded.
   async *bookFiles(): AsyncGenerator<BookFile> {
     for (const row of this.#database.iterate(
-      'SELECT Z_PK, ZASSETID, ZPATH FROM ZBKLIBRARYASSET WHERE ZASSETID IS NOT NULL AND ZPATH IS NOT NULL ORDER BY Z_PK',
+      'SELECT Z_PK, ZASSETID, ZPATH FROM ZBKLIBRARYASSET WHERE ZPATH IS NOT NULL ORDER BY Z_PK',
     ))
-      // The query selects only rows whose ZASSETID and ZPATH are not null.
+      // An asset without a path has no file; the query selects only rows
+      // whose ZPATH is not null.
       yield await bookFile(
         Number(row.Z_PK),
-        String(row.ZASSETID),
+        stored(row.ZASSETID),
         String(row.ZPATH),
       );
   }
