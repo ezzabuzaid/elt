@@ -31,8 +31,10 @@ export class NotesScan implements AsyncDisposable {
   #accounts?: NoteAccount[];
   #folders?: NoteFolder[];
   #noteIds?: ReadonlySet<string | null>;
-  #attachments?: Map<string | null, NoteAttachment>;
-  #inline?: Map<string | null, InlineAttachment>;
+  #attachments?: NoteAttachment[];
+  #inline?: InlineAttachment[];
+  #attachmentsById?: Map<string | null, NoteAttachment>;
+  #inlineById?: Map<string | null, InlineAttachment>;
   readonly #snapshot: NoteStoreSnapshot;
   readonly #scope: ImportScope;
 
@@ -80,50 +82,52 @@ export class NotesScan implements AsyncDisposable {
       );
   }
 
-  // Attachments and inline attachments of the notes in scope, by identifier,
-  // in store order. An attachment the store lists once per location keeps
-  // one entry.
-  get attachments(): ReadonlyMap<string | null, NoteAttachment> {
-    this.#attachments ??= this.#attachmentsInScope();
+  // Attachments and inline attachments of the notes in scope, one entry per
+  // store row, in store order.
+  get attachments(): readonly NoteAttachment[] {
+    const notes = this.#notesInScope();
+    this.#attachments ??= this.#snapshot
+      .attachments()
+      .filter((attachment) => notes.has(attachment.noteId))
+      .toArray();
     return this.#attachments;
   }
 
-  get inline(): ReadonlyMap<string | null, InlineAttachment> {
-    this.#inline ??= this.#inlineInScope();
+  get inline(): readonly InlineAttachment[] {
+    const notes = this.#notesInScope();
+    this.#inline ??= this.#snapshot
+      .inlineAttachments()
+      .filter((inline) => notes.has(inline.noteId))
+      .toArray();
     return this.#inline;
   }
 
-  #attachmentsInScope(): Map<string | null, NoteAttachment> {
-    const notes = this.#notesInScope();
-    return new Map(
-      this.#snapshot
-        .attachments()
-        .filter((attachment) => notes.has(attachment.noteId))
-        .map((attachment) => [attachment.id, attachment]),
+  // Lookups by identifier, for a note's markdown and an attachment's file.
+  attachment(id: string | null): NoteAttachment | undefined {
+    this.#attachmentsById ??= new Map(
+      this.attachments.map((attachment) => [attachment.id, attachment]),
     );
+    return this.#attachmentsById.get(id);
   }
 
-  #inlineInScope(): Map<string | null, InlineAttachment> {
-    const notes = this.#notesInScope();
-    return new Map(
-      this.#snapshot
-        .inlineAttachments()
-        .filter((inline) => notes.has(inline.noteId))
-        .map((inline) => [inline.id, inline]),
+  #inlineAttachment(id: string | null): InlineAttachment | undefined {
+    this.#inlineById ??= new Map(
+      this.inline.map((inline) => [inline.id, inline]),
     );
+    return this.#inlineById.get(id);
   }
 
   // Plain text keeps what reads as text: inline tags and mentions.
   text(document: NoteDocument): string {
     return plainText(
       document,
-      ({ id }) => string(this.inline.get(id)?.altText ?? null) ?? '',
+      ({ id }) => string(this.#inlineAttachment(id)?.altText ?? null) ?? '',
     );
   }
 
   markdown(document: NoteDocument): string {
     return markdown(document, ({ id, type }: NoteAttachmentReference) => {
-      const token = this.inline.get(id);
+      const token = this.#inlineAttachment(id);
       if (token !== undefined) {
         const text = token.altText ?? '';
         const target = string(token.target);
@@ -132,7 +136,7 @@ export class NotesScan implements AsyncDisposable {
           ? `[${text}](<${target}>)`
           : text;
       }
-      const attachment = this.attachments.get(id);
+      const attachment = this.attachment(id);
       if (attachment === undefined) return '';
       const grid = attachment.table();
       if (grid !== null) return `\n${markdownTable(grid)}\n`;

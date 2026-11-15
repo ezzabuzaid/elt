@@ -142,7 +142,7 @@ export class AttachmentsStream extends AppleNotesStream<
   readonly supportsFileTransfer = true;
 
   protected rows(scan: NotesScan): Iterable<NoteAttachment> {
-    return scan.attachments.values();
+    return scan.attachments;
   }
 
   protected async record(
@@ -179,7 +179,7 @@ export class AttachmentsStream extends AppleNotesStream<
 
   // The original file, not a staged copy: readers only read it.
   override file(record: Attachment, scan: NotesScan): string | null {
-    const attachment = scan.attachments.get(record.id);
+    const attachment = scan.attachment(record.id);
     return record.availableLocally && attachment !== undefined
       ? attachment.file
       : null;

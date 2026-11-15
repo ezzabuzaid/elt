@@ -16,7 +16,7 @@ import { NoteDocument, decodeTable } from './note-document.ts';
 const requiredColumns = {
   Z_PRIMARYKEY: ['Z_ENT', 'Z_NAME'],
   ZICNOTEDATA: ['Z_PK', 'ZDATA'],
-  ZICLOCATION: ['ZATTACHMENT', 'ZLATITUDE', 'ZLONGITUDE'],
+  ZICLOCATION: ['Z_PK', 'ZLATITUDE', 'ZLONGITUDE'],
   ZICCLOUDSYNCINGOBJECT: [
     'Z_PK',
     'Z_ENT',
@@ -43,6 +43,7 @@ const requiredColumns = {
     'ZNOTE',
     'ZACCOUNT1',
     'ZMEDIA',
+    'ZLOCATION',
     'ZPARENTATTACHMENT',
     'ZTYPEUTI',
     'ZTITLE',
@@ -97,6 +98,8 @@ const notesSql = `SELECT n.Z_PK, n.ZIDENTIFIER, a.ZIDENTIFIER AS account, f.ZIDE
   ORDER BY n.Z_PK`;
 
 // Gallery pages (scans) belong to the gallery attachment rather than a note.
+// An attachment has one location, its to-one ZLOCATION: the inverse
+// ZICLOCATION.ZATTACHMENT is not unique, so a join on it repeats the row.
 const attachmentsSql = `SELECT t.ZIDENTIFIER, n.ZIDENTIFIER AS note, n.ZISPASSWORDPROTECTED AS locked, p.ZIDENTIFIER AS parent, t.ZTYPEUTI, coalesce(t.ZUSERTITLE, t.ZTITLE) AS title, m.ZFILENAME, t.ZURLSTRING, t.ZSUMMARY, t.ZOCRSUMMARY, t.ZHANDWRITINGSUMMARY, t.ZIMAGECLASSIFICATIONSUMMARY, t.ZADDITIONALINDEXABLETEXT, t.ZFILESIZE, t.ZDURATION, t.ZSIZEWIDTH, t.ZSIZEHEIGHT, l.ZLATITUDE, l.ZLONGITUDE, t.ZCREATIONDATE, t.ZMODIFICATIONDATE, t.ZMERGEABLEDATA1, a.ZIDENTIFIER AS account, m.ZIDENTIFIER AS media, m.ZGENERATION1
   FROM ZICCLOUDSYNCINGOBJECT t
   LEFT JOIN ZICCLOUDSYNCINGOBJECT p ON p.Z_PK = t.ZPARENTATTACHMENT
@@ -104,7 +107,7 @@ const attachmentsSql = `SELECT t.ZIDENTIFIER, n.ZIDENTIFIER AS note, n.ZISPASSWO
   JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = n.ZFOLDER
   JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = t.ZACCOUNT1
   LEFT JOIN ZICCLOUDSYNCINGOBJECT m ON m.Z_PK = t.ZMEDIA
-  LEFT JOIN ZICLOCATION l ON l.ZATTACHMENT = t.Z_PK
+  LEFT JOIN ZICLOCATION l ON l.Z_PK = t.ZLOCATION
   WHERE t.Z_ENT = ${entity('ICAttachment')} AND ${live('t')} AND ${live('n')}
   ORDER BY t.Z_PK`;
 

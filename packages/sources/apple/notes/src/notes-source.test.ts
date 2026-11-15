@@ -231,7 +231,7 @@ const richNote = [
 // keeps media; the photo's do not, as when iCloud has not downloaded it.
 // Also cases a live store rarely holds: a second account with its own
 // folder, a scan gallery whose page belongs to the gallery rather than the
-// note, a photo with a blank user title and two locations, and a mention
+// note, a photo with a blank user title and two location rows that name it, and a mention
 // whose text is blank.
 const noteStoreFixture = async (directory: string) => {
   const path = join(directory, 'NoteStore.sqlite');
@@ -282,7 +282,8 @@ const noteStoreFixture = async (directory: string) => {
       (15, 9, 'INLINE-TAG', 5, 'com.apple.notes.inlinetextattachment.hashtag', '#food', 'FOOD', ${created}),
       (17, 9, 'INLINE-LINK', 5, 'com.apple.notes.inlinetextattachment.link', 'Old', 'applenotes:note/note-trashed', ${created}),
       (22, 9, 'INLINE-BLANK', 5, 'com.apple.notes.inlinetextattachment.mention', ' ', NULL, ${created});
-    INSERT INTO ZICLOCATION (ZATTACHMENT, ZLATITUDE, ZLONGITUDE) VALUES (12, 52.52, 13.405), (12, 48.8566, 2.3522);
+    INSERT INTO ZICLOCATION (Z_PK, ZATTACHMENT, ZLATITUDE, ZLONGITUDE) VALUES (1, 12, 52.52, 13.405), (2, 12, 48.8566, 2.3522);
+    UPDATE ZICCLOUDSYNCINGOBJECT SET ZLOCATION = 1 WHERE Z_PK = 12;
   `);
   database
     .prepare(
@@ -628,8 +629,9 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
         hasBytes: false,
       },
       {
-        // One record despite two locations; a blank user title hides the
-        // stored one.
+        // One record with the location it names, though a second
+        // location row names it too; a blank user title hides the stored
+        // one.
         id: 'ATT-PHOTO',
         noteId: 'NOTE-RICH',
         parentId: null,
@@ -657,6 +659,53 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
       },
     ],
   );
+});
+
+test('an attachment that two location rows name loads once, with the location its own location relationship names', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-notes-');
+  const path = await noteStoreFixture(scratch.path);
+  {
+    using notes = open(path);
+    notes.exec(
+      'UPDATE ZICCLOUDSYNCINGOBJECT SET ZLOCATION = 2 WHERE Z_PK = 12',
+    );
+  }
+  const source = new AppleNotesSource({ path });
+  const { pipeline, destination } = await notesPipeline(source, scratch.path);
+
+  await pipeline.run();
+
+  assert.deepEqual(
+    noteRows(
+      destination.path,
+      "SELECT id, latitude, longitude FROM attachments WHERE id = 'ATT-PHOTO'",
+    ),
+    [{ id: 'ATT-PHOTO', latitude: 48.8566, longitude: 2.3522 }],
+  );
+});
+
+test('a Notes store that repeats an attachment or inline attachment identifier fails both reads rather than keeping one of each', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-notes-');
+  const path = await noteStoreFixture(scratch.path);
+  {
+    // NoteStore.sqlite declares ZIDENTIFIER unique; this store does not, so
+    // it can repeat one.
+    using notes = open(path);
+    notes.exec(`
+      INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZNOTE, ZACCOUNT1, ZTYPEUTI, ZFILESIZE) VALUES (23, 5, 'ATT-TABLE', 5, 1, 'public.jpeg', 1);
+      INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZNOTE1, ZTYPEUTI1, ZALTTEXT) VALUES (24, 9, 'INLINE-TAG', 5, 'com.apple.notes.inlinetextattachment.hashtag', '#again');
+    `);
+  }
+  const source = new AppleNotesSource({ path });
+  const { pipeline } = await notesPipeline(source, scratch.path);
+
+  await assert.rejects(pipeline.run(), (error) => {
+    assert.ok(error instanceof AggregateError);
+    const causes = error.errors.map(String).join('\n');
+    assert.match(causes, /returned id ATT-TABLE twice in one scan/);
+    assert.match(causes, /returned id INLINE-TAG twice in one scan/);
+    return true;
+  });
 });
 
 test('Notes loads edits and deletions incrementally and a repeat run writes nothing', async () => {

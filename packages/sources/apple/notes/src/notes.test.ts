@@ -284,7 +284,8 @@ const noteStoreFixture = async (directory: string) => {
     INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZNOTE1, ZTYPEUTI1, ZALTTEXT, ZTOKENCONTENTIDENTIFIER, ZCREATIONDATE2) VALUES
       (15, 9, 'INLINE-TAG', 5, 'com.apple.notes.inlinetextattachment.hashtag', '#food', 'FOOD', ${created}),
       (17, 9, 'INLINE-LINK', 5, 'com.apple.notes.inlinetextattachment.link', 'Old', 'applenotes:note/note-trashed', ${created});
-    INSERT INTO ZICLOCATION (ZATTACHMENT, ZLATITUDE, ZLONGITUDE) VALUES (12, 52.52, 13.405);
+    INSERT INTO ZICLOCATION (Z_PK, ZATTACHMENT, ZLATITUDE, ZLONGITUDE) VALUES (1, 12, 52.52, 13.405);
+    UPDATE ZICCLOUDSYNCINGOBJECT SET ZLOCATION = 1 WHERE Z_PK = 12;
   `);
   database
     .prepare(
