@@ -8,18 +8,19 @@ import {
   selected,
 } from '@eltjs/source-apple-macos/import-scope';
 
-// What a container selection keeps in one store: its containers, the
-// contacts and groups in them, and any record among those three.
+// What a container selection keeps in one store: its containers, which the
+// selection names by uniqueId (the Contacts.framework identifier), the
+// contacts and groups in them, and any record among those three, by id.
 export class ContactSelection {
-  readonly #containers: ReadonlySet<string | null>;
-  readonly #contacts: ReadonlySet<string | null>;
-  readonly #groups: ReadonlySet<string | null>;
+  readonly #containers: ReadonlySet<number>;
+  readonly #contacts: ReadonlySet<number>;
+  readonly #groups: ReadonlySet<number>;
 
   constructor(store: AddressBookStore, collectionIds: readonly string[]) {
     this.#containers = new Set(
       store
         .containers()
-        .filter((container) => selected(collectionIds, container.id))
+        .filter((container) => selected(collectionIds, container.uniqueId))
         .map((container) => container.id),
     );
     this.#contacts = new Set(
@@ -54,14 +55,14 @@ export class ContactSelection {
     return this.container(id) || this.contact(id) || this.group(id);
   }
 
-  #has(ids: ReadonlySet<string | null>, id: unknown): boolean {
-    return (typeof id === 'string' || id === null) && ids.has(id);
+  #has(ids: ReadonlySet<number>, id: unknown): boolean {
+    return typeof id === 'number' && ids.has(id);
   }
 }
 
-// Images are staged from bytes a stream read, by contact and kind.
-export const imageKey = (contactId: unknown, kind: unknown) =>
-  JSON.stringify([contactId, kind]);
+// Images are staged from bytes a stream read, by store, contact and kind.
+export const imageKey = (store: unknown, contactId: unknown, kind: unknown) =>
+  JSON.stringify([store, contactId, kind]);
 
 // One run's read of every account store: streams read through it, each
 // store's selection is worked out once, and the images stream leaves the

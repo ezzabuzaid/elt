@@ -11,6 +11,7 @@ import {
   attributeRecord,
   explained,
   localStores,
+  storeField,
 } from '../contacts-fields.ts';
 import type { ContactSelection } from '../contacts-scan.ts';
 
@@ -18,22 +19,26 @@ const naming = { renames: { owner: 'contactId' } };
 
 const properties = explained(
   {
-    id: eventKitFields.id,
+    store: storeField,
+    id: eventKitFields.integer,
+    uniqueId: eventKitFields.nullableText,
     ...attributeFields(alertToneView, naming),
   },
   {
-    id: 'Alert tone identifier, AddressBook ZABCDALERTTONE.ZUNIQUEID; the primary key.',
+    id: "The alert tone's row in its store, AddressBook ZABCDALERTTONE.Z_PK; with store, the primary key.",
+    uniqueId:
+      'Alert tone identifier, AddressBook ZABCDALERTTONE.ZUNIQUEID, as stored; the store does not enforce it unique.',
     contactId:
-      "Owning contact: ZABCDALERTTONE.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id within this source. NULL when unset or no record matches.",
+      'Owning contact: ZABCDALERTTONE.ZOWNER, the Z_PK of that record. Join to contacts.id in the same store. NULL when unset or no record matches.',
   },
 );
 
 export class AlertTonesStream extends AppleContactsStream<ValueRow> {
   readonly name = 'alertTones';
-  readonly primaryKey = ['id'];
+  readonly primaryKey = ['store', 'id'];
   readonly jsonSchema = {
     type: 'object',
-    description: `One row per alert tone record of a contact in the AddressBook table ZABCDALERTTONE. Primary key id; contactId refers to contacts.id, and a contact can have several. type and toneData are exported as stored and their values are not documented by Apple. ${localStores}`,
+    description: `One row per alert tone record of a contact in the AddressBook table ZABCDALERTTONE. Primary key (store, id); contactId refers to contacts.id in the same store, and a contact can have several. type and toneData are exported as stored and their values are not documented by Apple. ${localStores}`,
     properties,
     required: Object.keys(properties),
   } as const;
@@ -50,6 +55,7 @@ export class AlertTonesStream extends AppleContactsStream<ValueRow> {
     return [
       {
         id: row.id,
+        uniqueId: row.uniqueId,
         ...attributeRecord(alertToneView, row.values, naming),
       },
     ];

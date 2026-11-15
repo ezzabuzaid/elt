@@ -5,28 +5,29 @@ import type {
 import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 import { AppleContactsStream } from '../apple-contacts-stream.ts';
-import { explained, localStores } from '../contacts-fields.ts';
+import { explained, localStores, storeField } from '../contacts-fields.ts';
 import type { ContactSelection } from '../contacts-scan.ts';
 
 const properties = explained(
   {
-    parentGroupId: eventKitFields.id,
-    childGroupId: eventKitFields.id,
+    store: storeField,
+    parentGroupId: eventKitFields.integer,
+    childGroupId: eventKitFields.integer,
   },
   {
     parentGroupId:
-      'Parent group identifier (ZABCDRECORD.ZUNIQUEID of Z_18PARENTGROUPS.Z_19PARENTGROUPS); refers to groups.id within this source.',
+      'Parent group: Z_18PARENTGROUPS.Z_19PARENTGROUPS, the Z_PK of that record; refers to groups.id in the same store.',
     childGroupId:
-      'Child group identifier (ZABCDRECORD.ZUNIQUEID of Z_18PARENTGROUPS.Z_18CHILDGROUPS); refers to groups.id within this source.',
+      'Child group: Z_18PARENTGROUPS.Z_18CHILDGROUPS, the Z_PK of that record; refers to groups.id in the same store.',
   },
 );
 
 export class GroupSubgroupsStream extends AppleContactsStream<GroupSubgroupRow> {
   readonly name = 'groupSubgroups';
-  readonly primaryKey = ['parentGroupId', 'childGroupId'];
+  readonly primaryKey = ['store', 'parentGroupId', 'childGroupId'];
   readonly jsonSchema = {
     type: 'object',
-    description: `One row per direct parent-child link between groups stored in the AddressBook table Z_18PARENTGROUPS. Primary key (parentGroupId, childGroupId), both groups.id within this source. Deeper nesting is a chain of rows; a child can have several parents. ${localStores}`,
+    description: `One row per direct parent-child link between groups stored in the AddressBook table Z_18PARENTGROUPS. Primary key (store, parentGroupId, childGroupId): the table's own PRIMARY KEY, within its store; both are groups.id in the same store. Deeper nesting is a chain of rows; a child can have several parents. ${localStores}`,
     properties,
     required: Object.keys(properties),
   } as const;

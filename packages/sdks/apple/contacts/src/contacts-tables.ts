@@ -14,7 +14,8 @@ const kinds = [
 // How the AddressBook store keeps an attribute: text, integers, numbers and
 // 0/1 flags as Core Data writes them, a time as Core Data seconds since
 // 2001-01-01 UTC, data as bytes, a record as the Z_PK of another ZABCDRECORD
-// row, and a calendar date as noon UTC of the day, in 1604 without a year.
+// row of the same store, and a calendar date as noon UTC of the day, in 1604
+// without a year.
 export type ContactsAttributeKind = (typeof kinds)[number];
 
 const isKind = (name: string): name is ContactsAttributeKind =>
@@ -64,7 +65,7 @@ function labeledView(
   joins: readonly string[],
   own: Partial<Record<ContactsAttributeKind, string>>,
 ): ContactsView {
-  const shared = view(table, ['ZUNIQUEID', ...joins], {
+  const shared = view(table, ['Z_PK', 'ZUNIQUEID', ...joins], {
     record: 'owner',
     text: 'label',
     boolean: 'isPrimary isPrivate',
@@ -97,7 +98,7 @@ export type GroupEntity = (typeof groupEntities)[number];
 export type ContactEntity = (typeof contactEntities)[number];
 
 // Every stored attribute of the Core Data model (ABAddressBook, macOS 26),
-// relationships as the related record's uniqueId. Left out: Core Data's own
+// relationships as the related record's Z_PK. Left out: Core Data's own
 // Z_ columns, transient attributes, values stored only to sort or search
 // (creation and modification year and yearless offsets, sortingFirstName,
 // nameNormalized, addressNormalized, lastFourDigits, ABCDContactIndex), and
@@ -142,27 +143,31 @@ export const contactView = view(
   },
 );
 
-export const noteView = view('ZABCDNOTE', ['ZCONTACT'], {
+export const noteView = view('ZABCDNOTE', ['Z_PK', 'ZCONTACT'], {
   text: 'text',
   data: 'richTextData',
 });
 
 // The non-Gregorian birthday (CNContact.nonGregorianBirthday).
-export const dateComponentsView = view('ZABCDDATECOMPONENTS', ['ZCONTACT'], {
-  text: 'uniqueId calendarIdentifier',
-  integer: 'era year month day iOSLegacyIdentifier',
-  boolean: 'isLeapMonth',
-});
+export const dateComponentsView = view(
+  'ZABCDDATECOMPONENTS',
+  ['Z_PK', 'ZCONTACT'],
+  {
+    text: 'uniqueId calendarIdentifier',
+    integer: 'era year month day iOSLegacyIdentifier',
+    boolean: 'isLeapMonth',
+  },
+);
 
-export const phoneNumberView = labeledView('ZABCDPHONENUMBER', ['Z_PK'], {
+export const phoneNumberView = labeledView('ZABCDPHONENUMBER', [], {
   text: 'fullNumber countryCode areaCode localNumber extension',
 });
 
-export const emailAddressView = labeledView('ZABCDEMAILADDRESS', ['Z_PK'], {
+export const emailAddressView = labeledView('ZABCDEMAILADDRESS', [], {
   text: 'address',
 });
 
-export const postalAddressView = labeledView('ZABCDPOSTALADDRESS', ['Z_PK'], {
+export const postalAddressView = labeledView('ZABCDPOSTALADDRESS', [], {
   text: 'street subLocality city state region zipCode countryName countryCode sama',
   data: 'customValuesDictionary',
 });
@@ -205,7 +210,7 @@ export const likenessView = labeledView('ZABCDLIKENESS', [], {
   data: 'data',
 });
 
-export const alertToneView = view('ZABCDALERTTONE', ['ZUNIQUEID'], {
+export const alertToneView = view('ZABCDALERTTONE', ['Z_PK', 'ZUNIQUEID'], {
   record: 'owner',
   text: 'type toneData',
   integer: 'iOSLegacyIdentifier',
@@ -219,7 +224,7 @@ export const customPropertyView = view('ZABCDCUSTOMPROPERTY', ['Z_PK'], {
 // Values of custom properties, on any record.
 export const customPropertyValueView = view(
   'ZABCDCUSTOMPROPERTYVALUE',
-  ['ZUNIQUEID', 'ZCUSTOMPROPERTY'],
+  ['Z_PK', 'ZUNIQUEID', 'ZCUSTOMPROPERTY'],
   {
     record: 'owner',
     text: 'label stringValue',
@@ -231,12 +236,16 @@ export const customPropertyValueView = view(
   },
 );
 
-export const remoteLocationView = view('ZABCDREMOTELOCATION', ['ZUNIQUEID'], {
-  record: 'owner',
-  text: 'label url',
-  boolean: 'isPrimary isPrivate',
-  integer: 'orderingIndex',
-});
+export const remoteLocationView = view(
+  'ZABCDREMOTELOCATION',
+  ['Z_PK', 'ZUNIQUEID'],
+  {
+    record: 'owner',
+    text: 'label url',
+    boolean: 'isPrimary isPrivate',
+    integer: 'orderingIndex',
+  },
+);
 
 const views: readonly ContactsView[] = [
   recordView,
@@ -264,12 +273,14 @@ const views: readonly ContactsView[] = [
 
 // Tables read only to join, or for values no view lists.
 const otherColumns: SnapshotColumns = {
+  Z_METADATA: ['Z_UUID'],
   Z_PRIMARYKEY: ['Z_ENT', 'Z_NAME'],
   Z_22PARENTGROUPS: ['Z_22CONTACTS', 'Z_19PARENTGROUPS1'],
   Z_18PARENTGROUPS: ['Z_18CHILDGROUPS', 'Z_19PARENTGROUPS'],
   ZABCDSERVICE: ['Z_PK', 'ZSERVICENAME'],
   ZABCDUNKNOWNPROPERTY: ['Z_PK', 'ZOWNER', 'ZPROPERTYNAME', 'ZORIGINALLINE'],
   ZABCDDISTRIBUTIONLISTCONFIG: [
+    'Z_PK',
     'ZGROUP',
     'ZCONTACT',
     'ZEMAIL',

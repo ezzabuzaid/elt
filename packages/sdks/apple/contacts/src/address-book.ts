@@ -56,9 +56,7 @@ export class AddressBook implements AsyncDisposable {
     const stores: AddressBookStore[] = [];
     try {
       for (const found of storeDirectories(directory)) {
-        const store = new AddressBookStore(found.source, found.directory);
-        stores.push(store);
-        store.requireLayout();
+        stores.push(AddressBookStore.open(found.source, found.directory));
       }
       return new AddressBook(stores);
     } catch (cause) {

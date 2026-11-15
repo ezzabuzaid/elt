@@ -197,7 +197,7 @@ export class AppleContactsSource extends Source<ContactsScan> {
         continue;
       }
       const data = scan.images.get(
-        imageKey(message.data.contactId, message.data.kind),
+        imageKey(message.data.store, message.data.contactId, message.data.kind),
       );
       if (data === undefined)
         throw new TypeError('Contacts image record lost its stored data');

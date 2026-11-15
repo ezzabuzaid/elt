@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { hash } from 'node:crypto';
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { chmod, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -120,7 +120,8 @@ const readFirst = async (source: AppleContactsSource) => {
 
 // AddressBook-v22.abcddb's tables as macOS 26.6.2 creates them (schema only,
 // no data), in WAL mode like the real stores.
-const addressBookSchema = `CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER PRIMARY KEY, Z_NAME VARCHAR, Z_SUPER INTEGER, Z_MAX INTEGER);
+const addressBookSchema = `CREATE TABLE Z_METADATA (Z_VERSION INTEGER PRIMARY KEY, Z_UUID VARCHAR(255), Z_PLIST BLOB);
+CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER PRIMARY KEY, Z_NAME VARCHAR, Z_SUPER INTEGER, Z_MAX INTEGER);
 CREATE TABLE ZABCDRECORD (Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZCREATIONDATEYEAR INTEGER, ZDISPLAYFLAGS INTEGER, ZIOSLEGACYIDENTIFIER INTEGER, ZMODIFICATIONDATEYEAR INTEGER, ZSYNCSTATUS INTEGER, ZCONTAINER INTEGER, ZEXTERNALGROUPBEHAVIOR INTEGER, ZBIRTHDAYYEAR INTEGER, ZPREFERREDFORLINKNAME INTEGER, ZPREFERREDFORLINKPHOTO INTEGER, ZPRIVACYFLAGS INTEGER, ZCONTACTINDEX INTEGER, ZCONTAINER1 INTEGER, ZCONTAINERWHERECONTACTISME INTEGER, ZLUNARBIRTHDAYCOMPONENTS INTEGER, ZNOTE INTEGER, ZASSISTANTSYNCANCHOR INTEGER, ZSHARECOUNT INTEGER, ZSYNCCOUNT INTEGER, ZVERSION INTEGER, ZCONTAINER2 INTEGER, ZGUARDIANFLAGS INTEGER, ZISALL INTEGER, ZTYPE INTEGER, ZINFO INTEGER, ZME INTEGER, Z22_ME INTEGER, ZPROVIDERMETADATA INTEGER, ZCREATIONDATE TIMESTAMP, ZCREATIONDATEYEARLESS FLOAT, ZMODIFICATIONDATE TIMESTAMP, ZMODIFICATIONDATEYEARLESS FLOAT, ZBIRTHDAY TIMESTAMP, ZBIRTHDAYYEARLESS FLOAT, ZIMAGESYNCFAILEDTIME TIMESTAMP, ZWALLPAPERSYNCFAILEDTIME TIMESTAMP, ZLASTSYNCDATE TIMESTAMP, ZEXTERNALCOLLECTIONPATH VARCHAR, ZEXTERNALFILENAME VARCHAR, ZEXTERNALHASH VARCHAR, ZEXTERNALIMAGEURI VARCHAR, ZEXTERNALMODIFICATIONTAG VARCHAR, ZEXTERNALURI VARCHAR, ZEXTERNALUUID VARCHAR, ZUNIQUEID VARCHAR, ZNAME VARCHAR, ZNAMENORMALIZED VARCHAR, ZTMPREMOTELOCATION VARCHAR, ZCROPRECT VARCHAR, ZCROPRECTID VARCHAR, ZDEPARTMENT VARCHAR, ZDOWNTIMEWHITELIST VARCHAR, ZFIRSTNAME VARCHAR, ZIDENTITYUNIQUEID VARCHAR, ZIMAGEREFERENCE VARCHAR, ZIMAGETYPE VARCHAR, ZJOBTITLE VARCHAR, ZLASTNAME VARCHAR, ZLINKID VARCHAR, ZMAIDENNAME VARCHAR, ZMIDDLENAME VARCHAR, ZNICKNAME VARCHAR, ZORGANIZATION VARCHAR, ZPHONEMEDATA VARCHAR, ZPHONETICFIRSTNAME VARCHAR, ZPHONETICLASTNAME VARCHAR, ZPHONETICMIDDLENAME VARCHAR, ZPHONETICORGANIZATION VARCHAR, ZPREFERREDAPPLEPERSONAIDENTIFIER VARCHAR, ZPREFERREDLIKENESSSOURCE VARCHAR, ZSORTINGFIRSTNAME VARCHAR, ZSORTINGLASTNAME VARCHAR, ZSUFFIX VARCHAR, ZTITLE VARCHAR, ZTMPHOMEPAGE VARCHAR, ZWALLPAPERURI VARCHAR, ZASSISTANTVALIDITY VARCHAR, ZCREATEDVERSION VARCHAR, ZLASTDOTMACACCOUNT VARCHAR, ZLASTSAVEDVERSION VARCHAR, ZSYNCANCHOR VARCHAR, ZEXTERNALIDENTIFIER VARCHAR, ZNAME1 VARCHAR, ZPROVIDERIDENTIFIER VARCHAR, ZREMOTELOCATION VARCHAR, ZSERIALNUMBER VARCHAR, ZEXTERNALREPRESENTATION BLOB, ZMODIFIEDUNIQUEIDSDATA BLOB, ZSEARCHELEMENTDATA BLOB, ZAVATARRECIPEDATA BLOB, ZCROPRECTHASH BLOB, ZIMAGEDATA BLOB, ZIMAGEHASH BLOB, ZMEMOJIMETADATA BLOB, ZSENSITIVECONTENTCONFIGURATION BLOB, ZTHUMBNAILIMAGEDATA BLOB, ZWALLPAPER BLOB );
 CREATE TABLE Z_22PARENTGROUPS (Z_22CONTACTS INTEGER, Z_19PARENTGROUPS1 INTEGER, PRIMARY KEY (Z_22CONTACTS, Z_19PARENTGROUPS1) );
 CREATE TABLE Z_18PARENTGROUPS (Z_18CHILDGROUPS INTEGER, Z_19PARENTGROUPS INTEGER, PRIMARY KEY (Z_18CHILDGROUPS, Z_19PARENTGROUPS) );
@@ -229,6 +230,10 @@ function createStore(
     writeFileSync(join(externalData, id), bytes);
   using database = open(join(directory, 'AddressBook-v22.abcddb'));
   database.exec(addressBookSchema);
+  // Core Data's store identifier, a UUID in a real store.
+  database
+    .prepare('INSERT INTO Z_METADATA (Z_VERSION, Z_UUID) VALUES (1, ?)')
+    .run(`STORE-${basename(directory)}`);
   const entity = database.prepare(
     'INSERT INTO Z_PRIMARYKEY (Z_ENT, Z_NAME, Z_SUPER, Z_MAX) VALUES (?, ?, ?, 0)',
   );
@@ -618,28 +623,31 @@ test('Contacts scope keeps only one container and its related records and images
       }),
     ],
   }).run();
-  assert.deepEqual(rows(destination.path, 'SELECT id FROM contacts'), [
-    { id: 'ME:ABPerson' },
-  ]);
-  assert.deepEqual(rows(destination.path, 'SELECT id FROM containers'), [
-    { id: 'LOCAL:ABContainer' },
+  assert.deepEqual(
+    rows(destination.path, 'SELECT store, id, uniqueId FROM contacts'),
+    [{ store: 'STORE-AddressBook', id: 2, uniqueId: 'ME:ABPerson' }],
+  );
+  assert.deepEqual(rows(destination.path, 'SELECT uniqueId FROM containers'), [
+    { uniqueId: 'LOCAL:ABContainer' },
   ]);
   assert.deepEqual(
-    rows(destination.path, 'SELECT DISTINCT contactId FROM images'),
-    [{ contactId: 'ME:ABPerson' }],
+    rows(destination.path, 'SELECT DISTINCT store, contactId FROM images'),
+    [{ store: 'STORE-AddressBook', contactId: 2 }],
   );
   // Related records follow their store: Ada's note stays, and account A's
   // group and its memberships stay out.
-  assert.deepEqual(rows(destination.path, 'SELECT contactId FROM notes'), [
-    { contactId: 'ME:ABPerson' },
-  ]);
+  assert.deepEqual(
+    rows(destination.path, 'SELECT store, contactId FROM notes'),
+    [{ store: 'STORE-AddressBook', contactId: 2 }],
+  );
   assert.deepEqual(rows(destination.path, 'SELECT id FROM groups'), []);
   assert.deepEqual(rows(destination.path, 'SELECT * FROM groupMembers'), []);
   const saved = JSON.stringify(
     rows(join(scratch.path, 'state.sqlite'), 'SELECT state FROM checkpoints'),
   );
+  assert.ok(saved.includes('STORE-AddressBook'));
   assert.ok(
-    !saved.includes('BOB:ABPerson') && !saved.includes('FRIENDS:ABGroup'),
+    !saved.includes('STORE-ACCOUNT-A') && !saved.includes('STORE-ACCOUNT-B'),
   );
 });
 
@@ -780,25 +788,28 @@ test('Contacts reads subscribed records, every custom value type, archived vCard
   const all = await load('all', {});
   const scoped = await load('scoped', { collectionIds: ['ROOT:ABContainer'] });
 
-  assert.deepEqual(rows(all, 'SELECT id, kind, imageHash FROM contacts'), [
-    {
-      id: 'SUBSCRIBED:ABPerson',
-      kind: 'subscribedContact',
-      imageHash: 'stored as text',
-    },
-  ]);
-  assert.deepEqual(rows(all, 'SELECT id, kind FROM groups'), [
-    { id: 'SUBSCRIBED:ABGroup', kind: 'subscribedGroup' },
+  assert.deepEqual(
+    rows(all, 'SELECT uniqueId, kind, imageHash FROM contacts'),
+    [
+      {
+        uniqueId: 'SUBSCRIBED:ABPerson',
+        kind: 'subscribedContact',
+        imageHash: 'stored as text',
+      },
+    ],
+  );
+  assert.deepEqual(rows(all, 'SELECT uniqueId, kind FROM groups'), [
+    { uniqueId: 'SUBSCRIBED:ABGroup', kind: 'subscribedGroup' },
   ]);
   assert.deepEqual(
     rows(
       all,
-      'SELECT id, recordId, propertyName, valueType, numberValue, dateValue, dataValue FROM customPropertyValues',
+      'SELECT uniqueId, recordId, propertyName, valueType, numberValue, dateValue, dataValue FROM customPropertyValues',
     ),
     [
       {
-        id: 'CUSTOM-ALL',
-        recordId: 'SUBSCRIBED:ABPerson',
+        uniqueId: 'CUSTOM-ALL',
+        recordId: 2,
         propertyName: 'X-MEASURE',
         valueType: 2,
         numberValue: 2.5,
@@ -810,20 +821,20 @@ test('Contacts reads subscribed records, every custom value type, archived vCard
   // An archived line loads as JSON, like other property lists.
   assert.deepEqual(
     rows(all, 'SELECT recordId, originalLine FROM unknownProperties'),
-    [{ recordId: 'SUBSCRIBED:ABPerson', originalLine: '"X-ARCHIVED:1"' }],
+    [{ recordId: 2, originalLine: '"X-ARCHIVED:1"' }],
   );
   // A value whose owner is unset or gone has no contact, so a container
   // scope cannot place it.
   assert.deepEqual(
-    rows(all, 'SELECT id, contactId FROM phoneNumbers ORDER BY id'),
+    rows(all, 'SELECT uniqueId, contactId FROM phoneNumbers ORDER BY uniqueId'),
     [
-      { id: 'PHONE-GONE-OWNER', contactId: null },
-      { id: 'PHONE-NO-OWNER', contactId: null },
+      { uniqueId: 'PHONE-GONE-OWNER', contactId: null },
+      { uniqueId: 'PHONE-NO-OWNER', contactId: null },
     ],
   );
   assert.deepEqual(rows(scoped, 'SELECT id FROM phoneNumbers'), []);
-  assert.deepEqual(rows(scoped, 'SELECT id FROM contacts'), [
-    { id: 'SUBSCRIBED:ABPerson' },
+  assert.deepEqual(rows(scoped, 'SELECT uniqueId FROM contacts'), [
+    { uniqueId: 'SUBSCRIBED:ABPerson' },
   ]);
 });
 
@@ -890,23 +901,184 @@ test('Contacts loads each unknown vCard line row, two equal lines on one record 
   assert.deepEqual(
     rows(
       destination.path,
-      'SELECT recordId, propertyName FROM unknownProperties ORDER BY recordId',
+      'SELECT store, id, recordId, propertyName FROM unknownProperties ORDER BY store, id',
     ),
     [
-      { recordId: 'ADA:ABPerson', propertyName: 'X-ODD' },
-      { recordId: 'ADA:ABPerson', propertyName: 'X-ODD' },
-      { recordId: 'GRACE:ABPerson', propertyName: 'X-ODD' },
+      { store: 'STORE-ACCOUNT-A', id: 1, recordId: 2, propertyName: 'X-ODD' },
+      { store: 'STORE-AddressBook', id: 1, recordId: 2, propertyName: 'X-ODD' },
+      { store: 'STORE-AddressBook', id: 2, recordId: 2, propertyName: 'X-ODD' },
     ],
   );
   assert.deepEqual(
+    second
+      .filter(({ count, deleted }) => count > 0 || deleted > 0)
+      .map(({ copy }) => copy.from.name),
+    [],
+  );
+});
+
+test('Contacts loads each distribution-list choice row, two for one group, member and property included', async () => {
+  await using scratch = await new TemporaryFiles().directory('contacts-list-');
+  const directory = join(scratch.path, 'AddressBook');
+  createStore(directory, {
+    ZABCDRECORD: [
+      { Z_PK: 1, Z_ENT: container, ZUNIQUEID: 'LOCAL:ABContainer' },
+      { Z_PK: 2, Z_ENT: group, ZUNIQUEID: 'FRIENDS:ABGroup', ZCONTAINER: 1 },
+      { Z_PK: 3, Z_ENT: contact, ZUNIQUEID: 'GRACE:ABPerson', ZCONTAINER1: 1 },
+    ],
+    ZABCDEMAILADDRESS: [
+      { Z_PK: 1, ZOWNER: 3, ZUNIQUEID: 'EMAIL-1' },
+      { Z_PK: 2, ZOWNER: 3, ZUNIQUEID: 'EMAIL-2' },
+    ],
+    ZABCDDISTRIBUTIONLISTCONFIG: [
+      { Z_PK: 1, ZGROUP: 2, ZCONTACT: 3, ZPROPERTYNAME: 'Email', ZEMAIL: 1 },
+      { Z_PK: 2, ZGROUP: 2, ZCONTACT: 3, ZPROPERTYNAME: 'Email', ZEMAIL: 2 },
+    ],
+  });
+  mkdirSync(join(directory, 'Sources'));
+  const source = new AppleContactsSource({
+    directory,
+    preferences: preferencesFixture(scratch.path),
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'list',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: await copies(source, destination),
+      }),
+    ],
+  });
+
+  await pipeline.run();
+  const second = await pipeline.run();
+
+  assert.deepEqual(
     rows(
       destination.path,
-      'SELECT recordId, id FROM unknownProperties ORDER BY recordId, id',
+      'SELECT store, id, groupId, contactId, propertyName, emailId FROM distributionListConfigs ORDER BY id',
     ),
     [
-      { recordId: 'ADA:ABPerson', id: 1 },
-      { recordId: 'ADA:ABPerson', id: 2 },
-      { recordId: 'GRACE:ABPerson', id: 1 },
+      {
+        store: 'STORE-AddressBook',
+        id: 1,
+        groupId: 2,
+        contactId: 3,
+        propertyName: 'Email',
+        emailId: 1,
+      },
+      {
+        store: 'STORE-AddressBook',
+        id: 2,
+        groupId: 2,
+        contactId: 3,
+        propertyName: 'Email',
+        emailId: 2,
+      },
+    ],
+  );
+  assert.deepEqual(
+    second
+      .filter(({ count, deleted }) => count > 0 || deleted > 0)
+      .map(({ copy }) => copy.from.name),
+    [],
+  );
+});
+
+test('Contacts loads each record row, two with one uniqueId in a store and the same uniqueId in another store included', async () => {
+  await using scratch = await new TemporaryFiles().directory('contacts-twin-');
+  const directory = join(scratch.path, 'AddressBook');
+  createStore(directory, {
+    ZABCDRECORD: [
+      { Z_PK: 1, Z_ENT: container, ZUNIQUEID: 'LOCAL:ABContainer' },
+      { Z_PK: 2, Z_ENT: contact, ZUNIQUEID: 'TWIN:ABPerson', ZCONTAINER1: 1 },
+      { Z_PK: 3, Z_ENT: contact, ZUNIQUEID: 'TWIN:ABPerson', ZCONTAINER1: 1 },
+    ],
+    ZABCDPHONENUMBER: [
+      { Z_PK: 1, ZOWNER: 2, ZUNIQUEID: 'PHONE-TWIN', ZFULLNUMBER: '1' },
+      { Z_PK: 2, ZOWNER: 3, ZUNIQUEID: 'PHONE-TWIN', ZFULLNUMBER: '2' },
+    ],
+  });
+  createStore(join(directory, 'Sources/ACCOUNT-A'), {
+    ZABCDRECORD: [
+      { Z_PK: 1, Z_ENT: container, ZUNIQUEID: 'A:ABContainer' },
+      { Z_PK: 2, Z_ENT: contact, ZUNIQUEID: 'TWIN:ABPerson', ZCONTAINER1: 1 },
+    ],
+    ZABCDPHONENUMBER: [
+      { Z_PK: 1, ZOWNER: 2, ZUNIQUEID: 'PHONE-TWIN', ZFULLNUMBER: '3' },
+    ],
+  });
+  const source = new AppleContactsSource({
+    directory,
+    preferences: preferencesFixture(scratch.path),
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'twin',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: await copies(source, destination),
+      }),
+    ],
+  });
+
+  await pipeline.run();
+  const second = await pipeline.run();
+
+  assert.deepEqual(
+    rows(
+      destination.path,
+      'SELECT store, id, uniqueId, containerId FROM contacts ORDER BY store, id',
+    ),
+    [
+      {
+        store: 'STORE-ACCOUNT-A',
+        id: 2,
+        uniqueId: 'TWIN:ABPerson',
+        containerId: 1,
+      },
+      {
+        store: 'STORE-AddressBook',
+        id: 2,
+        uniqueId: 'TWIN:ABPerson',
+        containerId: 1,
+      },
+      {
+        store: 'STORE-AddressBook',
+        id: 3,
+        uniqueId: 'TWIN:ABPerson',
+        containerId: 1,
+      },
+    ],
+  );
+  // Each number joins its own contact by the store and the contact's id.
+  assert.deepEqual(
+    rows(
+      destination.path,
+      'SELECT p.store, p.fullNumber, c.id AS contactId FROM phoneNumbers p JOIN contacts c ON c.store = p.store AND c.id = p.contactId ORDER BY p.fullNumber',
+    ),
+    [
+      { store: 'STORE-AddressBook', fullNumber: '1', contactId: 2 },
+      { store: 'STORE-AddressBook', fullNumber: '2', contactId: 3 },
+      { store: 'STORE-ACCOUNT-A', fullNumber: '3', contactId: 2 },
     ],
   );
   assert.deepEqual(
@@ -989,11 +1161,13 @@ test('Contacts exports every stream of every account store by identifier', async
   assert.deepEqual(
     rows(
       out,
-      'SELECT id, source, isAll, remoteLocation, meContactId, creationDate FROM containers ORDER BY id',
+      'SELECT store, id, uniqueId, source, isAll, remoteLocation, meContactId, creationDate FROM containers ORDER BY uniqueId',
     ),
     [
       {
-        id: 'A:ABContainer',
+        store: 'STORE-ACCOUNT-A',
+        id: 1,
+        uniqueId: 'A:ABContainer',
         source: 'ACCOUNT-A',
         isAll: null,
         remoteLocation: null,
@@ -1001,7 +1175,9 @@ test('Contacts exports every stream of every account store by identifier', async
         creationDate: null,
       },
       {
-        id: 'B:ABContainer',
+        store: 'STORE-ACCOUNT-B',
+        id: 1,
+        uniqueId: 'B:ABContainer',
         source: 'ACCOUNT-B',
         isAll: null,
         remoteLocation: null,
@@ -1009,11 +1185,13 @@ test('Contacts exports every stream of every account store by identifier', async
         creationDate: null,
       },
       {
-        id: 'LOCAL:ABContainer',
+        store: 'STORE-AddressBook',
+        id: 1,
+        uniqueId: 'LOCAL:ABContainer',
         source: null,
         isAll: 1,
         remoteLocation: 'local',
-        meContactId: 'ME:ABPerson',
+        meContactId: 2,
         creationDate: '2025-01-02T03:04:05.006Z',
       },
     ],
@@ -1021,13 +1199,15 @@ test('Contacts exports every stream of every account store by identifier', async
   assert.deepEqual(
     rows(
       out,
-      'SELECT id, kind, containerId, firstName, lastName, organization, birthdayYear, birthdayMonth, birthdayDay, meOfContainerId, imageHash, preferredForLinkName, modificationDate FROM contacts ORDER BY id',
+      'SELECT store, id, uniqueId, kind, containerId, firstName, lastName, organization, birthdayYear, birthdayMonth, birthdayDay, meOfContainerId, imageHash, preferredForLinkName, modificationDate FROM contacts ORDER BY uniqueId',
     ),
     [
       {
-        id: 'ALAN:ABPerson',
+        store: 'STORE-ACCOUNT-A',
+        id: 5,
+        uniqueId: 'ALAN:ABPerson',
         kind: 'contact',
-        containerId: 'A:ABContainer',
+        containerId: 1,
         firstName: 'Alan',
         lastName: null,
         organization: null,
@@ -1040,9 +1220,11 @@ test('Contacts exports every stream of every account store by identifier', async
         modificationDate: null,
       },
       {
-        id: 'BOB:ABPerson',
+        store: 'STORE-ACCOUNT-B',
+        id: 2,
+        uniqueId: 'BOB:ABPerson',
         kind: 'contact',
-        containerId: 'B:ABContainer',
+        containerId: 1,
         firstName: 'Bob',
         lastName: null,
         organization: null,
@@ -1055,9 +1237,11 @@ test('Contacts exports every stream of every account store by identifier', async
         modificationDate: null,
       },
       {
-        id: 'GRACE:ABPerson',
+        store: 'STORE-ACCOUNT-A',
+        id: 4,
+        uniqueId: 'GRACE:ABPerson',
         kind: 'contact',
-        containerId: 'A:ABContainer',
+        containerId: 1,
         firstName: 'Grace',
         lastName: 'Hopper',
         organization: 'Navy',
@@ -1070,16 +1254,18 @@ test('Contacts exports every stream of every account store by identifier', async
         modificationDate: null,
       },
       {
-        id: 'ME:ABPerson',
+        store: 'STORE-AddressBook',
+        id: 2,
+        uniqueId: 'ME:ABPerson',
         kind: 'contact',
-        containerId: 'LOCAL:ABContainer',
+        containerId: 1,
         firstName: 'Ada',
         lastName: 'Local',
         birthdayYear: null,
         birthdayMonth: 7,
         birthdayDay: 9,
         organization: null,
-        meOfContainerId: 'LOCAL:ABContainer',
+        meOfContainerId: 1,
         imageHash: null,
         preferredForLinkName: 1,
         modificationDate: '2025-01-03T00:00:00.000Z',
@@ -1089,41 +1275,50 @@ test('Contacts exports every stream of every account store by identifier', async
   assert.deepEqual(
     rows(
       out,
-      'SELECT id, kind, name, containerId, searchElementData FROM groups ORDER BY id',
+      'SELECT store, id, uniqueId, kind, name, containerId, searchElementData FROM groups ORDER BY id',
     ),
     [
       {
-        id: 'FRIENDS:ABGroup',
+        store: 'STORE-ACCOUNT-A',
+        id: 2,
+        uniqueId: 'FRIENDS:ABGroup',
         kind: 'group',
         name: 'Friends',
-        containerId: 'A:ABContainer',
+        containerId: 1,
         searchElementData: null,
       },
       {
-        id: 'SMART:ABGroup',
+        store: 'STORE-ACCOUNT-A',
+        id: 3,
+        uniqueId: 'SMART:ABGroup',
         kind: 'smartGroup',
         name: 'Recent',
-        containerId: 'A:ABContainer',
+        containerId: 1,
         searchElementData: '{"property":"modificationDate"}',
       },
     ],
   );
   assert.deepEqual(
-    rows(out, 'SELECT groupId, contactId FROM groupMembers ORDER BY contactId'),
+    rows(
+      out,
+      'SELECT store, groupId, contactId FROM groupMembers ORDER BY contactId',
+    ),
     [
-      { groupId: 'FRIENDS:ABGroup', contactId: 'ALAN:ABPerson' },
-      { groupId: 'FRIENDS:ABGroup', contactId: 'GRACE:ABPerson' },
+      { store: 'STORE-ACCOUNT-A', groupId: 2, contactId: 4 },
+      { store: 'STORE-ACCOUNT-A', groupId: 2, contactId: 5 },
     ],
   );
   assert.deepEqual(
-    rows(out, 'SELECT parentGroupId, childGroupId FROM groupSubgroups'),
-    [{ parentGroupId: 'FRIENDS:ABGroup', childGroupId: 'SMART:ABGroup' }],
+    rows(out, 'SELECT store, parentGroupId, childGroupId FROM groupSubgroups'),
+    [{ store: 'STORE-ACCOUNT-A', parentGroupId: 2, childGroupId: 3 }],
   );
   assert.deepEqual(
-    rows(out, 'SELECT contactId, text, richTextData FROM notes'),
+    rows(out, 'SELECT store, id, contactId, text, richTextData FROM notes'),
     [
       {
-        contactId: 'ME:ABPerson',
+        store: 'STORE-AddressBook',
+        id: 1,
+        contactId: 2,
         text: 'first line\nsecond ✓',
         richTextData: null,
       },
@@ -1132,11 +1327,13 @@ test('Contacts exports every stream of every account store by identifier', async
   assert.deepEqual(
     rows(
       out,
-      'SELECT contactId, calendarIdentifier, era, year, month, day, isLeapMonth FROM alternateBirthdays',
+      'SELECT store, id, contactId, calendarIdentifier, era, year, month, day, isLeapMonth FROM alternateBirthdays',
     ),
     [
       {
-        contactId: 'GRACE:ABPerson',
+        store: 'STORE-ACCOUNT-A',
+        id: 1,
+        contactId: 4,
         calendarIdentifier: 'chinese',
         era: 78,
         year: 40,
@@ -1149,12 +1346,14 @@ test('Contacts exports every stream of every account store by identifier', async
   assert.deepEqual(
     rows(
       out,
-      'SELECT id, contactId, label, fullNumber, isPrimary, orderingIndex, iOSLegacyIdentifier FROM phoneNumbers ORDER BY id',
+      'SELECT store, id, uniqueId, contactId, label, fullNumber, isPrimary, orderingIndex, iOSLegacyIdentifier FROM phoneNumbers ORDER BY id',
     ),
     [
       {
-        id: 'PHONE-1',
-        contactId: 'GRACE:ABPerson',
+        store: 'STORE-ACCOUNT-A',
+        id: 1,
+        uniqueId: 'PHONE-1',
+        contactId: 4,
         label: '_$!<Mobile>!$_',
         fullNumber: '+1 555 0100',
         isPrimary: 1,
@@ -1162,8 +1361,10 @@ test('Contacts exports every stream of every account store by identifier', async
         iOSLegacyIdentifier: 5,
       },
       {
-        id: 'PHONE-2',
-        contactId: 'ALAN:ABPerson',
+        store: 'STORE-ACCOUNT-A',
+        id: 2,
+        uniqueId: 'PHONE-2',
+        contactId: 5,
         label: 'Lab',
         fullNumber: '555-0101',
         isPrimary: null,
@@ -1192,28 +1393,34 @@ test('Contacts exports every stream of every account store by identifier', async
   assert.deepEqual(
     rows(
       out,
-      'SELECT id, label, year, month, day FROM contactDates ORDER BY id',
+      'SELECT uniqueId, label, year, month, day FROM contactDates ORDER BY uniqueId',
     ),
     [
       {
-        id: 'DATE-1',
+        uniqueId: 'DATE-1',
         label: '_$!<Anniversary>!$_',
         year: 1930,
         month: 6,
         day: 15,
       },
-      { id: 'DATE-2', label: 'holiday', year: null, month: 12, day: 25 },
+      {
+        uniqueId: 'DATE-2',
+        label: 'holiday',
+        year: null,
+        month: 12,
+        day: 25,
+      },
     ],
   );
   assert.deepEqual(
     rows(
       out,
-      'SELECT id, recordId, propertyName, recordType, valueType, stringValue FROM customPropertyValues',
+      'SELECT uniqueId, recordId, propertyName, recordType, valueType, stringValue FROM customPropertyValues',
     ),
     [
       {
-        id: 'CUSTOM-1',
-        recordId: 'GRACE:ABPerson',
+        uniqueId: 'CUSTOM-1',
+        recordId: 4,
         propertyName: 'X-FAVORITE',
         recordType: 'ABPerson',
         valueType: 1,
@@ -1221,9 +1428,16 @@ test('Contacts exports every stream of every account store by identifier', async
       },
     ],
   );
-  assert.deepEqual(rows(out, 'SELECT recordId, url FROM remoteLocations'), [
-    { recordId: 'A:ABContainer', url: 'https://contacts.example.com/' },
-  ]);
+  assert.deepEqual(
+    rows(out, 'SELECT uniqueId, recordId, url FROM remoteLocations'),
+    [
+      {
+        uniqueId: 'REMOTE-1',
+        recordId: 1,
+        url: 'https://contacts.example.com/',
+      },
+    ],
+  );
   assert.deepEqual(
     rows(
       out,
@@ -1243,14 +1457,15 @@ test('Contacts exports every stream of every account store by identifier', async
   assert.deepEqual(
     rows(
       out,
-      'SELECT groupId, contactId, propertyName, emailId, phoneId, addressId FROM distributionListConfigs',
+      'SELECT store, groupId, contactId, propertyName, emailId, phoneId, addressId FROM distributionListConfigs',
     ),
     [
       {
-        groupId: 'FRIENDS:ABGroup',
-        contactId: 'GRACE:ABPerson',
+        store: 'STORE-ACCOUNT-A',
+        groupId: 2,
+        contactId: 4,
         propertyName: 'Email',
-        emailId: 'EMAIL-1',
+        emailId: 1,
         phoneId: null,
         addressId: null,
       },
@@ -1258,7 +1473,7 @@ test('Contacts exports every stream of every account store by identifier', async
   );
   const images = rows(
     out,
-    'SELECT contactId, kind, storage, externalId, byteLength, sha256, bytes FROM images ORDER BY contactId, kind',
+    'SELECT store, contactId, kind, storage, externalId, byteLength, sha256, bytes FROM images ORDER BY store, contactId, kind',
   );
   const jpeg = Buffer.from('not really a jpeg');
   assert.deepEqual(
@@ -1268,16 +1483,8 @@ test('Contacts exports every stream of every account store by identifier', async
     })),
     [
       {
-        contactId: 'BOB:ABPerson',
-        kind: 'thumbnail',
-        storage: 'external',
-        externalId: 'EXTERNAL-BOB',
-        byteLength: jpeg.length,
-        sha256: sha256(jpeg),
-        bytes: jpeg,
-      },
-      {
-        contactId: 'GRACE:ABPerson',
+        store: 'STORE-ACCOUNT-A',
+        contactId: 4,
         kind: 'image',
         storage: 'inline',
         externalId: null,
@@ -1286,7 +1493,8 @@ test('Contacts exports every stream of every account store by identifier', async
         bytes: photo,
       },
       {
-        contactId: 'GRACE:ABPerson',
+        store: 'STORE-ACCOUNT-A',
+        contactId: 4,
         kind: 'thumbnail',
         storage: 'inline',
         externalId: null,
@@ -1295,7 +1503,18 @@ test('Contacts exports every stream of every account store by identifier', async
         bytes: png,
       },
       {
-        contactId: 'ME:ABPerson',
+        store: 'STORE-ACCOUNT-B',
+        contactId: 2,
+        kind: 'thumbnail',
+        storage: 'external',
+        externalId: 'EXTERNAL-BOB',
+        byteLength: jpeg.length,
+        sha256: sha256(jpeg),
+        bytes: jpeg,
+      },
+      {
+        store: 'STORE-AddressBook',
+        contactId: 2,
         kind: 'image',
         storage: 'external',
         externalId: 'EXTERNAL-ME',
@@ -1379,16 +1598,19 @@ test('Contacts loads edits incrementally, deletes removed rows and writes nothin
     images: { count: 1, deleted: 0 },
   });
   assert.deepEqual(
-    rows(destination.path, 'SELECT id, jobTitle FROM contacts ORDER BY id'),
+    rows(
+      destination.path,
+      'SELECT uniqueId, jobTitle FROM contacts ORDER BY uniqueId',
+    ),
     [
-      { id: 'BOB:ABPerson', jobTitle: null },
-      { id: 'GRACE:ABPerson', jobTitle: 'Rear Admiral' },
-      { id: 'ME:ABPerson', jobTitle: null },
+      { uniqueId: 'BOB:ABPerson', jobTitle: null },
+      { uniqueId: 'GRACE:ABPerson', jobTitle: 'Rear Admiral' },
+      { uniqueId: 'ME:ABPerson', jobTitle: null },
     ],
   );
   const [grace] = rows(
     destination.path,
-    "SELECT byteLength, bytes FROM images WHERE contactId = 'GRACE:ABPerson'",
+    "SELECT byteLength, bytes FROM images WHERE store = 'STORE-ACCOUNT-A' AND contactId = 4",
   );
   assert.deepEqual(
     fileBytes(destination.path, 'images', grace?.bytes),
@@ -1724,39 +1946,39 @@ test('Contacts reads as documented views whose joins keep one row per contact', 
     contacts
       .read(
         `
-        SELECT c.id, c."birthdayYear", coalesce(p.n, 0) AS phones,
+        SELECT c."uniqueId", c."birthdayYear", coalesce(p.n, 0) AS phones,
           coalesce(g.n, 0) AS "groups", a."calendarIdentifier" AS alternate
         FROM contacts c
-        LEFT JOIN (SELECT "contactId", count(*) AS n FROM phone_numbers GROUP BY 1) p ON p."contactId" = c.id
-        LEFT JOIN (SELECT "contactId", count(*) AS n FROM group_members GROUP BY 1) g ON g."contactId" = c.id
-        LEFT JOIN alternate_birthdays a ON a."contactId" = c.id
-        ORDER BY c.id`,
+        LEFT JOIN (SELECT store, "contactId", count(*) AS n FROM phone_numbers GROUP BY 1, 2) p ON p.store = c.store AND p."contactId" = c.id
+        LEFT JOIN (SELECT store, "contactId", count(*) AS n FROM group_members GROUP BY 1, 2) g ON g.store = c.store AND g."contactId" = c.id
+        LEFT JOIN alternate_birthdays a ON a.store = c.store AND a."contactId" = c.id
+        ORDER BY c."uniqueId"`,
       )
       .map((found) => ({ ...found })),
     [
       {
-        id: 'ALAN:ABPerson',
+        uniqueId: 'ALAN:ABPerson',
         birthdayYear: null,
         phones: 1,
         groups: 1,
         alternate: null,
       },
       {
-        id: 'BOB:ABPerson',
+        uniqueId: 'BOB:ABPerson',
         birthdayYear: null,
         phones: 0,
         groups: 0,
         alternate: null,
       },
       {
-        id: 'GRACE:ABPerson',
+        uniqueId: 'GRACE:ABPerson',
         birthdayYear: 1906,
         phones: 1,
         groups: 1,
         alternate: 'chinese',
       },
       {
-        id: 'ME:ABPerson',
+        uniqueId: 'ME:ABPerson',
         birthdayYear: null,
         phones: 0,
         groups: 0,
@@ -1767,23 +1989,27 @@ test('Contacts reads as documented views whose joins keep one row per contact', 
   assert.deepEqual(
     contacts
       .read(
-        `SELECT s."parentGroupId", s."childGroupId", child.kind
-        FROM group_subgroups s JOIN "groups" child ON child.id = s."childGroupId"`,
+        `SELECT parent."uniqueId" AS parent, child."uniqueId" AS child, child.kind
+        FROM group_subgroups s
+        JOIN "groups" parent ON parent.store = s.store AND parent.id = s."parentGroupId"
+        JOIN "groups" child ON child.store = s.store AND child.id = s."childGroupId"`,
       )
       .map((found) => ({ ...found })),
     [
       {
-        parentGroupId: 'FRIENDS:ABGroup',
-        childGroupId: 'SMART:ABGroup',
+        parent: 'FRIENDS:ABGroup',
+        child: 'SMART:ABGroup',
         kind: 'smartGroup',
       },
     ],
   );
   const images = contacts.read(
-    `SELECT "contactId", kind, storage, "attachmentRef" FROM images ORDER BY "contactId"`,
+    `SELECT c."uniqueId", i.kind, i.storage, i."attachmentRef"
+    FROM images i JOIN contacts c ON c.store = i.store AND c.id = i."contactId"
+    ORDER BY c."uniqueId"`,
   );
   assert.deepEqual(
-    images.map(({ contactId, kind, storage }) => [contactId, kind, storage]),
+    images.map(({ uniqueId, kind, storage }) => [uniqueId, kind, storage]),
     [
       ['BOB:ABPerson', 'thumbnail', 'external'],
       ['GRACE:ABPerson', 'thumbnail', 'inline'],
@@ -1934,8 +2160,8 @@ test('Contacts writes each phone number in E.164, reading one without a country 
     await contacts.load();
     return Object.fromEntries(
       contacts
-        .read('SELECT id, e164 FROM phone_numbers')
-        .map(({ id, e164 }) => [id, e164]),
+        .read('SELECT "uniqueId", e164 FROM phone_numbers')
+        .map(({ uniqueId, e164 }) => [uniqueId, e164]),
     );
   };
 

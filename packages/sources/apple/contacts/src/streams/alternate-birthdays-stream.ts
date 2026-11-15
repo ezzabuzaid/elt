@@ -11,14 +11,21 @@ import {
   attributeRecord,
   explained,
   localStores,
+  storeField,
 } from '../contacts-fields.ts';
 import type { ContactSelection } from '../contacts-scan.ts';
 
 const properties = explained(
-  { contactId: eventKitFields.id, ...attributeFields(dateComponentsView) },
   {
+    store: storeField,
+    id: eventKitFields.integer,
+    contactId: eventKitFields.integer,
+    ...attributeFields(dateComponentsView),
+  },
+  {
+    id: "The date-components record's row in its store, AddressBook ZABCDDATECOMPONENTS.Z_PK; with store, the primary key.",
     contactId:
-      'Owning contact identifier (ZABCDRECORD.ZUNIQUEID of ZABCDDATECOMPONENTS.ZCONTACT); the primary key. Refers to contacts.id within this source.',
+      'Owning contact: ZABCDDATECOMPONENTS.ZCONTACT, the Z_PK of that record. Refers to contacts.id in the same store.',
     uniqueId:
       'Native identifier of this date-components record, AddressBook ZABCDDATECOMPONENTS.ZUNIQUEID, as stored; no other stream refers to it.',
     calendarIdentifier:
@@ -34,10 +41,10 @@ const properties = explained(
 // The non-Gregorian birthday (CNContact.nonGregorianBirthday).
 export class AlternateBirthdaysStream extends AppleContactsStream<ContactPartRow> {
   readonly name = 'alternateBirthdays';
-  readonly primaryKey = ['contactId'];
+  readonly primaryKey = ['store', 'id'];
   readonly jsonSchema = {
     type: 'object',
-    description: `One row per contact with a non-Gregorian birthday (CNContact.nonGregorianBirthday, which a live store saves here), as date components in the AddressBook table ZABCDDATECOMPONENTS. Primary key contactId, which refers to contacts.id; one record per contact is assumed, since the store does not enforce it. Components stay in the calendar named by calendarIdentifier and are not converted, so they do not compare with the contact's Gregorian birthdayYear, birthdayMonth and birthdayDay. ${localStores}`,
+    description: `One row per non-Gregorian birthday of a contact (CNContact.nonGregorianBirthday, which a live store saves here), as date components in the AddressBook table ZABCDDATECOMPONENTS. Primary key (store, id); contactId refers to contacts.id in the same store. The store does not stop a contact having two such records, and each loads. Components stay in the calendar named by calendarIdentifier and are not converted, so they do not compare with the contact's Gregorian birthdayYear, birthdayMonth and birthdayDay. ${localStores}`,
     properties,
     required: Object.keys(properties),
   } as const;
@@ -53,6 +60,7 @@ export class AlternateBirthdaysStream extends AppleContactsStream<ContactPartRow
   protected records(row: ContactPartRow): Record<string, unknown>[] {
     return [
       {
+        id: row.id,
         contactId: row.contactId,
         ...attributeRecord(dateComponentsView, row.values),
       },

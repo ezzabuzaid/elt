@@ -17,8 +17,10 @@ export type ContactsReader = {
 
 // A Contacts stream: its description, and how its records come out of every
 // account store. Reading is the same for every stream: each store's rows the
-// container selection keeps, each projected into records whose fields follow
-// the schema's order, then validated, so streams supply only those steps.
+// container selection keeps, each projected into records that name their
+// store and whose fields follow the schema's order, then validated, so
+// streams supply only those steps. A row's key is an identity its store
+// enforces, a Z_PK or a join table's primary key, with the store.
 export abstract class AppleContactsStream<Row> {
   abstract readonly name: string;
   abstract readonly jsonSchema: {
@@ -48,11 +50,15 @@ export abstract class AppleContactsStream<Row> {
       const selection = scan.selection(store);
       for (const row of this.rows(store)) {
         if (selection !== null && !this.accepts(row, selection)) continue;
-        const records = (await this.records(row, store, scan)).map((values) =>
-          Object.fromEntries(
-            fields.map((field) => [field, values[field] ?? null]),
-          ),
-        );
+        const records = (await this.records(row, store, scan)).map((values) => {
+          const record: Record<string, unknown> = {
+            ...values,
+            store: store.identifier,
+          };
+          return Object.fromEntries(
+            fields.map((field) => [field, record[field] ?? null]),
+          );
+        });
         yield* validateRecords(this, records, 'Contacts');
       }
     }

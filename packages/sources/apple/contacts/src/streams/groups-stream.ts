@@ -14,6 +14,7 @@ import {
   entityKind,
   explained,
   localStores,
+  storeField,
 } from '../contacts-fields.ts';
 import type { ContactSelection } from '../contacts-scan.ts';
 
@@ -27,24 +28,28 @@ const naming = { renames: { container: 'containerId' } };
 
 const properties = explained(
   {
-    id: eventKitFields.id,
+    store: storeField,
+    id: eventKitFields.integer,
+    uniqueId: eventKitFields.nullableText,
     kind: entityKind(kinds),
     ...attributeFields(groupView, naming),
     ...attributeFields(recordView),
   },
   {
-    id: 'Group identifier, AddressBook ZABCDRECORD.ZUNIQUEID; the primary key. groupMembers.groupId, groupSubgroups.parentGroupId, groupSubgroups.childGroupId and distributionListConfigs.groupId refer to it.',
+    id: "The group's row in its store, AddressBook ZABCDRECORD.Z_PK; with store, the primary key. groupMembers.groupId, groupSubgroups.parentGroupId, groupSubgroups.childGroupId and distributionListConfigs.groupId refer to it within the same store.",
+    uniqueId:
+      'Group identifier, AddressBook ZABCDRECORD.ZUNIQUEID: the Contacts.framework identifier (CNGroup.identifier, …:ABGroup). The store indexes it but does not enforce it unique.',
     containerId:
-      "Owning container: AddressBook ZABCDRECORD.ZCONTAINER resolved to that record's ZUNIQUEID. Join to containers.id within this source. NULL when unset or no record matches.",
+      'Owning container: AddressBook ZABCDRECORD.ZCONTAINER, the Z_PK of that record. Join to containers.id in the same store. NULL when unset or no record matches.',
   },
 );
 
 export class GroupsStream extends AppleContactsStream<RecordRow<GroupEntity>> {
   readonly name = 'groups';
-  readonly primaryKey = ['id'];
+  readonly primaryKey = ['store', 'id'];
   readonly jsonSchema = {
     type: 'object',
-    description: `One row per group record: an ABCDGroup, ABCDSubscribedGroup or ABCDSmartGroup, told apart by kind. Primary key id; containerId refers to containers.id. Stored members are in groupMembers, stored nesting in groupSubgroups and per-member address choices in distributionListConfigs. ${localStores}`,
+    description: `One row per group record: an ABCDGroup, ABCDSubscribedGroup or ABCDSmartGroup, told apart by kind. Primary key (store, id); containerId refers to containers.id in the same store. Stored members are in groupMembers, stored nesting in groupSubgroups and per-member address choices in distributionListConfigs. ${localStores}`,
     properties,
     required: Object.keys(properties),
   } as const;
@@ -64,6 +69,7 @@ export class GroupsStream extends AppleContactsStream<RecordRow<GroupEntity>> {
     return [
       {
         id: row.id,
+        uniqueId: row.uniqueId,
         kind: row.entity === null ? null : kinds[row.entity],
         ...attributeRecord(groupView, row.values, naming),
         ...attributeRecord(recordView, row.values),

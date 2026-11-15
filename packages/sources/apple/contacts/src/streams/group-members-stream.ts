@@ -5,28 +5,29 @@ import type {
 import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 import { AppleContactsStream } from '../apple-contacts-stream.ts';
-import { explained, localStores } from '../contacts-fields.ts';
+import { explained, localStores, storeField } from '../contacts-fields.ts';
 import type { ContactSelection } from '../contacts-scan.ts';
 
 const properties = explained(
   {
-    groupId: eventKitFields.id,
-    contactId: eventKitFields.id,
+    store: storeField,
+    groupId: eventKitFields.integer,
+    contactId: eventKitFields.integer,
   },
   {
     groupId:
-      'Group identifier (ZABCDRECORD.ZUNIQUEID of Z_22PARENTGROUPS.Z_19PARENTGROUPS1); refers to groups.id within this source.',
+      'Group: Z_22PARENTGROUPS.Z_19PARENTGROUPS1, the Z_PK of that record; refers to groups.id in the same store.',
     contactId:
-      'Member contact identifier (ZABCDRECORD.ZUNIQUEID of Z_22PARENTGROUPS.Z_22CONTACTS); refers to contacts.id within this source. A contact can belong to many groups.',
+      'Member contact: Z_22PARENTGROUPS.Z_22CONTACTS, the Z_PK of that record; refers to contacts.id in the same store. A contact can belong to many groups.',
   },
 );
 
 export class GroupMembersStream extends AppleContactsStream<GroupMemberRow> {
   readonly name = 'groupMembers';
-  readonly primaryKey = ['groupId', 'contactId'];
+  readonly primaryKey = ['store', 'groupId', 'contactId'];
   readonly jsonSchema = {
     type: 'object',
-    description: `One row per group membership stored in the AddressBook table Z_22PARENTGROUPS. Primary key (groupId, contactId). Only stored memberships appear; the connector does not evaluate smart group criteria. ${localStores}`,
+    description: `One row per group membership stored in the AddressBook table Z_22PARENTGROUPS. Primary key (store, groupId, contactId): the table's own PRIMARY KEY, within its store. Only stored memberships appear; the connector does not evaluate smart group criteria. ${localStores}`,
     properties,
     required: Object.keys(properties),
   } as const;

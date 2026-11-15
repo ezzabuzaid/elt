@@ -12,11 +12,12 @@ import {
   attributeFields,
   attributeRecord,
   explained,
+  storeField,
 } from './contacts-fields.ts';
 import type { ContactSelection, ContactsScan } from './contacts-scan.ts';
 
 export const labeledValue =
-  "Primary key id; contactId refers to contacts.id, and a contact can have several. label is the stored, unlocalized label. isPrimary, isPrivate and orderingIndex pass through as stored; whether orderingIndex orders a contact's values densely or uniquely is not verified.";
+  "Primary key (store, id); contactId refers to contacts.id in the same store, and a contact can have several. label is the stored, unlocalized label. isPrimary, isPrivate and orderingIndex pass through as stored; whether orderingIndex orders a contact's values densely or uniquely is not verified.";
 
 // A labeled value's owner is the contact it belongs to.
 const labeled = (naming: Naming): Naming => ({
@@ -24,18 +25,24 @@ const labeled = (naming: Naming): Naming => ({
   renames: { owner: 'contactId' },
 });
 
-// A contact's labeled value (CNLabeledValue) as fields: its own identifier,
-// the owning contact, a raw label such as _$!<Mobile>!$_ or a custom one, its
-// order, then the table's own values.
+// A contact's labeled value (CNLabeledValue) as fields: its store, its row,
+// its native identifier, the owning contact, a raw label such as
+// _$!<Mobile>!$_ or a custom one, its order, then the table's own values.
 export function labeledFields(
   view: ContactsView,
   naming: Naming = {},
 ): Record<string, FieldSchema> {
   return explained(
-    { id: eventKitFields.id, ...attributeFields(view, labeled(naming)) },
     {
-      id: `Identifier of this labeled value, AddressBook ${view.table}.ZUNIQUEID; the primary key.`,
-      contactId: `Owning contact: ${view.table}.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id within this source; a contact can have many of these values. NULL when unset or no record matches.`,
+      store: storeField,
+      id: eventKitFields.integer,
+      uniqueId: eventKitFields.nullableText,
+      ...attributeFields(view, labeled(naming)),
+    },
+    {
+      id: `This labeled value's row in its store, AddressBook ${view.table}.Z_PK; with store, the primary key.`,
+      uniqueId: `Native identifier of this labeled value, AddressBook ${view.table}.ZUNIQUEID, as stored; the store indexes it but does not enforce it unique.`,
+      contactId: `Owning contact: ${view.table}.ZOWNER, the Z_PK of that record. Join to contacts.id in the same store; a contact can have many of these values. NULL when unset or no record matches.`,
       label: `Label from AddressBook ${view.table}.ZLABEL, as stored and not localized: a built-in label is a token such as _$!<Mobile>!$_, a custom label is its own text. NULL when the store holds no value; it can also be empty text.`,
     },
   );
@@ -46,7 +53,7 @@ export function labeledFields(
 export abstract class LabeledValueStream<
   Row extends ValueRow = ValueRow,
 > extends AppleContactsStream<Row> {
-  readonly primaryKey = ['id'];
+  readonly primaryKey = ['store', 'id'];
   protected abstract readonly view: ContactsView;
   protected readonly naming: Naming = {};
 
@@ -62,6 +69,7 @@ export abstract class LabeledValueStream<
     return [
       {
         id: row.id,
+        uniqueId: row.uniqueId,
         ...attributeRecord(this.view, row.values, labeled(this.naming)),
       },
     ];

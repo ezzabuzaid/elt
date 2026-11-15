@@ -11,14 +11,14 @@ import type {
 import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 import { AppleContactsStream } from '../apple-contacts-stream.ts';
-import { localStores } from '../contacts-fields.ts';
+import { localStores, storeField } from '../contacts-fields.ts';
 import {
   type ContactSelection,
   type ContactsScan,
   imageKey,
 } from '../contacts-scan.ts';
 
-const { id, text, nullableText } = eventKitFields;
+const { integer, text, nullableText } = eventKitFields;
 
 async function sha256(data: StoredData): Promise<string> {
   const hash = createHash('sha256');
@@ -29,16 +29,17 @@ async function sha256(data: StoredData): Promise<string> {
 }
 
 const properties = {
+  store: storeField,
   contactId: {
-    ...id,
+    ...integer,
     description:
-      'Contact identifier, AddressBook ZABCDRECORD.ZUNIQUEID; refers to contacts.id within this source. Part of the primary key with kind.',
+      "The contact's row in its store, AddressBook ZABCDRECORD.Z_PK; refers to contacts.id in the same store. Part of the primary key with store and kind.",
   },
   kind: {
     ...text,
     enum: ['image', 'thumbnail'],
     description:
-      'Which stored image this row is: image for ZABCDRECORD.ZIMAGEDATA, thumbnail for ZABCDRECORD.ZTHUMBNAILIMAGEDATA. Part of the primary key with contactId.',
+      'Which stored image this row is: image for ZABCDRECORD.ZIMAGEDATA, thumbnail for ZABCDRECORD.ZTHUMBNAILIMAGEDATA. Part of the primary key with store and contactId.',
   },
   storage: {
     ...text,
@@ -67,11 +68,11 @@ const properties = {
 // A contact's photo and thumbnail, each inline or in _EXTERNAL_DATA.
 export class ImagesStream extends AppleContactsStream<ContactImagesRow> {
   readonly name = 'images';
-  readonly primaryKey = ['contactId', 'kind'];
+  readonly primaryKey = ['store', 'contactId', 'kind'];
   readonly supportsFileTransfer = true;
   readonly jsonSchema = {
     type: 'object',
-    description: `One row per stored contact image, from AddressBook ZABCDRECORD.ZIMAGEDATA (kind image) and ZTHUMBNAILIMAGEDATA (kind thumbnail): at most two rows per contact. Primary key (contactId, kind); contactId refers to contacts.id. byteLength and sha256 are computed from the bytes when extracted; a stored external file that cannot be read fails the extraction instead of producing a row. ${localStores}`,
+    description: `One row per stored contact image, from AddressBook ZABCDRECORD.ZIMAGEDATA (kind image) and ZTHUMBNAILIMAGEDATA (kind thumbnail): at most two rows per contact. Primary key (store, contactId, kind); contactId refers to contacts.id in the same store. byteLength and sha256 are computed from the bytes when extracted; a stored external file that cannot be read fails the extraction instead of producing a row. ${localStores}`,
     properties,
     required: Object.keys(properties),
   } as const;
@@ -92,7 +93,7 @@ export class ImagesStream extends AppleContactsStream<ContactImagesRow> {
   // previous row's data is no longer needed.
   protected async records(
     row: ContactImagesRow,
-    _store: AddressBookStore,
+    store: AddressBookStore,
     scan: ContactsScan,
   ): Promise<Record<string, unknown>[]> {
     scan.images.clear();
@@ -100,7 +101,7 @@ export class ImagesStream extends AppleContactsStream<ContactImagesRow> {
     for (const kind of ['image', 'thumbnail'] as const) {
       const data = row[kind]();
       if (data === null) continue;
-      scan.images.set(imageKey(row.contactId, kind), data);
+      scan.images.set(imageKey(store.identifier, row.contactId, kind), data);
       records.push({
         contactId: row.contactId,
         kind,

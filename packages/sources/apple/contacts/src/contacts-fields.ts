@@ -18,8 +18,7 @@ const nullableBoolean = { type: ['boolean', 'null'] } as const;
 type ValueKind = Exclude<ContactsAttributeKind, 'calendarDate'>;
 
 // Data loads as JSON when it is a property list and as base64 otherwise; a
-// record reference loads as that record's uniqueId, the CNContact, CNGroup or
-// CNContainer identifier.
+// record reference loads as that record's id, its Z_PK in the same store.
 const schemas = {
   text: nullableText,
   integer: nullableInteger,
@@ -27,7 +26,7 @@ const schemas = {
   number: nullableNumber,
   time: nullableTimestamp,
   data: nullableText,
-  record: nullableText,
+  record: nullableInteger,
 } as const satisfies Record<ValueKind, FieldSchema>;
 
 // How each kind's value reaches the record, as encode() writes it.
@@ -38,8 +37,17 @@ const conversions = {
   boolean: 'with 0 read as false and any other stored value as true',
   time: 'Core Data seconds since 2001-01-01 converted to a UTC instant with millisecond precision',
   data: 'a binary property list as JSON (keyed archives unarchived, nested bytes as Base64), other bytes as Base64',
-  record: "a ZABCDRECORD reference resolved to that record's ZUNIQUEID",
+  record:
+    'a ZABCDRECORD reference as that Z_PK, the id of the record in this store',
 } as const satisfies Record<ValueKind, string>;
+
+// Every stream's rows are keyed within their store, which this field names.
+export const storeField = {
+  ...text,
+  minLength: 1,
+  description:
+    "Identifier of the Contacts store the row was read from, Core Data's Z_METADATA.Z_UUID; part of the primary key. A Z_PK is unique only within one store, so a row's id, and each reference to another row, is read within its store: join on store and id.",
+} as const satisfies FieldSchema;
 
 export const unverified =
   'Meaning not verified: Apple does not document this store.';

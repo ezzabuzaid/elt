@@ -14,6 +14,7 @@ import {
   entityKind,
   explained,
   localStores,
+  storeField,
 } from '../contacts-fields.ts';
 import type { ContactSelection } from '../contacts-scan.ts';
 
@@ -32,17 +33,21 @@ const naming = {
 
 const properties = explained(
   {
-    id: eventKitFields.id,
+    store: storeField,
+    id: eventKitFields.integer,
+    uniqueId: eventKitFields.nullableText,
     kind: entityKind(kinds),
     ...attributeFields(contactView, naming),
     ...attributeFields(recordView),
   },
   {
-    id: 'Contact identifier, AddressBook ZABCDRECORD.ZUNIQUEID; the primary key. contactId fields in other streams of this source refer to it.',
+    id: "The contact's row in its store, AddressBook ZABCDRECORD.Z_PK; with store, the primary key. contactId fields in other streams of this source refer to it within the same store.",
+    uniqueId:
+      'Contact identifier, AddressBook ZABCDRECORD.ZUNIQUEID: the Contacts.framework identifier (CNContact.identifier, …:ABPerson), which other apps such as WhatsApp keep. The store indexes it but does not enforce it unique.',
     containerId:
-      "Owning container: AddressBook ZABCDRECORD.ZCONTAINER1 resolved to that record's ZUNIQUEID. Join to containers.id within this source. NULL when unset or no record matches.",
+      'Owning container: AddressBook ZABCDRECORD.ZCONTAINER1, the Z_PK of that record. Join to containers.id in the same store. NULL when unset or no record matches.',
     meOfContainerId:
-      "AddressBook ZABCDRECORD.ZCONTAINERWHERECONTACTISME resolved to that record's ZUNIQUEID. Join to containers.id within this source. NULL when unset or no record matches.",
+      'AddressBook ZABCDRECORD.ZCONTAINERWHERECONTACTISME, the Z_PK of that record. Join to containers.id in the same store. NULL when unset or no record matches.',
   },
 );
 
@@ -50,10 +55,10 @@ export class ContactsStream extends AppleContactsStream<
   RecordRow<ContactEntity>
 > {
   readonly name = 'contacts';
-  readonly primaryKey = ['id'];
+  readonly primaryKey = ['store', 'id'];
   readonly jsonSchema = {
     type: 'object',
-    description: `One row per contact record: an ABCDContact or ABCDSubscribedContact, told apart by kind. Primary key id; containerId refers to containers.id. Multi-valued details are separate streams keyed by their own id with contactId: phoneNumbers, emailAddresses, postalAddresses, urlAddresses, socialProfiles, messagingAddresses, relatedNames, contactDates, calendarUris, addressingGrammars and likenesses; alertTones, notes, alternateBirthdays and images also carry contactId, and groupMembers lists stored group membership. The same person in two stores is two rows; this source does not merge them. ${localStores}`,
+    description: `One row per contact record: an ABCDContact or ABCDSubscribedContact, told apart by kind. Primary key (store, id); containerId refers to containers.id in the same store. Multi-valued details are separate streams keyed by their own (store, id) with contactId: phoneNumbers, emailAddresses, postalAddresses, urlAddresses, socialProfiles, messagingAddresses, relatedNames, contactDates, calendarUris, addressingGrammars and likenesses; alertTones, notes, alternateBirthdays and images also carry contactId, and groupMembers lists stored group membership. The same person in two stores is two rows; this source does not merge them. ${localStores}`,
     properties,
     required: Object.keys(properties),
   } as const;
@@ -73,6 +78,7 @@ export class ContactsStream extends AppleContactsStream<
     return [
       {
         id: row.id,
+        uniqueId: row.uniqueId,
         kind: row.entity === null ? null : kinds[row.entity],
         ...attributeRecord(contactView, row.values, naming),
         ...attributeRecord(recordView, row.values),

@@ -5,20 +5,26 @@ import type {
 import { eventKitFields } from '@eltjs/source-apple-macos/eventkit-fields';
 
 import { AppleContactsStream } from '../apple-contacts-stream.ts';
-import { encode, explained, localStores } from '../contacts-fields.ts';
+import {
+  encode,
+  explained,
+  localStores,
+  storeField,
+} from '../contacts-fields.ts';
 import type { ContactSelection } from '../contacts-scan.ts';
 
 const properties = explained(
   {
+    store: storeField,
     id: eventKitFields.integer,
-    recordId: eventKitFields.id,
+    recordId: eventKitFields.integer,
     propertyName: eventKitFields.text,
     originalLine: eventKitFields.text,
   },
   {
-    id: "The line's row number in its store (ZABCDUNKNOWNPROPERTY.Z_PK); with recordId, the primary key. It is unique only within one store, and recordId names the store.",
+    id: "The line's row in its store, AddressBook ZABCDUNKNOWNPROPERTY.Z_PK; with store, the primary key.",
     recordId:
-      'Owning record identifier (ZABCDRECORD.ZUNIQUEID of ZABCDUNKNOWNPROPERTY.ZOWNER); with id, the primary key. Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export.',
+      'Owning record: ZABCDUNKNOWNPROPERTY.ZOWNER, the Z_PK of that record. Join to contacts.id, groups.id or containers.id in the same store; it can name a record kind this source does not export.',
     propertyName:
       'vCard property name as stored in AddressBook ZABCDUNKNOWNPROPERTY.ZPROPERTYNAME.',
     originalLine:
@@ -29,10 +35,10 @@ const properties = explained(
 // vCard lines Contacts kept without understanding them, one record per row.
 export class UnknownPropertiesStream extends AppleContactsStream<UnknownPropertyRow> {
   readonly name = 'unknownProperties';
-  readonly primaryKey = ['recordId', 'id'];
+  readonly primaryKey = ['store', 'id'];
   readonly jsonSchema = {
     type: 'object',
-    description: `One row per row of the AddressBook table ZABCDUNKNOWNPROPERTY: a vCard line that Contacts kept without interpreting it. The primary key is (recordId, id): id is the row's Z_PK, unique within its store, and recordId names the store. The same line stored twice on one record is two rows. recordId refers to contacts.id, groups.id or containers.id within this source, or to a record kind this source does not export. ${localStores}`,
+    description: `One row per row of the AddressBook table ZABCDUNKNOWNPROPERTY: a vCard line that Contacts kept without interpreting it. Primary key (store, id). The same line stored twice on one record is two rows. recordId refers to contacts.id, groups.id or containers.id in the same store, or to a record kind this source does not export. ${localStores}`,
     properties,
     required: Object.keys(properties),
   } as const;

@@ -57,8 +57,8 @@ const datePart = (column: string, format: string) =>
   `CAST(strftime('${format}', ${column} + ${referenceDateSeconds}, 'unixepoch') AS INTEGER)`;
 
 // A view's attributes as a SELECT list under its alias: a record reference
-// resolves to that record's ZUNIQUEID, and a calendar date splits into its
-// Gregorian parts, the year NULL for 1604.
+// is that record's Z_PK, NULL when no record has it, and a calendar date
+// splits into its Gregorian parts, the year NULL for 1604.
 const select = ({ attributes }: ContactsView, alias: string): string =>
   Object.entries(attributes)
     .flatMap(([name, { column, kind }]) => {
@@ -66,7 +66,7 @@ const select = ({ attributes }: ContactsView, alias: string): string =>
       if (kind === 'time') return [`${instant(value)} AS "${name}"`];
       if (kind === 'record')
         return [
-          `(SELECT o.ZUNIQUEID FROM ZABCDRECORD o WHERE o.Z_PK = ${value}) AS "${name}"`,
+          `(SELECT o.Z_PK FROM ZABCDRECORD o WHERE o.Z_PK = ${value}) AS "${name}"`,
         ];
       if (kind === 'calendarDate')
         return [
@@ -80,6 +80,9 @@ const select = ({ attributes }: ContactsView, alias: string): string =>
 
 const part = (stored: SQLOutputValue | undefined) =>
   typeof stored === 'number' ? stored : null;
+
+// A Z_PK: SQLite enforces it as the table's INTEGER PRIMARY KEY.
+const rowId = (stored: SQLOutputValue | undefined) => Number(stored);
 
 const text = (stored: SQLOutputValue | undefined) =>
   typeof stored === 'string' ? stored : null;
@@ -112,24 +115,31 @@ const entityOf = <Entity extends string>(
   stored: SQLOutputValue | undefined,
 ): Entity | null => entities.find((entity) => entity === stored) ?? null;
 
-// A contact, group or container: its identifier, Core Data entity, and its
-// own and ABCDRecord attributes.
+// Rows are identified by their Z_PK, which is unique within one store, and
+// refer to other rows of their store by Z_PK. ZUNIQUEID has only a plain
+// index, so it is a value like any other.
+
+// A contact, group or container: its Z_PK and ZUNIQUEID, Core Data entity,
+// and its own and ABCDRecord attributes.
 export type RecordRow<Entity> = {
-  readonly id: string | null;
+  readonly id: number;
+  readonly uniqueId: string | null;
   readonly entity: Entity | null;
   readonly values: ContactsValues;
 };
 
-// A record that belongs to a contact and has no identifier of its own.
+// A record that belongs to a contact: a note or an alternate birthday.
 export type ContactPartRow = {
-  readonly contactId: string | null;
+  readonly id: number;
+  readonly contactId: number | null;
   readonly values: ContactsValues;
 };
 
-// A value record with its own identifier: a labeled value, an alert tone, a
-// custom property value or a remote location.
+// A value record with a ZUNIQUEID: a labeled value, an alert tone, a custom
+// property value or a remote location.
 export type ValueRow = {
-  readonly id: string | null;
+  readonly id: number;
+  readonly uniqueId: string | null;
   readonly values: ContactsValues;
 };
 
@@ -138,39 +148,40 @@ export type MessagingAddressRow = ValueRow & {
   readonly service: string | null;
 };
 
+// A row of a Core Data join table, whose two Z_PKs are its PRIMARY KEY.
 export type GroupMemberRow = {
-  readonly groupId: string | null;
-  readonly contactId: string | null;
+  readonly groupId: number;
+  readonly contactId: number;
 };
 
 export type GroupSubgroupRow = {
-  readonly parentGroupId: string | null;
-  readonly childGroupId: string | null;
+  readonly parentGroupId: number;
+  readonly childGroupId: number;
 };
 
 // A vCard line Contacts kept without interpreting it; the store keeps the
 // line as bytes.
 export type UnknownPropertyRow = {
-  // The row's Z_PK, unique within its store.
   readonly id: number;
-  readonly recordId: string | null;
+  readonly recordId: number;
   readonly propertyName: ContactsValue;
   readonly originalLine: ContactsValue;
 };
 
 // Which of a member's addresses a distribution list (group) uses for it.
 export type DistributionListConfigRow = {
-  readonly groupId: string | null;
-  readonly contactId: string | null;
+  readonly id: number;
+  readonly groupId: number;
+  readonly contactId: number;
   readonly propertyName: ContactsValue;
-  readonly emailId: string | null;
-  readonly phoneId: string | null;
-  readonly addressId: string | null;
+  readonly emailId: number | null;
+  readonly phoneId: number | null;
+  readonly addressId: number | null;
 };
 
 // A contact's photo and thumbnail, decoded only when asked.
 export type ContactImagesRow = {
-  readonly contactId: string | null;
+  readonly contactId: number;
   image(): StoredData | null;
   thumbnail(): StoredData | null;
 };
@@ -182,31 +193,51 @@ export class AddressBookStore implements Disposable {
   readonly source: string | null;
   readonly directory: string;
   readonly path: string;
+  // Core Data's identifier of the store (Z_METADATA.Z_UUID), which names
+  // the store whose Z_PKs a row's id and references are, as the store UUID
+  // does in a Core Data object ID URI (x-coredata://<UUID>/<entity>/p<Z_PK>).
+  readonly identifier: string;
   readonly #database: Snapshot;
 
-  constructor(source: string | null, directory: string) {
+  private constructor(
+    source: string | null,
+    directory: string,
+    database: Snapshot,
+    identifier: string,
+  ) {
     this.source = source;
     this.directory = directory;
     this.path = join(directory, storeFile);
-    this.#database = appDatabase.snapshot(this.path);
+    this.#database = database;
+    this.identifier = identifier;
   }
 
-  // Refuses a store without a column or entity a reader needs, and closes
-  // it: a renamed entity would match no rows, and an account read as empty
-  // loses its contacts from every target.
-  requireLayout(): void {
-    this.#database.requireColumns(requiredColumns);
-    const entities = new Set(
-      this.#database
-        .all('SELECT Z_NAME FROM Z_PRIMARYKEY')
-        .map((entity) => entity.Z_NAME),
-    );
-    const missing = requiredEntities
-      .filter((entity) => !entities.has(entity))
-      .map((entity) => `entity ${entity}`);
-    if (missing.length === 0) return;
-    this[Symbol.dispose]();
-    throw new ContactsSchemaError(this.path, missing);
+  // Refuses a store without a column, entity or identifier a reader needs,
+  // and closes it: a renamed entity would match no rows, and an account read
+  // as empty loses its contacts from every target.
+  static open(source: string | null, directory: string): AddressBookStore {
+    const path = join(directory, storeFile);
+    const database = appDatabase.snapshot(path);
+    try {
+      database.requireColumns(requiredColumns);
+      const entities = new Set(
+        database
+          .all('SELECT Z_NAME FROM Z_PRIMARYKEY')
+          .map((entity) => entity.Z_NAME),
+      );
+      const missing = requiredEntities
+        .filter((entity) => !entities.has(entity))
+        .map((entity) => `entity ${entity}`);
+      if (missing.length > 0) throw new ContactsSchemaError(path, missing);
+      const [metadata] = database.all('SELECT Z_UUID FROM Z_METADATA');
+      const identifier = metadata?.Z_UUID;
+      if (typeof identifier !== 'string')
+        throw new ContactsSchemaError(path, ['Z_METADATA.Z_UUID']);
+      return new AddressBookStore(source, directory, database, identifier);
+    } catch (cause) {
+      database[Symbol.dispose]();
+      throw cause;
+    }
   }
 
   containers(): IteratorObject<RecordRow<ContainerEntity>, undefined> {
@@ -224,22 +255,22 @@ export class AddressBookStore implements Disposable {
   groupMembers(): IteratorObject<GroupMemberRow, undefined> {
     return this.#database
       .iterate(
-        'SELECT g.ZUNIQUEID AS "@groupId", c.ZUNIQUEID AS "@contactId" FROM Z_22PARENTGROUPS j JOIN ZABCDRECORD g ON g.Z_PK = j.Z_19PARENTGROUPS1 JOIN ZABCDRECORD c ON c.Z_PK = j.Z_22CONTACTS',
+        'SELECT g.Z_PK AS "@groupId", c.Z_PK AS "@contactId" FROM Z_22PARENTGROUPS j JOIN ZABCDRECORD g ON g.Z_PK = j.Z_19PARENTGROUPS1 JOIN ZABCDRECORD c ON c.Z_PK = j.Z_22CONTACTS',
       )
       .map((row) => ({
-        groupId: text(row['@groupId']),
-        contactId: text(row['@contactId']),
+        groupId: rowId(row['@groupId']),
+        contactId: rowId(row['@contactId']),
       }));
   }
 
   groupSubgroups(): IteratorObject<GroupSubgroupRow, undefined> {
     return this.#database
       .iterate(
-        'SELECT p.ZUNIQUEID AS "@parentGroupId", g.ZUNIQUEID AS "@childGroupId" FROM Z_18PARENTGROUPS j JOIN ZABCDRECORD p ON p.Z_PK = j.Z_19PARENTGROUPS JOIN ZABCDRECORD g ON g.Z_PK = j.Z_18CHILDGROUPS',
+        'SELECT p.Z_PK AS "@parentGroupId", g.Z_PK AS "@childGroupId" FROM Z_18PARENTGROUPS j JOIN ZABCDRECORD p ON p.Z_PK = j.Z_19PARENTGROUPS JOIN ZABCDRECORD g ON g.Z_PK = j.Z_18CHILDGROUPS',
       )
       .map((row) => ({
-        parentGroupId: text(row['@parentGroupId']),
-        childGroupId: text(row['@childGroupId']),
+        parentGroupId: rowId(row['@parentGroupId']),
+        childGroupId: rowId(row['@childGroupId']),
       }));
   }
 
@@ -274,10 +305,11 @@ export class AddressBookStore implements Disposable {
   messagingAddresses(): IteratorObject<MessagingAddressRow, undefined> {
     return this.#database
       .iterate(
-        `SELECT m.ZUNIQUEID AS "@id", ${select(messagingAddressView, 'm')}, (SELECT s.ZSERVICENAME FROM ZABCDSERVICE s WHERE s.Z_PK = m.ZSERVICE) AS "@service" FROM ZABCDMESSAGINGADDRESS m`,
+        `SELECT m.Z_PK AS "@id", m.ZUNIQUEID AS "@uniqueId", ${select(messagingAddressView, 'm')}, (SELECT s.ZSERVICENAME FROM ZABCDSERVICE s WHERE s.Z_PK = m.ZSERVICE) AS "@service" FROM ZABCDMESSAGINGADDRESS m`,
       )
       .map((row) => ({
-        id: text(row['@id']),
+        id: rowId(row['@id']),
+        uniqueId: text(row['@uniqueId']),
         values: values(messagingAddressView, row),
         service: text(row['@service']),
       }));
@@ -311,10 +343,11 @@ export class AddressBookStore implements Disposable {
   customPropertyValues(): IteratorObject<ValueRow, undefined> {
     return this.#database
       .iterate(
-        `SELECT v.ZUNIQUEID AS "@id", ${select(customPropertyView, 'p')}, ${select(customPropertyValueView, 'v')} FROM ZABCDCUSTOMPROPERTYVALUE v LEFT JOIN ZABCDCUSTOMPROPERTY p ON p.Z_PK = v.ZCUSTOMPROPERTY`,
+        `SELECT v.Z_PK AS "@id", v.ZUNIQUEID AS "@uniqueId", ${select(customPropertyView, 'p')}, ${select(customPropertyValueView, 'v')} FROM ZABCDCUSTOMPROPERTYVALUE v LEFT JOIN ZABCDCUSTOMPROPERTY p ON p.Z_PK = v.ZCUSTOMPROPERTY`,
       )
       .map((row) => ({
-        id: text(row['@id']),
+        id: rowId(row['@id']),
+        uniqueId: text(row['@uniqueId']),
         values: {
           ...values(customPropertyView, row),
           ...values(customPropertyValueView, row),
@@ -329,11 +362,11 @@ export class AddressBookStore implements Disposable {
   unknownProperties(): IteratorObject<UnknownPropertyRow, undefined> {
     return this.#database
       .iterate(
-        'SELECT u.Z_PK AS "@id", r.ZUNIQUEID AS "@recordId", u.ZPROPERTYNAME AS "@propertyName", u.ZORIGINALLINE AS "@originalLine" FROM ZABCDUNKNOWNPROPERTY u JOIN ZABCDRECORD r ON r.Z_PK = u.ZOWNER',
+        'SELECT u.Z_PK AS "@id", r.Z_PK AS "@recordId", u.ZPROPERTYNAME AS "@propertyName", u.ZORIGINALLINE AS "@originalLine" FROM ZABCDUNKNOWNPROPERTY u JOIN ZABCDRECORD r ON r.Z_PK = u.ZOWNER',
       )
       .map((row) => ({
-        id: Number(row['@id']),
-        recordId: text(row['@recordId']),
+        id: rowId(row['@id']),
+        recordId: rowId(row['@recordId']),
         propertyName: attributeValue('text', row['@propertyName']),
         originalLine: attributeValue('text', row['@originalLine']),
       }));
@@ -345,22 +378,23 @@ export class AddressBookStore implements Disposable {
   > {
     return this.#database
       .iterate(
-        'SELECT g.ZUNIQUEID AS "@groupId", c.ZUNIQUEID AS "@contactId", d.ZPROPERTYNAME AS "@propertyName", (SELECT x.ZUNIQUEID FROM ZABCDEMAILADDRESS x WHERE x.Z_PK = d.ZEMAIL) AS "@emailId", (SELECT x.ZUNIQUEID FROM ZABCDPHONENUMBER x WHERE x.Z_PK = d.ZPHONE) AS "@phoneId", (SELECT x.ZUNIQUEID FROM ZABCDPOSTALADDRESS x WHERE x.Z_PK = d.ZADDRESS) AS "@addressId" FROM ZABCDDISTRIBUTIONLISTCONFIG d JOIN ZABCDRECORD g ON g.Z_PK = d.ZGROUP JOIN ZABCDRECORD c ON c.Z_PK = d.ZCONTACT',
+        'SELECT d.Z_PK AS "@id", g.Z_PK AS "@groupId", c.Z_PK AS "@contactId", d.ZPROPERTYNAME AS "@propertyName", (SELECT x.Z_PK FROM ZABCDEMAILADDRESS x WHERE x.Z_PK = d.ZEMAIL) AS "@emailId", (SELECT x.Z_PK FROM ZABCDPHONENUMBER x WHERE x.Z_PK = d.ZPHONE) AS "@phoneId", (SELECT x.Z_PK FROM ZABCDPOSTALADDRESS x WHERE x.Z_PK = d.ZADDRESS) AS "@addressId" FROM ZABCDDISTRIBUTIONLISTCONFIG d JOIN ZABCDRECORD g ON g.Z_PK = d.ZGROUP JOIN ZABCDRECORD c ON c.Z_PK = d.ZCONTACT',
       )
       .map((row) => ({
-        groupId: text(row['@groupId']),
-        contactId: text(row['@contactId']),
+        id: rowId(row['@id']),
+        groupId: rowId(row['@groupId']),
+        contactId: rowId(row['@contactId']),
         propertyName: attributeValue('text', row['@propertyName']),
-        emailId: text(row['@emailId']),
-        phoneId: text(row['@phoneId']),
-        addressId: text(row['@addressId']),
+        emailId: part(row['@emailId']),
+        phoneId: part(row['@phoneId']),
+        addressId: part(row['@addressId']),
       }));
   }
 
   images(): IteratorObject<ContactImagesRow, undefined> {
     return this.#database
       .iterate(
-        `SELECT c.ZUNIQUEID AS "@contactId", c.ZIMAGEDATA AS "@image", c.ZTHUMBNAILIMAGEDATA AS "@thumbnail" FROM ZABCDRECORD c ${entityJoin('c', contactEntities)} WHERE c.ZIMAGEDATA IS NOT NULL OR c.ZTHUMBNAILIMAGEDATA IS NOT NULL`,
+        `SELECT c.Z_PK AS "@contactId", c.ZIMAGEDATA AS "@image", c.ZTHUMBNAILIMAGEDATA AS "@thumbnail" FROM ZABCDRECORD c ${entityJoin('c', contactEntities)} WHERE c.ZIMAGEDATA IS NOT NULL OR c.ZTHUMBNAILIMAGEDATA IS NOT NULL`,
       )
       .map((row) => {
         const decode = (stored: SQLOutputValue | undefined) =>
@@ -368,7 +402,7 @@ export class AddressBookStore implements Disposable {
             ? storedData(this.path, this.directory, stored)
             : null;
         return {
-          contactId: text(row['@contactId']),
+          contactId: rowId(row['@contactId']),
           image: () => decode(row['@image']),
           thumbnail: () => decode(row['@thumbnail']),
         };
@@ -386,10 +420,11 @@ export class AddressBookStore implements Disposable {
   ): IteratorObject<RecordRow<Entity>, undefined> {
     return this.#database
       .iterate(
-        `SELECT ${alias}.ZUNIQUEID AS "@id", ${alias}_entity.Z_NAME AS "@entity", ${select(view, alias)}, ${select(recordView, alias)} FROM ZABCDRECORD ${alias} ${entityJoin(alias, entities)}`,
+        `SELECT ${alias}.Z_PK AS "@id", ${alias}.ZUNIQUEID AS "@uniqueId", ${alias}_entity.Z_NAME AS "@entity", ${select(view, alias)}, ${select(recordView, alias)} FROM ZABCDRECORD ${alias} ${entityJoin(alias, entities)}`,
       )
       .map((row) => ({
-        id: text(row['@id']),
+        id: rowId(row['@id']),
+        uniqueId: text(row['@uniqueId']),
         entity: entityOf(entities, row['@entity']),
         values: { ...values(view, row), ...values(recordView, row) },
       }));
@@ -401,10 +436,11 @@ export class AddressBookStore implements Disposable {
   ): IteratorObject<ContactPartRow, undefined> {
     return this.#database
       .iterate(
-        `SELECT c.ZUNIQUEID AS "@contactId", ${select(view, alias)} FROM ${view.table} ${alias} JOIN ZABCDRECORD c ON c.Z_PK = ${alias}.ZCONTACT`,
+        `SELECT ${alias}.Z_PK AS "@id", c.Z_PK AS "@contactId", ${select(view, alias)} FROM ${view.table} ${alias} JOIN ZABCDRECORD c ON c.Z_PK = ${alias}.ZCONTACT`,
       )
       .map((row) => ({
-        contactId: text(row['@contactId']),
+        id: rowId(row['@id']),
+        contactId: rowId(row['@contactId']),
         values: values(view, row),
       }));
   }
@@ -415,8 +451,12 @@ export class AddressBookStore implements Disposable {
   ): IteratorObject<ValueRow, undefined> {
     return this.#database
       .iterate(
-        `SELECT ${alias}.ZUNIQUEID AS "@id", ${select(view, alias)} FROM ${view.table} ${alias}`,
+        `SELECT ${alias}.Z_PK AS "@id", ${alias}.ZUNIQUEID AS "@uniqueId", ${select(view, alias)} FROM ${view.table} ${alias}`,
       )
-      .map((row) => ({ id: text(row['@id']), values: values(view, row) }));
+      .map((row) => ({
+        id: rowId(row['@id']),
+        uniqueId: text(row['@uniqueId']),
+        values: values(view, row),
+      }));
   }
 }
