@@ -99,6 +99,16 @@ A tab or tab group belongs to the nearest profile folder above it. A group under
 | `closedWindows`, `closedTabs`, `closedWindowActiveTabs`                      | History › Recently Closed: windows with their state, tabs closed alone or with their window, and the active tab of each closed window for each group.                                                                                                                                                                                               |
 | `downloads`                                                                  | The Downloads list: URL, saved path, profile, times, bytes, and the file when it is still at `path` (`availableLocally`). For an archive that Safari opened itself, `path` names the archive in a `.download` folder that no longer exists, and `openedPath` names the first extracted file. The extracted files move next to it, so no file loads. |
 
+A property list keeps no UUID unique: Safari lists a window or tab again each time it closes it, and a synced bookmark can be in the file two times. Thus the property list streams are keyed by place, and the UUIDs are columns:
+
+- `closedWindows` by `position` in the Recently Closed list; `windowId` is the UUID.
+- `closedTabs` by `(entryPosition, position)`: the place of its entry in the list, and its place among the tabs of its closed window (0 for a tab closed on its own). `entryPosition` refers to `closedWindows.position` for a tab closed with its window; `tabId` is the UUID.
+- `closedWindowActiveTabs` by `(windowPosition, tabGroupId)`; `windowPosition` refers to `closedWindows.position`.
+- `bookmarks` and `readingListItems` by `path`, the place of each entry from the top level down, such as `1/0`; `parentPath` refers to `bookmarks.path`, and `uuid` is the `WebBookmarkUUID`.
+- `downloads` by `position` in the Downloads list; `identifier` is the `DownloadEntryIdentifier`.
+
+A reader that wants one row for each UUID groups by the UUID column.
+
 The source does not read:
 
 - the iCloud sync bookkeeping: `history_events`, `history_event_listeners`, `history_client_versions`, `metadata`, `generations`, the `sync_*` tables, CloudKit `system_fields` and `Sync.Data`;

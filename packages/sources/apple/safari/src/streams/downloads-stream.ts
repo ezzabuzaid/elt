@@ -8,7 +8,15 @@ const { boolean, nullableText, nullableTimestamp, nullableInteger } =
   safariFields;
 
 const properties = {
-  id: { ...safariFields.id, description: 'Download identifier.' },
+  position: {
+    ...safariFields.ordinal,
+    description: 'Index in the Downloads list, as Safari orders it.',
+  },
+  identifier: {
+    ...safariFields.id,
+    description:
+      'Download identifier (DownloadEntryIdentifier). Downloads.plist does not keep it unique, so several records can hold one identifier.',
+  },
   profileId: {
     ...safariFields.nullableId,
     description:
@@ -54,7 +62,7 @@ const properties = {
 export class DownloadsStream extends SafariStream<typeof properties, Download> {
   readonly name = 'downloads';
   readonly store = 'downloads';
-  readonly primaryKey = ['id'];
+  readonly primaryKey = ['position'];
   readonly supportsFileTransfer = true;
   readonly jsonSchema = {
     type: 'object',
@@ -70,7 +78,8 @@ export class DownloadsStream extends SafariStream<typeof properties, Download> {
 
   protected record(download: Download): RecordDraft<typeof properties> {
     return {
-      id: download.id,
+      position: download.position,
+      identifier: download.identifier,
       profileId: download.profileId,
       url: download.url,
       path: download.path,

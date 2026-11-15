@@ -6,14 +6,15 @@ import { SafariStream, safariFields } from '../safari-stream.ts';
 import { windowState, windowStateFields } from '../window-state.ts';
 
 const properties = {
-  id: {
-    ...safariFields.id,
-    description:
-      'Closed window UUID; closedTabs.closedWindowId and closedWindowActiveTabs.windowId refer to it.',
-  },
   position: {
     ...safariFields.ordinal,
-    description: 'Index in the Recently Closed list, as Safari orders it.',
+    description:
+      'Index in the Recently Closed list, as Safari orders it; closedTabs.entryPosition and closedWindowActiveTabs.windowPosition refer to it.',
+  },
+  windowId: {
+    ...safariFields.id,
+    description:
+      'Closed window UUID. Safari lists a window again each time it closes it, so several records can hold one UUID.',
   },
   profileId: safariFields.profileId,
   activeTabGroupId: {
@@ -30,7 +31,7 @@ export class ClosedWindowsStream extends SafariStream<
 > {
   readonly name = 'closedWindows';
   readonly store = 'closedTabs';
-  readonly primaryKey = ['id'];
+  readonly primaryKey = ['position'];
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -45,8 +46,8 @@ export class ClosedWindowsStream extends SafariStream<
 
   protected record(window: ClosedWindow): RecordDraft<typeof properties> {
     return {
-      id: window.id,
       position: window.position,
+      windowId: window.windowId,
       profileId: window.profileId,
       activeTabGroupId: window.activeTabGroupId,
       ...windowState(window.state),

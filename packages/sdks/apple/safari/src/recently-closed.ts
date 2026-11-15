@@ -19,21 +19,27 @@ export type ClosedWindowActiveTab = {
   readonly tabId: string | null;
 };
 
+// A closed window, identified by its place in the Recently Closed list:
+// Safari lists a window again each time it closes it.
 export type ClosedWindow = {
-  readonly id: string | null;
   readonly position: number;
+  readonly windowId: string | null;
   readonly profileId: string | null;
   readonly activeTabGroupId: string | null;
   readonly state: WindowState;
   readonly activeTabs: ClosedWindowActiveTab[];
 };
 
-// A closed tab: on its own in the list, or one of a closed window's tabs.
+// A closed tab: on its own in the list, or one of a closed window's tabs,
+// identified by the place of its entry in the list and its place among the
+// entry's tabs.
 export type ClosedTab = {
-  readonly id: string | null;
-  // The closed window it was one of; null for a tab closed on its own.
-  readonly closedWindowId: string | null;
+  // The place in the list of the tab closed on its own, or of the closed
+  // window it was one of.
+  readonly entryPosition: number;
+  // Its place among its closed window's tabs; 0 for a tab closed on its own.
   readonly position: number;
+  readonly tabId: string | null;
   readonly windowId: string | null;
   readonly profileId: string | null;
   readonly title: string | null;
@@ -54,15 +60,15 @@ export type ClosedEntryFilter = (profileId: string | null) => boolean;
 
 type Entry = {
   readonly state: Dictionary;
-  readonly closedWindowId: PlistValue | undefined;
+  readonly entryPosition: number;
   readonly position: number;
 };
 
 const windowType = 1;
 
-const closedWindow = ({ state, position }: Entry): ClosedWindow => ({
-  id: stored(state.WindowUUID),
+const closedWindow = (state: Dictionary, position: number): ClosedWindow => ({
   position,
+  windowId: stored(state.WindowUUID),
   profileId: stored(state.ProfileUUID),
   activeTabGroupId: text(state.activeTabGroupUUID),
   state: windowState(state),
@@ -71,10 +77,10 @@ const closedWindow = ({ state, position }: Entry): ClosedWindow => ({
   ),
 });
 
-const closedTab = ({ state, closedWindowId, position }: Entry): ClosedTab => ({
-  id: stored(state.TabUUID),
-  closedWindowId: stored(closedWindowId),
+const closedTab = ({ state, entryPosition, position }: Entry): ClosedTab => ({
+  entryPosition,
   position,
+  tabId: stored(state.TabUUID),
   windowId: text(state.WindowUUID),
   profileId: stored(state.ProfileUUID),
   title: text(state.TabTitle),
@@ -92,8 +98,7 @@ const closedTab = ({ state, closedWindowId, position }: Entry): ClosedTab => ({
 
 // RecentlyClosedTabs.plist: what History > Recently Closed lists, windows
 // with the tabs they held and tabs closed on their own. The list is in no
-// date order; a window or tab listed again keeps the entry it was last
-// closed in.
+// date order, and it lists a window or tab again each time Safari closes it.
 export class RecentlyClosed {
   readonly #entries: readonly PlistValue[];
 
@@ -104,47 +109,27 @@ export class RecentlyClosed {
     this.#entries = entries;
   }
 
-  // The entries keep() keeps, before a later closing replaces an earlier
-  // one, so a tab closed under two profiles keeps the kept profile's entry.
+  // The entries keep() keeps, each at its place in the list.
   closed(keep: ClosedEntryFilter): {
     readonly windows: ClosedWindow[];
     readonly tabs: ClosedTab[];
   } {
-    const windows = new Map<unknown, Entry>();
-    const tabs = new Map<unknown, Entry>();
-    this.#entries.forEach((value, position) => {
+    const windows: ClosedWindow[] = [];
+    const tabs: ClosedTab[] = [];
+    this.#entries.forEach((value, entryPosition) => {
       const entry = dictionary(value);
       const state = dictionary(entry.PersistentState);
       if (!keep(stored(state.ProfileUUID))) return;
       if (entry.PersistentStateType !== windowType) {
-        latest(tabs, state.TabUUID, { state, closedWindowId: null, position });
+        tabs.push(closedTab({ state, entryPosition, position: 0 }));
         return;
       }
-      latest(windows, state.WindowUUID, {
-        state,
-        closedWindowId: undefined,
-        position,
-      });
-      for (const [index, tab] of list(state.TabStates).entries())
-        latest(tabs, dictionary(tab).TabUUID, {
-          state: dictionary(tab),
-          closedWindowId: state.WindowUUID,
-          position: index,
-        });
+      windows.push(closedWindow(state, entryPosition));
+      for (const [position, tab] of list(state.TabStates).entries())
+        tabs.push(
+          closedTab({ state: dictionary(tab), entryPosition, position }),
+        );
     });
-    return {
-      windows: [...windows.values()].map(closedWindow),
-      tabs: [...tabs.values()].map(closedTab),
-    };
+    return { windows, tabs };
   }
-}
-
-function latest(entries: Map<unknown, Entry>, id: unknown, entry: Entry): void {
-  const kept = entries.get(id);
-  const closed = (candidate: Entry) =>
-    candidate.state.DateClosed instanceof Date
-      ? candidate.state.DateClosed.getTime()
-      : Number.NEGATIVE_INFINITY;
-  if (kept === undefined || closed(entry) > closed(kept))
-    entries.set(id, entry);
 }

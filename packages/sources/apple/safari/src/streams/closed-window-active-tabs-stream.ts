@@ -4,9 +4,9 @@ import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
 
 const properties = {
-  windowId: {
-    ...safariFields.id,
-    description: 'The closed window; refers to closedWindows.id.',
+  windowPosition: {
+    ...safariFields.ordinal,
+    description: 'The closed window; refers to closedWindows.position.',
   },
   tabGroupId: {
     ...safariFields.id,
@@ -15,12 +15,12 @@ const properties = {
   tabId: {
     ...safariFields.id,
     description:
-      'The tab that was active in that group; closedTabs.id when Safari kept the tab.',
+      'The tab that was active in that group; closedTabs.tabId when Safari kept the tab.',
   },
 } as const;
 
 type Entry = {
-  readonly windowId: string | null;
+  readonly windowPosition: number;
   readonly tabGroupId: string;
   readonly tabId: string | null;
 };
@@ -31,7 +31,7 @@ export class ClosedWindowActiveTabsStream extends SafariStream<
 > {
   readonly name = 'closedWindowActiveTabs';
   readonly store = 'closedTabs';
-  readonly primaryKey = ['windowId', 'tabGroupId'];
+  readonly primaryKey = ['windowPosition', 'tabGroupId'];
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -43,7 +43,7 @@ export class ClosedWindowActiveTabsStream extends SafariStream<
   protected rows(scan: SafariScan): readonly Entry[] {
     return scan.closedTabs.windows.flatMap((window) =>
       window.activeTabs.map(({ tabGroupId, tabId }) => ({
-        windowId: window.id,
+        windowPosition: window.position,
         tabGroupId,
         tabId,
       })),

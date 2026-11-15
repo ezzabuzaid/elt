@@ -7,13 +7,19 @@ import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 const { nullableText, nullableTimestamp, nullableInteger } = safariFields;
 
 const properties = {
-  id: {
+  path: {
     ...safariFields.id,
-    description: 'Reading List item UUID (WebBookmarkUUID).',
+    description:
+      "Index of each entry from the top level of Bookmarks.plist down to this item, joined by '/', such as '3/0'; its folder is the bookmarks record whose path is the part before the last '/'.",
   },
   position: {
     ...safariFields.ordinal,
     description: 'Index in the Reading List, as Safari orders it.',
+  },
+  uuid: {
+    ...safariFields.id,
+    description:
+      'Reading List item UUID (WebBookmarkUUID). Bookmarks.plist does not keep it unique, so several records can hold one UUID.',
   },
   title: {
     ...nullableText,
@@ -79,7 +85,7 @@ export class ReadingListItemsStream extends SafariStream<
 > {
   readonly name = 'readingListItems';
   readonly store = 'bookmarks';
-  readonly primaryKey = ['id'];
+  readonly primaryKey = ['path'];
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -94,8 +100,9 @@ export class ReadingListItemsStream extends SafariStream<
 
   protected record(item: ReadingListItem): RecordDraft<typeof properties> {
     return {
-      id: item.id,
+      path: item.path,
       position: item.position,
+      uuid: item.uuid,
       title: item.title,
       url: item.url,
       addedAt: iso(item.addedAt),

@@ -972,20 +972,12 @@ const PRIMARY_KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
   cloudTabs: ['TAB-1'],
   cloudTabPositions: ['TAB-1|0'],
   cloudTabCloseRequests: ['CR-1'],
-  bookmarks: [
-    'PROXY-HISTORY',
-    'BAR',
-    'BM-1',
-    'FOLDER-1',
-    'BM-2',
-    'MENU',
-    'READING-LIST',
-  ],
-  readingListItems: ['RL-1'],
-  closedWindows: ['W-1'],
-  closedWindowActiveTabs: ['W-1|G-2'],
-  closedTabs: ['CT-1', 'CT-2', 'CT-3'],
-  downloads: ['DL-1', 'DL-2'],
+  bookmarks: ['0', '1', '1/0', '1/1', '1/1/0', '2', '3'],
+  readingListItems: ['3/0'],
+  closedWindows: ['1'],
+  closedWindowActiveTabs: ['1|G-2'],
+  closedTabs: ['0|0', '1|0', '1|1', '2|0'],
+  downloads: ['0', '1'],
 };
 
 // The fields of the record whose key field holds the given value.
@@ -1246,8 +1238,8 @@ test('Safari reads history, iCloud Tabs, bookmarks and recently closed tabs as d
   // The Reading List folder is a bookmark; its items are their own stream.
   assert.deepEqual(
     rows(
-      safari.read(`SELECT b.id, p.title AS folder, b.position, b.kind, b.title, b.url, b.hidden
-        FROM bookmarks b LEFT JOIN bookmarks p ON p.id = b."parentId" ORDER BY b.id`),
+      safari.read(`SELECT b.uuid AS id, p.title AS folder, b.position, b.kind, b.title, b.url, b.hidden
+        FROM bookmarks b LEFT JOIN bookmarks p ON p.path = b."parentPath" ORDER BY b.uuid`),
     ),
     [
       {
@@ -1318,12 +1310,13 @@ test('Safari reads history, iCloud Tabs, bookmarks and recently closed tabs as d
   assert.deepEqual(
     rows(
       safari.read(
-        `SELECT id, title, "fetchedTitle", "previewText", "lastViewedAt", "fetchResult" FROM reading_list_items`,
+        `SELECT path, uuid, title, "fetchedTitle", "previewText", "lastViewedAt", "fetchResult" FROM reading_list_items`,
       ),
     ),
     [
       {
-        id: 'RL-1',
+        path: '3/0',
+        uuid: 'RL-1',
         title: 'Saved',
         fetchedTitle: 'Fetched title',
         previewText: 'A preview',
@@ -1332,41 +1325,55 @@ test('Safari reads history, iCloud Tabs, bookmarks and recently closed tabs as d
       },
     ],
   );
-  // A tab closed on its own keeps no window; year 1 means never visited.
+  // A tab closed on its own keeps no window; year 1 means never visited. A
+  // tab closed again is listed again.
   assert.deepEqual(
     rows(
-      safari.read(`SELECT t.id, t."closedWindowId", t.position, t."lastVisitedAt" IS NULL AS never,
-        t."ancestorTabIds" AS ancestors, w."addressFieldText", a."tabId" = t.id AS active
-        FROM closed_tabs t LEFT JOIN closed_windows w ON w.id = t."closedWindowId"
-        LEFT JOIN closed_window_active_tabs a ON a."windowId" = w.id ORDER BY t.id`),
+      safari.read(`SELECT t."tabId", t."entryPosition", t.position, w."windowId", t."lastVisitedAt" IS NULL AS never,
+        t."ancestorTabIds" AS ancestors, w."addressFieldText", a."tabId" = t."tabId" AS active
+        FROM closed_tabs t LEFT JOIN closed_windows w ON w.position = t."entryPosition"
+        LEFT JOIN closed_window_active_tabs a ON a."windowPosition" = w.position ORDER BY t."entryPosition", t.position`),
     ),
     [
       {
-        id: 'CT-1',
-        closedWindowId: null,
+        tabId: 'CT-1',
+        entryPosition: 0,
         position: 0,
+        windowId: null,
         never: 1,
         ancestors: '["CT-0"]',
         addressFieldText: null,
         active: null,
       },
       {
-        id: 'CT-2',
-        closedWindowId: 'W-1',
+        tabId: 'CT-2',
+        entryPosition: 1,
         position: 0,
+        windowId: 'W-1',
         never: 0,
         ancestors: '[]',
         addressFieldText: 'half typed',
         active: 0,
       },
       {
-        id: 'CT-3',
-        closedWindowId: 'W-1',
+        tabId: 'CT-3',
+        entryPosition: 1,
         position: 1,
+        windowId: 'W-1',
         never: 0,
         ancestors: '[]',
         addressFieldText: 'half typed',
         active: 1,
+      },
+      {
+        tabId: 'CT-1',
+        entryPosition: 2,
+        position: 0,
+        windowId: null,
+        never: 1,
+        ancestors: '[]',
+        addressFieldText: null,
+        active: null,
       },
     ],
   );
@@ -1673,20 +1680,22 @@ test('Safari reads profiles, windows, tab groups, tabs with their back and forwa
   );
   // A download still on disk is stored; an archive Safari opened is gone.
   const downloads = rows(
-    safari.read(`SELECT id, "profileId", "availableLocally", "openedPath" IS NOT NULL AS opened, "attachmentRef"
-      FROM downloads ORDER BY id`),
+    safari.read(`SELECT position, identifier, "profileId", "availableLocally", "openedPath" IS NOT NULL AS opened, "attachmentRef"
+      FROM downloads ORDER BY position`),
   );
   assert.deepEqual(
     downloads.map(({ attachmentRef: _, ...download }) => download),
     [
       {
-        id: 'DL-1',
+        position: 0,
+        identifier: 'DL-1',
         profileId: 'DefaultProfile',
         availableLocally: 1,
         opened: 0,
       },
       {
-        id: 'DL-2',
+        position: 1,
+        identifier: 'DL-2',
         profileId: 'PROFILE-WORK',
         availableLocally: 0,
         opened: 1,
@@ -1866,12 +1875,14 @@ test('Safari follows each store on its own: a rerun writes nothing, and edits an
   );
   assert.deepEqual(
     safari
-      .read(`SELECT id FROM bookmarks WHERE kind = 'bookmark' ORDER BY id`)
-      .map(({ id }) => id),
+      .read(`SELECT uuid FROM bookmarks WHERE kind = 'bookmark' ORDER BY uuid`)
+      .map(({ uuid }) => uuid),
     ['BM-2'],
   );
   assert.deepEqual(
-    safari.read(`SELECT id FROM closed_tabs ORDER BY id`).map(({ id }) => id),
+    safari
+      .read(`SELECT "tabId" FROM closed_tabs ORDER BY "tabId"`)
+      .map(({ tabId }) => tabId),
     ['CT-2', 'CT-3'],
   );
 });
@@ -2014,7 +2025,7 @@ test('Safari scope keeps the chosen profiles and visit dates, and leaves unattri
     items: 3,
     tags: 1,
     tombstones: 3,
-    closed: 3,
+    closed: 4,
     tabs: 5,
     groups: 7,
     downloads: 2,
@@ -2038,7 +2049,7 @@ test('Safari scope keeps the chosen profiles and visit dates, and leaves unattri
     items: 2,
     tags: 1,
     tombstones: 3,
-    closed: 3,
+    closed: 4,
     tabs: 4,
     groups: 5,
     downloads: 1,
@@ -2496,10 +2507,10 @@ test('Safari reads a value it keeps in two places from either, and a blank one a
   assert.deepEqual(fieldsOf(windows, 'id', 'WIN-CLOSED-STATE', ['closedAt']), {
     closedAt: '2026-03-02T00:00:00.000Z',
   });
-  assert.deepEqual(fieldsOf(bookmarks, 'id', 'BM-UNTITLED', ['title']), {
+  assert.deepEqual(fieldsOf(bookmarks, 'uuid', 'BM-UNTITLED', ['title']), {
     title: 'From the page',
   });
-  assert.deepEqual(fieldsOf(readingList, 'id', 'RL-2', ['previewText']), {
+  assert.deepEqual(fieldsOf(readingList, 'uuid', 'RL-2', ['previewText']), {
     previewText: 'From the bookmark',
   });
 });
@@ -2571,10 +2582,10 @@ test('Safari keeps each time as stored: database times round to the millisecond,
   assert.deepEqual(fieldsOf(visits, 'id', 20, ['visitedAt']), {
     visitedAt: '2026-01-20T09:00:00.001Z',
   });
-  assert.deepEqual(fieldsOf(closed, 'id', 'CT-1', ['closedAt']), {
+  assert.deepEqual(fieldsOf(closed, 'tabId', 'CT-1', ['closedAt']), {
     closedAt: '2026-03-01T12:00:00.000Z',
   });
-  assert.deepEqual(fieldsOf(closed, 'id', 'CT-2', ['lastVisitedAt']), {
+  assert.deepEqual(fieldsOf(closed, 'tabId', 'CT-2', ['lastVisitedAt']), {
     lastVisitedAt: null,
   });
   assert.deepEqual(fieldsOf(tombstones, 'id', 4, ['startAt', 'endAt']), {
@@ -2708,20 +2719,151 @@ test('Safari reads its folders, window groups, tag links and closed tabs as it s
     })),
     [{ profileId: 'DefaultProfile', itemId: 1, tagId: 1 }],
   );
-  // Unscoped, the later close wins; scoped to Work, only its own close is
-  // listed.
-  assert.deepEqual(
-    fieldsOf(closed, 'id', 'CT-9', ['profileId', 'title', 'closedAt']),
-    {
-      profileId: 'DefaultProfile',
-      title: 'Closed at home',
-      closedAt: '2026-03-06T12:00:00.000Z',
-    },
+  // Unscoped, each close is listed at its place; scoped to Work, only its own
+  // close is listed, at the same place.
+  const ninth = (records: typeof closed) =>
+    records
+      .filter(({ tabId }) => tabId === 'CT-9')
+      .map(({ entryPosition, profileId, title }) => ({
+        entryPosition,
+        profileId,
+        title,
+      }));
+  assert.deepEqual(ninth(closed), [
+    { entryPosition: 3, profileId: 'PROFILE-WORK', title: 'Closed at work' },
+    { entryPosition: 4, profileId: 'DefaultProfile', title: 'Closed at home' },
+  ]);
+  assert.deepEqual(ninth(closedAtWork), [
+    { entryPosition: 3, profileId: 'PROFILE-WORK', title: 'Closed at work' },
+  ]);
+});
+
+// The titles a view holds, sorted, with one entry for each row.
+const titles = (
+  safari: Awaited<ReturnType<typeof appleImport>>,
+  view: string,
+  column = 'title',
+) =>
+  safari
+    .read(`SELECT "${column}" AS title FROM ${view}`)
+    .map(({ title }) => String(title))
+    .sort();
+
+test('Safari loads each entry of Recently Closed, a window and a tab that the list repeats included', async () => {
+  await using scratch = await new TemporaryFiles().directory('safari-');
+  const location = await safariFixture(scratch.path);
+  const [, window] = closedTabsPlist.ClosedTabOrWindowPersistentStates;
+  // Safari lists window W-1 again, with the same tab UUIDs, after it was
+  // reopened and closed again.
+  await writePlist(join(location.directory, 'RecentlyClosedTabs.plist'), {
+    ...closedTabsPlist,
+    ClosedTabOrWindowPersistentStates: [
+      ...closedTabsPlist.ClosedTabOrWindowPersistentStates,
+      {
+        ...window,
+        PersistentState: {
+          ...window.PersistentState,
+          DateClosed: new Date('2026-03-03T12:00:00Z'),
+          CustomUnifiedFieldText: 'typed again',
+          TabStates: window.PersistentState.TabStates.map((tab) => ({
+            ...tab,
+            TabTitle: `${tab.TabTitle} again`,
+          })),
+        },
+      },
+    ],
+  });
+  const safari = await appleImport(
+    new AppleSafariSource(location),
+    join(scratch.path, 'import'),
   );
+
+  await safari.load();
+
+  assert.deepEqual(titles(safari, 'closed_windows', 'addressFieldText'), [
+    'half typed',
+    'typed again',
+  ]);
+  assert.deepEqual(titles(safari, 'closed_tabs'), [
+    'Closed alone',
+    'Closed earlier',
+    'First',
+    'First again',
+    'Second',
+    'Second again',
+  ]);
   assert.deepEqual(
-    closedAtWork.map(({ id, profileId, title }) => ({ id, profileId, title })),
-    [{ id: 'CT-9', profileId: 'PROFILE-WORK', title: 'Closed at work' }],
+    rows(safari.read('SELECT count(*) AS n FROM closed_window_active_tabs')),
+    [{ n: 2 }],
   );
+});
+
+test('Safari loads each node of Bookmarks.plist, a bookmark and a Reading List item that the file repeats included', async () => {
+  await using scratch = await new TemporaryFiles().directory('safari-');
+  const location = await safariFixture(scratch.path);
+  const [proxy, bar, menu, readingList] = bookmarksPlist.Children;
+  const [bookmark] = bar.Children;
+  const [item] = readingList.Children;
+  // A synced copy of BM-1 in the Bookmarks menu, and RL-1 saved twice.
+  await writePlist(join(location.directory, 'Bookmarks.plist'), {
+    ...bookmarksPlist,
+    Children: [
+      proxy,
+      bar,
+      {
+        ...menu,
+        Children: [{ ...bookmark, URIDictionary: { title: 'Copy' } }],
+      },
+      {
+        ...readingList,
+        Children: [item, { ...item, URIDictionary: { title: 'Saved again' } }],
+      },
+    ],
+  });
+  const safari = await appleImport(
+    new AppleSafariSource(location),
+    join(scratch.path, 'import'),
+  );
+
+  await safari.load();
+
+  assert.deepEqual(
+    titles(safari, `bookmarks WHERE kind = 'bookmark' AND title IS NOT NULL`),
+    ['Copy', 'Example', 'Nested'],
+  );
+  assert.deepEqual(titles(safari, 'reading_list_items'), [
+    'Saved',
+    'Saved again',
+  ]);
+});
+
+test('Safari loads each entry of its Downloads list, a download that the list repeats included', async () => {
+  await using scratch = await new TemporaryFiles().directory('safari-');
+  const location = await safariFixture(scratch.path);
+  // A file downloaded twice: Safari lists DL-1 again for the second copy.
+  const entry = (url: string, file: string) => ({
+    DownloadEntryIdentifier: 'DL-1',
+    DownloadEntryURL: url,
+    DownloadEntryPath: join(scratch.path, 'Downloads', file),
+    DownloadEntryProfileUUIDStringKey: 'DefaultProfile',
+  });
+  await writePlist(join(location.directory, 'Downloads.plist'), {
+    DownloadHistory: [
+      entry('https://example.com/report.pdf', 'report.pdf'),
+      entry('https://example.com/report.pdf', 'report-2.pdf'),
+    ],
+  });
+  const safari = await appleImport(
+    new AppleSafariSource(location),
+    join(scratch.path, 'import'),
+  );
+
+  await safari.load();
+
+  assert.deepEqual(titles(safari, 'downloads', 'path'), [
+    join(scratch.path, 'Downloads', 'report-2.pdf'),
+    join(scratch.path, 'Downloads', 'report.pdf'),
+  ]);
 });
 
 test('Safari writes every stream with its fields in schema order and its rows in store order', async () => {

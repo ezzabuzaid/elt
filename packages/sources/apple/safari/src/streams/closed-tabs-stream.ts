@@ -7,16 +7,20 @@ import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 const { boolean, nullableText, nullableTimestamp } = safariFields;
 
 const properties = {
-  id: { ...safariFields.id, description: 'Closed tab UUID.' },
-  closedWindowId: {
-    ...safariFields.nullableId,
+  entryPosition: {
+    ...safariFields.ordinal,
     description:
-      'The recently closed window that held the tab; refers to closedWindows.id. NULL for a tab closed on its own.',
+      'Index in the Recently Closed list of the tab closed on its own, or of the closed window that held it; for a tab closed with its window, refers to closedWindows.position.',
   },
   position: {
     ...safariFields.ordinal,
     description:
-      'Index in the Recently Closed list for a tab closed on its own, or among its closed window tabs.',
+      'Index among the tabs of its closed window; 0 for a tab closed on its own.',
+  },
+  tabId: {
+    ...safariFields.id,
+    description:
+      'Closed tab UUID. Safari lists a tab again each time it closes it, so several records can hold one UUID.',
   },
   windowId: {
     ...nullableText,
@@ -69,7 +73,7 @@ export class ClosedTabsStream extends SafariStream<
 > {
   readonly name = 'closedTabs';
   readonly store = 'closedTabs';
-  readonly primaryKey = ['id'];
+  readonly primaryKey = ['entryPosition', 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -84,9 +88,9 @@ export class ClosedTabsStream extends SafariStream<
 
   protected record(tab: ClosedTab): RecordDraft<typeof properties> {
     return {
-      id: tab.id,
-      closedWindowId: tab.closedWindowId,
+      entryPosition: tab.entryPosition,
       position: tab.position,
+      tabId: tab.tabId,
       windowId: tab.windowId,
       profileId: tab.profileId,
       title: tab.title,

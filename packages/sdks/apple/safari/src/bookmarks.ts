@@ -24,11 +24,14 @@ const kindsByType = new Map<unknown, BookmarkKind>([
 // Safari names the Reading List folder by this title.
 const readingListTitle = 'com.apple.ReadingList';
 
+// A node is identified by its path: the place of each node from the root
+// folder down to it, such as '1/0', as the file repeats a UUID.
 export type Bookmark = {
-  readonly id: string | null;
-  // The containing folder's UUID; null at the top level.
-  readonly parentId: string | null;
+  readonly path: string;
+  // The containing folder's path; null at the top level.
+  readonly parentPath: string | null;
   readonly position: number;
+  readonly uuid: string | null;
   readonly kind: BookmarkKind | null;
   // Its own title, or else the title of the page it points to.
   readonly title: string | null;
@@ -44,8 +47,9 @@ export type Bookmark = {
 };
 
 export type ReadingListItem = {
-  readonly id: string | null;
+  readonly path: string;
   readonly position: number;
+  readonly uuid: string | null;
   readonly title: string | null;
   readonly url: string | null;
   readonly addedAt: Date | null;
@@ -62,14 +66,18 @@ export type ReadingListItem = {
   readonly featureText: string | null;
 };
 
+const place = (parentPath: string | null, position: number): string =>
+  parentPath === null ? String(position) : `${parentPath}/${position}`;
+
 const bookmark = (
   node: Dictionary,
-  parentId: string | null,
+  parentPath: string | null,
   position: number,
 ): Bookmark => ({
-  id: stored(node.WebBookmarkUUID),
-  parentId,
+  path: place(parentPath, position),
+  parentPath,
   position,
+  uuid: stored(node.WebBookmarkUUID),
   kind: kindsByType.get(node.WebBookmarkType) ?? null,
   title: text(node.Title) ?? text(dictionary(node.URIDictionary).title),
   url: text(node.URLString),
@@ -88,13 +96,15 @@ const bookmark = (
 
 const readingListItem = (
   node: Dictionary,
+  parentPath: string | null,
   position: number,
 ): ReadingListItem => {
   const saved = dictionary(node.ReadingList);
   const fetched = dictionary(node.ReadingListNonSync);
   return {
-    id: stored(node.WebBookmarkUUID),
+    path: place(parentPath, position),
     position,
+    uuid: stored(node.WebBookmarkUUID),
     title: text(dictionary(node.URIDictionary).title),
     url: stored(node.URLString),
     addedAt: plistTime(saved.DateAdded),
@@ -125,18 +135,19 @@ export class Bookmarks {
     const root = dictionary(plist);
     if (typeof root.WebBookmarkType !== 'string')
       throw new TypeError('Bookmarks.plist has no root folder');
-    const walk = (folder: Dictionary, parentId: string | null) =>
+    const walk = (folder: Dictionary, parentPath: string | null) =>
       list(folder.Children).forEach((child, position) => {
         const node = dictionary(child);
         if (
           folder.Title === readingListTitle &&
           node.WebBookmarkType === 'WebBookmarkTypeLeaf'
         ) {
-          this.readingList.push(readingListItem(node, position));
+          this.readingList.push(readingListItem(node, parentPath, position));
           return;
         }
-        this.bookmarks.push(bookmark(node, parentId, position));
-        walk(node, String(node.WebBookmarkUUID));
+        const added = bookmark(node, parentPath, position);
+        this.bookmarks.push(added);
+        walk(node, added.path);
       });
     walk(root, null);
   }

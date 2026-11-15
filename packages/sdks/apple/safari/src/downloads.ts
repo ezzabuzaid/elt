@@ -13,8 +13,11 @@ import {
   text,
 } from './safari-values.ts';
 
+// A download is identified by its place in the list, as the list repeats
+// an identifier.
 export type Download = {
-  readonly id: string | null;
+  readonly position: number;
+  readonly identifier: string | null;
   readonly profileId: string | null;
   readonly url: string | null;
   // Where the file was saved.
@@ -30,10 +33,11 @@ export type Download = {
   readonly availableLocally: boolean;
 };
 
-const download = (entry: Dictionary): Download => {
+const download = (entry: Dictionary, position: number): Download => {
   const path = stored(entry.DownloadEntryPath);
   return {
-    id: stored(entry.DownloadEntryIdentifier),
+    position,
+    identifier: stored(entry.DownloadEntryIdentifier),
     profileId: text(entry.DownloadEntryProfileUUIDStringKey),
     url: stored(entry.DownloadEntryURL),
     path,
@@ -58,6 +62,8 @@ export class Downloads {
     const history = dictionary(plist).DownloadHistory;
     if (!Array.isArray(history))
       throw new TypeError('Downloads.plist lists no download history');
-    this.downloads = list(history).map(dictionary).map(download);
+    this.downloads = list(history).map((entry, position) =>
+      download(dictionary(entry), position),
+    );
   }
 }

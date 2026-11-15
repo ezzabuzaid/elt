@@ -7,19 +7,24 @@ import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 const { nullableText } = safariFields;
 
 const properties = {
-  id: {
+  path: {
     ...safariFields.id,
     description:
-      'Bookmark UUID (WebBookmarkUUID); bookmarks.parentId refers to it.',
+      "Index of each entry from the top level down to this one, joined by '/', such as '1/0'; bookmarks.parentPath refers to it.",
   },
-  parentId: {
+  parentPath: {
     ...safariFields.nullableId,
     description:
-      'The containing folder; refers to bookmarks.id. NULL for the top-level folders.',
+      'The containing folder; refers to bookmarks.path. NULL for the top-level folders.',
   },
   position: {
     ...safariFields.ordinal,
     description: 'Index within the containing folder, as Safari orders it.',
+  },
+  uuid: {
+    ...safariFields.id,
+    description:
+      'Bookmark UUID (WebBookmarkUUID). Bookmarks.plist does not keep it unique, so several records can hold one UUID.',
   },
   kind: {
     ...safariFields.text,
@@ -79,7 +84,7 @@ const properties = {
 export class BookmarksStream extends SafariStream<typeof properties, Bookmark> {
   readonly name = 'bookmarks';
   readonly store = 'bookmarks';
-  readonly primaryKey = ['id'];
+  readonly primaryKey = ['path'];
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -94,9 +99,10 @@ export class BookmarksStream extends SafariStream<typeof properties, Bookmark> {
 
   protected record(bookmark: Bookmark): RecordDraft<typeof properties> {
     return {
-      id: bookmark.id,
-      parentId: bookmark.parentId,
+      path: bookmark.path,
+      parentPath: bookmark.parentPath,
       position: bookmark.position,
+      uuid: bookmark.uuid,
       kind: bookmark.kind,
       title: bookmark.title,
       url: bookmark.url,
