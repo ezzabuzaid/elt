@@ -40,7 +40,7 @@ export class NotificationCenterSnapshot implements Disposable {
   notifications(): IteratorObject<Notification, undefined> {
     return this.#database
       .iterate(
-        'SELECT uuid, data, delivered_date AS deliveredAt, style FROM record ORDER BY rec_id',
+        'SELECT rec_id AS id, app_id AS appId, uuid, data, delivered_date AS deliveredAt, style FROM record ORDER BY rec_id',
       )
       .map((row) => {
         const payload = expand(parseBinaryPlist(bytes(row.data)));
@@ -49,7 +49,9 @@ export class NotificationCenterSnapshot implements Disposable {
         const request = payload.req;
         const level = request.intrp;
         return {
-          id: uuid(row.uuid),
+          id: Number(row.id),
+          uuid: uuid(row.uuid),
+          appId: Number(row.appId),
           bundleId: required(payload.app, 'A notification names no app'),
           deliveredAt: referenceDateInstant(Number(row.deliveredAt)),
           requestId: text(request.iden),
@@ -78,8 +80,11 @@ export class NotificationCenterSnapshot implements Disposable {
 
   apps(): IteratorObject<NotificationApp, undefined> {
     return this.#database
-      .iterate('SELECT identifier, badge FROM app ORDER BY app_id')
+      .iterate(
+        'SELECT app_id AS id, identifier, badge FROM app ORDER BY app_id',
+      )
       .map((row) => ({
+        id: Number(row.id),
         bundleId: required(row.identifier, 'An app has no identifier'),
         badge: row.badge === null ? null : Number(row.badge),
       }));
@@ -88,11 +93,12 @@ export class NotificationCenterSnapshot implements Disposable {
   categories(): IteratorObject<NotificationCategory, undefined> {
     return this.#database
       .iterate(
-        `SELECT app.identifier AS bundleId, categories.categories AS list
+        `SELECT app_id AS appId, app.identifier AS bundleId, categories.categories AS list
          FROM categories JOIN app USING (app_id)
-         ORDER BY app.app_id`,
+         ORDER BY app_id`,
       )
       .flatMap((row) => {
+        const appId = Number(row.appId);
         const bundleId = required(row.bundleId, 'An app has no identifier');
         const list = parseBinaryPlist(bytes(row.list));
         if (!Array.isArray(list))
@@ -103,6 +109,7 @@ export class NotificationCenterSnapshot implements Disposable {
               `${bundleId}'s category ${position} is no dictionary`,
             );
           return {
+            appId,
             bundleId,
             position,
             id: required(

@@ -5,7 +5,7 @@ A user wants the notifications that their apps sent, also after Notification Cen
 ## Language
 
 **Notification**:
-One delivery that Notification Center shows, from one row of `record`. The UUID of the delivery identifies it.
+One delivery that Notification Center shows, from one row of `record`. Its `rec_id` and the UUID of the delivery identify it.
 _Avoid_: Alert (an alert is a notification style), message, request
 
 **Request**:

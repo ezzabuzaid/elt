@@ -8,14 +8,31 @@ import {
 } from '../apple-notification-center-stream.ts';
 import type { NotificationCenterScan } from '../notification-center-scan.ts';
 
-const { id, text, nullableInteger, nullableText, instant, nullableInstant } =
-  notificationCenterFields;
+const {
+  id,
+  ordinal,
+  text,
+  nullableInteger,
+  nullableText,
+  instant,
+  nullableInstant,
+} = notificationCenterFields;
 
 const properties = {
   id: {
+    ...ordinal,
+    description:
+      'The notification’s row in usernoted’s store (record.rec_id), the key the store declares. usernoted gives a freed rec_id to a later notification, so uuid tells the two apart.',
+  },
+  uuid: {
     ...id,
     description:
-      'The delivery’s UUID (record.uuid), uppercase as NSUUID writes it; Activity’s notificationUsage.notificationId names a notification by it.',
+      'The delivery’s UUID (record.uuid), uppercase as NSUUID writes it; Activity’s notificationUsage.notificationId names a notification by it. No index keeps it unique.',
+  },
+  appId: {
+    ...ordinal,
+    description:
+      'The app that posted it (record.app_id); refers to apps.id while the app is in the store.',
   },
   bundleId: {
     ...text,
@@ -95,12 +112,12 @@ export class NotificationsStream extends AppleNotificationCenterStream<
   Notification
 > {
   readonly name = 'notifications';
-  readonly primaryKey = ['id'];
+  readonly primaryKey = ['id', 'uuid'];
   readonly emitsDeletes = undefined;
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per notification Notification Center delivered while an import read its store. Primary key id. Notification Center keeps a notification for minutes to days; a notification it no longer holds stays loaded, so rows are a history, not what Notification Center shows now.',
+      'One record per notification Notification Center delivered while an import read its store. Primary key id, uuid. Notification Center keeps a notification for minutes to days; a notification it no longer holds stays loaded, so rows are a history, not what Notification Center shows now.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -115,6 +132,8 @@ export class NotificationsStream extends AppleNotificationCenterStream<
     return [
       {
         id: notification.id,
+        uuid: notification.uuid,
+        appId: notification.appId,
         bundleId: notification.bundleId,
         deliveredAt: notification.deliveredAt,
         requestId: notification.requestId,

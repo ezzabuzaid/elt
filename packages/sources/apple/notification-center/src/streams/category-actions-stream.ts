@@ -10,14 +10,14 @@ import type { NotificationCenterScan } from '../notification-center-scan.ts';
 const { id, ordinal, nullableInteger, nullableText } = notificationCenterFields;
 
 const properties = {
-  bundleId: {
-    ...id,
-    description: 'The app that registered it; refers to apps.bundleId.',
+  appId: {
+    ...ordinal,
+    description: 'The app that registered it; refers to apps.id.',
   },
   categoryPosition: {
     ...ordinal,
     description:
-      'Its category; refers to categories.position for the same app.',
+      'Its category; with appId, refers to categories.appId and categories.position.',
   },
   position: {
     ...ordinal,
@@ -51,7 +51,7 @@ const properties = {
 } as const;
 
 type Action = CategoryAction & {
-  readonly bundleId: string;
+  readonly appId: number;
   readonly categoryPosition: number;
 };
 
@@ -60,12 +60,12 @@ export class CategoryActionsStream extends AppleNotificationCenterStream<
   Action
 > {
   readonly name = 'categoryActions';
-  readonly primaryKey = ['bundleId', 'categoryPosition', 'position'];
+  readonly primaryKey = ['appId', 'categoryPosition', 'position'];
   readonly emitsDeletes = true;
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per button a notification category puts on its notifications, such as Reply or Mark as Read. Primary key bundleId, categoryPosition, position.',
+      'One record per button a notification category puts on its notifications, such as Reply or Mark as Read. Primary key appId, categoryPosition, position.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -74,7 +74,7 @@ export class CategoryActionsStream extends AppleNotificationCenterStream<
     return scan.snapshot.categories().flatMap((category) =>
       category.actions.map((action) => ({
         ...action,
-        bundleId: category.bundleId,
+        appId: category.appId,
         categoryPosition: category.position,
       })),
     );
@@ -83,7 +83,7 @@ export class CategoryActionsStream extends AppleNotificationCenterStream<
   protected records(action: Action): RecordDraft<typeof properties>[] {
     return [
       {
-        bundleId: action.bundleId,
+        appId: action.appId,
         categoryPosition: action.categoryPosition,
         position: action.position,
         id: action.id,

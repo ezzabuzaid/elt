@@ -13,9 +13,14 @@ export const interruptionLevels: readonly InterruptionLevel[] = [
 
 // One notification Notification Center holds, as its app posted it.
 export type Notification = {
+  // The row's rec_id, the key record declares (ADR 0022). A reused rec_id
+  // names a later notification, so the UUID goes with it.
+  readonly id: number;
   // The delivery's UUID, as NSUUID writes it; Biome's Notification.Usage
-  // names a notification by it.
-  readonly id: string;
+  // names a notification by it. No index keeps it unique.
+  readonly uuid: string;
+  // The app_id of the posting app's row in app.
+  readonly appId: number;
   // The posting app's bundle identifier, in its own case.
   readonly bundleId: string;
   readonly deliveredAt: string;
@@ -44,7 +49,9 @@ export type Notification = {
 
 // An app that has posted to Notification Center.
 export type NotificationApp = {
-  // As usernoted keys it: lowercased.
+  // The row's app_id, the key app declares (ADR 0022).
+  readonly id: number;
+  // As usernoted stores it: lowercased. No index keeps it unique.
   readonly bundleId: string;
   readonly badge: number | null;
 };
@@ -67,6 +74,8 @@ export type CategoryAction = {
 // A notification category an app registered, kept in the order it gave them:
 // nothing stops an app registering one identifier twice.
 export type NotificationCategory = {
+  // The app_id of the app that registered it.
+  readonly appId: number;
   readonly bundleId: string;
   readonly position: number;
   readonly id: string;

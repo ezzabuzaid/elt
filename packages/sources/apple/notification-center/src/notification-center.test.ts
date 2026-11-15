@@ -392,12 +392,12 @@ test('a notification Notification Center drops stays loaded, while the next run 
 
   assert.deepEqual(second.notifications, { count: 1, deleted: 0 });
   assert.deepEqual(
-    rows(out, 'SELECT id FROM notifications ORDER BY deliveredAt'),
+    rows(out, 'SELECT uuid FROM notifications ORDER BY deliveredAt'),
     [
-      { id: messagesDelivery.uuid },
-      { id: codexDelivery.uuid },
-      { id: scriptEditorDelivery.uuid },
-      { id: '4E000000-0000-4000-8000-000000000004' },
+      { uuid: messagesDelivery.uuid },
+      { uuid: codexDelivery.uuid },
+      { uuid: scriptEditorDelivery.uuid },
+      { uuid: '4E000000-0000-4000-8000-000000000004' },
     ],
   );
 });
@@ -435,7 +435,9 @@ test('every Notification Center stream loads the store decoded, and a second run
     ),
     [
       {
-        id: messagesDelivery.uuid,
+        id: 1,
+        uuid: messagesDelivery.uuid,
+        appId: 1,
         bundleId: 'com.apple.MobileSMS',
         deliveredAt: '2026-10-06T07:14:07.997621Z',
         requestId: 'message-1',
@@ -453,7 +455,9 @@ test('every Notification Center stream loads the store decoded, and a second run
         userInfo: '{"CKBBContextKeyMessageGUID":"GUID-1"}',
       },
       {
-        id: codexDelivery.uuid,
+        id: 2,
+        uuid: codexDelivery.uuid,
+        appId: 2,
         bundleId: 'com.openai.codex',
         deliveredAt: '2026-10-07T11:00:32.022000Z',
         requestId: 'request-1',
@@ -471,7 +475,9 @@ test('every Notification Center stream loads the store decoded, and a second run
         userInfo: '{"conversation_id":"conversation-1"}',
       },
       {
-        id: scriptEditorDelivery.uuid,
+        id: 3,
+        uuid: scriptEditorDelivery.uuid,
+        appId: 3,
         bundleId: 'com.apple.ScriptEditor2',
         deliveredAt: '2026-10-07T12:30:00.000125Z',
         requestId: null,
@@ -496,7 +502,7 @@ test('every Notification Center stream loads the store decoded, and a second run
     String(
       rows(
         out,
-        `SELECT payload FROM notifications WHERE id = '${messagesDelivery.uuid}'`,
+        `SELECT payload FROM notifications WHERE uuid = '${messagesDelivery.uuid}'`,
       )[0]?.payload,
     ),
   );
@@ -504,20 +510,21 @@ test('every Notification Center stream loads the store decoded, and a second run
   assert.equal(payload.req.dest, 15);
   assert.deepEqual(payload.req.uncc, { identifier: 'chat-1' });
   assert.deepEqual(
-    rows(out, 'SELECT bundleId, badge FROM apps ORDER BY bundleId'),
+    rows(out, 'SELECT id, bundleId, badge FROM apps ORDER BY id'),
     [
-      { bundleId: 'com.apple.mobilesms', badge: 2 },
-      { bundleId: 'com.apple.scripteditor2', badge: null },
-      { bundleId: 'com.openai.codex', badge: null },
+      { id: 1, bundleId: 'com.apple.mobilesms', badge: 2 },
+      { id: 2, bundleId: 'com.openai.codex', badge: null },
+      { id: 3, bundleId: 'com.apple.scripteditor2', badge: null },
     ],
   );
   assert.deepEqual(
     rows(
       out,
-      'SELECT bundleId, position, id, options, intentIdentifiers, hiddenPreviewsBodyPlaceholder, summaryFormat, actionsMenuTitle FROM categories ORDER BY position',
+      'SELECT appId, bundleId, position, id, options, intentIdentifiers, hiddenPreviewsBodyPlaceholder, summaryFormat, actionsMenuTitle FROM categories ORDER BY position',
     ),
     [
       {
+        appId: 1,
         bundleId: 'com.apple.mobilesms',
         position: 0,
         id: 'com.apple.messages.IncomingFilesCategory.Madrid',
@@ -529,6 +536,7 @@ test('every Notification Center stream loads the store decoded, and a second run
         actionsMenuTitle: null,
       },
       {
+        appId: 1,
         bundleId: 'com.apple.mobilesms',
         position: 1,
         id: 'com.apple.messages.Mute',
@@ -543,11 +551,11 @@ test('every Notification Center stream loads the store decoded, and a second run
   assert.deepEqual(
     rows(
       out,
-      'SELECT bundleId, categoryPosition, position, id, title, options, typeCode, textInputButtonTitle, textInputPlaceholder FROM categoryActions ORDER BY categoryPosition',
+      'SELECT appId, categoryPosition, position, id, title, options, typeCode, textInputButtonTitle, textInputPlaceholder FROM categoryActions ORDER BY categoryPosition',
     ),
     [
       {
-        bundleId: 'com.apple.mobilesms',
+        appId: 1,
         categoryPosition: 0,
         position: 0,
         id: 'com.apple.messages.ReplyAction',
@@ -558,7 +566,7 @@ test('every Notification Center stream loads the store decoded, and a second run
         textInputPlaceholder: 'Text Message',
       },
       {
-        bundleId: 'com.apple.mobilesms',
+        appId: 1,
         categoryPosition: 1,
         position: 0,
         id: 'com.apple.messages.MuteAction',
@@ -606,16 +614,19 @@ test('an app that posts again under the same request loads the new notification 
   assert.deepEqual(
     rows(
       out,
-      "SELECT id, requestId, title FROM notifications WHERE bundleId = 'com.openai.codex' ORDER BY deliveredAt",
+      "SELECT id, uuid, requestId, title FROM notifications WHERE bundleId = 'com.openai.codex' ORDER BY deliveredAt",
     ),
+    // The new notification has the replaced one's rec_id, and its own UUID.
     [
       {
-        id: codexDelivery.uuid,
+        id: 2,
+        uuid: codexDelivery.uuid,
         requestId: 'request-1',
         title: 'Task finished',
       },
       {
-        id: '7C0DE5E1-0000-4000-8000-000000000002',
+        id: 2,
+        uuid: '7C0DE5E1-0000-4000-8000-000000000002',
         requestId: 'request-1',
         title: 'Task finished again',
       },
@@ -663,9 +674,129 @@ test('a category an app registered twice loads both, told apart by position', as
   assert.deepEqual(
     rows(
       out,
-      "SELECT categoryPosition, id FROM categoryActions WHERE bundleId = 'com.openai.codex'",
+      'SELECT categoryPosition, id FROM categoryActions WHERE appId = 2',
     ),
     [{ categoryPosition: 1, id: 'pay' }],
+  );
+});
+
+// usernoted's record table declares only rec_id unique: no index keeps uuid
+// unique, so two rows can hold one UUID.
+test('two notifications usernoted stores under one UUID load as two rows', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
+  const path = join(dir.path, 'db');
+  notificationCenterFixture(path);
+  {
+    using usernoted = new ScratchNotificationCenter(path, { existing: true });
+    deliver(usernoted, {
+      ...codexDelivery,
+      recId: 4,
+      delivered: appleTime('2026-10-07T13:00:00.000Z'),
+    });
+  }
+  const run = await pipeline(
+    new AppleNotificationCenterSource({ path }),
+    dir.path,
+    globalThis,
+  );
+  const out = join(dir.path, 'out.sqlite');
+
+  await run.run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      `SELECT id, uuid FROM notifications WHERE uuid = '${codexDelivery.uuid}' ORDER BY id`,
+    ),
+    [
+      { id: 2, uuid: codexDelivery.uuid },
+      { id: 4, uuid: codexDelivery.uuid },
+    ],
+  );
+});
+
+// usernoted's app table declares only app_id unique: no index keeps
+// identifier unique, so two apps can hold one bundle identifier.
+test('two apps usernoted keeps under one bundle identifier load as two apps', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
+  const path = join(dir.path, 'db');
+  notificationCenterFixture(path);
+  {
+    using usernoted = new ScratchNotificationCenter(path, { existing: true });
+    usernoted.insert('app', {
+      app_id: 4,
+      identifier: 'com.openai.codex',
+      badge: 5,
+    });
+  }
+  const run = await pipeline(
+    new AppleNotificationCenterSource({ path }),
+    dir.path,
+    globalThis,
+  );
+  const out = join(dir.path, 'out.sqlite');
+
+  await run.run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      "SELECT id, bundleId, badge FROM apps WHERE bundleId = 'com.openai.codex' ORDER BY id",
+    ),
+    [
+      { id: 2, bundleId: 'com.openai.codex', badge: null },
+      { id: 4, bundleId: 'com.openai.codex', badge: 5 },
+    ],
+  );
+});
+
+test('the categories of two apps under one bundle identifier load for each app', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
+  const path = join(dir.path, 'db');
+  notificationCenterFixture(path);
+  {
+    using usernoted = new ScratchNotificationCenter(path, { existing: true });
+    usernoted.insert('app', { app_id: 4, identifier: 'com.openai.codex' });
+    for (const appId of [2, 4])
+      usernoted.insert('categories', {
+        app_id: appId,
+        categories: binaryPlist([
+          {
+            id: `task-${appId}`,
+            opt: 0,
+            acts: [{ id: `open-${appId}`, op: 4, ti: 'Open' }],
+          },
+        ]),
+      });
+  }
+  const run = await pipeline(
+    new AppleNotificationCenterSource({ path }),
+    dir.path,
+    globalThis,
+  );
+  const out = join(dir.path, 'out.sqlite');
+
+  await run.run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      "SELECT appId, position, id FROM categories WHERE bundleId = 'com.openai.codex' ORDER BY appId",
+    ),
+    [
+      { appId: 2, position: 0, id: 'task-2' },
+      { appId: 4, position: 0, id: 'task-4' },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT appId, categoryPosition, position, id FROM categoryActions WHERE appId IN (2, 4) ORDER BY appId',
+    ),
+    [
+      { appId: 2, categoryPosition: 0, position: 0, id: 'open-2' },
+      { appId: 4, categoryPosition: 0, position: 0, id: 'open-4' },
+    ],
   );
 });
 
@@ -697,9 +828,9 @@ test('an app macOS forgets deletes its app and categories while its notification
   assert.deepEqual(
     rows(
       out,
-      "SELECT id FROM notifications WHERE bundleId = 'com.apple.MobileSMS'",
+      "SELECT uuid FROM notifications WHERE bundleId = 'com.apple.MobileSMS'",
     ),
-    [{ id: messagesDelivery.uuid }],
+    [{ uuid: messagesDelivery.uuid }],
   );
 });
 
@@ -736,8 +867,8 @@ test('a date range loads the notifications delivered in it, to the microsecond, 
     const loaded = counts(await run.run());
 
     assert.deepEqual(
-      rows(out, 'SELECT id FROM notifications ORDER BY deliveredAt').map(
-        ({ id }) => id,
+      rows(out, 'SELECT uuid FROM notifications ORDER BY deliveredAt').map(
+        ({ uuid }) => uuid,
       ),
       expected,
     );
@@ -907,7 +1038,7 @@ test(
   },
 );
 
-test('this Mac’s Notification Center loads every notification and app it holds, ids as Biome writes them', async (t) => {
+test('this Mac’s Notification Center loads every notification and app it holds, UUIDs as Biome writes them', async (t) => {
   if (process.platform !== 'darwin')
     return t.skip('Notification Center requires macOS');
   await using dir = await new TemporaryFiles().directory(
@@ -948,7 +1079,7 @@ test('this Mac’s Notification Center loads every notification and app it holds
     return t.skip('Notification Center holds no notification to check');
   assert.equal(
     loaded(
-      "SELECT count(*) AS n FROM notifications WHERE id NOT GLOB '[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]-[0-9A-F][0-9A-F][0-9A-F][0-9A-F]-[0-9A-F][0-9A-F][0-9A-F][0-9A-F]-[0-9A-F][0-9A-F][0-9A-F][0-9A-F]-[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]'",
+      "SELECT count(*) AS n FROM notifications WHERE uuid NOT GLOB '[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]-[0-9A-F][0-9A-F][0-9A-F][0-9A-F]-[0-9A-F][0-9A-F][0-9A-F][0-9A-F]-[0-9A-F][0-9A-F][0-9A-F][0-9A-F]-[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]'",
     ),
     0,
   );

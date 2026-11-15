@@ -11,9 +11,14 @@ const { id, ordinal, nullableInteger, nullableText, nullableTextList } =
   notificationCenterFields;
 
 const properties = {
+  appId: {
+    ...ordinal,
+    description:
+      'The app that registered it (categories.app_id); refers to apps.id.',
+  },
   bundleId: {
     ...id,
-    description: 'The app that registered it; refers to apps.bundleId.',
+    description: 'The bundle identifier of that app (apps.bundleId).',
   },
   position: {
     ...ordinal,
@@ -56,12 +61,12 @@ export class CategoriesStream extends AppleNotificationCenterStream<
   NotificationCategory
 > {
   readonly name = 'categories';
-  readonly primaryKey = ['bundleId', 'position'];
+  readonly primaryKey = ['appId', 'position'];
   readonly emitsDeletes = true;
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per notification category an app registered, the kinds of notification it posts and the buttons they carry (categoryActions). Primary key bundleId, position. A category the app stops registering is deleted.',
+      'One record per notification category an app registered, the kinds of notification it posts and the buttons they carry (categoryActions). Primary key appId, position. A category the app stops registering is deleted.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -75,6 +80,7 @@ export class CategoriesStream extends AppleNotificationCenterStream<
   ): RecordDraft<typeof properties>[] {
     return [
       {
+        appId: category.appId,
         bundleId: category.bundleId,
         position: category.position,
         id: category.id,
