@@ -91,7 +91,7 @@ The app's own state, `storage/root-state.json`, is a separate file. Only `downlo
 | ------------------------ | --------------------------------------------------------------------------- |
 | `workspaces`             | workspace the app is signed in to and has saved, with the user signed in as |
 | `channels`               | conversation the app knows: public and private channels, DMs, group DMs     |
-| `channelMembers`         | member of a conversation whose members the app keeps (group DMs)            |
+| `channelMembers`         | entry of a conversation's member list, where the app keeps one (group DMs)  |
 | `members`                | person, bot or app user the app knows in a workspace                        |
 | `bots`                   | bot the app knows, such as an integration's sender                          |
 | `apps`                   | Slack app the client has loaded                                             |
@@ -105,7 +105,7 @@ The app's own state, `storage/root-state.json`, is a separate file. Only `downlo
 | `fileShares`             | conversation and message a file was shared in, held or not                  |
 | `listRecords`            | row of a Slack List the app opened, its cells as JSON                       |
 | `channelSections`        | section of the user's sidebar                                               |
-| `channelSectionChannels` | conversation the user put in a section                                      |
+| `channelSectionChannels` | entry of the list of conversations the user put in a section                |
 | `threadSubscriptions`    | thread the app knows whether the user follows                               |
 | `preferences`            | user or workspace preference, its value as JSON                             |
 | `userGroupMemberships`   | user group the app checked the signed-in user's membership of               |
@@ -113,6 +113,7 @@ The app's own state, `storage/root-state.json`, is a separate file. Only `downlo
 
 Every key has `workspaceId`.
 
+- **Lists.** A record decoded from a list of its owner is keyed by the owner and its `position` in the list, as the app keeps it: `channelMembers` by `channelId` and `position`, `channelSectionChannels` by `sectionId` and `position`. The member or conversation is a column. A list that repeats an entry loads a record for each place. The source deduplicates nothing (see [ADR 0022 of elt](../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md)).
 - **Messages.** A message's `ts` is Slack's own ID: seconds and microseconds, as Slack writes them. `sentAt` is the same instant, as a `date-time` with `precision` 6 (see the string formats in [elt](../../../elt/README.md#string-formats)). `blocks`, attachment `fields` and preference values stay JSON, as Slack holds them.
 - **Saved messages.** A message that the user saved for later has `savedState` (for example `in_progress`), `savedTodoState` (for example `saved`) and `isSavedArchived`. They come from the `saved` object that the app keeps on the message. The app keeps no list of saved items (`saved.list` and `saved.itemMap` stay empty). Thus the source does not know a saved message that the app does not hold.
 - **Snippets.** A snippet's `content` is its full text.

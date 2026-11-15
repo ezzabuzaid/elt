@@ -985,12 +985,12 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
   assert.deepEqual(
     rows(
       out,
-      'SELECT channelId, memberId FROM channelMembers ORDER BY memberId',
+      'SELECT channelId, position, memberId FROM channelMembers ORDER BY position',
     ),
     [
-      { channelId: 'G1', memberId: 'U1' },
-      { channelId: 'G1', memberId: 'U2' },
-      { channelId: 'G1', memberId: 'U3' },
+      { channelId: 'G1', position: 0, memberId: 'U1' },
+      { channelId: 'G1', position: 1, memberId: 'U2' },
+      { channelId: 'G1', position: 2, memberId: 'U3' },
     ],
   );
   assert.deepEqual(
@@ -1285,6 +1285,85 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
         endedAt: '2026-09-21T14:13:24.567Z',
         path: join(dir.path, 'notes.md'),
       },
+    ],
+  );
+});
+
+test('a member that a conversation’s member list repeats loads once for each place in the list', async () => {
+  const { dir, store, out } = await scratch();
+  await using _ = dir;
+  await store.save([
+    januaryClient({
+      channels: [
+        general,
+        random,
+        {
+          id: 'G1',
+          name: 'mpdm-ezz--sara-1',
+          kind: 'mpim',
+          members: ['U1', 'U2', 'U2'],
+        },
+      ],
+    }),
+  ]);
+
+  await (
+    await pipeline(
+      new SlackDesktopSource({ directory: store.directory }),
+      dir.path,
+      globalThis,
+    )
+  ).run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT memberId, count(*) AS n FROM channelMembers GROUP BY memberId ORDER BY memberId',
+    ),
+    [
+      { memberId: 'U1', n: 1 },
+      { memberId: 'U2', n: 2 },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT channelId, position, memberId FROM channelMembers ORDER BY position',
+    ),
+    [
+      { channelId: 'G1', position: 0, memberId: 'U1' },
+      { channelId: 'G1', position: 1, memberId: 'U2' },
+      { channelId: 'G1', position: 2, memberId: 'U2' },
+    ],
+  );
+});
+
+test('a conversation that a sidebar section repeats loads once for each place in the section', async () => {
+  const { dir, store, out } = await scratch();
+  await using _ = dir;
+  await store.save([
+    januaryClient({
+      sections: [{ id: 'S1', name: 'Projects', channels: ['C2', 'C1', 'C2'] }],
+    }),
+  ]);
+
+  await (
+    await pipeline(
+      new SlackDesktopSource({ directory: store.directory }),
+      dir.path,
+      globalThis,
+    )
+  ).run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT sectionId, position, channelId FROM channelSectionChannels ORDER BY position',
+    ),
+    [
+      { sectionId: 'S1', position: 0, channelId: 'C2' },
+      { sectionId: 'S1', position: 1, channelId: 'C1' },
+      { sectionId: 'S1', position: 2, channelId: 'C2' },
     ],
   );
 });

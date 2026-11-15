@@ -24,11 +24,11 @@ export class ChannelSectionChannelsStream extends SlackDesktopStream<
   Row
 > {
   readonly name = 'channelSectionChannels';
-  readonly primaryKey = ['workspaceId', 'sectionId', 'channelId'];
+  readonly primaryKey = ['workspaceId', 'sectionId', 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per conversation the user put in a sidebar section. Slack’s own sections, which sort conversations themselves, list none. Primary key workspaceId, sectionId, channelId. One moved out is deleted.',
+      'One record per entry of the list of conversations the user put in a sidebar section. Slack’s own sections, which sort conversations themselves, list none. A conversation the list repeats has a record for each place. Primary key workspaceId, sectionId, position. An entry the app stops listing is deleted.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -36,7 +36,7 @@ export class ChannelSectionChannelsStream extends SlackDesktopStream<
   protected rows(scan: SlackDesktopScan): readonly Row[] {
     return scan.clients.flatMap(({ workspace, channelSections }) =>
       channelSections.flatMap(({ id: sectionId, channelIds }) =>
-        [...new Set(channelIds)]
+        channelIds
           .map((channelId, position) => ({
             workspaceId: workspace.id,
             sectionId,
