@@ -615,7 +615,7 @@ test('a Calendar read without the private ICS export fails with IcsExportUnavail
   );
 });
 
-test('a Calendar read keeps one all-day occurrence that EventKit expands twice in its day, at two UTC offsets', async () => {
+test('a Calendar read returns both copies of an all-day occurrence that EventKit expands twice in its day, at two UTC offsets', async () => {
   await using stub = await StubEventKitHelper.create();
   // What EventKit returned on 2026-10-12 for the yearly Flag Day of a United
   // States holidays calendar, read in Asia/Amman: 2016-06-14 from midnight at
@@ -677,7 +677,7 @@ test('a Calendar read keeps one all-day occurrence that EventKit expands twice i
 
   assert.deepEqual(
     occurrences.map(({ startMs }) => startMs),
-    [1465851600000],
+    [1465851600000, 1465855200000],
   );
 });
 

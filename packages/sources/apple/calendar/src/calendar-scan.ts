@@ -136,8 +136,11 @@ export class CalendarScan implements AsyncDisposable {
   async [Symbol.asyncDispose](): Promise<void> {}
 }
 
-// An occurrence's id: its item plus, for a recurring event, the occurrence it
-// replaces (a local date when all-day), so rescheduling keeps the id.
+// An occurrence's id: its item plus, for a recurring event, the instant of the
+// occurrence it replaces (EKEvent.occurrenceDate), so rescheduling keeps the
+// id. An all-day occurrence is keyed by that instant too, not by its day:
+// EventKit can return one all-day occurrence twice in its day, at two UTC
+// offsets, and each copy is a row.
 function identify(occurrence: OccurrenceDocument): CalendarEvent {
   const recurring =
     occurrence.recurrenceRules.length > 0 || occurrence.detached;
@@ -145,11 +148,7 @@ function identify(occurrence: OccurrenceDocument): CalendarEvent {
     throw new TypeError(
       'EventKit returned a recurring event without an occurrence date',
     );
-  let occurrenceKey: string | null = null;
-  if (recurring)
-    occurrenceKey = occurrence.allDay
-      ? (occurrence.occurrenceDay ?? null)
-      : timestamp(occurrence.occurrenceMs);
+  const occurrenceKey = recurring ? timestamp(occurrence.occurrenceMs) : null;
   // A moved occurrence keeps the key of its series' item, so moving it
   // updates its row.
   const eventId = JSON.stringify([

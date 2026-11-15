@@ -1613,7 +1613,7 @@ test(
     assert.equal(day.startAt, '2024-12-31T21:00:00.000Z');
     assert.equal(day.occurrenceAt, '2024-12-31T21:00:00.000Z');
     assert.equal(day.occurrenceDate, '2025-01-01');
-    assert.equal(JSON.parse(String(day.id)).at(-1), '2025-01-01');
+    assert.equal(JSON.parse(String(day.id)).at(-1), '2024-12-31T21:00:00.000Z');
     // EventKit has no time zone or place for a floating all-day event.
     assert.deepEqual(
       [day.timeZone, day.locationTitle, day.radius],
@@ -1621,6 +1621,75 @@ test(
     );
   },
 );
+
+test('Calendar loads both copies of an all-day occurrence that EventKit expands twice in its day, each keyed by its occurrence instant, with their alarms and rules', async () => {
+  await using stub = await StubEventKitHelper.create();
+  // What EventKit returned on 2026-10-12 for the yearly Flag Day of a United
+  // States holidays calendar, read in Asia/Amman: 2016-06-14 from midnight at
+  // +03:00, and again from midnight at +02:00.
+  const flagDay = (startMs: number) =>
+    occurrence({
+      calendarItemId: 'flag-day',
+      name: 'Flag Day',
+      allDay: true,
+      startMs,
+      endMs: startMs + 86_399_000,
+      startDay: '2016-06-14',
+      endDay: '2016-06-14',
+      occurrenceMs: startMs,
+      occurrenceDay: '2016-06-14',
+      alarms: [recordedAlarm],
+      recurrenceRules: [rule({ frequency: 3, end: undefined })],
+    });
+  const june = {
+    startAt: '2016-06-01T00:00:00.000Z',
+    endAt: '2016-07-01T00:00:00.000Z',
+  };
+  stub.answer(eventsRead(june, true), {
+    documents: [
+      account(),
+      calendar(),
+      flagDay(at('2016-06-13T21:00:00.000Z')),
+      flagDay(at('2016-06-13T22:00:00.000Z')),
+    ],
+  });
+  await using scratch = await new TemporaryFiles().directory('cal-all-day-');
+  const imported = await appleImport(
+    new AppleCalendarSource({
+      store: new CalendarStore(stub.path, { env: process.env }),
+      ...june,
+    }),
+    join(scratch.path, 'import'),
+  );
+
+  await imported.load();
+
+  const first = eventId('flag-day', '2016-06-13T21:00:00.000Z');
+  const second = eventId('flag-day', '2016-06-13T22:00:00.000Z');
+  assert.deepEqual(
+    imported
+      .read(
+        `SELECT "eventId", "startDate", "occurrenceDate" FROM events ORDER BY "startAt"`,
+      )
+      .map((row) => ({ ...row })),
+    [
+      { eventId: first, startDate: '2016-06-14', occurrenceDate: '2016-06-14' },
+      {
+        eventId: second,
+        startDate: '2016-06-14',
+        occurrenceDate: '2016-06-14',
+      },
+    ],
+  );
+  for (const table of ['alarms', 'recurrence_rules'])
+    assert.deepEqual(
+      imported
+        .read(`SELECT "eventId" FROM ${table} ORDER BY "eventId"`)
+        .map(({ eventId }) => eventId),
+      [first, second],
+      table,
+    );
+});
 
 test(
   'iCalendar parsing unfolds lines, keeps parameters and vendor properties, and nests components',

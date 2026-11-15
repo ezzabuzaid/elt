@@ -29,7 +29,7 @@ const properties = {
   eventId: {
     ...id,
     description:
-      "Occurrence identity: JSON [calendarId, series item, occurrenceKey]. The series item is calendarItemId, or for a moved (detached) occurrence, which EventKit gives an item of its own, its series' calendarItemId. occurrenceKey is NULL for a nonrecurring event, occurrenceDate for a recurring all-day event and occurrenceAt for a recurring timed event, so moving an occurrence keeps its identity. An event is recurring when it has recurrence rules or is detached. Related EventKit rows join here.",
+      "Occurrence identity: JSON [calendarId, series item, occurrenceKey]. The series item is calendarItemId, or for a moved (detached) occurrence, which EventKit gives an item of its own, its series' calendarItemId. occurrenceKey is NULL for a nonrecurring event and occurrenceAt for a recurring event, all-day or timed, so moving an occurrence keeps its identity. An all-day occurrence is not keyed by its day: EventKit can return one all-day occurrence twice in its day, at two UTC offsets, and each copy is a row; a reader that wants one row per day groups by occurrenceDate. An event is recurring when it has recurrence rules or is detached. Related EventKit rows join here.",
   },
   calendarId: {
     ...id,
