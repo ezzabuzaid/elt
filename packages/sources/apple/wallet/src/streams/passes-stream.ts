@@ -20,7 +20,12 @@ const properties = {
   id: {
     ...id,
     description:
-      'passd’s identifier for the pass (pass.unique_id), also the name of its bundle, ~/Library/Passes/Cards/<id>.pkpass. Every other Wallet stream’s passId refers to it.',
+      'The pass’s row in passd’s database (pass.pid), the key passd declares, a 64-bit integer in decimal. Every other Wallet stream’s passId refers to it.',
+  },
+  uniqueId: {
+    ...id,
+    description:
+      'passd’s name for the pass (pass.unique_id), also the name of its bundle, ~/Library/Passes/Cards/<uniqueId>.pkpass. passd does not keep it unique: two rows can share it.',
   },
   passTypeIdentifier: {
     ...text,
@@ -200,6 +205,7 @@ export class PassesStream extends AppleWalletStream<typeof properties> {
     return [
       {
         id: pass.id,
+        uniqueId: pass.uniqueId,
         passTypeIdentifier: pass.passTypeIdentifier,
         serialNumber: pass.serialNumber,
         teamIdentifier: pass.teamIdentifier,

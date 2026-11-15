@@ -17,7 +17,8 @@ export function walletRecords(path: string): WalletRecord[] {
   using database = appDatabase.snapshot(path, requiredColumns);
   return database
     .all(
-      `SELECT pass.unique_id AS id,
+      `SELECT CAST(pass.pid AS TEXT) AS id,
+              pass.unique_id AS uniqueId,
               pass.ingested_date AS addedAt,
               pass.modified_date AS updatedAt,
               pass.signing_date AS signedAt,
@@ -25,13 +26,14 @@ export function walletRecords(path: string): WalletRecord[] {
               pass_annotations.sorting_state AS sortingState
        FROM pass
        LEFT JOIN pass_annotations ON pass_annotations.pass_pid = pass.pid
-       ORDER BY pass.ingested_date, pass.unique_id`,
+       ORDER BY pass.ingested_date, pass.pid`,
     )
     .map((row) => {
-      if (typeof row.id !== 'string')
-        throw new TypeError('A Wallet pass has no unique ID');
+      if (typeof row.id !== 'string' || typeof row.uniqueId !== 'string')
+        throw new TypeError('A Wallet pass has no pid or unique ID');
       return {
         id: row.id,
+        uniqueId: row.uniqueId,
         addedAt: instant(row.addedAt),
         updatedAt: instant(row.updatedAt),
         signedAt: instant(row.signedAt),

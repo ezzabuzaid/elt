@@ -1,6 +1,6 @@
 # @eltjs/source-apple-wallet
 
-An ELT source for the Wallet passes on this Mac. It reads `~/Library/Passes`, where passd keeps the Wallet passes of this Mac, with the SDK `@eltjs/sdk-apple-wallet`. `passes23.sqlite` records each pass, and `Cards/<id>.pkpass/` holds the bundle that the issuer signed. The source does not use Wallet or PassKit, and no app has to be open. PassKit shows an app only the passes of the types that its entitlement names.
+An ELT source for the Wallet passes on this Mac. It reads `~/Library/Passes`, where passd keeps the Wallet passes of this Mac, with the SDK `@eltjs/sdk-apple-wallet`. `passes23.sqlite` records each pass, and `Cards/<unique_id>.pkpass/` holds the bundle that the issuer signed. The source does not use Wallet or PassKit, and no app has to be open. PassKit shows an app only the passes of the types that its entitlement names.
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../../elt/CONTEXT.md) for the words of all of elt.
 
@@ -63,7 +63,7 @@ The source needs no grant. On 2026-10-10, a launchd job without Full Disk Access
 | `passLocalizations` | each `<language>.lproj/pass.strings`                        | text that a pass translates, by language and localization key                                |
 | `passImages`        | the images that `manifest.json` lists                       | image in the bundle, with the image as its file                                              |
 
-The `id` of a pass is the `unique_id` of passd, which also names its bundle. `passTypeIdentifier` and `serialNumber` are the identity that the issuer gives the pass. The `passId` of every other stream refers to `id`.
+The `id` of a pass is its `pid`, the primary key that passd declares for the `pass` table, a 64-bit integer written in decimal text ([ADR 0022 of elt](../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md)). `uniqueId` is the `unique_id` of passd, which names the bundle. It is a column and not the key, because its index `pass_unique_id_index` is not unique: two rows can have the same `unique_id`, and each loads as a pass. `passTypeIdentifier` and `serialNumber` are the identity that the issuer gives the pass. The `passId` of every other stream refers to `id`, and the other parts of its key are the position or the path of the record in the bundle.
 
 The source reads the content of `pass.json` from the bundle, not from the copies of passd (`relevant_pass_dates`, `location`), because the bundle keeps what the copies lose: the offset of a date ([ADR 0001](./docs/adr/0001-the-content-of-a-pass-comes-from-its-bundle.md)). The dates of PassKit are W3C dates with a time zone, for example a departure at `2025-09-15T09:30+08:00`. Each date loads as a UTC [`date-time`](../../../elt/README.md#string-formats) to the millisecond (`relevantAt`) and the offset in minutes that it was written with (`relevantAtOffset`). The SQL Server source uses the same convention. A date without a time zone fails the read.
 

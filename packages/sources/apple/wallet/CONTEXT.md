@@ -5,7 +5,7 @@ A user wants the passes in their Wallet in one store that SQL can read: boarding
 ## Language
 
 **Pass**:
-One item in Wallet, for example a boarding pass or a ticket. The `unique_id` of passd identifies it on this Mac. The issuer identifies it by its pass type identifier and serial number.
+One item in Wallet, for example a boarding pass or a ticket. Its row `pid` in `passes23.sqlite` identifies it on this Mac. The `unique_id` of passd names its bundle, but passd does not keep it unique. The issuer identifies it by its pass type identifier and serial number.
 _Avoid_: Card (a payment card is a different thing), ticket
 
 **Issuer**:
@@ -13,7 +13,7 @@ The company that made and signed a pass, and that can update it.
 _Avoid_: Vendor, organization (`organizationName` is a field of the pass)
 
 **Bundle**:
-The signed folder `Cards/<id>.pkpass/` of one pass: `pass.json`, `manifest.json`, the images and the localizations.
+The signed folder `Cards/<unique_id>.pkpass/` of one pass: `pass.json`, `manifest.json`, the images and the localizations.
 _Avoid_: Package, `.pkpass` file (Pass Viewer adds such a file, and passd keeps it as a folder)
 
 **Field**:

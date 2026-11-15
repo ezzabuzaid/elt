@@ -22,8 +22,12 @@ export type PassDate = {
 
 // What Wallet records about a pass in passes23.sqlite, beside its bundle.
 export type WalletRecord = {
-  // passd's identifier for the pass; Cards/<id>.pkpass is its bundle.
+  // The pass's row, pass.pid, the key passd declares: a 64-bit integer, in
+  // decimal, since a double cannot hold it (ADR 0022 of elt).
   readonly id: string;
+  // passd's name for the pass, which no constraint keeps unique;
+  // Cards/<uniqueId>.pkpass is its bundle.
+  readonly uniqueId: string;
   readonly addedAt: string | null;
   // When Wallet last stored a new version of the pass.
   readonly updatedAt: string | null;

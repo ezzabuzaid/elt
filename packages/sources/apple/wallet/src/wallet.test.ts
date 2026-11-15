@@ -40,7 +40,7 @@ import { AppleWalletSource } from './apple-wallet-source.ts';
 // Wallet annotates it with, and its bundle's files besides manifest.json,
 // which passd writes from them.
 type ScratchPass = {
-  readonly id: string;
+  readonly uniqueId: string;
   // A random 64-bit integer, as passd keys its rows.
   readonly pid: bigint;
   readonly addedAt: number;
@@ -55,7 +55,7 @@ type ScratchPass = {
 
 // A synthetic Wallet store: passes23.sqlite with the pass and
 // pass_annotations tables as macOS 27's passd declares them, in its rollback
-// journal, and a Cards/<id>.pkpass bundle per pass.
+// journal, and a Cards/<unique_id>.pkpass bundle per pass.
 class ScratchWallet implements Disposable {
   readonly directory: string;
   readonly #database: DatabaseSync;
@@ -86,7 +86,7 @@ class ScratchWallet implements Disposable {
       )
       .run(
         pass.pid,
-        pass.id,
+        pass.uniqueId,
         serialNumber(pass),
         pass.addedAt,
         pass.updatedAt,
@@ -108,10 +108,10 @@ class ScratchWallet implements Disposable {
   update(pass: ScratchPass): void {
     this.#database
       .prepare(
-        'UPDATE pass SET modified_date = ?, signing_date = ? WHERE unique_id = ?',
+        'UPDATE pass SET modified_date = ?, signing_date = ? WHERE pid = ?',
       )
-      .run(pass.updatedAt, pass.signedAt, pass.id);
-    rmSync(this.bundle(pass.id), { recursive: true, force: true });
+      .run(pass.updatedAt, pass.signedAt, pass.pid);
+    rmSync(this.bundle(pass.uniqueId), { recursive: true, force: true });
     this.#writeBundle(pass);
   }
 
@@ -121,7 +121,7 @@ class ScratchWallet implements Disposable {
     this.#database
       .prepare('DELETE FROM pass_annotations WHERE pass_pid = ?')
       .run(pass.pid);
-    rmSync(this.bundle(pass.id), { recursive: true });
+    rmSync(this.bundle(pass.uniqueId), { recursive: true });
   }
 
   exec(sql: string): void {
@@ -135,13 +135,13 @@ class ScratchWallet implements Disposable {
   #writeBundle(pass: ScratchPass): void {
     const manifest: Record<string, string> = {};
     for (const [path, content] of Object.entries(pass.files)) {
-      const file = join(this.bundle(pass.id), path);
+      const file = join(this.bundle(pass.uniqueId), path);
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, content);
       manifest[path] = hash('sha1', content);
     }
     writeFileSync(
-      join(this.bundle(pass.id), 'manifest.json'),
+      join(this.bundle(pass.uniqueId), 'manifest.json'),
       JSON.stringify(manifest),
     );
   }
@@ -159,7 +159,7 @@ function serialNumber(pass: ScratchPass): string {
     !('serialNumber' in json) ||
     typeof json.serialNumber !== 'string'
   )
-    throw new TypeError(`Scratch pass ${pass.id} names no serial number`);
+    throw new TypeError(`Scratch pass ${pass.uniqueId} names no serial number`);
   return json.serialNumber;
 }
 
@@ -182,7 +182,7 @@ const bluePixel = Buffer.from(
 // local time, semantic tags, a web service with its token, images at two
 // scales, and English and Arabic text.
 const boardingPass: ScratchPass = {
-  id: 'Rj5JgNLqUsLcgX514jcGtHwF+aI=',
+  uniqueId: 'Rj5JgNLqUsLcgX514jcGtHwF+aI=',
   pid: -6751586574849564982n,
   addedAt: appleTime('2025-09-15T09:28:20Z', 663083),
   updatedAt: appleTime('2025-09-15T09:28:20Z', 977644),
@@ -285,7 +285,7 @@ const boardingPass: ScratchPass = {
 // An event ticket made for iOS 18: a venue to show it near, a beacon, an
 // interval and a moment it is relevant, an expiry, and an auxiliary row.
 const eventTicket: ScratchPass = {
-  id: 'DBOQyV1BAwPyPhYRvYyhG8eusUE=',
+  uniqueId: 'DBOQyV1BAwPyPhYRvYyhG8eusUE=',
   pid: -269134946572782675n,
   addedAt: appleTime('2026-02-10T18:58:50Z', 405923),
   updatedAt: appleTime('2026-02-10T18:58:50Z', 447005),
@@ -342,7 +342,7 @@ const eventTicket: ScratchPass = {
 // A store card, the only kind here with personalization.json, whose balance
 // an issuer may write as a number no double holds.
 const storeCard: ScratchPass = {
-  id: 'nOg2bVYUyXuEZC0szfn89-+rtyE=',
+  uniqueId: 'nOg2bVYUyXuEZC0szfn89-+rtyE=',
   pid: 7514561053096528262n,
   addedAt: appleTime('2026-03-01T08:00:00Z', 1),
   updatedAt: appleTime('2026-03-01T08:00:00Z', 2),
@@ -463,7 +463,7 @@ test('a pass whose bundle cannot be read fails the run, naming the pass, and eve
   await run.run();
   const loaded = tableSizes(out);
   using wallet = new ScratchWallet(dir.path, { existing: true });
-  const bundle = wallet.bundle(eventTicket.id);
+  const bundle = wallet.bundle(eventTicket.uniqueId);
   const breakages = [
     // A bundle gone while its row stays.
     () => rmSync(bundle, { recursive: true }),
@@ -492,7 +492,7 @@ test('a pass whose bundle cannot be read fails the run, naming the pass, and eve
       assert.equal(error.errors.length, streamNames.length);
       for (const cause of error.errors) {
         assert.ok(cause instanceof PassBundleError);
-        assert.ok(cause.message.includes(eventTicket.id));
+        assert.ok(cause.message.includes(eventTicket.uniqueId));
       }
       return true;
     });
@@ -604,7 +604,7 @@ test('a pass’s authenticationToken reaches nothing an import writes', async ()
     );
   const [loaded] = rows(
     join(dir.path, 'import/out.sqlite'),
-    `SELECT webServiceUrl, passJson FROM passes WHERE id = '${boardingPass.id}'`,
+    `SELECT webServiceUrl, passJson FROM passes WHERE id = '${boardingPass.pid}'`,
   );
   assert.equal(loaded?.webServiceUrl, 'https://passes.example.com/v1');
   assert.ok(String(loaded?.passJson).includes('"webServiceURL"'));
@@ -624,28 +624,28 @@ test('a date written with an offset loads as UTC and its offset, and a number pa
   assert.deepEqual(
     rows(
       out,
-      `SELECT relevantAt, relevantAtOffset FROM passes WHERE id = '${boardingPass.id}'`,
+      `SELECT relevantAt, relevantAtOffset FROM passes WHERE id = '${boardingPass.pid}'`,
     ),
     [{ relevantAt: '2025-09-15T01:30:00.000Z', relevantAtOffset: 480 }],
   );
   assert.deepEqual(
     rows(
       out,
-      `SELECT at, atOffset FROM passRelevantDates WHERE passId = '${eventTicket.id}' AND position = 1`,
+      `SELECT at, atOffset FROM passRelevantDates WHERE passId = '${eventTicket.pid}' AND position = 1`,
     ),
     [{ at: '2026-02-14T01:00:00.000Z', atOffset: -330 }],
   );
   assert.deepEqual(
     rows(
       out,
-      `SELECT value FROM passFields WHERE passId = '${storeCard.id}' AND key = 'balance'`,
+      `SELECT value FROM passFields WHERE passId = '${storeCard.pid}' AND key = 'balance'`,
     ),
     [{ value: '12345678901234567890.25' }],
   );
   assert.deepEqual(
     rows(
       out,
-      `SELECT semantics, passJson FROM passes WHERE id = '${storeCard.id}'`,
+      `SELECT semantics, passJson FROM passes WHERE id = '${storeCard.pid}'`,
     ),
     [
       {
@@ -711,7 +711,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
   const run = await pipeline(source, dir.path);
   const out = join(dir.path, 'out.sqlite');
   const bundle = (pass: ScratchPass, path: string) =>
-    join(dir.path, 'Cards', `${pass.id}.pkpass`, path);
+    join(dir.path, 'Cards', `${pass.uniqueId}.pkpass`, path);
 
   const first = counts(await run.run());
 
@@ -750,7 +750,8 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
   assert.deepEqual(streamRows(out, source.passes, 'id'), [
     {
       ...unset,
-      id: eventTicket.id,
+      id: String(eventTicket.pid),
+      uniqueId: eventTicket.uniqueId,
       passTypeIdentifier: 'pass.com.example.venue',
       serialNumber: 'TICKET-1',
       teamIdentifier: 'TEAM654321',
@@ -769,7 +770,8 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
     },
     {
       ...unset,
-      id: boardingPass.id,
+      id: String(boardingPass.pid),
+      uniqueId: boardingPass.uniqueId,
       passTypeIdentifier: 'pass.com.example.airline',
       serialNumber: 'BP-845',
       teamIdentifier: 'TEAM123456',
@@ -800,7 +802,8 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
     },
     {
       ...unset,
-      id: storeCard.id,
+      id: String(storeCard.pid),
+      uniqueId: storeCard.uniqueId,
       passTypeIdentifier: 'pass.com.example.cafe',
       serialNumber: 'CARD-1',
       teamIdentifier: 'TEAM777777',
@@ -822,7 +825,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
     streamRows(out, source.passFields, 'passId, area, position'),
     [
       field({
-        passId: eventTicket.id,
+        passId: String(eventTicket.pid),
         area: 'auxiliary',
         position: 0,
         key: 'seat',
@@ -831,14 +834,14 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
         row: 1,
       }),
       field({
-        passId: eventTicket.id,
+        passId: String(eventTicket.pid),
         area: 'primary',
         position: 0,
         key: 'event',
         value: 'Night Concert',
       }),
       field({
-        passId: boardingPass.id,
+        passId: String(boardingPass.pid),
         area: 'auxiliary',
         position: 0,
         key: 'departure',
@@ -851,7 +854,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
         semantics: '{"originalDepartureDate":"2025-09-15T09:30+08:00"}',
       }),
       field({
-        passId: boardingPass.id,
+        passId: String(boardingPass.pid),
         area: 'back',
         position: 0,
         key: 'website',
@@ -861,7 +864,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
         dataDetectorTypes: '["PKDataDetectorTypeLink"]',
       }),
       field({
-        passId: boardingPass.id,
+        passId: String(boardingPass.pid),
         area: 'header',
         position: 0,
         key: 'boarding-gate',
@@ -871,7 +874,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
         changeMessage: 'Gate changed to %@',
       }),
       field({
-        passId: boardingPass.id,
+        passId: String(boardingPass.pid),
         area: 'primary',
         position: 0,
         key: 'origin',
@@ -879,7 +882,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
         value: 'KUL',
       }),
       field({
-        passId: boardingPass.id,
+        passId: String(boardingPass.pid),
         area: 'primary',
         position: 1,
         key: 'destination',
@@ -887,7 +890,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
         value: 'DOH',
       }),
       field({
-        passId: storeCard.id,
+        passId: String(storeCard.pid),
         area: 'primary',
         position: 0,
         key: 'balance',
@@ -900,7 +903,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
   );
   assert.deepEqual(streamRows(out, source.passBarcodes, 'passId, position'), [
     {
-      passId: eventTicket.id,
+      passId: String(eventTicket.pid),
       position: 0,
       format: 'PKBarcodeFormatAztec',
       message: 'TICKET-1-SEAT-A12',
@@ -908,7 +911,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
       altText: null,
     },
     {
-      passId: boardingPass.id,
+      passId: String(boardingPass.pid),
       position: 0,
       format: 'PKBarcodeFormatQR',
       message: 'M1RIVERA/SAM E9U5XWF KULDOHEA 0845',
@@ -916,7 +919,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
       altText: '9U5XWF',
     },
     {
-      passId: boardingPass.id,
+      passId: String(boardingPass.pid),
       position: 1,
       format: 'PKBarcodeFormatPDF417',
       message: 'M1RIVERA/SAM E9U5XWF KULDOHEA 0845',
@@ -926,7 +929,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
   ]);
   assert.deepEqual(streamRows(out, source.passLocations, 'passId, position'), [
     {
-      passId: eventTicket.id,
+      passId: String(eventTicket.pid),
       position: 0,
       latitude: 25.195613989,
       longitude: 55.277543085,
@@ -936,7 +939,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
   ]);
   assert.deepEqual(streamRows(out, source.passBeacons, 'passId, position'), [
     {
-      passId: eventTicket.id,
+      passId: String(eventTicket.pid),
       position: 0,
       proximityUuid: 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0',
       major: 1,
@@ -948,7 +951,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
     streamRows(out, source.passRelevantDates, 'passId, position'),
     [
       {
-        passId: eventTicket.id,
+        passId: String(eventTicket.pid),
         position: 0,
         at: null,
         atOffset: null,
@@ -958,7 +961,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
         endsAtOffset: 240,
       },
       {
-        passId: eventTicket.id,
+        passId: String(eventTicket.pid),
         position: 1,
         at: '2026-02-14T01:00:00.000Z',
         atOffset: -330,
@@ -973,25 +976,25 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
     streamRows(out, source.passLocalizations, 'passId, language, key'),
     [
       {
-        passId: boardingPass.id,
+        passId: String(boardingPass.pid),
         language: 'ar',
         key: 'BOARDING_PASS',
         text: 'بطاقة صعود',
       },
       {
-        passId: boardingPass.id,
+        passId: String(boardingPass.pid),
         language: 'ar',
         key: 'KUALA_LUMPUR',
         text: 'كوالالمبور',
       },
       {
-        passId: boardingPass.id,
+        passId: String(boardingPass.pid),
         language: 'en',
         key: 'BOARDING_PASS',
         text: 'Boarding pass',
       },
       {
-        passId: boardingPass.id,
+        passId: String(boardingPass.pid),
         language: 'en',
         key: 'KUALA_LUMPUR',
         text: 'Kuala Lumpur',
@@ -1000,7 +1003,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
   );
   assert.deepEqual(streamRows(out, source.passImages, 'passId, path'), [
     {
-      passId: eventTicket.id,
+      passId: String(eventTicket.pid),
       path: 'strip.png',
       name: 'strip',
       scale: 1,
@@ -1009,7 +1012,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
       file: bundle(eventTicket, 'strip.png'),
     },
     {
-      passId: boardingPass.id,
+      passId: String(boardingPass.pid),
       path: 'ar.lproj/logo.png',
       name: 'logo',
       scale: 1,
@@ -1018,7 +1021,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
       file: bundle(boardingPass, 'ar.lproj/logo.png'),
     },
     {
-      passId: boardingPass.id,
+      passId: String(boardingPass.pid),
       path: 'icon.png',
       name: 'icon',
       scale: 1,
@@ -1027,7 +1030,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
       file: bundle(boardingPass, 'icon.png'),
     },
     {
-      passId: boardingPass.id,
+      passId: String(boardingPass.pid),
       path: 'icon@2x.png',
       name: 'icon',
       scale: 2,
@@ -1036,7 +1039,7 @@ test('every Wallet stream loads the store decoded, and a second run writes nothi
       file: bundle(boardingPass, 'icon@2x.png'),
     },
     {
-      passId: storeCard.id,
+      passId: String(storeCard.pid),
       path: 'thumbnail.png',
       name: 'thumbnail',
       scale: 1,
@@ -1099,14 +1102,14 @@ test('an expired, voided or archived pass stays loaded with what flags it', asyn
     ),
     [
       {
-        id: eventTicket.id,
+        id: String(eventTicket.pid),
         expiresAt: '2026-02-13T23:00:00.250Z',
         voided: 1,
         archivedAt: '2026-02-10T18:58:50.829152Z',
         sortingState: 1,
       },
       {
-        id: storeCard.id,
+        id: String(storeCard.pid),
         expiresAt: null,
         voided: 0,
         archivedAt: null,
@@ -1171,6 +1174,50 @@ test('a pass that repeats a field key, a barcode or a location loads every one o
   });
 });
 
+test('two pass rows that share one unique_id load as two passes, each with every row of its bundle', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-wallet-');
+  // passd declares only pid the key of pass: pass_unique_id_index is not
+  // unique, so a second row may carry the same unique_id and bundle.
+  const copy = { ...eventTicket, pid: 4611686018427387905n };
+  {
+    using wallet = new ScratchWallet(dir.path);
+    wallet.add(eventTicket);
+    wallet.add(copy);
+  }
+  const run = await pipeline(
+    new AppleWalletSource({ directory: dir.path }),
+    dir.path,
+  );
+  const out = join(dir.path, 'out.sqlite');
+
+  await run.run();
+
+  assert.deepEqual(rows(out, 'SELECT id, uniqueId FROM passes ORDER BY id'), [
+    { id: String(eventTicket.pid), uniqueId: eventTicket.uniqueId },
+    { id: String(copy.pid), uniqueId: eventTicket.uniqueId },
+  ]);
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT passId, count(*) AS n FROM passFields GROUP BY passId ORDER BY passId',
+    ),
+    [
+      { passId: String(eventTicket.pid), n: 2 },
+      { passId: String(copy.pid), n: 2 },
+    ],
+  );
+  assert.deepEqual(tableSizes(out), {
+    passes: 2,
+    passFields: 4,
+    passBarcodes: 2,
+    passLocations: 2,
+    passBeacons: 2,
+    passRelevantDates: 4,
+    passLocalizations: 0,
+    passImages: 2,
+  });
+});
+
 test('a pass removed from Wallet deletes its rows from every stream, and the other passes stay', async () => {
   await using dir = await new TemporaryFiles().directory('elt-wallet-');
   walletFixture(dir.path);
@@ -1204,14 +1251,14 @@ test('a pass removed from Wallet deletes its rows from every stream, and the oth
         `SELECT DISTINCT ${name === 'passes' ? 'id' : 'passId'} AS pass FROM ${name} ORDER BY pass`,
       ).map(({ pass }) => pass),
       {
-        passes: [eventTicket.id, storeCard.id],
-        passFields: [eventTicket.id, storeCard.id],
-        passBarcodes: [eventTicket.id],
-        passLocations: [eventTicket.id],
-        passBeacons: [eventTicket.id],
-        passRelevantDates: [eventTicket.id],
+        passes: [String(eventTicket.pid), String(storeCard.pid)],
+        passFields: [String(eventTicket.pid), String(storeCard.pid)],
+        passBarcodes: [String(eventTicket.pid)],
+        passLocations: [String(eventTicket.pid)],
+        passBeacons: [String(eventTicket.pid)],
+        passRelevantDates: [String(eventTicket.pid)],
         passLocalizations: [],
-        passImages: [eventTicket.id, storeCard.id],
+        passImages: [String(eventTicket.pid), String(storeCard.pid)],
       }[name],
       name,
     );
@@ -1265,7 +1312,7 @@ test('a new version of a pass changes its rows in place and deletes what it no l
   assert.deepEqual(
     rows(
       out,
-      `SELECT updatedAt, signedAt FROM passes WHERE id = '${eventTicket.id}'`,
+      `SELECT updatedAt, signedAt FROM passes WHERE id = '${eventTicket.pid}'`,
     ),
     [
       {
@@ -1277,7 +1324,7 @@ test('a new version of a pass changes its rows in place and deletes what it no l
   assert.deepEqual(
     rows(
       out,
-      `SELECT key, value FROM passFields WHERE passId = '${eventTicket.id}' ORDER BY area`,
+      `SELECT key, value FROM passFields WHERE passId = '${eventTicket.pid}' ORDER BY area`,
     ),
     [
       { key: 'seat', value: 'B7' },
@@ -1287,7 +1334,7 @@ test('a new version of a pass changes its rows in place and deletes what it no l
   assert.deepEqual(
     rows(
       out,
-      `SELECT position, at FROM passRelevantDates WHERE passId = '${eventTicket.id}'`,
+      `SELECT position, at FROM passRelevantDates WHERE passId = '${eventTicket.pid}'`,
     ),
     [{ position: 0, at: '2026-02-14T01:00:00.000Z' }],
   );
@@ -1327,21 +1374,21 @@ test('a pass made before iOS 9 loads its one barcode, which a pass with a barcod
     ),
     [
       {
-        passId: boardingPass.id,
+        passId: String(boardingPass.pid),
         position: 0,
         format: 'PKBarcodeFormatQR',
         message: 'M1RIVERA/SAM E9U5XWF KULDOHEA 0845',
         altText: '9U5XWF',
       },
       {
-        passId: boardingPass.id,
+        passId: String(boardingPass.pid),
         position: 1,
         format: 'PKBarcodeFormatPDF417',
         message: 'M1RIVERA/SAM E9U5XWF KULDOHEA 0845',
         altText: null,
       },
       {
-        passId: storeCard.id,
+        passId: String(storeCard.pid),
         position: 0,
         format: 'PKBarcodeFormatPDF417',
         message: 'CARD-1',
@@ -1379,11 +1426,11 @@ test('each image loads with its file, and an image the issuer replaces loads aga
     );
   await run.run();
   assert.deepEqual(await exported(), {
-    [`${eventTicket.id}/strip.png`]: redPixel,
-    [`${boardingPass.id}/ar.lproj/logo.png`]: redPixel,
-    [`${boardingPass.id}/icon.png`]: redPixel,
-    [`${boardingPass.id}/icon@2x.png`]: bluePixel,
-    [`${storeCard.id}/thumbnail.png`]: bluePixel,
+    [`${eventTicket.pid}/strip.png`]: redPixel,
+    [`${boardingPass.pid}/ar.lproj/logo.png`]: redPixel,
+    [`${boardingPass.pid}/icon.png`]: redPixel,
+    [`${boardingPass.pid}/icon@2x.png`]: bluePixel,
+    [`${storeCard.pid}/thumbnail.png`]: bluePixel,
   });
   {
     using passd = new ScratchWallet(dir.path, { existing: true });
@@ -1397,7 +1444,7 @@ test('each image loads with its file, and an image the issuer replaces loads aga
 
   assert.deepEqual(second.passImages, { count: 1, deleted: 0 });
   assert.deepEqual(
-    (await exported())[`${storeCard.id}/thumbnail.png`],
+    (await exported())[`${storeCard.pid}/thumbnail.png`],
     redPixel,
   );
 });
@@ -1492,28 +1539,30 @@ test('this Mac’s Wallet loads every pass passd lists, as passd records it, and
   // when it added the pass, so the reader's decoding of pass.json must agree.
   const stored = rows(
     join(walletStorePath(homedir()), 'passes23.sqlite'),
-    `SELECT pass.unique_id AS id, pass.serial_number AS serialNumber,
+    `SELECT CAST(pass.pid AS TEXT) AS id, pass.unique_id AS uniqueId,
+            pass.serial_number AS serialNumber,
             pass.expiration_date AS expiration,
             (SELECT count(*) FROM pass_location_source AS source
              JOIN location ON location.location_source_pid = source.location_source_pid
              WHERE source.pass_pid = pass.pid) AS locations
-     FROM pass ORDER BY pass.unique_id`,
+     FROM pass ORDER BY pass.pid`,
   );
   if (stored.length === 0) return t.skip('Wallet on this Mac holds no pass');
   const loadedPasses = new Map(
     rows(
       out,
-      `SELECT id, serialNumber, expiresAt AS expiration,
+      `SELECT id, uniqueId, serialNumber, expiresAt AS expiration,
               (SELECT count(*) FROM passLocations WHERE passId = passes.id) AS locations
        FROM passes`,
     ).map((pass) => [pass.id, pass]),
   );
   // Counted, so a failure names no pass.
   const differing = stored.filter(
-    ({ id, serialNumber, expiration, locations }) => {
+    ({ id, uniqueId, serialNumber, expiration, locations }) => {
       const pass = loadedPasses.get(id);
       return (
         pass === undefined ||
+        pass.uniqueId !== uniqueId ||
         pass.serialNumber !== serialNumber ||
         pass.expiration !==
           (expiration === null
@@ -1529,7 +1578,7 @@ test('this Mac’s Wallet loads every pass passd lists, as passd records it, and
   assert.equal(
     differing,
     0,
-    'passes whose serial number, expiry or places differ from passd’s record',
+    'passes whose unique ID, serial number, expiry or places differ from passd’s record',
   );
   // Every pass loads its pass.json whole, without its token, and every image
   // its manifest lists.
@@ -1542,13 +1591,13 @@ test('this Mac’s Wallet loads every pass passd lists, as passd records it, and
   );
   const images = (
     await Promise.all(
-      stored.map(async ({ id }) => {
+      stored.map(async ({ uniqueId }) => {
         const manifest: unknown = JSON.parse(
           await readFile(
             join(
               walletStorePath(homedir()),
               'Cards',
-              `${String(id)}.pkpass`,
+              `${String(uniqueId)}.pkpass`,
               'manifest.json',
             ),
             'utf8',

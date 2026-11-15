@@ -14,7 +14,7 @@ export const walletStorePath = (home: string): string =>
   join(home, 'Library/Passes');
 
 // Wallet's passes on this Mac as passd keeps them: passes23.sqlite records
-// when each pass was added, updated and archived, and Cards/<id>.pkpass holds
+// when each pass was added, updated and archived, and Cards/<unique_id>.pkpass holds
 // the bundle its issuer signed. A pass the user removes, on this Mac or on a
 // device that syncs it through iCloud, loses its row and its bundle, and
 // passd records nothing of it.
@@ -37,8 +37,8 @@ export class WalletStore {
       passes.push({
         ...record,
         ...(await readPassBundle(
-          record.id,
-          join(this.#directory, 'Cards', `${record.id}.pkpass`),
+          record.uniqueId,
+          join(this.#directory, 'Cards', `${record.uniqueId}.pkpass`),
         )),
       });
     return passes;
