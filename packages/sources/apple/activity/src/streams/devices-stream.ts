@@ -18,11 +18,16 @@ import { activityFields, isoTime } from '../activity-values.ts';
 const { nullableText, nullableInteger } = activityFields;
 
 const properties = {
+  id: {
+    ...activityFields.integer,
+    description:
+      "The DevicePeer row's rowid, the only identity sync.db keeps; a VACUUM can renumber it.",
+  },
   deviceId: {
     ...activityFields.text,
     minLength: 1,
     description:
-      'Biome identifier of the device; origin in the Biome streams refers to it.',
+      'Biome identifier of the device; origin in the Biome streams refers to it. Two rows can name one device.',
   },
   thisMac: {
     ...activityFields.boolean,
@@ -54,7 +59,7 @@ export class DevicesStream {
   readonly store = 'devices';
   readonly name = 'devices';
   readonly retentionDays = null;
-  readonly primaryKey: readonly string[] = Object.freeze(['deviceId']);
+  readonly primaryKey: readonly string[] = Object.freeze(['id']);
   readonly supportedSyncModes: readonly SyncMode[] = Object.freeze([
     'full_refresh',
     'incremental',
@@ -93,7 +98,8 @@ export class DevicesStream {
 
   #record(device: BiomeDevice): RecordDraft<typeof properties> {
     return {
-      deviceId: device.id,
+      id: device.id,
+      deviceId: device.identifier,
       thisMac: device.thisMac,
       name: device.name ?? null,
       model: device.model ?? null,

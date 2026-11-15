@@ -6,8 +6,12 @@ import { appDatabase } from './app-database.ts';
 
 // A device Biome syncs activity with, this Mac included.
 export type BiomeDevice = {
-  // What origin names in the device's segments.
-  readonly id: string | undefined;
+  // The row's rowid: DevicePeer declares no key, so this is the only identity
+  // sync.db keeps. A VACUUM can renumber it (ADR 0022).
+  readonly id: number;
+  // What origin names in the device's segments. sync.db does not keep it
+  // unique: two rows can name one device.
+  readonly identifier: string | undefined;
   // This Mac, whose segments carry origin 'local'.
   readonly thisMac: boolean;
   // Biome usually leaves the name empty.
@@ -47,10 +51,11 @@ export class BiomeSync implements Disposable {
   devices(): IteratorObject<BiomeDevice, undefined> {
     return this.#database
       .iterate(
-        'SELECT device_identifier, me, name, CAST(model AS TEXT) AS model, platform, last_sync_date FROM DevicePeer ORDER BY device_identifier',
+        'SELECT rowid, device_identifier, me, name, CAST(model AS TEXT) AS model, platform, last_sync_date FROM DevicePeer ORDER BY rowid',
       )
       .map((row) => ({
-        id:
+        id: Number(row.rowid),
+        identifier:
           typeof row.device_identifier === 'string'
             ? row.device_identifier
             : undefined,

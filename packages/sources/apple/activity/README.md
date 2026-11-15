@@ -125,6 +125,8 @@ Each file is a preallocated SEGB v2 segment. [The reader of CCL](https://github.
 
 Biome never compacts a segment. Thus `(origin, segment, slot)` identifies a record. The codec `codec-segb` (`packages/codecs/segb`) reads the format. `sdk-apple-biome` lists the segments of each stream and decodes the fields of their records. Only a written slot whose CRC agrees is a record: Biome fills a deleted record with zeroes in place, and some slots marked written hold zeroes (240 of them in the files of this Mac).
 
+`DevicePeer` in `sync.db` declares no `PRIMARY KEY` and no `UNIQUE` index, so `devices` is keyed by `id`, the rowid of the row: the only identity that the store keeps ([elt ADR 0022](../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md)). Two rows can name one device, and each loads; `deviceId` is a column, and a reader that wants one row for each device groups by it. A `VACUUM` can renumber the rowids, and then the next run deletes the old rows and inserts the new ones.
+
 ## Changes, expiry and deletions
 
 A Biome stream diffs one [group](../../../elt/README.md#grouped-snapshots) for each segment. The fingerprint of a group is a hash of the trailer of its segment. Thus a run reads only the segments to which Biome added records or from which it deleted records ([ADR 0002](./docs/adr/0002-a-biome-segment-is-one-group-fingerprinted-by-its-trailer.md)). The size and the modification time cannot do this: Biome writes preallocated files in place, and the modification time was up to 236 hours older than the newest record. The deletion counter of the header cannot do this either: it did not agree with the deleted slots in 9 of 417 files.

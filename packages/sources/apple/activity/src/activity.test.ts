@@ -884,6 +884,7 @@ test('Activity reads every Biome stream, knowledgeC and the device list as docum
   ]);
   assert.deepEqual(view('devices'), [
     {
+      id: 1,
       deviceId: 'MAC-1',
       thisMac: 1,
       name: null,
@@ -892,6 +893,7 @@ test('Activity reads every Biome stream, knowledgeC and the device list as docum
       lastSyncedAt: null,
     },
     {
+      id: 2,
       deviceId: 'PHONE-1',
       thisMac: 0,
       name: null,
@@ -900,6 +902,35 @@ test('Activity reads every Biome stream, knowledgeC and the device list as docum
       lastSyncedAt: '2026-09-21T14:13:20.000Z',
     },
   ]);
+});
+
+// DevicePeer declares no key, so its rowid is the only identity sync.db
+// keeps, and two rows can name one device (ADR 0022).
+test('Activity loads each DevicePeer row by its rowid, also two rows that name one device', async () => {
+  await using scratch = await new TemporaryFiles().directory('activity-');
+  const location = await activityFixture(scratch.path);
+  {
+    using devices = open(join(location.biome, 'sync/sync.db'));
+    devices
+      .prepare('INSERT INTO DevicePeer VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('PHONE-1', 'IDS-2', 0, '', '24A335', 2, 1_790_000_600, 2);
+  }
+  const activity = await appleImport(
+    new AppleActivitySource(location),
+    join(scratch.path, 'import'),
+  );
+
+  const loaded = await activity.load();
+
+  assert.deepEqual(loaded.devices, { count: 3, deleted: 0 });
+  assert.deepEqual(
+    activity.read('SELECT id, "deviceId", model FROM devices ORDER BY id'),
+    [
+      { id: 1, deviceId: 'MAC-1', model: '26A428' },
+      { id: 2, deviceId: 'PHONE-1', model: '23G90' },
+      { id: 3, deviceId: 'PHONE-1', model: '24A335' },
+    ],
+  );
 });
 
 test('Activity keeps the rows of records macOS expired, deletes what was removed within their age, and rereads only changed segments', async () => {
