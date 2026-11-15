@@ -16,7 +16,7 @@ console.log(tabs.length);
 
 - `diaArchivePath(home)` gives the path of the archive in the home folder `home`: `Library/Application Support/Dia/StorableAutoArchive.json`.
 - `new DiaArchive(home)` reads the archive in that home folder.
-- `tabs()` reads the file one time and gives each archived tab of each profile as an `ArchivedTab`. The archive date of Dia, in seconds since 2001-01-01, becomes UTC text to the microsecond. An absent `url` or `groupID` becomes null. The variant becomes JSON text with sorted keys, so a write that only moves keys gives the same text.
+- `tabs()` reads the file one time and gives each archived tab of each profile as an `ArchivedTab`, one for each entry of the file. It drops no entry that repeats an id. The archive date of Dia, in seconds since 2001-01-01, becomes UTC text to the microsecond. An absent `url` or `groupID` becomes null. The variant becomes JSON text with sorted keys, so a write that only moves keys gives the same text.
 - `version()` gives the change signal, an `AppFilesVersion` of `@eltjs/sdk-macos-app-database`. Its value is the file stamp, so it changes when Dia writes the file. A missing file has a stamp too. A file that the process may not read is the value `unavailable`, not an error.
 - `lastWrite()` gives the time of the last write of the file.
 

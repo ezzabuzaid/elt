@@ -14,7 +14,7 @@ Put the source in a `Connection` with a destination and a checkpoint store, and 
 
 ## The stream
 
-`archivedTabs` has one row for each archived tab. Its primary key is `profileId` and `id`, because two profiles can hold a tab with the same id.
+`archivedTabs` has one row for each archived tab. Its primary key is `profileId` and `id`, the UUID that Dia gives the tab. That UUID is Dia's own identity of an archived tab, so it stays the key after Dia removes older tabs from the file, which a place in the list would not. The key has the profile because two profiles can hold a tab with the same id. A profile that lists one id two times fails the pass with `twice in one scan`, and the source keeps neither copy in place of the other ([ADR 0022 of elt](../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md)).
 
 | Field        | Value                                                                                                  |
 | ------------ | ------------------------------------------------------------------------------------------------------ |

@@ -424,6 +424,34 @@ test('a tab Dia removes from its archive stays loaded, and an unchanged archive 
   ]);
 });
 
+test('a profile whose archive lists one tab UUID twice fails the pass rather than keeping one of them, and keeps what loaded', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-dia-');
+  await writeArchive(dir.path, { 'Profile 1': [page] });
+  const run = await pipeline(
+    new DiaDesktopSource({ home: dir.path }),
+    dir.path,
+    globalThis,
+  );
+  const out = join(dir.path, 'out.sqlite');
+  await run.run();
+
+  await writeArchive(dir.path, {
+    'Profile 1': [page, { ...other, id: page.id }],
+  });
+
+  await assert.rejects(run.run(), (error) => {
+    assert.ok(error instanceof PipelineError);
+    assert.match(
+      error.errors.map(String).join('\n'),
+      /returned profileId Profile 1, id 1A000000-0000-4000-8000-000000000001 twice in one scan/,
+    );
+    return true;
+  });
+  assert.deepEqual(rows(out, 'SELECT id, title FROM archivedTabs'), [
+    { id: page.id, title: page.title },
+  ]);
+});
+
 test('a rewrite that orders keys differently writes nothing, and an edited tab is written again', async () => {
   await using dir = await new TemporaryFiles().directory('elt-dia-');
   await writeArchive(dir.path, { 'Profile 1': [page, supertab] });
