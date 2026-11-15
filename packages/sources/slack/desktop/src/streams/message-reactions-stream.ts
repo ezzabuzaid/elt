@@ -6,12 +6,16 @@ import type { SlackReaction } from '@eltjs/sdk-slack-desktop';
 import type { SlackDesktopScan } from '../slack-desktop-scan.ts';
 import { SlackDesktopStream, slackFields } from '../slack-desktop-stream.ts';
 
-const { id, ts, nullableText, textList } = slackFields;
+const { id, ts, ordinal, nullableText, textList } = slackFields;
 
 const properties = {
   workspaceId: { ...id, description: 'The workspace (workspaces.id).' },
   channelId: { ...id, description: 'The conversation (channels.id).' },
   messageTs: { ...ts, description: 'The message (messages.ts).' },
+  position: {
+    ...ordinal,
+    description: 'Its place in the message’s list of reactions, from 0.',
+  },
   name: {
     ...id,
     description:
@@ -37,6 +41,7 @@ type Row = {
   readonly workspaceId: string;
   readonly channelId: string;
   readonly messageTs: string;
+  readonly position: number;
   readonly reaction: SlackReaction;
 };
 
@@ -45,11 +50,11 @@ export class MessageReactionsStream extends SlackDesktopStream<
   Row
 > {
   readonly name = 'messageReactions';
-  readonly primaryKey = ['workspaceId', 'channelId', 'messageTs', 'name'];
+  readonly primaryKey = ['workspaceId', 'channelId', 'messageTs', 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per emoji reaction on a message. Primary key workspaceId, channelId, messageTs, name. A reaction removed from a message the app still holds is deleted; reactions of a message the app dropped from its cache stay.',
+      'One record per entry of a message’s list of emoji reactions. An emoji the list repeats has a record for each place. Primary key workspaceId, channelId, messageTs, position. A reaction removed from a message the app still holds is deleted; reactions of a message the app dropped from its cache stay.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -64,10 +69,11 @@ export class MessageReactionsStream extends SlackDesktopStream<
   protected rows(scan: SlackDesktopScan): readonly Row[] {
     return scan.clients.flatMap((client) =>
       scan.messages(client).flatMap(({ channelId, ts, reactions }) =>
-        reactions.map((reaction) => ({
+        reactions.map((reaction, position) => ({
           workspaceId: client.workspace.id,
           channelId,
           messageTs: ts,
+          position,
           reaction,
         })),
       ),

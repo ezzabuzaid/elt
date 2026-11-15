@@ -1368,6 +1368,233 @@ test('a conversation that a sidebar section repeats loads once for each place in
   );
 });
 
+test('an emoji that a message’s reaction list repeats loads once for each place in the list', async () => {
+  const { dir, store, out } = await scratch();
+  await using _ = dir;
+  await store.save([
+    januaryClient({
+      messages: {
+        C1: [
+          {
+            ts: '1790000000.000100',
+            reactions: [
+              { name: 'eyes', users: ['U1'], count: 1 },
+              { name: 'eyes', users: ['U2'], count: 1 },
+            ],
+          },
+        ],
+      },
+    }),
+  ]);
+
+  await (
+    await pipeline(
+      new SlackDesktopSource({ directory: store.directory }),
+      dir.path,
+      globalThis,
+    )
+  ).run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT messageTs, position, name, userIds FROM messageReactions ORDER BY position',
+    ),
+    [
+      {
+        messageTs: '1790000000.000100',
+        position: 0,
+        name: 'eyes',
+        userIds: '["U1"]',
+      },
+      {
+        messageTs: '1790000000.000100',
+        position: 1,
+        name: 'eyes',
+        userIds: '["U2"]',
+      },
+    ],
+  );
+});
+
+test('a message that a conversation’s pin list repeats loads once for each place in the list', async () => {
+  const { dir, store, out } = await scratch();
+  await using _ = dir;
+  await store.save([
+    januaryClient({
+      pins: { C1: ['1790000000.000100', '1790000000.000100'] },
+      pinsLoading: { C1: 'loaded' },
+    }),
+  ]);
+
+  await (
+    await pipeline(
+      new SlackDesktopSource({ directory: store.directory }),
+      dir.path,
+      globalThis,
+    )
+  ).run();
+
+  assert.deepEqual(
+    rows(out, 'SELECT channelId, position, ts FROM pins ORDER BY position'),
+    [
+      { channelId: 'C1', position: 0, ts: '1790000000.000100' },
+      { channelId: 'C1', position: 1, ts: '1790000000.000100' },
+    ],
+  );
+});
+
+test('a share that a file’s share list repeats, or that both its private and public lists hold, loads once for each place', async () => {
+  const { dir, store, out } = await scratch();
+  await using _ = dir;
+  const state = clientState({
+    team: january,
+    user: self.id,
+    channels: [general],
+    members: [self],
+    files: [{ id: 'F1', name: 'notes.md', mode: 'hosted' }],
+  });
+  const share = { ts: '1790000000.000100', share_user_id: 'U1' };
+  await store.save([
+    {
+      team: january.id,
+      user: self.id,
+      state: {
+        ...state,
+        files: {
+          F1: {
+            ...state.files.F1,
+            shares: {
+              private: { C1: [share] },
+              public: { C1: [share, share] },
+            },
+          },
+        },
+      },
+    },
+  ]);
+
+  await (
+    await pipeline(
+      new SlackDesktopSource({ directory: store.directory }),
+      dir.path,
+      globalThis,
+    )
+  ).run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT fileId, isPrivate, channelId, position, ts FROM fileShares ORDER BY isPrivate DESC, position',
+    ),
+    [
+      {
+        fileId: 'F1',
+        isPrivate: 1,
+        channelId: 'C1',
+        position: 0,
+        ts: '1790000000.000100',
+      },
+      {
+        fileId: 'F1',
+        isPrivate: 0,
+        channelId: 'C1',
+        position: 0,
+        ts: '1790000000.000100',
+      },
+      {
+        fileId: 'F1',
+        isPrivate: 0,
+        channelId: 'C1',
+        position: 1,
+        ts: '1790000000.000100',
+      },
+    ],
+  );
+});
+
+test('a section that the sidebar’s list repeats loads once for each place, and its conversations once, as the app keeps one list for its ID', async () => {
+  const { dir, store, out } = await scratch();
+  await using _ = dir;
+  await store.save([
+    januaryClient({
+      sections: [
+        { id: 'S1', name: 'Projects', channels: ['C1'] },
+        { id: 'S1', name: 'Projects', channels: ['C1'] },
+      ],
+    }),
+  ]);
+
+  await (
+    await pipeline(
+      new SlackDesktopSource({ directory: store.directory }),
+      dir.path,
+      globalThis,
+    )
+  ).run();
+
+  assert.deepEqual(
+    rows(out, 'SELECT position, id FROM channelSections ORDER BY position'),
+    [
+      { position: 0, id: 'S1' },
+      { position: 1, id: 'S1' },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT sectionId, position, channelId FROM channelSectionChannels',
+    ),
+    [{ sectionId: 'S1', position: 0, channelId: 'C1' }],
+  );
+});
+
+test('a message’s ts is the key the app keeps it under in its channel', async () => {
+  const { dir, store, out } = await scratch();
+  await using _ = dir;
+  const state = clientState({
+    team: january,
+    user: self.id,
+    channels: [general],
+    members: [self],
+    messages: { C1: [{ ts: '1790000000.000300', text: 'agenda' }] },
+  });
+  await store.save([
+    {
+      team: january.id,
+      user: self.id,
+      state: {
+        ...state,
+        messages: {
+          C1: {
+            ...state.messages.C1,
+            '1790000000.000400': state.messages.C1?.['1790000000.000300'],
+          },
+        },
+      },
+    },
+  ]);
+
+  await (
+    await pipeline(
+      new SlackDesktopSource({ directory: store.directory }),
+      dir.path,
+      globalThis,
+    )
+  ).run();
+
+  assert.deepEqual(
+    rows(
+      out,
+      "SELECT ts, sentAt FROM messages WHERE text = 'agenda' ORDER BY ts",
+    ),
+    [
+      { ts: '1790000000.000300', sentAt: '2026-09-21T14:13:20.000300Z' },
+      { ts: '1790000000.000400', sentAt: '2026-09-21T14:13:20.000400Z' },
+    ],
+  );
+});
+
 test('a message deleted inside history the app holds is deleted; one the app dropped from its cache stays', async () => {
   const { dir, store, out } = await scratch();
   await using _ = dir;

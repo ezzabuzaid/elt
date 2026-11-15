@@ -8,7 +8,11 @@ const { id, ordinal, nullableText } = slackFields;
 
 const properties = {
   workspaceId: { ...id, description: 'The workspace (workspaces.id).' },
-  id: { ...id, description: 'Slack’s section ID.' },
+  id: {
+    ...id,
+    description:
+      'Slack’s section ID, which names the section’s conversations (channelSectionChannels.sectionId).',
+  },
   type: {
     ...id,
     description:
@@ -35,11 +39,11 @@ export class ChannelSectionsStream extends SlackDesktopStream<
   Row
 > {
   readonly name = 'channelSections';
-  readonly primaryKey = ['workspaceId', 'id'];
+  readonly primaryKey = ['workspaceId', 'position'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per section of the user’s sidebar in a workspace. Primary key workspaceId, id. One the user removes is deleted.',
+      'One record per entry of the list of sections of the user’s sidebar in a workspace. A section the list repeats has a record for each place. Primary key workspaceId, position. One the user removes is deleted.',
     properties,
     required: Object.keys(properties),
   } as const;

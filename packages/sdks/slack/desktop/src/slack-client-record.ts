@@ -9,6 +9,7 @@ import type {
   SlackChannelKind,
   SlackChannelNote,
   SlackChannelSection,
+  SlackChannelSectionList,
   SlackClient,
   SlackFile,
   SlackFileShare,
@@ -54,8 +55,9 @@ export function readSlackClient(state: unknown, record: string): SlackClient {
   const existing = (fields: Fields) => fields.boolean('isNonExistent') !== true;
   const messagesByChannel = root.object('messages');
   const channelMessages = root.values('messages').flatMap(([channelId]) =>
-    (messagesByChannel?.entries(channelId) ?? []).map(([, fields]) => ({
+    (messagesByChannel?.entries(channelId) ?? []).map(([ts, fields]) => ({
       channelId,
+      ts,
       fields,
     })),
   );
@@ -63,10 +65,7 @@ export function readSlackClient(state: unknown, record: string): SlackClient {
   const gone = new Set(
     channelMessages
       .filter(({ fields }) => !existing(fields))
-      .map(
-        ({ channelId, fields }) =>
-          `${channelId} ${fields.requiredString('ts')}`,
-      ),
+      .map(({ channelId, ts }) => `${channelId} ${ts}`),
   );
   return {
     workspace: {
@@ -97,16 +96,16 @@ export function readSlackClient(state: unknown, record: string): SlackClient {
         ({ fields }) =>
           existing(fields) && fields.boolean('_hidden_reply') !== true,
       )
-      .map(({ channelId, fields }) =>
-        message(channelId, fields, record, reactions),
+      .map(({ channelId, ts, fields }) =>
+        message(channelId, ts, fields, record, reactions),
       ),
     threadReplies: channelMessages
       .filter(
         ({ fields }) =>
           existing(fields) && fields.boolean('_hidden_reply') === true,
       )
-      .map(({ channelId, fields }) =>
-        message(channelId, fields, record, reactions),
+      .map(({ channelId, ts, fields }) =>
+        message(channelId, ts, fields, record, reactions),
       ),
     files: root
       .entries('files')
@@ -115,6 +114,7 @@ export function readSlackClient(state: unknown, record: string): SlackClient {
     listRecords: listRecords(root, existing, record),
     pins: pins(root, pinLists),
     channelSections: sections(root),
+    channelSectionLists: sectionLists(root),
     threadSubscriptions: root
       .entries('threadSub')
       .map(([key, fields]) => threadSubscription(key, fields, record)),
@@ -297,13 +297,14 @@ function attachment(fields: Fields): SlackAttachment {
   };
 }
 
+// A message under its key in its channel's slice, which is its ts.
 function message(
   channelId: string,
+  ts: string,
   fields: Fields,
   record: string,
   reactions: ReadonlyMap<string, readonly SlackReaction[]>,
 ): SlackMessage {
-  const ts = fields.requiredString('ts');
   const edited = fields.object('edited');
   const saved = fields.object('saved');
   const reactionKey = fields.string('_rxn_key');
@@ -368,10 +369,11 @@ function file(id: string, fields: Fields): SlackFile {
     shares: (['private', 'public'] as const).flatMap((visibility) =>
       (shares?.values(visibility) ?? []).flatMap(([channelId]) =>
         (shares?.object(visibility)?.list(channelId) ?? []).map(
-          (share): SlackFileShare => ({
+          (share, position): SlackFileShare => ({
             channelId,
             ts: share.requiredString('ts'),
             isPrivate: visibility === 'private',
+            position,
             sharedBy: share.string('share_user_id'),
           }),
         ),
@@ -424,7 +426,7 @@ function pins(root: Fields, pinLists: Fields | null): SlackPin[] {
   const messages = root.object('messages');
   return (pinLists?.values('pinsByChannel') ?? []).flatMap(([channelId]) => {
     const items = channels?.object(channelId)?.list('pinned_items') ?? [];
-    return (byChannel?.list(channelId) ?? []).map((pin) => {
+    return (byChannel?.list(channelId) ?? []).map((pin, position) => {
       const ts = pin.requiredString('ts');
       const item = items.find(
         (candidate) => candidate.object('message')?.string('ts') === ts,
@@ -435,6 +437,7 @@ function pins(root: Fields, pinLists: Fields | null): SlackPin[] {
         ?.object('pinned_info');
       return {
         channelId,
+        position,
         ts,
         type: pin.requiredString('type'),
         pinnedBy:
@@ -472,20 +475,28 @@ function history(
 
 // The sidebar's sections, in the order the client keeps them.
 function sections(root: Fields): SlackChannelSection[] {
+  return (
+    root.object('channelSections')?.list('orderedChannelSectionList') ?? []
+  ).map((section, position) => ({
+    id: section.requiredString('id'),
+    type: section.requiredString('type'),
+    name: section.string('name'),
+    emoji: section.string('emoji'),
+    position,
+  }));
+}
+
+// The conversations the user put in each section, one list for each section
+// ID, as the client keys them apart from the sections' order.
+function sectionLists(root: Fields): SlackChannelSectionList[] {
   const state = root.object('channelSections');
-  if (state === null) return [];
-  const channelIds = state.object('channelIdsByChannelSectionId');
-  return state.list('orderedChannelSectionList').map((section, position) => {
-    const id = section.requiredString('id');
-    return {
-      id,
-      type: section.requiredString('type'),
-      name: section.string('name'),
-      emoji: section.string('emoji'),
-      position,
-      channelIds: channelIds?.strings(id) ?? [],
-    };
-  });
+  const lists = state?.object('channelIdsByChannelSectionId');
+  return (state?.values('channelIdsByChannelSectionId') ?? []).map(
+    ([sectionId]) => ({
+      sectionId,
+      channelIds: lists?.strings(sectionId) ?? [],
+    }),
+  );
 }
 
 function threadSubscription(

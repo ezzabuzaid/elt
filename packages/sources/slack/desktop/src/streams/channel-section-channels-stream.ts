@@ -34,8 +34,8 @@ export class ChannelSectionChannelsStream extends SlackDesktopStream<
   } as const;
 
   protected rows(scan: SlackDesktopScan): readonly Row[] {
-    return scan.clients.flatMap(({ workspace, channelSections }) =>
-      channelSections.flatMap(({ id: sectionId, channelIds }) =>
+    return scan.clients.flatMap(({ workspace, channelSectionLists }) =>
+      channelSectionLists.flatMap(({ sectionId, channelIds }) =>
         channelIds
           .map((channelId, position) => ({
             workspaceId: workspace.id,

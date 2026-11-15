@@ -168,7 +168,10 @@ export type SlackMessage = {
 export type SlackFileShare = {
   readonly channelId: string;
   readonly ts: string;
+  // Whether the client lists it with the private or the public shares.
   readonly isPrivate: boolean;
+  // Its place in that list of shares in the conversation, from 0.
+  readonly position: number;
   readonly sharedBy: string | null;
 };
 
@@ -231,6 +234,8 @@ export type SlackListRecord = {
 // A message pinned in a conversation.
 export type SlackPin = {
   readonly channelId: string;
+  // Its place in the conversation's pin list, from 0.
+  readonly position: number;
   readonly ts: string;
   // What is pinned: message.
   readonly type: string;
@@ -245,6 +250,11 @@ export type SlackChannelSection = {
   readonly emoji: string | null;
   // Where the sidebar shows it, from 0.
   readonly position: number;
+};
+
+// The conversations the user put in a section, in their order there.
+export type SlackChannelSectionList = {
+  readonly sectionId: string;
   readonly channelIds: readonly string[];
 };
 
@@ -285,6 +295,8 @@ export type SlackClient = {
   readonly listRecords: readonly SlackListRecord[];
   readonly pins: readonly SlackPin[];
   readonly channelSections: readonly SlackChannelSection[];
+  // One for each section ID the client keeps conversations for.
+  readonly channelSectionLists: readonly SlackChannelSectionList[];
   readonly threadSubscriptions: readonly SlackThreadSubscription[];
   readonly userGroupMemberships: readonly SlackUserGroupMembership[];
   readonly preferences: readonly SlackPreference[];

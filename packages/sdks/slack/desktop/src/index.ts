@@ -8,6 +8,7 @@ export type {
   SlackChannelKind,
   SlackChannelNote,
   SlackChannelSection,
+  SlackChannelSectionList,
   SlackClient,
   SlackFile,
   SlackFileShare,

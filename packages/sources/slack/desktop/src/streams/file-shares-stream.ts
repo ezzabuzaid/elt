@@ -4,7 +4,7 @@ import type { SlackFileShare } from '@eltjs/sdk-slack-desktop';
 import type { SlackDesktopScan } from '../slack-desktop-scan.ts';
 import { SlackDesktopStream, slackFields } from '../slack-desktop-stream.ts';
 
-const { id, ts, nullableText } = slackFields;
+const { id, ts, ordinal, nullableText } = slackFields;
 
 const properties = {
   workspaceId: { ...id, description: 'The workspace (workspaces.id).' },
@@ -20,7 +20,13 @@ const properties = {
   },
   isPrivate: {
     type: 'boolean',
-    description: 'Whether the conversation is private.',
+    description:
+      'Whether the file lists the share with its private shares, those in private conversations, or with its public ones.',
+  },
+  position: {
+    ...ordinal,
+    description:
+      'Its place in the file’s list of private or public shares in the conversation, from 0.',
   },
   sharedBy: { ...nullableText, description: 'Who shared it (members.id).' },
 } as const;
@@ -37,12 +43,18 @@ export class FileSharesStream extends SlackDesktopStream<
   Row
 > {
   readonly name = 'fileShares';
-  readonly primaryKey = ['workspaceId', 'fileId', 'channelId', 'ts'];
+  readonly primaryKey = [
+    'workspaceId',
+    'fileId',
+    'isPrivate',
+    'channelId',
+    'position',
+  ];
   override readonly emitsDeletes = undefined;
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per place a file was shared: the conversation and the message that shared it, including messages the app does not hold. Primary key workspaceId, fileId, channelId, ts. Kept after the app drops the file.',
+      'One record per entry of a file’s lists of shares: the conversation and the message that shared it, including messages the app does not hold. A share a list repeats has a record for each place. Primary key workspaceId, fileId, isPrivate, channelId, position. Kept after the app drops the file.',
     properties,
     required: Object.keys(properties),
   } as const;

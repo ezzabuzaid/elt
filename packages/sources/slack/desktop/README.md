@@ -98,13 +98,13 @@ The app's own state, `storage/root-state.json`, is a separate file. Only `downlo
 | `messages`               | channel message the app has held, without thread replies                    |
 | `threadReplies`          | thread reply the app has held, never deleted                                |
 | `messageAttachments`     | link preview, shared message or integration card under a message            |
-| `messageReactions`       | emoji reaction on a message, with who reacted as far as the app knows       |
+| `messageReactions`       | entry of a message's reactions, with who reacted as far as the app knows    |
 | `messageFiles`           | file a held message shares, in its order                                    |
-| `pins`                   | message pinned in a conversation, with who pinned it and when               |
+| `pins`                   | entry of a conversation's pin list, with who pinned it and when             |
 | `files`                  | file the app has held (upload, snippet, canvas, List), metadata only        |
-| `fileShares`             | conversation and message a file was shared in, held or not                  |
+| `fileShares`             | entry of a file's shares: conversation and message, held or not             |
 | `listRecords`            | row of a Slack List the app opened, its cells as JSON                       |
-| `channelSections`        | section of the user's sidebar                                               |
+| `channelSections`        | entry of the list of sections of the user's sidebar                         |
 | `channelSectionChannels` | entry of the list of conversations the user put in a section                |
 | `threadSubscriptions`    | thread the app knows whether the user follows                               |
 | `preferences`            | user or workspace preference, its value as JSON                             |
@@ -113,8 +113,8 @@ The app's own state, `storage/root-state.json`, is a separate file. Only `downlo
 
 Every key has `workspaceId`.
 
-- **Lists.** A record decoded from a list of its owner is keyed by the owner and its `position` in the list, as the app keeps it: `channelMembers` by `channelId` and `position`, `channelSectionChannels` by `sectionId` and `position`. The member or conversation is a column. A list that repeats an entry loads a record for each place. The source deduplicates nothing (see [ADR 0022 of elt](../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md)).
-- **Messages.** A message's `ts` is Slack's own ID: seconds and microseconds, as Slack writes them. `sentAt` is the same instant, as a `date-time` with `precision` 6 (see the string formats in [elt](../../../elt/README.md#string-formats)). `blocks`, attachment `fields` and preference values stay JSON, as Slack holds them.
+- **Lists.** The client keeps objects by their key, but nothing keeps the entries of a list unique. A record decoded from a list of its owner is keyed by the owner and its `position` in the list, as the app keeps it: `channelMembers` by `channelId` and `position`, `channelSectionChannels` by `sectionId` and `position`, `messageReactions` by `channelId`, `messageTs` and `position`, `pins` by `channelId` and `position`, `fileShares` by `fileId`, `isPrivate` (the file's private or public list of shares), `channelId` and `position`, and `channelSections` by `position` in the sidebar. The member, conversation, emoji `name`, pinned or sharing `ts` and section `id` are columns. A list that repeats an entry loads a record for each place. The client keeps one list of conversations for each section ID, so a section that the sidebar repeats loads its conversations once. The source deduplicates nothing (see [ADR 0022 of elt](../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md)).
+- **Messages.** A message's `ts` is Slack's own ID: seconds and microseconds, as Slack writes them. It is the key that the client keeps the message under in its conversation. `sentAt` is the same instant, as a `date-time` with `precision` 6 (see the string formats in [elt](../../../elt/README.md#string-formats)). `blocks`, attachment `fields` and preference values stay JSON, as Slack holds them.
 - **Saved messages.** A message that the user saved for later has `savedState` (for example `in_progress`), `savedTodoState` (for example `saved`) and `isSavedArchived`. They come from the `saved` object that the app keeps on the message. The app keeps no list of saved items (`saved.list` and `saved.itemMap` stay empty). Thus the source does not know a saved message that the app does not hold.
 - **Snippets.** A snippet's `content` is its full text.
 - **Pins.** A pin's `pinnedBy` and `pinnedAt` come from the conversation's `pinned_items`. The app keeps them with each pinned message when it loads the pin list. Else they come from the pinned message's own `pinned_info`. Both are seconds. Both are NULL when the app holds neither. They are only in `pins`, not in `messages`, so the two streams cannot disagree.
