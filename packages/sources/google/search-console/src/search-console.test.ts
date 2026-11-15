@@ -823,6 +823,44 @@ test('a fractional click count is refused rather than stored', async () => {
   );
 });
 
+test('an analytics row whose keys do not match the requested dimensions fails the read rather than vanish', async () => {
+  using searchConsole = google({
+    reply: () => ({
+      rows: [
+        { clicks: 1, ctr: 0.5, impressions: 2, keys: [day(-1)], position: 2 },
+      ],
+    }),
+  });
+  await using database = await databases.database();
+  const destination = new PostgresDestination({
+    url: database.connectionString,
+    schema: RAW,
+  });
+  const source = new SearchConsoleSource({
+    requester: searchConsole.requester,
+    searchTypes: ['WEB'],
+    siteUrls: [SITE],
+  });
+
+  await assert.rejects(
+    new Pipeline({
+      clock: globalThis,
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [
+            new Copy(source.searchAnalyticsQueries, destination.table('rows')),
+          ],
+        }),
+      ],
+    }).run(),
+    /1 keys for the 2 dimensions date, query/,
+  );
+});
+
 test('analytics pagination follows startRow until a short page', async () => {
   const days = Array.from({ length: 9 }, (_, offset) => day(-1 - offset));
   const page = (start: number, size: number) =>
@@ -971,6 +1009,84 @@ test('sitemaps convert int64 text and second-precision times', async () => {
       submitted: 512,
       type: 'web',
     },
+  );
+});
+
+test('a sitemap that reports one content type twice loads both entries, keyed by their place in its list', async () => {
+  // The Sitemaps API does not document type as unique within contents[].
+  using searchConsole = google({
+    reply: () => ({
+      sitemap: [
+        {
+          ...sitemapEntry('https://example.com/sitemap.xml'),
+          contents: [
+            { type: 'web', submitted: '3', indexed: '0' },
+            { type: 'web', submitted: '5', indexed: '0' },
+          ],
+        },
+      ],
+    }),
+  });
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, {
+      max: 1,
+      onnotice: () => {},
+      connection: { search_path: RAW },
+    }),
+    (sql) => sql.end(),
+  );
+  const destination = new PostgresDestination({
+    url: database.connectionString,
+    schema: RAW,
+  });
+  const source = new SearchConsoleSource({
+    requester: searchConsole.requester,
+    siteUrls: [SITE],
+  });
+
+  await new Pipeline({
+    clock: globalThis,
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.connectionString,
+          schema: RAW,
+        }),
+        steps: [
+          new Copy(source.sitemapContents, destination.table('contents'), {
+            id: 'sitemapContents',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  }).run();
+
+  assert.deepEqual(
+    (
+      await sql`SELECT "sitemapPath", position::int, type, submitted::int FROM contents ORDER BY position`
+    ).map((row) => ({ ...row })),
+    [
+      {
+        position: 0,
+        sitemapPath: 'https://example.com/sitemap.xml',
+        submitted: 3,
+        type: 'web',
+      },
+      {
+        position: 1,
+        sitemapPath: 'https://example.com/sitemap.xml',
+        submitted: 5,
+        type: 'web',
+      },
+    ],
   );
 });
 
@@ -1336,8 +1452,6 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
       keys: ['gbr', 'MOBILE'],
       position: 7,
     },
-    // Google's own row, with one key too few: skipped, not fatal.
-    { clicks: 9, ctr: 0.2, impressions: 90, keys: ['zzz'], position: 2 },
   ];
   using searchConsole = google({ reply: () => ({ rows }) });
   await using database = await databases.database();

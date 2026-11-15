@@ -89,7 +89,7 @@ The report types change which rows exist. Thus they are part of the source ident
 | -------------------------- | ------------------------ | ------------------------------------ | ------------------------------------------------------ |
 | `sites`                    | Full refresh or snapshot | `[siteUrl]`                          | property that the grant can read                       |
 | `sitemaps`                 | Full refresh or snapshot | `[siteUrl, path]`                    | sitemap that the property lists                        |
-| `sitemapContents`          | Full refresh or snapshot | `[siteUrl, sitemapPath, type]`       | content type in a sitemap                              |
+| `sitemapContents`          | Full refresh or snapshot | `[siteUrl, sitemapPath, position]`   | entry in the contents list of a sitemap                |
 | `searchAnalyticsDaily`     | Incremental              | `[siteUrl, date, searchType]`        | Pacific day and report type                            |
 | `searchAnalyticsQueries`   | Incremental              | `[siteUrl, date, query]`             | Pacific day and query, web results only                |
 | `searchAnalyticsPages`     | Incremental              | `[siteUrl, date, page]`              | Pacific day and page, web results only                 |
@@ -100,7 +100,7 @@ The report types change which rows exist. Thus they are part of the source ident
 
 - `sites` lists the properties that the grant can read, also the properties that `siteUrls` does not select. Google also lists the properties where the grant is `siteUnverifiedUser`. The source drops them, because their history cannot be read.
 - `sitemaps` holds the report of Google on each listed sitemap. Google sends the int64 counts `warnings`, `errors` and `submitted` as decimal strings. The source parses them to integers and rejects an integer that is not safe. `lastDownloaded` is null until Google reads the sitemap for the first time. The stream also holds what the source read from the sitemap file: `urlsRead`, or `readError` when the source could not read the file.
-- `sitemapContents` holds the rows for each content type that each sitemap holds.
+- `sitemapContents` holds the entries of the contents list of each sitemap, keyed by their position in the list. Google does not document `type` as unique within the list, so `type` is a column. A key is an identity that the upstream enforces, see [elt ADR 0022](../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md).
 - `searchAnalyticsDaily` holds the totals of the property for each day and each report type. `searchType` is a column.
 - `searchAnalyticsCountries` holds the totals of a trailing window of `breakdownMonths`, from `startDate` to `endDate`, the day of the read. The stream has no date dimension. Thus each read replaces the whole window, and the source compares it as one list. It does not resume it.
 - `urlInspection` holds one row for each inspected URL. `inSitemap` and `inSearchAnalytics` tell where the source found the URL, and `inspectedAt` tells when it inspected the URL. `errorStatus` and `errorMessage` are set when Google rejected the URL.
@@ -157,7 +157,7 @@ The descriptions of `clicks`, `ctr` and `position` give these formulas. Each rea
 
 ### Projection
 
-- The API does not name the columns of a row. `keys` has one value for each requested dimension, in the same order. When a row has a different number of keys, the source skips that row. It does not fail the copy.
+- The API does not name the columns of a row. `keys` has one value for each requested dimension, in the same order. When a row has a different number of keys, the read fails with the count of keys and the requested dimensions. The source does not skip the row, because a skipped row is lost with no message.
 - `clicks`, `impressions` and `ctr` are always present, also when they are zero. For example, live Discover rows report `"clicks":0,"impressions":0,"ctr":0`. `clicks` and `impressions` are integers. A missing or fractional count fails validation.
 - Each dated row has `settled`. It is false from the `firstIncompleteDate` of the response, because Google can still restate those days. The next incremental run reads the day again, and the flag becomes true when Google settles the day.
 - `position` can be null. Discover and Google News report no rank on any row, also on rows with no traffic. When a missing rank loads as `0`, it tells the best possible position, which is wrong. A live run found no position on all 380 Discover and all 380 Google News daily rows.

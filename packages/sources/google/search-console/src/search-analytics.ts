@@ -59,25 +59,26 @@ export function analyticsRecords(
   rows: readonly SearchAnalyticsRow[],
   fields: (keyed: Record<string, unknown>) => Record<string, unknown>,
 ): Record<string, unknown>[] {
-  return rows.flatMap((row) => {
-    // A row whose keys disagree with the requested dimensions is Google's
-    // doing; skipping it keeps one malformed row from failing the copy.
-    if (row.keys.length !== dimensions.length) return [];
+  return rows.map((row) => {
+    // Google documents keys as the requested dimensions in order; a row that
+    // breaks it fails the read rather than vanish.
+    if (row.keys.length !== dimensions.length)
+      throw new Error(
+        `Search Console returned a row with ${row.keys.length} keys for the ${dimensions.length} dimensions ${dimensions.join(', ')}`,
+      );
     const keyed = {
       siteUrl,
       ...Object.fromEntries(
         dimensions.map((dimension, index) => [dimension, row.keys[index]]),
       ),
     };
-    return [
-      {
-        ...keyed,
-        ...fields(keyed),
-        clicks: row.clicks,
-        ctr: row.ctr,
-        impressions: row.impressions,
-        position: row.position,
-      },
-    ];
+    return {
+      ...keyed,
+      ...fields(keyed),
+      clicks: row.clicks,
+      ctr: row.ctr,
+      impressions: row.impressions,
+      position: row.position,
+    };
   });
 }

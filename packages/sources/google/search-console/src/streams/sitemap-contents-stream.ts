@@ -9,10 +9,15 @@ const { id, text, ordinal, nullableOrdinal } = searchConsoleFields;
 const properties = {
   siteUrl,
   sitemapPath: { ...id, description: 'The sitemap URL (sitemaps.path).' },
+  position: {
+    ...ordinal,
+    description:
+      'The place of the entry in Google’s contents list of the sitemap, from 0.',
+  },
   type: {
     ...text,
     description:
-      'The kind of URLs counted: web, image, video, news, mobile, androidApp and so on.',
+      'The kind of URLs counted: web, image, video, news, mobile, androidApp and so on. Google does not document it as unique within a sitemap.',
   },
   submitted: {
     ...ordinal,
@@ -30,9 +35,9 @@ export class SitemapContentsStream extends ListingStream {
     super({
       name: 'sitemapContents',
       description:
-        'One record per kind of URL in a submitted sitemap, with how many the sitemap lists. Primary key siteUrl, sitemapPath, type. An incremental read deletes a record that Google no longer reports.',
+        'One record per entry of the contents list of a submitted sitemap, in Google’s order: a kind of URL and how many the sitemap lists. Primary key siteUrl, sitemapPath, position. An incremental read deletes a record that Google no longer reports.',
       properties,
-      primaryKey: ['siteUrl', 'sitemapPath', 'type'],
+      primaryKey: ['siteUrl', 'sitemapPath', 'position'],
       partitionKey: ['siteUrl'],
     });
   }
@@ -45,9 +50,10 @@ export class SitemapContentsStream extends ListingStream {
     const siteUrl = this.siteUrl(partition);
     return (await scan.sitemaps(siteUrl, signal)).flatMap(
       ({ path, contents = [] }) =>
-        contents.map((content) => ({
+        contents.map((content, position) => ({
           siteUrl,
           sitemapPath: path,
+          position,
           type: content.type,
           submitted: Number(content.submitted),
           indexed:
