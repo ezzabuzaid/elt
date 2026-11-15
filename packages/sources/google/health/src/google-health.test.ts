@@ -553,6 +553,63 @@ test('a daily type and the rollups start on the day the user joined, and the rol
   assert.ok(floors.includes(today), 'floors reach the day the run began');
 });
 
+test('a day that lists one heart rate zone twice loads both entries, each at its place in the list', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  // The Health API documents caloriesInHeartRateZones only as a list of the
+  // calories in each zone; it does not make a zone unique within the list.
+  using _google = google({
+    profile,
+    rollups: {
+      'calories-in-heart-rate-zone': (date) =>
+        date === '2026-10-12'
+          ? {
+              caloriesInHeartRateZone: {
+                caloriesInHeartRateZones: [
+                  { heartRateZone: 'LIGHT', kcal: 120 },
+                  { heartRateZone: 'LIGHT', kcal: 30 },
+                ],
+              },
+            }
+          : undefined,
+    },
+  });
+
+  await load(warehouse);
+
+  const zones = await rows(warehouse, 'caloriesInHeartRateZone', 'kcal DESC');
+  assert.deepEqual(
+    zones.map(({ heartRateZone, kcal, position }) => ({
+      heartRateZone,
+      kcal: Number(kcal),
+      position: Number(position),
+    })),
+    [
+      { heartRateZone: 'LIGHT', kcal: 120, position: 0 },
+      { heartRateZone: 'LIGHT', kcal: 30, position: 1 },
+    ],
+  );
+});
+
 test('an account with no Google Health profile fails the run as a config failure that tells the user how to fix it', async () => {
   await using database = await databases.database();
   const warehouse = {
