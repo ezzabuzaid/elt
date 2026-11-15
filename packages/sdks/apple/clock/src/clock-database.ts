@@ -14,6 +14,7 @@ import {
 
 const columns = {
   ZMTCDALARM: [
+    'Z_PK',
     'ZMTID',
     'ZTITLE',
     'ZENABLED',
@@ -39,6 +40,7 @@ const columns = {
     'ZSIRICONTEXT',
   ],
   ZMTCDTIMER: [
+    'Z_PK',
     'ZMTID',
     'ZTITLE',
     'ZSTATE',
@@ -91,10 +93,11 @@ export class ClockDatabase implements Disposable {
   alarms() {
     return this.#database
       .all(
-        `SELECT ZMTID AS "id", ZTITLE AS "title", ZENABLED AS "enabled", ZHOUR AS "hour", ZMINUTE AS "minute", ZDAY AS "day", ZMONTH AS "month", ZYEAR AS "year", ZREPEATSCHEDULE AS "repeatSchedule", ZALLOWSSNOOZE AS "allowsSnooze", ZSNOOZEDURATION AS "snoozeMinutes", ZSLEEPALARM AS "sleepAlarm", ZSLEEPSCHEDULE AS "sleepSchedule", ZSILENTMODEOPTIONS AS "silentModeOptions", ZCOORDINATIONPOLICY AS "coordinationPolicy", ZDISMISSEDACTION AS "dismissedAction", ZDISMISSEDDATE AS "dismissedAt", ZFIREDDATE AS "firedAt", ZKEEPOFFUNTILDATE AS "keepOffUntil", ZLASTMODIFIEDDATE AS "modifiedAt", ZSNOOZEFIREDATE AS "snoozeFireAt", CAST(ZSOUND AS TEXT) AS "soundId", ZSIRICONTEXT AS "siriContext" FROM ZMTCDALARM ORDER BY Z_PK`,
+        `SELECT CAST(Z_PK AS TEXT) AS "id", ZMTID AS "uuid", ZTITLE AS "title", ZENABLED AS "enabled", ZHOUR AS "hour", ZMINUTE AS "minute", ZDAY AS "day", ZMONTH AS "month", ZYEAR AS "year", ZREPEATSCHEDULE AS "repeatSchedule", ZALLOWSSNOOZE AS "allowsSnooze", ZSNOOZEDURATION AS "snoozeMinutes", ZSLEEPALARM AS "sleepAlarm", ZSLEEPSCHEDULE AS "sleepSchedule", ZSILENTMODEOPTIONS AS "silentModeOptions", ZCOORDINATIONPOLICY AS "coordinationPolicy", ZDISMISSEDACTION AS "dismissedAction", ZDISMISSEDDATE AS "dismissedAt", ZFIREDDATE AS "firedAt", ZKEEPOFFUNTILDATE AS "keepOffUntil", ZLASTMODIFIEDDATE AS "modifiedAt", ZSNOOZEFIREDATE AS "snoozeFireAt", CAST(ZSOUND AS TEXT) AS "soundId", ZSIRICONTEXT AS "siriContext" FROM ZMTCDALARM ORDER BY Z_PK`,
       )
       .map((row) => ({
-        id: uuid(row.id),
+        id: requiredText(row.id),
+        uuid: uuid(row.uuid),
         title: text(row.title),
         enabled: flag(row.enabled),
         hour: number(row.hour),
@@ -123,10 +126,11 @@ export class ClockDatabase implements Disposable {
   timers() {
     return this.#database
       .all(
-        `SELECT ZMTID AS "id", ZTITLE AS "title", ZSTATE AS "stateCode", ZDURATION AS "duration", CAST(ZSOUND AS TEXT) AS "soundId", ZDISMISSEDDATE AS "dismissedAt", ZFIREDDATE AS "firedAt", ZLASTMODIFIEDDATE AS "modifiedAt", ZTIMERURL AS "url", ZSIRICONTEXT AS "siriContext", ZTIMERCONTEXT AS "timerContext", ZFIRETIME AS fireTime FROM ZMTCDTIMER ORDER BY Z_PK`,
+        `SELECT CAST(Z_PK AS TEXT) AS "id", ZMTID AS "uuid", ZTITLE AS "title", ZSTATE AS "stateCode", ZDURATION AS "duration", CAST(ZSOUND AS TEXT) AS "soundId", ZDISMISSEDDATE AS "dismissedAt", ZFIREDDATE AS "firedAt", ZLASTMODIFIEDDATE AS "modifiedAt", ZTIMERURL AS "url", ZSIRICONTEXT AS "siriContext", ZTIMERCONTEXT AS "timerContext", ZFIRETIME AS fireTime FROM ZMTCDTIMER ORDER BY Z_PK`,
       )
       .map((row) => ({
-        id: uuid(row.id),
+        id: requiredText(row.id),
+        uuid: uuid(row.uuid),
         title: text(row.title),
         stateCode: number(row.stateCode),
         duration: number(row.duration),

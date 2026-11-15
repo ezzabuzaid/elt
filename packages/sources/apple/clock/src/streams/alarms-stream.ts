@@ -6,7 +6,12 @@ const properties = {
   id: {
     ...fields.id,
     description:
-      'Identifier of this stored object. UUIDs come from MobileTimer; decimal IDs are Core Data row identifiers.',
+      'Core Data row identifier (Z_PK) of the alarm, which the store keeps unique.',
+  },
+  uuid: {
+    ...fields.id,
+    description:
+      'MobileTimer UUID of the alarm (ZMTID), in upper case. The store does not keep it unique.',
   },
   title: {
     ...fields.text,

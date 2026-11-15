@@ -3,10 +3,14 @@ import type { ClockSnapshot } from '@eltjs/sdk-apple-clock/clock-store';
 import { ClockStream, fields } from '../clock-stream.ts';
 
 const properties = {
-  id: {
+  position: {
+    ...fields.position,
+    description: 'Zero-based position in the saved stopwatch list.',
+  },
+  uuid: {
     ...fields.id,
     description:
-      'Identifier of this stored object. UUIDs come from MobileTimer; decimal IDs are Core Data row identifiers.',
+      'MobileTimer identifier of the stopwatch (MTStopwatchIdentifier). The list does not keep it unique.',
   },
   title: {
     ...fields.text,
@@ -42,7 +46,7 @@ export class StopwatchesStream extends ClockStream<typeof properties> {
   readonly description =
     'Current stopwatch state and saved timing anchors, not a historical session log.';
   readonly properties = properties;
-  readonly primaryKey = ['id'];
+  readonly primaryKey = ['position'];
   protected rows(snapshot: ClockSnapshot) {
     return snapshot.stopwatches.map(({ laps: _laps, ...watch }) => watch);
   }

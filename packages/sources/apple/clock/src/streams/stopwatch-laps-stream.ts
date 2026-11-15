@@ -3,9 +3,9 @@ import type { ClockSnapshot } from '@eltjs/sdk-apple-clock/clock-store';
 import { ClockStream, fields } from '../clock-stream.ts';
 
 const properties = {
-  stopwatchId: {
-    ...fields.id,
-    description: 'Identifier of the parent stopwatches row.',
+  stopwatchPosition: {
+    ...fields.position,
+    description: 'Position of the parent stopwatches row.',
   },
   position: {
     ...fields.position,
@@ -24,11 +24,11 @@ export class StopwatchLapsStream extends ClockStream<typeof properties> {
   readonly description =
     'Completed laps of the current stopwatch, in stored order; reset removes them.';
   readonly properties = properties;
-  readonly primaryKey = ['stopwatchId', 'position'];
+  readonly primaryKey = ['stopwatchPosition', 'position'];
   protected rows(snapshot: ClockSnapshot) {
     return snapshot.stopwatches.flatMap((watch) =>
       watch.laps.map((interval, position) => ({
-        stopwatchId: watch.id,
+        stopwatchPosition: watch.position,
         position,
         interval,
       })),

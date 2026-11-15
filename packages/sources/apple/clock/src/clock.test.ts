@@ -364,11 +364,12 @@ test('Clock streams retain complete stored facts and diff unchanged, changed and
   assert.deepEqual(
     rows(
       dir.path,
-      'select id,title,hour,minute,enabled,repeatSchedule,soundId,modifiedAt,dismissedAt from alarms',
+      'select id,uuid,title,hour,minute,enabled,repeatSchedule,soundId,modifiedAt,dismissedAt from alarms',
     ),
     [
       {
-        id: '22222222-2222-4222-8222-222222222222',
+        id: '1',
+        uuid: '22222222-2222-4222-8222-222222222222',
         title: 'Synthetic alarm',
         hour: 23,
         minute: 59,
@@ -430,16 +431,16 @@ test('Clock streams retain complete stored facts and diff unchanged, changed and
   assert.deepEqual(
     rows(
       dir.path,
-      'select stopwatchId,position,interval from stopwatchLaps order by position',
+      'select stopwatchPosition,position,interval from stopwatchLaps order by position',
     ),
     [
       {
-        stopwatchId: '11111111-1111-4111-8111-111111111111',
+        stopwatchPosition: 0,
         position: 0,
         interval: 1.25,
       },
       {
-        stopwatchId: '11111111-1111-4111-8111-111111111111',
+        stopwatchPosition: 0,
         position: 1,
         interval: 2.5,
       },
@@ -482,8 +483,11 @@ test('Clock streams retain complete stored facts and diff unchanged, changed and
     11,
   );
   assert.deepEqual(
-    rows(full.path, 'select id,startedAt,stateCode from stopwatches'),
-    rows(dir.path, 'select id,startedAt,stateCode from stopwatches'),
+    rows(
+      full.path,
+      'select position,uuid,startedAt,stateCode from stopwatches',
+    ),
+    rows(dir.path, 'select position,uuid,startedAt,stateCode from stopwatches'),
   );
   upstream.exec(
     "UPDATE ZMTCDALARM SET ZTITLE='Changed'; DELETE FROM ZMTCDREPORT; DELETE FROM ZMTCDMAKEUPDAY; DELETE FROM ZMTCDCALENDARRELEASE; DELETE FROM ZMTCDTIMERDURATION;",
@@ -533,6 +537,101 @@ test('Clock streams retain complete stored facts and diff unchanged, changed and
     (await run.run()).every(
       ({ count, deleted }) => count === 0 && deleted === 0,
     ),
+  );
+});
+
+test('Clock loads each alarm and timer row of a MobileTimer identifier that the database repeats', async () => {
+  await using dir = await new TemporaryFiles().directory('clock-mtid-');
+  const location = await fixture(dir.path);
+  using upstream = open(location.database);
+  upstream.exec(`
+    INSERT INTO ZMTCDALARM (Z_PK,ZMTID,ZTITLE) VALUES (2,x'22222222222242228222222222222222','Second alarm');
+    INSERT INTO ZMTCDTIMER (Z_PK,ZMTID,ZTITLE) VALUES (2,x'33333333333343338333333333333333','Second timer');
+  `);
+  const source = new AppleClockSource(location);
+  const streams = (await source.discover()).streams.filter(({ name }) =>
+    ['alarms', 'timers'].includes(name),
+  );
+  await (await pipeline(source, dir.path, streams)).run();
+  assert.deepEqual(
+    rows(dir.path, 'select id,uuid,title from alarms order by id'),
+    [
+      {
+        id: '1',
+        uuid: '22222222-2222-4222-8222-222222222222',
+        title: 'Synthetic alarm',
+      },
+      {
+        id: '2',
+        uuid: '22222222-2222-4222-8222-222222222222',
+        title: 'Second alarm',
+      },
+    ],
+  );
+  assert.deepEqual(
+    rows(dir.path, 'select id,uuid,title from timers order by id'),
+    [
+      {
+        id: '1',
+        uuid: '33333333-3333-4333-8333-333333333333',
+        title: 'Synthetic timer',
+      },
+      {
+        id: '2',
+        uuid: '33333333-3333-4333-8333-333333333333',
+        title: 'Second timer',
+      },
+    ],
+  );
+});
+
+test('Clock loads each stopwatch and its laps when the stopwatch list repeats an identifier', async () => {
+  await using dir = await new TemporaryFiles().directory('clock-stopwatch-');
+  const location = await fixture(dir.path);
+  const second = {
+    $MTStopwatch: {
+      ...watch.$MTStopwatch,
+      MTStopwatchTitle: 'Second',
+      MTStopwatchLaps: [1.5, 2.5],
+    },
+  };
+  await writeFile(
+    location.stopwatches,
+    binary({ MTStopwatches: { MTStopwatches: [watch, second] } }),
+  );
+  const source = new AppleClockSource(location);
+  const streams = (await source.discover()).streams.filter(({ name }) =>
+    ['stopwatches', 'stopwatchLaps'].includes(name),
+  );
+  await (await pipeline(source, dir.path, streams)).run();
+  assert.deepEqual(
+    rows(
+      dir.path,
+      'select position,uuid,title from stopwatches order by position',
+    ),
+    [
+      {
+        position: 0,
+        uuid: '11111111-1111-4111-8111-111111111111',
+        title: null,
+      },
+      {
+        position: 1,
+        uuid: '11111111-1111-4111-8111-111111111111',
+        title: 'Second',
+      },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      dir.path,
+      'select stopwatchPosition,position,interval from stopwatchLaps order by stopwatchPosition,position',
+    ),
+    [
+      { stopwatchPosition: 0, position: 0, interval: 3.832172989845276 },
+      { stopwatchPosition: 1, position: 0, interval: 1.5 },
+      { stopwatchPosition: 1, position: 1, interval: 2.5 },
+    ],
   );
 });
 
@@ -704,8 +803,8 @@ test('this Mac Clock stores load read-only through the real pipeline', async (t)
     rows(dir.path, 'select count(*) n from stopwatches')[0]?.n,
     daemon.MTStopwatches.MTStopwatches.length,
   );
-  for (const { id } of rows(dir.path, 'select id from timers'))
-    assert.match(String(id), /^[A-F0-9-]{36}$/);
+  for (const { uuid } of rows(dir.path, 'select uuid from timers'))
+    assert.match(String(uuid), /^[A-F0-9-]{36}$/);
 });
 
 test('a Clock watch keeps every stream current while its stores hold still', async (t) => {

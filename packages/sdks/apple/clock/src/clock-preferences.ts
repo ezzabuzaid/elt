@@ -63,10 +63,11 @@ export async function stopwatches(path: string) {
   const root = await preferences(path);
   const stored = root.MTStopwatches;
   if (stored === undefined) return [];
-  return array(dictionary(stored).MTStopwatches).map((entry) => {
+  return array(dictionary(stored).MTStopwatches).map((entry, position) => {
     const watch = dictionary(dictionary(entry).$MTStopwatch);
     return {
-      id: requiredText(watch.MTStopwatchIdentifier),
+      position,
+      uuid: requiredText(watch.MTStopwatchIdentifier),
       title: text(watch.MTStopwatchTitle),
       stateCode: number(watch.MTStopwatchState),
       currentInterval: number(watch.MTStopwatchCurrentInterval),
