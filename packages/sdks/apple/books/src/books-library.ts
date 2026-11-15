@@ -117,13 +117,21 @@ const libraryColumns = {
     'ZLASTMODIFICATION',
     'ZLOCALMODDATE',
   ],
-  ZBKCOLLECTIONMEMBER: ['ZCOLLECTION', 'ZASSETID', 'ZSORTKEY', 'ZLOCALMODDATE'],
+  ZBKCOLLECTIONMEMBER: [
+    'Z_PK',
+    'ZCOLLECTION',
+    'ZASSET',
+    'ZASSETID',
+    'ZSORTKEY',
+    'ZLOCALMODDATE',
+  ],
 } as const;
 
 // Internal counters can exceed JavaScript's safe integer range. Read only
-// mapped fields; SQLite keeps the keys used for ordering and joins as int64.
+// mapped fields; a reference to another asset is read as the Z_PK of the row
+// it joins, so one that points at no row reads as NULL.
 const assetsQuery = `
-      SELECT ${libraryColumns.ZBKLIBRARYASSET.filter(
+      SELECT asset.Z_PK AS id, ${libraryColumns.ZBKLIBRARYASSET.filter(
         (column) =>
           column !== 'Z_PK' &&
           column !== 'ZSERIESCONTAINER' &&
@@ -131,8 +139,8 @@ const assetsQuery = `
       )
         .map((column) => `asset.${column}`)
         .join(', ')},
-        container.ZASSETID AS seriesContainerAssetId,
-        parent.ZASSETID AS supplementalContentParentAssetId
+        container.Z_PK AS seriesContainerId,
+        parent.Z_PK AS supplementalContentParentId
       FROM ZBKLIBRARYASSET asset
       LEFT JOIN ZBKLIBRARYASSET container ON container.Z_PK = asset.ZSERIESCONTAINER
       LEFT JOIN ZBKLIBRARYASSET parent ON parent.Z_PK = asset.ZSUPPLEMENTALCONTENTPARENT
@@ -140,12 +148,10 @@ const assetsQuery = `
       ORDER BY asset.Z_PK`;
 
 const collectionMembersQuery = `
-      SELECT collection.ZCOLLECTIONID AS collectionId, member.ZASSETID,
-        member.ZSORTKEY, member.ZLOCALMODDATE
-      FROM ZBKCOLLECTIONMEMBER member
-      JOIN ZBKCOLLECTION collection ON collection.Z_PK = member.ZCOLLECTION
-      WHERE collection.ZCOLLECTIONID IS NOT NULL AND member.ZASSETID IS NOT NULL
-      ORDER BY member.Z_PK`;
+      SELECT Z_PK, ZCOLLECTION, ZASSET, ZASSETID, ZSORTKEY, ZLOCALMODDATE
+      FROM ZBKCOLLECTIONMEMBER
+      WHERE ZASSETID IS NOT NULL
+      ORDER BY Z_PK`;
 
 export const contentTypes = ['epub', 'pdf'] as const;
 export type ContentType = (typeof contentTypes)[number];
@@ -158,8 +164,9 @@ const contentTypesByCode = new Map<number, ContentType>([
 
 // A book, audiobook or PDF in the library, as BKLibrary keeps it. Lists of
 // author, narrator and genre names are archived bytes Books has not been seen
-// to fill.
+// to fill. Its Z_PK is its identity: Books does not keep ZASSETID unique.
 export type LibraryAsset = {
+  readonly id: number;
   readonly assetId: string | null;
   readonly title: string | null;
   readonly sortTitle: string | null;
@@ -229,7 +236,7 @@ export type LibraryAsset = {
   readonly isEphemeral: boolean | null;
   readonly isStoreAudiobook: boolean | null;
   readonly isSupplementalContent: boolean | null;
-  readonly supplementalContentParentAssetId: string | null;
+  readonly supplementalContentParentId: number | null;
   readonly isTrackedAsRecent: boolean | null;
   readonly canRedownload: boolean | null;
   readonly hasReadAloudSupport: boolean | null;
@@ -239,7 +246,7 @@ export type LibraryAsset = {
   readonly versionNumber: number | null;
   readonly version: string | null;
   readonly seriesId: string | null;
-  readonly seriesContainerAssetId: string | null;
+  readonly seriesContainerId: number | null;
   readonly sequenceNumber: number | null;
   readonly sequenceDisplayName: string | null;
   readonly seriesIsOrdered: boolean | null;
@@ -247,8 +254,11 @@ export type LibraryAsset = {
   readonly seriesIsCloudOnly: boolean | null;
 };
 
+// A collection, identified by its Z_PK; Books does not keep its identifier
+// unique.
 export type Collection = {
-  readonly collectionId: string | null;
+  readonly id: number;
+  readonly identifier: string | null;
   readonly title: string | null;
   readonly details: string | null;
   readonly deleted: boolean;
@@ -261,8 +271,13 @@ export type Collection = {
   readonly localModifiedAt: Date | null;
 };
 
+// One row of a collection's members, identified by its Z_PK, naming its
+// collection and asset by their Z_PKs. The asset's identifier stays after the
+// asset leaves the library.
 export type CollectionMember = {
-  readonly collectionId: string | null;
+  readonly id: number;
+  readonly collectionId: number | null;
+  readonly libraryAssetId: number | null;
   readonly assetId: string | null;
   readonly sortKey: number | null;
   readonly addedAt: Date | null;
@@ -271,6 +286,7 @@ export type CollectionMember = {
 const libraryAsset = (row: Row): LibraryAsset => {
   const contentTypeCode = integer(row.ZCONTENTTYPE);
   return {
+    id: Number(row.id),
     assetId: stored(row.ZASSETID),
     title: text(row.ZTITLE),
     sortTitle: text(row.ZSORTTITLE),
@@ -343,9 +359,7 @@ const libraryAsset = (row: Row): LibraryAsset => {
     isEphemeral: nullableFlag(row.ZISEPHEMERAL),
     isStoreAudiobook: nullableFlag(row.ZISSTOREAUDIOBOOK),
     isSupplementalContent: nullableFlag(row.ZISSUPPLEMENTALCONTENT),
-    supplementalContentParentAssetId: text(
-      row.supplementalContentParentAssetId,
-    ),
+    supplementalContentParentId: integer(row.supplementalContentParentId),
     isTrackedAsRecent: nullableFlag(row.ZISTRACKEDASRECENT),
     canRedownload: nullableFlag(row.ZCANREDOWNLOAD),
     hasReadAloudSupport: nullableFlag(row.ZHASRACSUPPORT),
@@ -355,7 +369,7 @@ const libraryAsset = (row: Row): LibraryAsset => {
     versionNumber: number(row.ZVERSIONNUMBER),
     version: text(row.ZVERSIONNUMBERHUMANREADABLE),
     seriesId: text(row.ZSERIESID),
-    seriesContainerAssetId: text(row.seriesContainerAssetId),
+    seriesContainerId: integer(row.seriesContainerId),
     sequenceNumber: number(row.ZSEQUENCENUMBER),
     sequenceDisplayName: text(row.ZSEQUENCEDISPLAYNAME),
     seriesIsOrdered: nullableFlag(row.ZSERIESISORDERED),
@@ -384,7 +398,8 @@ export class BooksLibrary implements Disposable {
         'SELECT * FROM ZBKCOLLECTION WHERE ZCOLLECTIONID IS NOT NULL ORDER BY Z_PK',
       )
       .map((row) => ({
-        collectionId: stored(row.ZCOLLECTIONID),
+        id: Number(row.Z_PK),
+        identifier: stored(row.ZCOLLECTIONID),
         title: text(row.ZTITLE),
         details: text(row.ZDETAILS),
         deleted: flag(row.ZDELETEDFLAG),
@@ -400,7 +415,9 @@ export class BooksLibrary implements Disposable {
 
   collectionMembers(): IteratorObject<CollectionMember, undefined> {
     return this.#database.iterate(collectionMembersQuery).map((row) => ({
-      collectionId: stored(row.collectionId),
+      id: Number(row.Z_PK),
+      collectionId: integer(row.ZCOLLECTION),
+      libraryAssetId: integer(row.ZASSET),
       assetId: stored(row.ZASSETID),
       sortKey: integer(row.ZSORTKEY),
       addedAt: coreDataTime(row.ZLOCALMODDATE),
@@ -411,10 +428,14 @@ export class BooksLibrary implements Disposable {
   // iCloud's file flags so no placeholder is downloaded.
   async *bookFiles(): AsyncGenerator<BookFile> {
     for (const row of this.#database.iterate(
-      'SELECT ZASSETID, ZPATH FROM ZBKLIBRARYASSET WHERE ZASSETID IS NOT NULL AND ZPATH IS NOT NULL ORDER BY Z_PK',
+      'SELECT Z_PK, ZASSETID, ZPATH FROM ZBKLIBRARYASSET WHERE ZASSETID IS NOT NULL AND ZPATH IS NOT NULL ORDER BY Z_PK',
     ))
       // The query selects only rows whose ZASSETID and ZPATH are not null.
-      yield await bookFile(String(row.ZASSETID), String(row.ZPATH));
+      yield await bookFile(
+        Number(row.Z_PK),
+        String(row.ZASSETID),
+        String(row.ZPATH),
+      );
   }
 
   [Symbol.dispose](): void {

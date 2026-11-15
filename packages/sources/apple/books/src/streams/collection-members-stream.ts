@@ -5,14 +5,24 @@ import type { BooksScan } from '../books-scan.ts';
 import { BooksStream, booksFields, iso } from '../books-stream.ts';
 
 const properties = {
+  id: {
+    ...booksFields.rowId,
+    description:
+      'The member row; Books can keep one asset in one collection on two rows.',
+  },
   collectionId: {
-    ...booksFields.id,
-    description: 'The collection; refers to collections.collectionId.',
+    ...booksFields.nullableRowId,
+    description: 'The collection; refers to collections.id.',
+  },
+  libraryAssetId: {
+    ...booksFields.nullableRowId,
+    description:
+      'The member; refers to libraryAssets.id. NULL when the asset is no longer in the library.',
   },
   assetId: {
     ...booksFields.assetId,
     description:
-      'The member; refers to libraryAssets.assetId, or to an asset no longer in the library.',
+      'Identifier of the member asset; matches libraryAssets.assetId, and stays after the asset leaves the library.',
   },
   sortKey: {
     ...booksFields.nullableInteger,
@@ -30,7 +40,7 @@ export class CollectionMembersStream extends BooksStream<
 > {
   readonly name = 'collectionMembers';
   readonly store = 'library';
-  readonly primaryKey = ['collectionId', 'assetId'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -45,7 +55,9 @@ export class CollectionMembersStream extends BooksStream<
 
   protected record(member: CollectionMember): RecordDraft<typeof properties> {
     return {
+      id: member.id,
       collectionId: member.collectionId,
+      libraryAssetId: member.libraryAssetId,
       assetId: member.assetId,
       sortKey: member.sortKey,
       addedAt: iso(member.addedAt),

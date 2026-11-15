@@ -7,6 +7,8 @@ export type BookFileFormat = (typeof bookFileFormats)[number];
 // A library asset's file: a single file such as a PDF or a zipped .epub, or
 // an unzipped EPUB package directory, with what of it is on this Mac.
 export type BookFile = {
+  // The Z_PK of the library asset whose file this is.
+  readonly libraryAssetId: number;
   readonly assetId: string;
   readonly path: string;
   readonly format: BookFileFormat;
@@ -31,6 +33,7 @@ function exportable(
 }
 
 export async function bookFile(
+  libraryAssetId: number,
   assetId: string,
   path: string,
 ): Promise<BookFile> {
@@ -42,6 +45,7 @@ export async function bookFile(
   );
   const files = exportable(path, listed);
   return {
+    libraryAssetId,
     assetId,
     path,
     format:

@@ -8,7 +8,11 @@ const { boolean, nullableInteger, nullableText, nullableTimestamp } =
   booksFields;
 
 const properties = {
-  collectionId: {
+  id: {
+    ...booksFields.rowId,
+    description: 'The collection row; Books does not keep identifier unique.',
+  },
+  identifier: {
     ...booksFields.id,
     description:
       'Collection identifier: a fixed name such as Finished_Collection_ID for a built-in collection, a UUID for one the user made.',
@@ -49,7 +53,7 @@ export class CollectionsStream extends BooksStream<
 > {
   readonly name = 'collections';
   readonly store = 'library';
-  readonly primaryKey = ['collectionId'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -64,7 +68,8 @@ export class CollectionsStream extends BooksStream<
 
   protected record(collection: Collection): RecordDraft<typeof properties> {
     return {
-      collectionId: collection.collectionId,
+      id: collection.id,
+      identifier: collection.identifier,
       title: collection.title,
       details: collection.details,
       deleted: collection.deleted,

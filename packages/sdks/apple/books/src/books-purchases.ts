@@ -6,6 +6,7 @@ import { coreDataTime, integer, nullableFlag, text } from './books-values.ts';
 // The Jalisco columns this reader reads; opening the store checks them.
 const purchasesColumns = {
   ZBLJALISCOSERVERITEM: [
+    'Z_PK',
     'ZSTOREID',
     'ZTITLE',
     'ZSORTEDTITLE',
@@ -30,8 +31,10 @@ const purchasesColumns = {
 } as const;
 
 // An item the Apple Account bought from the Book Store, as Books last fetched
-// the purchase history.
+// the purchase history, identified by its Z_PK: Books does not keep ZSTOREID
+// unique, and each row belongs to one of its purchase databases (ZDATABASE).
 export type Purchase = {
+  readonly id: number;
   readonly storeId: string;
   readonly title: string | null;
   readonly sortTitle: string | null;
@@ -69,6 +72,7 @@ export class BooksPurchases implements Disposable {
         'SELECT * FROM ZBLJALISCOSERVERITEM WHERE ZSTOREID IS NOT NULL ORDER BY Z_PK',
       )
       .map((row) => ({
+        id: Number(row.Z_PK),
         storeId: String(row.ZSTOREID),
         title: text(row.ZTITLE),
         sortTitle: text(row.ZSORTEDTITLE),

@@ -14,6 +14,10 @@ const {
 } = booksFields;
 
 const properties = {
+  id: {
+    ...booksFields.rowId,
+    description: 'The asset row; Books does not keep assetId unique.',
+  },
   assetId: booksFields.assetId,
   title: { ...nullableText, description: 'Title.' },
   sortTitle: { ...nullableText, description: 'Title Books sorts by.' },
@@ -214,10 +218,10 @@ const properties = {
     ...nullableBoolean,
     description: 'Supplemental material of another asset.',
   },
-  supplementalContentParentAssetId: {
-    ...nullableText,
+  supplementalContentParentId: {
+    ...booksFields.nullableRowId,
     description:
-      'Asset this supplemental content belongs to; refers to libraryAssets.assetId.',
+      'Asset this supplemental content belongs to; refers to libraryAssets.id.',
   },
   isTrackedAsRecent: {
     ...nullableBoolean,
@@ -250,10 +254,10 @@ const properties = {
     description: 'Store version as displayed.',
   },
   seriesId: { ...nullableText, description: 'Store series ID.' },
-  seriesContainerAssetId: {
-    ...nullableText,
+  seriesContainerId: {
+    ...booksFields.nullableRowId,
     description:
-      'Series this book belongs to in the library; refers to libraryAssets.assetId.',
+      'Series this book belongs to in the library; refers to libraryAssets.id.',
   },
   sequenceNumber: {
     ...nullableNumber,
@@ -283,7 +287,7 @@ export class LibraryAssetsStream extends BooksStream<
 > {
   readonly name = 'libraryAssets';
   readonly store = 'library';
-  readonly primaryKey = ['assetId'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -298,6 +302,7 @@ export class LibraryAssetsStream extends BooksStream<
 
   protected record(asset: LibraryAsset): RecordDraft<typeof properties> {
     return {
+      id: asset.id,
       assetId: asset.assetId,
       title: asset.title,
       sortTitle: asset.sortTitle,
@@ -367,7 +372,7 @@ export class LibraryAssetsStream extends BooksStream<
       isEphemeral: asset.isEphemeral,
       isStoreAudiobook: asset.isStoreAudiobook,
       isSupplementalContent: asset.isSupplementalContent,
-      supplementalContentParentAssetId: asset.supplementalContentParentAssetId,
+      supplementalContentParentId: asset.supplementalContentParentId,
       isTrackedAsRecent: asset.isTrackedAsRecent,
       canRedownload: asset.canRedownload,
       hasReadAloudSupport: asset.hasReadAloudSupport,
@@ -377,7 +382,7 @@ export class LibraryAssetsStream extends BooksStream<
       versionNumber: asset.versionNumber,
       version: asset.version,
       seriesId: asset.seriesId,
-      seriesContainerAssetId: asset.seriesContainerAssetId,
+      seriesContainerId: asset.seriesContainerId,
       sequenceNumber: asset.sequenceNumber,
       sequenceDisplayName: asset.sequenceDisplayName,
       seriesIsOrdered: asset.seriesIsOrdered,

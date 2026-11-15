@@ -6,6 +6,7 @@ import { coreDataTime, flag, integer, stored, text } from './books-values.ts';
 // The AEAnnotation columns this reader reads; opening the store checks them.
 const annotationsColumns = {
   ZAEANNOTATION: [
+    'Z_PK',
     'ZANNOTATIONUUID',
     'ZANNOTATIONASSETID',
     'ZANNOTATIONTYPE',
@@ -36,9 +37,11 @@ const annotationKindsByCode = new Map<number, AnnotationKind>([
   [3, 'readingPosition'],
 ]);
 
-// A highlight, note or reading position in a book.
+// A highlight, note or reading position in a book, identified by its Z_PK:
+// Books does not keep ZANNOTATIONUUID unique.
 export type Annotation = {
-  readonly id: string | null;
+  readonly id: number;
+  readonly uuid: string | null;
   // Blank on Books' deletion markers.
   readonly assetId: string | null;
   readonly kind: AnnotationKind | null;
@@ -78,7 +81,8 @@ export class BooksAnnotations implements Disposable {
       .map((row) => {
         const kindCode = integer(row.ZANNOTATIONTYPE);
         return {
-          id: stored(row.ZANNOTATIONUUID),
+          id: Number(row.Z_PK),
+          uuid: stored(row.ZANNOTATIONUUID),
           assetId: text(row.ZANNOTATIONASSETID),
           kind:
             kindCode === null

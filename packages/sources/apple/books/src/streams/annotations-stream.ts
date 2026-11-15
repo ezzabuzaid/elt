@@ -8,7 +8,11 @@ const { boolean, nullableInteger, nullableText, nullableTimestamp } =
   booksFields;
 
 const properties = {
-  id: { ...booksFields.id, description: 'Annotation UUID.' },
+  id: {
+    ...booksFields.rowId,
+    description: 'The annotation row; Books does not keep uuid unique.',
+  },
+  uuid: { ...booksFields.id, description: 'Annotation UUID.' },
   assetId: {
     ...booksFields.nullableId,
     description:
@@ -105,6 +109,7 @@ export class AnnotationsStream extends BooksStream<
   protected record(annotation: Annotation): RecordDraft<typeof properties> {
     return {
       id: annotation.id,
+      uuid: annotation.uuid,
       assetId: annotation.assetId,
       kind: annotation.kind,
       kindCode: annotation.kindCode,

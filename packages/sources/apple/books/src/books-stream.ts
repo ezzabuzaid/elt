@@ -24,6 +24,10 @@ export const base64 = (bytes: Uint8Array | null): string | null =>
   bytes === null ? null : Buffer.from(bytes).toString('base64');
 
 export const booksFields = {
+  // A row's Z_PK: Core Data's identity of the row within its entity, the
+  // key Books enforces (ADR 0022 of elt).
+  rowId: integer,
+  nullableRowId: nullableInteger,
   id: { ...text, minLength: 1 },
   nullableId: { ...nullableText, minLength: 1 },
   text,
@@ -40,7 +44,7 @@ export const booksFields = {
     ...text,
     minLength: 1,
     description:
-      'Books asset identifier (a 32-character hex string for books added from files); refers to libraryAssets.assetId within this source.',
+      'Books asset identifier (a 32-character hex string for books added from files); matches libraryAssets.assetId within this source. Books does not keep it unique.',
   },
 } as const;
 

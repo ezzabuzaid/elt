@@ -848,7 +848,7 @@ test('Books reads its library, annotations, synced reading state and reading his
   assert.deepEqual(
     rows(
       books.read(
-        `SELECT "assetId", title, "contentType", "readingProgress" AS progress, "isFinished", "finishedAt", "seriesContainerAssetId" FROM library_assets ORDER BY "assetId"`,
+        `SELECT "assetId", title, "contentType", "readingProgress" AS progress, "isFinished", "finishedAt", "seriesContainerId" FROM library_assets ORDER BY "assetId"`,
       ),
     ),
     [
@@ -859,7 +859,7 @@ test('Books reads its library, annotations, synced reading state and reading his
         progress: 0.5,
         isFinished: 0,
         finishedAt: null,
-        seriesContainerAssetId: null,
+        seriesContainerId: null,
       },
       {
         assetId: 'G3',
@@ -868,7 +868,7 @@ test('Books reads its library, annotations, synced reading state and reading his
         progress: 0,
         isFinished: 0,
         finishedAt: null,
-        seriesContainerAssetId: 'A1',
+        seriesContainerId: 1,
       },
       {
         assetId: 'P2',
@@ -877,7 +877,7 @@ test('Books reads its library, annotations, synced reading state and reading his
         progress: 1,
         isFinished: 1,
         finishedAt: '2023-08-21T10:00:00.000Z',
-        seriesContainerAssetId: null,
+        seriesContainerId: null,
       },
       {
         assetId: 'Z4',
@@ -886,41 +886,32 @@ test('Books reads its library, annotations, synced reading state and reading his
         progress: 0,
         isFinished: 0,
         finishedAt: null,
-        seriesContainerAssetId: null,
+        seriesContainerId: null,
       },
     ],
   );
   assert.deepEqual(
     rows(
       books.read(
-        `SELECT "collectionId", "assetId" FROM collection_members ORDER BY "collectionId"`,
+        `SELECT id, "collectionId", "libraryAssetId", "assetId" FROM collection_members ORDER BY id`,
       ),
     ),
     [
-      { collectionId: '4F1E-WANT', assetId: 'LEFT' },
-      { collectionId: 'Finished_Collection_ID', assetId: 'P2' },
+      { id: 1, collectionId: 1, libraryAssetId: 2, assetId: 'P2' },
+      // A member whose book left the library keeps only its identifier.
+      { id: 2, collectionId: 2, libraryAssetId: null, assetId: 'LEFT' },
     ],
   );
   assert.deepEqual(
     rows(
       books.read(
-        `SELECT id, "assetId", kind, style, underline, deleted, "selectedText", note, chapter FROM annotations ORDER BY id`,
+        `SELECT id, uuid, "assetId", kind, style, underline, deleted, "selectedText", note, chapter FROM annotations ORDER BY id`,
       ),
     ),
     [
       {
-        id: 'D-4',
-        assetId: null,
-        kind: null,
-        style: 0,
-        underline: 0,
-        deleted: 1,
-        selectedText: null,
-        note: null,
-        chapter: null,
-      },
-      {
-        id: 'H-1',
+        id: 1,
+        uuid: 'H-1',
         assetId: 'A1',
         kind: 'highlight',
         style: 3,
@@ -931,7 +922,20 @@ test('Books reads its library, annotations, synced reading state and reading his
         chapter: 'Chapter 4',
       },
       {
-        id: 'R-3',
+        id: 2,
+        uuid: 'U-2',
+        assetId: 'A1',
+        kind: 'highlight',
+        style: 0,
+        underline: 1,
+        deleted: 0,
+        selectedText: 'underlined',
+        note: null,
+        chapter: 'Chapter 5',
+      },
+      {
+        id: 3,
+        uuid: 'R-3',
         assetId: 'A1',
         kind: 'readingPosition',
         style: 0,
@@ -942,15 +946,16 @@ test('Books reads its library, annotations, synced reading state and reading his
         chapter: null,
       },
       {
-        id: 'U-2',
-        assetId: 'A1',
-        kind: 'highlight',
+        id: 4,
+        uuid: 'D-4',
+        assetId: null,
+        kind: null,
         style: 0,
-        underline: 1,
-        deleted: 0,
-        selectedText: 'underlined',
+        underline: 0,
+        deleted: 1,
+        selectedText: null,
         note: null,
-        chapter: 'Chapter 5',
+        chapter: null,
       },
     ],
   );
@@ -1023,9 +1028,11 @@ test('Books reads its library, annotations, synced reading state and reading his
   assert.doesNotMatch(JSON.stringify(purchase), /SECRET/);
   assert.deepEqual(
     rows(
-      books.read(`SELECT id, "boldText", "lineHeight" AS height FROM themes`),
+      books.read(
+        `SELECT id, identifier, "boldText", "lineHeight" AS height FROM themes`,
+      ),
     ),
-    [{ id: 'Quiet', boldText: 1, height: 1.4 }],
+    [{ id: 1, identifier: 'Quiet', boldText: 1, height: 1.4 }],
   );
 });
 
@@ -1182,11 +1189,11 @@ test('Books follows each store on its own: a rerun writes nothing, and edits, de
     annotations: { count: 0, deleted: 0 },
   });
   assert.deepEqual(
-    rows(books.read('SELECT id, note FROM annotations ORDER BY id')),
+    rows(books.read('SELECT uuid, note FROM annotations ORDER BY id')),
     [
-      { id: 'D-4', note: null },
-      { id: 'H-1', note: 'Rhythm first' },
-      { id: 'R-3', note: null },
+      { uuid: 'H-1', note: 'Rhythm first' },
+      { uuid: 'R-3', note: null },
+      { uuid: 'D-4', note: null },
     ],
   );
   assert.deepEqual(
@@ -1544,7 +1551,7 @@ test(
   },
 );
 
-test('Books imports library assets with oversized integers in unused columns and internal relationship keys', async () => {
+test('Books imports library assets with oversized integers in unused columns', async () => {
   await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const source = new AppleBooksSource(location);
@@ -1568,8 +1575,6 @@ test('Books imports library assets with oversized integers in unused columns and
         ZSERIESSORTKEY = -9223372036854775808,
         ZGENERATION = 9007199254740993,
         ZUNMAPPEDCOUNTER = 9223372036854775807;
-      UPDATE ZBKLIBRARYASSET SET Z_PK = 9223372036854775807 WHERE ZASSETID = 'A1';
-      UPDATE ZBKLIBRARYASSET SET ZSERIESCONTAINER = 9223372036854775807 WHERE ZASSETID = 'G3';
     `);
   }
   const after = await appleImport(
@@ -1580,6 +1585,190 @@ test('Books imports library assets with oversized integers in unused columns and
   await after.load();
 
   assert.deepEqual(after.read(query), expected);
+});
+
+// One import of a fresh fixture under root, loaded after running sql on one
+// of its stores.
+async function loadedAfter(
+  root: string,
+  store: keyof BooksFixture['files'],
+  sql: string,
+) {
+  const location = await booksFixture(root);
+  {
+    using database = open(location.files[store]);
+    database.exec(sql);
+  }
+  const books = await appleImport(
+    new AppleBooksSource(location),
+    join(root, 'import'),
+  );
+  await books.load();
+  return books;
+}
+
+// Books' indexes on its business identifiers are not unique; only Z_PK is a
+// key (ADR 0022 of elt), so each of these repeats is a row of its own.
+test('Books loads every library asset and its book file when two rows hold one asset identifier', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+
+  const books = await loadedAfter(
+    scratch.path,
+    'library',
+    `INSERT INTO ZBKLIBRARYASSET (Z_PK, Z_ENT, Z_OPT, ZASSETID, ZTITLE, ZCONTENTTYPE, ZPATH, ZSERIESCONTAINER)
+       SELECT 5, Z_ENT, Z_OPT, ZASSETID, 'Design, again', ZCONTENTTYPE, ZPATH, 1 FROM ZBKLIBRARYASSET WHERE Z_PK = 1`,
+  );
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "id", "assetId", "title", "seriesContainerId" FROM library_assets WHERE "assetId" = 'A1' ORDER BY "id"`,
+      ),
+    ),
+    [
+      {
+        id: 1,
+        assetId: 'A1',
+        title: 'Design for Developers',
+        seriesContainerId: null,
+      },
+      { id: 5, assetId: 'A1', title: 'Design, again', seriesContainerId: 1 },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "libraryAssetId", "assetId", "attachmentRef" IS NOT NULL AS stored FROM book_files WHERE "assetId" = 'A1' ORDER BY "libraryAssetId"`,
+      ),
+    ),
+    [
+      { libraryAssetId: 1, assetId: 'A1', stored: 1 },
+      { libraryAssetId: 5, assetId: 'A1', stored: 1 },
+    ],
+  );
+});
+
+test('Books loads every collection when two rows hold one collection identifier', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+
+  const books = await loadedAfter(
+    scratch.path,
+    'library',
+    `INSERT INTO ZBKCOLLECTION (Z_PK, Z_ENT, Z_OPT, ZCOLLECTIONID, ZTITLE, ZDELETEDFLAG, ZHIDDEN, ZPLACEHOLDER)
+       VALUES (3, 2, 1, 'Finished_Collection_ID', 'Finished again', 0, 0, 0)`,
+  );
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "id", "identifier", "title" FROM collections ORDER BY "id"`,
+      ),
+    ),
+    [
+      { id: 1, identifier: 'Finished_Collection_ID', title: 'Finished' },
+      { id: 2, identifier: '4F1E-WANT', title: 'Want to Read' },
+      { id: 3, identifier: 'Finished_Collection_ID', title: 'Finished again' },
+    ],
+  );
+});
+
+test('Books loads every collection member when one book is a member of one collection twice', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+
+  const books = await loadedAfter(
+    scratch.path,
+    'library',
+    `INSERT INTO ZBKCOLLECTIONMEMBER (Z_PK, Z_ENT, Z_OPT, ZCOLLECTION, ZASSET, ZASSETID, ZSORTKEY)
+       VALUES (3, 3, 1, 1, 2, 'P2', 3)`,
+  );
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "id", "collectionId", "libraryAssetId", "assetId", "sortKey" FROM collection_members ORDER BY "id"`,
+      ),
+    ),
+    [
+      { id: 1, collectionId: 1, libraryAssetId: 2, assetId: 'P2', sortKey: 1 },
+      {
+        id: 2,
+        collectionId: 2,
+        libraryAssetId: null,
+        assetId: 'LEFT',
+        sortKey: 2,
+      },
+      { id: 3, collectionId: 1, libraryAssetId: 2, assetId: 'P2', sortKey: 3 },
+    ],
+  );
+});
+
+test('Books loads every annotation when two rows hold one annotation UUID', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+
+  const books = await loadedAfter(
+    scratch.path,
+    'annotations',
+    `INSERT INTO ZAEANNOTATION (Z_PK, Z_ENT, Z_OPT, ZANNOTATIONUUID, ZANNOTATIONASSETID, ZANNOTATIONTYPE, ZANNOTATIONISUNDERLINE, ZANNOTATIONDELETED, ZANNOTATIONSELECTEDTEXT)
+       VALUES (5, 1, 1, 'H-1', 'A1', 2, 0, 0, 'Grids, again')`,
+  );
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "id", "uuid", "selectedText" FROM annotations WHERE "uuid" = 'H-1' ORDER BY "id"`,
+      ),
+    ),
+    [
+      { id: 1, uuid: 'H-1', selectedText: 'Grids and rhythm' },
+      { id: 5, uuid: 'H-1', selectedText: 'Grids, again' },
+    ],
+  );
+});
+
+test('Books loads every purchase when two rows hold one store ID', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+
+  const books = await loadedAfter(
+    scratch.path,
+    'purchases',
+    `INSERT INTO ZBLJALISCOSERVERITEM (Z_PK, Z_ENT, Z_OPT, ZSTOREID, ZTITLE)
+       VALUES (2, 4, 1, '1587320271', 'Bought, in another list')`,
+  );
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "id", "storeId", "title" FROM purchases ORDER BY "id"`,
+      ),
+    ),
+    [
+      { id: 1, storeId: '1587320271', title: 'Bought' },
+      { id: 2, storeId: '1587320271', title: 'Bought, in another list' },
+    ],
+  );
+});
+
+test('Books loads every theme when two rows hold one theme identifier', async () => {
+  await using scratch = await new TemporaryFiles().directory('books-');
+
+  const books = await loadedAfter(
+    scratch.path,
+    'themes',
+    `INSERT INTO ZBOOKTHEME (Z_PK, Z_ENT, Z_OPT, ZIDENTIFIER, ZLINEHEIGHT)
+       VALUES (2, 1, 1, 'Quiet', 1.6)`,
+  );
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "id", "identifier", "lineHeight" FROM themes ORDER BY "id"`,
+      ),
+    ),
+    [
+      { id: 1, identifier: 'Quiet', lineHeight: 1.4 },
+      { id: 2, identifier: 'Quiet', lineHeight: 1.6 },
+    ],
+  );
 });
 
 test('a malformed or missing Books store, column or value fails only the streams that read it', async () => {
@@ -1631,25 +1820,27 @@ test('a malformed or missing Books store, column or value fails only the streams
     'purchases',
     'ALTER TABLE ZBLJALISCOSERVERITEM DROP COLUMN ZGENRE',
   );
-  const unkeyed = {
-    collectionMembers: await withoutKey(
-      'members',
-      'library',
-      'ZBKCOLLECTIONMEMBER',
-    ),
+  const unkeyedMembers = await withoutKey(
+    'members',
+    'library',
+    'ZBKCOLLECTIONMEMBER',
+  );
+  const unidentified = {
     annotations: await withoutKey(
       'annotations',
       'annotations',
       'ZAEANNOTATION',
     ),
-    assetDetails: await withoutKey('details', 'assetData', 'ZBCASSETDETAIL'),
-    reviews: await withoutKey('reviews', 'assetData', 'ZBCASSETREVIEW'),
     purchases: await withoutKey(
       'purchases',
       'purchases',
       'ZBLJALISCOSERVERITEM',
     ),
     themes: await withoutKey('themes', 'themes', 'ZBOOKTHEME'),
+  };
+  const unkeyed = {
+    assetDetails: await withoutKey('details', 'assetData', 'ZBCASSETDETAIL'),
+    reviews: await withoutKey('reviews', 'assetData', 'ZBCASSETREVIEW'),
   };
   const blobId = await afterSql(
     'blob-id',
@@ -1713,11 +1904,20 @@ test('a malformed or missing Books store, column or value fails only the streams
     genre.purchases ?? '',
     /lacks the columns ZBLJALISCOSERVERITEM\.ZGENRE/,
   );
-  // Z_PK only orders rows, so a table without it fails only its own stream,
-  // when its query runs, and the store's other streams load.
+  // Z_PK is the key of these streams, so a table without it is a layout the
+  // source does not know, and every stream of its store fails.
+  assert.deepEqual(Object.keys(unkeyedMembers).sort(), library);
+  for (const error of Object.values(unkeyedMembers))
+    assert.match(error, /lacks the columns ZBKCOLLECTIONMEMBER\.Z_PK/);
+  for (const [stream, failed] of Object.entries(unidentified)) {
+    assert.deepEqual(Object.keys(failed), [stream]);
+    assert.match(failed[stream] ?? '', /^MissingColumnsError: .*\.Z_PK/);
+  }
+  // Where Z_PK only orders rows, a table without it fails only its own
+  // stream, when its query runs, and the store's other streams load.
   for (const [stream, failed] of Object.entries(unkeyed)) {
     assert.deepEqual(Object.keys(failed), [stream]);
-    assert.match(failed[stream] ?? '', /no such column: (member\.)?Z_PK/);
+    assert.match(failed[stream] ?? '', /no such column: Z_PK/);
   }
   assert.deepEqual(Object.keys(blobId), ['assetDetails']);
   assert.match(blobId.assetDetails ?? '', /invalid assetDetails\.assetId/);
@@ -2063,25 +2263,22 @@ test('Books refuses a reading history document that is not bytes, and keeps the 
 
 // Each stream's primary keys, joined by |, in the order Books yields them for
 // booksFixture with the rows the order test adds: Z_PK order, which differs
-// from key order, and reading history in its document's order.
+// from key order where the key is not the Z_PK, and reading history in its
+// document's order.
 const PRIMARY_KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
-  libraryAssets: ['A1', 'P2', 'G3', 'Z4'],
-  collections: ['Finished_Collection_ID', '4F1E-WANT'],
-  collectionMembers: [
-    'Finished_Collection_ID|P2',
-    '4F1E-WANT|LEFT',
-    'Finished_Collection_ID|A1',
-  ],
-  bookFiles: ['A1', 'P2', 'G3', 'Z4'],
-  annotations: ['H-1', 'U-2', 'R-3', 'D-4'],
+  libraryAssets: ['1', '2', '3', '4'],
+  collections: ['1', '2'],
+  collectionMembers: ['1', '2', '3'],
+  bookFiles: ['1', '2', '3', '4'],
+  annotations: ['1', '2', '3', '4'],
   assetDetails: ['A1', 'ELSEWHERE', '0-ELSEWHERE'],
   reviews: ['REVIEW-9', 'REVIEW-1'],
   readingMonths: ['2026-09', '2022-08'],
   readingDays: ['2026-09-14', '2026-09-08'],
   streakRecords: ['7', '1'],
   readingGoal: ['current'],
-  purchases: ['1587320271', '1000000001'],
-  themes: ['Quiet', 'Calm'],
+  purchases: ['1', '2'],
+  themes: ['1', '2'],
 };
 
 test('Books writes every stream with its fields in schema order and its rows in store order', async () => {
@@ -2213,8 +2410,8 @@ test('Books keeps each stored value as Books means it', async () => {
       'isExplicit',
       'isLocked',
       'isNew',
-      'supplementalContentParentAssetId',
-      'seriesContainerAssetId',
+      'supplementalContentParentId',
+      'seriesContainerId',
       'finishedAt',
       'lastOpenedAt',
       'lastEngagedAt',
@@ -2240,8 +2437,8 @@ test('Books keeps each stored value as Books means it', async () => {
       isExplicit: false,
       isLocked: true,
       isNew: false,
-      supplementalContentParentAssetId: 'P2',
-      seriesContainerAssetId: null,
+      supplementalContentParentId: 2,
+      seriesContainerId: null,
       // distantPast and distantFuture mean none; a second inside is a time.
       finishedAt: null,
       lastOpenedAt: '0000-12-30T00:00:01.000Z',
@@ -2254,17 +2451,17 @@ test('Books keeps each stored value as Books means it', async () => {
   assert.deepEqual(
     fieldsOf(assets, 'assetId', 'G3', [
       'isFinished',
-      'seriesContainerAssetId',
-      'supplementalContentParentAssetId',
+      'seriesContainerId',
+      'supplementalContentParentId',
     ]),
     {
       isFinished: false,
-      seriesContainerAssetId: 'A1',
-      supplementalContentParentAssetId: null,
+      seriesContainerId: 1,
+      supplementalContentParentId: null,
     },
   );
   assert.deepEqual(
-    fieldsOf(collections, 'collectionId', 'DELETED-C', [
+    fieldsOf(collections, 'identifier', 'DELETED-C', [
       'title',
       'deleted',
       'hidden',
@@ -2285,7 +2482,7 @@ test('Books keeps each stored value as Books means it', async () => {
   ]);
   assert.deepEqual(
     ['D-4', 'H-1', 'R-3'].map((id) =>
-      fieldsOf(annotations, 'id', id, ['assetId', 'kind', 'kindCode']),
+      fieldsOf(annotations, 'uuid', id, ['assetId', 'kind', 'kindCode']),
     ),
     [
       // A deletion marker's empty book is none, and its kind has no name.
@@ -2296,7 +2493,8 @@ test('Books keeps each stored value as Books means it', async () => {
   );
   assert.deepEqual(themes, [
     {
-      id: 'Quiet',
+      id: 1,
+      identifier: 'Quiet',
       hasCustomLayout: null,
       boldText: true,
       justify: false,
@@ -2307,7 +2505,8 @@ test('Books keeps each stored value as Books means it', async () => {
       wordSpacing: null,
     },
     {
-      id: 'Calm',
+      id: 2,
+      identifier: 'Calm',
       hasCustomLayout: true,
       boldText: false,
       justify: false,
@@ -2836,7 +3035,7 @@ test('a Books pass over a large annotation store holds one annotation at a time,
     {
       ...imported
         .prepare(
-          "SELECT count(*) AS n FROM raw_annotations WHERE id LIKE 'LARGE-%'",
+          "SELECT count(*) AS n FROM raw_annotations WHERE uuid LIKE 'LARGE-%'",
         )
         .get(),
     },

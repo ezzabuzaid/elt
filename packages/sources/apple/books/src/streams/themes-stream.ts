@@ -7,7 +7,11 @@ import { BooksStream, booksFields } from '../books-stream.ts';
 const { nullableBoolean, nullableNumber } = booksFields;
 
 const properties = {
-  id: { ...booksFields.id, description: 'Theme identifier.' },
+  id: {
+    ...booksFields.rowId,
+    description: 'The theme row; Books does not keep identifier unique.',
+  },
+  identifier: { ...booksFields.id, description: 'Theme identifier.' },
   hasCustomLayout: {
     ...nullableBoolean,
     description: 'Uses custom spacing rather than the theme default.',
@@ -46,6 +50,7 @@ export class ThemesStream extends BooksStream<typeof properties, Theme> {
   protected record(theme: Theme): RecordDraft<typeof properties> {
     return {
       id: theme.id,
+      identifier: theme.identifier,
       hasCustomLayout: theme.hasCustomLayout,
       boldText: theme.boldText,
       justify: theme.justify,

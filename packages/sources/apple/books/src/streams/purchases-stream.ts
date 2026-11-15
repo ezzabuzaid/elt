@@ -8,6 +8,10 @@ const { nullableBoolean, nullableInteger, nullableText, nullableTimestamp } =
   booksFields;
 
 const properties = {
+  id: {
+    ...booksFields.rowId,
+    description: 'The purchase row; Books does not keep storeId unique.',
+  },
   storeId: {
     ...booksFields.id,
     description:
@@ -61,7 +65,7 @@ const properties = {
 export class PurchasesStream extends BooksStream<typeof properties, Purchase> {
   readonly name = 'purchases';
   readonly store = 'purchases';
-  readonly primaryKey = ['storeId'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -76,6 +80,7 @@ export class PurchasesStream extends BooksStream<typeof properties, Purchase> {
 
   protected record(purchase: Purchase): RecordDraft<typeof properties> {
     return {
+      id: purchase.id,
       storeId: purchase.storeId,
       title: purchase.title,
       sortTitle: purchase.sortTitle,

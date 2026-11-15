@@ -13,6 +13,10 @@ import { BooksStream, booksFields, iso } from '../books-stream.ts';
 const { boolean, nullableInteger, nullableTimestamp } = booksFields;
 
 const properties = {
+  libraryAssetId: {
+    ...booksFields.rowId,
+    description: 'The asset whose file this is; refers to libraryAssets.id.',
+  },
   assetId: booksFields.assetId,
   path: {
     ...booksFields.text,
@@ -50,7 +54,7 @@ const properties = {
 export class BookFilesStream extends BooksStream<typeof properties, BookFile> {
   readonly name = 'bookFiles';
   readonly store = 'library';
-  readonly primaryKey = ['assetId'];
+  readonly primaryKey = ['libraryAssetId'];
   readonly supportsFileTransfer = true;
   readonly jsonSchema = {
     type: 'object',
@@ -66,6 +70,7 @@ export class BookFilesStream extends BooksStream<typeof properties, BookFile> {
 
   protected record(file: BookFile): RecordDraft<typeof properties> {
     return {
+      libraryAssetId: file.libraryAssetId,
       assetId: file.assetId,
       path: file.path,
       format: file.format,
@@ -84,6 +89,9 @@ export class BookFilesStream extends BooksStream<typeof properties, BookFile> {
     staging: string,
   ): Promise<string | null> {
     if (!record.availableLocally) return null;
-    return exportBookFile(record.path, join(staging, `${record.assetId}.epub`));
+    return exportBookFile(
+      record.path,
+      join(staging, `${record.libraryAssetId}.epub`),
+    );
   }
 }

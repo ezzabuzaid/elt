@@ -6,6 +6,7 @@ import { nullableFlag, number, stored } from './books-values.ts';
 // The BookTheme columns this reader reads; opening the store checks them.
 const themesColumns = {
   ZBOOKTHEME: [
+    'Z_PK',
     'ZIDENTIFIER',
     'ZHASCUSTOMLAYOUT',
     'ZISFONTBOLDED',
@@ -18,9 +19,11 @@ const themesColumns = {
   ],
 } as const;
 
-// A reading theme the user customized; unset settings stay NULL.
+// A reading theme the user customized, identified by its Z_PK: Books keeps
+// no index on ZIDENTIFIER. Unset settings stay NULL.
 export type Theme = {
-  readonly id: string | null;
+  readonly id: number;
+  readonly identifier: string | null;
   readonly hasCustomLayout: boolean | null;
   readonly boldText: boolean | null;
   readonly justify: boolean | null;
@@ -46,7 +49,8 @@ export class BooksThemes implements Disposable {
         'SELECT * FROM ZBOOKTHEME WHERE ZIDENTIFIER IS NOT NULL ORDER BY Z_PK',
       )
       .map((row) => ({
-        id: stored(row.ZIDENTIFIER),
+        id: Number(row.Z_PK),
+        identifier: stored(row.ZIDENTIFIER),
         hasCustomLayout: nullableFlag(row.ZHASCUSTOMLAYOUT),
         boldText: nullableFlag(row.ZISFONTBOLDED),
         justify: nullableFlag(row.ZJUSTIFY),
