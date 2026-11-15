@@ -7,24 +7,33 @@ import {
 } from '../apple-mail-stream.ts';
 import {
   described,
-  metadata,
   nullableText,
   plistProperties,
+  text,
 } from '../mail-fields.ts';
 import type { MailScan } from '../mail-scan.ts';
 
 export class SmartMailboxesStream extends AppleMailStream {
   readonly name = 'smartMailboxes';
-  readonly primaryKey = ['id'];
+  // The file's tree enforces no identity, so a smart mailbox is its path in
+  // the tree (ADR 0022); MailboxID is a column.
+  readonly primaryKey = ['path'];
   readonly jsonSchema = mailSchema(
-    'One record per smart mailbox dictionary in MailData/SyncedSmartMailboxes.plist, including those nested under MailboxChildren. Primary key id. parentId refers to the containing smart mailbox. Conditions are smartMailboxConditions rows whose ownerId is id. Scoped imports omit this stream.',
+    'One record per smart mailbox dictionary in MailData/SyncedSmartMailboxes.plist, including those nested under MailboxChildren, each before its children. Primary key path. parentPath refers to the containing smart mailbox. Conditions are smartMailboxConditions rows whose mailboxPath is path. Scoped imports omit this stream.',
     described(
-      { ...metadata, parentId: nullableText },
       {
-        id: 'MailboxID value of the smart mailbox.',
+        path: text,
+        parentPath: nullableText,
+        mailboxId: text,
+        properties: text,
+      },
+      {
+        path: 'Zero-based position of the smart mailbox in each list from the top of the file, joined by slashes, such as 0/1 for the second child of the first smart mailbox; the primary key.',
+        parentPath:
+          'Refers to smartMailboxes.path of the smart mailbox whose MailboxChildren contains this one; NULL at the top level.',
+        mailboxId:
+          'MailboxID value of the smart mailbox. The file does not keep it unique, so two smart mailboxes can share it.',
         properties: `The whole smart mailbox dictionary, including its MailboxCriteria and nested MailboxChildren. ${plistProperties}`,
-        parentId:
-          'Refers to smartMailboxes.id of the smart mailbox whose MailboxChildren contains this one; NULL at the top level.',
       },
     ),
   );
@@ -35,8 +44,9 @@ export class SmartMailboxesStream extends AppleMailStream {
     for await (const mailbox of scan.snapshot.files.smartMailboxes())
       yield {
         data: {
-          id: mailbox.id,
-          parentId: mailbox.parentId,
+          path: mailbox.path,
+          parentPath: mailbox.parentPath,
+          mailboxId: mailbox.mailboxId,
           properties: plistJSON(mailbox.dictionary),
         },
         file: null,

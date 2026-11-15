@@ -3,18 +3,22 @@ import {
   type MailEntry,
   mailSchema,
 } from '../apple-mail-stream.ts';
-import { described, metadata } from '../mail-fields.ts';
+import { accountFields, described } from '../mail-fields.ts';
 import type { MailScan } from '../mail-scan.ts';
 
 export class SmtpServersStream extends AppleMailStream {
   readonly name = 'smtpServers';
+  // The store's row id, which it keeps unique; not its identifier, which it
+  // does not (ADR 0022).
   readonly primaryKey = ['id'];
   readonly jsonSchema = mailSchema(
-    'One record per SMTP server account in the system Accounts store (~/Library/Accounts/Accounts4.sqlite), read without Mail scripting or Automation access. Primary key id. accounts.properties.sendingServerId refers to id for an account that sends through SMTP; scoped imports still omit this stream, because a server can serve accounts outside the scope.',
-    described(metadata, {
-      id: 'The Accounts store identifier of the SMTP account.',
+    'One record per SMTP server account in the system Accounts store (~/Library/Accounts/Accounts4.sqlite), read without Mail scripting or Automation access. Primary key id. accounts.properties.sendingServerIdentifier refers to identifier for an account that sends through SMTP; scoped imports still omit this stream, because a server can serve accounts outside the scope.',
+    described(accountFields, {
+      id: 'The SMTP account row in the Accounts store (ZACCOUNT.Z_PK); the primary key. Accounts accounts.id holds the same value.',
+      identifier:
+        'The Accounts store identifier of the SMTP account (ACAccount.identifier). The store does not keep it unique.',
       properties:
-        "JSON object: id; name (its parent account's description, such as iCloud or Google); userName; serverName; port; usesSsl; enabled. For iCloud the server settings come from the parent account's Mail settings. A value the store does not hold is null; no password is read. Kept as data without interpretation.",
+        "JSON object: name (its parent account's description, such as iCloud or Google); userName; serverName; port; usesSsl; enabled. For iCloud the server settings come from the parent account's Mail settings. A value the store does not hold is null; no password is read. Kept as data without interpretation.",
     }),
   );
 

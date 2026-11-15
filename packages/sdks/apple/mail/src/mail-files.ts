@@ -78,10 +78,13 @@ export class MailFile {
   }
 }
 
-// A rule in MailData/SyncedRules.plist or UnsyncedRules.plist.
+// A rule in MailData/SyncedRules.plist or UnsyncedRules.plist. The file is
+// an array that enforces no identity, so a rule is its scope and its place in
+// that array; two rules can share a RuleId.
 type MailRule = {
   readonly scope: 'Synced' | 'Unsynced';
-  readonly id: string;
+  readonly position: number;
+  readonly ruleId: string;
   readonly dictionary: Readonly<Record<string, PlistValue>>;
   // The value MailData/RulesActiveState.plist stores for the rule, as stored;
   // null when that file is absent or has no entry for it.
@@ -91,11 +94,15 @@ type MailRule = {
 };
 
 // A smart mailbox in MailData/SyncedSmartMailboxes.plist, nested ones
-// included.
+// included. The tree enforces no identity, so a smart mailbox is its path:
+// the position in each list from the top, joined by slashes ("0/1"). Two
+// smart mailboxes can share a MailboxID.
 type SmartMailbox = {
-  readonly id: string;
-  // The smart mailbox whose MailboxChildren holds this one; null at the top.
-  readonly parentId: string | null;
+  readonly path: string;
+  // The path of the smart mailbox whose MailboxChildren holds this one; null
+  // at the top.
+  readonly parentPath: string | null;
+  readonly mailboxId: string;
   readonly dictionary: Readonly<Record<string, PlistValue>>;
   // Its MailboxCriteria list, checked only when asked.
   conditions(): PlistValue[];
@@ -120,19 +127,21 @@ const criteria =
 // once it has been read.
 function* smartMailboxTree(
   entries: PlistValue[],
-  parentId: string | null,
+  parentPath: string | null,
 ): Generator<SmartMailbox, void, undefined> {
-  for (const entry of entries) {
+  for (const [position, entry] of entries.entries()) {
     const dictionary = plistObject(entry);
-    const id = requiredString(dictionary, 'MailboxID');
+    const path =
+      parentPath === null ? String(position) : `${parentPath}/${position}`;
     yield {
-      id,
-      parentId,
+      path,
+      parentPath,
+      mailboxId: requiredString(dictionary, 'MailboxID'),
       dictionary,
       conditions: criteria(dictionary, 'MailboxCriteria'),
     };
     if (dictionary.MailboxChildren !== undefined)
-      yield* smartMailboxTree(plistList(dictionary.MailboxChildren), id);
+      yield* smartMailboxTree(plistList(dictionary.MailboxChildren), path);
   }
 }
 
@@ -266,14 +275,15 @@ export class MailFiles {
     for (const scope of ['Synced', 'Unsynced'] as const) {
       const value = await this.#plistAt(`MailData/${scope}Rules.plist`);
       if (value === null) continue;
-      for (const entry of plistList(value)) {
+      for (const [position, entry] of plistList(value).entries()) {
         const dictionary = plistObject(entry);
-        const id = requiredString(dictionary, 'RuleId');
+        const ruleId = requiredString(dictionary, 'RuleId');
         yield {
           scope,
-          id,
+          position,
+          ruleId,
           dictionary,
-          enabled: active?.[id] ?? null,
+          enabled: active?.[ruleId] ?? null,
           conditions: criteria(dictionary, 'Criteria'),
         };
       }

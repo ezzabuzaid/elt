@@ -265,7 +265,7 @@ class ScratchAccountsStore implements Disposable {
 // The system Accounts store behind the fixture's imap://ACCOUNT mailbox, laid
 // out as on macOS 27: an iCloud account whose IMAP and SMTP children hold
 // Mail's own settings, and a calendar account under it that owns no mailbox.
-// LOCAL, the On My Mac host, has no account here, so its URL describes it.
+// LOCAL, the On My Mac host, has no account here.
 function scratchAccounts(path: string): AccountsStore {
   using store = new ScratchAccountsStore(path);
   store.account({
@@ -333,16 +333,16 @@ function scratchAccounts(path: string): AccountsStore {
 }
 
 const byId = (a: { id: unknown }, b: { id: unknown }) =>
-  String(a.id) < String(b.id) ? -1 : 1;
+  Number(a.id) - Number(b.id);
 // What a reader sees for the fixture under root: the IMAP account named and
-// addressed through its iCloud parent, and the On My Mac host. The calendar
-// account owns no mailbox, so it is not a Mail account.
+// addressed through its iCloud parent. The calendar account owns no mailbox,
+// so it is not a Mail account, and the On My Mac host has no account row.
 function expectedAccounts(root: string) {
   return [
     {
-      id: 'ACCOUNT',
+      id: 2,
+      identifier: 'ACCOUNT',
       properties: {
-        id: 'ACCOUNT',
         name: 'iCloud',
         type: 'com.apple.account.IMAP',
         parentType: 'com.apple.account.AppleAccount',
@@ -359,25 +359,7 @@ function expectedAccounts(root: string) {
         port: 993,
         usesSsl: true,
         directory: join(root, 'V10/ACCOUNT'),
-        sendingServerId: 'SMTP',
-      },
-    },
-    {
-      id: 'LOCAL',
-      properties: {
-        id: 'LOCAL',
-        name: 'On My Mac',
-        type: 'local',
-        parentType: null,
-        enabled: null,
-        emailAddresses: [],
-        fullName: null,
-        userName: null,
-        serverName: null,
-        port: null,
-        usesSsl: null,
-        directory: join(root, 'V10/LOCAL'),
-        sendingServerId: null,
+        sendingServerIdentifier: 'SMTP',
       },
     },
   ];
@@ -386,9 +368,9 @@ function expectedAccounts(root: string) {
 // settings; its own SSLIsDirect false means STARTTLS, not that TLS is off.
 const expectedSmtpServers = [
   {
-    id: 'SMTP',
+    id: 3,
+    identifier: 'SMTP',
     properties: {
-      id: 'SMTP',
       name: 'iCloud',
       userName: 'user1@icloud.example',
       serverName: 'smtp1.example.com',
@@ -401,8 +383,9 @@ const expectedSmtpServers = [
 // Account and SMTP rows as a consumer reads them: properties parsed from JSON.
 function parsedProperties(found: Record<string, unknown>[]) {
   return found
-    .map(({ id, properties }) => ({
+    .map(({ id, identifier, properties }) => ({
       id,
+      identifier,
       properties: JSON.parse(String(properties)),
     }))
     .sort(byId);
@@ -947,7 +930,7 @@ test('Mail yields server labels and sender addresses in the numeric order of the
   );
 });
 
-test('Mail yields every record with its fields in schema order, smart mailboxes with parentId before properties, and subjects and signatures in store order', async () => {
+test('Mail yields every record with its fields in schema order, and subjects and signatures in store order', async () => {
   await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   exec(store.index, "INSERT INTO subjects VALUES(10,'Ten'),(2,'Two')");
@@ -969,10 +952,7 @@ test('Mail yields every record with its fields in schema order, smart mailboxes 
   for (const stream of streams) {
     const yielded = records.get(stream.name) ?? [];
     assert.ok(yielded.length > 0, stream.name);
-    const order =
-      stream === source.smartMailboxes
-        ? ['id', 'parentId', 'properties']
-        : Object.keys(stream.jsonSchema.properties ?? {});
+    const order = Object.keys(stream.jsonSchema.properties ?? {});
     for (const record of yielded)
       assert.deepEqual(Object.keys(record), order, stream.name);
   }
@@ -1014,10 +994,10 @@ test('Mail yields every record with its fields in schema order, smart mailboxes 
   ]);
   assert.deepEqual(values(records, 'subjects', 'id'), ['1', '2', '10']);
   // A directory's own signatures come before those of its subdirectories.
-  assert.deepEqual(values(records, 'signatures', 'id'), ['example', 'a']);
+  assert.deepEqual(values(records, 'signatures', 'name'), ['example', 'a']);
 });
 
-test('An account scope keeps that account’s mailboxes, the messages labelled into them and those labels, and drops server rows and SMTP servers', async () => {
+test('An account scope keeps that account’s mailboxes, the messages labelled into them and those labels, and drops server rows, SMTP servers and the accounts of other hosts', async () => {
   await using dir = await new TemporaryFiles().directory('elt-mail-');
   const store = await fixture(join(dir.path, 'Mail'));
   const source = new AppleMailSource({
@@ -1038,7 +1018,8 @@ test('An account scope keeps that account’s mailboxes, the messages labelled i
   );
   assert.deepEqual(values(records, 'serverMessages', 'id'), []);
   assert.deepEqual(values(records, 'serverMessageMailboxes', 'label'), []);
-  assert.deepEqual(values(records, 'accounts', 'id'), ['LOCAL']);
+  // On My Mac has no account row, and ACCOUNT is outside the scope.
+  assert.deepEqual(values(records, 'accounts', 'id'), []);
   assert.deepEqual(values(records, 'smtpServers', 'id'), []);
 });
 
@@ -1205,6 +1186,187 @@ test('An integer beyond 2^53 fails a scoped read as it opens, and only messages 
       }),
     ),
     tooLarge,
+  );
+});
+
+// A second copy of the fixture's IMAP and SMTP accounts under new row ids,
+// with the same identifiers: Accounts4 declares no unique index on
+// ZACCOUNT.ZIDENTIFIER.
+function repeatAccounts(root: string) {
+  using accounts = open(join(root, 'Accounts4.sqlite'), {
+    journal: new RollbackJournal(),
+  });
+  accounts.exec(`
+    CREATE TEMP TABLE copied AS SELECT * FROM ZACCOUNT WHERE Z_PK IN (2, 3);
+    UPDATE copied SET Z_PK = Z_PK + 10;
+    INSERT INTO ZACCOUNT SELECT * FROM copied;
+    INSERT INTO ZACCOUNTPROPERTY (ZOWNER, ZKEY, ZVALUE)
+      SELECT ZOWNER + 10, ZKEY, ZVALUE FROM ZACCOUNTPROPERTY WHERE ZOWNER IN (2, 3);
+  `);
+}
+
+test('Two Accounts store rows with one SMTP identifier load as two smtpServers, each keyed by its own row', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
+  const store = await fixture(join(dir.path, 'Mail'));
+  repeatAccounts(store.root);
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+
+  await (await pipeline(source, dir.path)).run();
+
+  const out = join(dir.path, 'out.sqlite');
+  assert.equal(rows(out, 'SELECT count(*) AS n FROM smtpServers')[0]?.n, 2);
+  assert.deepEqual(
+    rows(out, 'SELECT id, identifier FROM smtpServers ORDER BY id'),
+    [
+      { id: 3, identifier: 'SMTP' },
+      { id: 13, identifier: 'SMTP' },
+    ],
+  );
+});
+
+test('Two Accounts store rows with the identifier of one mailbox host load as two accounts, each keyed by its own row', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
+  const store = await fixture(join(dir.path, 'Mail'));
+  repeatAccounts(store.root);
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+
+  await (await pipeline(source, dir.path)).run();
+
+  const out = join(dir.path, 'out.sqlite');
+  assert.equal(
+    rows(
+      out,
+      "SELECT count(*) AS n FROM accounts WHERE properties ->> '$.type' = 'com.apple.account.IMAP'",
+    )[0]?.n,
+    2,
+  );
+  assert.deepEqual(
+    rows(out, 'SELECT id, identifier FROM accounts ORDER BY id'),
+    [
+      { id: 2, identifier: 'ACCOUNT' },
+      { id: 12, identifier: 'ACCOUNT' },
+    ],
+  );
+});
+
+test('Two rules with one RuleId load as two rules, each keyed by its place in the rules file, with their own conditions', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
+  const store = await fixture(join(dir.path, 'Mail'));
+  const rule = (expression: string) =>
+    `<dict><key>RuleId</key><string>rule</string><key>Criteria</key><array><dict><key>Expression</key><string>${expression}</string></dict></array></dict>`;
+  await writeFile(
+    join(store.root, 'V10/MailData/SyncedRules.plist'),
+    xml(`<array>${rule('first')}${rule('second')}</array>`),
+  );
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+
+  await (await pipeline(source, dir.path)).run();
+
+  const out = join(dir.path, 'out.sqlite');
+  assert.deepEqual(
+    rows(out, 'SELECT scope, position, ruleId FROM rules ORDER BY position'),
+    [
+      { scope: 'Synced', position: 0, ruleId: 'rule' },
+      { scope: 'Synced', position: 1, ruleId: 'rule' },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      `SELECT rulePosition, properties ->> '$.Expression' AS expression
+       FROM ruleConditions ORDER BY rulePosition`,
+    ),
+    [
+      { rulePosition: 0, expression: 'first' },
+      { rulePosition: 1, expression: 'second' },
+    ],
+  );
+});
+
+test('Two smart mailboxes with one MailboxID load as two smart mailboxes, each keyed by its path in the tree, with their own conditions', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
+  const store = await fixture(join(dir.path, 'Mail'));
+  const smart = (header: string) =>
+    `<dict><key>MailboxID</key><string>smart</string><key>MailboxCriteria</key><array><dict><key>Header</key><string>${header}</string></dict></array></dict>`;
+  await writeFile(
+    join(store.root, 'V10/MailData/SyncedSmartMailboxes.plist'),
+    xml(
+      `<array><dict><key>MailboxID</key><string>parent</string><key>MailboxChildren</key><array>${smart('From')}${smart('To')}</array></dict></array>`,
+    ),
+  );
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+
+  await (await pipeline(source, dir.path)).run();
+
+  const out = join(dir.path, 'out.sqlite');
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT path, parentPath, mailboxId FROM smartMailboxes ORDER BY path',
+    ),
+    [
+      { path: '0', parentPath: null, mailboxId: 'parent' },
+      { path: '0/0', parentPath: '0', mailboxId: 'smart' },
+      { path: '0/1', parentPath: '0', mailboxId: 'smart' },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      `SELECT "mailboxPath", properties ->> '$.Header' AS header
+       FROM smartMailboxConditions ORDER BY "mailboxPath"`,
+    ),
+    [
+      { mailboxPath: '0/0', header: 'From' },
+      { mailboxPath: '0/1', header: 'To' },
+    ],
+  );
+});
+
+test('Two signature files with one name in different folders load as two signatures, each keyed by its relative path', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-mail-');
+  const store = await fixture(join(dir.path, 'Mail'));
+  const signatures = join(store.root, 'V10/MailData/Signatures');
+  await mkdir(join(signatures, 'Nested'));
+  await writeFile(
+    join(signatures, 'Nested/example.mailsignature'),
+    'Content-Type: text/plain\r\n\r\nNested',
+  );
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+
+  await (await pipeline(source, dir.path)).run();
+
+  const out = join(dir.path, 'out.sqlite');
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT "relativePath", name FROM signatures ORDER BY "relativePath"',
+    ),
+    [
+      {
+        relativePath: 'MailData/Signatures/Nested/example.mailsignature',
+        name: 'example',
+      },
+      {
+        relativePath: 'MailData/Signatures/example.mailsignature',
+        name: 'example',
+      },
+    ],
   );
 });
 
@@ -1742,7 +1904,9 @@ test('Mail scope filters dates, message ownership and MIME before copying files 
   // A collection scope keeps every account; SMTP servers have no proven
   // owner, so Mail's servers stay out of a scoped import.
   assert.deepEqual(
-    parsedProperties(rows(output, 'SELECT id, properties FROM accounts')),
+    parsedProperties(
+      rows(output, 'SELECT id, identifier, properties FROM accounts'),
+    ),
     expectedAccounts(scratch.path),
   );
   assert.deepEqual(rows(output, 'SELECT * FROM smtpServers'), []);
@@ -1811,18 +1975,24 @@ test('Mail exports the native store, MIME, detached files and unavailable metada
     /Hello 🌍/,
   );
   assert.deepEqual(
-    parsedProperties(rows(out, 'SELECT id, properties FROM accounts')),
+    parsedProperties(
+      rows(out, 'SELECT id, identifier, properties FROM accounts'),
+    ),
     expectedAccounts(store.root),
   );
   assert.deepEqual(
-    parsedProperties(rows(out, 'SELECT id, properties FROM smtpServers')),
+    parsedProperties(
+      rows(out, 'SELECT id, identifier, properties FROM smtpServers'),
+    ),
     expectedSmtpServers,
   );
   assert.equal(rows(out, 'SELECT enabled FROM rules')[0]?.enabled, 1);
   assert.equal(
-    rows(out, "SELECT parentId FROM smartMailboxes WHERE id='smart'")[0]
-      ?.parentId,
-    'parent',
+    rows(
+      out,
+      "SELECT parentPath FROM smartMailboxes WHERE mailboxId='smart'",
+    )[0]?.parentPath,
+    '0',
   );
   assert.equal(
     rows(out, 'SELECT summaryBase64 FROM generatedSummaries')[0]?.summaryBase64,
@@ -2138,7 +2308,10 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
   );
   assert.deepEqual(
     parsedProperties(
-      rows(join(dir.path, 'out.sqlite'), 'SELECT id, properties FROM accounts'),
+      rows(
+        join(dir.path, 'out.sqlite'),
+        'SELECT id, identifier, properties FROM accounts',
+      ),
     ),
     expectedAccounts(store.root),
   );
@@ -2807,11 +2980,15 @@ test('Mail reads as documented views whose MIME, rule and subject joins hold, wi
     ],
   );
   assert.deepEqual(
-    parsedProperties(mail.read('SELECT id, properties FROM accounts')),
+    parsedProperties(
+      mail.read('SELECT id, identifier, properties FROM accounts'),
+    ),
     expectedAccounts(store.root),
   );
   assert.deepEqual(
-    parsedProperties(mail.read('SELECT id, properties FROM smtp_servers')),
+    parsedProperties(
+      mail.read('SELECT id, identifier, properties FROM smtp_servers'),
+    ),
     expectedSmtpServers,
   );
   // The host of a mailbox URL names the account that owns it.
@@ -2821,13 +2998,13 @@ test('Mail reads as documented views whose MIME, rule and subject joins hold, wi
         `
         WITH b AS (SELECT url, substr(url, instr(url, '://') + 3) AS rest FROM mailboxes)
         SELECT b.url, a.properties ->> '$.type' AS type
-        FROM b JOIN accounts a ON a.id = substr(b.rest, 1, instr(b.rest, '/') - 1)
+        FROM b LEFT JOIN accounts a ON a.identifier = substr(b.rest, 1, instr(b.rest, '/') - 1)
         ORDER BY b.url`,
       )
       .map((found) => ({ ...found })),
     [
       { url: 'imap://ACCOUNT/INBOX', type: 'com.apple.account.IMAP' },
-      { url: 'local://LOCAL/Archive', type: 'local' },
+      { url: 'local://LOCAL/Archive', type: null },
     ],
   );
   const [parts] = mail.read(`
@@ -2847,9 +3024,9 @@ test('Mail reads as documented views whose MIME, rule and subject joins hold, wi
     ['first', 'second'],
   );
   const [conditions] = mail.read(`
-    SELECT count(*) AS total, count(r.id) AS matched
+    SELECT count(*) AS total, count(r.position) AS matched
     FROM rule_conditions c
-    LEFT JOIN rules r ON r.scope = c.scope AND r.id = c."ownerId"`);
+    LEFT JOIN rules r ON r.scope = c.scope AND r.position = c."rulePosition"`);
   assert.ok(Number(conditions?.total) > 0);
   assert.equal(conditions?.matched, conditions?.total);
   assert.deepEqual(
@@ -2939,28 +3116,33 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
       .map(({ url }) => new URL(String(url)).hostname),
   );
   const accounts = parsedProperties(
-    rows(destination.path, 'SELECT id, properties FROM accounts'),
+    rows(destination.path, 'SELECT id, identifier, properties FROM accounts'),
   );
-  assert.equal(accounts.length, hosts.size);
-  for (const { id, properties } of accounts) {
-    assert.ok(hosts.has(String(id)), 'an account id is not a mailbox host');
-    // A host the store does not know keeps its URL scheme as its type; only
-    // On My Mac hosts have no account there.
+  const identifiers = new Set(accounts.map(({ identifier }) => identifier));
+  // Only On My Mac hosts have no account in the store.
+  for (const { url } of index.prepare('SELECT url FROM mailboxes').all()) {
+    const parsed = new URL(String(url));
     assert.ok(
-      properties.type === 'local' ||
-        String(properties.type).startsWith('com.apple.account.'),
+      parsed.protocol === 'local:' || identifiers.has(parsed.hostname),
       'a mailbox host has no account in the Accounts store',
     );
+  }
+  for (const { id, identifier, properties } of accounts) {
+    assert.equal(typeof id, 'number');
+    assert.ok(
+      hosts.has(String(identifier)),
+      'an account identifier is not a mailbox host',
+    );
+    assert.ok(String(properties.type).startsWith('com.apple.account.'));
     assert.deepEqual(Object.keys(properties).sort(), [
       'directory',
       'emailAddresses',
       'enabled',
       'fullName',
-      'id',
       'name',
       'parentType',
       'port',
-      'sendingServerId',
+      'sendingServerIdentifier',
       'serverName',
       'type',
       'userName',
@@ -2968,11 +3150,13 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
     ]);
   }
   for (const { properties } of parsedProperties(
-    rows(destination.path, 'SELECT id, properties FROM smtpServers'),
+    rows(
+      destination.path,
+      'SELECT id, identifier, properties FROM smtpServers',
+    ),
   ))
     assert.deepEqual(Object.keys(properties).sort(), [
       'enabled',
-      'id',
       'name',
       'port',
       'serverName',

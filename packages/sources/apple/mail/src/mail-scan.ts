@@ -97,13 +97,13 @@ export class MailScan implements AsyncDisposable {
   }
 
   #readAccountRecords(): MailAccountRecords {
-    const hosts = new Map<string, string>();
-    for (const url of this.snapshot.index.mailboxUrls()) {
-      // mailboxes.url is NOT NULL in the index.
-      const parsed = new URL(String(url));
-      if (!hosts.has(parsed.hostname))
-        hosts.set(parsed.hostname, parsed.protocol.slice(0, -1));
-    }
+    // mailboxes.url is NOT NULL in the index.
+    const hosts = new Set(
+      Array.from(
+        this.snapshot.index.mailboxUrls(),
+        (url) => new URL(String(url)).hostname,
+      ),
+    );
     using snapshot = this.#accountsStore.open();
     const accounts = new MailAccounts(snapshot.accounts());
     return {

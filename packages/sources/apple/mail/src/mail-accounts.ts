@@ -2,49 +2,47 @@ import { join } from 'node:path';
 
 import { type Account, mailDataclass } from '@eltjs/sdk-apple-accounts';
 
-export type AccountRecord = { id: string; properties: string };
+// id is the account's row in the Accounts store (ZACCOUNT.Z_PK), the identity
+// the store keeps unique; identifier is ACAccount.identifier, which it does
+// not (ADR 0022).
+export type AccountRecord = {
+  id: number;
+  identifier: string;
+  properties: string;
+};
 
 // Mail's accounts and SMTP servers as the system Accounts store keeps them.
 // Mail names an account's folder, and the host of each of its mailbox URLs,
 // after the store's account identifier.
 export class MailAccounts {
-  readonly #byIdentifier: ReadonlyMap<string, Account>;
+  readonly #accounts: readonly Account[];
 
   constructor(accounts: readonly Account[]) {
-    this.#byIdentifier = new Map(
-      accounts.map((account) => [account.identifier, account]),
-    );
+    this.#accounts = accounts;
   }
 
-  // One record per account that owns mailboxes: hosts is each mailbox URL's
-  // scheme and host, directory the current Mail version folder. A host the
-  // store does not know (an On My Mac account) keeps what its URL says.
-  accounts(
-    hosts: ReadonlyMap<string, string>,
-    directory: string,
-  ): AccountRecord[] {
-    return [...hosts].map(([host, scheme]) => {
-      const account = this.#byIdentifier.get(host);
-      return {
-        id: host,
-        properties: JSON.stringify(
-          account === undefined
-            ? unknownAccount(host, scheme, directory)
-            : mailAccount(account, directory),
-        ),
-      };
-    });
+  // One record per store account that owns mailboxes: one whose identifier is
+  // the host of a mailbox URL. directory is the current Mail version folder.
+  // An On My Mac host (local://) has no row in the store, so no record.
+  accounts(hosts: ReadonlySet<string>, directory: string): AccountRecord[] {
+    return this.#accounts
+      .filter(({ identifier }) => hosts.has(identifier))
+      .map((account) => ({
+        id: account.id,
+        identifier: account.identifier,
+        properties: JSON.stringify(mailAccount(account, directory)),
+      }));
   }
 
   smtpServers(): AccountRecord[] {
-    return [...this.#byIdentifier.values()]
+    return this.#accounts
       .filter(({ type }) => type === 'com.apple.account.SMTP')
       .map((server) => {
         const outgoing = server.outgoingMailServer;
         return {
-          id: server.identifier,
+          id: server.id,
+          identifier: server.identifier,
           properties: JSON.stringify({
-            id: server.identifier,
             name: server.name,
             userName: outgoing.userName,
             serverName: outgoing.host,
@@ -60,7 +58,6 @@ export class MailAccounts {
 function mailAccount(account: Account, directory: string) {
   const incoming = account.incomingMailServer;
   return {
-    id: account.identifier,
     name: account.name,
     type: account.type,
     parentType: account.parent?.type ?? null,
@@ -72,26 +69,6 @@ function mailAccount(account: Account, directory: string) {
     port: incoming.port,
     usesSsl: incoming.usesTls,
     directory: join(directory, account.identifier),
-    sendingServerId: account.sendingAccountIdentifier,
-  };
-}
-
-// A mailbox host with no account in the store: On My Mac mailboxes use
-// local://, and their account has no settings to read.
-function unknownAccount(host: string, scheme: string, directory: string) {
-  return {
-    id: host,
-    name: scheme === 'local' ? 'On My Mac' : null,
-    type: scheme,
-    parentType: null,
-    enabled: null,
-    emailAddresses: [],
-    fullName: null,
-    userName: null,
-    serverName: null,
-    port: null,
-    usesSsl: null,
-    directory: join(directory, host),
-    sendingServerId: null,
+    sendingServerIdentifier: account.sendingAccountIdentifier,
   };
 }

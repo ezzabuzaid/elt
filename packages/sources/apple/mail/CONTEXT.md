@@ -29,7 +29,7 @@ An attachment that the index lists. Its file can be on this Mac or not.
 _Avoid_: Remote attachment
 
 **Mailbox host**:
-The host of a mailbox URL. It names the account of the mailbox.
+The host of a mailbox URL. It names the account of the mailbox, and it matches `accounts.identifier`. The Accounts store does not keep it unique, so it is not the key of `accounts`.
 _Avoid_: Account ID (the Accounts store has its own identifiers)
 
 **Local row ID**:

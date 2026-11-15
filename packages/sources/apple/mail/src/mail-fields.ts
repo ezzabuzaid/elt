@@ -159,12 +159,9 @@ export const partFields = {
   availableLocally: flag,
   sha256: nullableText,
 } as const;
-export const metadata = { id: text, properties: text } as const;
-export const scopedMetadata = { scope: text, ...metadata } as const;
-export const conditionFields = {
-  scope: text,
-  ownerId: text,
-  position: { type: 'integer' },
+export const accountFields = {
+  id: { type: 'integer' },
+  identifier: text,
   properties: text,
 } as const;
 export const headersFields = {
