@@ -111,6 +111,44 @@ export default defineConfig(
     rules: { curly: ['error', 'all'] },
   },
   {
+    // A stream's key is an identity its upstream enforces, and no source or SDK
+    // dedupes rows: the scan fails on a repeat (packages/elt ADR 0022).
+    files: ['packages/sdks/**/*.ts', 'packages/sources/**/*.ts'],
+    ignores: ['**/*.test.ts', '**/src/test/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...['TemplateElement[value.raw', 'Literal[value'].flatMap((node) => [
+          {
+            selector: `${node}=/\\bSELECT\\s+DISTINCT\\b/i]`,
+            message:
+              'SELECT DISTINCT hides the rows that the store repeats. Read every row, and key the stream by an identity that the store enforces (packages/elt ADR 0022).',
+          },
+          {
+            selector: `${node}=/\\b(UNION|INTERSECT|EXCEPT)\\b(?!\\s+ALL\\b)/]`,
+            message:
+              'UNION, INTERSECT and EXCEPT without ALL drop repeated rows. Use the ALL form, and key the stream by an identity that the store enforces (packages/elt ADR 0022).',
+          },
+        ]),
+        {
+          selector: [
+            'FunctionDeclaration > Identifier.id',
+            'VariableDeclarator[init.type=/FunctionExpression$/] > Identifier.id',
+            'ImportSpecifier > Identifier.imported',
+          ]
+            .map(
+              (node) =>
+                `${node}[name=/^(uniq|unique|dedupe?|distinct)(By|With)?$/i]`,
+            )
+            .concat('ImportDeclaration[source.value=/(^|[./])uniq/]')
+            .join(', '),
+          message:
+            'A dedupe helper drops the rows that the store repeats. Key the stream by an identity that the store enforces, and let the scan fail on a repeat (packages/elt ADR 0022).',
+        },
+      ],
+    },
+  },
+  {
     // The pre-commit hook script, which no tsconfig includes; typed lint gives
     // it the default project instead of a parse error.
     files: ['**/*.ts'],

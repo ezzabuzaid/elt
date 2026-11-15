@@ -184,7 +184,7 @@ Several properties or accounts share tables through one [partitioned stream](#pa
 
 Three different things control identity:
 
-- `Stream.primaryKey` is the identity of the source, as `sourceDefinedCursor` is its cursor (Airbyte calls the key `source_defined_primary_key`). A deduplicating copy of a stream that declares a key uses that key. The key alone does not make a SQL unique constraint, and it does not select deduplication.
+- `Stream.primaryKey` is the identity of the source, as `sourceDefinedCursor` is its cursor (Airbyte calls the key `source_defined_primary_key`). A deduplicating copy of a stream that declares a key uses that key. The key alone does not make a SQL unique constraint, and it does not select deduplication. The key is an identity that the upstream enforces, and no source deduplicates rows ([ADR 0022](./docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md)).
 - The `Copy` option `primaryKey: ['id']` or `['tenantId', 'id']` selects the identity only for a stream that declares no key. The constructor of `Copy` refuses `primaryKey` for a stream with a key: `Stream <name> defines its own primary key; omit primaryKey`.
 - `.primaryKey()` on a SQLite column is a physical constraint. An append that conflicts with it fails and rolls back that copy. It never becomes an update.
 
