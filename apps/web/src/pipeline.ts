@@ -43,7 +43,7 @@ export default async function pipeline() {
       {
         stream: new WebStream({
           name: 'articles',
-          primaryKey: ['articleUrl'],
+          primaryKey: ['pageUrl'],
           readers: [
             new ListingReader(),
             new ArchiveReader(),

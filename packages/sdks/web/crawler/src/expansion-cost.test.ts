@@ -175,9 +175,9 @@ test("the large site's other child sitemaps are read in later runs, each once, u
       if ('error' in entry) throw entry.error;
       if ('response' in entry) pages.push(entry.url);
       if ('routes' in entry)
-        for (const { listingUrl, complete, routes: named } of entry.routes) {
-          assert.ok(complete, listingUrl);
-          for (const { url } of named)
+        for (const { listingUrl, readers } of entry.routes) {
+          assert.ok(!readers.includes(null), listingUrl);
+          for (const { url } of readers.flatMap((named) => named ?? []))
             routes.push(
               `${new URL(listingUrl).pathname} ${new URL(url).pathname}`,
             );

@@ -44,9 +44,14 @@ async function routes(crawl: Crawl) {
   for await (const entry of crawl) {
     if ('error' in entry) throw entry.error;
     if ('routes' in entry)
-      for (const { listingUrl, routes } of entry.routes)
-        for (const { url, how, text } of routes)
+      for (const { listingUrl, readers, redirect } of entry.routes) {
+        for (const { url, how, text } of readers.flatMap(
+          (named) => named ?? [],
+        ))
           lines.push(`${listingUrl} ${how} ${url} ${text ?? '-'}`);
+        if (redirect !== null)
+          lines.push(`${listingUrl} redirect ${redirect} -`);
+      }
   }
   return lines.toSorted();
 }
@@ -119,12 +124,45 @@ test('the routes connect a list to the program page that the home page it links 
     lines,
     [
       ...listRoutes(`${list.origin}/programs`),
+      // The logo and the name link the home page: a route for each.
+      `${list.origin}/programs list-item ${site.origin}/ -`,
       `${list.origin}/programs list-item ${site.origin}/ Vercel for Startups`,
       `${site.origin}/ link ${site.origin}/startups Startups`,
       `${site.origin}/ robots ${site.origin}/robots.txt -`,
       `${site.origin}/robots.txt robots-sitemap ${site.origin}/crawled-sitemap.xml -`,
       `${site.origin}/crawled-sitemap.xml sitemap-entry ${site.origin}/startups -`,
     ].toSorted(),
+  );
+});
+
+test('a list that links one page twice names it at each link, with the text of each, as a page does not keep its links unique', async () => {
+  await using site = await new HttpServer().start(
+    website([], () => ({
+      '/startups': '<p>Credits.</p>',
+      '/robots.txt': { type: 'text/plain', body: '' },
+    })),
+  );
+  await using list = await new HttpServer().start(
+    website([], () => ({
+      '/programs': `<main><a href="${site.origin}/startups">Vercel for Startups</a> <a href="${site.origin}/startups">Apply</a></main>`,
+    })),
+  );
+
+  const lines = await routes(
+    programs(new AdaptiveRevisit()).crawl([`${list.origin}/programs`], null, {
+      signal: AbortSignal.timeout(120_000),
+      include: [new URLPattern(`${site.origin}/*`)],
+      expand,
+    }),
+  );
+
+  assert.deepEqual(
+    lines.filter((line) => line.startsWith(`${list.origin}/programs `)),
+    [
+      `${list.origin}/programs list-item ${site.origin}/startups Apply`,
+      `${list.origin}/programs list-item ${site.origin}/startups Vercel for Startups`,
+      `${list.origin}/programs robots ${list.origin}/robots.txt -`,
+    ],
   );
 });
 
@@ -445,7 +483,7 @@ test('a failure says whether its URL is a page or a document, such as a broken s
   ]);
 });
 
-test('a page that LinkReader does not admit in a later crawl gives an incomplete group, which says that the page names more than its routes', async () => {
+test('a page that LinkReader does not admit in a later crawl gives null for LinkReader, which says that the page names more than its routes', async () => {
   let pages = '<a href="/listed">Listed</a>';
   await using site = await new HttpServer().start(
     website([], () => ({
@@ -464,21 +502,21 @@ test('a page that LinkReader does not admit in a later crawl gives an incomplete
     new FixedRevisit({ every: 0 }),
   );
   const options = { signal: AbortSignal.timeout(120_000) };
-  // Each group of the crawl as "listing complete routes".
+  // Each group of the crawl as "listing routes", with "-" for a reader that skipped it.
   const groups = async (crawl: Crawl) => {
     const lines: string[] = [];
     for await (const entry of crawl) {
       if ('error' in entry) throw entry.error;
       if ('routes' in entry)
-        for (const { listingUrl, complete, routes } of entry.routes)
+        for (const { listingUrl, readers } of entry.routes)
           lines.push(
-            `${new URL(listingUrl).pathname} ${String(complete)} ${routes.map(({ url }) => new URL(url).pathname).join(',')}`,
+            `${new URL(listingUrl).pathname} ${readers.map((named) => (named === null ? '-' : named.map(({ url }) => new URL(url).pathname).join(','))).join(' ')}`,
           );
     }
     return lines.toSorted();
   };
   const first = crawler.crawl([`${site.origin}/`], null, options);
-  assert.ok((await groups(first)).includes('/listed true /deep'));
+  assert.ok((await groups(first)).includes('/listed /deep'));
   const memento: unknown = JSON.parse(JSON.stringify(first.snapshot()));
   // The home page now links another page first, which takes the budget.
   pages = '<a href="/first">First</a><a href="/listed">Listed</a>';
@@ -487,7 +525,7 @@ test('a page that LinkReader does not admit in a later crawl gives an incomplete
     crawler.crawl([`${site.origin}/`], memento, options),
   );
 
-  assert.ok(lines.includes('/listed false '), lines.join('\n'));
+  assert.ok(lines.includes('/listed -'), lines.join('\n'));
 });
 
 test('a page that the crawl downloaded keeps its routes after the budget of LinkReader is spent', async () => {

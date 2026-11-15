@@ -41,7 +41,7 @@ The fact "a listing named a URL", with how the listing named it and the text tha
 _Avoid_: Link (a link is one kind of route), edge, parent
 
 **Routes stream**:
-The second stream of a web stream, named `<name>_routes`. It has one row for each route, keyed by `inputUrl`, `listingUrl` and `url`. A listing that a crawl reads again completely replaces its rows, and an incomplete read only adds rows; a listing that a run does not read keeps them ([ADR 0011](./docs/adr/0011-a-web-stream-gives-its-routes-as-a-second-stream.md)). It reads beside its web stream and loads the routes of each checkpoint of the web stream ([ADR 0012](./docs/adr/0012-a-routes-stream-reads-beside-its-web-stream.md)).
+The second stream of a web stream, named `<name>_routes`. It has one row for each place where a reader found a route, keyed by `inputUrl`, `listingUrl`, `reader` and `position`, with `url` as a column (elt ADR 0022). A listing that a crawl reads again replaces the rows of each reader that read it, and a reader that skipped it keeps its rows; a listing that a run does not read keeps them ([ADR 0011](./docs/adr/0011-a-web-stream-gives-its-routes-as-a-second-stream.md)). It reads beside its web stream and loads the routes of each checkpoint of the web stream ([ADR 0012](./docs/adr/0012-a-routes-stream-reads-beside-its-web-stream.md)).
 _Avoid_: Links table, graph, inlinks
 
 **Crawls stream**:

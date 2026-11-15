@@ -17,7 +17,7 @@ export class ArticleExtractor extends RecordExtractor {
     articleUrl: {
       ...text,
       description:
-        'The article identity: the declared canonical URL, or the final URL when the page declares none. Two URLs of one article, such as with and without a trailing slash, have one articleUrl.',
+        'The declared canonical URL, or the final URL when the page declares none. Not a key: two URLs of one article, such as with and without a trailing slash, are two records with one articleUrl, and many pages can declare one canonical URL.',
     },
     url: { ...text, description: 'Final HTTP response URL after redirects.' },
     canonicalUrl: {

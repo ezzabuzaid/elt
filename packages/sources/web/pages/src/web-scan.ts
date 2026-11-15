@@ -17,17 +17,23 @@ export const outbox = z.array(
   z.object({
     seq: z.number().int().nonnegative(),
     listingUrl: z.string(),
-    // Every reader read the response, so the routes replace the listing's rows.
-    complete: z.boolean(),
-    routes: z
+    // What each reader named, by its position among the stream's readers;
+    // null for a reader that skipped the response, whose rows stay.
+    readers: z
       .array(
-        z.object({
-          url: z.string(),
-          how: z.enum(routeHows),
-          text: z.string().nullable(),
-        }),
+        z
+          .array(
+            z.object({
+              url: z.string(),
+              how: z.enum(routeHows),
+              text: z.string().nullable(),
+            }),
+          )
+          .readonly()
+          .nullable(),
       )
       .readonly(),
+    redirect: z.string().nullable(),
   }),
 );
 export type Outbox = z.infer<typeof outbox>;

@@ -1,5 +1,7 @@
 # An article is keyed by its canonical URL
 
+Superseded by [ADR 0022 of elt](../../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md): a page does not enforce its canonical URL, as many pages can declare one, so a web stream of articles is keyed by `pageUrl`, and `articleUrl` is a column that a reader groups by.
+
 A site can name one article with two URLs. On ezz.sh, `rss.xml` names `/posts/ways_of_writing` and `sitemap-0.xml` names `/posts/ways_of_writing/` (backlog item 2966). Both URLs answer 200 with the same bytes, and both declare `/posts/ways_of_writing/` as the canonical URL. The articles stream was keyed by the page URL, so the destination had 152 rows for 77 articles.
 
 Thus `ArticleExtractor` gives an `articleUrl`: the canonical URL that the page declares, or the final URL when the page declares none. A web stream of articles uses `articleUrl` as its primary key. Both URLs of one article then give one key on each crawl, and the destination keeps one row.

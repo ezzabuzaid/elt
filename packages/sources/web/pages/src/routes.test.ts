@@ -416,6 +416,46 @@ test('a list that links the program page and the home page keeps both routes to 
   );
 });
 
+test('a list that links one program page twice keeps a route for each link, with its own text, as a page does not keep its links unique', async () => {
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  await using site = await new HttpServer().start(
+    website(() => ({
+      '/startups': '<p>Credits.</p>',
+      '/robots.txt': { type: 'text/plain', body: '' },
+    })),
+  );
+  await using list = await new HttpServer().start(
+    website(() => ({
+      '/programs': `<main><a href="${site.origin}/startups">Vercel for Startups</a><a href="${site.origin}/startups">Apply</a></main>`,
+    })),
+  );
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const input = `${list.origin}/programs`;
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [{ stream: programs(site.origin), inputs: [input] }],
+    }),
+    database.path,
+    checkpoints.path,
+    false,
+  );
+
+  await ingestion.run();
+
+  assert.deepEqual(
+    routes(database.connection).filter((line) =>
+      line.startsWith(`${input} | ${input} | list-item |`),
+    ),
+    [
+      `${input} | ${input} | list-item | ${site.origin}/startups | Apply`,
+      `${input} | ${input} | list-item | ${site.origin}/startups | Vercel for Startups`,
+    ],
+  );
+});
+
 test('a list read again replaces its routes, and a listing that the run does not read keeps its rows', async () => {
   await using cache = await new TemporaryFiles().directory('web-cache-');
   let programPages = ['/startups', '/startup-credits'];

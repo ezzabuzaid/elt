@@ -102,7 +102,7 @@ async function pipeline(
 function articles() {
   return new WebStream({
     name: 'articles',
-    primaryKey: ['articleUrl'],
+    primaryKey: ['pageUrl'],
     readers: [new ListingReader()],
     revisit: new FixedRevisit({ every: 0 }),
     extractor: new ArticleExtractor(),

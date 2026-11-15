@@ -309,7 +309,7 @@ test('an unchanged native-Markdown page requested again on a due visit loads not
 function articles(extractor = new ArticleExtractor()) {
   return new WebStream({
     name: 'articles',
-    primaryKey: ['articleUrl'],
+    primaryKey: ['pageUrl'],
     readers: [
       new ListingReader(),
       new ArchiveReader(),

@@ -9,7 +9,7 @@ Thus elt keeps each declaration as data, where its declarer is, and leaves the g
 - The page's own declarations, from its head and its `Link` header, are `Article.localizedVersions` in `sdk-web-article`, and the `localizedVersions` column of `ArticleExtractor`. The `Link` header also gives `canonicalUrl` when the head declares none.
 - A sitemap's declarations are listing provenance, as `lastModified` is: `codec-sitemap` reads them, the crawler carries them on each page it hands back, and WebSource gives them in the provenance column `listedVersions`.
 - Each copy is `{ language, url }`, the language in lower case and the URL resolved, in the order declared. A record holds this list because an elt array can hold objects of scalar fields.
-- An article stays keyed by its canonical URL (ADR 0007), so each copy is its own row.
+- Each copy is its own page, so each copy is its own row.
 
 ## Considered Options
 

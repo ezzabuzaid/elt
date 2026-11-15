@@ -9,7 +9,7 @@ import type { RecordExtractor } from './record-extractor.ts';
 /** A configured stream of pages: the crawl's readers navigate, and the extractor turns each page into records. */
 export class WebStream {
   readonly name: string;
-  /** The record key within one input. */
+  /** The record key within one input: an identity that the crawl or the page enforces, such as pageUrl for one record per page, never a business id that many pages can give, such as a canonical URL (elt ADR 0022). */
   readonly primaryKey: readonly string[];
   readonly readers: readonly Reader<unknown, unknown>[];
   /** When an incremental crawl requests a known URL again. */

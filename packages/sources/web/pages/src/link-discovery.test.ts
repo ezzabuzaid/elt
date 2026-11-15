@@ -428,7 +428,7 @@ test('an interruption during a long stretch of archive pages keeps the progress 
         // finished.
         stream: new WebStream({
           name: 'articles',
-          primaryKey: ['articleUrl'],
+          primaryKey: ['pageUrl'],
           readers: [
             new ListingReader(),
             new ArchiveReader(),
@@ -511,7 +511,7 @@ test('an interruption during a long stretch of archive pages keeps the progress 
 function articles(include?: string) {
   return new WebStream({
     name: 'articles',
-    primaryKey: ['articleUrl'],
+    primaryKey: ['pageUrl'],
     readers: [
       new ListingReader(),
       new ArchiveReader(),

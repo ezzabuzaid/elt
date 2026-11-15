@@ -21,14 +21,12 @@ import type {
 import {
   type CrawlRequest,
   type Finding,
-  type Naming,
   type PageLocation,
   type Priority,
   type Reader,
   type Route,
   isHtml,
   priorities,
-  routeHows,
 } from './reader.ts';
 import {
   type Change,
@@ -74,9 +72,16 @@ export class CrawlError extends Error {
  */
 export type ListingRoutes = {
   readonly listingUrl: string;
-  /** Every reader read the response, so the routes are all that it names. A reader that threw or skipped the response leaves it incomplete. */
-  readonly complete: boolean;
-  readonly routes: readonly Route[];
+  /**
+   * What each reader named in the response, at the reader's position among
+   * the crawl's readers: each URL at every place that the reader finds it.
+   * Null for a reader that skipped the response or could not read it, so the
+   * response names more than this read gives. A redirect, which no reader
+   * reads, names nothing to any reader.
+   */
+  readonly readers: readonly (readonly Route[] | null)[];
+  /** The URL that the response redirects to; null when it does not redirect. */
+  readonly redirect: string | null;
 };
 
 export type CrawledPage = PageLocation & {
@@ -782,10 +787,10 @@ class CrawlRun implements Crawl {
         (isHtml(type) || type === 'text/markdown')
       )
         this.#pages.set(entry.start, origin);
-      // Each URL in scope that the response names, found or not, as Heritrix
-      // records every outlink of a URI and Nutch inverts them into inlinks.
-      const named = new Map<string, Naming>();
-      let complete = true;
+      // Each URL in scope that the response names, found or not, at every
+      // place that each reader finds it, as Heritrix records every outlink of
+      // a URI and Nutch keeps an inlink for each anchor (ADR 0022 of elt).
+      const named: (readonly Route[] | null)[] = [];
       // Readers are independent: one that cannot read the response is reported
       // for it, and the others still read it. The page itself did not fail.
       for (const [index, reader] of this.#readers.entries()) {
@@ -804,22 +809,21 @@ class CrawlRun implements Crawl {
             this.#states[index],
           );
           if (findings === null) {
-            complete = false;
+            named.push(null);
             continue;
           }
+          const routes: Route[] = [];
           for (const finding of findings) {
             if (!this.#keeps(finding, entry)) continue;
             const next = this.#entry(finding, entry, index, list);
             if (finding.naming !== null && this.#scopes(next))
-              named.set(
-                next.url,
-                strongest(named.get(next.url), finding.naming),
-              );
+              routes.push({ url: next.url, ...finding.naming });
             this.#enqueue(next);
           }
+          named.push(routes);
         } catch (cause) {
           signal.throwIfAborted();
-          complete = false;
+          named.push(null);
           yield this.#failure(entry, false, entry.url, cause);
         }
       }
@@ -827,8 +831,8 @@ class CrawlRun implements Crawl {
       const routes: ListingRoutes[] = [
         {
           listingUrl: entry.url,
-          complete,
-          routes: [...named].map(([url, naming]) => ({ url, ...naming })),
+          readers: named,
+          redirect: null,
         },
       ];
       // A URL downloaded again for a role it adds is a page already handed back.
@@ -932,8 +936,8 @@ class CrawlRun implements Crawl {
       routes: [
         {
           listingUrl: entry.url,
-          complete: true,
-          routes: [{ url: location, how: 'redirect', text: null }],
+          readers: this.#readers.map(() => []),
+          redirect: location,
         },
       ],
     };
@@ -1370,17 +1374,6 @@ function redirectTarget(status: number, headers: Headers, url: string) {
   return location !== null && [300, 301, 302, 303, 307, 308].includes(status)
     ? httpUrl(location, url)
     : null;
-}
-
-// The naming of a URL that one response names in two ways: the more specific
-// way, with the first text that either gives.
-function strongest(before: Naming | undefined, next: Naming): Naming {
-  if (before === undefined) return next;
-  const [first, second] =
-    routeHows.indexOf(next.how) < routeHows.indexOf(before.how)
-      ? [next, before]
-      : [before, next];
-  return { how: first.how, text: first.text ?? second.text };
 }
 
 // Folds a finding into an entry for the same URL: roles only grow.

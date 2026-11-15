@@ -78,7 +78,7 @@ const source = new WebSource({
     {
       stream: new WebStream({
         name: 'articles',
-        primaryKey: ['articleUrl'],
+        primaryKey: ['pageUrl'],
         readers: [new ListingReader()],
         extractor: new ArticleExtractor(),
       }),

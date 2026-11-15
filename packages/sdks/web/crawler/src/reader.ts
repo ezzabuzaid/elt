@@ -52,8 +52,7 @@ export const priorities = ['listing', 'page', 'link', 'backfill'] as const;
 export type Priority = (typeof priorities)[number];
 
 /**
- * How a response named a URL, from the most specific way to the least, for a
- * URL that one response names in more than one way:
+ * How a response named a URL:
  * - 'list-item': a page that a list hands back, such as a row of a list on GitHub.
  * - 'pagination': another page of the same list, feed or sitemap.
  * - 'archive': an archive that a page links, which is a list.

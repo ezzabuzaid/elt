@@ -315,7 +315,7 @@ test('a page asked again as a browser after a failed Markdown redirect is extrac
   );
 });
 
-test('an article that a feed and a sitemap list with and without a trailing slash is stored once, and an unchanged rerun writes nothing', async () => {
+test('an article that a feed and a sitemap list with and without a trailing slash is stored for each page, with the one canonical URL both declare as their articleUrl, and an unchanged rerun writes nothing', async () => {
   await using cache = await new TemporaryFiles().directory('web-cache-');
   // Like ezz.sh live on 2026-10-26: rss.xml and sitemap-0.xml name the two forms, both answer 200 and declare one canonical URL.
   const requests: string[] = [];
@@ -372,15 +372,23 @@ test('an article that a feed and a sitemap list with and without a trailing slas
         .prepare('SELECT count(*) AS rows FROM articles')
         .get(),
     },
-    { rows: 1 },
+    { rows: 2 },
   );
   assert.deepEqual(
     database.connection
-      .prepare('SELECT articleUrl, title FROM articles')
+      .prepare(
+        'SELECT pageUrl, articleUrl, title FROM articles ORDER BY pageUrl',
+      )
       .all()
       .map((row) => ({ ...row })),
     [
       {
+        pageUrl: `${upstream.origin}/posts/ways-of-writing`,
+        articleUrl: `${upstream.origin}/posts/ways-of-writing/`,
+        title: 'Ways of writing',
+      },
+      {
+        pageUrl: `${upstream.origin}/posts/ways-of-writing/`,
         articleUrl: `${upstream.origin}/posts/ways-of-writing/`,
         title: 'Ways of writing',
       },
@@ -1568,7 +1576,7 @@ test(
           {
             stream: new WebStream({
               name: 'articles',
-              primaryKey: ['articleUrl'],
+              primaryKey: ['pageUrl'],
               readers: [new ListingReader()],
               extractor: new ArticleExtractor(),
             }),
@@ -1625,7 +1633,7 @@ test(
           {
             stream: new WebStream({
               name: 'articles',
-              primaryKey: ['articleUrl'],
+              primaryKey: ['pageUrl'],
               readers: [new ListingReader()],
               // What a poll interval was: one interval for every URL.
               revisit: new FixedRevisit({ every: 100 }),
@@ -1844,7 +1852,7 @@ test(
         {
           stream: new WebStream({
             name: 'feeds',
-            primaryKey: ['articleUrl'],
+            primaryKey: ['pageUrl'],
             readers: [new ListingReader()],
             // The feed is due 10 s after each visit, and the post never again.
             revisit: new CompositeRevisit(
@@ -1919,7 +1927,7 @@ test(
           {
             stream: new WebStream({
               name: 'news',
-              primaryKey: ['articleUrl'],
+              primaryKey: ['pageUrl'],
               readers: [new ListingReader()],
               revisit: new AlwaysRevisit(),
               extractor: new ArticleExtractor(),
@@ -2536,7 +2544,7 @@ test("a web stream's expand patterns load the program page that the home page of
         {
           stream: new WebStream({
             name: 'articles',
-            primaryKey: ['articleUrl'],
+            primaryKey: ['pageUrl'],
             readers: [
               new PaginationReader({ strategy: 'all' }),
               new ListingReader(),
@@ -2643,7 +2651,7 @@ test('by default an incremental crawl requests a known page again only when it i
       {
         stream: new WebStream({
           name: 'articles',
-          primaryKey: ['articleUrl'],
+          primaryKey: ['pageUrl'],
           readers: [new ListingReader()],
           extractor: new ArticleExtractor(),
         }),
@@ -2716,7 +2724,7 @@ test('a page that was not due keeps its fingerprint, so once due and unchanged i
       {
         stream: new WebStream({
           name: 'articles',
-          primaryKey: ['articleUrl'],
+          primaryKey: ['pageUrl'],
           readers: [new ListingReader()],
           extractor: new ArticleExtractor(),
         }),
@@ -2825,7 +2833,7 @@ test('a host that answers 429 stops the crawl there, keeps the loaded rows, and 
 function articles(include?: string) {
   return new WebStream({
     name: 'articles',
-    primaryKey: ['articleUrl'],
+    primaryKey: ['pageUrl'],
     readers: [
       new ListingReader(),
       new ArchiveReader(),
@@ -2875,7 +2883,7 @@ function twoBlogs(requests: string[], post: () => string) {
 function feedStream(name: string, revisit?: FixedRevisit) {
   return new WebStream({
     name,
-    primaryKey: ['articleUrl'],
+    primaryKey: ['pageUrl'],
     readers: [new ListingReader()],
     ...(revisit === undefined ? {} : { revisit }),
     extractor: new ArticleExtractor(),
@@ -3229,7 +3237,7 @@ test("a host's client is shared: an article read through it and a crawl of its o
 function pages() {
   return new WebStream({
     name: 'pages',
-    primaryKey: ['articleUrl'],
+    primaryKey: ['pageUrl'],
     readers: [new StartReader()],
     revisit: new AlwaysRevisit(),
     extractor: new ArticleExtractor(),

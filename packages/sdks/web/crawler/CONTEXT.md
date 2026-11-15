@@ -105,7 +105,7 @@ The fact "listing L named URL U". The listing is a response that a reader read, 
 _Avoid_: Link (a link is one kind of route), edge, provenance (`listingUrl` is the first route only), parent
 
 **How**:
-The way that a listing named the URL of a route, such as `list-item`, `link`, `robots-sitemap`, `sitemap-entry`, `feed-item` or `redirect`. The reader that found the URL gives it. `routeHows` lists every value, from the most specific.
+The way that a listing named the URL of a route, such as `list-item`, `link`, `robots-sitemap`, `sitemap-entry`, `feed-item` or `redirect`. The reader that found the URL gives it. `routeHows` lists every value.
 _Avoid_: Kind, type, rel
 
 **Route text**:

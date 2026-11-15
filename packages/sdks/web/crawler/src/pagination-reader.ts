@@ -61,13 +61,13 @@ export class PaginationReader extends Reader<null, null> {
   }: Visit<null>): readonly Finding<null>[] {
     if (!request.start && !request.list) return [];
     if (response.statusCode !== 200 || !isHtml(type)) return [];
-    const { pagination, texts, pages } = this.#readList(
+    const { pagination, pages } = this.#readList(
       pageText(response),
       response.url,
       headers,
     );
     return [
-      ...[...pages].map(([url, text]) => ({
+      ...pages.map(({ url, text }) => ({
         url,
         naming: { how: 'list-item' as const, text },
         lastModified: null,
@@ -81,9 +81,9 @@ export class PaginationReader extends Reader<null, null> {
         note: null,
         priority: 'page' as const,
       })),
-      ...[...pagination].map(([url, tolerate]) => ({
+      ...pagination.map(({ url, text, tolerate }) => ({
         url,
-        naming: { how: 'pagination' as const, text: texts.get(url) ?? null },
+        naming: { how: 'pagination' as const, text },
         lastModified: null,
         published: null,
         localizedVersions: [],
@@ -107,39 +107,53 @@ export class PaginationReader extends Reader<null, null> {
       const origin = new URL(url).origin;
       // A declared next page that fails is an error; a page that a link only
       // looks like, such as Fortune's linked /page/0/ that answers 404, is not.
-      const pagination = new Map<string, readonly number[]>(
-        discoverUrisFromHeaders(headers, { linkSelectors: paginationLinks })
-          .map((value) => webUrl(value, url))
-          .filter((value) => new URL(value).origin === origin)
-          .map((value) => [value, []]),
+      const declared = discoverUrisFromHeaders(headers, {
+        linkSelectors: paginationLinks,
+      })
+        .map((value) => webUrl(value, url))
+        .filter((value) => new URL(value).origin === origin);
+      const tolerate = new Map<string, readonly number[]>(
+        declared.map((value) => [value, []]),
       );
-      // The first text that links each URL of the list's origin.
-      const texts = new Map<string, string | null>();
       const list = pageOf(url);
-      for (const link of document.querySelectorAll<
-        HTMLAnchorElement | HTMLLinkElement
-      >('a[href], link[href]')) {
+      const links = [
+        ...document.querySelectorAll<HTMLAnchorElement | HTMLLinkElement>(
+          'a[href], link[href]',
+        ),
+      ].flatMap((link) => {
         const target = URL.parse(link.href);
-        if (!target || target.origin !== origin) continue;
-        const next = webUrl(target.href, url);
-        texts.set(next, texts.get(next) ?? anchorText(link));
+        return target && target.origin === origin
+          ? [{ link, url: webUrl(target.href, url) }]
+          : [];
+      });
+      for (const { link, url: next } of links)
         if (paginationLinks.some(({ rel }) => link.relList.contains(rel)))
-          pagination.set(next, []);
+          tolerate.set(next, []);
         else if (
-          !pagination.has(next) &&
+          !tolerate.has(next) &&
           (this.#pagination === undefined
             ? isPageOf(next, url, list)
             : this.#pagination.some((pattern) => pattern.test(next)))
         )
-          pagination.set(next, [404, 410]);
-      }
+          tolerate.set(next, [404, 410]);
+      // Each place that names another page of the list: the Link header,
+      // then each link to it, also a link that only a later rel names.
+      const pagination = [
+        ...declared.map((value) => ({ url: value, text: null, tolerate: [] })),
+        ...links.flatMap(({ link, url: next }) => {
+          const statuses = tolerate.get(next);
+          return statuses === undefined
+            ? []
+            : [{ url: next, text: anchorText(link), tolerate: statuses }];
+        }),
+      ];
       for (const navigation of document.querySelectorAll(
         'nav, footer, [role="navigation"]',
       ))
         navigation.remove();
-      // Each page with the first text that names it, as a list's logo and
-      // its name can link one page.
-      const pages = new Map<string, string | null>();
+      // Each link of the list to a page, as a list's logo and its name can
+      // link one page twice.
+      const pages: { url: string; text: string | null }[] = [];
       for (const link of document.querySelectorAll<HTMLAnchorElement>(
         'a[href]',
       )) {
@@ -150,10 +164,10 @@ export class PaginationReader extends Reader<null, null> {
         )
           continue;
         const page = webUrl(target.href, url);
-        if (!pagination.has(page))
-          pages.set(page, pages.get(page) ?? anchorText(link));
+        if (!tolerate.has(page))
+          pages.push({ url: page, text: anchorText(link) });
       }
-      return { pagination, texts, pages };
+      return { pagination, pages };
     } finally {
       dom.window.close();
     }

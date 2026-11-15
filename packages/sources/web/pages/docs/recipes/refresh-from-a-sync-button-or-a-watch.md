@@ -74,7 +74,7 @@ const source = new WebSource({
     {
       stream: new WebStream({
         name: 'articles',
-        primaryKey: ['articleUrl'],
+        primaryKey: ['pageUrl'],
         readers: [new ListingReader()],
         revisit: new FixedRevisit({ every: 10_000 }),
         extractor: new ArticleExtractor(),

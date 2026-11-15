@@ -132,7 +132,7 @@ function article(path: string) {
 function articles(name = 'articles') {
   return new WebStream({
     name,
-    primaryKey: ['articleUrl'],
+    primaryKey: ['pageUrl'],
     readers: [new ListingReader()],
     extractor: new ArticleExtractor(),
   });
@@ -838,7 +838,7 @@ test("the consumer's time with each entry, each page's extraction and each copy'
       {
         stream: new WebStream({
           name: 'articles',
-          primaryKey: ['articleUrl'],
+          primaryKey: ['pageUrl'],
           readers: [new ListingReader()],
           revisit: new AlwaysRevisit(),
           extractor: new ArticleExtractor(),

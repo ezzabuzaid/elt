@@ -49,7 +49,7 @@ test('each page publishes the records it gave once read, and a page whose finger
       {
         stream: new WebStream({
           name: 'articles',
-          primaryKey: ['articleUrl'],
+          primaryKey: ['pageUrl'],
           readers: [new ListingReader()],
           // The second run reads the page again, unchanged.
           revisit: new AlwaysRevisit(),

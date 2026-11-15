@@ -77,15 +77,15 @@ export class LinkReader extends Reader<never, State> {
     const links = markdown
       ? markdownLinks(text)
       : htmlLinks(text, response.url);
-    // Each page with the first text that links it, as a logo and a name can link one page.
-    const pages = new Map<string, string | null>();
-    for (const link of links) {
+    // Each link to a page, as a logo and a name can link one page twice.
+    const pages = links.flatMap((link) => {
       const target = httpUrl(link.href, response.url);
       // The crawl keeps from a one-step expansion only the links that match its patterns.
-      if (target && (step || new URL(target).origin === origin))
-        pages.set(target, pages.get(target) ?? link.text);
-    }
-    return [...pages].map(([url, text]) => ({
+      return target && (step || new URL(target).origin === origin)
+        ? [{ url: target, text: link.text }]
+        : [];
+    });
+    return pages.map(({ url, text }) => ({
       url,
       naming: { how: 'link' as const, text },
       lastModified: null,

@@ -218,7 +218,7 @@ async function crawl(
       {
         stream: new WebStream({
           name: 'articles',
-          primaryKey: ['articleUrl'],
+          primaryKey: ['pageUrl'],
           readers: [new ListingReader()],
           revisit: new AlwaysRevisit(),
           extractor: new ArticleExtractor(),

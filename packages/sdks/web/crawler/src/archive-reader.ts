@@ -59,8 +59,8 @@ export class ArchiveReader extends Reader<null, null> {
     at,
   }: Visit<null>): readonly Finding<null>[] {
     if (response.statusCode !== 200 || !isHtml(type)) return [];
-    return [...readArchives(pageText(response), response.url, headers, at)].map(
-      ([url, text]) => ({
+    return readArchives(pageText(response), response.url, headers, at).map(
+      ({ url, text }) => ({
         url,
         naming: { how: 'archive' as const, text },
         lastModified: null,
@@ -91,13 +91,12 @@ function readArchives(
   try {
     const document = dom.window.document;
     const origin = new URL(url).origin;
-    // Each archive with the first text that links it.
-    const archives = new Map<string, string | null>(
+    // Each place that names an archive: the Link header, then each link to it.
+    const archives: { url: string; text: string | null }[] =
       discoverUrisFromHeaders(headers, { linkSelectors: [{ rel: 'archives' }] })
         .map((value) => webUrl(value, url))
         .filter((value) => new URL(value).origin === origin)
-        .map((value) => [value, null]),
-    );
+        .map((value) => ({ url: value, text: null }));
     for (const link of document.querySelectorAll<
       HTMLAnchorElement | HTMLLinkElement
     >('a[href], link[href]')) {
@@ -111,8 +110,10 @@ function readArchives(
           link.textContent.trim(),
         )
       ) {
-        const archive = webUrl(target.href, url);
-        archives.set(archive, archives.get(archive) ?? anchorText(link));
+        archives.push({
+          url: webUrl(target.href, url),
+          text: anchorText(link),
+        });
       }
     }
     return archives;
