@@ -7,17 +7,21 @@ import {
   accountsFields,
 } from '../apple-accounts-stream.ts';
 
-const { id, boolean } = accountsFields;
+const { integer, nullableText, boolean } = accountsFields;
 
 const properties = {
   accountId: {
-    ...id,
+    ...integer,
     description: 'The account; refers to accounts.id within this source.',
   },
+  dataclassId: {
+    ...integer,
+    description: 'The data class; refers to dataclasses.id within this source.',
+  },
   dataclass: {
-    ...id,
+    ...nullableText,
     description:
-      'Data class name, such as com.apple.Dataclass.Mail; refers to dataclasses.name within this source.',
+      'Data class name, such as com.apple.Dataclass.Mail (dataclasses.name); NULL when the store holds no row for the data class.',
   },
   enabled: {
     ...boolean,
@@ -36,11 +40,11 @@ export class AccountDataclassesStream extends AppleAccountsStream<
   Account
 > {
   readonly name = 'accountDataclasses';
-  readonly primaryKey = ['accountId', 'dataclass'];
+  readonly primaryKey = ['accountId', 'dataclassId'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per data class an account offers or has turned on: what it syncs, such as mail, calendars or contacts. Primary key (accountId, dataclass).',
+      'One record per data class an account offers or has turned on: what it syncs, such as mail, calendars or contacts. Primary key (accountId, dataclassId), the key of both join tables.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -50,16 +54,12 @@ export class AccountDataclassesStream extends AppleAccountsStream<
   }
 
   protected records(account: Account): RecordDraft<typeof properties>[] {
-    return [
-      ...new Set([
-        ...account.provisionedDataclasses,
-        ...account.enabledDataclasses,
-      ]),
-    ].map((dataclass) => ({
-      accountId: account.identifier,
-      dataclass,
-      enabled: account.enabledDataclasses.includes(dataclass),
-      provisioned: account.provisionedDataclasses.includes(dataclass),
+    return account.dataclasses.map((dataclass) => ({
+      accountId: account.id,
+      dataclassId: dataclass.dataclassId,
+      dataclass: dataclass.name,
+      enabled: dataclass.enabled,
+      provisioned: dataclass.provisioned,
     }));
   }
 }

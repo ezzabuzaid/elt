@@ -235,39 +235,55 @@ test('accounts come with their type, parent, enabled data classes and decoded pr
   assert.equal(accounts[1]?.parent, accounts[0]);
   assert.deepEqual(
     accounts.map((account) => ({
+      id: account.id,
       identifier: account.identifier,
+      typeId: account.typeId,
       type: account.type,
-      parent: account.parent?.identifier ?? null,
+      parent: account.parent?.id ?? null,
       description: account.description,
       username: account.username,
       active: account.active,
-      enabledDataclasses: account.enabledDataclasses,
+      dataclasses: account.dataclasses,
       properties: account.properties,
       dataclassProperties: account.dataclassProperties,
     })),
     [
       {
+        id: 1,
         identifier: 'GOOGLE',
+        typeId: 1,
         type: 'com.apple.account.Google',
         parent: null,
         description: 'Work',
         username: 'ann@example.com',
         active: true,
-        enabledDataclasses: [
-          'com.apple.Dataclass.Mail',
-          'com.apple.Dataclass.Calendars',
+        dataclasses: [
+          {
+            dataclassId: 1,
+            name: 'com.apple.Dataclass.Mail',
+            enabled: true,
+            provisioned: false,
+          },
+          {
+            dataclassId: 2,
+            name: 'com.apple.Dataclass.Calendars',
+            enabled: true,
+            provisioned: false,
+          },
         ],
         properties: { ACPropertyFullName: 'Ann Example' },
         dataclassProperties: {},
       },
       {
+        id: 2,
         identifier: 'IMAP-1',
+        typeId: 2,
         type: 'com.apple.account.IMAP',
-        parent: 'GOOGLE',
+        parent: 1,
         description: null,
         username: null,
         active: true,
-        enabledDataclasses: [],
+        dataclasses: [],
         properties: {
           Hostname: 'imap.example.com',
           PortNumber: 993,
@@ -285,13 +301,15 @@ test('accounts come with their type, parent, enabled data classes and decoded pr
         },
       },
       {
+        id: 3,
         identifier: 'IDLE',
+        typeId: 2,
         type: 'com.apple.account.IMAP',
         parent: null,
         description: null,
         username: null,
         active: false,
-        enabledDataclasses: [],
+        dataclasses: [],
         properties: {},
         dataclassProperties: {},
       },
@@ -512,26 +530,27 @@ test('this Mac’s Accounts store reads as one consistent snapshot: accounts, th
   }
 
   // Checked without printing a value: these are the user's own accounts.
+  // Each reference is by row id, which the store keeps unique.
   const { accounts, accountTypes, dataclasses, accessOptionKeys } = read;
-  const types = new Set(accountTypes.map(({ identifier }) => identifier));
-  const dataclassNames = new Set(dataclasses.map(({ name }) => name));
+  const types = new Set(accountTypes.map(({ id }) => id));
+  const dataclassIds = new Set(dataclasses.map(({ id }) => id));
   assert.equal(types.size, accountTypes.length);
-  assert.equal(dataclassNames.size, dataclasses.length);
+  assert.equal(dataclassIds.size, dataclasses.length);
+  assert.equal(new Set(accounts.map(({ id }) => id)).size, accounts.length);
   for (const account of accounts) {
-    assert.ok(types.has(account.type));
+    assert.ok(types.has(account.typeId));
     assert.ok(account.parent === null || accounts.includes(account.parent));
-    for (const dataclass of [
-      ...account.enabledDataclasses,
-      ...account.provisionedDataclasses,
-    ])
-      assert.ok(dataclassNames.has(dataclass));
+    for (const { dataclassId, name } of account.dataclasses) {
+      assert.ok(dataclassIds.has(dataclassId));
+      assert.ok(name !== null);
+    }
   }
   for (const type of accountTypes)
     for (const dataclass of [
-      ...type.supportedDataclasses,
-      ...type.syncableDataclasses,
+      ...type.supportedDataclassIds,
+      ...type.syncableDataclassIds,
     ])
-      assert.ok(dataclassNames.has(dataclass));
+      assert.ok(dataclassIds.has(dataclass));
   for (const key of accessOptionKeys)
-    for (const type of key.accountTypes) assert.ok(types.has(type));
+    for (const type of key.accountTypeIds) assert.ok(types.has(type));
 });

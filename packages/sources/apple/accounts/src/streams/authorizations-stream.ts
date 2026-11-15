@@ -8,13 +8,23 @@ import {
   accountsFields,
 } from '../apple-accounts-stream.ts';
 
-const { id, nullableText } = accountsFields;
+const { id, integer, nullableText } = accountsFields;
 
 const properties = {
+  id: {
+    ...integer,
+    description:
+      'The authorization row (ZAUTHORIZATION.Z_PK); the primary key.',
+  },
+  accountTypeId: {
+    ...integer,
+    description:
+      'The kind of account access was granted to; refers to accountTypes.id within this source.',
+  },
   accountType: {
     ...id,
     description:
-      'The kind of account access was granted to; refers to accountTypes.id within this source.',
+      'Identifier of that account type, such as com.apple.account.Facebook (accountTypes.identifier).',
   },
   bundleId: {
     ...id,
@@ -37,11 +47,11 @@ export class AuthorizationsStream extends AppleAccountsStream<
   Authorization
 > {
   readonly name = 'authorizations';
-  readonly primaryKey = ['accountType', 'bundleId'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per app granted access to a kind of account through the Accounts framework. Primary key (accountType, bundleId).',
+      'One record per app granted access to a kind of account through the Accounts framework. Primary key id.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -55,6 +65,8 @@ export class AuthorizationsStream extends AppleAccountsStream<
   ): RecordDraft<typeof properties>[] {
     return [
       {
+        id: authorization.id,
+        accountTypeId: authorization.accountTypeId,
         accountType: authorization.accountType,
         bundleId: authorization.bundleId,
         grantedPermissions: authorization.grantedPermissions,

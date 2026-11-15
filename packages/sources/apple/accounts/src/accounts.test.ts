@@ -433,14 +433,16 @@ test('every Accounts stream loads the store, without authentication material, an
   assert.deepEqual(
     rows(
       out,
-      `SELECT id, type, parentId, description, name, username, fullName,
-              emailAddresses, active, authenticated, createdAt,
-              owningBundleId, dataclassProperties
-       FROM accounts WHERE id IN ('ICLOUD', 'IMAP') ORDER BY id`,
+      `SELECT id, identifier, typeId, type, parentId, description, name,
+              username, fullName, emailAddresses, active, authenticated,
+              createdAt, owningBundleId, dataclassProperties
+       FROM accounts WHERE id IN (1, 2) ORDER BY id`,
     ),
     [
       {
-        id: 'ICLOUD',
+        id: 1,
+        identifier: 'ICLOUD',
+        typeId: 1,
         type: 'com.apple.account.AppleAccount',
         parentId: null,
         description: 'iCloud',
@@ -460,9 +462,11 @@ test('every Accounts stream loads the store, without authentication material, an
         }),
       },
       {
-        id: 'IMAP',
+        id: 2,
+        identifier: 'IMAP',
+        typeId: 2,
         type: 'com.apple.account.IMAP',
-        parentId: 'ICLOUD',
+        parentId: 1,
         description: null,
         name: 'iCloud',
         username: null,
@@ -482,89 +486,119 @@ test('every Accounts stream loads the store, without authentication material, an
   assert.deepEqual(
     rows(
       out,
-      'SELECT accountId, key, value FROM accountProperties ORDER BY accountId, key',
+      'SELECT id, accountId, key, value FROM accountProperties ORDER BY id',
     ),
     [
       {
-        accountId: 'ICLOUD',
+        id: 1,
+        accountId: 1,
         key: 'ACPropertyFullName',
         value: '"Ann Example"',
       },
       {
-        accountId: 'ICLOUD',
+        id: 2,
+        accountId: 1,
         key: 'appleIDAliases',
         value: '["ann@example.com"]',
       },
+      { id: 4, accountId: 2, key: 'PortNumber', value: '993' },
+      { id: 5, accountId: 2, key: 'SSLIsDirect', value: 'true' },
       {
-        accountId: 'IDS',
+        id: 6,
+        accountId: 3,
+        key: 'IdentityEmailAddress',
+        value: '"ann@icloud.example"',
+      },
+      {
+        id: 7,
+        accountId: 4,
         key: 'account-info',
         value: JSON.stringify({
           SelfHandle: 'mailto:ann@example.com',
           AppleID: 'ann@example.com',
         }),
       },
-      { accountId: 'IMAP', key: 'PortNumber', value: '993' },
-      { accountId: 'IMAP', key: 'SSLIsDirect', value: 'true' },
-      { accountId: 'ITUNES', key: 'storefrontID', value: '"143441"' },
+      { id: 8, accountId: 5, key: 'storefrontID', value: '"143441"' },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT accountId, dataclassId, dataclass, enabled, provisioned FROM accountDataclasses ORDER BY accountId, dataclassId',
+    ),
+    [
       {
-        accountId: 'SMTP',
-        key: 'IdentityEmailAddress',
-        value: '"ann@icloud.example"',
+        accountId: 1,
+        dataclassId: 1,
+        dataclass: mail,
+        enabled: 1,
+        provisioned: 1,
+      },
+      {
+        accountId: 1,
+        dataclassId: 2,
+        dataclass: calendars,
+        enabled: 1,
+        provisioned: 1,
+      },
+      {
+        accountId: 1,
+        dataclassId: 3,
+        dataclass: contacts,
+        enabled: 0,
+        provisioned: 1,
       },
     ],
   );
   assert.deepEqual(
     rows(
       out,
-      'SELECT accountId, dataclass, enabled, provisioned FROM accountDataclasses ORDER BY accountId, dataclass',
-    ),
-    [
-      { accountId: 'ICLOUD', dataclass: calendars, enabled: 1, provisioned: 1 },
-      { accountId: 'ICLOUD', dataclass: contacts, enabled: 0, provisioned: 1 },
-      { accountId: 'ICLOUD', dataclass: mail, enabled: 1, provisioned: 1 },
-    ],
-  );
-  assert.deepEqual(
-    rows(
-      out,
-      `SELECT id, description, supportedDataclasses, syncableDataclasses
-       FROM accountTypes WHERE id = 'com.apple.account.AppleAccount'`,
+      `SELECT id, identifier, description, supportedDataclassIds,
+              syncableDataclassIds
+       FROM accountTypes WHERE identifier = 'com.apple.account.AppleAccount'`,
     ),
     [
       {
-        id: 'com.apple.account.AppleAccount',
+        id: 1,
+        identifier: 'com.apple.account.AppleAccount',
         description: 'iCloud',
-        supportedDataclasses: JSON.stringify([mail, calendars, contacts]),
-        syncableDataclasses: JSON.stringify([mail, calendars]),
+        supportedDataclassIds: '[1,2,3]',
+        syncableDataclassIds: '[1,2]',
       },
     ],
   );
   assert.equal(rows(out, 'SELECT * FROM accountTypes').length, 6);
   assert.deepEqual(
-    rows(out, 'SELECT name, enumValue FROM dataclasses ORDER BY enumValue'),
+    rows(out, 'SELECT id, name, enumValue FROM dataclasses ORDER BY id'),
     [
-      { name: mail, enumValue: 1 },
-      { name: calendars, enumValue: 2 },
-      { name: contacts, enumValue: 3 },
+      { id: 1, name: mail, enumValue: 1 },
+      { id: 2, name: calendars, enumValue: 2 },
+      { id: 3, name: contacts, enumValue: 3 },
     ],
   );
   assert.deepEqual(
-    rows(out, 'SELECT name, enumValue, accountTypes FROM accessOptionKeys'),
+    rows(
+      out,
+      'SELECT id, name, enumValue, accountTypeIds FROM accessOptionKeys',
+    ),
     [
       {
+        id: 1,
         name: 'ACFacebookAppIdKey',
         enumValue: 1,
-        accountTypes: JSON.stringify(['com.apple.account.Facebook']),
+        accountTypeIds: '[6]',
       },
     ],
   );
   assert.deepEqual(
     rows(
       out,
-      'SELECT accountType, bundleId, grantedPermissions, options FROM authorizations',
+      'SELECT id, accountTypeId, accountType, bundleId, grantedPermissions, options FROM authorizations',
     ),
     [
       {
+        id: 1,
+        accountTypeId: 6,
         accountType: 'com.apple.account.Facebook',
         bundleId: 'com.example.app',
         grantedPermissions: 'read',
@@ -575,11 +609,12 @@ test('every Accounts stream loads the store, without authentication material, an
   assert.deepEqual(
     rows(
       out,
-      'SELECT accountId, serviceName, expiresAt, persistent FROM credentialItems',
+      'SELECT id, accountIdentifier, serviceName, expiresAt, persistent FROM credentialItems',
     ),
     [
       {
-        accountId: 'ICLOUD',
+        id: 1,
+        accountIdentifier: 'ICLOUD',
         serviceName: 'com.apple.account.AppleAccount.token',
         expiresAt: addedAt,
         persistent: 1,
@@ -590,6 +625,130 @@ test('every Accounts stream loads the store, without authentication material, an
   const second = await run.run();
 
   assert.ok(second.every((result) => result.count === 0));
+});
+
+test('two data classes with one name both load, each with its own id and its own links', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-accounts-');
+  const path = join(dir.path, 'Accounts4.sqlite');
+  {
+    using store = new ScratchAccountsStore(path);
+    store.dataclass(mail, 1);
+    store.dataclass(mail, 4);
+    store.accountType({
+      identifier: 'com.apple.account.IMAP',
+      description: 'IMAP',
+      supported: [mail],
+    });
+    store.account({
+      pk: 1,
+      identifier: 'IMAP',
+      type: 'com.apple.account.IMAP',
+      enabled: [mail],
+    });
+  }
+  {
+    // ZDATACLASS.ZNAME is a BLOB with no constraint: the second row links
+    // the account and the type to the second data class.
+    using store = open(path, { journal: new RollbackJournal() });
+    store.exec(`
+      INSERT INTO Z_2PROVISIONEDDATACLASSES VALUES (1, 2);
+      INSERT INTO Z_4SUPPORTEDDATACLASSES VALUES (1, 2);
+    `);
+  }
+  const out = join(dir.path, 'out.sqlite');
+
+  await (await pipeline(new AppleAccountsSource({ path }), dir.path)).run();
+
+  assert.deepEqual(
+    rows(out, 'SELECT id, name, enumValue FROM dataclasses ORDER BY id'),
+    [
+      { id: 1, name: mail, enumValue: 1 },
+      { id: 2, name: mail, enumValue: 4 },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT accountId, dataclassId, dataclass, enabled, provisioned FROM accountDataclasses ORDER BY dataclassId',
+    ),
+    [
+      {
+        accountId: 1,
+        dataclassId: 1,
+        dataclass: mail,
+        enabled: 1,
+        provisioned: 0,
+      },
+      {
+        accountId: 1,
+        dataclassId: 2,
+        dataclass: mail,
+        enabled: 0,
+        provisioned: 1,
+      },
+    ],
+  );
+  assert.deepEqual(
+    rows(out, 'SELECT id, supportedDataclassIds FROM accountTypes'),
+    [{ id: 1, supportedDataclassIds: '[1,2]' }],
+  );
+});
+
+test('two accounts with one identifier both load, each with its own id, properties and data classes', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-accounts-');
+  const path = join(dir.path, 'Accounts4.sqlite');
+  {
+    // ZACCOUNT.ZIDENTIFIER has no UNIQUE constraint.
+    using store = new ScratchAccountsStore(path);
+    store.dataclass(mail, 1);
+    store.accountType({
+      identifier: 'com.apple.account.IMAP',
+      description: 'IMAP',
+    });
+    for (const [pk, description, port] of [
+      [1, 'Work', 993],
+      [2, 'Home', 143],
+    ] as const)
+      store.account({
+        pk,
+        identifier: 'IMAP',
+        type: 'com.apple.account.IMAP',
+        description,
+        enabled: [mail],
+        properties: { PortNumber: port },
+      });
+  }
+  const out = join(dir.path, 'out.sqlite');
+
+  await (await pipeline(new AppleAccountsSource({ path }), dir.path)).run();
+
+  assert.deepEqual(
+    rows(out, 'SELECT id, identifier, typeId, name FROM accounts ORDER BY id'),
+    [
+      { id: 1, identifier: 'IMAP', typeId: 1, name: 'Work' },
+      { id: 2, identifier: 'IMAP', typeId: 1, name: 'Home' },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT id, accountId, key, value FROM accountProperties ORDER BY id',
+    ),
+    [
+      { id: 1, accountId: 1, key: 'PortNumber', value: '993' },
+      { id: 2, accountId: 2, key: 'PortNumber', value: '143' },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT accountId, dataclassId FROM accountDataclasses ORDER BY accountId',
+    ),
+    [
+      { accountId: 1, dataclassId: 1 },
+      { accountId: 2, dataclassId: 1 },
+    ],
+  );
 });
 
 test('an account changed in the store updates its rows, and a removed one deletes them', async () => {
@@ -610,14 +769,17 @@ test('an account changed in the store updates its rows, and a removed one delete
 
   await run.run();
 
-  assert.deepEqual(rows(out, 'SELECT id, name FROM accounts ORDER BY id'), [
-    { id: 'ICLOUD', name: 'Personal' },
-    { id: 'IDS', name: null },
-    { id: 'IMAP', name: 'Personal' },
-    { id: 'ITUNES', name: null },
-  ]);
   assert.deepEqual(
-    rows(out, "SELECT key FROM accountProperties WHERE accountId = 'SMTP'"),
+    rows(out, 'SELECT id, identifier, name FROM accounts ORDER BY id'),
+    [
+      { id: 1, identifier: 'ICLOUD', name: 'Personal' },
+      { id: 2, identifier: 'IMAP', name: 'Personal' },
+      { id: 4, identifier: 'IDS', name: null },
+      { id: 5, identifier: 'ITUNES', name: null },
+    ],
+  );
+  assert.deepEqual(
+    rows(out, 'SELECT key FROM accountProperties WHERE accountId = 3'),
     [],
   );
 });

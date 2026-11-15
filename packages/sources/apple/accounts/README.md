@@ -54,16 +54,23 @@ The store needs [Full Disk Access](../messages/README.md#full-disk-access) for t
 
 ## Streams
 
-| Stream               | Upstream                                                            | One record for each                                                                                    |
-| -------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `accounts`           | `ZACCOUNT`                                                          | account: parent, type, sign-in state, date added, owner app, the settings of each data class as JSON   |
-| `accountProperties`  | `ZACCOUNTPROPERTY`                                                  | property of an account, with its keyed archive decoded to JSON                                         |
-| `accountDataclasses` | `Z_*ENABLEDDATACLASSES`, `Z_*PROVISIONEDDATACLASSES`                | data class that an account offers or has turned on                                                     |
-| `accountTypes`       | `ZACCOUNTTYPE`, `Z_*SUPPORTEDDATACLASSES`, `Z_*SYNCABLEDATACLASSES` | account type, with the data classes that it can offer and sync, as arrays                              |
-| `dataclasses`        | `ZDATACLASS`                                                        | data class: a kind of data that accounts sync, such as mail or calendars                               |
-| `accessOptionKeys`   | `ZACCESSOPTIONSKEY`, `Z_*OWNINGACCOUNTTYPES`                        | option key that an app gives to ask for access to an account type                                      |
-| `authorizations`     | `ZAUTHORIZATION`                                                    | app that has access to an account type                                                                 |
-| `credentialItems`    | `ZCREDENTIALITEM`                                                   | expiry date of a stored credential; the credential is in the keychain, and the source does not read it |
+| Stream               | Upstream                                                            | Primary key                | One record for each                                                                                    |
+| -------------------- | ------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `accounts`           | `ZACCOUNT`                                                          | `id`                       | account: parent, type, sign-in state, date added, owner app, the settings of each data class as JSON   |
+| `accountProperties`  | `ZACCOUNTPROPERTY`                                                  | `id`                       | property of an account, with its keyed archive decoded to JSON                                         |
+| `accountDataclasses` | `Z_*ENABLEDDATACLASSES`, `Z_*PROVISIONEDDATACLASSES`                | `(accountId, dataclassId)` | data class that an account offers or has turned on                                                     |
+| `accountTypes`       | `ZACCOUNTTYPE`, `Z_*SUPPORTEDDATACLASSES`, `Z_*SYNCABLEDATACLASSES` | `id`                       | account type, with the ids of the data classes that it can offer and sync, as arrays                   |
+| `dataclasses`        | `ZDATACLASS`                                                        | `id`                       | data class: a kind of data that accounts sync, such as mail or calendars                               |
+| `accessOptionKeys`   | `ZACCESSOPTIONSKEY`, `Z_*OWNINGACCOUNTTYPES`                        | `id`                       | option key that an app gives to ask for access to an account type                                      |
+| `authorizations`     | `ZAUTHORIZATION`                                                    | `id`                       | app that has access to an account type                                                                 |
+| `credentialItems`    | `ZCREDENTIALITEM`                                                   | `id`                       | expiry date of a stored credential; the credential is in the keychain, and the source does not read it |
+
+The key of each stream is an identity that the store enforces ([ADR 0022 of elt](../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md)). The store declares no `UNIQUE` constraint. Its only keys are the `Z_PK` of each Core Data entity and the declared `PRIMARY KEY` of each join table:
+
+- `id` is the `Z_PK` of the row. A record names another record by this id: `accounts.parentId` and `typeId`, `accountProperties.accountId`, `accountDataclasses.accountId` and `dataclassId`, `authorizations.accountTypeId`, the `accountTypes` data class id lists and `accessOptionKeys.accountTypeIds`.
+- `accountDataclasses` is keyed by `(accountId, dataclassId)`, the declared key of both join tables. A data class in either table is one record, with `enabled` and `provisioned`.
+- The names and identifiers of the store are columns, because the store does not keep them unique: `accounts.identifier` (`ACAccount.identifier`, which Mail uses), `accountTypes.identifier`, `dataclasses.name`, `accessOptionKeys.name`, `accountProperties.key`, `authorizations.accountType` and `bundleId`. Two rows with one name each load. A reader that wants one row for each name deduplicates by that column.
+- `credentialItems.accountIdentifier` is the identifier of the account as the store keeps it, not a link to its row. It matches `accounts.identifier`.
 
 Core Data names the join tables after entity numbers, and these numbers change between model versions (`Z_2ENABLEDDATACLASSES` on macOS 27). Thus the SDK finds each join table by the end of its name. When a join table is not there, the read fails with `AccountsSchemaError`, which names the table.
 
@@ -111,6 +118,7 @@ Not verified: the values of `authorizations` and `credentialItems`. The store of
 
 - [ADR 0001](./docs/adr/0001-each-read-checks-only-the-columns-of-its-tables.md): each read checks only the columns of its tables.
 - [ADR 0002](./docs/adr/0002-authentication-material-does-not-load.md): authentication material does not load.
+- [elt ADR 0022](../../../elt/docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md): a stream's key is an identity its upstream enforces.
 
 ## Development
 

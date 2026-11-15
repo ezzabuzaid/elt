@@ -13,17 +13,14 @@ export type MailServer = {
   readonly userName: string | null;
 };
 
-// Properties that hold authentication material rather than settings: the
-// iTunes Store's encrypted last sign-in response, the Apple ID's next
-// liveness nonce and Game Center's opaque player record, whole, and the
-// identity service's AuthID inside account-info.
-const authenticationProperties = new Set([
-  'lastAuthenticationServerResponse',
-  'nextLivenessNonce',
-  'GKPlayerInternal',
-]);
-const authenticationKeys: Readonly<Record<string, readonly string[]>> = {
-  'account-info': ['AuthID'],
+// A data class an account offers or has turned on: one row of either join
+// table, keyed by the account and the data class row. The name is null when
+// the store holds no row for the data class.
+export type AccountDataclass = {
+  readonly dataclassId: number;
+  readonly name: string | null;
+  readonly enabled: boolean;
+  readonly provisioned: boolean;
 };
 
 // One account in the system Accounts store, as the Accounts framework keeps
@@ -34,8 +31,13 @@ const authenticationKeys: Readonly<Record<string, readonly string[]>> = {
 // stored key answers each question was matched against Mail scripting on
 // macOS 27, with Exchange, iCloud and Google accounts.
 export class Account {
-  // ACAccount.identifier; Mail names its account folders after it.
+  // ZACCOUNT.Z_PK, the identity the store keeps unique.
+  readonly id: number;
+  // ACAccount.identifier; Mail names its account folders after it. The store
+  // does not keep it unique.
   readonly identifier: string;
+  // The account type's Z_PK.
+  readonly typeId: number;
   // ACAccountType.identifier, such as com.apple.account.IMAP.
   readonly type: string;
   readonly parent: Account | null;
@@ -53,17 +55,18 @@ export class Account {
   readonly modificationId: string | null;
   // The bundle identifier of the app that owns the account.
   readonly owningBundleId: string | null;
-  // Data classes turned on for this account, such as com.apple.Dataclass.Mail.
-  readonly enabledDataclasses: readonly string[];
-  // Data classes the account is set up to offer, on or off.
-  readonly provisionedDataclasses: readonly string[];
+  // Data classes the account offers or has turned on, such as
+  // com.apple.Dataclass.Mail, one for each data class row.
+  readonly dataclasses: readonly AccountDataclass[];
   // The account's properties, decoded from their keyed archives.
   readonly properties: Readonly<Record<string, PlistValue>>;
   // Per data class settings, such as the iCloud mail servers.
   readonly dataclassProperties: Readonly<Record<string, PlistValue>>;
 
   constructor(fields: {
+    readonly id: number;
     readonly identifier: string;
+    readonly typeId: number;
     readonly type: string;
     readonly parent: Account | null;
     readonly description: string | null;
@@ -79,12 +82,13 @@ export class Account {
     readonly credentialType: string | null;
     readonly modificationId: string | null;
     readonly owningBundleId: string | null;
-    readonly enabledDataclasses: readonly string[];
-    readonly provisionedDataclasses: readonly string[];
+    readonly dataclasses: readonly AccountDataclass[];
     readonly properties: Readonly<Record<string, PlistValue>>;
     readonly dataclassProperties: Readonly<Record<string, PlistValue>>;
   }) {
+    this.id = fields.id;
     this.identifier = fields.identifier;
+    this.typeId = fields.typeId;
     this.type = fields.type;
     this.parent = fields.parent;
     this.description = fields.description;
@@ -101,8 +105,7 @@ export class Account {
     this.credentialType = fields.credentialType;
     this.modificationId = fields.modificationId;
     this.owningBundleId = fields.owningBundleId;
-    this.enabledDataclasses = fields.enabledDataclasses;
-    this.provisionedDataclasses = fields.provisionedDataclasses;
+    this.dataclasses = fields.dataclasses;
     this.properties = fields.properties;
     this.dataclassProperties = fields.dataclassProperties;
   }
@@ -146,34 +149,15 @@ export class Account {
     ];
   }
 
-  // Its properties without authentication material, which is not the
-  // account's settings and not for copying out of the store.
-  get propertiesWithoutAuthentication(): Readonly<Record<string, PlistValue>> {
-    return Object.fromEntries(
-      Object.entries(this.properties)
-        .filter(([key]) => !authenticationProperties.has(key))
-        .map(([key, value]) => {
-          const secret = authenticationKeys[key];
-          return [
-            key,
-            secret === undefined || !isDictionary(value)
-              ? value
-              : Object.fromEntries(
-                  Object.entries(value).filter(
-                    ([inner]) => !secret.includes(inner),
-                  ),
-                ),
-          ];
-        }),
-    );
-  }
-
   // Active, with the data class turned on for it or its parent.
   enabledFor(dataclass: string): boolean {
     return (
       this.active &&
       [this, this.parent].some(
-        (owner) => owner?.enabledDataclasses.includes(dataclass) ?? false,
+        (owner) =>
+          owner?.dataclasses.some(
+            ({ name, enabled }) => enabled && name === dataclass,
+          ) ?? false,
       )
     );
   }

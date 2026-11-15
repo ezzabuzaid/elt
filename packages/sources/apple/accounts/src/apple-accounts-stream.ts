@@ -12,9 +12,9 @@ import type { AccountsScan } from './accounts-scan.ts';
 
 export const accountsFields = {
   ...eventKitFields,
-  nullableId: { type: ['string', 'null'], minLength: 1 },
-  nullableBoolean: { type: ['boolean', 'null'] },
   nullableInteger: { type: ['integer', 'null'] },
+  integers: { type: 'array', items: { type: 'integer' } },
+  nullableBoolean: { type: ['boolean', 'null'] },
   strings: { type: 'array', items: { type: 'string' } },
 } as const;
 

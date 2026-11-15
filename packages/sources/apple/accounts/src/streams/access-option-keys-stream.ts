@@ -7,21 +7,26 @@ import {
   accountsFields,
 } from '../apple-accounts-stream.ts';
 
-const { id, nullableInteger, strings } = accountsFields;
+const { id, integer, nullableInteger, integers } = accountsFields;
 
 const properties = {
+  id: {
+    ...integer,
+    description:
+      'The option key row (ZACCESSOPTIONSKEY.Z_PK); the primary key.',
+  },
   name: {
     ...id,
     description:
-      'Option key name, such as ACFacebookAppIdKey; the primary key.',
+      'Option key name, such as ACFacebookAppIdKey. The store does not keep it unique.',
   },
   enumValue: {
     ...nullableInteger,
     description:
       "The Accounts framework's number for the key as stored; NULL when it holds none.",
   },
-  accountTypes: {
-    ...strings,
+  accountTypeIds: {
+    ...integers,
     description:
       'Account types the key applies to, each an accountTypes.id within this source; empty when none.',
   },
@@ -32,11 +37,11 @@ export class AccessOptionKeysStream extends AppleAccountsStream<
   AccessOptionKey
 > {
   readonly name = 'accessOptionKeys';
-  readonly primaryKey = ['name'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per option key an app passes when it asks for access to a kind of account, such as a Facebook app identifier. Primary key name.',
+      'One record per option key an app passes when it asks for access to a kind of account, such as a Facebook app identifier. Primary key id.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -48,9 +53,10 @@ export class AccessOptionKeysStream extends AppleAccountsStream<
   protected records(key: AccessOptionKey): RecordDraft<typeof properties>[] {
     return [
       {
+        id: key.id,
         name: key.name,
         enumValue: key.enumValue,
-        accountTypes: [...key.accountTypes],
+        accountTypeIds: [...key.accountTypeIds],
       },
     ];
   }

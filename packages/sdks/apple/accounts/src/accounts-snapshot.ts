@@ -11,13 +11,14 @@ import {
   isDictionary,
 } from '@eltjs/codec-plist';
 
-import { Account } from './account.ts';
+import { Account, type AccountDataclass } from './account.ts';
 import { appDatabase } from './app-database.ts';
 import { AccountsSchemaError } from './errors.ts';
 
 // A kind of account, such as com.apple.account.IMAP, and the data classes it
-// can offer.
+// can offer, each by its Z_PK.
 export type AccountType = {
+  readonly id: number;
   readonly identifier: string;
   readonly description: string | null;
   readonly credentialType: string | null;
@@ -27,27 +28,42 @@ export type AccountType = {
   readonly supportsAuthentication: boolean | null;
   readonly supportsMultipleAccounts: boolean | null;
   readonly visibility: number | null;
-  readonly supportedDataclasses: readonly string[];
-  readonly syncableDataclasses: readonly string[];
+  readonly supportedDataclassIds: readonly number[];
+  readonly syncableDataclassIds: readonly number[];
 };
 
 // A kind of data an account syncs, such as com.apple.Dataclass.Mail, and the
-// Accounts framework's number for it.
+// Accounts framework's number for it. The store does not keep the name
+// unique.
 export type Dataclass = {
+  readonly id: number;
   readonly name: string;
   readonly enumValue: number | null;
 };
 
 // An option key an app passes to request access to a kind of account, such
-// as ACFacebookAppIdKey, and the account types it applies to.
+// as ACFacebookAppIdKey, and the account types it applies to, each by its
+// Z_PK.
 export type AccessOptionKey = {
+  readonly id: number;
   readonly name: string;
   readonly enumValue: number | null;
-  readonly accountTypes: readonly string[];
+  readonly accountTypeIds: readonly number[];
+};
+
+// One keyed value of an account, decoded from its keyed archive, without
+// authentication material.
+export type AccountProperty = {
+  readonly id: number;
+  readonly accountId: number;
+  readonly key: string;
+  readonly value: PlistValue;
 };
 
 // An app's granted access to one kind of account.
 export type Authorization = {
+  readonly id: number;
+  readonly accountTypeId: number;
   readonly accountType: string;
   readonly bundleId: string;
   readonly grantedPermissions: string | null;
@@ -55,8 +71,10 @@ export type Authorization = {
 };
 
 // When a stored credential for an account and service expires. The
-// credential itself lives in the keychain, not here.
+// credential itself lives in the keychain, not here. The account is named by
+// its identifier, as stored, not by a link to its row.
 export type CredentialItem = {
+  readonly id: number;
   readonly accountIdentifier: string;
   readonly serviceName: string;
   readonly expiresAt: Date | null;
@@ -101,17 +119,19 @@ const accountTypeColumns = {
     'ZSUPPORTSMULTIPLEACCOUNTS',
     'ZVISIBILITY',
   ],
-  ZDATACLASS: ['Z_PK', 'ZNAME'],
+} satisfies SnapshotColumns;
+const accountPropertyColumns = {
+  ZACCOUNTPROPERTY: ['Z_PK', 'ZOWNER', 'ZKEY', 'ZVALUE'],
 } satisfies SnapshotColumns;
 const dataclassColumns = {
-  ZDATACLASS: ['ZNAME', 'ZENUMVALUE'],
+  ZDATACLASS: ['Z_PK', 'ZNAME', 'ZENUMVALUE'],
 } satisfies SnapshotColumns;
 const accessOptionKeyColumns = {
   ZACCESSOPTIONSKEY: ['Z_PK', 'ZNAME', 'ZENUMVALUE'],
-  ZACCOUNTTYPE: ['Z_PK', 'ZIDENTIFIER'],
 } satisfies SnapshotColumns;
 const authorizationColumns = {
   ZAUTHORIZATION: [
+    'Z_PK',
     'ZACCOUNTTYPE',
     'ZBUNDLEID',
     'ZGRANTEDPERMISSIONS',
@@ -121,6 +141,7 @@ const authorizationColumns = {
 } satisfies SnapshotColumns;
 const credentialItemColumns = {
   ZCREDENTIALITEM: [
+    'Z_PK',
     'ZACCOUNTIDENTIFIER',
     'ZSERVICENAME',
     'ZEXPIRATIONDATE',
@@ -132,6 +153,19 @@ const credentialItemColumns = {
 // millisecond rounds as SQLite rounds it.
 const instant = (column: string) =>
   `strftime('%Y-%m-%dT%H:%M:%fZ', ${column} + ${referenceDateSeconds}, 'unixepoch')`;
+
+// Properties that hold authentication material rather than settings: the
+// iTunes Store's encrypted last sign-in response, the Apple ID's next
+// liveness nonce and Game Center's opaque player record, whole, and the
+// identity service's AuthID inside account-info.
+const authenticationProperties = new Set([
+  'lastAuthenticationServerResponse',
+  'nextLivenessNonce',
+  'GKPlayerInternal',
+]);
+const authenticationKeys: Readonly<Record<string, readonly string[]>> = {
+  'account-info': ['AuthID'],
+};
 
 // The store as of one moment: everything read through it agrees. Each kind of
 // record is read on request and checks only the tables it reads. Hold it only
@@ -157,7 +191,8 @@ export class AccountsSnapshot implements Disposable {
     const rows = this.#database
       .all(
         `SELECT account.Z_PK AS pk, account.ZIDENTIFIER AS identifier,
-                type.ZIDENTIFIER AS type, account.ZPARENTACCOUNT AS parent,
+                account.ZACCOUNTTYPE AS typeId, type.ZIDENTIFIER AS type,
+                account.ZPARENTACCOUNT AS parent,
                 account.ZACCOUNTDESCRIPTION AS description,
                 account.ZUSERNAME AS username, account.ZACTIVE AS active,
                 account.ZAUTHENTICATED AS authenticated,
@@ -178,6 +213,7 @@ export class AccountsSnapshot implements Disposable {
       .map((row) => ({
         pk: Number(row.pk),
         identifier: required(row.identifier, 'An account has no identifier'),
+        typeId: Number(row.typeId),
         type: required(row.type, 'An account has no type'),
         parent: row.parent === null ? null : Number(row.parent),
         row,
@@ -194,7 +230,9 @@ export class AccountsSnapshot implements Disposable {
         entry.parent === null ? undefined : byKey.get(entry.parent);
       const dataclassProperties = decoded(row.dataclassProperties);
       const created = new Account({
+        id: entry.pk,
         identifier: entry.identifier,
+        typeId: entry.typeId,
         type: entry.type,
         parent: parent === undefined ? null : account(parent),
         description: string(row.description),
@@ -212,8 +250,11 @@ export class AccountsSnapshot implements Disposable {
         credentialType: string(row.credentialType),
         modificationId: string(row.modificationId),
         owningBundleId: string(row.owningBundleId),
-        enabledDataclasses: named(enabled.get(entry.pk), names),
-        provisionedDataclasses: named(provisioned.get(entry.pk), names),
+        dataclasses: accountDataclasses(
+          enabled.get(entry.pk) ?? [],
+          provisioned.get(entry.pk) ?? [],
+          names,
+        ),
         properties: properties.get(entry.pk) ?? {},
         dataclassProperties: isDictionary(dataclassProperties)
           ? dataclassProperties
@@ -227,7 +268,6 @@ export class AccountsSnapshot implements Disposable {
 
   accountTypes(): IteratorObject<AccountType, undefined> {
     this.#require(accountTypeColumns);
-    const names = this.#dataclassNames();
     const supported = this.#links('SUPPORTEDDATACLASSES', 'SUPPORTEDTYPES');
     const syncable = this.#links('SYNCABLEDATACLASSES', 'SYNCABLETYPES');
     return this.#database
@@ -243,6 +283,7 @@ export class AccountsSnapshot implements Disposable {
          FROM ZACCOUNTTYPE ORDER BY Z_PK`,
       )
       .map((row) => ({
+        id: Number(row.pk),
         identifier: required(
           row.identifier,
           'An account type has no identifier',
@@ -255,8 +296,8 @@ export class AccountsSnapshot implements Disposable {
         supportsAuthentication: flag(row.supportsAuthentication),
         supportsMultipleAccounts: flag(row.supportsMultipleAccounts),
         visibility: integer(row.visibility),
-        supportedDataclasses: named(supported.get(Number(row.pk)), names),
-        syncableDataclasses: named(syncable.get(Number(row.pk)), names),
+        supportedDataclassIds: supported.get(Number(row.pk)) ?? [],
+        syncableDataclassIds: syncable.get(Number(row.pk)) ?? [],
       }));
   }
 
@@ -264,9 +305,10 @@ export class AccountsSnapshot implements Disposable {
     this.#require(dataclassColumns);
     return this.#database
       .iterate(
-        'SELECT ZNAME AS name, ZENUMVALUE AS enumValue FROM ZDATACLASS ORDER BY Z_PK',
+        'SELECT Z_PK AS pk, ZNAME AS name, ZENUMVALUE AS enumValue FROM ZDATACLASS ORDER BY Z_PK',
       )
       .map((row) => ({
+        id: Number(row.pk),
         name: required(decoded(row.name), 'A data class has no name'),
         enumValue: integer(row.enumValue),
       }));
@@ -274,24 +316,47 @@ export class AccountsSnapshot implements Disposable {
 
   accessOptionKeys(): IteratorObject<AccessOptionKey, undefined> {
     this.#require(accessOptionKeyColumns);
-    const types = this.#accountTypeIdentifiers();
     const owners = this.#links('OWNINGACCOUNTTYPES', 'ACCESSKEYS');
     return this.#database
       .iterate(
         'SELECT Z_PK AS pk, ZNAME AS name, ZENUMVALUE AS enumValue FROM ZACCESSOPTIONSKEY ORDER BY Z_PK',
       )
       .map((row) => ({
+        id: Number(row.pk),
         name: required(row.name, 'An access option key has no name'),
         enumValue: integer(row.enumValue),
-        accountTypes: named(owners.get(Number(row.pk)), types),
+        accountTypeIds: owners.get(Number(row.pk)) ?? [],
       }));
+  }
+
+  // One property row at a time; authentication material is left out.
+  accountProperties(): IteratorObject<AccountProperty, undefined> {
+    this.#require(accountPropertyColumns);
+    return this.#database
+      .iterate(
+        'SELECT Z_PK AS pk, ZOWNER AS owner, ZKEY AS key, ZVALUE AS value FROM ZACCOUNTPROPERTY ORDER BY Z_PK',
+      )
+      .flatMap((row) => {
+        const key = required(row.key, 'An account property has no key');
+        if (authenticationProperties.has(key)) return [];
+        return [
+          {
+            id: Number(row.pk),
+            accountId: Number(row.owner),
+            key,
+            value: withoutAuthenticationKeys(key, decoded(row.value)),
+          },
+        ];
+      });
   }
 
   authorizations(): IteratorObject<Authorization, undefined> {
     this.#require(authorizationColumns);
     return this.#database
       .iterate(
-        `SELECT type.ZIDENTIFIER AS accountType,
+        `SELECT authorization.Z_PK AS pk,
+                authorization.ZACCOUNTTYPE AS accountTypeId,
+                type.ZIDENTIFIER AS accountType,
                 authorization.ZBUNDLEID AS bundleId,
                 authorization.ZGRANTEDPERMISSIONS AS grantedPermissions,
                 authorization.ZOPTIONS AS options
@@ -301,6 +366,8 @@ export class AccountsSnapshot implements Disposable {
          ORDER BY authorization.Z_PK`,
       )
       .map((row) => ({
+        id: Number(row.pk),
+        accountTypeId: Number(row.accountTypeId),
         accountType: required(
           row.accountType,
           'An authorization has no account type',
@@ -315,13 +382,14 @@ export class AccountsSnapshot implements Disposable {
     this.#require(credentialItemColumns);
     return this.#database
       .iterate(
-        `SELECT ZACCOUNTIDENTIFIER AS accountIdentifier,
+        `SELECT Z_PK AS pk, ZACCOUNTIDENTIFIER AS accountIdentifier,
                 ZSERVICENAME AS serviceName,
                 ${instant('ZEXPIRATIONDATE')} AS expiresAt,
                 ZPERSISTENT AS persistent
          FROM ZCREDENTIALITEM ORDER BY Z_PK`,
       )
       .map((row) => ({
+        id: Number(row.pk),
         accountIdentifier: required(
           row.accountIdentifier,
           'A credential item has no account',
@@ -352,14 +420,6 @@ export class AccountsSnapshot implements Disposable {
       this.#database
         .all('SELECT Z_PK AS pk, ZNAME AS name FROM ZDATACLASS')
         .map(({ pk, name }) => [Number(pk), String(decoded(name))]),
-    );
-  }
-
-  #accountTypeIdentifiers(): Map<number, string> {
-    return new Map(
-      this.#database
-        .all('SELECT Z_PK AS pk, ZIDENTIFIER AS identifier FROM ZACCOUNTTYPE')
-        .map(({ pk, identifier }) => [Number(pk), String(identifier)]),
     );
   }
 
@@ -410,11 +470,31 @@ export class AccountsSnapshot implements Disposable {
   }
 }
 
-function named(
-  keys: readonly number[] | undefined,
+// The two join tables of an account, joined on the data class row: a data
+// class in either table is one link, with both flags.
+function accountDataclasses(
+  enabled: readonly number[],
+  provisioned: readonly number[],
   names: ReadonlyMap<number, string>,
-): string[] {
-  return (keys ?? []).flatMap((key) => names.get(key) ?? []);
+): AccountDataclass[] {
+  return [
+    ...provisioned,
+    ...enabled.filter((id) => !provisioned.includes(id)),
+  ].map((dataclassId) => ({
+    dataclassId,
+    name: names.get(dataclassId) ?? null,
+    enabled: enabled.includes(dataclassId),
+    provisioned: provisioned.includes(dataclassId),
+  }));
+}
+
+function withoutAuthenticationKeys(key: string, value: PlistValue): PlistValue {
+  const secret = authenticationKeys[key];
+  return secret === undefined || !isDictionary(value)
+    ? value
+    : Object.fromEntries(
+        Object.entries(value).filter(([inner]) => !secret.includes(inner)),
+      );
 }
 
 function decoded(value: unknown): PlistValue {

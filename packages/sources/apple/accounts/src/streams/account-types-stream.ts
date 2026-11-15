@@ -7,16 +7,27 @@ import {
   accountsFields,
 } from '../apple-accounts-stream.ts';
 
-const { id, nullableText, nullableBoolean, nullableInteger, strings } =
-  accountsFields;
+const {
+  id,
+  integer,
+  nullableText,
+  nullableBoolean,
+  nullableInteger,
+  integers,
+} = accountsFields;
 const stored = (what: string) =>
   `${what} as the Accounts framework stores it; NULL when it holds none.`;
 
 const properties = {
   id: {
+    ...integer,
+    description:
+      'The account type row (ZACCOUNTTYPE.Z_PK); the primary key. accounts.typeId, authorizations.accountTypeId and accessOptionKeys.accountTypeIds refer to it within this source.',
+  },
+  identifier: {
     ...id,
     description:
-      'Account type identifier, such as com.apple.account.IMAP; the primary key. accounts.type and accessOptionKeys.accountTypes refer to it within this source.',
+      'Account type identifier, such as com.apple.account.IMAP. The store does not keep it unique.',
   },
   description: {
     ...nullableText,
@@ -50,15 +61,15 @@ const properties = {
     ...nullableInteger,
     description: stored('The visibility value'),
   },
-  supportedDataclasses: {
-    ...strings,
+  supportedDataclassIds: {
+    ...integers,
     description:
-      'Data classes its accounts can offer, each a dataclasses.name within this source; empty when none.',
+      'Data classes its accounts can offer, each a dataclasses.id within this source; empty when none.',
   },
-  syncableDataclasses: {
-    ...strings,
+  syncableDataclassIds: {
+    ...integers,
     description:
-      'Data classes its accounts can sync, each a dataclasses.name within this source; empty when none.',
+      'Data classes its accounts can sync, each a dataclasses.id within this source; empty when none.',
   },
 } as const;
 
@@ -83,7 +94,8 @@ export class AccountTypesStream extends AppleAccountsStream<
   protected records(type: AccountType): RecordDraft<typeof properties>[] {
     return [
       {
-        id: type.identifier,
+        id: type.id,
+        identifier: type.identifier,
         description: type.description,
         credentialType: type.credentialType,
         credentialProtectionPolicy: type.credentialProtectionPolicy,
@@ -92,8 +104,8 @@ export class AccountTypesStream extends AppleAccountsStream<
         supportsAuthentication: type.supportsAuthentication,
         supportsMultipleAccounts: type.supportsMultipleAccounts,
         visibility: type.visibility,
-        supportedDataclasses: [...type.supportedDataclasses],
-        syncableDataclasses: [...type.syncableDataclasses],
+        supportedDataclassIds: [...type.supportedDataclassIds],
+        syncableDataclassIds: [...type.syncableDataclassIds],
       },
     ];
   }

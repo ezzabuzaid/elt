@@ -1,7 +1,7 @@
 import type { Account, AccountsSnapshot } from '@eltjs/sdk-apple-accounts';
 
 // One run's read of the Accounts store: every stream reads the same snapshot.
-// Accounts are read once and kept for the run, since three streams project
+// Accounts are read once and kept for the run, since two streams project
 // them and each links to its parent; every other kind of record is read from
 // the snapshot as its stream iterates it, never held for the run.
 export class AccountsScan implements AsyncDisposable {

@@ -7,13 +7,18 @@ import {
   accountsFields,
 } from '../apple-accounts-stream.ts';
 
-const { id, nullableBoolean, nullableTimestamp } = accountsFields;
+const { id, integer, nullableBoolean, nullableTimestamp } = accountsFields;
 
 const properties = {
-  accountId: {
+  id: {
+    ...integer,
+    description:
+      'The credential item row (ZCREDENTIALITEM.Z_PK); the primary key.',
+  },
+  accountIdentifier: {
     ...id,
     description:
-      'Identifier of the account the credential belongs to, as stored; matches accounts.id within this source while that account exists.',
+      'Identifier of the account the credential belongs to, as stored, not a link to its row; matches accounts.identifier within this source while that account exists.',
   },
   serviceName: {
     ...id,
@@ -36,11 +41,11 @@ export class CredentialItemsStream extends AppleAccountsStream<
   CredentialItem
 > {
   readonly name = 'credentialItems';
-  readonly primaryKey = ['accountId', 'serviceName'];
+  readonly primaryKey = ['id'];
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One record per stored credential the Accounts framework tracks: when it expires, not the credential, which lives in the keychain and is not read. Primary key (accountId, serviceName).',
+      'One record per stored credential the Accounts framework tracks: when it expires, not the credential, which lives in the keychain and is not read. Primary key id.',
     properties,
     required: Object.keys(properties),
   } as const;
@@ -52,7 +57,8 @@ export class CredentialItemsStream extends AppleAccountsStream<
   protected records(item: CredentialItem): RecordDraft<typeof properties>[] {
     return [
       {
-        accountId: item.accountIdentifier,
+        id: item.id,
+        accountIdentifier: item.accountIdentifier,
         serviceName: item.serviceName,
         expiresAt: item.expiresAt?.toISOString() ?? null,
         persistent: item.persistent,

@@ -10,7 +10,8 @@ import {
 
 const {
   id,
-  nullableId,
+  integer,
+  nullableInteger,
   nullableText,
   text,
   boolean,
@@ -23,17 +24,27 @@ const stored = (what: string) =>
 
 const properties = {
   id: {
+    ...integer,
+    description:
+      'The account row (ZACCOUNT.Z_PK); the primary key. parentId, accountProperties.accountId and accountDataclasses.accountId refer to it within this source.',
+  },
+  identifier: {
     ...id,
     description:
-      'Account identifier (ACAccount.identifier); the primary key. parentId, accountProperties.accountId and accountDataclasses.accountId refer to it within this source. Mail names its account folders and the hosts of its mailbox URLs after it.',
+      'Account identifier (ACAccount.identifier). The store does not keep it unique. Mail names its account folders and the hosts of its mailbox URLs after it, and credentialItems.accountIdentifier holds it.',
+  },
+  typeId: {
+    ...integer,
+    description:
+      'The account type; refers to accountTypes.id within this source.',
   },
   type: {
     ...id,
     description:
-      'Account type identifier, such as com.apple.account.IMAP; refers to accountTypes.id within this source.',
+      'Account type identifier, such as com.apple.account.IMAP (accountTypes.identifier).',
   },
   parentId: {
-    ...nullableId,
+    ...nullableInteger,
     description:
       'The account this one belongs to, such as an IMAP or SMTP account under its iCloud or Google account; refers to id within this source. NULL for a top-level account.',
   },
@@ -133,9 +144,11 @@ export class AccountsStream extends AppleAccountsStream<
   protected records(account: Account): RecordDraft<typeof properties>[] {
     return [
       {
-        id: account.identifier,
+        id: account.id,
+        identifier: account.identifier,
+        typeId: account.typeId,
         type: account.type,
-        parentId: account.parent?.identifier ?? null,
+        parentId: account.parent?.id ?? null,
         description: account.description,
         name: account.name,
         username: account.username,
