@@ -23,6 +23,11 @@ const categorySlug = (url: string) => pathSegments(url)[1];
  */
 export class CategoryExtractor extends RecordExtractor {
   readonly properties = {
+    position: {
+      type: 'integer',
+      description:
+        'Position of the link in the hidden menu, from 0; the key with pageUrl.',
+    },
     url: {
       type: 'string',
       description:
@@ -67,7 +72,8 @@ export class CategoryExtractor extends RecordExtractor {
             .filter(({ url }) => isTopLevel(url))
             .map(({ url, name }) => [categorySlug(url), name]),
         );
-        const records = links.map(({ url, name }) => ({
+        const records = links.map(({ url, name }, position) => ({
+          position,
           url,
           name,
           group: isTopLevel(url) ? null : (tops.get(categorySlug(url)) ?? null),

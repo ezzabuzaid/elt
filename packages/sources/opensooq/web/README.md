@@ -22,13 +22,14 @@ const source = new WebSource({
 
 ## Categories
 
-The stream `opensooq_categories` reads each home page with `StartReader` alone: it downloads the home page and requests no category page. The home page has a hidden menu, `<div id="megaMenuRaw">`, that links each category. The menu links each top-level category, such as `/en/cars`, before the categories under it, such as `/en/cars/motorcycles`. On 2026-10-30, the menu of OpenSooq Jordan linked 1,183 categories, 19 of them top-level, and no URL twice. `StartReader` downloads the home page a second time to hand it back, so a read costs two downloads of the home page and one of `robots.txt`. A home page without the menu is a failure of that page, and no category is stored.
+The stream `opensooq_categories` reads each home page with `StartReader` alone: it downloads the home page and requests no category page. The home page has a hidden menu, `<div id="megaMenuRaw">`, that links each category. The menu links each top-level category, such as `/en/cars`, before the categories under it, such as `/en/cars/motorcycles`. On 2026-10-30, the menu of OpenSooq Jordan linked 1,183 categories, 19 of them top-level, and no URL twice. A page does not keep its links unique, so a record is keyed by its place in the menu: `inputUrl`, `pageUrl` and `position` (ADR 0022 of elt). A menu that links one URL twice gives two records. `StartReader` downloads the home page a second time to hand it back, so a read costs two downloads of the home page and one of `robots.txt`. A home page without the menu is a failure of that page, and no category is stored.
 
-| Column  | From the menu                                                                                                 |
-| ------- | ------------------------------------------------------------------------------------------------------------- |
-| `url`   | the link, as an absolute URL; the stream's key with `inputUrl`                                                |
-| `name`  | the text of the link, such as `Motorcycles`                                                                   |
-| `group` | the name of the top-level category that the category is under, such as `Autos`; null for a top-level category |
+| Column     | From the menu                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------------------- |
+| `position` | the place of the link in the menu, from 0; the stream's key with `inputUrl` and `pageUrl`                     |
+| `url`      | the link, as an absolute URL                                                                                  |
+| `name`     | the text of the link, such as `Motorcycles`                                                                   |
+| `group`    | the name of the top-level category that the category is under, such as `Autos`; null for a top-level category |
 
 ## Listings
 
@@ -38,22 +39,24 @@ A listing page is read once (`OnceRevisit`): a later run does not request it aga
 
 `OpenSooqExtractor` reads the schema.org JSON-LD of a listing page. A listing page also embeds Organization, BreadcrumbList and FAQPage objects; the listing object is the one whose `url` path is `/:lang/search/<id>` with the id of the page URL. The `@type` of the listing object is a schema.org type. On 2026-10-26, the live listings had five types: `Motorcycle`, `Product`, `Residence`, `Service` and `Vehicle`. One zod schema validates each of them, and it accepts any `@type`. A listing page without that object, or with an object that does not match the schema, is a failure of that page, and the page is tried again on the next run. A page that is not a listing page gives no record.
 
-| Column         | From the listing object                                               |
-| -------------- | --------------------------------------------------------------------- |
-| `id`           | the id in the listing path, as text; the stream's key with `inputUrl` |
-| `title`        | `name`                                                                |
-| `description`  | `description`, or null (`Residence` has none)                         |
-| `url`          | the final URL of the listing page                                     |
-| `type`         | `@type`, such as `Motorcycle`                                         |
-| `price`        | `offers.price` as a number                                            |
-| `currency`     | `offers.priceCurrency`                                                |
-| `location`     | `contentLocation` of the image, as given                              |
-| `imageUrls`    | `[contentUrl]` of the image                                           |
-| `condition`    | `itemCondition`, or null (only `Motorcycle` has one)                  |
-| `availability` | `offers.availability`                                                 |
-| `publishedAt`  | `datePublished` of the image as given, or null (`Product` has none)   |
+| Column         | From the listing object                                             |
+| -------------- | ------------------------------------------------------------------- |
+| `id`           | the id in the listing path, as text                                 |
+| `title`        | `name`                                                              |
+| `description`  | `description`, or null (`Residence` has none)                       |
+| `url`          | the final URL of the listing page                                   |
+| `type`         | `@type`, such as `Motorcycle`                                       |
+| `price`        | `offers.price` as a number                                          |
+| `currency`     | `offers.priceCurrency`                                              |
+| `location`     | `contentLocation` of the image, as given                            |
+| `imageUrls`    | `[contentUrl]` of the image                                         |
+| `condition`    | `itemCondition`, or null (only `Motorcycle` has one)                |
+| `availability` | `offers.availability`                                               |
+| `publishedAt`  | `datePublished` of the image as given, or null (`Product` has none) |
 
 The image is under `image`, or under `photo` for `Residence`.
+
+A listing page gives one record, and the crawl keeps one page per URL, so a listing is keyed by `inputUrl` and `pageUrl` (ADR 0022 of elt). The listing id is not the key: the `/en/` and `/ar/` pages of one listing share it, and each page gives its own record. A reader that wants one row for each listing groups by `id`.
 
 The page fingerprint is the hash of the validated listing object and the page URL. Changes elsewhere in the page, such as ads or timestamps, do not cause an extraction.
 

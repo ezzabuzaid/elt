@@ -13,7 +13,9 @@ const listingPage = new URLPattern({ pathname: '/:lang/search/*' });
 /** The listings of the category pages given as inputs, following each category's rel="next" pagination. */
 export const listings = new WebStream({
   name: 'opensooq_listings',
-  primaryKey: ['id'],
+  // A listing page gives one record, and the crawl keeps one page per URL; the
+  // listing id is a column, as /en/ and /ar/ pages of one listing share it (ADR 0022).
+  primaryKey: ['pageUrl'],
   // Not ListingReader: OpenSooq's robots.txt lists the sitemaps of 20 country sites.
   // Not ArchiveReader: OpenSooq has no year archives, and a year filter such as /en/cars/motorcycles/2024 is not one.
   readers: [new PaginationReader()],

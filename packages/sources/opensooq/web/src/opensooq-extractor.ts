@@ -47,7 +47,11 @@ const nullableText = { type: ['string', 'null'] } as const;
 /** One listing per OpenSooq listing page, read from the page's schema.org JSON-LD. */
 export class OpenSooqExtractor extends RecordExtractor {
   readonly properties = {
-    id: { ...text, description: 'Listing id, the number in the listing URL.' },
+    id: {
+      ...text,
+      description:
+        'Listing id, the number in the listing URL; the /en/ and /ar/ pages of one listing share it.',
+    },
     title: { ...text, description: 'Listing title.' },
     description: {
       ...nullableText,

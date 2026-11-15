@@ -166,3 +166,42 @@ test('each category of the hidden menu is stored with its absolute URL, its name
     ],
   );
 });
+
+test('a category that the hidden menu links twice is stored at each of its menu positions, as a page does not keep its links unique', async () => {
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  await using upstream = await homePage(
+    '<div id="megaMenuRaw"><a href="/en/cars">Autos</a><a href="/en/cars/motorcycles">Motorcycles</a><a href="/en/cars/motorcycles">Bikes</a></div>',
+  );
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [{ stream: categories, inputs: [`${upstream.origin}/en`] }],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+
+  await ingestion.run();
+
+  const { origin } = upstream;
+  assert.deepEqual(
+    database.connection
+      .prepare(
+        'SELECT position, url, name FROM opensooq_categories ORDER BY position',
+      )
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      { position: 0, url: `${origin}/en/cars`, name: 'Autos' },
+      {
+        position: 1,
+        url: `${origin}/en/cars/motorcycles`,
+        name: 'Motorcycles',
+      },
+      { position: 2, url: `${origin}/en/cars/motorcycles`, name: 'Bikes' },
+    ],
+  );
+});

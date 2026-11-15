@@ -835,3 +835,63 @@ function shiftedClock(t: TestContext) {
     shift += ms;
   };
 }
+
+test('a listing that a category links under /en/ and /ar/ is stored once for each page, as the crawl keeps one page per URL and not one per listing id', async () => {
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  await using upstream = await new HttpServer().start((request, response) => {
+    const url = new URL(request.url ?? '/', 'http://localhost');
+    const listing = /^\/(en|ar)\/search\/(\d+)$/.exec(url.pathname);
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    if (url.pathname === '/en/category')
+      response.end(
+        '<html><body><main><a href="/en/search/287909010">English</a><a href="/ar/search/287909010">عربي</a></main></body></html>',
+      );
+    else if (listing)
+      response.end(
+        listingPage([
+          {
+            ...motorcycle(listing[2] ?? '', '4499'),
+            name: listing[1] === 'ar' ? 'تارو رينجر' : 'TARO RANGER',
+            url: `http://jo.opensooq.com/${listing[1]}/search/${listing[2]}`,
+          },
+        ]),
+      );
+    else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [
+        { stream: listings, inputs: [`${upstream.origin}/en/category`] },
+      ],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+
+  await ingestion.run();
+
+  assert.deepEqual(
+    database.connection
+      .prepare(
+        'SELECT pageUrl, id, title FROM opensooq_listings ORDER BY pageUrl',
+      )
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      {
+        pageUrl: `${upstream.origin}/ar/search/287909010`,
+        id: '287909010',
+        title: 'تارو رينجر',
+      },
+      {
+        pageUrl: `${upstream.origin}/en/search/287909010`,
+        id: '287909010',
+        title: 'TARO RANGER',
+      },
+    ],
+  );
+});
