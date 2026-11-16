@@ -12,12 +12,11 @@ type Command = (signal: AbortSignal) => Promise<string>;
 // An automation as an eca rule, named for its saved cursor.
 type Named = Rule<postgres.Sql, Command> & { readonly name: string };
 
-// Runs the automations over one warehouse. An automation gives the keys that
-// are true; its eca condition gives each key that is true after and was not
-// before, carrying the automation's act bound to the match, so a new match is
-// a command the loop runs, and eca stays unaware of actions. The cursor of
-// each automation is kept in proactive.cursors, by the name it was added
-// with, so a restart goes on where the last run stopped.
+// Runs the automations over one warehouse. Each automation is an eca
+// condition, and its rule gives each match with the automation's act bound
+// to it, so a match is a command the loop runs, and eca stays unaware of
+// actions. The cursor of each automation is kept in proactive.cursors, by the
+// name it was added with, so a restart goes on where the last run stopped.
 export class Automations {
   readonly #eca: Eca<postgres.Sql, Command>;
   readonly #cursors: postgres.Sql;
@@ -46,16 +45,9 @@ export class Automations {
       name,
       condition: {
         async evaluate(before, after) {
-          const was = new Set(
-            (await automation.evaluate(before.sql, before.at)).map(
-              ({ key }) => key,
-            ),
+          return (await automation.evaluate(before, after)).map(
+            (match) => (signal: AbortSignal) => automation.act(match, signal),
           );
-          return (await automation.evaluate(after.sql, after.at))
-            .filter(({ key }) => !was.has(key))
-            .map(
-              (match) => (signal: AbortSignal) => automation.act(match, signal),
-            );
         },
       },
     });
@@ -102,7 +94,7 @@ export class Automations {
       if ('error' in outcome) {
         failures += 1;
         process.stderr.write(
-          `An automation failed: ${String(outcome.error)}\n`,
+          `The automation ${name} failed: ${String(outcome.error)}\n`,
         );
       }
       for (const act of outcome.matches)
@@ -119,7 +111,9 @@ export class Automations {
           ]);
         } catch (error) {
           failures += 1;
-          process.stderr.write(`An automation failed: ${String(error)}\n`);
+          process.stderr.write(
+            `The automation ${name} failed: ${String(error)}\n`,
+          );
         }
       await this.#save(name, outcome.cursor);
     }

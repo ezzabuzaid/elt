@@ -1,26 +1,33 @@
 import type postgres from 'postgres';
 
-import type { Match } from '../../engine/automation.ts';
+import type { Reading } from '@eltjs/eca';
+
 import { NotifyAutomation } from '../../engine/notify-automation.ts';
 
 type Context = { readonly matches: boolean; readonly seconds: number };
 
+type Message = { readonly text: string; readonly url: string };
+
 // Sender scope is fixed for both topic rules. Other people's messages can
 // supply context, but can never become notifications. Context is rebuilt
-// from the warehouse each time, so a late-loaded thread parent is usable.
-export abstract class ClayTopicMessages extends NotifyAutomation<{
-  text: string;
-  url: string;
-}> {
+// from the warehouse each time, so a late-loaded thread parent is usable. A
+// message matches when it is about the topic after and was not before; its
+// URL names it by workspace, conversation and exact Slack timestamp.
+export abstract class ClayTopicMessages extends NotifyAutomation<Message> {
   abstract readonly name: string;
 
-  message({ data }: Match<{ text: string; url: string }>) {
-    return `${data.text}\n${data.url}`;
+  message({ text, url }: Message) {
+    return `${text}\n${url}`;
   }
 
   protected abstract about(text: string, channelId: string): boolean;
 
-  async evaluate(sql: postgres.Sql) {
+  async evaluate(before: Reading<postgres.Sql>, after: Reading<postgres.Sql>) {
+    const was = new Set((await this.#about(before.sql)).map(({ url }) => url));
+    return (await this.#about(after.sql)).filter(({ url }) => !was.has(url));
+  }
+
+  async #about(sql: postgres.Sql): Promise<Message[]> {
     const rows = await sql`
       SELECT * FROM (
         SELECT DISTINCT ON ("channelId", ts)
@@ -41,7 +48,7 @@ export abstract class ClayTopicMessages extends NotifyAutomation<{
 
     const conversations = new Map<string, Context>();
     const threads = new Map<string, Context>();
-    const matches: Match<{ text: string; url: string }>[] = [];
+    const matches: Message[] = [];
     for (const { channelId, ts, userId, text, threadTs } of rows) {
       if (
         typeof channelId !== 'string' ||
@@ -72,13 +79,10 @@ export abstract class ClayTopicMessages extends NotifyAutomation<{
       }
       if (userId !== 'U03CUQ5SCRY' || !context.matches) continue;
       matches.push({
-        key: `T20H06JTC/${channelId}/${ts}`,
-        data: {
-          // Slack keeps an empty text for a message with no words, such as
-          // one that only shares a file.
-          text: `${this.name}: ${text === '' ? '(no text)' : text}`,
-          url: `slack://channel?team=T20H06JTC&id=${channelId}&message=${ts}`,
-        },
+        // Slack keeps an empty text for a message with no words, such as one
+        // that only shares a file.
+        text: `${this.name}: ${text === '' ? '(no text)' : text}`,
+        url: `slack://channel?team=T20H06JTC&id=${channelId}&message=${ts}`,
       });
     }
     return matches;

@@ -1,8 +1,8 @@
-import { hash } from 'node:crypto';
-
 import type postgres from 'postgres';
 
-import { Automation, type Match } from '../../engine/automation.ts';
+import type { Reading } from '@eltjs/eca';
+
+import { Automation } from '../../engine/automation.ts';
 import type { MeetingBriefWriter } from './meeting-brief-writer.ts';
 
 type Meeting = {
@@ -40,10 +40,11 @@ export type MeetingBrief = PlanningMeeting & {
   }[];
 };
 
-// A revision is a new match: changing a meeting or one of its conversations
-// refreshes its one brief. The brief also tells how fresh each source is.
-// That is the state of the imports now, which the sync history keeps with
-// no versions, so the action reads it from current, not the condition.
+// A meeting matches when it or the conversations about it are different
+// after than before, so a change refreshes its one brief. The brief also
+// tells how fresh each source is. That is the state of the imports now,
+// which the sync history keeps with no versions, so the action reads it from
+// current, not the condition.
 export class PlanningMeetings extends Automation<PlanningMeeting> {
   readonly #briefs: MeetingBriefWriter;
   readonly #current: postgres.Sql;
@@ -54,7 +55,7 @@ export class PlanningMeetings extends Automation<PlanningMeeting> {
     this.#current = current;
   }
 
-  async act({ data }: Match<PlanningMeeting>, signal: AbortSignal) {
+  async act(data: PlanningMeeting, signal: AbortSignal) {
     const coverage = await this.#current<MeetingBrief['coverage']>`
       SELECT connector, status, last_successful_sync_at::text AS "lastSuccessfulSyncAt"
       FROM marts.sync_status WHERE connector IN ('apple-calendar', 'apple-mail', 'apple-messages', 'slack')
@@ -64,13 +65,25 @@ export class PlanningMeetings extends Automation<PlanningMeeting> {
     return `Planning brief ready: ${data.meeting.name}\n${path}`;
   }
 
-  async evaluate(
-    sql: postgres.Sql,
-    at: Temporal.Instant,
-  ): Promise<Match<PlanningMeeting>[]> {
-    const now = new Date(at.epochMilliseconds);
-    const meetings = (
-      await sql<Meeting[]>`
+  async evaluate(before: Reading<postgres.Sql>, after: Reading<postgres.Sql>) {
+    const was = new Set(
+      (await planning(before)).map((meeting) => JSON.stringify(meeting)),
+    );
+    return (await planning(after)).filter(
+      (meeting) => !was.has(JSON.stringify(meeting)),
+    );
+  }
+}
+
+// Each future planning meeting at the reading's time, with the conversations
+// of the 30 days before that time which name it.
+async function planning({
+  sql,
+  at,
+}: Reading<postgres.Sql>): Promise<PlanningMeeting[]> {
+  const now = new Date(at.epochMilliseconds);
+  const meetings = (
+    await sql<Meeting[]>`
       SELECT e."eventId", e.name, e."startAt", e."endAt", e.body, e.location, e.url,
         coalesce((SELECT jsonb_agg(jsonb_build_object(
           'name', a.name, 'url', a.url, 'status', a.status) ORDER BY a.id)
@@ -83,15 +96,15 @@ export class PlanningMeetings extends Automation<PlanningMeeting> {
         AND NOT c.subscribed AND c.type IN (0, 1, 2)
         AND e."startAt" >= ${now}
       ORDER BY e."eventId"`
-    ).filter(({ name }) =>
-      /\b(?:planning|plan|prep|preparation|formulation|kick[ -]?off|strategy|agenda)\b|تخطيط|تحضير/u.test(
-        name.toLowerCase(),
-      ),
-    );
-    if (meetings.length === 0) return [];
+  ).filter(({ name }) =>
+    /\b(?:planning|plan|prep|preparation|formulation|kick[ -]?off|strategy|agenda)\b|تخطيط|تحضير/u.test(
+      name.toLowerCase(),
+    ),
+  );
+  if (meetings.length === 0) return [];
 
-    const since = new Date(now.getTime() - 30 * 24 * 60 * 60_000);
-    const slack = await sql<Conversation[]>`
+  const since = new Date(now.getTime() - 30 * 24 * 60 * 60_000);
+  const slack = await sql<Conversation[]>`
       SELECT 'Slack/' || "workspaceId" || '/' || "channelId" || '/' || ts AS id,
         'Slack/' || "workspaceId" || '/' || "channelId" || '/' || coalesce("threadTs", ts) AS conversation,
         "sentAt" AS at, coalesce("userId", 'Unknown') AS author, coalesce(text, '') AS text,
@@ -105,7 +118,7 @@ export class PlanningMeetings extends Automation<PlanningMeeting> {
           FROM marts.slack_thread_replies
         ) copies ORDER BY "workspaceId", "channelId", ts, loaded_at DESC, origin
       ) messages WHERE "sentAt" BETWEEN ${since} AND ${now}`;
-    const messages = await sql<Conversation[]>`
+  const messages = await sql<Conversation[]>`
       SELECT 'Messages/' || m.guid || '/' || cm."chatGuid" AS id,
         'Messages/' || cm."chatGuid" AS conversation, m.date AS at,
         CASE WHEN m."isFromMe" THEN 'Me' ELSE coalesce(m.handle, 'Unknown') END AS author,
@@ -113,7 +126,7 @@ export class PlanningMeetings extends Automation<PlanningMeeting> {
       FROM marts.messages_messages m
       JOIN marts.messages_chat_messages cm ON cm."messageGuid" = m.guid
       WHERE m.date BETWEEN ${since} AND ${now}`;
-    const mail = await sql<Conversation[]>`
+  const mail = await sql<Conversation[]>`
       SELECT 'Mail/' || m.id || '/' || coalesce(cm."conversationId", '') AS id,
         'Mail/' || coalesce(cm."conversationId", 'message/' || m.id) AS conversation,
         m."dateReceived" AS at, coalesce(a.address, 'Unknown') AS author,
@@ -133,48 +146,45 @@ export class PlanningMeetings extends Automation<PlanningMeeting> {
       LEFT JOIN marts.mail_subjects s ON s.id = m.subject
       LEFT JOIN marts.mail_message_global_data g ON g.id = m."globalMessageId"
       WHERE m."dateReceived" BETWEEN ${since} AND ${now} AND m.deleted = 0`;
-    for (const message of mail)
-      if (message.url !== null)
-        message.url = `message://${encodeURIComponent(message.url)}`;
-    const conversations = [...slack, ...messages, ...mail].sort(
-      (a, b) => a.at.getTime() - b.at.getTime() || a.id.localeCompare(b.id),
-    );
-    return meetings.map((meeting) => {
-      // Keep distinctive title words. A generic "Planning meeting" can
-      // still be briefed from Calendar, but must not match every conversation.
-      const terms = [
-        ...new Set(meeting.name.toLowerCase().match(/[\p{L}\p{N}]+/gu)),
-      ]
+  for (const message of mail)
+    if (message.url !== null)
+      message.url = `message://${encodeURIComponent(message.url)}`;
+  const conversations = [...slack, ...messages, ...mail].sort(
+    (a, b) => a.at.getTime() - b.at.getTime() || a.id.localeCompare(b.id),
+  );
+  return meetings.map((meeting) => {
+    // Keep distinctive title words. A generic "Planning meeting" can
+    // still be briefed from Calendar, but must not match every conversation.
+    const terms = [
+      ...new Set(meeting.name.toLowerCase().match(/[\p{L}\p{N}]+/gu)),
+    ]
+      .filter(
+        (word) =>
+          !/^(?:a|an|the|and|with|for|of|to|meeting|meetup|planning|plan|prep|preparation|formulation|kick|off|kickoff|strategy|agenda|call|sync|تخطيط|تحضير|اجتماع)$/.test(
+            word,
+          ),
+      )
+      .map(
+        (word) =>
+          new RegExp(
+            `(?<![\\p{L}\\p{N}])${RegExp.escape(word)}(?![\\p{L}\\p{N}])`,
+            'iu',
+          ),
+      );
+    const related = new Set(
+      conversations
         .filter(
-          (word) =>
-            !/^(?:a|an|the|and|with|for|of|to|meeting|meetup|planning|plan|prep|preparation|formulation|kick|off|kickoff|strategy|agenda|call|sync|تخطيط|تحضير|اجتماع)$/.test(
-              word,
-            ),
+          ({ text }) =>
+            (terms.length > 0 && terms.every((term) => term.test(text))) ||
+            (meeting.url !== null && text.includes(meeting.url)),
         )
-        .map(
-          (word) =>
-            new RegExp(
-              `(?<![\\p{L}\\p{N}])${RegExp.escape(word)}(?![\\p{L}\\p{N}])`,
-              'iu',
-            ),
-        );
-      const related = new Set(
-        conversations
-          .filter(
-            ({ text }) =>
-              (terms.length > 0 && terms.every((term) => term.test(text))) ||
-              (meeting.url !== null && text.includes(meeting.url)),
-          )
-          .map(({ conversation }) => conversation),
-      );
-      const evidence = conversations.filter(({ conversation }) =>
+        .map(({ conversation }) => conversation),
+    );
+    return {
+      meeting,
+      conversations: conversations.filter(({ conversation }) =>
         related.has(conversation),
-      );
-      const revision = hash('sha256', JSON.stringify([meeting, evidence]));
-      return {
-        key: `${meeting.eventId}/${revision}`,
-        data: { meeting, conversations: evidence },
-      };
-    });
-  }
+      ),
+    };
+  });
 }

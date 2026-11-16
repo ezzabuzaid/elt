@@ -1,10 +1,10 @@
-import { Automation, type Match } from './automation.ts';
+import { Automation } from './automation.ts';
 
 // An automation whose only action is to tell the user.
 export abstract class NotifyAutomation<Data> extends Automation<Data> {
-  abstract message(match: Match<Data>): string;
+  abstract message(match: Data): string;
 
-  async act(match: Match<Data>): Promise<string> {
+  async act(match: Data): Promise<string> {
     return this.message(match);
   }
 }

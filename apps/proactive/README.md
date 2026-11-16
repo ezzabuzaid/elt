@@ -14,8 +14,9 @@ messages.
 
 ## Rules
 
-Each rule is an automation (`src/engine/automation.ts`): `evaluate` reads the warehouse
-at a time and gives the keys that are true, and `act` does the work for one new match and returns a short receipt, which
+Each rule is an automation (`src/engine/automation.ts`): `evaluate` is its eca
+condition, which reads the warehouse at two readings and gives what matches in
+`after` that did not match in `before`, and `act` does the work for one match and returns a short receipt, which
 `Automations` shows as a macOS notification. A `NotifyAutomation` only tells
 the user. An `AgentAutomation` gives its instruction and the match to Codex
 (its default model for the signed-in account, no user configuration), which may write only in
@@ -103,15 +104,16 @@ The recent Data Hub Claude session identifies the work as MCP, not MCB:
 project-brief access through SQL and exporting BD prompts for proposal skills.
 
 Only messages saved by Slack on this Mac are available, and thread replies
-must have been loaded by the app. Slack saves periodically. Each rule keys a
-message by workspace, conversation and exact Slack timestamp; a reply present
-in both streams or a later edit does not create a second alert for that rule.
+must have been loaded by the app. Slack saves periodically. Each rule tells a
+message by its Slack link, which names its workspace, conversation and exact
+Slack timestamp; a reply present in both streams or a later edit does not
+create a second alert for that rule.
 Matches carry the Slack link as well as the message text.
 
-`Automations` gives each automation to eca as a rule whose condition is "a key
-true after and not before", and eca walks it from its saved cursor over each
-position of the warehouse since the last run. So a run after a pause tells each
-key that became true meanwhile, also one that stopped and became true again.
+`Automations` gives each automation to eca as a rule, and eca walks it from its
+saved cursor over each position of the warehouse since the last run. So a run
+after a pause tells each match that became true meanwhile, also one that
+stopped and became true again.
 The cursors are in `proactive.cursors`, by the name each automation is added
 with, and a cursor is saved after the actions of its run: a run that stops
 between them acts again rather than not at all. A cursor older than the
@@ -128,5 +130,6 @@ run and cleans up a killed run. Each test closes its clients and drops its
 database when done. The generator and
 agent tests use a local executable in place of the authenticated Codex
 service, and the automations test one in place of `osascript`; they make no AI
-request and show no notification. The automations test loads a real pipeline
-into a real Postgres destination and reads it as of its positions.
+request and show no notification. Each test of the automations and of a rule
+loads its rows through a real pipeline into a real Postgres destination and
+reads it as of its positions.
