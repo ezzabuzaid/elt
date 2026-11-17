@@ -1,0 +1,6 @@
+{
+  "name": "sdk-microsoft-sharepoint",
+  "sourceRoot": "packages/sdks/microsoft/sharepoint/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"]
+}

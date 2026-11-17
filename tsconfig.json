@@ -238,6 +238,12 @@
     },
     {
       "path": "./packages/opentelemetry"
+    },
+    {
+      "path": "./packages/sdks/microsoft/sharepoint"
+    },
+    {
+      "path": "./packages/parsers/office"
     }
   ]
 }

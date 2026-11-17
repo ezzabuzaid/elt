@@ -1,0 +1,6 @@
+{
+  "name": "parser-office",
+  "sourceRoot": "packages/parsers/office/src",
+  "projectType": "library",
+  "tags": ["layer:island"]
+}

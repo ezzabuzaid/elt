@@ -1,0 +1,19 @@
+{
+  "name": "@eltjs/parser-office",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./office-document-parser": {
+      "types": "./dist/office-document-parser.d.ts",
+      "default": "./dist/office-document-parser.js"
+    }
+  },
+  "dependencies": {
+    "@eltjs/elt": "*",
+    "officeparser": "^8.8.0"
+  },
+  "devDependencies": {
+    "@zukhruf/fs": "^0.8.26"
+  }
+}

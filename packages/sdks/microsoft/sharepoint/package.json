@@ -1,0 +1,22 @@
+{
+  "name": "@eltjs/sdk-microsoft-sharepoint",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@azure/msal-node": "^7.2.2",
+    "@zukhruf/async": "^0.8.25",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@zukhruf/fs": "^0.8.25",
+    "@zukhruf/testing": "^0.8.25",
+    "msw": "^3.0.3"
+  }
+}

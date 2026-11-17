@@ -9,6 +9,7 @@
     "packages/destinations/*",
     "packages/sdks/*/*",
     "packages/codecs/*",
+    "packages/parsers/*",
     "packages/sources/*/*",
     "apps/*"
   ],
@@ -56,6 +57,7 @@
     "better-sqlite3": false,
     "fsevents": false,
     "nx": false,
+    "tesseract.js": false,
     "unrs-resolver": false
   }
 }
