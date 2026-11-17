@@ -1,4 +1,4 @@
-import { Gauge, Latch } from '@zukhruf/async';
+import { Future, Gauge, Latch } from '@zukhruf/async';
 
 // The count of the changes that the helper of an EventKit store reported, so
 // its value changes at each change. While the helper subscribes, EventKit
@@ -42,11 +42,12 @@ export class EventKitChanges extends Gauge<number> implements AsyncDisposable {
             },
           );
     this.#state = running;
-    const subscription = await running.subscribed.wait();
-    if (subscription.status === 'rejected') {
+    try {
+      await running.subscribed.wait();
+    } catch (error) {
       // This read gives the failure, so the next read starts a new helper.
       this.#state = new Stopped();
-      throw subscription.reason;
+      throw error;
     }
     return this.#changes;
   }
@@ -72,8 +73,8 @@ class Failed {
 
 // A helper that runs until it fails or is stopped.
 class Running {
-  // Opens when the helper confirms its subscription, or fails before it.
-  readonly subscribed = new Latch<PromiseSettledResult<void>>();
+  // Settles when the helper confirms its subscription, or fails before it.
+  readonly subscribed = new Future<void>();
   readonly #controller = new AbortController();
   readonly #ended = new Latch();
 
@@ -99,10 +100,10 @@ class Running {
     try {
       for await (const _change of watch(signal)) {
         changed();
-        this.subscribed.open({ status: 'fulfilled', value: undefined });
+        this.subscribed.resolve();
       }
     } catch (error) {
-      this.subscribed.open({ status: 'rejected', reason: error });
+      this.subscribed.reject(error);
       failed(error);
     } finally {
       this.#ended.open();

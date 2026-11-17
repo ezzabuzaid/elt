@@ -1,7 +1,7 @@
 import {
   Collector,
+  Future,
   type Gauge,
-  Latch,
   Period,
   type Sample,
 } from '@zukhruf/async';
@@ -150,32 +150,30 @@ class Closed implements SessionState {
 }
 
 class Opening implements SessionState {
-  readonly #opened = new Latch<PromiseSettledResult<SqlServerSession>>();
+  readonly #opened: Future<SqlServerSession>;
 
   constructor(database: SqlServerDatabase, failed: () => void) {
-    database.open().then(
-      (value) => this.#opened.open({ status: 'fulfilled', value }),
-      (reason: unknown) => {
+    this.#opened = Future.run(async () => {
+      try {
+        return await database.open();
+      } catch (error) {
         failed();
-        this.#opened.open({ status: 'rejected', reason });
-      },
-    );
+        throw error;
+      }
+    });
   }
 
   open(): Opening {
     return this;
   }
 
-  async session(): Promise<SqlServerSession> {
-    const opened = await this.#opened.wait();
-    if (opened.status === 'rejected') throw opened.reason;
-    return opened.value;
+  session(): Promise<SqlServerSession> {
+    return this.#opened.wait();
   }
 
   // An open that failed has nothing to close; its gauges gave its error.
   async [Symbol.asyncDispose](): Promise<void> {
-    const opened = await this.#opened.wait();
-    if (opened.status === 'fulfilled')
-      await opened.value[Symbol.asyncDispose]();
+    const session = await this.#opened.wait().catch(() => undefined);
+    await session?.[Symbol.asyncDispose]();
   }
 }

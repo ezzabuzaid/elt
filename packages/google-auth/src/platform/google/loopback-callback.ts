@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 
-import type { Clock } from '@zukhruf/async';
+import { type Clock, Future } from '@zukhruf/async';
 
 export class OAuthCallbackTimeoutError extends Error {
   override readonly name = 'OAuthCallbackTimeoutError';
@@ -49,9 +49,8 @@ export async function listenForCallback({
     throw new TypeError('The OAuth callback server is not listening on a port');
   }
   const redirectUri = `http://127.0.0.1:${address.port}/callback`;
-  const answer = Promise.withResolvers<string>();
   // The timeout can fire before anyone asks for the callback.
-  answer.promise.catch(() => {});
+  const answer = new Future<string>();
   // Until the app asks for a callback, no sign-in is the one it waits for.
   let awaits = (_state: string | null): boolean => false;
   let closed = false;
@@ -99,7 +98,7 @@ export async function listenForCallback({
     callback(state: string) {
       if (!state) throw new TypeError('A callback needs the flow state');
       awaits = (received) => received === state;
-      return answer.promise;
+      return answer.wait();
     },
     close,
     redirectUri,
