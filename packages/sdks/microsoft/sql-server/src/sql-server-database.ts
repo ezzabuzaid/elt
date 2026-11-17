@@ -5,9 +5,11 @@ import { SqlServerVersionError } from './errors.ts';
 import { connectionFailure, query } from './sql-server-request.ts';
 import { SqlServerSession } from './sql-server-session.ts';
 
-// One database on a SQL Server, named by an ADO.NET connection string
-// (Server=host,port;Database=name;User Id=...;Password=...), the form SQL
-// Server's own tools print.
+// One database on a SQL Server, named by its parts or by an ADO.NET
+// connection string (Server=host,port;Database=name;User Id=...;Password=...),
+// the form SQL Server's own tools print. A connection string cuts a value at
+// its first ';' and drops its braces, so a password that holds them reaches
+// the server whole only through the parts.
 export class SqlServerDatabase {
   // Server and database, without credentials.
   readonly location: string;
@@ -16,13 +18,36 @@ export class SqlServerDatabase {
   readonly name: string;
   readonly #config: sql.config;
 
-  constructor(connectionString: string) {
-    const config = sql.ConnectionPool.parseConnectionString(connectionString);
+  constructor(
+    named:
+      | string
+      | {
+          server: string;
+          port?: number;
+          database: string;
+          user: string;
+          password: string;
+          // For a server whose certificate no authority signed, such as SQL
+          // Server in Docker.
+          trustServerCertificate?: boolean;
+        },
+  ) {
+    const config: sql.config =
+      typeof named === 'string'
+        ? sql.ConnectionPool.parseConnectionString(named)
+        : {
+            server: named.server,
+            port: named.port,
+            database: named.database,
+            user: named.user,
+            password: named.password,
+            options: { trustServerCertificate: named.trustServerCertificate },
+          };
     // Without a database the login's default one opens, which the caller
     // did not choose.
     if (!config.server || !config.database)
       throw new TypeError(
-        'A SQL Server connection string must name its Server and its Database',
+        'A SQL Server database needs its Server and its Database',
       );
     const instance = config.options?.instanceName;
     this.location = `${config.server}${instance ? `\\${instance}` : ''}:${config.port ?? 1433}/${config.database}`;

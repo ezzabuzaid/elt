@@ -5,9 +5,13 @@ Reads one SQL Server database. This SDK knows nothing of elt. It works with SQL 
 ```ts
 import { SqlServerDatabase } from '@eltjs/sdk-microsoft-sql-server';
 
-const database = new SqlServerDatabase(
-  'Server=localhost,1433;Database=sales;User Id=reader;Password=secret;Encrypt=true',
-);
+const database = new SqlServerDatabase({
+  server: 'localhost',
+  port: 1433,
+  database: 'sales',
+  user: 'reader',
+  password: 'secret',
+});
 
 await using session = await database.open();
 for (const table of await session.tables()) {
@@ -15,7 +19,7 @@ for (const table of await session.tables()) {
 }
 ```
 
-- `SqlServerDatabase` takes an ADO.NET connection string. The string must name its server and its database. An `mssql://` URL does not work.
+- `SqlServerDatabase` takes the parts of a login (`server`, `port`, `database`, `user`, `password` and `trustServerCertificate`), or an ADO.NET connection string, the form that the tools of SQL Server print. Both must name the server and the database. An `mssql://` URL does not work. Use the parts when you have them: a connection string cuts a value at its first `;` and removes its braces, so a password that holds them gets to the server only through the parts. The connection is encrypted. Set `trustServerCertificate` for a server whose certificate no authority signed, such as SQL Server in Docker.
 - `open` gives a `SqlServerSession`. Dispose the session to close its connections.
 - `tables` gives each user table that the login can read. A view is not in the list. Each `SqlServerTable` has its columns, its primary key and its Change Tracking state. `unreadable` names the columns that the login cannot read.
 - `rows`, `page`, `rowversions` and `changes` take a `SqlServerRead`: a `clock`, which an app gives as `globalThis`, and a `signal`, which stops the read also when the server sends nothing. A read that gets no row between two checks an hour apart fails with `SqlServerUnavailableError`.

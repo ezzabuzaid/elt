@@ -33,7 +33,8 @@ const sqlServer = new SqlServer({
 });
 
 // A real db_datareader identity, with the additional grants this test needs.
-// The database belongs to Zukhruf; this scope owns only the server login.
+// The database belongs to Zukhruf; this scope owns only the server login. Its
+// password holds a semicolon and braces, which only the parts carry whole.
 async function readOnlyLogin(
   database: Database,
   admin: sql.ConnectionPool,
@@ -41,7 +42,7 @@ async function readOnlyLogin(
 ) {
   await using resources = new AsyncDisposableStack();
   const user = `reader_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
-  const password = `Reader-${randomUUID()}`;
+  const password = `Reader;{${randomUUID()}}`;
   await admin
     .request()
     .batch(
@@ -68,7 +69,14 @@ async function readOnlyLogin(
   const owned = resources.move();
   return {
     user: `[${user}]`,
-    connectionString: `Server=${database.host},${database.port};Database=${database.database};User Id=${user};Password=${password};Encrypt=true;TrustServerCertificate=true`,
+    login: {
+      server: database.host,
+      port: database.port,
+      database: database.database,
+      user,
+      password,
+      trustServerCertificate: true,
+    },
     [Symbol.asyncDispose]: () => owned.disposeAsync(),
   };
 }
@@ -107,7 +115,7 @@ test('a connection string must name its database; a server that cannot be reache
       new SqlServerDatabase(
         'Server=localhost,51433;User Id=sa;Password=never-printed',
       ),
-    /must name its Server and its Database/,
+    /needs its Server and its Database/,
   );
   await using scratch = await sqlServer.database();
   const unreachable = new SqlServerDatabase(
@@ -140,6 +148,44 @@ test('a connection string must name its database; a server that cannot be reache
   }
 });
 
+test('parts give the server a password that holds a semicolon and braces whole, where its connection string cuts it, and they trust a self-signed certificate only when they say so', async () => {
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  await using reader = await readOnlyLogin(scratch, admin, '');
+  const { server, port, database, user, password } = reader.login;
+
+  const cut = await new SqlServerDatabase(
+    `Server=${server},${port};Database=${database};User Id=${user};Password=${password};Encrypt=true;TrustServerCertificate=true`,
+  )
+    .open()
+    .then(
+      () => assert.fail('the connection string cut the password'),
+      (error: unknown) => error,
+    );
+  const untrusted = await new SqlServerDatabase({
+    server,
+    port,
+    database,
+    user,
+    password,
+  })
+    .open()
+    .then(
+      () => assert.fail('nothing signed the certificate of the server'),
+      (error: unknown) => error,
+    );
+
+  await using session = await new SqlServerDatabase(reader.login).open();
+  assert.deepEqual(await session.tables(), []);
+  assert.ok(cut instanceof SqlServerLoginError, String(cut));
+  assert.ok(untrusted instanceof SqlServerUnavailableError, String(untrusted));
+});
+
 test('discovery shows only what the login may read, and a read refused later names the grant it needs', async () => {
   await using scratch = await sqlServer.database();
   await using clients = new AsyncDisposableStack();
@@ -160,7 +206,7 @@ test('discovery shows only what the login may read, and a read refused later nam
     admin,
     'DENY SELECT ON dbo.people (region) TO {user};',
   );
-  const database = new SqlServerDatabase(reader.connectionString);
+  const database = new SqlServerDatabase(reader.login);
   {
     await using session = await database.open();
     const tables = await session.tables();
@@ -264,9 +310,7 @@ test('a Change Tracking version the history no longer covers, after a truncate o
     admin,
     'GRANT VIEW CHANGE TRACKING ON dbo.items TO {user};',
   );
-  await using session = await new SqlServerDatabase(
-    reader.connectionString,
-  ).open();
+  await using session = await new SqlServerDatabase(reader.login).open();
   const items = table(await session.tables(), 'dbo.items');
   const synced = await session.changeTrackingPosition(items);
   await admin.request().batch('UPDATE dbo.items SET v = 2;');
@@ -344,9 +388,7 @@ test(
       admin,
       'GRANT VIEW CHANGE TRACKING ON dbo.numbers TO {user};',
     );
-    await using session = await new SqlServerDatabase(
-      reader.connectionString,
-    ).open();
+    await using session = await new SqlServerDatabase(reader.login).open();
     const numbers = table(await session.tables(), 'dbo.numbers');
 
     // More abandoned reads, and abandoned snapshots, than the session holds
@@ -410,9 +452,7 @@ for (const snapshot of [false, true])
       admin,
       'GRANT VIEW CHANGE TRACKING ON dbo.lines TO {user};',
     );
-    await using session = await new SqlServerDatabase(
-      reader.connectionString,
-    ).open();
+    await using session = await new SqlServerDatabase(reader.login).open();
     const lines = table(await session.tables(), 'dbo.lines');
     const synced = await session.changeTrackingPosition(lines);
     await admin.request().batch(`
@@ -472,9 +512,7 @@ test('rowversion reads stop below the oldest open write, so a row still being wr
     CREATE TABLE dbo.events (id int PRIMARY KEY, stamp rowversion);
     INSERT dbo.events (id) VALUES (1), (2), (3);`);
   await using reader = await readOnlyLogin(scratch, admin, '');
-  await using session = await new SqlServerDatabase(
-    reader.connectionString,
-  ).open();
+  await using session = await new SqlServerDatabase(reader.login).open();
   const events = table(await session.tables(), 'dbo.events');
   const stamp = events.rowversion;
   assert.ok(stamp);
@@ -544,9 +582,7 @@ test('the database version moves when a rowversion or a tracked table changes, a
       'CREATE TABLE dbo.stamped (id int PRIMARY KEY, note int, stamp rowversion);',
     );
   await using reader = await readOnlyLogin(scratch, admin, '');
-  await using session = await new SqlServerDatabase(
-    reader.connectionString,
-  ).open();
+  await using session = await new SqlServerDatabase(reader.login).open();
   const untracked = await session.version();
   assert.equal(untracked.changeTracking, null);
 
@@ -595,9 +631,7 @@ test('discovery lists user tables but not views, each with its key in key order,
     admin,
     'GRANT VIEW CHANGE TRACKING ON sales.items TO {user};',
   );
-  await using session = await new SqlServerDatabase(
-    reader.connectionString,
-  ).open();
+  await using session = await new SqlServerDatabase(reader.login).open();
 
   const tables = await session.tables();
 
@@ -706,9 +740,7 @@ test('paging by two over every kind of key reads each row once, in the order the
       .join('\n'),
   );
   await using reader = await readOnlyLogin(scratch, admin, '');
-  await using session = await new SqlServerDatabase(
-    reader.connectionString,
-  ).open();
+  await using session = await new SqlServerDatabase(reader.login).open();
   const tables = await session.tables();
 
   for (const name of Object.keys(kinds)) {
@@ -777,9 +809,7 @@ test('every type reads back exactly, at its limits, as the text or number that k
        CAST(CAST('2025-01-02T03:04:05.1234567' AS datetime2(7)) AS sql_variant), N'', NULL),
       (3, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);`);
   await using reader = await readOnlyLogin(scratch, admin, '');
-  await using session = await new SqlServerDatabase(
-    reader.connectionString,
-  ).open();
+  await using session = await new SqlServerDatabase(reader.login).open();
   const everything = table(await session.tables(), 'dbo.everything');
 
   const rows: unknown[][] = await Array.fromAsync(
@@ -943,9 +973,7 @@ test('a connection lost in the middle of a read is unavailable', async () => {
       SELECT TOP (4000) REPLICATE(N'x', 2000)
       FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;`);
   await using reader = await readOnlyLogin(scratch, admin, '');
-  await using session = await new SqlServerDatabase(
-    reader.connectionString,
-  ).open();
+  await using session = await new SqlServerDatabase(reader.login).open();
   const [bookings] = (await session.tables()).filter(
     ({ name }) => name === 'bookings',
   );

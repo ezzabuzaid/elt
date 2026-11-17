@@ -40,12 +40,12 @@ await new Pipeline({
 
 ## How to use it
 
-1. Make a `SqlServerDatabase` from an ADO.NET connection string. [mssql](https://github.com/tediousjs/node-mssql) parses it. It does not read an `mssql://` URL. The connection string must name a `Database`.
+1. Make a `SqlServerDatabase` from the parts of a login (`server`, `port`, `database`, `user`, `password`) or from an ADO.NET connection string, which [mssql](https://github.com/tediousjs/node-mssql) parses. It does not read an `mssql://` URL. Both must name a database. A password that holds `;` or braces gets to the server only through the parts (see the [SDK](../../../sdks/microsoft/sql-server/README.md)).
 2. Call `SqlServerSource.discover(database, { schemas })`. The streams are the tables of the database, so the source is discovered. A host discovers it again on each run.
 3. Call `sqlServerCopies` to make one copy for each discovered table, with the sync strategy that discovery selected.
 4. Connect the copies to a destination and a checkpoint store through `Connection` and `Pipeline`.
 
-`@eltjs/sdk-microsoft-sql-server` owns the database: the connection string, discovery, exact reads, Change Tracking and the values that a watch reads. The source owns the streams, their schemas and the sync strategy. The SDK and the source hold no configuration from environment variables or for a standalone app.
+`@eltjs/sdk-microsoft-sql-server` owns the database: the login, discovery, exact reads, Change Tracking and the values that a watch reads. The source owns the streams, their schemas and the sync strategy. The SDK and the source hold no configuration from environment variables or for a standalone app.
 
 `sqlServerCopies` makes each stream a copy:
 
@@ -61,7 +61,7 @@ A read-only login is sufficient: `db_datareader`, and `VIEW CHANGE TRACKING` on 
 
 `VIEW SERVER STATE` (`VIEW DATABASE STATE` on Azure SQL Database) is optional. With it, a watch sees each write to a table that the source reads by snapshot or fully, also to a column with no statistics. See [Watching](#watching).
 
-- A connection string that names no `Database` is refused. Thus a read never goes to the default database of the login.
+- A database that is made without a `Database` is refused. Thus a read never goes to the default database of the login.
 - A server that cannot be reached fails with `SqlServerUnavailableError`. It is down, it restarts or fails over, its address is wrong, the network dropped the connection, or a read got no row for too long. This is a `system` failure, so a later attempt or the next check of a watch can succeed. A connection that fails during a read gives the same error.
 - A read that waits for the server checks each hour that rows still arrive. A read that got no row from one check to the next fails, so a server that stopped sending fails its read within two hours. A slow read that keeps getting rows does not fail. A stop ends a read at once, also when the server sends nothing. The driver then has 5 seconds to cancel the statement.
 - A login that the server refuses fails with `SqlServerLoginError`: the credentials are wrong or the login is disabled. This is a `config` failure, which the user must fix. It is the same when the pool opens a new connection during a read or a watch. The login errors that SQL Server gives while it fails over or is busy (4060, 10928, 10929, 40197, 40501, 40613) are not refusals, also when SQL Server follows them with 18456: they are `SqlServerUnavailableError`. A database that is offline gives 4060, and so does a database name that does not exist: SQL Server does not tell them apart, so a wrong name fails as `system` and the watch tries again.
