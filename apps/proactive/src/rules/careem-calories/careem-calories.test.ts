@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
@@ -24,6 +23,7 @@ import {
 } from '@eltjs/elt-postgresql';
 
 import type { Automation } from '../../engine/automation.ts';
+import { CodexStandIn } from '../../testing/codex-stand-in.ts';
 import { CareemCalories } from './careem-calories.ts';
 
 const postgresql = new Postgres({ environment: process.env });
@@ -454,28 +454,14 @@ test('a receipt whose body Mail downloads after the baseline makes the agent act
   await using directory = await new TemporaryFiles().directory(
     'proactive-test-',
   );
-  const asked = join(directory.path, 'asked.jsonl');
-  await writeFile(asked, '');
-  // The real Codex service needs an authenticated, paid request. This
-  // executable stands in for codex and records the order it was given.
-  const codex = join(directory.path, 'codex');
-  await writeFile(
-    codex,
-    `#!${process.execPath}
-import { appendFile, writeFile } from 'node:fs/promises';
-let prompt = '';
-for await (const chunk of process.stdin) prompt += chunk;
-const order = /"orderId":"(\\d+)"/.exec(prompt)[1];
-await appendFile(${JSON.stringify(asked)}, JSON.stringify(order) + '\\n');
-await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1], 'Logged order ' + order);
-`,
-    { mode: 0o700 },
+  const codex = await CodexStandIn.create(
+    directory.path,
+    (prompt) => `Logged order ${/"orderId":"(\d+)"/.exec(prompt)?.[1]}`,
   );
   const asks = async () =>
-    (await readFile(asked, 'utf8'))
-      .split('\n')
-      .filter((line) => line !== '')
-      .map((line): unknown => JSON.parse(line));
+    (await codex.calls()).map(
+      ({ prompt }) => /"orderId":"(\d+)"/.exec(prompt)?.[1],
+    );
   // Mail knows the receipt's headers before it downloads its body, so the
   // import has the message without a part.
   warehouse.mailbox.addresses.push(
@@ -488,7 +474,10 @@ await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1],
     message('40465', '1', '1', '2026-10-09T11:13:22Z', 0),
   );
   const baseline = await warehouse.load();
-  const automation = new CareemCalories(join(directory.path, 'agent'), codex);
+  const automation = new CareemCalories(
+    join(directory.path, 'agent'),
+    codex.path,
+  );
   const signal = new AbortController().signal;
 
   warehouse.mailbox.parts.push(

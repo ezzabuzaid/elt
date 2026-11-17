@@ -25,6 +25,7 @@ import {
   PostgresSyncHistory,
 } from '@eltjs/elt-postgresql';
 
+import { CodexStandIn } from '../testing/codex-stand-in.ts';
 import { AgentAutomation } from './agent-automation.ts';
 import { Automation } from './automation.ts';
 import { Automations } from './automations.ts';
@@ -367,27 +368,11 @@ test('an agent automation runs Codex in its own writable folder with the instruc
   await using directory = await new TemporaryFiles().directory(
     'proactive-test-',
   );
-  const seen = join(directory.path, 'seen.json');
-  const executable = join(directory.path, 'codex');
-  // The real Codex service needs an authenticated, paid network request.
-  // This executable stands in for that external boundary; execFile, stdin and
-  // the output file run for real.
-  await writeFile(
-    executable,
-    `#!${process.execPath}
-import { stat, writeFile } from 'node:fs/promises';
-// Codex fails when its --cd folder does not exist.
-await stat(process.argv[process.argv.indexOf('--cd') + 1]);
-let prompt = '';
-for await (const chunk of process.stdin) prompt += chunk;
-await writeFile(${JSON.stringify(seen)}, JSON.stringify({ argv: process.argv.slice(2), prompt }));
-const said = prompt.includes('"dish":"nothing"') ? ' ' : 'Logged 950 kcal';
-await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1], said);
-`,
-    { mode: 0o700 },
+  const codex = await CodexStandIn.create(directory.path, (prompt) =>
+    prompt.includes('"dish":"nothing"') ? ' ' : 'Logged 950 kcal',
   );
   const folder = join(directory.path, 'agent');
-  const automation = new LogsFood(folder, executable);
+  const automation = new LogsFood(folder, codex.path);
   const signal = new AbortController().signal;
 
   assert.equal(
@@ -395,9 +380,9 @@ await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1],
     'Logged 950 kcal',
   );
 
-  const { argv, prompt }: { argv: string[]; prompt: string } = JSON.parse(
-    await readFile(seen, 'utf8'),
-  );
+  const [call] = await codex.calls();
+  assert.ok(call, 'Codex ran');
+  const { argv, prompt } = call;
   assert.equal(argv[0], 'exec');
   assert.ok(argv.includes('--ephemeral'));
   assert.ok(argv.includes('--ignore-user-config'));

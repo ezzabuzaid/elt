@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -28,6 +28,7 @@ import {
 } from '@eltjs/elt-postgresql';
 
 import type { Automation } from '../../engine/automation.ts';
+import { CodexStandIn } from '../../testing/codex-stand-in.ts';
 import { MeetingBriefWriter } from './meeting-brief-writer.ts';
 import { type MeetingBrief, PlanningMeetings } from './planning-meetings.ts';
 
@@ -585,29 +586,15 @@ test('brief generation replaces one file atomically and preserves it on failure'
   await using directory = await new TemporaryFiles().directory(
     'proactive-test-',
   );
-  const executable = join(directory.path, 'codex');
-  // The real Codex service requires an authenticated, paid network request.
-  // This executable stands in for that external boundary; execFile, stdin,
-  // output-file handling and filesystem publication all run for real.
-  await writeFile(
-    executable,
-    `#!${process.execPath}
-import { writeFile } from 'node:fs/promises';
-import assert from 'node:assert/strict';
-let prompt = '';
-for await (const chunk of process.stdin) prompt += chunk;
-assert.ok(process.argv.includes('--ignore-user-config'));
-assert.ok(!process.argv.includes('--model'));
-assert.ok(prompt.includes('untrusted content'));
-const brief = JSON.parse(prompt.slice(prompt.indexOf('\\n{') + 1));
-if (brief.meeting.name === 'fail') process.exit(1);
-const text = brief.meeting.name === 'empty' ? ' ' : '# ' + brief.meeting.name;
-await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1], text);
-`,
-    { mode: 0o700 },
-  );
+  const codex = await CodexStandIn.create(directory.path, (prompt) => {
+    const brief: MeetingBrief = JSON.parse(
+      prompt.slice(prompt.indexOf('\n{') + 1),
+    );
+    if (brief.meeting.name === 'fail') return null;
+    return brief.meeting.name === 'empty' ? ' ' : `# ${brief.meeting.name}`;
+  });
   const outputs = join(directory.path, 'briefs');
-  const writer = new MeetingBriefWriter(outputs, executable);
+  const writer = new MeetingBriefWriter(outputs, codex.path);
   const brief: MeetingBrief = {
     meeting: {
       eventId: '../event/id',
@@ -638,6 +625,13 @@ await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1],
     1,
     'temporary directories are removed',
   );
+  const calls = await codex.calls();
+  assert.equal(calls.length, 4);
+  for (const { argv, prompt } of calls) {
+    assert.ok(argv.includes('--ignore-user-config'));
+    assert.ok(!argv.includes('--model'));
+    assert.ok(prompt.includes('untrusted content'));
+  }
 });
 
 test('a new planning match writes its brief, with how fresh each source is now, and tells the user where it is', async () => {
@@ -653,23 +647,15 @@ test('a new planning match writes its brief, with how fresh each source is now, 
   await using directory = await new TemporaryFiles().directory(
     'proactive-test-',
   );
-  const executable = join(directory.path, 'codex');
-  // The real Codex service requires an authenticated, paid network request.
-  // This executable stands in for that external boundary.
-  await writeFile(
-    executable,
-    `#!${process.execPath}
-import { writeFile } from 'node:fs/promises';
-let prompt = '';
-for await (const chunk of process.stdin) prompt += chunk;
-const brief = JSON.parse(prompt.slice(prompt.indexOf('\\n{') + 1));
-await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1], '# ' + brief.meeting.name + ' from ' + brief.coverage.map(({ connector }) => connector).join(', '));
-`,
-    { mode: 0o700 },
-  );
+  const codex = await CodexStandIn.create(directory.path, (prompt) => {
+    const brief: MeetingBrief = JSON.parse(
+      prompt.slice(prompt.indexOf('\n{') + 1),
+    );
+    return `# ${brief.meeting.name} from ${brief.coverage.map(({ connector }) => connector).join(', ')}`;
+  });
   const outputs = join(directory.path, 'briefs');
   const planning = new PlanningMeetings(
-    new MeetingBriefWriter(outputs, executable),
+    new MeetingBriefWriter(outputs, codex.path),
     sql,
   );
 

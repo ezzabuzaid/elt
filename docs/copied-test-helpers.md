@@ -85,3 +85,13 @@ In these tests, the code under test uses the codec, so the literal is the indepe
 - `packages/sources/apple/safari/src/safari.test.ts`: `appleSeconds`.
 - `packages/sources/apple/wallet/src/wallet.test.ts`: `appleTime` and the check of the stored expiration.
 - `packages/sources/whatsapp/desktop/src/whatsapp-desktop.test.ts`: `coreData` and `statusSeconds`.
+
+## Codex stand-in
+
+The stand-in is an executable that replaces the codex CLI in a test, because the real Codex service needs an authenticated, paid request. It reads the prompt on stdin, fails when its `--cd` folder does not exist, and writes its reply to the `--output-last-message` path, as `codex exec` does.
+
+### Moved to `src/testing/`
+
+- `apps/proactive`: four places, in `src/engine/automations.test.ts`, `src/rules/careem-calories/careem-calories.test.ts` and `src/rules/planning-meetings/planning-meetings.test.ts` (two). Each wrote its own script. Now each test calls `CodexStandIn.create(folder, reply)` from `src/testing/codex-stand-in.ts`: `reply` is the test's function from the prompt to the reply (`null` makes the run fail), and `calls()` gives the argv and the prompt of each run, so the test asserts them itself.
+
+`tsconfig.lib.json` of the app excludes `src/testing/**`, so `dist` holds no test code.
