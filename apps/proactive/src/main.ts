@@ -7,7 +7,7 @@ import type { Warehouse } from '@eltjs/eca';
 import { PostgresDestination } from '@eltjs/elt-postgresql';
 
 import { Automations } from './engine/automations.ts';
-import pipeline, { warehouseUrl } from './pipeline.ts';
+import pipeline from './pipeline.ts';
 import { EarlyMonthSpend } from './rules/bank-sms/early-month-spend.ts';
 import { MissingMidMonthCredit } from './rules/bank-sms/missing-mid-month-credit.ts';
 import { SpendSpike } from './rules/bank-sms/spend-spike.ts';
@@ -17,6 +17,7 @@ import { ClayDataHubMcpMessages } from './rules/clay-topics/clay-data-hub-mcp-me
 import { KeywordText } from './rules/keyword-text/keyword-text.ts';
 import { MeetingBriefWriter } from './rules/planning-meetings/meeting-brief-writer.ts';
 import { PlanningMeetings } from './rules/planning-meetings/planning-meetings.ts';
+import { warehouseUrl } from './warehouse.ts';
 
 // Conditions read the marts as agent_reader, which can read nothing else.
 const readerUrl = 'postgres://agent_reader:agent@127.0.0.1:55432/warehouse';
