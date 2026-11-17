@@ -30,7 +30,8 @@ const STORED: GoogleOAuthCredential = {
 };
 
 /**
- * A store over a Map that counts reads and can be told to refuse writes.
+ * A store over a Map that counts reads and can be told to refuse writes
+ * and to accept them again.
  * google-auth-library reaches the token endpoint through node-fetch, so the
  * Google side is stubbed below fetch with msw; anything unlisted fails the
  * test instead of reaching the network.
@@ -53,6 +54,11 @@ function mapStore(initial?: GoogleOAuthCredential) {
     },
   };
   return {
+    acceptWrites() {
+      save = async (ref, credential) => {
+        rows.set(ref, credential);
+      };
+    },
     calls,
     refuseWrites(error: Error) {
       save = async () => {
@@ -193,7 +199,7 @@ test('a later rotation is persisted before the response that caused it returns',
   }
 });
 
-test('a persist failure rejects the request that rotated and every later one', async () => {
+test('a persist failure rejects the request that rotated, and a later rotation is still persisted', async () => {
   const server = googleServer(
     [
       'first',
@@ -202,7 +208,7 @@ test('a persist failure rejects the request that rotated and every later one', a
     ],
     [],
   );
-  const { refuseWrites, store } = mapStore(STORED);
+  const { acceptWrites, refuseWrites, rows, store } = mapStore(STORED);
   try {
     const opener = new GoogleGrantOpener({ app: APP, store });
     const session = await opener.open(REF, [SEARCH_CONSOLE]);
@@ -214,11 +220,13 @@ test('a persist failure rejects the request that rotated and every later one', a
       session.client.request({ url: RESOURCE_URL }),
       diskFull,
     );
-    // The chain stays broken: the stored refresh token is unknown from here on.
-    await assert.rejects(
-      session.client.request({ url: RESOURCE_URL }),
-      diskFull,
-    );
+
+    acceptWrites();
+    session.client.credentials.expiry_date = 1;
+    const { data } = await session.client.request({ url: RESOURCE_URL });
+
+    assert.deepEqual(data, { ok: true });
+    assert.equal(stored(rows).refreshToken, 'refresh-again');
   } finally {
     server.cleanup();
   }

@@ -1,3 +1,4 @@
+import { Lock } from '@zukhruf/async';
 import type { OAuth2Client } from 'google-auth-library';
 import pMemoize from 'p-memoize';
 
@@ -13,11 +14,12 @@ import { GoogleGrant } from './grant.ts';
  * constructs it with its store and the installed app.
  *
  * A refresh token Google rotates is written back through the store. Writes
- * chain in order, and the client's own transporter awaits the chain before it
- * returns any response, so the request that triggered a failed write rejects
- * with the write error (gaxios response interceptors,
- * `node_modules/gaxios/build/cjs/src/gaxios.js` `#applyResponseInterceptors`).
- * Nothing is logged or swallowed.
+ * run one at a time in order, and the client's own transporter waits for the
+ * writes in line before it returns any response (gaxios response
+ * interceptors, `node_modules/gaxios/build/cjs/src/gaxios.js`
+ * `#applyResponseInterceptors`). A failed write rejects the next response,
+ * which is the request that triggered the rotation, with the write error; the
+ * writes after it still run (#4525). Nothing is logged or swallowed.
  */
 export class GoogleGrantOpener {
   readonly #app: GoogleOAuthApp;
@@ -53,18 +55,38 @@ export class GoogleGrantOpener {
   ): Promise<GoogleGrantSession> {
     const grant = GoogleGrant.parse(await this.#store.read(ref));
     if (!grant) throw new GoogleGrantMissingError(ref);
-    let persisted = Promise.resolve();
+    const writes = new Lock();
+    let failed: { readonly error: unknown } | undefined;
     const client = this.#app.client(grant, scopes, (rotated) => {
-      persisted = persisted.then(() => this.#store.write(ref, rotated));
+      // The failure is kept inside the work, so it is set before the lock
+      // passes to the wait in line below.
+      void writes.run(
+        async () => {
+          try {
+            await this.#store.write(ref, rotated);
+          } catch (error) {
+            failed = { error };
+          }
+        },
+        { signal: undefined },
+      );
     });
+    const persisted = async () => {
+      // FIFO: this runs after every write queued before it.
+      await writes.run(async () => {}, { signal: undefined });
+      if (!failed) return;
+      const { error } = failed;
+      failed = undefined;
+      throw error;
+    };
     client.transporter.interceptors.response.add({
       resolved: async (response) => {
-        await persisted;
+        await persisted();
         return response;
       },
     });
     await this.#assertUsable(client, grant);
-    await persisted;
+    await persisted();
     return new GoogleGrantSession(grant, client);
   }
 

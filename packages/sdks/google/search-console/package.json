@@ -12,12 +12,12 @@
   "dependencies": {
     "@eltjs/codec-sitemap": "0.0.1",
     "@eltjs/google-auth": "0.0.1",
-    "@zukhruf/async": "^0.8.22",
+    "@zukhruf/async": "^0.8.25",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/testing": "^0.8.22",
+    "@zukhruf/testing": "^0.8.25",
     "msw": "^3.0.3"
   }
 }

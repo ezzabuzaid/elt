@@ -13,15 +13,15 @@
     "@eltjs/elt": "*",
     "@eltjs/sdk-chromium-cookies": "0.0.1",
     "@eltjs/sdk-instagram-web": "0.0.1",
-    "@zukhruf/async": "^0.8.22",
-    "@zukhruf/fs": "^0.8.22",
-    "@zukhruf/snapshot-differential": "^0.8.22",
-    "@zukhruf/sqlite-open": "^0.8.22",
+    "@zukhruf/async": "^0.8.25",
+    "@zukhruf/fs": "^0.8.25",
+    "@zukhruf/snapshot-differential": "^0.8.25",
+    "@zukhruf/sqlite-open": "^0.8.25",
     "p-memoize": "^8.0.0"
   },
   "devDependencies": {
     "@eltjs/elt-sqlite": "*",
-    "@zukhruf/testing": "^0.8.22",
+    "@zukhruf/testing": "^0.8.25",
     "msw": "^3.0.3"
   }
 }

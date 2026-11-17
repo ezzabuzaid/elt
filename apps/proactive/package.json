@@ -17,11 +17,11 @@
     "@eltjs/source-apple-messages": "0.0.1",
     "@eltjs/source-slack-desktop": "0.0.1",
     "@eltjs/source-whatsapp-desktop": "0.0.1",
-    "@zukhruf/fs": "^0.8.22",
-    "@zukhruf/shutdown": "^0.8.22",
+    "@zukhruf/fs": "^0.8.25",
+    "@zukhruf/shutdown": "^0.8.25",
     "postgres": "^3.4.9"
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.8.22"
+    "@zukhruf/testing": "^0.8.25"
   }
 }

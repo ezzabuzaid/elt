@@ -14,8 +14,8 @@
     "postgres": "^3.4.9"
   },
   "devDependencies": {
-    "@zukhruf/fs": "^0.8.22",
-    "@zukhruf/snapshot-differential": "^0.8.22",
-    "@zukhruf/testing": "^0.8.22"
+    "@zukhruf/fs": "^0.8.25",
+    "@zukhruf/snapshot-differential": "^0.8.25",
+    "@zukhruf/testing": "^0.8.25"
   }
 }

@@ -14,14 +14,14 @@
     "@eltjs/elt": "*",
     "@eltjs/sdk-apple-biome": "0.0.1",
     "@eltjs/sdk-apple-knowledge": "0.0.1",
-    "@zukhruf/async": "^0.8.22",
-    "@zukhruf/snapshot-differential": "^0.8.22"
+    "@zukhruf/async": "^0.8.25",
+    "@zukhruf/snapshot-differential": "^0.8.25"
   },
   "devDependencies": {
     "@eltjs/elt-sqlite": "*",
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/fs": "^0.8.22",
-    "@zukhruf/sqlite-open": "^0.8.22",
-    "@zukhruf/testing": "^0.8.22"
+    "@zukhruf/fs": "^0.8.25",
+    "@zukhruf/sqlite-open": "^0.8.25",
+    "@zukhruf/testing": "^0.8.25"
   }
 }
