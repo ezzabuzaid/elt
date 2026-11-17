@@ -92,6 +92,12 @@ export class FileRead {
     };
   }
 
+  // A source that must download a file asks first. Bytes and stored copies
+  // need every file.
+  accepts(fileName: string): boolean {
+    return this.parser?.accepts(fileName) ?? true;
+  }
+
   get outputType(): 'text' | 'bytes' {
     return this.parser !== undefined || this.file.storage !== undefined
       ? 'text'

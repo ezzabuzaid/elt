@@ -600,6 +600,7 @@ new Copy(
 - A path must stay readable until the consumer moves past its record. It can be a staged copy that the source removes after, or the original file when a copy would cost too much. Notes and Messages give their original attachment files.
 - The replication refuses a record that still holds a source file path (`Destinations cannot receive source file paths`).
 - A source names a staged copy with `fileExtension` from `elt`: the extension of the file when it is 1 to 16 letters or digits, else none. The original file name stays in the source metadata.
+- A source that must download a file, such as one that reads a cloud API, downloads it only when a field accepts its name: `configuration.fileReads.some((read) => read.accepts(name))`. A field with a parser accepts what its parser accepts; a field of bytes or of stored files accepts every file. A record whose file no field accepts yields `file: null`. Airbyte's file-based sources likewise choose files by name, with [globs](https://github.com/airbytehq/airbyte-python-cdk/blob/f77450f74def59598cda8e1e9a4e975031710c18/airbyte_cdk/sources/file_based/file_based_stream_reader.py), before they read one.
 
 ### Local files
 
@@ -648,6 +649,7 @@ Extend `DocumentParser` with `parse(path, signal?): Promise<string | null>`.
 - Return `null` when the file has no text that the parser can show. Throw only when the read failed.
 - Give it a stable identity that includes its version and the configuration that matters. Keep the parser and its configuration immutable, and do not change the file.
 - `identityFor(path)` gives the identity of the format that reads one file, or `null` when the parser does not handle it. A composite parser uses it, so that a new audio model does not invalidate the text of other formats.
+- `accepts(fileName)` tells a source, before it downloads a file, whether the parser can read a file of that name. It returns `true` by default: the parser then decides from the content, as `MacOSDocumentParser` does for a file with no extension.
 - A parser does not depend on a source or a destination.
 - The identity of the parser is part of the checkpoint binding of the copy. A new identity needs a new copy ID or a reset of the checkpoint.
 - Keys and cursors stay metadata fields. A checkpoint is acknowledged only after the rows before it commit.

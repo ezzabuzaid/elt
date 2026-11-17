@@ -110,6 +110,57 @@ test('file storage declarations validate identities and keep parsing separate wi
     assert.throws(() => new LocalFiles({ directory }), /requires a directory/);
 });
 
+test('a file field accepts a file name only when its parser does, and a field of bytes or stored files accepts every name', () => {
+  const stream = new Stream({
+    name: 'files',
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    supportedSyncModes: ['full_refresh'],
+    supportsFileTransfer: true,
+  });
+  const documents = new (class extends DocumentParser {
+    override async parse(): Promise<string> {
+      throw new Error('unexpected parse');
+    }
+    override accepts(fileName: string): boolean {
+      return fileName.endsWith('.docx');
+    }
+  })('documents');
+  const anyFormat = new (class extends DocumentParser {
+    override async parse(): Promise<string> {
+      throw new Error('unexpected parse');
+    }
+  })('any-format');
+  const storage = new (class extends FileStorage {
+    override identity = 'test-store';
+    override reference = 'A test reference.';
+    override async save(): Promise<string> {
+      throw new Error('unexpected save');
+    }
+    override async flush(): Promise<void> {
+      throw new Error('unexpected flush');
+    }
+    override async retain(): Promise<void> {
+      throw new Error('unexpected cleanup');
+    }
+  })();
+
+  const parsed = new FileRead('content', stream.file, documents);
+  assert.equal(parsed.accepts('proposal.docx'), true);
+  assert.equal(parsed.accepts('team photo.jpg'), false);
+  assert.equal(
+    new FileRead('content', stream.file, anyFormat).accepts('GroupPhotoImage'),
+    true,
+  );
+  assert.equal(
+    new FileRead('bytes', stream.file).accepts('team photo.jpg'),
+    true,
+  );
+  assert.equal(
+    new FileRead('ref', stream.file.store(storage)).accepts('team photo.jpg'),
+    true,
+  );
+});
+
 test('date formats accept only canonical UTC timestamps and real calendar dates', () => {
   assert.equal(isTimestamp('2025-01-02T03:04:05.006Z'), true);
   for (const value of [
