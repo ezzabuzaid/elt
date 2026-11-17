@@ -9,9 +9,9 @@ messages.
 ## Layout
 
 - `src/main.ts` adds the rules that run. `src/pipeline.ts` lists the connections that the warehouse imports.
-- `src/connections/` holds one file for each connection. Each copy loads a stream into `raw_<stream>`, and readers see it as `marts.<prefix>_<stream>` (`marts-copy.ts`). `src/warehouse.ts` holds the address of the loading role.
+- `src/connections/` holds one file for each connection. Each copy loads a stream into `raw_<stream>`, and readers see it as `marts.<prefix>_<stream>` (`marts-copy.ts`). `src/warehouse.ts` holds the addresses of the loading role and of `agent_reader`, and `src/rules-file.ts` the place of the stored rules.
 - `src/engine/` runs the rules: the `Automation` base, the `NotifyAutomation` and `AgentAutomation` actions, the `Automations` runner, and the stored rules: `SqlNotifyRule` and `SqlAgentRule` (`sql-rule.ts`) and `RuleStore` (`rule-store.ts`).
-- `src/rules/` holds one folder for each rule, with its test. Rules that share a base class or a source share a folder: `bank-sms/` and `clay-topics/`. A new rule is a new folder. `src/rules/notifications.test.ts` checks the notification text of the four notifying rules.
+- `src/rules/` holds the rules that are classes, one folder each with its test: `clay-topics/` (two rules that share a base class) and `planning-meetings/`. A rule that one SQL query can express is a stored rule instead (below).
 
 ## Stored rules
 
@@ -46,6 +46,14 @@ since it tells only what becomes true after its first run. A name is
 kebab-case, and a name that is kept already is refused. Quote a YAML value
 that has `: ` or ends with `:`.
 
+A rule's SQL runs as `agent_reader`, whose `statement_timeout` is 30 seconds
+(`infra/init/01-roles.sh`), so a slow rule fails and the others still run.
+Postgres inlines a CTE into the query that reads it and can apply an
+expensive filter of the outer query before a cheap one of the CTE; a CTE that
+picks the few rows an expensive step reads is `MATERIALIZED`. A Careem receipt
+rule took 25 seconds without it, because it built the receipt text of all
+70,000 Mail messages, and 1 second with it.
+
 A stored rule matches each row that its SQL gives as of `after` and did not
 give as of `before`. Rows are compared whole, so a rule chooses what it
 compares by the columns it selects: a row whose value changes while it stays
@@ -65,14 +73,6 @@ the user. An `AgentAutomation` gives its instruction and the match to Codex
 automation fails, in its condition or its action, the failure goes to stderr
 and the other automations still act. A failed action is not retried. A run
 with a failure exits with code 1.
-
-**CareemCalories:** when a Careem delivery receipt arrives in Mail, the agent
-logs the calorie intake of the order in `outputs/proactive/agent/food-log.md`:
-one row per order with the date, restaurant, dishes and estimated kcal. Each
-order ID acts once. The receipt names the restaurant and the dishes, but no
-calories, so the agent estimates them. Receipts from July 2026 on have no
-text part; the rule gives the agent the text of the HTML part. A receipt
-reaches the warehouse only after Mail.app fetched it.
 
 **PlanningMeetings:** when a new future planning meeting is imported, write a
 brief with recent decisions, unresolved questions, relevant conversations and
@@ -101,22 +101,6 @@ The brief tells how fresh each source is at the time it is written: the sync
 history keeps no versions, so the action reads it, not the condition.
 Calendar access and Full Disk Access for Mail and Messages must already be
 granted to the host running the app.
-
-Three rules read the Arab Bank SMS in Messages, by the time of each SMS in
-Amman:
-
-- **EarlyMonthSpend:** the card purchases of days 1 to 10 of a month pass
-  200 JOD. Each month notifies once.
-- **SpendSpike:** the card purchases of an ISO week pass twice the median of
-  the 8 weeks before it. A week without purchases counts as 0 JOD, and a
-  median of 0 (five or more empty weeks) is no spike. One-time codes, credits
-  and transfers are not purchases. Each week notifies once.
-- **MissingMidMonthCredit:** a credit of 1000 JOD or more is due on days 13
-  to 17 of each month. When day 18 starts and no such credit came on day 13
-  or later, the month notifies once. Day 18 starts when the import holds a
-  message from day 18, so an import that is behind does not notify. A credit
-  on days 7 to 12 does not count, because a different credit of the same
-  size arrives then; thus a mid-month credit that comes early notifies too.
 
 Both Slack rules require Clay McCoy as the sender in Delivery Associates:
 

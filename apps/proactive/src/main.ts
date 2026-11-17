@@ -12,13 +12,8 @@ import { RuleStore } from './engine/rule-store.ts';
 import { SqlAgentRule, SqlNotifyRule } from './engine/sql-rule.ts';
 import pipeline from './pipeline.ts';
 import { rulesFile, rulesFolder } from './rules-file.ts';
-import { EarlyMonthSpend } from './rules/bank-sms/early-month-spend.ts';
-import { MissingMidMonthCredit } from './rules/bank-sms/missing-mid-month-credit.ts';
-import { SpendSpike } from './rules/bank-sms/spend-spike.ts';
-import { CareemCalories } from './rules/careem-calories/careem-calories.ts';
 import { ClayBdAgentMessages } from './rules/clay-topics/clay-bd-agent-messages.ts';
 import { ClayDataHubMcpMessages } from './rules/clay-topics/clay-data-hub-mcp-messages.ts';
-import { KeywordText } from './rules/keyword-text/keyword-text.ts';
 import { MeetingBriefWriter } from './rules/planning-meetings/meeting-brief-writer.ts';
 import { PlanningMeetings } from './rules/planning-meetings/planning-meetings.ts';
 import { readerUrl, warehouseUrl } from './warehouse.ts';
@@ -53,10 +48,6 @@ const warehouse: Warehouse<postgres.Sql> = {
 const outputs = new URL('../../../outputs/proactive/', import.meta.url);
 const agent = fileURLToPath(new URL('agent/', outputs));
 const automations = new Automations({ warehouse, cursors: writer });
-automations.add('early-month-spend', new EarlyMonthSpend());
-automations.add('spend-spike', new SpendSpike());
-automations.add('missing-mid-month-credit', new MissingMidMonthCredit());
-automations.add('keyword-text', new KeywordText());
 automations.add('clay-bd-agent-messages', new ClayBdAgentMessages());
 automations.add('clay-data-hub-mcp-messages', new ClayDataHubMcpMessages());
 automations.add(
@@ -66,7 +57,6 @@ automations.add(
     sql,
   ),
 );
-automations.add('careem-calories', new CareemCalories(agent));
 
 await mkdir(rulesFolder, { recursive: true });
 using rules = new RuleStore(rulesFile);
