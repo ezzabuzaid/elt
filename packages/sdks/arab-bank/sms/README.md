@@ -1,4 +1,4 @@
-> **Design for review.** This folder is the API on paper of `@eltjs/sdk-arab-bank-sms` (backlog #3668). It has no code, no `package.json` and no tsconfig. Nothing reads it until Ezz rules on each decision.
+> **Design, decided; build parked.** This folder is the API on paper of `@eltjs/sdk-arab-bank-sms` (backlog #3668). It has no code, no `package.json` and no tsconfig. ADRs 0001 to 0004 are the decisions (2026-11-17). Ezz parked the build the same day.
 
 # Arab Bank SMS
 
