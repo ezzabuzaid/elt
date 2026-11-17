@@ -26,6 +26,7 @@ import {
   Copy,
   CopyConfiguration,
   type Destination,
+  DocumentParser,
   type FailureType,
   type FileContent,
   Gauge,
@@ -4520,6 +4521,82 @@ test('a file whose own name ends in an extension too long to keep is stored unde
   assert.equal(
     await readFile(join(files.directory, reference), 'utf8'),
     'original',
+  );
+});
+
+test('a stored file field that accepts only what a parser accepts stores no other file, while another stored field of the same copy keeps every file', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-local-');
+  const proposal = join(scratch.path, 'proposal.docx');
+  const photo = join(scratch.path, 'team.jpg');
+  await writeFile(proposal, 'proposal');
+  await writeFile(photo, 'photo');
+  const documents = new (class extends DocumentParser {
+    override async parse(): Promise<string> {
+      throw new Error('a stored field does not parse');
+    }
+    override accepts(fileName: string): boolean {
+      return fileName.endsWith('.docx');
+    }
+  })('documents');
+  const files = new LocalFiles({ directory: join(scratch.path, 'files') });
+  const every = new LocalFiles({ directory: join(scratch.path, 'every') });
+  const stream = new Stream({
+    ...scripted('docs', { snapshot: false }),
+    supportsFileTransfer: true,
+  });
+  const source = new ScriptedSource([stream], {
+    docs: [
+      { ...record('docs', 'proposal', 1), file: proposal },
+      { ...record('docs', 'photo', 1), file: photo },
+    ],
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+
+  await new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(
+            stream,
+            destination.table('docs', (c) => [
+              c.text('id'),
+              c.text('ref').from(stream.file.accepting(documents).store(files)),
+              c.text('everyRef').from(stream.file.store(every)),
+            ]),
+          ),
+        ],
+      }),
+    ],
+  }).run();
+
+  using db = open(destination.path, { readOnly: true });
+  const rows = db
+    .prepare('SELECT id, ref, everyRef FROM docs ORDER BY id')
+    .all();
+  assert.deepEqual(
+    rows.map(({ id, ref, everyRef }) => ({
+      id,
+      stored: ref !== null,
+      kept: everyRef !== null,
+    })),
+    [
+      { id: 'photo', stored: false, kept: true },
+      { id: 'proposal', stored: true, kept: true },
+    ],
+  );
+  const stored = await readdir(files.directory, { recursive: true });
+  assert.deepEqual(
+    stored
+      .filter((name) => /\.(docx|jpg)$/.test(name))
+      .map((name) => name.slice(-5)),
+    ['.docx'],
   );
 });
 

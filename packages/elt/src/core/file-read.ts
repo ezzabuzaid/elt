@@ -6,10 +6,20 @@ import type { Stream } from './stream.ts';
 export class FileReference {
   readonly stream: Stream;
   readonly storage?: FileStorage;
+  // Only the files this parser accepts, so a remote source downloads no
+  // file that a later parse of the stored copy would refuse.
+  readonly acceptedBy?: DocumentParser;
 
-  constructor(stream: Stream, storage?: FileStorage) {
+  constructor(
+    stream: Stream,
+    storage?: FileStorage,
+    acceptedBy?: DocumentParser,
+  ) {
     this.stream = stream;
     this.storage = storage;
+    this.acceptedBy = acceptedBy;
+    if (acceptedBy !== undefined && !(acceptedBy instanceof DocumentParser))
+      throw new TypeError('A file reference accepts files of a DocumentParser');
     if (
       storage !== undefined &&
       (!(storage instanceof FileStorage) ||
@@ -23,7 +33,11 @@ export class FileReference {
   }
 
   store(storage: FileStorage): FileReference {
-    return new FileReference(this.stream, storage);
+    return new FileReference(this.stream, storage, this.acceptedBy);
+  }
+
+  accepting(parser: DocumentParser): FileReference {
+    return new FileReference(this.stream, this.storage, parser);
   }
 }
 
@@ -35,6 +49,7 @@ export class FileRead {
   readonly parser?: DocumentParser;
   readonly parserIdentity?: string;
   readonly storageIdentity?: string;
+  readonly acceptingIdentity?: string;
 
   constructor(name: string, file: FileReference, parser?: DocumentParser) {
     this.name = name;
@@ -50,6 +65,7 @@ export class FileRead {
       throw new TypeError('Select parsing and storage as separate file fields');
     this.parserIdentity = parser?.identity;
     this.storageIdentity = file.storage?.identity;
+    this.acceptingIdentity = file.acceptedBy?.identity;
     Object.freeze(this);
   }
 
@@ -67,6 +83,10 @@ export class FileRead {
       throw new TypeError('Parser identity changed after configuration');
     if (this.file.storage?.identity !== this.storageIdentity)
       throw new TypeError('File storage identity changed after configuration');
+    if (this.file.acceptedBy?.identity !== this.acceptingIdentity)
+      throw new TypeError(
+        'Accepting parser identity changed after configuration',
+      );
     const { properties } = stream.jsonSchema;
     if (
       stream.jsonSchema.type !== 'object' ||
@@ -89,13 +109,17 @@ export class FileRead {
       stream: this.file.stream.name,
       parser: this.parserIdentity,
       storage: this.storageIdentity,
+      accepting: this.acceptingIdentity,
     };
   }
 
-  // A source that must download a file asks first. Bytes and stored copies
-  // need every file.
+  // A source that must download a file asks first. A field of bytes or
+  // stored files with no accepting parser needs every file.
   accepts(fileName: string): boolean {
-    return this.parser?.accepts(fileName) ?? true;
+    return (
+      (this.file.acceptedBy?.accepts(fileName) ?? true) &&
+      (this.parser?.accepts(fileName) ?? true)
+    );
   }
 
   get outputType(): 'text' | 'bytes' {

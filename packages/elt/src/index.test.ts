@@ -110,7 +110,7 @@ test('file storage declarations validate identities and keep parsing separate wi
     assert.throws(() => new LocalFiles({ directory }), /requires a directory/);
 });
 
-test('a file field accepts a file name only when its parser does, and a field of bytes or stored files accepts every name', () => {
+test('a file field accepts a file name only when its parser does, and a field of bytes or stored files accepts every name unless its reference accepts only what a parser accepts', () => {
   const stream = new Stream({
     name: 'files',
     jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
@@ -159,6 +159,13 @@ test('a file field accepts a file name only when its parser does, and a field of
     new FileRead('ref', stream.file.store(storage)).accepts('team photo.jpg'),
     true,
   );
+  const narrowed = new FileRead(
+    'ref',
+    stream.file.accepting(documents).store(storage),
+  );
+  assert.equal(narrowed.accepts('proposal.docx'), true);
+  assert.equal(narrowed.accepts('team photo.jpg'), false);
+  assert.equal(JSON.parse(JSON.stringify(narrowed)).accepting, 'documents');
 });
 
 test('date formats accept only canonical UTC timestamps and real calendar dates', () => {

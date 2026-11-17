@@ -1,3 +1,5 @@
+import { basename } from 'node:path';
+
 import type { Catalog } from './catalog.ts';
 import type { ChangeSignal } from './change-signal.ts';
 import type { PipelineClock } from './clock.ts';
@@ -346,7 +348,7 @@ export abstract class Source<
         )
           throw new TypeError('File field collides with source metadata');
         let value: string | FileContent | null = null;
-        if (message.file !== null) {
+        if (message.file !== null && read.accepts(basename(message.file))) {
           let pending = values.get(read.parser);
           if (pending === undefined) {
             pending =
