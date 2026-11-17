@@ -3,10 +3,10 @@
 A user wants to know what Arc's sidebar holds before an agent reads it: how many tabs, folders and notes each profile has, pinned, unpinned and in favorites. This program loads the sidebar file of this Mac into a SQLite file in a temporary folder, runs a second pass to show that a pass with no change writes nothing, and counts the items. It prints no URL and no title.
 
 ```ts
-import { mkdtemp } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 
 import { Connection, Copy, Pipeline } from '@eltjs/elt';
@@ -17,10 +17,10 @@ import {
 } from '@eltjs/elt-sqlite';
 import { ArcDesktopSource } from '@eltjs/source-arc-desktop/arc-desktop-source';
 
-const directory = await mkdtemp(join(tmpdir(), 'arc-'));
+await using folder = await new TemporaryFiles().directory('arc-');
 const source = new ArcDesktopSource({ home: homedir() });
 const destination = new SQLiteDestination({
-  path: join(directory, 'arc.sqlite'),
+  path: join(folder.path, 'arc.sqlite'),
 });
 const pipeline = new Pipeline({
   history: new SQLiteSyncHistory(),
@@ -30,7 +30,7 @@ const pipeline = new Pipeline({
       source,
       destination,
       checkpoints: new SQLiteCheckpointStore({
-        path: join(directory, 'arc-state.sqlite'),
+        path: join(folder.path, 'arc-state.sqlite'),
       }),
       steps: [source.spaces, source.sidebarItems].map(
         (stream) =>
@@ -49,7 +49,7 @@ for (const pass of ['first', 'second'])
   for (const { copy, count, deleted } of await pipeline.run())
     console.log(pass, copy.from.name, { count, deleted });
 
-using database = open(join(directory, 'arc.sqlite'), {
+using database = open(join(folder.path, 'arc.sqlite'), {
   readOnly: true,
 });
 console.table(
@@ -63,7 +63,7 @@ console.table(
 );
 ```
 
-Output on 2026-11-02, on this Mac:
+Output on 2026-11-17, on this Mac:
 
 ```text
 first spaces { count: 9, deleted: 0 }
@@ -85,4 +85,4 @@ second sidebarItems { count: 0, deleted: 0 }
 
 - `Profile 2` has favorites and no space. Its favorites have `spaceId` null.
 - The second pass writes nothing, because the sidebar file did not change.
-- The temporary folder holds a copy of the sidebar. Delete it when you are done.
+- The program deletes the temporary folder, and the copy of the sidebar in it, when it ends.

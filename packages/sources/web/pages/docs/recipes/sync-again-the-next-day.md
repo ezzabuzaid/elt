@@ -18,11 +18,10 @@ A blog has two posts, and its sitemap gives the date when each post last changed
 
 ```ts title="sync-again.ts"
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 
 import { Connection, Copy, Pipeline } from '@eltjs/elt';
@@ -70,8 +69,8 @@ const address = server.address();
 if (address === null || typeof address === 'string') throw new Error('No port');
 const origin = `http://127.0.0.1:${address.port}`;
 
-const directory = await mkdtemp(join(tmpdir(), 'web-'));
-const articles = join(directory, 'articles.sqlite');
+await using folder = await new TemporaryFiles().directory('web-');
+const articles = join(folder.path, 'articles.sqlite');
 const destination = new SQLiteDestination({ path: articles });
 const source = new WebSource({
   streams: [
@@ -85,7 +84,7 @@ const source = new WebSource({
       inputs: [`${origin}/sitemap.xml`],
     },
   ],
-  cachePath: join(directory, 'web-http.sqlite'),
+  cachePath: join(folder.path, 'web-http.sqlite'),
   userAgent: 'ExampleReader/1.0 (+https://example.com/contact)',
 });
 // The pipeline's clock. Day 2 is one day after day 1.
@@ -104,7 +103,7 @@ const pipeline = new Pipeline({
       source,
       destination,
       checkpoints: new SQLiteCheckpointStore({
-        path: join(directory, 'checkpoints.sqlite'),
+        path: join(folder.path, 'checkpoints.sqlite'),
       }),
       steps: [
         new Copy(
@@ -145,7 +144,6 @@ posts.set('/posts/1', {
 });
 await sync('day 2');
 server.close();
-await rm(directory, { recursive: true, force: true });
 ```
 
 Output:

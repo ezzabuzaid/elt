@@ -16,10 +16,10 @@
 The source of this program reads a folder with three files: a text invoice, an HTML lease, and a file named `scan.pdf` that is not a PDF.
 
 ```ts title="search-stored-files.ts"
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 
 import {
@@ -96,8 +96,10 @@ class DocumentsFolder extends Source {
   }
 }
 
-const directory = await mkdtemp(join(tmpdir(), 'search-stored-files-'));
-const folder = join(directory, 'Documents');
+await using directory = await new TemporaryFiles().directory(
+  'search-stored-files-',
+);
+const folder = join(directory.path, 'Documents');
 await mkdir(folder);
 await writeFile(
   join(folder, 'invoice-4471.txt'),
@@ -110,9 +112,9 @@ await writeFile(
 await writeFile(join(folder, 'scan.pdf'), 'These bytes are not a PDF.');
 
 const source = new DocumentsFolder(folder);
-const files = new LocalFiles({ directory: join(directory, 'files') });
+const files = new LocalFiles({ directory: join(directory.path, 'files') });
 const sqlite = new SQLiteDestination({
-  path: join(directory, 'documents.sqlite'),
+  path: join(directory.path, 'documents.sqlite'),
 });
 const documents = sqlite
   .table('raw_documents', (c) => [
@@ -172,7 +174,6 @@ const found = database
   .all()
   .map(({ name }) => name);
 console.log({ found });
-await rm(directory, { recursive: true, force: true });
 ```
 
 Output:

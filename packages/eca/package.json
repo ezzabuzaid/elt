@@ -44,8 +44,8 @@
   "devDependencies": {
     "@eltjs/elt": "^0.3.7",
     "@eltjs/elt-sqlite": "^0.3.7",
-    "@zukhruf/fs": "^0.8.21",
-    "@zukhruf/sqlite-open": "^0.8.21",
-    "@zukhruf/testing": "^0.8.21"
+    "@zukhruf/fs": "^0.8.22",
+    "@zukhruf/sqlite-open": "^0.8.22",
+    "@zukhruf/testing": "^0.8.22"
   }
 }

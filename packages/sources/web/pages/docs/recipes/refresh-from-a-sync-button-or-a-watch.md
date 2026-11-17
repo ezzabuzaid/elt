@@ -20,10 +20,10 @@ A blog has two posts. Post 1 changes at each visit, and post 2 never changes. Th
 
 ```ts title="sync-or-watch.ts"
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import { TemporaryFiles } from '@zukhruf/fs';
 
 import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
@@ -65,9 +65,9 @@ const address = server.address();
 if (address === null || typeof address === 'string') throw new Error('No port');
 const origin = `http://127.0.0.1:${address.port}`;
 
-const directory = await mkdtemp(join(tmpdir(), 'web-'));
+await using folder = await new TemporaryFiles().directory('web-');
 const destination = new SQLiteDestination({
-  path: join(directory, 'articles.sqlite'),
+  path: join(folder.path, 'articles.sqlite'),
 });
 const source = new WebSource({
   streams: [
@@ -82,7 +82,7 @@ const source = new WebSource({
       inputs: [`${origin}/feed.json`],
     },
   ],
-  cachePath: join(directory, 'web-http.sqlite'),
+  cachePath: join(folder.path, 'web-http.sqlite'),
   userAgent: 'ExampleReader/1.0 (+https://example.com/contact)',
 });
 const pipeline = new Pipeline({
@@ -93,7 +93,7 @@ const pipeline = new Pipeline({
       source,
       destination,
       checkpoints: new SQLiteCheckpointStore({
-        path: join(directory, 'checkpoints.sqlite'),
+        path: join(folder.path, 'checkpoints.sqlite'),
       }),
       steps: [
         new Copy(
@@ -129,7 +129,6 @@ for await (const pass of pipeline.watch({ signal: stop.signal })) {
   if (passes === 2) stop.abort();
 }
 server.close();
-await rm(directory, { recursive: true, force: true });
 ```
 
 Output (the times change from run to run):

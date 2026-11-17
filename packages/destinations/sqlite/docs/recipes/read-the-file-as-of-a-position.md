@@ -15,11 +15,10 @@
 ## The program
 
 ```ts title="read-as-of-a-position.ts"
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 
 import {
@@ -86,91 +85,87 @@ class Prices extends Source {
   }
 }
 
-const directory = await mkdtemp(join(tmpdir(), 'elt-as-of-'));
-try {
-  // A short retention, so that the program outwaits it.
-  const destination = new SQLiteDestination({
-    path: join(directory, 'shop.sqlite'),
-    retention: Temporal.Duration.from({ seconds: 1 }),
-  });
-  const checkpoints = new SQLiteCheckpointStore({
-    path: join(directory, 'state.sqlite'),
-  });
-  const pass = (rows: readonly SourceMessage[]) =>
-    new Pipeline({
-      clock: globalThis,
-      history: new SQLiteSyncHistory(),
-      connections: [
-        new Connection({
-          name: 'shop',
-          source: new Prices(rows),
-          destination,
-          checkpoints,
-          steps: [
-            new Copy(prices, destination.table('prices'), {
-              id: 'prices',
-              syncMode: 'incremental',
-              destinationSyncMode: 'append_dedup',
-              cursorField: 'version',
-            }),
-          ],
-        }),
-      ],
-    }).run();
-  const price = (sku: string, cents: number, version: number) => ({
-    stream: 'prices',
-    data: { sku, price: cents, version },
-  });
+await using folder = await new TemporaryFiles().directory('elt-as-of-');
+// A short retention, so that the program outwaits it.
+const destination = new SQLiteDestination({
+  path: join(folder.path, 'shop.sqlite'),
+  retention: Temporal.Duration.from({ seconds: 1 }),
+});
+const checkpoints = new SQLiteCheckpointStore({
+  path: join(folder.path, 'state.sqlite'),
+});
+const pass = (rows: readonly SourceMessage[]) =>
+  new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'shop',
+        source: new Prices(rows),
+        destination,
+        checkpoints,
+        steps: [
+          new Copy(prices, destination.table('prices'), {
+            id: 'prices',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
+        ],
+      }),
+    ],
+  }).run();
+const price = (sku: string, cents: number, version: number) => ({
+  stream: 'prices',
+  data: { sku, price: cents, version },
+});
 
-  await pass([price('tea', 300, 1), price('milk', 120, 1)]);
-  const positions = destination.positions();
-  if ('expired' in positions) throw new Error(positions.expired);
-  const [monday] = positions;
-  if (monday === undefined) throw new Error('No position yet');
+await pass([price('tea', 300, 1), price('milk', 120, 1)]);
+const positions = destination.positions();
+if ('expired' in positions) throw new Error(positions.expired);
+const [monday] = positions;
+if (monday === undefined) throw new Error('No position yet');
 
-  await pass([price('tea', 350, 2)]);
+await pass([price('tea', 350, 2)]);
 
-  // The file as of the first pass, and as it is now.
-  const then = destination.reading(monday);
-  if ('expired' in then) throw new Error(then.expired);
-  using _then = then;
-  console.log(
-    'as of',
-    then.position,
-    then.sql.prepare('SELECT sku, price FROM prices ORDER BY sku').all(),
-  );
-  const now = destination.reading();
-  if ('expired' in now) throw new Error(now.expired);
-  using _now = now;
-  console.log(
-    'now',
-    now.position,
-    now.sql.prepare('SELECT sku, price FROM prices ORDER BY sku').all(),
-  );
+// The file as of the first pass, and as it is now.
+const then = destination.reading(monday);
+if ('expired' in then) throw new Error(then.expired);
+using _then = then;
+console.log(
+  'as of',
+  then.position,
+  then.sql.prepare('SELECT sku, price FROM prices ORDER BY sku').all(),
+);
+const now = destination.reading();
+if ('expired' in now) throw new Error(now.expired);
+using _now = now;
+console.log(
+  'now',
+  now.position,
+  now.sql.prepare('SELECT sku, price FROM prices ORDER BY sku').all(),
+);
 
-  // Copy the table as of the first pass into a database of the reader.
-  using copy = open(':memory:');
-  copy.prepare('ATTACH DATABASE ? AS "shop"').run(destination.path);
-  copy.exec('BEGIN');
-  const select = asOfSelect(copy, 'prices', monday, { schema: 'shop' });
-  if (typeof select !== 'string') throw new Error(select.expired);
-  copy.exec(`CREATE TEMP TABLE "monday" AS ${select}`);
-  copy.exec('COMMIT');
-  console.log(
-    'copied',
-    copy.prepare('SELECT sku, price FROM temp."monday" ORDER BY sku').all(),
-  );
+// Copy the table as of the first pass into a database of the reader.
+using copy = open(':memory:');
+copy.prepare('ATTACH DATABASE ? AS "shop"').run(destination.path);
+copy.exec('BEGIN');
+const select = asOfSelect(copy, 'prices', monday, { schema: 'shop' });
+if (typeof select !== 'string') throw new Error(select.expired);
+copy.exec(`CREATE TEMP TABLE "monday" AS ${select}`);
+copy.exec('COMMIT');
+console.log(
+  'copied',
+  copy.prepare('SELECT sku, price FROM temp."monday" ORDER BY sku').all(),
+);
 
-  // After the retention, the next commit deletes the history that only the
-  // first position reads.
-  await delay(1500);
-  await pass([price('milk', 130, 2)]);
-  console.log('positions', destination.positions());
-  const expired = destination.reading(monday);
-  console.log('expired' in expired ? expired : 'still readable');
-} finally {
-  await rm(directory, { recursive: true, force: true });
-}
+// After the retention, the next commit deletes the history that only the
+// first position reads.
+await delay(1500);
+await pass([price('milk', 130, 2)]);
+console.log('positions', destination.positions());
+const expired = destination.reading(monday);
+console.log('expired' in expired ? expired : 'still readable');
 ```
 
 Run it from the workspace root with Node.js 26:
@@ -182,11 +177,11 @@ node read-as-of-a-position.ts
 The output (the epoch is a new UUID in each run):
 
 ```
-as of 2692099e-8c1e-403e-83d0-dd575706fe90:1 [
+as of a6b6fd2d-1a88-44fc-ae37-8d0ca41f536c:1 [
   [Object: null prototype] { sku: 'milk', price: 120 },
   [Object: null prototype] { sku: 'tea', price: 300 }
 ]
-now 2692099e-8c1e-403e-83d0-dd575706fe90:2 [
+now a6b6fd2d-1a88-44fc-ae37-8d0ca41f536c:2 [
   [Object: null prototype] { sku: 'milk', price: 120 },
   [Object: null prototype] { sku: 'tea', price: 350 }
 ]
@@ -195,11 +190,11 @@ copied [
   [Object: null prototype] { sku: 'tea', price: 300 }
 ]
 positions [
-  '2692099e-8c1e-403e-83d0-dd575706fe90:2',
-  '2692099e-8c1e-403e-83d0-dd575706fe90:3'
+  'a6b6fd2d-1a88-44fc-ae37-8d0ca41f536c:2',
+  'a6b6fd2d-1a88-44fc-ae37-8d0ca41f536c:3'
 ]
 {
-  expired: 'Position 2692099e-8c1e-403e-83d0-dd575706fe90:1 is older than the retention of this file: its history keeps no row that only a reading before commit 2 reads'
+  expired: 'Position a6b6fd2d-1a88-44fc-ae37-8d0ca41f536c:1 is older than the retention of this file: its history keeps no row that only a reading before commit 2 reads'
 }
 ```
 

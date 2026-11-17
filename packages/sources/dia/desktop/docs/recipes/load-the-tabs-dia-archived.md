@@ -13,10 +13,10 @@
 ## The program
 
 ```ts title="load-the-tabs-dia-archived.ts"
-import { mkdtemp, rm } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 
 import { Connection, Copy, Pipeline } from '@eltjs/elt';
@@ -27,8 +27,8 @@ import {
 } from '@eltjs/elt-sqlite';
 import { DiaDesktopSource } from '@eltjs/source-dia-desktop/dia-desktop-source';
 
-const directory = await mkdtemp(join(tmpdir(), 'dia-'));
-const path = join(directory, 'dia.sqlite');
+await using folder = await new TemporaryFiles().directory('dia-');
+const path = join(folder.path, 'dia.sqlite');
 const source = new DiaDesktopSource({ home: homedir() });
 const destination = new SQLiteDestination({ path });
 const pipeline = new Pipeline({
@@ -39,7 +39,7 @@ const pipeline = new Pipeline({
       source,
       destination,
       checkpoints: new SQLiteCheckpointStore({
-        path: join(directory, 'checkpoints.sqlite'),
+        path: join(folder.path, 'checkpoints.sqlite'),
       }),
       steps: [
         new Copy(source.archivedTabs, destination.table('archivedTabs'), {
@@ -69,26 +69,25 @@ console.table(
     .all(),
 );
 database.close();
-await rm(directory, { recursive: true });
 ```
 
 ## The output
 
-Run it with `node load-the-tabs-dia-archived.ts`. On 2026-11-02, with Dia 1.55.1, the output was:
+Run it with `node load-the-tabs-dia-archived.ts`. On 2026-11-17, with Dia 1.57.1, the output was:
 
 ```text
-first pass: 2462 written, 0 deleted
+first pass: 2477 written, 0 deleted
 second pass: 0 written, 0 deleted
 ┌─────────┬─────────────┬──────────────┬──────┬───────────────────────────────┐
 │ (index) │ profileId   │ kind         │ tabs │ oldest                        │
 ├─────────┼─────────────┼──────────────┼──────┼───────────────────────────────┤
-│ 0       │ 'Default'   │ 'supertab'   │ 14   │ '2026-09-05T08:03:28.811364Z' │
-│ 1       │ 'Default'   │ 'webContent' │ 2293 │ '2026-09-03T09:31:17.054499Z' │
-│ 2       │ 'Profile 1' │ 'webContent' │ 31   │ '2026-09-08T20:27:00.259118Z' │
-│ 3       │ 'Profile 4' │ 'webContent' │ 12   │ '2026-09-28T08:09:40.498839Z' │
+│ 0       │ 'Default'   │ 'supertab'   │ 7    │ '2026-09-18T20:47:54.106568Z' │
+│ 1       │ 'Default'   │ 'webContent' │ 2275 │ '2026-09-18T06:31:27.124907Z' │
+│ 2       │ 'Profile 1' │ 'webContent' │ 50   │ '2026-09-28T13:55:07.675528Z' │
+│ 3       │ 'Profile 4' │ 'webContent' │ 13   │ '2026-09-28T08:09:40.498839Z' │
 │ 4       │ 'Profile 5' │ 'supertab'   │ 1    │ '2026-10-28T19:26:16.598681Z' │
-│ 5       │ 'Profile 5' │ 'webContent' │ 47   │ '2026-09-28T13:55:07.456100Z' │
-│ 6       │ 'Profile 6' │ 'webContent' │ 64   │ '2026-09-07T10:57:33.632022Z' │
+│ 5       │ 'Profile 5' │ 'webContent' │ 72   │ '2026-09-28T13:55:07.456100Z' │
+│ 6       │ 'Profile 6' │ 'webContent' │ 59   │ '2026-09-21T12:44:20.006782Z' │
 └─────────┴─────────────┴──────────────┴──────┴───────────────────────────────┘
 ```
 

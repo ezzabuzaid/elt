@@ -34,8 +34,8 @@
     "@eltjs/elt": "*",
     "@eltjs/sdk-web-article": "0.0.1",
     "@eltjs/sdk-web-crawler": "0.0.1",
-    "@zukhruf/async": "^0.8.21",
-    "@zukhruf/snapshot-differential": "^0.8.21",
+    "@zukhruf/async": "^0.8.22",
+    "@zukhruf/snapshot-differential": "^0.8.22",
     "got": "16.1.0",
     "keyv": "6.1.0",
     "zod": "4.6.5"
@@ -44,8 +44,8 @@
     "@eltjs/elt-sqlite": "*",
     "@mswjs/interceptors": "^0.45.9",
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/fs": "^0.8.21",
-    "@zukhruf/sqlite-open": "^0.8.21",
-    "@zukhruf/testing": "^0.8.21"
+    "@zukhruf/fs": "^0.8.22",
+    "@zukhruf/sqlite-open": "^0.8.22",
+    "@zukhruf/testing": "^0.8.22"
   }
 }

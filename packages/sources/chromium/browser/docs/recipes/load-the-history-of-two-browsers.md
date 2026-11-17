@@ -13,10 +13,10 @@
 ## The program
 
 ```ts title="load-the-history-of-two-browsers.ts"
-import { mkdtemp, rm } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 
 import { Connection, Copy, Pipeline } from '@eltjs/elt';
@@ -28,8 +28,8 @@ import {
 import { chrome, dia } from '@eltjs/sdk-chromium-browser';
 import { ChromiumSource } from '@eltjs/source-chromium-browser/chromium-source';
 
-const directory = await mkdtemp(join(tmpdir(), 'chromium-'));
-const path = join(directory, 'browsers.sqlite');
+await using folder = await new TemporaryFiles().directory('chromium-');
+const path = join(folder.path, 'browsers.sqlite');
 const destination = new SQLiteDestination({ path });
 const connections = [dia, chrome].map((browser) => {
   const source = new ChromiumSource({ browser, home: homedir() });
@@ -38,7 +38,7 @@ const connections = [dia, chrome].map((browser) => {
     source,
     destination,
     checkpoints: new SQLiteCheckpointStore({
-      path: join(directory, `${browser.id}-checkpoints.sqlite`),
+      path: join(folder.path, `${browser.id}-checkpoints.sqlite`),
     }),
     steps: [source.historyVisits, source.bookmarks].map(
       (stream) =>
@@ -78,17 +78,16 @@ console.table(
     .all(),
 );
 database.close();
-await rm(directory, { recursive: true });
 ```
 
 ## The output
 
-Run it with `node load-the-history-of-two-browsers.ts` from a folder where the `@eltjs` packages resolve. On 2026-11-02, on macOS 27, with Dia running and Chrome closed, the output was:
+Run it with `node load-the-history-of-two-browsers.ts` from a folder where the `@eltjs` packages resolve. On 2026-11-17, on macOS 27, with Dia running and Chrome closed, the output was:
 
 ```text
 first pass:
-  dia:historyVisits: 82300 written, 0 deleted
-  dia:bookmarks: 960 written, 0 deleted
+  dia:historyVisits: 86595 written, 0 deleted
+  dia:bookmarks: 956 written, 0 deleted
   chrome:historyVisits: 320 written, 0 deleted
   chrome:bookmarks: 577 written, 0 deleted
 second pass:
@@ -99,7 +98,7 @@ second pass:
 ┌─────────┬──────────┬────────┬─────────────────┐
 │ (index) │ browser  │ visits │ olderThan90Days │
 ├─────────┼──────────┼────────┼─────────────────┤
-│ 0       │ 'dia'    │ 82300  │ 80759           │
+│ 0       │ 'dia'    │ 86595  │ 80767           │
 │ 1       │ 'chrome' │ 320    │ 0               │
 └─────────┴──────────┴────────┴─────────────────┘
 ```
