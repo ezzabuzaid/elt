@@ -14,7 +14,9 @@ type Spike = {
 // purchases Arab Bank texts about, by the time of each SMS on the user's
 // clock, summed per ISO week. A week matches when it passes twice the median
 // of the 8 weeks before it, where a week without purchases counts as 0. A
-// week matches when it passes after and did not before.
+// median of 0, when five or more of those weeks are empty, gives no match:
+// any spend passes twice nothing. A week matches when it passes after and
+// did not before.
 // early-month-spend.ts parses the same template; a fix to the parse belongs
 // in both (ADR 0004 of eca).
 export class SpendSpike extends NotifyAutomation<Spike> {
@@ -69,7 +71,7 @@ async function spikes(sql: postgres.Sql): Promise<Spike[]> {
       .slice(index, index + 8)
       .map((week) => week.spent)
       .toSorted((a, b) => a - b);
-    return spent > low + high
+    return low + high > 0 && spent > low + high
       ? [
           {
             week: `${monday.yearOfWeek}-W${String(monday.weekOfYear).padStart(2, '0')}`,

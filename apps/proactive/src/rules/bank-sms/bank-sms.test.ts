@@ -342,6 +342,22 @@ test('a week without purchases counts as 0 in the usual spend', async () => {
   );
 });
 
+test('a week whose usual spend is 0 is no spike, as when five of the 8 weeks before have no purchases', async () => {
+  await using database = await postgresql.database();
+  const warehouse = inbox(database.connectionString);
+  const empty = await warehouse.receive();
+  const received = await warehouse.receive(
+    ...weeks('100.000', '100.000', '100.000'),
+    ['Arab Bank', purchase('150.000'), '2026-03-04T09:00:00Z'],
+  );
+
+  assert.deepEqual(
+    await warehouse.evaluate(new SpendSpike(), empty, received),
+    [],
+    'three weeks of 100 JOD and five of none make 0 JOD usual, which any spend passes twice',
+  );
+});
+
 test('the usual spend is the median of the 8 weeks before the week, without the week itself', async () => {
   await using database = await postgresql.database();
   const warehouse = inbox(database.connectionString);
