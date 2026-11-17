@@ -240,6 +240,9 @@
       "path": "./packages/opentelemetry"
     },
     {
+      "path": "./packages/sources/microsoft/sharepoint"
+    },
+    {
       "path": "./packages/sdks/microsoft/sharepoint"
     },
     {

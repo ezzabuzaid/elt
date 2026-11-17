@@ -1,0 +1,6 @@
+{
+  "name": "source-microsoft-sharepoint",
+  "sourceRoot": "packages/sources/microsoft/sharepoint/src",
+  "projectType": "library",
+  "tags": ["layer:island"]
+}

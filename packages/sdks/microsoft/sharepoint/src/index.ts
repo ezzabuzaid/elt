@@ -1,11 +1,12 @@
 export type { Column } from './column.ts';
 export type { DeltaPage } from './delta.ts';
 export type { Drive } from './drive.ts';
-export type { DriveItem } from './drive-item.ts';
+export type { DriveItem, PresentDriveItem } from './drive-item.ts';
 export {
   DeltaExpiredError,
   GraphError,
   SharePointAccessError,
+  SharePointCredentialsError,
   SharePointSiteNotFoundError,
 } from './errors.ts';
 export type { SharePointClientOptions } from './graph.ts';

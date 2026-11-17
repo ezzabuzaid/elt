@@ -76,3 +76,6 @@ const deletedDriveItem = z.object({
 export const driveItem = z.union([presentDriveItem, deletedDriveItem]);
 
 export type DriveItem = z.infer<typeof driveItem>;
+
+/** A file or a folder of a drive as it is now: a drive item that is not deleted. */
+export type PresentDriveItem = z.infer<typeof presentDriveItem>;

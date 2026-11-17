@@ -13,6 +13,7 @@ import {
   GraphError,
   SharePointAccessError,
   SharePointClient,
+  SharePointCredentialsError,
   SharePointSiteNotFoundError,
   SiteVersion,
 } from './index.ts';
@@ -358,6 +359,42 @@ test('the site, its drives, lists, columns, pages and text web parts come back a
     { id: welcome.id, innerHtml: welcome.innerHtml },
     { id: contacts.id, innerHtml: contacts.innerHtml },
   ]);
+});
+
+test('a client secret that Entra ID refuses fails with a SharePointCredentialsError, and no Graph request is sent', async () => {
+  const { clock } = fakeClock();
+  using server = new Msw().intercept(
+    http.post(
+      `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`,
+      () =>
+        Response.json(
+          {
+            error: 'invalid_client',
+            error_description:
+              "AADSTS7000215: Invalid client secret provided. Ensure the secret being sent in the request is the client secret value, not the client secret ID, for a secret added to app 'client-id'.",
+            error_codes: [7000215],
+          },
+          { status: 401 },
+        ),
+    ),
+  );
+  const client = new SharePointClient({
+    tenantId: TENANT,
+    clientId: 'client-id',
+    clientSecret: 'wrong-secret',
+    clock,
+  });
+
+  await assert.rejects(
+    client.site(SITE_URL, AbortSignal.timeout(5000)),
+    SharePointCredentialsError,
+  );
+  assert.deepEqual(
+    server.requests.filter(
+      (request) => new URL(request.url).host === 'graph.microsoft.com',
+    ),
+    [],
+  );
 });
 
 test('a 429 waits the Retry-After on the clock, then the request is sent again', async () => {

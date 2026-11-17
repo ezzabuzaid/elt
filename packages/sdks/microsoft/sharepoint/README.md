@@ -66,7 +66,7 @@ On 2026-11-17, with the app-only token of an app that holds only `Sites.Selected
 - `GET /sites/{id}/pages/{id}/microsoft.graph.sitePage?$expand=canvasLayout` answers 200.
 - A drive delta gives the root folder of the drive on each of its pages: 31 times over the 31 pages of a library of 5,725 files. The root has no `eTag`.
 - The item delta of the hidden list of template `accessRequest` answers 503 `serviceNotAvailable` at each try, while `GET /sites/{id}/lists/{id}/items` answers 200. `listItems` reads such a list in full.
-- One full pass of the granted site parsed with these schemas: 6 drives, 10 lists, 5,727 files, 718 folders, 6,457 list items and 4 pages.
+- One full pass of the granted site parsed with these schemas: 6 drives, 10 lists, 5,727 files, 314 folders, about 6,450 list items and 4 pages. The drive deltas gave the 314 folders 682 times: a delta gives a folder again when its children change, and the last time is the current one.
 
 Not checked live: that the `lastModifiedDateTime` of a list moves when one of its items changes, which `SiteVersion` uses. The app has only a read grant, and no test site is available. The next changes that people make to the site show it.
 

@@ -53,6 +53,22 @@ export class SharePointAccessError extends Error {
   }
 }
 
+/**
+ * Microsoft Entra ID refused the client ID or the client secret of the app,
+ * so no token was given: a wrong or expired secret, or an app that the tenant
+ * does not have. `cause` is MSAL's error, which names the AADSTS code.
+ */
+export class SharePointCredentialsError extends Error {
+  override readonly name = 'SharePointCredentialsError';
+
+  constructor(options: { cause: Error }) {
+    super(
+      'Microsoft Entra ID refused the client ID or secret of the app. Check them, or ask the administrator for a new secret.',
+      options,
+    );
+  }
+}
+
 /** No site is at the URL: Graph answered 404. */
 export class SharePointSiteNotFoundError extends Error {
   override readonly name = 'SharePointSiteNotFoundError';

@@ -1,11 +1,20 @@
-import { ConfidentialClientApplication } from '@azure/msal-node';
+import { ConfidentialClientApplication, ServerError } from '@azure/msal-node';
 import { type WallClock, delay, untilAborted } from '@zukhruf/async';
 import { z } from 'zod';
 
-import { GraphError, SharePointAccessError } from './errors.ts';
+import {
+  GraphError,
+  SharePointAccessError,
+  SharePointCredentialsError,
+} from './errors.ts';
 import { retryWait } from './graph-retry.ts';
 
 const GRAPH = 'https://graph.microsoft.com/v1.0';
+
+const refusedCredentials: ReadonlySet<string> = new Set([
+  'invalid_client',
+  'unauthorized_client',
+]);
 
 /**
  * An app registration of Microsoft Entra ID and its client secret, and the
@@ -111,9 +120,20 @@ export class Graph {
 
   async #token(signal: AbortSignal): Promise<string> {
     const result = await untilAborted(
-      this.#app.acquireTokenByClientCredential({
-        scopes: ['https://graph.microsoft.com/.default'],
-      }),
+      this.#app
+        .acquireTokenByClientCredential({
+          scopes: ['https://graph.microsoft.com/.default'],
+        })
+        .catch((error: unknown) => {
+          // A wrong secret answers invalid_client (AADSTS7000215, live
+          // 2026-11-17); an app the tenant lacks, unauthorized_client.
+          if (
+            error instanceof ServerError &&
+            refusedCredentials.has(error.errorCode)
+          )
+            throw new SharePointCredentialsError({ cause: error });
+          throw error;
+        }),
       signal,
     );
     if (result === null)

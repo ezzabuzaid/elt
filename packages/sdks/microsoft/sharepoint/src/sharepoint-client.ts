@@ -34,9 +34,12 @@ import { SITE_FIELDS, type Site, site, sitePath } from './site.ts';
  * app-only token. Each call stops when `signal` aborts.
  */
 export class SharePointClient {
+  /** The Microsoft Entra tenant of the app, which owns the sites it reads. */
+  readonly tenantId: string;
   readonly #graph: Graph;
 
   constructor(options: SharePointClientOptions) {
+    this.tenantId = options.tenantId;
     this.#graph = new Graph(options);
   }
 

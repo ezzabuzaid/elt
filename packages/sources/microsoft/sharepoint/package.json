@@ -1,0 +1,28 @@
+{
+  "name": "@eltjs/source-microsoft-sharepoint",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./sharepoint-source": {
+      "types": "./dist/sharepoint-source.d.ts",
+      "default": "./dist/sharepoint-source.js"
+    }
+  },
+  "dependencies": {
+    "@eltjs/elt": "*",
+    "@eltjs/sdk-microsoft-sharepoint": "*",
+    "@zukhruf/async": "^0.8.25",
+    "@zukhruf/fs": "^0.8.25",
+    "@zukhruf/snapshot-differential": "^0.8.25"
+  },
+  "devDependencies": {
+    "@eltjs/elt-sqlite": "*",
+    "@eltjs/parser-office": "*",
+    "@sinonjs/fake-timers": "15.4.0",
+    "@zukhruf/sqlite-open": "^0.8.25",
+    "@zukhruf/testing": "^0.8.25",
+    "msw": "^3.0.3",
+    "officeparser": "^8.8.0"
+  }
+}
