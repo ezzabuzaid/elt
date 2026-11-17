@@ -10,8 +10,27 @@ messages.
 
 - `src/main.ts` adds the rules that run. `src/pipeline.ts` lists the connections that the warehouse imports.
 - `src/connections/` holds one file for each connection. Each copy loads a stream into `raw_<stream>`, and readers see it as `marts.<prefix>_<stream>` (`marts-copy.ts`). `src/warehouse.ts` holds the address of the loading role.
-- `src/engine/` runs the rules: the `Automation` base, the `NotifyAutomation` and `AgentAutomation` actions, and the `Automations` runner.
+- `src/engine/` runs the rules: the `Automation` base, the `NotifyAutomation` and `AgentAutomation` actions, the `Automations` runner, and the stored rules: `SqlNotifyRule` and `SqlAgentRule` (`sql-rule.ts`) and `RuleStore` (`rule-store.ts`).
 - `src/rules/` holds one folder for each rule, with its test. Rules that share a base class or a source share a folder: `bank-sms/` and `clay-topics/`. A new rule is a new folder. `src/rules/notifications.test.ts` checks the notification text of the four notifying rules.
+
+## Stored rules
+
+A stored rule is a rule that a user wrote as data, not as a class: its words,
+one SQL query over the marts, and one action, `notify` (a message whose
+`{column}` names are filled from the matched row) or `agent` (an instruction
+that Codex gets with the matched row, as an `AgentAutomation` does). The rules
+are in `~/Library/Application Support/Context Compiler/Proactive/rules.sqlite`,
+not in the warehouse: a fresh run makes the warehouse again, and a rule is
+what a user wrote, not data that a run derives. The table refuses a row with
+no action or with two. `src/main.ts` adds each stored rule by its name beside
+the rules in `src/rules/`.
+
+A stored rule matches each row that its SQL gives as of `after` and did not
+give as of `before`. Rows are compared whole, so a rule chooses what it
+compares by the columns it selects: a row whose value changes while it stays
+true, such as a running total, matches again. A rule that must tell once
+selects what does not change once true, such as the purchase that passed a
+limit, not the total so far.
 
 ## Rules
 
@@ -62,12 +81,15 @@ history keeps no versions, so the action reads it, not the condition.
 Calendar access and Full Disk Access for Mail and Messages must already be
 granted to the host running the app.
 
-Two rules read the Arab Bank SMS in Messages, by the time of each SMS in
+Three rules read the Arab Bank SMS in Messages, by the time of each SMS in
 Amman:
 
+- **EarlyMonthSpend:** the card purchases of days 1 to 10 of a month pass
+  200 JOD. Each month notifies once.
 - **SpendSpike:** the card purchases of an ISO week pass twice the median of
-  the 8 weeks before it. A week without purchases counts as 0 JOD. One-time
-  codes, credits and transfers are not purchases. Each week notifies once.
+  the 8 weeks before it. A week without purchases counts as 0 JOD, and a
+  median of 0 (five or more empty weeks) is no spike. One-time codes, credits
+  and transfers are not purchases. Each week notifies once.
 - **MissingMidMonthCredit:** a credit of 1000 JOD or more is due on days 13
   to 17 of each month. When day 18 starts and no such credit came on day 13
   or later, the month notifies once. Day 18 starts when the import holds a

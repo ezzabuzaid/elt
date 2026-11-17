@@ -1,3 +1,6 @@
+import { mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Shutdown } from '@zukhruf/shutdown';
@@ -7,6 +10,8 @@ import type { Warehouse } from '@eltjs/eca';
 import { PostgresDestination } from '@eltjs/elt-postgresql';
 
 import { Automations } from './engine/automations.ts';
+import { RuleStore } from './engine/rule-store.ts';
+import { SqlAgentRule, SqlNotifyRule } from './engine/sql-rule.ts';
 import pipeline from './pipeline.ts';
 import { EarlyMonthSpend } from './rules/bank-sms/early-month-spend.ts';
 import { MissingMidMonthCredit } from './rules/bank-sms/missing-mid-month-credit.ts';
@@ -50,6 +55,7 @@ const warehouse: Warehouse<postgres.Sql> = {
   read: (position) => reader.reading(position),
 };
 const outputs = new URL('../../../outputs/proactive/', import.meta.url);
+const agent = fileURLToPath(new URL('agent/', outputs));
 const automations = new Automations({ warehouse, cursors: writer });
 automations.add('early-month-spend', new EarlyMonthSpend());
 automations.add('spend-spike', new SpendSpike());
@@ -64,10 +70,23 @@ automations.add(
     sql,
   ),
 );
-automations.add(
-  'careem-calories',
-  new CareemCalories(fileURLToPath(new URL('agent/', outputs))),
+automations.add('careem-calories', new CareemCalories(agent));
+
+// The rules that users wrote, kept outside the warehouse, which a fresh run
+// makes again.
+const home = join(
+  homedir(),
+  'Library/Application Support/Context Compiler/Proactive',
 );
+await mkdir(home, { recursive: true });
+using rules = new RuleStore(join(home, 'rules.sqlite'));
+for (const rule of rules.rules())
+  automations.add(
+    rule.name,
+    rule.notify === undefined
+      ? new SqlAgentRule(rule.sql, rule.agent, agent)
+      : new SqlNotifyRule(rule.sql, rule.notify),
+  );
 
 // A failed automation does not stop the others, but the run still exits
 // non-zero so the failure is not silent.
