@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   AppIntents,

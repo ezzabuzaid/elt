@@ -18,7 +18,10 @@ const execute = promisify(execFile);
 // One native engine process, which loads the model's weights when it starts.
 // JSON Lines over stdio keeps the engine independent of Node and avoids
 // opening a server port. Each request receives exactly one response.
-export class TranscriptionWorker extends Coprocess implements Worker {
+export class TranscriptionWorker
+  extends Coprocess
+  implements Worker<string, { text: string }>
+{
   constructor(
     helper: string,
     { path, language }: LocalTranscriptionConfiguration,
@@ -40,7 +43,7 @@ export class TranscriptionWorker extends Coprocess implements Worker {
     await execute(helper, ['--help']);
   }
 
-  async read(path: string) {
+  async run(path: string): Promise<{ text: string }> {
     const result = transcript.parse(await this.request({ path }));
     if ('error' in result) throw new Error(result.error);
     return result;

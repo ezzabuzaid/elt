@@ -1,7 +1,7 @@
-import { mkdtempDisposable, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import type {
@@ -243,8 +243,8 @@ export class AppleCalendarSource extends Source<CalendarScan> {
       return;
     }
     // Only records the diff emits are staged, one at a time.
-    await using staging = await mkdtempDisposable(
-      join(tmpdir(), 'elt-calendar-attachment-'),
+    await using staging = await new TemporaryFiles().directory(
+      'elt-calendar-attachment-',
     );
     for await (const message of messages) {
       if ('type' in message) {

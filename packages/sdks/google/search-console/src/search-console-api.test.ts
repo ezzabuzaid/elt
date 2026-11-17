@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { createClock } from '@sinonjs/fake-timers';
 import { Msw } from '@zukhruf/testing/msw';
 import { http } from 'msw';
 
@@ -114,10 +115,12 @@ test('a Retry-After longer than a minute fails without waiting', async () => {
         'retry-after': '120',
       }),
   });
-  const started = performance.now();
 
+  // The clock stands still, so a wait of 120 s would never end.
   await assert.rejects(
-    new SearchConsoleApi(searchConsole.requester).sites({ clock: globalThis }),
+    new SearchConsoleApi(searchConsole.requester).sites({
+      clock: createClock(),
+    }),
     (error: unknown) => {
       assert.ok(error instanceof SearchConsoleQuotaError);
       assert.equal(error.attempts, 1);
@@ -125,7 +128,6 @@ test('a Retry-After longer than a minute fails without waiting', async () => {
     },
   );
   assert.equal(searchConsole.calls.length, 1);
-  assert.ok(performance.now() - started < 500);
 });
 
 test('rate limits that never clear end after five attempts and say so', async () => {

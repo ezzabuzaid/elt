@@ -53,6 +53,6 @@ export class ImageFormat extends DocumentFormat {
   }
 
   override text(path: string, signal?: AbortSignal): Promise<string | null> {
-    return this.#ocr.use((worker) => worker.read(path), signal);
+    return this.#ocr.use((worker) => worker.run(path), signal);
   }
 }

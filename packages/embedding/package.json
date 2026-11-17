@@ -46,7 +46,8 @@
   "devDependencies": {
     "@ai-sdk/provider": "^4.0.37",
     "@eltjs/elt-sqlite": "^0.3.5",
-    "@zukhruf/sqlite-open": "^0.8.10",
-    "@zukhruf/testing": "^0.8.10"
+    "@zukhruf/fs": "^0.8.21",
+    "@zukhruf/sqlite-open": "^0.8.21",
+    "@zukhruf/testing": "^0.8.21"
   }
 }

@@ -9,8 +9,8 @@ import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { ImageFormat } from './document-formats/image-format.ts';
 import { MacOSDocumentParser } from './macos-document-parser.ts';
@@ -557,7 +557,7 @@ test('a parent that closes stdin with a read in flight gets its answer, and the 
   const worker = new VisionWorker(helper, globalThis);
   try {
     await worker.ready();
-    const reading = worker.read(path);
+    const reading = worker.run(path);
     await worker.close();
     assert.equal(await reading, 'Meet tomorrow');
     assert.match((await worker.exited()).message, /exited \(0\)/);

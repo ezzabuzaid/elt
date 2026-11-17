@@ -26,8 +26,9 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@types/jsdom": "28.0.3",
     "@eltjs/elt-sqlite": "*",
-    "@zukhruf/testing": "^0.8.10"
+    "@types/jsdom": "28.0.3",
+    "@zukhruf/fs": "^0.8.21",
+    "@zukhruf/testing": "^0.8.21"
   }
 }

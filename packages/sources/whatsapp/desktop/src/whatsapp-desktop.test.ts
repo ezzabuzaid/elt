@@ -9,8 +9,8 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,

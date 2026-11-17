@@ -13,11 +13,12 @@
     "@eltjs/elt": "*",
     "@eltjs/sdk-whatsapp-desktop": "0.0.1",
     "@eltjs/source-apple-macos": "0.0.1",
-    "@zukhruf/snapshot-differential": "^0.8.10"
+    "@zukhruf/snapshot-differential": "^0.8.21"
   },
   "devDependencies": {
     "@eltjs/elt-sqlite": "*",
-    "@zukhruf/sqlite-open": "^0.8.10",
-    "@zukhruf/testing": "^0.8.10"
+    "@zukhruf/fs": "^0.8.21",
+    "@zukhruf/sqlite-open": "^0.8.21",
+    "@zukhruf/testing": "^0.8.21"
   }
 }

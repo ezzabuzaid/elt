@@ -3,8 +3,8 @@ import { mkdir, utimes } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { StoreUnavailableError, WhatsApp } from './index.ts';
 

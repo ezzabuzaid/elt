@@ -14,9 +14,9 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { isDictionary, readPlist } from '@eltjs/codec-plist';
 import {

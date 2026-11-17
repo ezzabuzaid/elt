@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtempDisposable, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+
+import { TemporaryFiles } from '@zukhruf/fs';
 
 import { Automation } from './automation.ts';
 
@@ -22,8 +23,8 @@ export abstract class AgentAutomation<Data> extends Automation<Data> {
 
   async act(match: Data, signal: AbortSignal): Promise<string> {
     await mkdir(this.#directory, { recursive: true });
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'proactive-agent-'),
+    await using scratch = await new TemporaryFiles().directory(
+      'proactive-agent-',
     );
     const output = join(scratch.path, 'last-message.md');
     const result = promisify(execFile)(

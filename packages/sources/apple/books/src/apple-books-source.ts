@@ -1,7 +1,7 @@
-import { mkdtempDisposable, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
 import type {
@@ -149,7 +149,7 @@ export class AppleBooksSource extends Source<BooksScan> {
       return;
     }
     // Only records the diff emits are staged, one at a time.
-    await using staging = await mkdtempDisposable(join(tmpdir(), 'elt-books-'));
+    await using staging = await new TemporaryFiles().directory('elt-books-');
     for await (const message of messages) {
       if ('type' in message) {
         yield message;

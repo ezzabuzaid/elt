@@ -15,9 +15,10 @@
     "@eltjs/source-apple-macos": "0.0.1"
   },
   "devDependencies": {
-    "@sinonjs/fake-timers": "15.4.0",
     "@eltjs/elt-sqlite": "*",
-    "@zukhruf/sqlite-open": "^0.8.10",
-    "@zukhruf/testing": "^0.8.10"
+    "@sinonjs/fake-timers": "15.4.0",
+    "@zukhruf/fs": "^0.8.21",
+    "@zukhruf/sqlite-open": "^0.8.21",
+    "@zukhruf/testing": "^0.8.21"
   }
 }

@@ -13,8 +13,8 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { ChangeWatcher } from '@zukhruf/async';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { macOSAccess } from '@eltjs/sdk-macos-app-database';
 
@@ -405,13 +405,10 @@ test('a read its signal stops rejects with the reason at once and never resolves
     { interval: 10, timeout: 60_000 },
   );
   removal.abort(removed);
-  const outcome = await Promise.race([
-    reading.then(
-      () => 'resolved',
-      (error: unknown) => error,
-    ),
-    sleep(5_000, 'still reading'),
-  ]);
+  const outcome = await reading.then(
+    () => 'resolved',
+    (error: unknown) => error,
+  );
 
   assert.equal(outcome, removed);
 });
@@ -475,13 +472,10 @@ test('a read of only the accounts and lists its signal stops rejects with the re
     { interval: 10, timeout: 60_000 },
   );
   removal.abort(removed);
-  const outcome = await Promise.race([
-    reading.then(
-      () => 'resolved',
-      (error: unknown) => error,
-    ),
-    sleep(5_000, 'still reading'),
-  ]);
+  const outcome = await reading.then(
+    () => 'resolved',
+    (error: unknown) => error,
+  );
 
   assert.equal(outcome, removed);
 });

@@ -15,13 +15,14 @@
     "@eltjs/sdk-apple-accounts": "0.0.1",
     "@eltjs/sdk-apple-mail": "0.0.1",
     "@eltjs/source-apple-macos": "0.0.1",
-    "@zukhruf/snapshot-differential": "^0.8.10"
+    "@zukhruf/fs": "^0.8.21",
+    "@zukhruf/snapshot-differential": "^0.8.21"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
     "@eltjs/elt-sqlite": "*",
-    "@zukhruf/pool": "^0.8.10",
-    "@zukhruf/sqlite-open": "^0.8.10",
-    "@zukhruf/testing": "^0.8.10"
+    "@zukhruf/pool": "^0.8.21",
+    "@zukhruf/sqlite-open": "^0.8.21",
+    "@zukhruf/testing": "^0.8.21"
   }
 }

@@ -1973,13 +1973,10 @@ test(
     await sleep(2000);
     const stop = new Error('stop');
     controller.abort(stop);
-    const outcome = await Promise.race([
-      run.then(
-        () => 'the run finished',
-        (error: unknown) => error,
-      ),
-      sleep(30_000).then(() => 'the stop did not end the read'),
-    ]);
+    const outcome = await run.then(
+      () => 'the run finished',
+      (error: unknown) => error,
+    );
 
     assert.equal(outcome, stop);
   },

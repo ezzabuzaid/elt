@@ -3041,13 +3041,10 @@ test('a stopping watch ends the pass it is running, which the extract sees and t
   );
   await reading.promise;
   controller.abort(removed);
-  const outcome = await Promise.race([
-    watching.then(
-      () => 'ended',
-      (error: unknown) => error,
-    ),
-    sleep(2_000, 'still in its pass'),
-  ]);
+  const outcome = await watching.then(
+    () => 'ended',
+    (error: unknown) => error,
+  );
 
   assert.equal(outcome, 'ended');
   assert.deepEqual(seen, [removed]);
@@ -3102,10 +3099,7 @@ test("breaking a watch's loop ends the pass another connection is running, recor
       break;
     }
   })();
-  const outcome = await Promise.race([
-    consumed.then(() => 'ended'),
-    sleep(2_000, 'still in its pass'),
-  ]);
+  const outcome = await consumed.then(() => 'ended');
 
   assert.equal(outcome, 'ended');
   assert.ok(

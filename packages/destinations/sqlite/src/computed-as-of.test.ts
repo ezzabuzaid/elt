@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { Latch } from '@zukhruf/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
+import { TemporaryFiles } from '@zukhruf/fs';
 
 import {
   Catalog,

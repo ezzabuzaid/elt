@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { ChangeWatcher, type Outcome } from '@zukhruf/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
+import { TemporaryFiles } from '@zukhruf/fs';
 
 import { AppFilesVersion } from './index.ts';
 

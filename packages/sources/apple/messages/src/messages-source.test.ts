@@ -9,10 +9,10 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
 import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,

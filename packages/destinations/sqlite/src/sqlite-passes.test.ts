@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 
 import {

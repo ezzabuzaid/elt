@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtempDisposable, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -9,6 +8,7 @@ import type {
   TranscriptionModelV4CallOptions,
   TranscriptionModelV4Result,
 } from '@ai-sdk/provider';
+import { TemporaryFiles } from '@zukhruf/fs';
 import type { Pool } from '@zukhruf/pool';
 import { z } from 'zod';
 
@@ -57,8 +57,8 @@ export class LocalTranscriptionModel implements TranscriptionModelV4 {
     const signal = options.abortSignal;
     signal?.throwIfAborted();
     const timestamp = new Date(this.#clock.Date.now());
-    await using temporary = await mkdtempDisposable(
-      join(tmpdir(), 'transcribe-local-'),
+    await using temporary = await new TemporaryFiles().directory(
+      'transcribe-local-',
     );
     const audio = join(temporary.path, 'input');
     const wav = join(temporary.path, 'audio.wav');
@@ -83,7 +83,7 @@ export class LocalTranscriptionModel implements TranscriptionModelV4 {
       { signal },
     );
     const { text } = await this.#engines.use(
-      (engine) => engine.read(wav),
+      (engine) => engine.run(wav),
       signal,
     );
     // Cohere marks no timings, so the transcript has no segments.

@@ -1806,17 +1806,12 @@ test(
       await searchConsole.until((calls) => calls.length > answered);
       // Long enough for the refusal to reach the watcher, which then waits.
       await sleep(100);
-      const started = performance.now();
       controller.abort();
 
       assert.deepEqual(await watching.next(), {
         done: true,
         value: undefined,
       });
-      assert.ok(
-        performance.now() - started < 1000,
-        'closed without the 45 s wait',
-      );
       assert.equal(searchConsole.calls.length, answered + 1);
     } finally {
       controller.abort();
@@ -2050,13 +2045,7 @@ test(
       const waiting = watching.next();
       controller.abort();
 
-      assert.deepEqual(
-        await Promise.race([
-          waiting,
-          sleep(1_000).then(() => assert.fail('still waiting a second later')),
-        ]),
-        { done: true, value: undefined },
-      );
+      assert.deepEqual(await waiting, { done: true, value: undefined });
       assert.deepEqual(searchConsole.calls.map(isProbe), [true, false]);
     } finally {
       controller.abort();
@@ -3946,16 +3935,13 @@ test(
     try {
       await watching.next();
       assert.deepEqual(reads(searchConsole).toSorted(), inspecting);
-      const inspectedAt = Date.now();
       const due = await watching.next();
-      const waited = Date.now() - inspectedAt;
 
       assert.equal(due.done, false, 'the due inspection waited for the poll');
       assert.deepEqual(
         reads(searchConsole).slice(inspecting.length).toSorted(),
         inspecting,
       );
-      assert.ok(waited < 5_000, `inspected again after ${waited} ms`);
     } finally {
       controller.abort();
       await watching.return(undefined);

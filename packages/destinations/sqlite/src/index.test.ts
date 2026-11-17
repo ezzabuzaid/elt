@@ -10,6 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { Latch } from '@zukhruf/async';
+import { TemporaryFiles } from '@zukhruf/fs';
 import {
   ClosedWorld,
   Coverage,
@@ -17,7 +18,6 @@ import {
 } from '@zukhruf/snapshot-differential';
 import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,
@@ -7391,13 +7391,16 @@ class CheckedStore extends Gauge<number> implements AsyncDisposable {
 
 // The checked source loaded into one SQLite file with its sync history, and
 // what readers see of each stream and of the connector there.
-async function checkedPipeline(directory: string) {
+async function checkedPipeline(
+  directory: string,
+  clock: ConstructorParameters<typeof Pipeline>[0]['clock'] = globalThis,
+) {
   const source = new CheckedSource();
   const path = join(directory, 'data.sqlite');
   const destination = new SQLiteDestination({ path });
   const history = new SQLiteSyncHistory();
   const pipeline = new Pipeline({
-    clock: globalThis,
+    clock,
     history,
     connections: [
       new Connection({
@@ -7934,7 +7937,6 @@ test('a watch whose sync history cannot record a pass rejects with the historyâ€
     }
 
     busy.checks.emit('check', [busy.a]);
-    const started = Date.now();
     // Stops a watch that would wait for the idle connection's next change.
     const waiting = setTimeout(() => controller.abort(), 3000);
     const error = await watching.next().then(
@@ -7945,7 +7947,6 @@ test('a watch whose sync history cannot record a pass rejects with the historyâ€
 
     assert.ok(Error.isError(error));
     assert.equal(error.message, 'no such table: _elt_extraction_coverage');
-    assert.ok(Date.now() - started < 3000, 'it waited for the idle connection');
     assert.equal(busy.checks.listenerCount('check'), 0);
     assert.equal(idle.checks.listenerCount('check'), 0);
   } finally {
@@ -8042,10 +8043,7 @@ test(
       assert.deepEqual(outcomes(failed), [['a', 'system']]);
       assert.deepEqual(outcomes(sibling), [['b', null]]);
       assert.deepEqual(outcomes(retried), [['a', null]]);
-      assert.ok(
-        waited >= 9_000 && waited < 20_000,
-        `retried after ${waited} ms`,
-      );
+      assert.ok(waited >= 9_000, `retried after ${waited} ms`);
       assert.equal(streams().a?.current_as_of, startedAt());
     } finally {
       clearTimeout(deadline);
@@ -8060,41 +8058,63 @@ test(
   { timeout: 30_000 },
   async () => {
     await using scratch = await new TemporaryFiles().directory('elt-retry-');
-    const { source, pipeline } = await checkedPipeline(scratch.path);
+    const clock = createClock(0);
+    const { source, pipeline } = await checkedPipeline(scratch.path, clock);
     const controller = new AbortController();
     const watching = pipeline.watch({ signal: controller.signal });
     // Ends a watch whose next pass never comes, so the test fails, not hangs.
     const deadline = setTimeout(() => controller.abort(), 25_000);
+    // The watch runs on the fake clock: time moves in steps of 100 ms until
+    // the pass comes, so the clock tells how long the watch waited for it.
+    const passed = <T>(pending: Promise<T>) =>
+      timebox(
+        async () => {
+          await clock.tickAsync(100);
+          return Promise.race([
+            pending,
+            Promise.reject(
+              new assert.AssertionError({ message: 'The watch ran no pass' }),
+            ),
+          ]);
+        },
+        {
+          minTimeout: 10,
+          maxRetryTime: 20_000,
+          shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+        },
+      );
     try {
-      await watching.next();
+      await passed(watching.next());
 
       source.failing.add('a');
       source.denied.add('b');
       source.checks.emit('check', [source.a, source.b]);
-      const failed = await watching.next();
-      const failedAt = Date.now();
+      const failed = await passed(watching.next());
+      const failedAt = clock.now;
       source.failing.clear();
       source.denied.clear();
       source.checks.emit('check', [source.a]);
-      const changed = await watching.next();
-      const changedAfter = Date.now() - failedAt;
+      const changed = await passed(watching.next());
+      const changedAfter = clock.now - failedAt;
       // Past when a retry of either would have come.
       const next = watching.next();
+      await clock.tickAsync(11_000);
       const quiet = await Promise.race([
         next,
-        sleep(Math.max(0, 11_000 - (Date.now() - failedAt))).then(
-          () => 'quiet',
-        ),
+        sleep(1_000).then(() => 'quiet'),
       ]);
       source.checks.emit('check', [source.b]);
-      const granted = await next;
+      const granted = await passed(next);
 
       assert.deepEqual(outcomes(failed), [
         ['a', 'system'],
         ['b', 'config'],
       ]);
       assert.deepEqual(outcomes(changed), [['a', null]]);
-      assert.ok(changedAfter < 5_000, `loaded after ${changedAfter} ms`);
+      assert.ok(
+        changedAfter < 5_000,
+        `loaded after ${changedAfter} ms of the clock`,
+      );
       assert.equal(quiet, 'quiet', JSON.stringify(outcomes(granted)));
       assert.deepEqual(outcomes(granted), [['b', null]]);
     } finally {

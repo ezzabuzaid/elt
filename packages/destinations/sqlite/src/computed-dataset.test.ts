@@ -6,8 +6,8 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { Latch } from '@zukhruf/async';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { timebox } from '@zukhruf/testing/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,

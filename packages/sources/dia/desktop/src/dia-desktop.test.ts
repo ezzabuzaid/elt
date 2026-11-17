@@ -13,8 +13,8 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,

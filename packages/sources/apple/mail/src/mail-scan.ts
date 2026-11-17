@@ -1,7 +1,7 @@
 import { hash } from 'node:crypto';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import { TemporaryFiles } from '@zukhruf/fs';
 
 import type { AccountsStore } from '@eltjs/sdk-apple-accounts';
 import type {
@@ -75,7 +75,7 @@ export class MailScan implements AsyncDisposable {
     await using resources = new AsyncDisposableStack();
     const snapshot = resources.use(await store.open());
     const scratch = resources.use(
-      await mkdtempDisposable(join(tmpdir(), 'apple-mail-')),
+      await new TemporaryFiles().directory('apple-mail-'),
     );
     const selection =
       Object.keys(scope).length === 0

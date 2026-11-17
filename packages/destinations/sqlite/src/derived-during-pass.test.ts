@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { Latch } from '@zukhruf/async';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Catalog,

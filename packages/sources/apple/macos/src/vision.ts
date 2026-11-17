@@ -14,7 +14,10 @@ const response = z.union([
 // request with one line. Vision compiles its models once per helper binary and
 // caches them, so a host pools these workers with LeaderFirst: the first fills
 // that cache and the others read it.
-export class VisionWorker extends Coprocess implements Worker {
+export class VisionWorker
+  extends Coprocess
+  implements Worker<string, string | null>
+{
   // The memory a host sizes its pool by: a worker's own and the allocations
   // Vision makes for it outside the process, with headroom for the imports.
   static readonly memory = 2 * 1024 ** 3;
@@ -43,7 +46,7 @@ export class VisionWorker extends Coprocess implements Worker {
 
   // A pool lends only a ready worker, so the deadline times recognition, not
   // model compilation, which can take longer.
-  async read(path: string): Promise<string | null> {
+  async run(path: string): Promise<string | null> {
     const deadline = this.#clock.setTimeout(() => this.kill(), 120_000);
     try {
       const result = response.parse(

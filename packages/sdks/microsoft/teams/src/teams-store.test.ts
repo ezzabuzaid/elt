@@ -3,7 +3,7 @@ import { chmod, mkdir, symlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { TemporaryFiles } from '@zukhruf/testing/fs';
+import { TemporaryFiles } from '@zukhruf/fs';
 
 import { StoreUnavailableError, TeamsStore } from './index.ts';
 

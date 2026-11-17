@@ -7,7 +7,8 @@ import { setImmediate, setTimeout } from 'node:timers/promises';
 
 import { ClientRequestInterceptor } from '@mswjs/interceptors/ClientRequest';
 import { type TimerId, createClock } from '@sinonjs/fake-timers';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
+import { TemporaryFiles } from '@zukhruf/fs';
+import { timebox } from '@zukhruf/testing/async';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 import type { Response } from 'got';
@@ -2027,6 +2028,7 @@ test(
     });
     await using database = await new Sqlite().database();
     await using checkpoints = await new Sqlite().database();
+    const clock = createClock(0);
     const ingestion = await pipeline(
       new WebSource({
         cachePath: join(cache.path, 'web-http.sqlite'),
@@ -2046,11 +2048,32 @@ test(
       }),
       database.path,
       checkpoints.path,
+      clock,
     );
     const controller = new AbortController();
     const watch = ingestion.watch({ signal: controller.signal });
+    // The watch runs on the fake clock: time moves in steps of 100 ms until
+    // its next pass comes, so the clock tells how long it waited.
+    const passed = <T>(pending: Promise<T>) =>
+      timebox(
+        async () => {
+          await clock.tickAsync(100);
+          return Promise.race([
+            pending,
+            Promise.reject(
+              new assert.AssertionError({ message: 'The watch ran no pass' }),
+            ),
+          ]);
+        },
+        {
+          minTimeout: 10,
+          maxRetryTime: 15_000,
+          shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+        },
+      );
     try {
-      const failed = await watch.next();
+      const failed = await passed(watch.next());
+      const failedAt = clock.now;
       assert.ok(
         !failed.done &&
           failed.value.outcomes.some(({ failures }) => failures.length > 0),
@@ -2058,12 +2081,13 @@ test(
       body = 'fixed';
       // The watch tries a failed copy again 10 s later on its own, so a pass
       // before then comes from the source.
-      const next = await Promise.race([
-        watch.next(),
-        setTimeout(5_000, 'not read again'),
-      ]);
+      const next = await passed(watch.next());
 
-      assert.notEqual(next, 'not read again');
+      assert.equal(next.done, false);
+      assert.ok(
+        clock.now - failedAt < 5_000,
+        `read again after ${clock.now - failedAt} ms of the clock`,
+      );
       assert.deepEqual(
         database.connection
           .prepare('SELECT id, heading FROM pages')
@@ -2158,10 +2182,9 @@ class OpensOnSecondTry extends BodyExtractor {
 test(
   'a watched input whose read failed before its crawl began, such as an extractor that did not open, is read again when its starting URL is due as a failed one',
   { timeout: 20_000 },
-  async (t) => {
-    // The test sets the time, so the due time is known.
-    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
-    const start = Date.now();
+  async () => {
+    // The watch runs on a fake clock, so the due time is known.
+    const clock = createClock(Date.now());
     await using cache = await new TemporaryFiles().directory('web-cache-');
     await using upstream = await new HttpServer().start((request, response) => {
       const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
@@ -2196,32 +2219,52 @@ test(
       }),
       database.path,
       checkpoints.path,
+      clock,
     );
     const controller = new AbortController();
     const watch = ingestion.watch({ signal: controller.signal });
+    // Time moves in steps of 100 ms until the next pass comes, so the clock
+    // tells when the watch read the input again.
+    const passed = <T>(pending: Promise<T>) =>
+      timebox(
+        async () => {
+          await clock.tickAsync(100);
+          return Promise.race([
+            pending,
+            Promise.reject(
+              new assert.AssertionError({ message: 'The watch ran no pass' }),
+            ),
+          ]);
+        },
+        {
+          minTimeout: 10,
+          maxRetryTime: 15_000,
+          shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+        },
+      );
     try {
-      const failed = await watch.next();
+      const failed = await passed(watch.next());
+      const failedAt = clock.now;
       assert.ok(
         !failed.done &&
           failed.value.outcomes.some(({ failures }) => failures.length > 0),
       );
 
       // The starting URL is due 5 s after the failure, and the watch's own
-      // retry 10 s after it. The clock stays at 6 s, so a pass then comes
-      // from the source.
+      // retry 10 s after it, so a pass between them comes from the source.
       const next = watch.next();
+      await clock.tickAsync(4_000);
       const early = await Promise.race([
         next.then(() => 'a pass'),
-        setTimeout(2_500, 'no pass'),
+        setTimeout(1_000, 'no pass'),
       ]);
-      t.mock.timers.setTime(start + 6_000);
-      const due = await Promise.race([
-        next.then(() => 'a pass'),
-        setTimeout(6_000, 'no pass'),
-      ]);
+      const due = await passed(next);
+      const readAfter = clock.now - failedAt;
 
       assert.equal(early, 'no pass');
-      assert.equal(due, 'a pass');
+      assert.equal(due.done, false);
+      assert.ok(readAfter >= 5_000, `read again after ${readAfter} ms`);
+      assert.ok(readAfter < 10_000, `read again after ${readAfter} ms`);
       assert.deepEqual(
         database.connection
           .prepare('SELECT id, heading FROM pages')

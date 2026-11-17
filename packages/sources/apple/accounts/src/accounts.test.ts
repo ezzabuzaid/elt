@@ -9,9 +9,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { Connection, Copy, Pipeline, PipelineError } from '@eltjs/elt';
 import {

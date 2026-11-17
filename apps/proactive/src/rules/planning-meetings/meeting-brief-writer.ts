@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process';
 import { hash } from 'node:crypto';
-import { mkdir, mkdtempDisposable, readFile, rename } from 'node:fs/promises';
+import { mkdir, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+
+import { TemporaryFiles } from '@zukhruf/fs';
 
 import type { MeetingBrief } from './planning-meetings.ts';
 
@@ -19,9 +21,9 @@ export class MeetingBriefWriter {
 
   async write(brief: MeetingBrief, signal: AbortSignal): Promise<string> {
     await mkdir(this.#directory, { recursive: true });
-    await using scratch = await mkdtempDisposable(
-      join(this.#directory, '.prepare-'),
-    );
+    await using scratch = await new TemporaryFiles().directory('.prepare-', {
+      parent: this.#directory,
+    });
     const output = join(scratch.path, 'brief.md');
     const result = promisify(execFile)(
       this.#codex,

@@ -3,8 +3,8 @@ import { utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { NotesStore, StoreUnavailableError } from './index.ts';
 

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 
 import { type TimerId, createClock } from '@sinonjs/fake-timers';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 

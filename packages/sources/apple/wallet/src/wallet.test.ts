@@ -9,9 +9,9 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -378,7 +378,11 @@ function rows(path: string, sql: string) {
 
 // Every Wallet stream loaded incrementally as the Apple hosts load it, image
 // files exported beside the database into attachmentRef.
-async function pipeline(source: AppleWalletSource, directory: string) {
+async function pipeline(
+  source: AppleWalletSource,
+  directory: string,
+  clock: ConstructorParameters<typeof Pipeline>[0]['clock'] = globalThis,
+) {
   await mkdir(directory, { recursive: true });
   const destination = new SQLiteDestination({
     path: join(directory, 'out.sqlite'),
@@ -387,7 +391,7 @@ async function pipeline(source: AppleWalletSource, directory: string) {
   const { streams } = await source.discover();
   const history = new SQLiteSyncHistory();
   return new Pipeline({
-    clock: globalThis,
+    clock,
     history,
     connections: [
       new Connection({
@@ -1455,38 +1459,61 @@ test('a Wallet watch loads each commit while passd keeps its store open, and sto
     using wallet = new ScratchWallet(dir.path);
     wallet.add(storeCard);
   }
+  const clock = createClock(0);
   const run = await pipeline(
     new AppleWalletSource({ directory: dir.path }),
     dir.path,
+    clock,
   );
   // passd holds its connection open the whole time.
   using passd = new ScratchWallet(dir.path, { existing: true });
   const controller = new AbortController();
   const batches: Record<string, { count: number; deleted: number }>[] = [];
-  let abortedAt = Number.NaN;
-
-  for await (const { outcomes } of run.watch({
-    // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-  })) {
-    batches.push(counts(outcomes));
-    if (batches.length === 1) passd.add(eventTicket);
+  // The watch polls on the fake clock: time moves in steps of 100 ms until
+  // its next pass comes.
+  const passed = <T>(pending: Promise<T>) =>
+    timebox(
+      async () => {
+        await clock.tickAsync(100);
+        return Promise.race([
+          pending,
+          Promise.reject(
+            new assert.AssertionError({ message: 'The watch ran no pass' }),
+          ),
+        ]);
+      },
+      {
+        minTimeout: 10,
+        maxRetryTime: 10_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
+  const watching = run.watch({ signal: controller.signal });
+  for (const change of [
+    () => passd.add(eventTicket),
     // CloudKit bookkeeping commits without changing a pass.
-    else if (batches.length === 2)
+    () =>
       passd.exec(
         "INSERT INTO cloud_store_zone (pid, zone_name) VALUES (1, 'passes')",
-      );
-    // Past the next one-second poll, so a spurious batch would show.
-    else
-      setTimeout(() => {
-        abortedAt = performance.now();
-        controller.abort();
-      }, 1500);
+      ),
+    () => {},
+  ]) {
+    const pass = await passed(watching.next());
+    assert.ok(!pass.done);
+    batches.push(counts(pass.value.outcomes));
+    change();
   }
+  // Past the next one-second poll, so a spurious batch would show.
+  const ending = watching.next();
+  await clock.tickAsync(1500);
+  const abortedAt = clock.now;
+  controller.abort();
+  const end = await passed(ending);
+  assert.equal(end.done, true, 'no batch after the third');
 
   // The source stopped on the abort: the pipeline leaves a source that
-  // ignores it behind only after a second.
-  assert.ok(performance.now() - abortedAt < 500);
+  // ignores it behind only after a second on its clock.
+  assert.ok(clock.now - abortedAt < 500);
 
   const none = { count: 0, deleted: 0 };
   assert.deepEqual(batches, [

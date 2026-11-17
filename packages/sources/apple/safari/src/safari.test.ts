@@ -18,9 +18,9 @@ import { promisify } from 'node:util';
 import { deflateSync } from 'node:zlib';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { referenceDate } from '@eltjs/codec-apple-reference-date';
 import {

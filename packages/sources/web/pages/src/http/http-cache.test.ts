@@ -6,8 +6,8 @@ import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { gzipSync } from 'node:zlib';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 

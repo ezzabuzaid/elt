@@ -6,9 +6,9 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import { TemporaryFiles } from '@zukhruf/fs';
 
 import type { EventKitDocument, HelperRequest } from './documents.ts';
 
@@ -64,7 +64,7 @@ export class StubEventKitHelper implements AsyncDisposable {
 
   static async create(): Promise<StubEventKitHelper> {
     return new StubEventKitHelper(
-      await mkdtempDisposable(join(tmpdir(), 'eventkit-stub-')),
+      await new TemporaryFiles().directory('eventkit-stub-'),
     );
   }
 

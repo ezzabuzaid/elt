@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 
-import { TemporaryFiles } from '@zukhruf/testing/fs';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { MockTranscriptionModelV4 } from 'ai/test';
 
 import { AudioFormat } from './document-formats/audio-format.ts';

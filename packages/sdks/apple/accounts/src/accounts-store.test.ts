@@ -6,9 +6,9 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   AccountsStore,

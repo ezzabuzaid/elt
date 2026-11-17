@@ -7,8 +7,8 @@ import type {
   EmbeddingModelV4CallOptions,
   EmbeddingModelV4Result,
 } from '@ai-sdk/provider';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { APICallError } from 'ai';
 
 import {

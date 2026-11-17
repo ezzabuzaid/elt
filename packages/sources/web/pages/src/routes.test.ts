@@ -5,9 +5,9 @@ import type { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { Latch } from '@zukhruf/async';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 import type { Response } from 'got';

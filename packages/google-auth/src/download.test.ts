@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { TemporaryFiles } from '@zukhruf/testing/fs';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { type HttpHandler, HttpServer } from '@zukhruf/testing/http';
 import { OAuth2Client } from 'google-auth-library';
 

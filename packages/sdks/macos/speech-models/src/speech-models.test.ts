@@ -7,8 +7,8 @@ import { type TestContext, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { Fixed, NoEviction, Parallel, Pool } from '@zukhruf/pool';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { LocalTranscriptionModel } from '@eltjs/transcription-local';
 import { TranscriptionWorker } from '@eltjs/transcription-local/transcription-worker';

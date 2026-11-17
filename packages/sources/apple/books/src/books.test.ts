@@ -20,9 +20,9 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import { referenceDate } from '@eltjs/codec-apple-reference-date';
 import {

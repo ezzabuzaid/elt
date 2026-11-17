@@ -11,9 +11,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
 import { timebox } from '@zukhruf/testing/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
@@ -861,13 +861,10 @@ test('a Reminders pass the host stops while EventKit reads ends at once and is r
     { interval: 10, timeout: 60_000 },
   );
   removal.abort(removed);
-  const outcome = await Promise.race([
-    loading.then(
-      () => 'loaded',
-      (error: unknown) => error,
-    ),
-    sleep(5_000, 'still reading'),
-  ]);
+  const outcome = await loading.then(
+    () => 'loaded',
+    (error: unknown) => error,
+  );
 
   assert.equal(outcome, removed);
   assert.deepEqual(

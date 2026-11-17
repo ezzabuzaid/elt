@@ -40,15 +40,16 @@
   },
   "dependencies": {
     "@eltjs/elt": "^0.3.5",
-    "@zukhruf/mutex": "^0.8.10",
-    "@zukhruf/sqlite-drift": "^0.8.10",
-    "@zukhruf/sqlite-open": "^0.8.10",
-    "@zukhruf/sqlite-transaction": "^0.8.10"
+    "@zukhruf/mutex": "^0.8.21",
+    "@zukhruf/sqlite-drift": "^0.8.21",
+    "@zukhruf/sqlite-open": "^0.8.21",
+    "@zukhruf/sqlite-transaction": "^0.8.21"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/async": "^0.8.10",
-    "@zukhruf/snapshot-differential": "^0.8.10",
-    "@zukhruf/testing": "^0.8.10"
+    "@zukhruf/async": "^0.8.21",
+    "@zukhruf/fs": "^0.8.21",
+    "@zukhruf/snapshot-differential": "^0.8.21",
+    "@zukhruf/testing": "^0.8.21"
   }
 }

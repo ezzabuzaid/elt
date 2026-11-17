@@ -9,8 +9,8 @@ import { test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, UnchangedJournal, open } from '@zukhruf/sqlite-open';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,

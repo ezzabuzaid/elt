@@ -1,7 +1,6 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { type TemporaryDirectory, TemporaryFiles } from '@zukhruf/fs';
 import pMemoize from 'p-memoize';
 
 import { BrowserSession } from '@eltjs/sdk-chromium-cookies';
@@ -69,10 +68,14 @@ export class InstagramRun implements AsyncDisposable {
   // When the run opened: the session's cookies are valid then, and a story
   // that expires after it is still shown.
   readonly openedAt: Date;
-  readonly #staging: string;
+  readonly #staging: TemporaryDirectory;
   #downloads = 0;
 
-  private constructor(web: InstagramWeb, openedAt: Date, staging: string) {
+  private constructor(
+    web: InstagramWeb,
+    openedAt: Date,
+    staging: TemporaryDirectory,
+  ) {
     this.web = web;
     this.openedAt = openedAt;
     this.#staging = staging;
@@ -95,7 +98,7 @@ export class InstagramRun implements AsyncDisposable {
       { home, now },
     );
     const web = await InstagramWeb.open(session, signal);
-    const staging = await mkdtemp(join(tmpdir(), 'elt-instagram-'));
+    const staging = await new TemporaryFiles().directory('elt-instagram-');
     return new InstagramRun(web, now, staging);
   }
 
@@ -118,12 +121,15 @@ export class InstagramRun implements AsyncDisposable {
     url: string,
     signal: AbortSignal | undefined,
   ): Promise<string | null> {
-    const path = join(this.#staging, `${++this.#downloads}${extension(url)}`);
+    const path = join(
+      this.#staging.path,
+      `${++this.#downloads}${extension(url)}`,
+    );
     return (await this.web.download(url, path, signal)) ? path : null;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    await rm(this.#staging, { recursive: true, force: true });
+    await this.#staging.cleanup();
   }
 }
 

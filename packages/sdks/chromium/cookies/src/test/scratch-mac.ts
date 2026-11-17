@@ -1,10 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { createCipheriv, hash, pbkdf2Sync } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { type TemporaryDirectory, TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 
 export type ScratchCookie = {
@@ -36,19 +35,22 @@ function chromiumTime(now: Date, days: number): number {
 // as on the user's Mac.
 export class ScratchMac implements AsyncDisposable {
   readonly path: string;
+  readonly #folder: TemporaryDirectory;
   readonly #keychain: string;
 
-  private constructor(path: string, keychain: string) {
-    this.path = path;
+  private constructor(folder: TemporaryDirectory, keychain: string) {
+    this.#folder = folder;
+    this.path = folder.path;
     this.#keychain = keychain;
   }
 
   static async create(): Promise<ScratchMac> {
-    const path = await mkdtemp(join(tmpdir(), 'scratch-mac-'));
+    const folder = await new TemporaryFiles().directory('scratch-mac-');
+    const path = folder.path;
     const keychain = join(path, 'Library/Keychains/login.keychain-db');
     mkdirSync(join(path, 'Library/Keychains'), { recursive: true });
     security('create-keychain', '-p', 'scratch', keychain);
-    return new ScratchMac(path, keychain);
+    return new ScratchMac(folder, keychain);
   }
 
   // The Safe Storage password a Chromium browser keeps in the login keychain,
@@ -117,6 +119,6 @@ export class ScratchMac implements AsyncDisposable {
 
   async [Symbol.asyncDispose](): Promise<void> {
     security('delete-keychain', this.#keychain);
-    await rm(this.path, { recursive: true, force: true });
+    await this.#folder.cleanup();
   }
 }

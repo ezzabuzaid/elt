@@ -6,9 +6,9 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import { timebox } from '@zukhruf/testing/async';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';

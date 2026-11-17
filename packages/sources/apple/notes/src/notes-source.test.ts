@@ -12,8 +12,8 @@ import { promisify } from 'node:util';
 import { gzipSync } from 'node:zlib';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { TemporaryFiles } from '@zukhruf/testing/fs';
 
 import {
   Connection,
