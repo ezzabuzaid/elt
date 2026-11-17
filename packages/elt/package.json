@@ -37,9 +37,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "engines": {
-    "node": ">=24"
-  },
   "dependencies": {
     "@zukhruf/async": "^0.8.22",
     "@zukhruf/snapshot-differential": "^0.8.22"

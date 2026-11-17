@@ -41,9 +41,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "engines": {
-    "node": ">=24"
-  },
   "dependencies": {
     "@eltjs/elt": "^0.3.7",
     "@eltjs/sdk-microsoft-sql-server": "^0.3.7",
