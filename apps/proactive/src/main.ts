@@ -1,6 +1,4 @@
 import { mkdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Shutdown } from '@zukhruf/shutdown';
@@ -13,6 +11,7 @@ import { Automations } from './engine/automations.ts';
 import { RuleStore } from './engine/rule-store.ts';
 import { SqlAgentRule, SqlNotifyRule } from './engine/sql-rule.ts';
 import pipeline from './pipeline.ts';
+import { rulesFile, rulesFolder } from './rules-file.ts';
 import { EarlyMonthSpend } from './rules/bank-sms/early-month-spend.ts';
 import { MissingMidMonthCredit } from './rules/bank-sms/missing-mid-month-credit.ts';
 import { SpendSpike } from './rules/bank-sms/spend-spike.ts';
@@ -22,10 +21,7 @@ import { ClayDataHubMcpMessages } from './rules/clay-topics/clay-data-hub-mcp-me
 import { KeywordText } from './rules/keyword-text/keyword-text.ts';
 import { MeetingBriefWriter } from './rules/planning-meetings/meeting-brief-writer.ts';
 import { PlanningMeetings } from './rules/planning-meetings/planning-meetings.ts';
-import { warehouseUrl } from './warehouse.ts';
-
-// Conditions read the marts as agent_reader, which can read nothing else.
-const readerUrl = 'postgres://agent_reader:agent@127.0.0.1:55432/warehouse';
+import { readerUrl, warehouseUrl } from './warehouse.ts';
 
 using shutdown = new Shutdown();
 // postgres.js has no Symbol.asyncDispose, so the stack ends the clients.
@@ -72,14 +68,8 @@ automations.add(
 );
 automations.add('careem-calories', new CareemCalories(agent));
 
-// The rules that users wrote, kept outside the warehouse, which a fresh run
-// makes again.
-const home = join(
-  homedir(),
-  'Library/Application Support/Context Compiler/Proactive',
-);
-await mkdir(home, { recursive: true });
-using rules = new RuleStore(join(home, 'rules.sqlite'));
+await mkdir(rulesFolder, { recursive: true });
+using rules = new RuleStore(rulesFile);
 for (const rule of rules.rules())
   automations.add(
     rule.name,

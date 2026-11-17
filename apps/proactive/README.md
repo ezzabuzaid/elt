@@ -25,6 +25,27 @@ what a user wrote, not data that a run derives. The table refuses a row with
 no action or with two. `src/main.ts` adds each stored rule by its name beside
 the rules in `src/rules/`.
 
+Add a rule from a YAML or JSON file, with exactly one of `notify` and `agent`:
+
+```yaml
+name: keyword-text
+when: 'a text says proactive:'
+sql: SELECT text FROM marts.messages_messages WHERE NOT "isFromMe" AND text ILIKE '%proactive:%'
+notify: '{text}'
+```
+
+```sh
+npx nx run proactive:add-rule /path/to/rule.yaml
+```
+
+The target reads the warehouse as it is now, as `agent_reader`, in a read-only
+reading. It keeps the rule only when its SQL runs and its message names only
+columns that the SQL selects, also when no row is true now. It prints what
+the rule finds true now, one line for each row; the rule does not tell those,
+since it tells only what becomes true after its first run. A name is
+kebab-case, and a name that is kept already is refused. Quote a YAML value
+that has `: ` or ends with `:`.
+
 A stored rule matches each row that its SQL gives as of `after` and did not
 give as of `before`. Rows are compared whole, so a rule chooses what it
 compares by the columns it selects: a row whose value changes while it stays

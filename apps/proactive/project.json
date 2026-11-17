@@ -7,6 +7,10 @@
     "start": {
       "dependsOn": ["build"],
       "command": "node apps/proactive/dist/main.js"
+    },
+    "add-rule": {
+      "dependsOn": ["build"],
+      "command": "node apps/proactive/dist/add-rule.js"
     }
   }
 }

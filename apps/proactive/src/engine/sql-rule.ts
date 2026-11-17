@@ -28,6 +28,17 @@ async function appeared(
   });
 }
 
+// A stored rule's message for one row: each {column} is the row's value.
+export function fill(message: string, row: Row): string {
+  return message.replaceAll(/\{(\w+)\}/gu, (_, column: string) => {
+    if (!Object.hasOwn(row, column))
+      throw new TypeError(
+        `The message names {${column}}, which the rule's SQL does not select`,
+      );
+    return String(row[column]);
+  });
+}
+
 // A stored rule that tells the user: its message names columns as {column}.
 export class SqlNotifyRule extends NotifyAutomation<Row> {
   readonly #query: string;
@@ -40,13 +51,7 @@ export class SqlNotifyRule extends NotifyAutomation<Row> {
   }
 
   message(match: Row): string {
-    return this.#message.replaceAll(/\{(\w+)\}/gu, (_, column: string) => {
-      if (!Object.hasOwn(match, column))
-        throw new TypeError(
-          `The message names {${column}}, which the rule's SQL does not select`,
-        );
-      return String(match[column]);
-    });
+    return fill(this.#message, match);
   }
 
   evaluate(before: Reading<postgres.Sql>, after: Reading<postgres.Sql>) {
