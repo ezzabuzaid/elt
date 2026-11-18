@@ -2675,124 +2675,139 @@ test('Mail watches index commits and file-only downloads, and cancels', async (t
   assert.equal((await watch.next()).done, true);
 });
 
-test('Mail tracking pixels keep exact local files and database bytes with null OCR text', async () => {
-  await using ocr = new Pool({
-    clock: globalThis,
-    size: new Fixed(2),
-    startup: new LeaderFirst(),
-    eviction: new NoEviction(),
-    create: () =>
-      new VisionWorker(
-        fileURLToPath(
-          import.meta.resolve('@eltjs/source-apple-macos/vision-worker'),
-        ),
-        globalThis,
-      ),
-  });
-  await using dir = await new TemporaryFiles().directory('elt-mail-pixels-');
-  const store = await fixture(join(dir.path, 'Mail'));
-  const images = [];
-  for (const width of [1, 2, 3]) {
-    const chunk = (type: string, data: Buffer) => {
-      const label = Buffer.from(type);
-      const result = Buffer.alloc(data.length + 12);
-      result.writeUInt32BE(data.length);
-      label.copy(result, 4);
-      data.copy(result, 8);
-      result.writeUInt32BE(
-        crc32(Buffer.concat([label, data])),
-        data.length + 8,
-      );
-      return result;
-    };
-    const ihdr = Buffer.alloc(13);
-    ihdr.writeUInt32BE(width, 0);
-    ihdr.writeUInt32BE(width, 4);
-    ihdr[8] = 8;
-    ihdr[9] = 2;
-    const pixels = Buffer.concat(
-      Array.from({ length: width }, () =>
-        Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3, 255)]),
-      ),
-    );
-    images.push(
-      Buffer.concat([
-        Uint8Array.fromHex('89504e470d0a1a0a'),
-        chunk('IHDR', ihdr),
-        chunk('IDAT', deflateSync(pixels)),
-        chunk('IEND', Buffer.alloc(0)),
-      ]),
-    );
-  }
-  const raw = [
-    'Content-Type: multipart/mixed; boundary="pixels"',
-    '',
-    ...images.flatMap((bytes, i) => [
-      '--pixels',
-      'Content-Type: image/png',
-      `Content-Disposition: inline; filename="${i}.png"`,
-      'Content-Transfer-Encoding: base64',
-      '',
-      bytes.toString('base64'),
-    ]),
-    '--pixels--',
-    '',
-  ].join('\r\n');
-  await writeFile(
-    join(store.data, 'Messages/1.partial.emlx'),
-    `${Buffer.byteLength(raw)}\n${raw}`,
-  );
-  using upstream = open(store.index);
-  upstream.exec('DELETE FROM attachments');
-  const source = new AppleMailSource({
-    path: store.root,
-    accounts: store.accounts,
-  });
-  const destination = new SQLiteDestination({
-    path: join(dir.path, 'images.sqlite'),
-  });
-  const files = new LocalFiles({ directory: join(dir.path, 'files') });
-  await new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        steps: [
-          new Copy(
-            source.attachments,
-            destination.table('images', (columns) => [
-              ...SQLiteColumns.fromSchema(source.attachments.jsonSchema),
-              columns
-                .text('content')
-                .from(source.attachments.file)
-                .parse(new MacOSDocumentParser([new ImageFormat(ocr)])),
-              columns.blob('bytes').from(source.attachments.file),
-              columns
-                .text('attachmentRef')
-                .from(source.attachments.file.store(files)),
-            ]),
+// Vision reads no text in a virtual Mac: in the macOS virtual machine of
+// GitHub's runners every OCR warm-up failed with "IOServiceMatchingfailed for:
+// AppleM2ScalerParavirtDriver" (CI run 44391479307). A test that reads text
+// through Vision runs on a Mac that is not a virtual machine.
+const textRecognition = {
+  skip:
+    execFileSync('/usr/sbin/sysctl', ['-n', 'kern.hv_vmm_present'], {
+      encoding: 'utf8',
+    }).trim() === '1' && 'Vision reads no text in a virtual Mac',
+};
+
+test(
+  'Mail tracking pixels keep exact local files and database bytes with null OCR text',
+  textRecognition,
+  async () => {
+    await using ocr = new Pool({
+      clock: globalThis,
+      size: new Fixed(2),
+      startup: new LeaderFirst(),
+      eviction: new NoEviction(),
+      create: () =>
+        new VisionWorker(
+          fileURLToPath(
+            import.meta.resolve('@eltjs/source-apple-macos/vision-worker'),
           ),
-        ],
-      }),
-    ],
-  }).run();
-  const output = rows(
-    destination.path,
-    'SELECT content,bytes,attachmentRef FROM images ORDER BY partId',
-  );
-  assert.equal(output.length, 3);
-  for (const [i, row] of output.entries()) {
-    assert.equal(row.content, null);
-    assert.deepEqual(bytes(destination.path, 'images', row.bytes), images[i]);
-    assert.deepEqual(
-      await readFile(join(files.directory, String(row.attachmentRef))),
-      images[i],
+          globalThis,
+        ),
+    });
+    await using dir = await new TemporaryFiles().directory('elt-mail-pixels-');
+    const store = await fixture(join(dir.path, 'Mail'));
+    const images = [];
+    for (const width of [1, 2, 3]) {
+      const chunk = (type: string, data: Buffer) => {
+        const label = Buffer.from(type);
+        const result = Buffer.alloc(data.length + 12);
+        result.writeUInt32BE(data.length);
+        label.copy(result, 4);
+        data.copy(result, 8);
+        result.writeUInt32BE(
+          crc32(Buffer.concat([label, data])),
+          data.length + 8,
+        );
+        return result;
+      };
+      const ihdr = Buffer.alloc(13);
+      ihdr.writeUInt32BE(width, 0);
+      ihdr.writeUInt32BE(width, 4);
+      ihdr[8] = 8;
+      ihdr[9] = 2;
+      const pixels = Buffer.concat(
+        Array.from({ length: width }, () =>
+          Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3, 255)]),
+        ),
+      );
+      images.push(
+        Buffer.concat([
+          Uint8Array.fromHex('89504e470d0a1a0a'),
+          chunk('IHDR', ihdr),
+          chunk('IDAT', deflateSync(pixels)),
+          chunk('IEND', Buffer.alloc(0)),
+        ]),
+      );
+    }
+    const raw = [
+      'Content-Type: multipart/mixed; boundary="pixels"',
+      '',
+      ...images.flatMap((bytes, i) => [
+        '--pixels',
+        'Content-Type: image/png',
+        `Content-Disposition: inline; filename="${i}.png"`,
+        'Content-Transfer-Encoding: base64',
+        '',
+        bytes.toString('base64'),
+      ]),
+      '--pixels--',
+      '',
+    ].join('\r\n');
+    await writeFile(
+      join(store.data, 'Messages/1.partial.emlx'),
+      `${Buffer.byteLength(raw)}\n${raw}`,
     );
-  }
-});
+    using upstream = open(store.index);
+    upstream.exec('DELETE FROM attachments');
+    const source = new AppleMailSource({
+      path: store.root,
+      accounts: store.accounts,
+    });
+    const destination = new SQLiteDestination({
+      path: join(dir.path, 'images.sqlite'),
+    });
+    const files = new LocalFiles({ directory: join(dir.path, 'files') });
+    await new Pipeline({
+      clock: globalThis,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [
+            new Copy(
+              source.attachments,
+              destination.table('images', (columns) => [
+                ...SQLiteColumns.fromSchema(source.attachments.jsonSchema),
+                columns
+                  .text('content')
+                  .from(source.attachments.file)
+                  .parse(new MacOSDocumentParser([new ImageFormat(ocr)])),
+                columns.blob('bytes').from(source.attachments.file),
+                columns
+                  .text('attachmentRef')
+                  .from(source.attachments.file.store(files)),
+              ]),
+            ),
+          ],
+        }),
+      ],
+    }).run();
+    const output = rows(
+      destination.path,
+      'SELECT content,bytes,attachmentRef FROM images ORDER BY partId',
+    );
+    assert.equal(output.length, 3);
+    for (const [i, row] of output.entries()) {
+      assert.equal(row.content, null);
+      assert.deepEqual(bytes(destination.path, 'images', row.bytes), images[i]);
+      assert.deepEqual(
+        await readFile(join(files.directory, String(row.attachmentRef))),
+        images[i],
+      );
+    }
+  },
+);
 
 test('A MIME attachment whose extension alone passes the 255-byte file name limit is stored under its hash alone, and a short extension is kept', async () => {
   await using dir = await new TemporaryFiles().directory('elt-mail-ext-');

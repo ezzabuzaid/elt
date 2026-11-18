@@ -410,159 +410,184 @@ const messagesRows = (path: string, sql: string) => {
     .map((row) => ({ ...row }));
 };
 
-test('the document parser reads every attachment kind and throws only on unreadable files', async () => {
-  await using ocr = new Pool({
-    clock: globalThis,
-    size: new Fixed(2),
-    startup: new LeaderFirst(),
-    eviction: new NoEviction(),
-    create: () =>
-      new VisionWorker(
-        fileURLToPath(
-          import.meta.resolve('@eltjs/source-apple-macos/vision-worker'),
-        ),
-        globalThis,
-      ),
-  });
-  await using scratch = await new TemporaryFiles().directory('elt-parse-');
-  const path = await chatFixture(scratch.path);
-  const files = join(scratch.path, 'Attachments');
-  mkdirSync(files);
-  const file = async (name: string, content: string | Uint8Array) => {
-    const at = join(files, name);
-    await writeFile(at, content);
-    return at;
-  };
-  const photo = join(files, 'receipt.png');
-  renderedText(photo, 'Invoice 4821 due Friday');
-  const heic = join(files, 'receipt.heic');
-  execFileSync('/usr/bin/sips', ['-s', 'format', 'heic', photo, '--out', heic]);
-  const bitmap = join(files, 'receipt.bmp');
-  execFileSync('/usr/bin/sips', [
-    '-s',
-    'format',
-    'bmp',
-    photo,
-    '--out',
-    bitmap,
-  ]);
-  const blank = join(files, 'blank.png');
-  renderedText(blank, null);
-  const card =
-    'BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nTEL:+15550100\nEND:VCARD\n';
-  using chat = open(path);
-  // Each file as Messages records an attachment: a row naming its path.
-  const attach = (guid: string, filename: string) =>
-    chat
-      .prepare(
-        'INSERT INTO attachment (guid, original_guid, filename) VALUES (?, ?, ?)',
-      )
-      .run(guid, guid, filename);
-  for (const [guid, filename] of [
-    ['photo', photo],
-    ['heic', heic],
-    ['noExtension', await file('GroupPhotoImage', await readFile(heic))],
-    ['bitmapNoExtension', await file('bitmapImage', await readFile(bitmap))],
-    ['blankImage', blank],
-    ['blankPdf', await file('blank.pdf', blankPdf)],
-    ['text', await file('hello.txt', 'hello')],
-    ['card', await file('Ada.vcf', card)],
-    ['location', await file('CL.loc.vcf', card)],
-    ['video', await file('clip.mov', Uint8Array.of(0, 1, 2))],
-    [
-      'unknown',
-      await file('pluginPayloadAttachment', Uint8Array.of(9, 9, 9, 9)),
-    ],
-    // Text that opens like a bitmap, a GIF or a PDF header is none of them.
-    ['bitmapLikeText', await file('bitmapLikeText', 'BMW service due Friday')],
-    ['gifLikeText', await file('gifLikeText', 'GIF8 notes')],
-    ['pdfLikeText', await file('pdfLikeText', '%PDF notes')],
-    // Shorter than an icon header, so its missing fourth byte is not a zero.
-    ['shortFile', await file('shortFile', Uint8Array.of(0, 0, 1))],
-  ] as const)
-    attach(guid, filename);
-  const source = new AppleMessagesSource({ path, home: scratch.path });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'out.sqlite'),
-  });
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        steps: [
-          new Copy(
-            source.attachments,
-            destination.table('attachments', (c) => [
-              c.text('guid'),
-              c
-                .text('content')
-                .from(source.attachments.file)
-                .parse(new MacOSDocumentParser([new ImageFormat(ocr)])),
-            ]),
+// Vision reads no text in a virtual Mac: in the macOS virtual machine of
+// GitHub's runners every OCR warm-up failed with "IOServiceMatchingfailed for:
+// AppleM2ScalerParavirtDriver" (CI run 44391479307). A test that reads text
+// through Vision runs on a Mac that is not a virtual machine.
+const textRecognition = {
+  skip:
+    execFileSync('/usr/sbin/sysctl', ['-n', 'kern.hv_vmm_present'], {
+      encoding: 'utf8',
+    }).trim() === '1' && 'Vision reads no text in a virtual Mac',
+};
+
+test(
+  'the document parser reads every attachment kind and throws only on unreadable files',
+  textRecognition,
+  async () => {
+    await using ocr = new Pool({
+      clock: globalThis,
+      size: new Fixed(2),
+      startup: new LeaderFirst(),
+      eviction: new NoEviction(),
+      create: () =>
+        new VisionWorker(
+          fileURLToPath(
+            import.meta.resolve('@eltjs/source-apple-macos/vision-worker'),
           ),
-        ],
-      }),
-    ],
-  });
+          globalThis,
+        ),
+    });
+    await using scratch = await new TemporaryFiles().directory('elt-parse-');
+    const path = await chatFixture(scratch.path);
+    const files = join(scratch.path, 'Attachments');
+    mkdirSync(files);
+    const file = async (name: string, content: string | Uint8Array) => {
+      const at = join(files, name);
+      await writeFile(at, content);
+      return at;
+    };
+    const photo = join(files, 'receipt.png');
+    renderedText(photo, 'Invoice 4821 due Friday');
+    const heic = join(files, 'receipt.heic');
+    execFileSync('/usr/bin/sips', [
+      '-s',
+      'format',
+      'heic',
+      photo,
+      '--out',
+      heic,
+    ]);
+    const bitmap = join(files, 'receipt.bmp');
+    execFileSync('/usr/bin/sips', [
+      '-s',
+      'format',
+      'bmp',
+      photo,
+      '--out',
+      bitmap,
+    ]);
+    const blank = join(files, 'blank.png');
+    renderedText(blank, null);
+    const card =
+      'BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nTEL:+15550100\nEND:VCARD\n';
+    using chat = open(path);
+    // Each file as Messages records an attachment: a row naming its path.
+    const attach = (guid: string, filename: string) =>
+      chat
+        .prepare(
+          'INSERT INTO attachment (guid, original_guid, filename) VALUES (?, ?, ?)',
+        )
+        .run(guid, guid, filename);
+    for (const [guid, filename] of [
+      ['photo', photo],
+      ['heic', heic],
+      ['noExtension', await file('GroupPhotoImage', await readFile(heic))],
+      ['bitmapNoExtension', await file('bitmapImage', await readFile(bitmap))],
+      ['blankImage', blank],
+      ['blankPdf', await file('blank.pdf', blankPdf)],
+      ['text', await file('hello.txt', 'hello')],
+      ['card', await file('Ada.vcf', card)],
+      ['location', await file('CL.loc.vcf', card)],
+      ['video', await file('clip.mov', Uint8Array.of(0, 1, 2))],
+      [
+        'unknown',
+        await file('pluginPayloadAttachment', Uint8Array.of(9, 9, 9, 9)),
+      ],
+      // Text that opens like a bitmap, a GIF or a PDF header is none of them.
+      [
+        'bitmapLikeText',
+        await file('bitmapLikeText', 'BMW service due Friday'),
+      ],
+      ['gifLikeText', await file('gifLikeText', 'GIF8 notes')],
+      ['pdfLikeText', await file('pdfLikeText', '%PDF notes')],
+      // Shorter than an icon header, so its missing fourth byte is not a zero.
+      ['shortFile', await file('shortFile', Uint8Array.of(0, 0, 1))],
+    ] as const)
+      attach(guid, filename);
+    const source = new AppleMessagesSource({ path, home: scratch.path });
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'out.sqlite'),
+    });
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [
+            new Copy(
+              source.attachments,
+              destination.table('attachments', (c) => [
+                c.text('guid'),
+                c
+                  .text('content')
+                  .from(source.attachments.file)
+                  .parse(new MacOSDocumentParser([new ImageFormat(ocr)])),
+              ]),
+            ),
+          ],
+        }),
+      ],
+    });
 
-  await pipeline.run();
+    await pipeline.run();
 
-  assert.deepEqual(
-    Object.fromEntries(
-      messagesRows(
-        destination.path,
-        'SELECT guid, content FROM attachments',
-      ).map(({ guid, content }) => [guid, content]),
-    ),
-    {
-      'att-local': 'attached words',
-      'att-offloaded': null,
-      photo: 'Invoice 4821 due Friday',
-      heic: 'Invoice 4821 due Friday',
-      noExtension: 'Invoice 4821 due Friday',
-      bitmapNoExtension: 'Invoice 4821 due Friday',
-      blankImage: null,
-      blankPdf: null,
-      text: 'hello',
-      card,
-      location: card,
-      video: null,
-      unknown: null,
-      bitmapLikeText: null,
-      gifLikeText: null,
-      pdfLikeText: null,
-      shortFile: null,
-    },
-  );
-  // Both native readers report unreadable files through the pipeline.
-  for (const [name, content, message] of [
-    ['corrupt.pdf', 'not a pdf', /Error: Cannot read PDF/],
-    ['corrupt.heic', Uint8Array.of(0, 1, 2), /Cannot read image/],
-    // A PNG cut off after its header: ImageIO returns empty properties,
-    // and Vision has no pixels to decode.
-    [
-      'truncated.png',
-      Uint8Array.fromHex(
-        '89504e470d0a1a0a0000000d4948445200000040000000400802000000250be689',
+    assert.deepEqual(
+      Object.fromEntries(
+        messagesRows(
+          destination.path,
+          'SELECT guid, content FROM attachments',
+        ).map(({ guid, content }) => [guid, content]),
       ),
-      /Cannot read image: Vision failed/,
-    ],
-  ] as const) {
-    attach(name, await file(name, content));
-    await assert.rejects(
-      pipeline.run(),
-      (error: unknown) =>
-        error instanceof PipelineError &&
-        Error.isError(error.cause) &&
-        message.test(error.cause.message),
+      {
+        'att-local': 'attached words',
+        'att-offloaded': null,
+        photo: 'Invoice 4821 due Friday',
+        heic: 'Invoice 4821 due Friday',
+        noExtension: 'Invoice 4821 due Friday',
+        bitmapNoExtension: 'Invoice 4821 due Friday',
+        blankImage: null,
+        blankPdf: null,
+        text: 'hello',
+        card,
+        location: card,
+        video: null,
+        unknown: null,
+        bitmapLikeText: null,
+        gifLikeText: null,
+        pdfLikeText: null,
+        shortFile: null,
+      },
     );
-    chat.prepare('DELETE FROM attachment WHERE guid = ?').run(name);
-  }
-});
+    // Both native readers report unreadable files through the pipeline.
+    for (const [name, content, message] of [
+      ['corrupt.pdf', 'not a pdf', /Error: Cannot read PDF/],
+      ['corrupt.heic', Uint8Array.of(0, 1, 2), /Cannot read image/],
+      // A PNG cut off after its header: ImageIO returns empty properties,
+      // and Vision has no pixels to decode.
+      [
+        'truncated.png',
+        Uint8Array.fromHex(
+          '89504e470d0a1a0a0000000d4948445200000040000000400802000000250be689',
+        ),
+        /Cannot read image: Vision failed/,
+      ],
+    ] as const) {
+      attach(name, await file(name, content));
+      await assert.rejects(
+        pipeline.run(),
+        (error: unknown) =>
+          error instanceof PipelineError &&
+          Error.isError(error.cause) &&
+          message.test(error.cause.message),
+      );
+      chat.prepare('DELETE FROM attachment WHERE guid = ?').run(name);
+    }
+  },
+);
 
 test('Messages scope filters chat and native dates before decoding attachments and saving checkpoints', async () => {
   await using scratch = await new TemporaryFiles().directory('messages-scope-');
