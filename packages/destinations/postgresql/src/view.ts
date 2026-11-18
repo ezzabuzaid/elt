@@ -1,7 +1,13 @@
 import postgres from 'postgres';
 
-import { type Connection, DerivedDataset } from '@eltjs/elt';
+import {
+  type Connection,
+  DerivedDataset,
+  type PipelineClock,
+  errorMessage,
+} from '@eltjs/elt';
 
+import { PostgresDerivedStatus } from './postgres-derived-status.ts';
 import { PostgresDestination } from './postgres-destination.ts';
 import { PostgresSession } from './postgres-session.ts';
 import type { PostgresTable } from './postgres-table.ts';
@@ -62,11 +68,19 @@ export class View extends DerivedDataset<PostgresTable> {
   override async refresh({
     connections,
     earlier,
+    clock,
   }: {
     readonly connections: readonly Connection<PostgresTable>[];
     readonly earlier: readonly DerivedDataset<PostgresTable>[];
+    readonly clock: PipelineClock;
   }): Promise<void> {
     await using session = new PostgresSession(this.into.url, 'elt-derived');
+    const status = new PostgresDerivedStatus(
+      session.sql,
+      this.qualifiedName,
+      'view',
+      clock,
+    );
     try {
       await session.sql.begin((transaction) =>
         publishPostgresViews(transaction, {
@@ -80,10 +94,14 @@ export class View extends DerivedDataset<PostgresTable> {
         missing !== undefined &&
         (made(connections, this.into).has(missing) ||
           earlier.some((dataset) => derivedRelation(dataset) === missing))
-      )
+      ) {
+        await status.waiting();
         return;
+      }
+      await status.failed(errorMessage(error));
       throw error;
     }
+    await status.current();
   }
 }
 

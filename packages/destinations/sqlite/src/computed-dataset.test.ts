@@ -432,6 +432,95 @@ test('a file that is slow to read holds only its own place: the text of the file
   );
 });
 
+test('while a file is slow to read, derived_status says that the dataset refreshes and how many inputs are pending, and once the refresh ends that it is current, with each status counted', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await filesImport(scratch.path);
+  const names = Array.from({ length: 8 }, (_, index) => `f${index}.txt`);
+  for (const name of ['slow.txt', ...names])
+    await files.file(name, `text of ${name}`);
+  files.source.rows = ['slow.txt', ...names].map((ref, index) => ({
+    id: String(index),
+    ref,
+  }));
+  const released = new Latch();
+  files.parser().holding.set('slow.txt', released);
+  const status = `SELECT kind, state, inputs, computed, failed, pending, as_of IS NOT NULL AS dated FROM derived_status WHERE dataset = 'file_text'`;
+
+  const running = files.pipeline.run();
+  const whileHeld = await timebox(
+    () => {
+      const [row] = files.read(status);
+      assert.equal(row?.pending, 1);
+      return row;
+    },
+    {
+      minTimeout: 10,
+      maxRetryTime: 10_000,
+      shouldRetry: ({ error }) =>
+        error instanceof assert.AssertionError || Error.isError(error),
+    },
+  );
+  released.open();
+  await running;
+
+  assert.deepEqual(
+    { whileHeld, after: files.read(status) },
+    {
+      whileHeld: {
+        kind: 'computed',
+        state: 'refreshing',
+        inputs: names.length + 1,
+        computed: 0,
+        failed: 0,
+        pending: 1,
+        dated: 0,
+      },
+      after: [
+        {
+          kind: 'computed',
+          state: 'current',
+          inputs: names.length + 1,
+          computed: names.length + 1,
+          failed: 0,
+          pending: 0,
+          dated: 1,
+        },
+      ],
+    },
+  );
+});
+
+test('a parser that fails on every file leaves the dataset current in derived_status, with each failure counted', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await filesImport(scratch.path);
+  await files.file('a.txt', 'invoice');
+  await files.file('b.txt', 'receipt');
+  files.source.rows = [
+    { id: '1', ref: 'a.txt' },
+    { id: '2', ref: 'b.txt' },
+  ];
+  files.parser().failing.add('a.txt');
+  files.parser().failing.add('b.txt');
+
+  await files.pipeline.run();
+
+  assert.deepEqual(
+    files.read(
+      `SELECT state, error, inputs, computed, failed, pending FROM derived_status WHERE dataset = 'file_text'`,
+    ),
+    [
+      {
+        state: 'current',
+        error: null,
+        inputs: 2,
+        computed: 0,
+        failed: 2,
+        pending: 0,
+      },
+    ],
+  );
+});
+
 test('a run whose other copy failed still stores the text of the files its loaded rows name, and then rejects with that copy’s failure', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);

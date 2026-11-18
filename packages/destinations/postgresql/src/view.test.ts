@@ -219,6 +219,63 @@ test('a view whose input has not loaded yet stays absent, and appears with the r
   );
 });
 
+test('marts.derived_status says that a view waits while its input has not loaded, that it is current once it appears, and that it failed, with the error of Postgres, when its SQL does not compile', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  const source = new Records(['r1']);
+  const status = async () => [
+    ...(await sql`
+      SELECT dataset, kind, state, error IS NOT NULL AS failing
+      FROM marts.derived_status ORDER BY dataset`),
+  ];
+  const counting = (query: string) =>
+    recordsPipeline(url, source, (marts) => [count(marts, query)]);
+  source.failing = true;
+  await counting('SELECT count(*)::int AS n FROM raw.raw_records')
+    .run()
+    .catch(() => undefined);
+  const waiting = await status();
+  source.failing = false;
+  await counting('SELECT count(*)::int AS n FROM raw.raw_records').run();
+  const current = await status();
+
+  await counting('SELECT count(*)::int AS n FROM recordz')
+    .run()
+    .catch(() => undefined);
+
+  assert.deepEqual(
+    { waiting, current, failed: await status() },
+    {
+      waiting: [
+        {
+          dataset: 'marts.record_count',
+          kind: 'view',
+          state: 'waiting',
+          failing: false,
+        },
+      ],
+      current: [
+        {
+          dataset: 'marts.record_count',
+          kind: 'view',
+          state: 'current',
+          failing: false,
+        },
+      ],
+      failed: [
+        {
+          dataset: 'marts.record_count',
+          kind: 'view',
+          state: 'failed',
+          failing: true,
+        },
+      ],
+    },
+  );
+});
+
 test('a view that reads a view still waiting for its copy waits too, and both appear with the run that loads the copy', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();

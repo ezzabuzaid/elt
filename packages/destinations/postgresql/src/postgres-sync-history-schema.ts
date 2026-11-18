@@ -1,5 +1,6 @@
 import { syncHistoryRelations } from '@eltjs/elt';
 
+import { derivedStatusTable } from './postgres-derived-status.ts';
 import type { PostgresView } from './postgres-views.ts';
 
 // When connector's stream last matched its upstream: the start of its last
@@ -57,6 +58,7 @@ const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
         ORDER BY s.completed_at DESC, s.id DESC LIMIT 1
       ) success ON true
       ORDER BY a.connector, c.stream, a.id DESC`,
+  derived_status: `SELECT dataset, kind, state, as_of, refreshed_at, refreshing_since, error, inputs, computed, empty, failed, pending FROM _warehouse.derived_status ORDER BY dataset`,
 };
 
 // How readers see the sync history: what each pass declared and loaded.
@@ -106,4 +108,5 @@ export const syncHistoryTables = [
     connector text NOT NULL, stream text NOT NULL, checked_at timestamptz NOT NULL,
     PRIMARY KEY (connector, stream)
   )`,
+  derivedStatusTable,
 ] as const;

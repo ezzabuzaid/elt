@@ -9,11 +9,13 @@ import {
   type PipelineClock,
   type RefreshTrigger,
   type Rule,
+  errorMessage,
 } from '@eltjs/elt';
 
 import { identifier, quote } from './identifier.ts';
 import { TargetComments } from './postgres-comments.ts';
 import { rebindDependents } from './postgres-dependents.ts';
+import { PostgresDerivedStatus } from './postgres-derived-status.ts';
 import { PostgresDestination } from './postgres-destination.ts';
 import { storedColumns } from './postgres-fit.ts';
 import { TargetHistory, rowHash } from './postgres-history.ts';
@@ -203,8 +205,35 @@ export class ComputedDataset<
       { dataset: this.name },
       { clock, retention: this.into.retention },
     );
+    const status = new PostgresDerivedStatus(
+      load.sql,
+      this.qualifiedName,
+      'computed',
+      clock,
+    );
     const inputs = await this.#inputs(load.sql, connections);
-    if (inputs === null) return;
+    if (inputs === null) {
+      await status.waiting();
+      return;
+    }
+    try {
+      await this.#update(load, status, inputs, trigger, signal);
+    } catch (error) {
+      // A stop is not the dataset's failure.
+      if (signal?.aborted !== true) await status.failed(errorMessage(error));
+      throw error;
+    }
+  }
+
+  // Brings the output rows in step with inputs, and tells status how many
+  // are due and how many settled.
+  async #update(
+    load: PostgresLoad,
+    status: PostgresDerivedStatus,
+    inputs: Map<string, Input>,
+    trigger: RefreshTrigger,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
     const key = quote(this.#rule.key.name);
     const table = this.#qualified(this.#table);
     // The number of a transaction's commit, taken at its first change, so a
@@ -337,6 +366,10 @@ export class ComputedDataset<
       if (trigger.kind === 'commit') trigger.tried.add(attempt);
       due.push({ id, input, inputHash, rule });
     }
+    await status.refreshing({
+      ...(await this.#counts(load.sql, inputs)),
+      pending: due.length,
+    });
     // A pool of calls, each taking the next batch once its own committed, so
     // a slow call holds only its place, as a worker pool keeps its other
     // workers busy. A call that fails stops the pool taking more.
@@ -398,11 +431,42 @@ export class ComputedDataset<
                   {},
                 );
             }
+            await status.settled(sql, batch.length);
           });
         }
       }),
     );
     if (failures.length > 0) throw failures[0];
+    if (signal?.aborted === true) return;
+    await status.current({
+      ...(await this.#counts(load.sql, inputs)),
+      pending: 0,
+    });
+  }
+
+  // How many inputs there are, and how many output rows have each status.
+  async #counts(
+    sql: Transaction,
+    inputs: ReadonlyMap<string, Input>,
+  ): Promise<{
+    inputs: number;
+    computed: number;
+    empty: number;
+    failed: number;
+  }> {
+    const counted = new Map(
+      (
+        await sql.unsafe<{ status: string; n: number }[]>(
+          `SELECT "status", count(*)::int AS "n" FROM ${this.#qualified(this.#table)} GROUP BY "status"`,
+        )
+      ).map(({ status, n }) => [status, n]),
+    );
+    return {
+      inputs: inputs.size,
+      computed: counted.get('computed') ?? 0,
+      empty: counted.get('empty') ?? 0,
+      failed: counted.get('failed') ?? 0,
+    };
   }
 
   // Makes the table, its history and its view, or makes the table again when

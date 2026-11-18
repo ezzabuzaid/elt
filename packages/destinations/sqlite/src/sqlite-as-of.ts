@@ -3,6 +3,7 @@ import { type DatabaseSync, type SQLInputValue, constants } from 'node:sqlite';
 import { UnavailableError, open } from '@zukhruf/sqlite-open';
 
 import { busyTimeout } from './open-destination.ts';
+import { derivedStatus } from './sqlite-derived-status.ts';
 import { histories } from './sqlite-history.ts';
 import { identifiers, internalColumns, quote } from './sqlite-identifiers.ts';
 import {
@@ -244,9 +245,12 @@ export function selectAsOf(
 export const literal = (text: string) => `'${text.replaceAll("'", "''")}'`;
 
 // The tables of the sync history, unquoted.
-export const syncHistoryTables = [attempts, coverage, checks].map((table) =>
-  table.slice(1, -1),
-);
+export const syncHistoryTables = [
+  attempts,
+  coverage,
+  checks,
+  derivedStatus,
+].map((table) => table.slice(1, -1));
 
 // The sync history keeps no versions, so each of its tables of schema reads
 // as a TEMP view, named by name, that fails, and so does each view over them.

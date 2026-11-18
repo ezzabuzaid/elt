@@ -106,4 +106,34 @@ export const syncHistoryRelations = {
         'When the stream last matched its upstream: when its last successful pass began reading, or a later check by a watch that found the stream unchanged since, whichever is later, and never later than when its source says the upstream itself was last current, as an app writes its store only while it runs. A watch records its checks about once a minute. NULL if the stream never succeeded. A stream whose latest change failed to load keeps the time before that change, so its age is how stale it is; compare it with the current time to judge freshness.',
     },
   },
+  derived_status: {
+    name: 'derived_status',
+    description:
+      'One row per derived dataset, a view or a computed dataset, and what its refreshes left: whether it waits for its inputs, refreshes, is current or failed, as of when, and for a computed dataset how many of its inputs it computed, found empty, failed on or has still to compute. sync_status can say succeeded while a computed dataset still computes, or failed on each of its inputs; judge derived data here. A dataset is caught up when its state is current, its pending is 0, and its as_of is at or after the start of the last pass of the connections it reads, in sync_status. No row means that no refresh of the dataset ran yet.',
+    columns: {
+      dataset:
+        'Name of the view or computed dataset that readers query, as the pipeline declares it.',
+      kind: 'view: Postgres or SQLite computes it from its SQL on each read. computed: a rule computes one output row for each input, which readers query with its status.',
+      state:
+        'waiting: a relation that it reads is not made yet, so it holds no data; refreshing: a refresh runs since refreshing_since; current: the last refresh ended with no failure of the dataset; failed: the last refresh failed, and error says why. A refresh that a stopped process left stays refreshing until the next refresh.',
+      as_of:
+        'When the last refresh that ended with no failure began to read its inputs: the derived data shows what the copies had committed then. NULL if no refresh ended so.',
+      refreshed_at:
+        'When the last refresh that ended with no failure ended. NULL if no refresh ended so.',
+      refreshing_since:
+        'When the refresh that runs began; NULL while none runs.',
+      error:
+        'Why the last refresh failed, such as SQL that the database refused, or NULL. A rule that fails on one input is not a failure of the dataset: that output row has status failed, and failed counts it.',
+      inputs:
+        'How many inputs the computed dataset read in its last refresh; NULL for a view.',
+      computed:
+        'How many output rows had status computed when the refresh that runs began, or when the last refresh ended; NULL for a view. Count the rows of the dataset for the rows that landed since.',
+      empty:
+        'How many output rows had status empty when the refresh that runs began, or when the last refresh ended; NULL for a view.',
+      failed:
+        'How many output rows had status failed when the refresh that runs began, or when the last refresh ended; the next refresh after a pass tries each of them again. NULL for a view.',
+      pending:
+        'How many inputs the computed dataset has still to compute in the refresh that runs, or that a stopped refresh left; each commit of the refresh lowers it, and it is 0 once a refresh ends. NULL for a view.',
+    },
+  },
 } as const satisfies Record<string, ReaderRelation>;

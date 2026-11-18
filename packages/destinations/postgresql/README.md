@@ -291,7 +291,7 @@ A refresh is a load in `_warehouse._elt_loads`, under the name of its dataset, s
 
 - It records only connections with a Postgres destination. It refuses other connections when the pipeline validates.
 - It records into `_warehouse.sync_attempts`, `_warehouse.extraction_coverage` and `_warehouse.stream_checks`. The last one holds the latest check of each stream by a watch that found it unchanged.
-- `install()` makes those tables and publishes the `marts` views `sync_attempts`, `extraction_coverage`, `sync_status`, `stream_status` and `catalog`, in one transaction. The pipeline calls it before each run and watch, and it is safe to repeat. See [ADR 0005](./docs/adr/0005-the-history-install-publishes-the-catalog.md).
+- `install()` makes those tables and `_warehouse.derived_status`, and publishes the `marts` views `sync_attempts`, `extraction_coverage`, `sync_status`, `stream_status`, `derived_status` and `catalog`, in one transaction. The pipeline calls it before each run and watch, and it is safe to repeat. See [ADR 0005](./docs/adr/0005-the-history-install-publishes-the-catalog.md).
 - `new PostgresSyncHistory({ url, readers: ['agent_reader'] })` names the roles that read the database as of a position with their own session: `new PostgresDestination({ url: readerUrl, schema })`, then `positions()` and `reading()`. Each install grants each reader what a reading needs, which is the numbering in `_warehouse` and nothing else of it, as dbt applies the grants that a model declares after each build. Thus no host names the objects of the numbering, and a reader keeps its grants when the numbering is made again. The install grants nothing else: who may read `marts` is a grant of the database, such as its default privileges. A role that does not exist fails the install.
 - Before a pass reads, the history inserts one `sync_attempts` row, with the connection name as `connector` and the source identity as `source`. It inserts one `extraction_coverage` row for each selected stream, with the declared `coverage(stream)` of the source and the schema of the destination as `target_schema`. The outcomes close them.
 - A run declares each stream that a connection selected. A watch pass reads only the streams whose change signals changed, so an attempt vouches only for its own `extraction_coverage` rows.
@@ -300,13 +300,14 @@ A refresh is a load in `_warehouse._elt_loads`, under the name of its dataset, s
 
 The relations in `marts`:
 
-| Relation              | Contents                                                                                                                                                                                                                                         |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `catalog`             | Each view and column in `marts`, with its description. The start point of a reader. A table is not for readers, also when it is in `marts`, such as the raw table of a computed dataset.                                                         |
-| `sync_status`         | For each connection: the latest attempt, the end of the last successful pass, and `current_as_of` (the oldest of its streams).                                                                                                                   |
-| `stream_status`       | For each connection and stream: the latest attempt that declared the stream with the status of its copy, and the last attempt in which that copy succeeded. A watch pass reads only changed streams, so judge a stream here, by `current_as_of`. |
-| `sync_attempts`       | The kept history of attempts, with start and end times, status and errors.                                                                                                                                                                       |
-| `extraction_coverage` | For each attempt and stream: the configured selection, the explanation of the scope, the target, the outcome of the copy, the committed counts and the failed partitions.                                                                        |
+| Relation              | Contents                                                                                                                                                                                                                                                                                 |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `catalog`             | Each view and column in `marts`, with its description. The start point of a reader. A table is not for readers, also when it is in `marts`, such as the raw table of a computed dataset.                                                                                                 |
+| `sync_status`         | For each connection: the latest attempt, the end of the last successful pass, and `current_as_of` (the oldest of its streams).                                                                                                                                                           |
+| `stream_status`       | For each connection and stream: the latest attempt that declared the stream with the status of its copy, and the last attempt in which that copy succeeded. A watch pass reads only changed streams, so judge a stream here, by `current_as_of`.                                         |
+| `derived_status`      | For each view and computed dataset, named with its schema: whether it waits for its inputs, refreshes, is current or failed, its `as_of`, and for a computed dataset how many inputs it computed, found empty, failed on or has still to compute. See [derived status](#derived-status). |
+| `sync_attempts`       | The kept history of attempts, with start and end times, status and errors.                                                                                                                                                                                                               |
+| `extraction_coverage` | For each attempt and stream: the configured selection, the explanation of the scope, the target, the outcome of the copy, the committed counts and the failed partitions.                                                                                                                |
 
 What the relations tell:
 
@@ -318,6 +319,17 @@ What the relations tell:
 - The counts are the accepted operations that the pass committed, also deduplication no-ops and deletions of keys that were not there. They are not counts of changed rows or totals.
 - A first failure has no time of success.
 - Coverage is the [configured scope](../../elt/README.md#coverage). Judge freshness by `current_as_of` ([the four clocks](../../elt/README.md#the-four-clocks)).
+
+## Derived status
+
+Each [view](#declare-a-view) and [computed dataset](#declare-a-computed-dataset) keeps one row in `_warehouse.derived_status`, which readers see as `marts.derived_status`. A reader needs it because `sync_status` says that a pass succeeded while a computed dataset still computes, or failed on each of its inputs.
+
+- A refresh writes `waiting` when a relation that the dataset reads is not made yet, and `refreshing` when it begins, with `refreshing_since`. A computed dataset also writes how many inputs it read and how many it has still to compute (`pending`). Each commit of the refresh lowers `pending` in its own transaction, so a reader sees it fall while the rows land.
+- A refresh that ends with no failure of the dataset writes `current`, with `as_of`, when it began to read, and `refreshed_at`. A refresh that fails writes `failed`, with `error`. A rule that fails on one input is not a failure of the dataset: `failed` counts its rows.
+- `computed`, `empty` and `failed` count the output rows when the refresh began and when it ended.
+- A dataset is caught up when its `state` is `current`, its `pending` is 0, and its `as_of` is at or after the start of the last pass of the connections that it reads. This is the frontier of Materialize and the `DATA_TIMESTAMP` of a Snowflake dynamic table, with the pending items of a pgai vectorizer.
+- A refresh that a stopped process left stays `refreshing` until the next refresh. The status keeps no row versions, so a reading as of a position fails the view, as it fails the other views of the sync history.
+- A status write takes no commit number: it is not data of a position.
 
 ## Decisions
 
@@ -354,6 +366,7 @@ src/
   postgres-views.ts               the publication of views, for View and the sync history
   postgres-dependents.ts          the views over a table, made again over its change
   postgres-privileges.ts          the privileges of a relation, kept across its change
+  postgres-derived-status.ts      the status that each derived dataset keeps of itself
   postgres-checkpoint-store.ts    PostgresCheckpointStore
   postgres-sync-history.ts        PostgresSyncHistory and the catalog
   postgres-sync-history-schema.ts the tables and views of the history

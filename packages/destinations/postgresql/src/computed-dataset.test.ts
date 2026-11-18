@@ -500,6 +500,103 @@ test('a file that is slow to read holds only its own place: the text of the file
   );
 });
 
+test('while a file is slow to read, marts.derived_status says that the dataset refreshes and how many inputs are pending, and once the refresh ends that it is current, with each status counted', async (t) => {
+  await using database = await databases.database();
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  const files = await filesImport(url, scratch.path);
+  const names = Array.from({ length: 8 }, (_, index) => `f${index}.txt`);
+  for (const name of ['slow.txt', ...names])
+    await files.file(name, `text of ${name}`);
+  files.source.rows = ['slow.txt', ...names].map((ref, index) => ({
+    id: String(index),
+    ref,
+  }));
+  const released = new Latch();
+  files.parser().holding.set('slow.txt', released);
+  const status = () => sql`
+    SELECT kind, state, inputs::int, computed::int, failed::int, pending::int,
+      as_of IS NOT NULL AS dated
+    FROM marts.derived_status WHERE dataset = 'marts.file_text'`;
+
+  const running = files.pipeline.run();
+  const whileHeld = await waitFor(
+    async () => {
+      const [row] = await status();
+      assert.equal(row?.pending, 1);
+      return { ...row };
+    },
+    { signal: t.signal },
+  );
+  released.open();
+  await running;
+
+  assert.deepEqual(
+    { whileHeld, after: [...(await status())] },
+    {
+      whileHeld: {
+        kind: 'computed',
+        state: 'refreshing',
+        inputs: names.length + 1,
+        computed: 0,
+        failed: 0,
+        pending: 1,
+        dated: false,
+      },
+      after: [
+        {
+          kind: 'computed',
+          state: 'current',
+          inputs: names.length + 1,
+          computed: names.length + 1,
+          failed: 0,
+          pending: 0,
+          dated: true,
+        },
+      ],
+    },
+  );
+});
+
+test('a parser that fails on every file leaves the dataset current in marts.derived_status, with each failure counted', async () => {
+  await using database = await databases.database();
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  const files = await filesImport(url, scratch.path);
+  await files.file('a.txt', 'invoice');
+  await files.file('b.txt', 'receipt');
+  files.source.rows = [
+    { id: '1', ref: 'a.txt' },
+    { id: '2', ref: 'b.txt' },
+  ];
+  files.parser().failing.add('a.txt');
+  files.parser().failing.add('b.txt');
+
+  await files.pipeline.run();
+
+  assert.deepEqual(
+    [
+      ...(await sql`
+        SELECT state, error, inputs::int, computed::int, failed::int, pending::int
+        FROM marts.derived_status WHERE dataset = 'marts.file_text'`),
+    ],
+    [
+      {
+        state: 'current',
+        error: null,
+        inputs: 2,
+        computed: 0,
+        failed: 2,
+        pending: 0,
+      },
+    ],
+  );
+});
+
 test('a run whose other copy failed still stores the text of the files its loaded rows name, and then rejects with that copy’s failure', async () => {
   await using database = await databases.database();
   await using scratch = await new TemporaryFiles().directory('elt-computed-');

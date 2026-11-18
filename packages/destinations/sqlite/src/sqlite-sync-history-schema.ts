@@ -2,6 +2,7 @@ import { Declaration } from '@zukhruf/sqlite-drift';
 
 import { syncHistoryRelations } from '@eltjs/elt';
 
+import { derivedStatus, derivedStatusTable } from './sqlite-derived-status.ts';
 import { type SQLiteView, viewDefinition } from './sqlite-views.ts';
 
 export const attempts = '"_elt_sync_attempts"';
@@ -37,6 +38,7 @@ const tables = [
     "connector" TEXT NOT NULL, "stream" TEXT NOT NULL, "checked_at" TEXT NOT NULL,
     PRIMARY KEY ("connector", "stream")
   ) STRICT`,
+  derivedStatusTable,
 ];
 
 // The history's tables, which install() brings to this declaration.
@@ -93,6 +95,7 @@ const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
       FROM "declared" d LEFT JOIN "success" s ON s."connector" = d."connector" AND s."stream" = d."stream" AND s."rank" = 1
       LEFT JOIN "currency" c ON c."connector" = d."connector" AND c."stream" = d."stream"
       WHERE d."rank" = 1 ORDER BY d."connector", d."stream"`,
+  derived_status: `SELECT "dataset", "kind", "state", "as_of", "refreshed_at", "refreshing_since", "error", "inputs", "computed", "empty", "failed", "pending" FROM ${derivedStatus} ORDER BY "dataset"`,
 };
 
 // How readers see the sync history: what each pass declared and loaded.

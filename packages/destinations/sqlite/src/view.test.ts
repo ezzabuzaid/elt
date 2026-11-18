@@ -296,6 +296,44 @@ test('a view whose input has not loaded yet stays absent, and appears with the r
   assert.deepEqual(shell(path, 'SELECT n FROM record_count').rows, [{ n: 1 }]);
 });
 
+test('derived_status says that a view waits while its input has not loaded, that it is current once it appears, and that it failed, with the error of SQLite, when its SQL does not compile', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-view-');
+  const path = join(scratch.path, 'data.sqlite');
+  const source = new Records(['r1']);
+  const status = `SELECT dataset, kind, state, error IS NOT NULL AS failing FROM derived_status ORDER BY dataset`;
+  source.failing = true;
+  await recordsPipeline(path, source, 'SELECT count(*) AS n FROM records')
+    .run()
+    .catch(() => undefined);
+  const waiting = shell(path, status).rows;
+  source.failing = false;
+  await recordsPipeline(
+    path,
+    source,
+    'SELECT count(*) AS n FROM records',
+  ).run();
+  const current = shell(path, status).rows;
+
+  await recordsPipeline(path, source, 'SELECT count(*) AS n FROM recordz')
+    .run()
+    .catch(() => undefined);
+
+  assert.deepEqual(
+    { waiting, current, failed: shell(path, status).rows },
+    {
+      waiting: [
+        { dataset: 'record_count', kind: 'view', state: 'waiting', failing: 0 },
+      ],
+      current: [
+        { dataset: 'record_count', kind: 'view', state: 'current', failing: 0 },
+      ],
+      failed: [
+        { dataset: 'record_count', kind: 'view', state: 'failed', failing: 1 },
+      ],
+    },
+  );
+});
+
 test('a view that reads a view still waiting for its copy waits too, and both appear with the run that loads the copy', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-view-');
   const path = join(scratch.path, 'data.sqlite');

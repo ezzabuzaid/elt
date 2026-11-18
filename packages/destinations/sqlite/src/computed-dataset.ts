@@ -1,5 +1,5 @@
 import { hash } from 'node:crypto';
-import type { SQLInputValue, SQLOutputValue } from 'node:sqlite';
+import type { DatabaseSync, SQLInputValue, SQLOutputValue } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { open } from '@zukhruf/sqlite-open';
@@ -11,9 +11,11 @@ import {
   type PipelineClock,
   type RefreshTrigger,
   type Rule,
+  errorMessage,
 } from '@eltjs/elt';
 
 import { busyTimeout } from './open-destination.ts';
+import { SQLiteDerivedStatus } from './sqlite-derived-status.ts';
 import { SQLiteDestination } from './sqlite-destination.ts';
 import { SQLiteHistory, rowHash } from './sqlite-history.ts';
 import { identifiers, quote } from './sqlite-identifiers.ts';
@@ -169,8 +171,6 @@ export class ComputedDataset<
     readonly signal?: AbortSignal;
     readonly trigger: RefreshTrigger;
   }): Promise<void> {
-    const inputs = this.#inputs(connections);
-    if (inputs === null) return;
     // Open from the start, so it closes a refresh that a process ended; with
     // no commit it is no span, and leaves the positions as they are.
     using load = SQLiteLoad.open(
@@ -178,6 +178,35 @@ export class ComputedDataset<
       { dataset: this.name },
       { clock, retention: this.#into.retention },
     );
+    const status = new SQLiteDerivedStatus(
+      load.database,
+      this.name,
+      'computed',
+      clock,
+    );
+    const inputs = this.#inputs(connections);
+    if (inputs === null) {
+      status.waiting();
+      return;
+    }
+    try {
+      await this.#update(load, status, inputs, trigger, signal);
+    } catch (error) {
+      // A stop is not the dataset's failure.
+      if (signal?.aborted !== true) status.failed(errorMessage(error));
+      throw error;
+    }
+  }
+
+  // Brings the output rows in step with inputs, and tells status how many
+  // are due and how many settled.
+  async #update(
+    load: SQLiteLoad,
+    status: SQLiteDerivedStatus,
+    inputs: Map<string, Input>,
+    trigger: RefreshTrigger,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
     const { database } = load;
     const key = this.#rule.key.name;
     const table = quote(this.#table);
@@ -327,6 +356,10 @@ export class ComputedDataset<
       if (trigger.kind === 'commit') trigger.tried.add(attempt);
       due.push({ id, input, inputHash, rule });
     }
+    status.refreshing({
+      ...this.#counts(database, inputs),
+      pending: due.length,
+    });
     // A pool of calls, each taking the next batch once its own committed, so
     // a slow call holds only its place, as a worker pool keeps its other
     // workers busy. A call that fails stops the pool taking more.
@@ -378,6 +411,7 @@ export class ComputedDataset<
                   );
                 else store(commit, id, inputHash, rule, 'empty', null, {});
               });
+              status.settled(batch.length);
             },
             { mode: 'immediate' },
           );
@@ -385,6 +419,29 @@ export class ComputedDataset<
       }),
     );
     if (failures.length > 0) throw failures[0];
+    if (signal?.aborted === true) return;
+    status.current({ ...this.#counts(database, inputs), pending: 0 });
+  }
+
+  // How many inputs there are, and how many output rows have each status.
+  #counts(
+    database: DatabaseSync,
+    inputs: ReadonlyMap<string, Input>,
+  ): { inputs: number; computed: number; empty: number; failed: number } {
+    const counted = new Map(
+      database
+        .prepare(
+          `SELECT "status", count(*) AS "n" FROM ${quote(this.#table)} GROUP BY "status"`,
+        )
+        .all()
+        .map(({ status, n }) => [String(status), Number(n)]),
+    );
+    return {
+      inputs: inputs.size,
+      computed: counted.get('computed') ?? 0,
+      empty: counted.get('empty') ?? 0,
+      failed: counted.get('failed') ?? 0,
+    };
   }
 
   // Each input by key, from the rows of each relation of from that exists
