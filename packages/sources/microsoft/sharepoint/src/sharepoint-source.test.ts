@@ -8,7 +8,6 @@ import { createClock } from '@sinonjs/fake-timers';
 import { untilAborted } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { waitFor } from '@zukhruf/testing/async';
 import { Msw } from '@zukhruf/testing/msw';
 import { http } from 'msw';
 import { parseOffice } from 'officeparser';
@@ -1110,9 +1109,14 @@ test('a change to the version of a site wakes the streams of a watch', async (t:
     projects.lastModifiedDateTime = '2026-11-17T09:00:30Z';
 
     const next = watch.next();
-    await waitFor(() => assert.ok(clock.countTimers() > 0), {
-      signal: t.signal,
-    });
+    // The watch has armed its next check once a timer of the clock waits.
+    await untilAborted(
+      (async () => {
+        while (clock.countTimers() === 0)
+          await new Promise((resolve) => setImmediate(resolve));
+      })(),
+      t.signal,
+    );
     await clock.tickAsync(60_000);
     const woken = await untilAborted(next, t.signal);
 
