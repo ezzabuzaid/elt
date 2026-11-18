@@ -16,12 +16,12 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "^4.0.37",
-    "@zukhruf/coprocess": "^0.8.25",
-    "@zukhruf/fs": "^0.8.25",
-    "@zukhruf/pool": "^0.8.25",
+    "@zukhruf/coprocess": "^0.8.27",
+    "@zukhruf/fs": "^0.8.27",
+    "@zukhruf/pool": "^0.8.27",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.8.25"
+    "@zukhruf/testing": "^0.8.27"
   }
 }

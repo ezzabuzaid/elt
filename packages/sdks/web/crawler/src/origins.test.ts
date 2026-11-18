@@ -23,8 +23,6 @@ import {
 // Got retries no network error, so a test's failure is its first answer.
 const noRetries = got.extend({ retry: { limit: 0 } });
 
-const options = () => ({ signal: AbortSignal.timeout(120_000) });
-
 // A sitemap that names these URLs.
 function sitemap(urls: readonly string[]) {
   return HttpResponse.xml(
@@ -86,7 +84,7 @@ async function crawled(crawl: Crawl, time: Clock) {
   return { pages, failures };
 }
 
-test('a redirect to another origin whose robots.txt disallows the target is not requested', async () => {
+test('a redirect to another origin whose robots.txt disallows the target is not requested', async (t) => {
   const time = clock(0);
   const requests: string[] = [];
   using server = new Msw().intercept(
@@ -111,7 +109,7 @@ test('a redirect to another origin whose robots.txt disallows the target is not 
   const { pages, failures } = await crawled(
     new Origins(noRetries, null, time)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
-      .crawl(['https://site.test/sitemap.xml'], null, options()),
+      .crawl(['https://site.test/sitemap.xml'], null, { signal: t.signal }),
     time,
   );
 
@@ -125,7 +123,7 @@ test('a redirect to another origin whose robots.txt disallows the target is not 
   assert.deepEqual(failures, []);
 });
 
-test('a redirect target waits the delay of its own origin, not of the origin that redirected', async () => {
+test('a redirect target waits the delay of its own origin, not of the origin that redirected', async (t) => {
   const time = clock(0);
   const started = new Map<string, number>();
   using server = new Msw().intercept(
@@ -153,7 +151,7 @@ test('a redirect target waits the delay of its own origin, not of the origin tha
   const { pages } = await crawled(
     new Origins(noRetries, null, time)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
-      .crawl(['https://site.test/sitemap.xml'], null, options()),
+      .crawl(['https://site.test/sitemap.xml'], null, { signal: t.signal }),
     time,
   );
 
@@ -174,7 +172,7 @@ test('a redirect target waits the delay of its own origin, not of the origin tha
   );
 });
 
-test('without a Crawl-delay, two requests to one origin start one second apart', async () => {
+test('without a Crawl-delay, two requests to one origin start one second apart', async (t) => {
   const time = clock(0);
   const started: number[] = [];
   using server = new Msw().intercept(
@@ -192,7 +190,7 @@ test('without a Crawl-delay, two requests to one origin start one second apart',
   await crawled(
     new Origins(noRetries, null, time)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
-      .crawl(['https://site.test/sitemap.xml'], null, options()),
+      .crawl(['https://site.test/sitemap.xml'], null, { signal: t.signal }),
     time,
   );
 
@@ -200,7 +198,7 @@ test('without a Crawl-delay, two requests to one origin start one second apart',
   assert.equal(b - a, 1000);
 });
 
-test('the rules of robots.txt are read again 24 hours after they were read, and not before', async () => {
+test('the rules of robots.txt are read again 24 hours after they were read, and not before', async (t) => {
   const time = clock(10 * day);
   const robots: string[] = [];
   using server = new Msw().intercept(
@@ -228,7 +226,7 @@ test('the rules of robots.txt are read again 24 hours after they were read, and 
         time,
       )
         .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
-        .crawl(['https://site.test/sitemap.xml'], null, options()),
+        .crawl(['https://site.test/sitemap.xml'], null, { signal: t.signal }),
       time,
     );
 
@@ -238,7 +236,7 @@ test('the rules of robots.txt are read again 24 hours after they were read, and 
   assert.deepEqual(robots, ['/robots.txt']);
 });
 
-test('a 503 with Retry-After holds its origin until then, as a 429 does', async () => {
+test('a 503 with Retry-After holds its origin until then, as a 429 does', async (t) => {
   const time = clock(0);
   const requests: string[] = [];
   using server = new Msw().intercept(
@@ -257,7 +255,7 @@ test('a 503 with Retry-After holds its origin until then, as a 429 does', async 
   );
   const crawl = new Origins(noRetries, null, time)
     .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
-    .crawl(['https://site.test/sitemap.xml'], null, options());
+    .crawl(['https://site.test/sitemap.xml'], null, { signal: t.signal });
 
   const { failures } = await crawled(crawl, time);
 
@@ -275,7 +273,7 @@ test('a 503 with Retry-After holds its origin until then, as a 429 does', async 
   );
 });
 
-test('two crawls of one read share the expansion budget of each origin', async () => {
+test('two crawls of one read share the expansion budget of each origin', async (t) => {
   const time = clock(0);
   const requests: string[] = [];
   using server = new Msw().intercept(
@@ -313,7 +311,7 @@ test('two crawls of one read share the expansion budget of each origin', async (
       new AdaptiveRevisit(),
     );
   const crawlOptions = {
-    ...options(),
+    ...{ signal: t.signal },
     include: [new URLPattern('https://company.test/*')] as const,
     expand: [new URLPattern({ pathname: '*startup*' })] as const,
   };
@@ -347,7 +345,7 @@ test('two crawls of one read share the expansion budget of each origin', async (
   assert.notEqual(second.snapshot().crawl, null);
 });
 
-test('a redirect whose target stays is scheduled as unchanged, and one whose target moves as changed', async () => {
+test('a redirect whose target stays is scheduled as unchanged, and one whose target moves as changed', async (t) => {
   const time = clock(0);
   let target = '/b';
   using server = new Msw().intercept(
@@ -371,7 +369,7 @@ test('a redirect whose target stays is scheduled as unchanged, and one whose tar
   const run = async () => {
     const crawl = new Origins(noRetries, null, time)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
-      .crawl(['https://site.test/sitemap.xml'], memento, options());
+      .crawl(['https://site.test/sitemap.xml'], memento, { signal: t.signal });
     await crawled(crawl, time);
     const snapshot = crawl.snapshot();
     memento = snapshot;

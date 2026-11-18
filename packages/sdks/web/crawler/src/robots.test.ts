@@ -61,9 +61,7 @@ async function crawled(crawl: Crawl) {
 }
 
 const starts = ['https://site.test/sitemap.xml'];
-const options = () => ({ signal: AbortSignal.timeout(120_000) });
-
-test('a URL that robots.txt disallows is not requested, and the other pages are handed back', async () => {
+test('a URL that robots.txt disallows is not requested, and the other pages are handed back', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     site(requests, () =>
@@ -71,7 +69,9 @@ test('a URL that robots.txt disallows is not requested, and the other pages are 
     ),
   );
 
-  const result = await crawled(crawler().crawl(starts, null, options()));
+  const result = await crawled(
+    crawler().crawl(starts, null, { signal: t.signal }),
+  );
 
   assert.equal(requests[0], '/robots.txt');
   assert.ok(!requests.includes('/private/b'));
@@ -80,7 +80,7 @@ test('a URL that robots.txt disallows is not requested, and the other pages are 
   assert.equal(result.memento.crawl, null);
 });
 
-test("one download of a starting page's robots.txt gives both its rules and its sitemaps", async () => {
+test("one download of a starting page's robots.txt gives both its rules and its sitemaps", async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     site(requests, () =>
@@ -91,7 +91,7 @@ test("one download of a starting page's robots.txt gives both its rules and its 
   );
 
   const result = await crawled(
-    crawler().crawl(['https://site.test/'], null, options()),
+    crawler().crawl(['https://site.test/'], null, { signal: t.signal }),
   );
 
   assert.deepEqual(result.pages.filter((page) => page !== '/').toSorted(), [
@@ -105,7 +105,7 @@ test("one download of a starting page's robots.txt gives both its rules and its 
   );
 });
 
-test('a read whose rules an earlier read left downloads robots.txt once for its sitemaps', async () => {
+test('a read whose rules an earlier read left downloads robots.txt once for its sitemaps', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     site(requests, () =>
@@ -119,13 +119,13 @@ test('a read whose rules an earlier read left downloads robots.txt once for its 
   const earlier = new Origins(http, null, globalThis);
   for await (const _ of earlier
     .crawler(http, [new ListingReader()], new AdaptiveRevisit())
-    .crawl(['https://site.test/'], null, options()));
+    .crawl(['https://site.test/'], null, { signal: t.signal }));
   requests.length = 0;
 
   const result = await crawled(
     new Origins(http, earlier.snapshot(), globalThis)
       .crawler(http, [new ListingReader()], new AdaptiveRevisit())
-      .crawl(['https://site.test/'], null, options()),
+      .crawl(['https://site.test/'], null, { signal: t.signal }),
   );
 
   assert.deepEqual(result.pages.filter((page) => page !== '/').toSorted(), [
@@ -139,7 +139,7 @@ test('a read whose rules an earlier read left downloads robots.txt once for its 
   );
 });
 
-test('two crawls of one read on one website read its one robots.txt download', async () => {
+test('two crawls of one read on one website read its one robots.txt download', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     site(requests, () =>
@@ -154,7 +154,7 @@ test('two crawls of one read on one website read its one robots.txt download', a
     crawled(
       origins
         .crawler(http, [new ListingReader()], new AdaptiveRevisit())
-        .crawl([start], null, options()),
+        .crawl([start], null, { signal: t.signal }),
     );
 
   const [first, second] = await Promise.all([
@@ -174,7 +174,7 @@ test('two crawls of one read on one website read its one robots.txt download', a
   );
 });
 
-test('rules for another user agent do not apply, and rules for the client user agent do', async () => {
+test('rules for another user agent do not apply, and rules for the client user agent do', async (t) => {
   const robots = () =>
     HttpResponse.text(
       'User-agent: OtherBot\nDisallow: /a\n\nUser-agent: ExampleBot\nDisallow: /c\n',
@@ -183,20 +183,24 @@ test('rules for another user agent do not apply, and rules for the client user a
   using server = new Msw().intercept(site(requests, robots));
 
   const result = await crawled(
-    crawler({ 'user-agent': 'ExampleBot/1.0' }).crawl(starts, null, options()),
+    crawler({ 'user-agent': 'ExampleBot/1.0' }).crawl(starts, null, {
+      signal: t.signal,
+    }),
   );
 
   assert.ok(!requests.includes('/c'));
   assert.deepEqual(result.pages, ['/a', '/private/b']);
 });
 
-test('a robots.txt that answers 404 allows every URL', async () => {
+test('a robots.txt that answers 404 allows every URL', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     site(requests, () => new HttpResponse(null, { status: 404 })),
   );
 
-  const result = await crawled(crawler().crawl(starts, null, options()));
+  const result = await crawled(
+    crawler().crawl(starts, null, { signal: t.signal }),
+  );
 
   assert.deepEqual(result.pages, ['/a', '/private/b', '/c']);
   assert.deepEqual(result.failures, []);
@@ -216,7 +220,9 @@ test('a robots.txt that answers 503 holds its origin until Retry-After, and the 
     ),
   );
 
-  const result = await crawled(crawler().crawl(starts, null, options()));
+  const result = await crawled(
+    crawler().crawl(starts, null, { signal: t.signal }),
+  );
 
   assert.deepEqual(requests, ['/robots.txt']);
   assert.deepEqual(result.pages, []);
@@ -230,7 +236,7 @@ test('a robots.txt that answers 503 holds its origin until Retry-After, and the 
   assert.equal(result.nextDue, 120_000);
 });
 
-test('a link that robots.txt disallows spends no LinkReader budget', async () => {
+test('a link that robots.txt disallows spends no LinkReader budget', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
@@ -255,7 +261,7 @@ test('a link that robots.txt disallows spends no LinkReader budget', async () =>
         new AdaptiveRevisit(),
       )
       .crawl(['https://site.test/'], null, {
-        ...options(),
+        ...{ signal: t.signal },
         include: [new URLPattern({ pathname: '/nothing' })],
       }),
   );
@@ -263,7 +269,7 @@ test('a link that robots.txt disallows spends no LinkReader budget', async () =>
   assert.deepEqual(requests, ['/robots.txt', '/', '/b']);
 });
 
-test('a start that redirects to another origin spends no LinkReader budget on a link that robots.txt there disallows', async () => {
+test('a start that redirects to another origin spends no LinkReader budget on a link that robots.txt there disallows', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     http.get('https://a.test/*', ({ request }) => {
@@ -298,7 +304,7 @@ test('a start that redirects to another origin spends no LinkReader budget on a 
         new AdaptiveRevisit(),
       )
       .crawl(['https://a.test/'], null, {
-        ...options(),
+        ...{ signal: t.signal },
         include: [new URLPattern({ pathname: '/nothing' })],
       }),
   );
@@ -307,7 +313,7 @@ test('a start that redirects to another origin spends no LinkReader budget on a 
   assert.ok(!requests.includes('b.test/private/a'), requests.join(' '));
 });
 
-test('a link that the crawl does not select is dropped, not held, on a website whose robots.txt answers 503', async () => {
+test('a link that the crawl does not select is dropped, not held, on a website whose robots.txt answers 503', async (t) => {
   using server = new Msw().intercept(
     http.get('https://list.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
@@ -331,7 +337,7 @@ test('a link that the crawl does not select is dropped, not held, on a website w
         new AdaptiveRevisit(),
       )
       .crawl(['https://list.test/list'], null, {
-        ...options(),
+        ...{ signal: t.signal },
         include: [new URLPattern('https://flaky.test/post/2')],
       }),
   );
@@ -346,7 +352,7 @@ test('a link that the crawl does not select is dropped, not held, on a website w
   );
 });
 
-test('a link that the crawl does not select asks its website nothing, so a website whose robots.txt answers 503 fails nothing', async () => {
+test('a link that the crawl does not select asks its website nothing, so a website whose robots.txt answers 503 fails nothing', async (t) => {
   const flaky: string[] = [];
   using server = new Msw().intercept(
     http.get('https://list.test/*', ({ request }) => {
@@ -373,7 +379,7 @@ test('a link that the crawl does not select asks its website nothing, so a websi
         new AdaptiveRevisit(),
       )
       .crawl(['https://list.test/list'], null, {
-        ...options(),
+        ...{ signal: t.signal },
         include: [new URLPattern('https://list.test/post/*')],
       }),
   );
@@ -398,14 +404,16 @@ test('a robots.txt that answers 429 holds its origin as a 5xx does, not allowing
     ),
   );
 
-  const result = await crawled(crawler().crawl(starts, null, options()));
+  const result = await crawled(
+    crawler().crawl(starts, null, { signal: t.signal }),
+  );
 
   assert.deepEqual(requests, ['/robots.txt']);
   assert.notEqual(result.memento.crawl, null);
   assert.equal(result.nextDue, 60_000);
 });
 
-test('Crawl-delay spaces the requests to its origin', async () => {
+test('Crawl-delay spaces the requests to its origin', async (t) => {
   const started: number[] = [];
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
@@ -421,7 +429,9 @@ test('Crawl-delay spaces the requests to its origin', async () => {
     }),
   );
 
-  const result = await crawled(crawler().crawl(starts, null, options()));
+  const result = await crawled(
+    crawler().crawl(starts, null, { signal: t.signal }),
+  );
 
   assert.deepEqual(result.pages, ['/a']);
   const [sitemap = 0, page = 0] = started;

@@ -11,7 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import { Connection, Copy, Pipeline, PipelineError } from '@eltjs/elt';
 import {
@@ -875,7 +875,7 @@ test('a table in a layout this reader does not know fails only the stream that r
     );
 });
 
-test('watching the Accounts store reports each commit to it', async () => {
+test('watching the Accounts store reports each commit to it', async (t) => {
   await using dir = await new TemporaryFiles().directory('elt-accounts-');
   const path = join(dir.path, 'Accounts4.sqlite');
   accountsFixture(path);
@@ -901,7 +901,7 @@ test('watching the Accounts store reports each commit to it', async () => {
       }),
     ],
   }).watch({
-    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+    signal: AbortSignal.any([abort.signal, t.signal]),
   });
   const woken = async () => {
     const pass = await watch.next();
@@ -1023,7 +1023,7 @@ test('an Accounts watch keeps every stream current while the Accounts store hold
     ],
   }).watch({
     // A check that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   });
   try {
     await watching.next();
@@ -1038,9 +1038,9 @@ test('an Accounts watch keeps every stream current while the Accounts store hold
     const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
     // The check is due once the watch waits for its next poll.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     await clock.tickAsync(1000);
     await timebox(

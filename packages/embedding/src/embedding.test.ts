@@ -9,6 +9,7 @@ import type {
 } from '@ai-sdk/provider';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
+import { waitFor } from '@zukhruf/testing/async';
 import { APICallError } from 'ai';
 
 import {
@@ -466,11 +467,13 @@ test(
     model.hangs = (values) => values.includes('hung car');
 
     const run = listings.run();
-    await t.waitFor(() => assert.equal(clock.timers.size, 1));
+    await waitFor(() => assert.equal(clock.timers.size, 1), {
+      signal: t.signal,
+    });
     const ms = [...clock.timers.values()].map((timer) => timer.ms);
     clock.fire();
-    await t.waitFor(() => assert.equal(clock.timers.size, 0), {
-      timeout: 5000,
+    await waitFor(() => assert.equal(clock.timers.size, 0), {
+      signal: t.signal,
     });
     await run;
 
@@ -500,7 +503,9 @@ test(
     const controller = new AbortController();
 
     const run = listings.run({ signal: controller.signal });
-    await t.waitFor(() => assert.equal(clock.timers.size, 1));
+    await waitFor(() => assert.equal(clock.timers.size, 1), {
+      signal: t.signal,
+    });
     controller.abort();
     await run.catch(() => {});
     const stopped = clock.timers.size;

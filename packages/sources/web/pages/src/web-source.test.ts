@@ -3223,7 +3223,7 @@ test(
   },
 );
 
-test("a host's client is shared: an article read through it and a crawl of its origin ask the origin's robots.txt once, and the crawl leaves the client open", async () => {
+test("a host's client is shared: an article read through it and a crawl of its origin ask the origin's robots.txt once, and the crawl leaves the client open", async (t) => {
   await using cache = await new TemporaryFiles().directory('web-cache-');
   // The user agent of each robots.txt request.
   const robots: string[] = [];
@@ -3252,7 +3252,7 @@ test("a host's client is shared: an article read through it and a crawl of its o
   const page = `${upstream.origin}/programs/credits`;
   const reader = new WebArticle([new HTMLExtraction()], client.http);
 
-  const before = await reader.fetch(page, AbortSignal.timeout(10_000));
+  const before = await reader.fetch(page, t.signal);
   await (
     await pipeline(
       new WebSource({ client, streams: [{ stream: pages(), inputs: [page] }] }),
@@ -3260,7 +3260,7 @@ test("a host's client is shared: an article read through it and a crawl of its o
       checkpoints.path,
     )
   ).run();
-  const after = await reader.fetch(page, AbortSignal.timeout(10_000));
+  const after = await reader.fetch(page, t.signal);
 
   assert.deepEqual(robots, ['elt-test/1.0']);
   assert.deepEqual(

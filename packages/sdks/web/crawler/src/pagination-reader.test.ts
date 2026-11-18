@@ -46,7 +46,7 @@ function location(entry: CrawledPage | CrawlFailure) {
   return { url, lastModified, listingUrl };
 }
 
-test('a failing page of the pagination is handed out as a failure, and the pages listed before it are kept', async () => {
+test('a failing page of the pagination is handed out as a failure, and the pages listed before it are kept', async (t) => {
   // A declared next page that is gone is a failure too, unlike a listed page.
   for (const status of [500, 404]) {
     await using upstream = await new HttpServer().start((request, response) => {
@@ -63,7 +63,7 @@ test('a failing page of the pagination is handed out as a failure, and the pages
     const entries = await crawl(
       pagination(),
       `${upstream.origin}/category`,
-      AbortSignal.timeout(120_000),
+      t.signal,
     );
 
     assert.deepEqual(
@@ -86,7 +86,7 @@ test('a failing page of the pagination is handed out as a failure, and the pages
   }
 });
 
-test('a listed page that is gone is skipped, not a failure', async () => {
+test('a listed page that is gone is skipped, not a failure', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     requests.push(request.url ?? '');
@@ -103,7 +103,7 @@ test('a listed page that is gone is skipped, not a failure', async () => {
   const entries = await crawl(
     pagination(),
     `${upstream.origin}/category`,
-    AbortSignal.timeout(120_000),
+    t.signal,
   );
 
   assert.deepEqual(entries.map(location), [
@@ -117,7 +117,7 @@ test('a listed page that is gone is skipped, not a failure', async () => {
   assert.ok(requests.includes('/item/removed'), requests.join(' '));
 });
 
-test('a /sitemap.xml guess answered by a soft 404 page is not read as a list', async () => {
+test('a /sitemap.xml guess answered by a soft 404 page is not read as a list', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     requests.push(request.url ?? '');
@@ -140,7 +140,7 @@ test('a /sitemap.xml guess answered by a soft 404 page is not read as a list', a
       new AdaptiveRevisit(),
     ),
     `${upstream.origin}/`,
-    AbortSignal.timeout(120_000),
+    t.signal,
   );
 
   assert.deepEqual(
@@ -151,7 +151,7 @@ test('a /sitemap.xml guess answered by a soft 404 page is not read as a list', a
   assert.ok(!requests.includes('/offers'), requests.join(' '));
 });
 
-test('an archive that ArchiveReader finds and that fits on one page hands back the posts it lists, whatever the order of the readers', async () => {
+test('an archive that ArchiveReader finds and that fits on one page hands back the posts it lists, whatever the order of the readers', async (t) => {
   // In the second order, PaginationReader finds /2024/ as a page before ArchiveReader finds it as a list.
   for (const readers of [
     [new ArchiveReader(), new PaginationReader()],
@@ -175,7 +175,7 @@ test('an archive that ArchiveReader finds and that fits on one page hands back t
         new AdaptiveRevisit(),
       ),
       `${upstream.origin}/`,
-      AbortSignal.timeout(120_000),
+      t.signal,
       [new URLPattern({ pathname: '/posts/*' })],
     );
 
@@ -191,7 +191,7 @@ test('an archive that ArchiveReader finds and that fits on one page hands back t
   }
 });
 
-test('an archive that a later page of a list declares is no hop, so link limits count from the list', async () => {
+test('an archive that a later page of a list declares is no hop, so link limits count from the list', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');
     if (request.url === '/category')
@@ -221,7 +221,7 @@ test('an archive that a later page of a list declares is no hop, so link limits 
       new AdaptiveRevisit(),
     ),
     `${upstream.origin}/category`,
-    AbortSignal.timeout(120_000),
+    t.signal,
   );
 
   assert.deepEqual(
@@ -235,7 +235,7 @@ test('an archive that a later page of a list declares is no hop, so link limits 
   );
 });
 
-test('pagination on a listed page is not followed, and neither are its other links', async () => {
+test('pagination on a listed page is not followed, and neither are its other links', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     requests.push(request.url ?? '');
@@ -258,7 +258,7 @@ test('pagination on a listed page is not followed, and neither are its other lin
   const pages = await crawl(
     pagination(),
     `${upstream.origin}/category`,
-    AbortSignal.timeout(120_000),
+    t.signal,
   );
 
   assert.deepEqual(
@@ -273,7 +273,7 @@ test('pagination on a listed page is not followed, and neither are its other lin
   ]);
 });
 
-test('a crawl stopped inside the pagination and resumed from its snapshot reads the rest of the chain', async () => {
+test('a crawl stopped inside the pagination and resumed from its snapshot reads the rest of the chain', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     requests.push(request.url ?? '');
@@ -292,7 +292,7 @@ test('a crawl stopped inside the pagination and resumed from its snapshot reads 
   });
   const crawler = pagination();
   const first = crawler.crawl([`${upstream.origin}/category`], null, {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
   });
   for await (const entry of first) if (!('progress' in entry)) break;
   const snapshot = JSON.parse(JSON.stringify(first.snapshot()));
@@ -300,7 +300,7 @@ test('a crawl stopped inside the pagination and resumed from its snapshot reads 
 
   const resumed: (CrawledPage | CrawlFailure)[] = [];
   for await (const entry of crawler.crawl([], snapshot, {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
   }))
     if (!('progress' in entry) && !('deferred' in entry)) resumed.push(entry);
 
@@ -316,7 +316,7 @@ test('a crawl stopped inside the pagination and resumed from its snapshot reads 
   assert.ok(!requests.includes('/category'), requests.join(' '));
 });
 
-test('the pagination of a starting page is read to its end, both ways, from link elements, anchors and HTTP Link headers', async () => {
+test('the pagination of a starting page is read to its end, both ways, from link elements, anchors and HTTP Link headers', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');
     switch (request.url) {
@@ -345,7 +345,7 @@ test('the pagination of a starting page is read to its end, both ways, from link
   const pages = await crawl(
     pagination(),
     `${upstream.origin}/category/2`,
-    AbortSignal.timeout(120_000),
+    t.signal,
   );
 
   assert.deepEqual(
@@ -363,7 +363,7 @@ test('the pagination of a starting page is read to its end, both ways, from link
   );
 });
 
-test('undeclared pagination by page number is read to its last page, and a linked page that is gone is no failure', async () => {
+test('undeclared pagination by page number is read to its last page, and a linked page that is gone is no failure', async (t) => {
   // The CMS forms: WordPress, Ghost and Hugo /page/N/, Django and Drupal ?page=N, WordPress ?paged=N.
   for (const at of [
     (page: number) => (page === 1 ? '/tag/x/' : `/tag/x/page/${page}/`),
@@ -401,7 +401,7 @@ test('undeclared pagination by page number is read to its last page, and a linke
     const pages = await crawl(
       pagination(),
       `${upstream.origin}${at(1)}`,
-      AbortSignal.timeout(120_000),
+      t.signal,
     );
 
     assert.deepEqual(
@@ -416,7 +416,7 @@ test('undeclared pagination by page number is read to its last page, and a linke
   }
 });
 
-test('a year, a filter, the pages of another list and the list without its slash are pages, not pagination', async () => {
+test('a year, a filter, the pages of another list and the list without its slash are pages, not pagination', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     requests.push(request.url ?? '');
@@ -439,7 +439,7 @@ test('a year, a filter, the pages of another list and the list without its slash
   const pages = await crawl(
     pagination(),
     `${upstream.origin}/tag/x/`,
-    AbortSignal.timeout(120_000),
+    t.signal,
   );
 
   assert.deepEqual(
@@ -465,7 +465,7 @@ test('a year, a filter, the pages of another list and the list without its slash
     assert.ok(!requests.includes(path), requests.join(' '));
 });
 
-test('a list that links itself and its first page is downloaded once when the URL patterns do not select it', async () => {
+test('a list that links itself and its first page is downloaded once when the URL patterns do not select it', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     requests.push(request.url ?? '');
@@ -485,7 +485,7 @@ test('a list that links itself and its first page is downloaded once when the UR
   const pages = await crawl(
     pagination(),
     `${upstream.origin}/tag/x/`,
-    AbortSignal.timeout(120_000),
+    t.signal,
     [new URLPattern({ pathname: '/item/*' })],
   );
 
@@ -499,7 +499,7 @@ test('a list that links itself and its first page is downloaded once when the UR
   );
 });
 
-test('a declared pagination form is followed in place of the page-number rule', async () => {
+test('a declared pagination form is followed in place of the page-number rule', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     requests.push(request.url ?? '');
@@ -527,7 +527,7 @@ test('a declared pagination form is followed in place of the page-number rule', 
       new AdaptiveRevisit(),
     ),
     `${upstream.origin}/tag/x/`,
-    AbortSignal.timeout(120_000),
+    t.signal,
   );
 
   assert.deepEqual(
@@ -544,7 +544,7 @@ test('a declared pagination form is followed in place of the page-number rule', 
   assert.ok(!requests.includes('/item/from-rule'), requests.join(' '));
 });
 
-test('a list hands back only the pages on its own origin by default, also when the URL patterns match another origin', async () => {
+test('a list hands back only the pages on its own origin by default, also when the URL patterns match another origin', async (t) => {
   const other: string[] = [];
   await using elsewhere = await new HttpServer().start((request, response) => {
     other.push(request.url ?? '');
@@ -563,7 +563,7 @@ test('a list hands back only the pages on its own origin by default, also when t
   const pages = await crawl(
     pagination(),
     `${upstream.origin}/blog/`,
-    AbortSignal.timeout(120_000),
+    t.signal,
     [new URLPattern({ pathname: '/:section/:slug' })],
   );
 
@@ -574,7 +574,7 @@ test('a list hands back only the pages on its own origin by default, also when t
   assert.deepEqual(other, []);
 });
 
-test('a list with the strategy all hands back the pages on other origins that the URL patterns select, and requests no other page', async () => {
+test('a list with the strategy all hands back the pages on other origins that the URL patterns select, and requests no other page', async (t) => {
   const sister: string[] = [];
   const other: string[] = [];
   // As deepmind.google/blog, whose cards link posts on blog.google.
@@ -603,7 +603,7 @@ test('a list with the strategy all hands back the pages on other origins that th
       new AdaptiveRevisit(),
     ),
     `${upstream.origin}/blog/`,
-    AbortSignal.timeout(120_000),
+    t.signal,
     [
       new URLPattern(`${upstream.origin}/blog/*`),
       new URLPattern(`${blog.origin}/post/*`),
@@ -624,7 +624,7 @@ test('a list with the strategy all hands back the pages on other origins that th
   assert.deepEqual(other, []);
 });
 
-test('a reader takes the strategy same-origin or all and no origins, and no list of URL patterns is empty', () => {
+test('a reader takes the strategy same-origin or all and no origins, and no list of URL patterns is empty', (t) => {
   // The type checker proves this test: each line it expects an error on must not compile.
   new PaginationReader({ strategy: 'same-origin' });
   new PaginationReader({ strategy: 'all' });
@@ -635,13 +635,13 @@ test('a reader takes the strategy same-origin or all and no origins, and no list
   // @ts-expect-error -- an empty list of pagination forms would turn the page-number rule off and declare none
   new PaginationReader({ pagination: [] });
   pagination().crawl([], null, {
-    signal: AbortSignal.timeout(1000),
+    signal: t.signal,
     // @ts-expect-error -- an empty list of URL patterns would hand back no page
     include: [],
   });
 });
 
-test('a list with the strategy all follows no pagination to another origin', async () => {
+test('a list with the strategy all follows no pagination to another origin', async (t) => {
   await using elsewhere = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');
     if (request.url === '/tag/x/page/2/')
@@ -670,7 +670,7 @@ test('a list with the strategy all follows no pagination to another origin', asy
       new AdaptiveRevisit(),
     ),
     `${upstream.origin}/tag/x/`,
-    AbortSignal.timeout(120_000),
+    t.signal,
     [
       new URLPattern(`${upstream.origin}/item/*`),
       new URLPattern(`${elsewhere.origin}/item/*`),
@@ -702,7 +702,7 @@ test('a list whose stylesheet jsdom cannot parse writes nothing to the console',
       new AdaptiveRevisit(),
     ),
     `${upstream.origin}/category`,
-    AbortSignal.timeout(120_000),
+    t.signal,
   );
 
   assert.deepEqual(
@@ -715,7 +715,7 @@ test('a list whose stylesheet jsdom cannot parse writes nothing to the console',
   );
 });
 
-test('a starting page without pagination hands back the pages it lists outside navigation', async () => {
+test('a starting page without pagination hands back the pages it lists outside navigation', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');
     if (request.url === '/category')
@@ -728,7 +728,7 @@ test('a starting page without pagination hands back the pages it lists outside n
   const pages = await crawl(
     pagination(),
     `${upstream.origin}/category`,
-    AbortSignal.timeout(120_000),
+    t.signal,
   );
 
   assert.deepEqual(

@@ -81,7 +81,7 @@ test('a page that is due every hour is requested again in the next run while the
     new FixedRevisit({ every: hour }),
   );
   const options = {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
     include: [
       new URLPattern(`${microsoft.origin}/*`),
       new URLPattern(`${news.origin}/*`),
@@ -108,7 +108,7 @@ test('a page that is due every hour is requested again in the next run while the
   assert.notEqual(second.snapshot().crawl, null, 'the held sitemaps remain');
 });
 
-test('a new crawl does not request a starting URL that is not due', async () => {
+test('a new crawl does not request a starting URL that is not due', async (t) => {
   const log: string[] = [];
   await using site = await new HttpServer().start(
     website(log, () => ({
@@ -123,7 +123,7 @@ test('a new crawl does not request a starting URL that is not due', async () => 
     [new ListingReader()],
     new FixedRevisit({ every: day }),
   );
-  const options = { signal: AbortSignal.timeout(120_000) };
+  const options = { signal: t.signal };
   const first = crawler.crawl([`${site.origin}/sitemap.xml`], null, options);
   await drain(first);
   assert.equal(first.snapshot().crawl, null);

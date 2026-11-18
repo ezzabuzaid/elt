@@ -16,7 +16,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import { isDictionary, readPlist } from '@eltjs/codec-plist';
 import {
@@ -260,7 +260,7 @@ test(
     // chmod denies nothing on Windows, and nothing to root.
     skip: process.platform === 'win32' || process.getuid?.() === 0,
   },
-  async () => {
+  async (t) => {
     await using dir = await new TemporaryFiles().directory('clock-grant-');
     const location = await fixture(dir.path);
     // macOS keeps Clock's container from a process without Full Disk Access:
@@ -286,10 +286,7 @@ test(
 
       for await (const { outcomes } of run.watch({
         // A pass that never comes ends the watch, so the assertion fails.
-        signal: AbortSignal.any([
-          controller.signal,
-          AbortSignal.timeout(10_000),
-        ]),
+        signal: AbortSignal.any([controller.signal, t.signal]),
       })) {
         // The copies of one pass finish in any order.
         passes.push(
@@ -635,7 +632,7 @@ test('Clock loads each stopwatch and its laps when the stopwatch list repeats an
   );
 });
 
-test('a Clock watch follows selected database and preference changes and cancels cleanly', async () => {
+test('a Clock watch follows selected database and preference changes and cancels cleanly', async (t) => {
   await using dir = await new TemporaryFiles().directory('clock-watch-');
   const location = await fixture(dir.path);
   const source = new AppleClockSource(location);
@@ -649,7 +646,7 @@ test('a Clock watch follows selected database and preference changes and cancels
   const batches: { streams: string[]; count: number; deleted: number }[] = [];
   try {
     for await (const { outcomes } of run.watch({
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+      signal: AbortSignal.any([controller.signal, t.signal]),
     })) {
       batches.push({
         streams: outcomes.map(({ copy }) => copy.from.name).sort(),
@@ -688,7 +685,7 @@ test('a Clock watch follows selected database and preference changes and cancels
   assert.equal((await stopped.next()).done, true);
 });
 
-test('a Clock watch goes on when a preference file is removed, and loads it again when it returns', async () => {
+test('a Clock watch goes on when a preference file is removed, and loads it again when it returns', async (t) => {
   await using dir = await new TemporaryFiles().directory('clock-watch-');
   const location = await fixture(dir.path);
   const source = new AppleClockSource(location);
@@ -708,7 +705,7 @@ test('a Clock watch goes on when a preference file is removed, and loads it agai
   }[] = [];
   try {
     for await (const { outcomes } of run.watch({
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+      signal: AbortSignal.any([controller.signal, t.signal]),
     })) {
       const failures = outcomes.flatMap(({ failures }) => failures);
       errors.push(...failures.map(({ error }) => error));
@@ -835,7 +832,7 @@ test('a Clock watch keeps every stream current while its stores hold still', asy
     ],
   }).watch({
     // A check that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   });
   try {
     await watching.next();
@@ -850,9 +847,9 @@ test('a Clock watch keeps every stream current while its stores hold still', asy
     const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
     // The check is due once the watch waits for its next poll.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     await clock.tickAsync(1000);
     await timebox(

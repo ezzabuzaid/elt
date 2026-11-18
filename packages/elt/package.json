@@ -38,10 +38,10 @@
     "access": "public"
   },
   "dependencies": {
-    "@zukhruf/async": "^0.8.25",
-    "@zukhruf/snapshot-differential": "^0.8.25"
+    "@zukhruf/async": "^0.8.27",
+    "@zukhruf/snapshot-differential": "^0.8.27"
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.8.25"
+    "@zukhruf/testing": "^0.8.27"
   }
 }

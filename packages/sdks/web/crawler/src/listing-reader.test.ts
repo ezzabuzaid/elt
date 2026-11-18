@@ -49,11 +49,9 @@ function allReaders(limits: { maxDepth: number; maxPages: number }) {
 }
 
 // Progress entries only mark URLs read for the readers; these tests assert pages and failures.
-async function crawl(crawler: WebCrawler, start: string) {
+async function crawl(crawler: WebCrawler, start: string, signal: AbortSignal) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
-  for await (const entry of crawler.crawl([start], null, {
-    signal: AbortSignal.timeout(120_000),
-  }))
+  for await (const entry of crawler.crawl([start], null, { signal }))
     if (!('progress' in entry) && !('deferred' in entry)) entries.push(entry);
   return entries;
 }
@@ -81,7 +79,7 @@ function pathOf(url: string) {
 
 const article = '<html><body><p>An article.</p></body></html>';
 
-test('HTML sitemap declarations discover older pages when robots is absent', async () => {
+test('HTML sitemap declarations discover older pages when robots is absent', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     switch (request.url) {
       case '/':
@@ -115,7 +113,7 @@ test('HTML sitemap declarations discover older pages when robots is absent', asy
     }
   });
   assert.deepEqual(
-    (await crawl(listings(), upstream.origin))
+    (await crawl(listings(), upstream.origin, t.signal))
       .map(location)
       .toSorted((a, b) => a.url.localeCompare(b.url)),
     [
@@ -133,7 +131,7 @@ test('HTML sitemap declarations discover older pages when robots is absent', asy
   );
 });
 
-test("a sitemap's xhtml:link language copies of a page are the page's localized versions, resolved, HTTP only and in lower case, and a feed's item has none", async () => {
+test("a sitemap's xhtml:link language copies of a page are the page's localized versions, resolved, HTTP only and in lower case, and a feed's item has none", async (t) => {
   // A sitemap as Google's localized-versions guide shows one.
   await using upstream = await new HttpServer().start((request, response) => {
     switch (request.url) {
@@ -170,7 +168,11 @@ test("a sitemap's xhtml:link language copies of a page are the page's localized 
     }
   });
 
-  const pages = await crawl(listings(), `${upstream.origin}/sitemap.xml`);
+  const pages = await crawl(
+    listings(),
+    `${upstream.origin}/sitemap.xml`,
+    t.signal,
+  );
 
   assert.deepEqual(
     pages
@@ -193,7 +195,7 @@ test("a sitemap's xhtml:link language copies of a page are the page's localized 
   );
 });
 
-test('JSON alternates are validated without hiding explicit listing errors', async () => {
+test('JSON alternates are validated without hiding explicit listing errors', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     switch (request.url) {
       case '/':
@@ -244,7 +246,7 @@ test('JSON alternates are validated without hiding explicit listing errors', asy
   });
   for (const input of ['/', '/headers'])
     assert.deepEqual(
-      (await crawl(listings(), `${upstream.origin}${input}`))
+      (await crawl(listings(), `${upstream.origin}${input}`, t.signal))
         .map(location)
         .toSorted((a, b) => a.url.localeCompare(b.url)),
       [
@@ -262,7 +264,11 @@ test('JSON alternates are validated without hiding explicit listing errors', asy
       input,
     );
   for (const input of ['/api', '/explicit']) {
-    const entries = await crawl(listings(), `${upstream.origin}${input}`);
+    const entries = await crawl(
+      listings(),
+      `${upstream.origin}${input}`,
+      t.signal,
+    );
     assert.deepEqual(pages(entries), [], input);
     assert.deepEqual(
       failures(entries).map((failure) => [failure.url, failure.error.url]),
@@ -272,7 +278,7 @@ test('JSON alternates are validated without hiding explicit listing errors', asy
   }
 });
 
-test('labeled feed anchors discover pages without accepting ordinary navigation', async () => {
+test('labeled feed anchors discover pages without accepting ordinary navigation', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     switch (request.url) {
       case '/':
@@ -336,29 +342,36 @@ test('labeled feed anchors discover pages without accepting ordinary navigation'
   // A valid possible feed, even an empty one, is a listing, so robots.txt makes no /sitemap.xml guess.
   // The feed that /exports/updates redirects to is a request of its own,
   // after the feeds that the page names.
-  assert.deepEqual((await crawl(listings(), upstream.origin)).map(location), [
-    {
-      url: `${upstream.origin}/attribute-story`,
-      lastModified: null,
-      listingUrl: `${upstream.origin}/exports/attribute`,
-    },
-    {
-      url: `${upstream.origin}/story`,
-      lastModified: null,
-      listingUrl: `${upstream.origin}/feeds/current`,
-    },
-  ]);
   assert.deepEqual(
-    (await crawl(listings(), `${upstream.origin}/empty-only`)).map(location),
+    (await crawl(listings(), upstream.origin, t.signal)).map(location),
+    [
+      {
+        url: `${upstream.origin}/attribute-story`,
+        lastModified: null,
+        listingUrl: `${upstream.origin}/exports/attribute`,
+      },
+      {
+        url: `${upstream.origin}/story`,
+        lastModified: null,
+        listingUrl: `${upstream.origin}/feeds/current`,
+      },
+    ],
+  );
+  assert.deepEqual(
+    (await crawl(listings(), `${upstream.origin}/empty-only`, t.signal)).map(
+      location,
+    ),
     [],
   );
   assert.deepEqual(
-    (await crawl(listings(), `${upstream.origin}/false-only`)).map(location),
+    (await crawl(listings(), `${upstream.origin}/false-only`, t.signal)).map(
+      location,
+    ),
     [fallback],
   );
 });
 
-test('failures name the upstream while the rest of the listing still arrives', async () => {
+test('failures name the upstream while the rest of the listing still arrives', async (t) => {
   const index = 'https://publisher.example/index.xml';
   const broken = 'https://publisher.example/broken.xml';
   const story = {
@@ -410,7 +423,7 @@ test('failures name the upstream while the rest of the listing still arrives', a
       ),
       http.get(story.url, () => HttpResponse.html(article)),
     );
-    const entries = await crawl(listings(), index);
+    const entries = await crawl(listings(), index, t.signal);
     const [error, ...others] = failures(entries);
     assert.equal(others.length, 0);
     assert.equal(error?.url, failure.url);
@@ -456,7 +469,7 @@ test('cancellation stops requests and preserves the caller reason', async () => 
   }
 });
 
-test('arbitrary sites retain every candidate path, URL identity and raw hints', async () => {
+test('arbitrary sites retain every candidate path, URL identity and raw hints', async (t) => {
   for (const origin of ['https://biology.example', 'https://city.example']) {
     const listingUrl = `${origin}/maps/current.xml`;
     const requests: string[] = [];
@@ -497,33 +510,36 @@ test('arbitrary sites retain every candidate path, URL identity and raw hints', 
         HttpResponse.html(article),
       ),
     );
-    assert.deepEqual((await crawl(listings(), `${origin}/`)).map(location), [
-      // The origins take turns, and biology.example waits out its delay
-      // after the sitemap, so archive.example goes first.
-      {
-        url: 'https://archive.example/elsewhere',
-        lastModified: null,
-        listingUrl,
-      },
-      {
-        url: `${origin}/news/category`,
-        lastModified: '2026-10-20',
-        listingUrl,
-      },
-      {
-        url: `${origin}/papers?id=1`,
-        lastModified: '2026-10-20T16:04:01.000Z',
-        listingUrl,
-      },
-      { url: `${origin}/papers?id=2`, lastModified: null, listingUrl },
-      { url: `${origin}/papers/`, lastModified: null, listingUrl },
-      { url: `${origin}/papers`, lastModified: null, listingUrl },
-    ]);
+    assert.deepEqual(
+      (await crawl(listings(), `${origin}/`, t.signal)).map(location),
+      [
+        // The origins take turns, and biology.example waits out its delay
+        // after the sitemap, so archive.example goes first.
+        {
+          url: 'https://archive.example/elsewhere',
+          lastModified: null,
+          listingUrl,
+        },
+        {
+          url: `${origin}/news/category`,
+          lastModified: '2026-10-20',
+          listingUrl,
+        },
+        {
+          url: `${origin}/papers?id=1`,
+          lastModified: '2026-10-20T16:04:01.000Z',
+          listingUrl,
+        },
+        { url: `${origin}/papers?id=2`, lastModified: null, listingUrl },
+        { url: `${origin}/papers/`, lastModified: null, listingUrl },
+        { url: `${origin}/papers`, lastModified: null, listingUrl },
+      ],
+    );
     assert.deepEqual(requests, []);
   }
 });
 
-test('direct listings support sitemap, text, RSS, Atom, RDF and JSON Feed with provenance', async () => {
+test('direct listings support sitemap, text, RSS, Atom, RDF and JSON Feed with provenance', async (t) => {
   for (const document of [
     '<urlset><url><loc>https://feeds.example/paper</loc></url></urlset>',
     'https://feeds.example/paper\n',
@@ -543,7 +559,9 @@ test('direct listings support sitemap, text, RSS, Atom, RDF and JSON Feed with p
       http.get('https://feeds.example/paper', () => HttpResponse.html(article)),
     );
     assert.deepEqual(
-      (await crawl(listings(), 'https://feeds.example/start')).map(location),
+      (await crawl(listings(), 'https://feeds.example/start', t.signal)).map(
+        location,
+      ),
       [
         {
           url: 'https://feeds.example/paper',
@@ -556,7 +574,7 @@ test('direct listings support sitemap, text, RSS, Atom, RDF and JSON Feed with p
   }
 });
 
-test('autodiscovery follows HTML base and HTTP feed links despite absent robots, then probes a sitemap', async () => {
+test('autodiscovery follows HTML base and HTTP feed links despite absent robots, then probes a sitemap', async (t) => {
   for (const status of [404, 410]) {
     using upstream = site(
       http.get('https://start.example/blog', () =>
@@ -610,7 +628,9 @@ test('autodiscovery follows HTML base and HTTP feed links despite absent robots,
       ),
     );
     assert.deepEqual(
-      (await crawl(listings(), 'https://start.example/blog')).map(location),
+      (await crawl(listings(), 'https://start.example/blog', t.signal)).map(
+        location,
+      ),
       [
         {
           url: 'https://journal.example/from-html',
@@ -645,7 +665,7 @@ test('autodiscovery follows HTML base and HTTP feed links despite absent robots,
       ),
       http.get('https://bare.example/page', () => HttpResponse.html(article)),
     );
-    const entries = await crawl(listings(), 'https://bare.example/');
+    const entries = await crawl(listings(), 'https://bare.example/', t.signal);
     if (mapExists)
       assert.deepEqual(entries.map(location), [
         {
@@ -659,7 +679,7 @@ test('autodiscovery follows HTML base and HTTP feed links despite absent robots,
   }
 });
 
-test('an unreadable /sitemap.xml guess, such as a soft 404 page, is ignored', async () => {
+test('an unreadable /sitemap.xml guess, such as a soft 404 page, is ignored', async (t) => {
   using server = site(
     http.get('https://soft.example/', () => HttpResponse.html('<p>Home</p>')),
     http.get(
@@ -670,10 +690,13 @@ test('an unreadable /sitemap.xml guess, such as a soft 404 page, is ignored', as
       HttpResponse.html('<p>Page not found</p>'),
     ),
   );
-  assert.deepEqual(await crawl(listings(), 'https://soft.example/'), []);
+  assert.deepEqual(
+    await crawl(listings(), 'https://soft.example/', t.signal),
+    [],
+  );
 });
 
-test('traversal follows nested gzip maps, deduplicates candidates and terminates cycles', async () => {
+test('traversal follows nested gzip maps, deduplicates candidates and terminates cycles', async (t) => {
   let indexReads = 0;
   let mapReads = 0;
   using upstream = site(
@@ -704,7 +727,9 @@ test('traversal follows nested gzip maps, deduplicates candidates and terminates
     http.get('https://maps.example/page', () => HttpResponse.html(article)),
   );
   assert.deepEqual(
-    (await crawl(listings(), 'https://maps.example/index.xml')).map(location),
+    (await crawl(listings(), 'https://maps.example/index.xml', t.signal)).map(
+      location,
+    ),
     [
       {
         url: 'https://maps.example/page',
@@ -720,7 +745,7 @@ test('traversal follows nested gzip maps, deduplicates candidates and terminates
   );
 });
 
-test('JSON Feed and Atom pagination, including Atom links in RSS, retain older entries and stop cycles', async () => {
+test('JSON Feed and Atom pagination, including Atom links in RSS, retain older entries and stop cycles', async (t) => {
   for (const format of ['json', 'atom', 'rss']) {
     await using upstream = await new HttpServer().start((request, response) => {
       const first = request.url === '/first';
@@ -749,7 +774,9 @@ test('JSON Feed and Atom pagination, including Atom links in RSS, retain older e
         );
     });
     assert.deepEqual(
-      (await crawl(listings(), `${upstream.origin}/first`)).map(location),
+      (await crawl(listings(), `${upstream.origin}/first`, t.signal)).map(
+        location,
+      ),
       [
         {
           url: `${upstream.origin}/recent`,
@@ -767,7 +794,7 @@ test('JSON Feed and Atom pagination, including Atom links in RSS, retain older e
   }
 });
 
-test('feeds declared on crawled pages are read completely, and each page is downloaded once', async () => {
+test('feeds declared on crawled pages are read completely, and each page is downloaded once', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     const path = request.url;
@@ -832,6 +859,7 @@ test('feeds declared on crawled pages are read completely, and each page is down
   const entries = await crawl(
     allReaders({ maxDepth: 3, maxPages: 100 }),
     upstream.origin,
+    t.signal,
   );
   assert.deepEqual(
     entries.map((entry) => pathOf(location(entry).url)).toSorted(),
@@ -855,7 +883,7 @@ test('feeds declared on crawled pages are read completely, and each page is down
   );
 });
 
-test('feeds and sitemaps a starting page declares are read completely, and a listing replaces a link provenance', async () => {
+test('feeds and sitemaps a starting page declares are read completely, and a listing replaces a link provenance', async (t) => {
   const requests: string[] = [];
   using server = site(
     http.get('https://site.test/*', ({ request }) => {
@@ -896,6 +924,7 @@ test('feeds and sitemaps a starting page declares are read completely, and a lis
     await crawl(
       allReaders({ maxDepth: 3, maxPages: 100 }),
       'https://site.test/',
+      t.signal,
     )
   ).map(location);
   assert.deepEqual(
@@ -910,7 +939,7 @@ test('feeds and sitemaps a starting page declares are read completely, and a lis
   assert.equal(found[3]?.listingUrl, 'https://site.test/feed/2');
 });
 
-test('reads Atom, RDF and gzip sitemaps declared in headers, following their pagination and child listings', async () => {
+test('reads Atom, RDF and gzip sitemaps declared in headers, following their pagination and child listings', async (t) => {
   using server = site(
     http.get('https://site.test/*', ({ request }) => {
       const path = new URL(request.url).pathname;
@@ -962,6 +991,7 @@ test('reads Atom, RDF and gzip sitemaps declared in headers, following their pag
     await crawl(
       allReaders({ maxDepth: 1, maxPages: 100 }),
       'https://site.test/',
+      t.signal,
     )
   ).map(location);
   assert.deepEqual(found.map((page) => new URL(page.url).pathname).toSorted(), [
@@ -977,7 +1007,7 @@ test('reads Atom, RDF and gzip sitemaps declared in headers, following their pag
   );
 });
 
-test('a URL declared as both a page and a feed is fetched once and serves both roles', async () => {
+test('a URL declared as both a page and a feed is fetched once and serves both roles', async (t) => {
   const requests: string[] = [];
   using server = site(
     http.get('https://site.test/*', ({ request }) => {
@@ -1000,6 +1030,7 @@ test('a URL declared as both a page and a feed is fetched once and serves both r
     await crawl(
       allReaders({ maxDepth: 1, maxPages: 100 }),
       'https://site.test/',
+      t.signal,
     )
   ).map(location);
   // The crawl reads the origin's rules first; that one download gives ListingReader the sitemaps too.
@@ -1010,7 +1041,7 @@ test('a URL declared as both a page and a feed is fetched once and serves both r
   );
 });
 
-test('an invalid feed hint still remains an ordinary linked page', async () => {
+test('an invalid feed hint still remains an ordinary linked page', async (t) => {
   const requests: string[] = [];
   using server = site(
     http.get('https://site.test/*', ({ request }) => {
@@ -1032,6 +1063,7 @@ test('an invalid feed hint still remains an ordinary linked page', async () => {
     await crawl(
       allReaders({ maxDepth: 1, maxPages: 100 }),
       'https://site.test/',
+      t.signal,
     )
   ).map(location);
   // /about is one hop away: /leaf is two hops away, past maxDepth, so its links are not read.
@@ -1042,7 +1074,7 @@ test('an invalid feed hint still remains an ordinary linked page', async () => {
   assert.ok(!requests.includes('/too-deep'));
 });
 
-test('declared remote feeds contribute pages without expanding the remote origin', async () => {
+test('declared remote feeds contribute pages without expanding the remote origin', async (t) => {
   const requests: string[] = [];
   using server = site(
     http.get('https://site.test/', () =>
@@ -1075,6 +1107,7 @@ test('declared remote feeds contribute pages without expanding the remote origin
     await crawl(
       allReaders({ maxDepth: 3, maxPages: 100 }),
       'https://site.test/',
+      t.signal,
     )
   ).map(location);
   // A starting page's labeled anchors are possible feeds on any origin; Feedscout rejects the wiki page.
@@ -1091,7 +1124,7 @@ test('declared remote feeds contribute pages without expanding the remote origin
   );
 });
 
-test('cross-origin feeds on crawled pages need a declaration or a feed-path hint', async () => {
+test('cross-origin feeds on crawled pages need a declaration or a feed-path hint', async (t) => {
   const remoteRequests: string[] = [];
   await using remote = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -1125,6 +1158,7 @@ test('cross-origin feeds on crawled pages need a declaration or a feed-path hint
   const entries = await crawl(
     allReaders({ maxDepth: 3, maxPages: 1 }),
     upstream.origin,
+    t.signal,
   );
   // /published is on a remote origin, so its links are not followed.
   assert.deepEqual(remoteRequests, [
@@ -1184,7 +1218,7 @@ test('a feed on a crawled page keeps the caller reason on cancellation', async (
   }
 });
 
-test('declared sitemap failures and malformed listings are handed out with their URL while pages continue', async () => {
+test('declared sitemap failures and malformed listings are handed out with their URL while pages continue', async (t) => {
   const bytes = new Uint8Array([0, 255, 1, 128]);
   for (const listing of ['missing', 'malformed']) {
     const requests: string[] = [];
@@ -1212,6 +1246,7 @@ test('declared sitemap failures and malformed listings are handed out with their
     const entries = await crawl(
       allReaders({ maxDepth: 1, maxPages: 100 }),
       'https://site.test/',
+      t.signal,
     );
     const [failure, ...others] = failures(entries);
     assert.equal(others.length, 0);

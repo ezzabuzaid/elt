@@ -11,7 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -886,7 +886,7 @@ test(
     const controller = new AbortController();
     const passes = run.watch({
       // A batch that never comes ends the watch, so the assertion fails.
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+      signal: AbortSignal.any([controller.signal, t.signal]),
     });
 
     // The first check loads the store.
@@ -899,24 +899,24 @@ test(
     // The next one-second poll sees the commit.
     const loading = passes.next();
     // The poll is due once the watch waits for it.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     await clock.tickAsync(1000);
     const second = await loading;
     assert.equal(second.done, false, 'the poll after the commit loads it');
     // Past the poll after it, nothing changed: no pass comes before the stop.
     const after = passes.next();
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     await clock.tickAsync(1500);
     // The window's poll was read: the watch waits for the next one.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     controller.abort();
 
@@ -1027,7 +1027,7 @@ test('a Call History watch keeps every stream current while callhistoryd changes
     ],
   }).watch({
     // A check that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   });
   try {
     await watching.next();
@@ -1042,9 +1042,9 @@ test('a Call History watch keeps every stream current while callhistoryd changes
     const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
     // The check is due once the watch waits for its next poll.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     await clock.tickAsync(1000);
     await timebox(

@@ -7,7 +7,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { Latch } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
-import { timebox } from '@zukhruf/testing/async';
+import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import {
   Catalog,
@@ -475,14 +475,14 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
 
   try {
     const first = await pass();
-    await t.waitFor(
+    await waitFor(
       () => {
         assert.ok(
           files.parser().parsed.includes('slow.txt'),
           'slow.txt was never read',
         );
       },
-      { interval: 10, timeout: 5_000 },
+      { signal: t.signal, interval: 10 },
     );
     files.source.rows = [
       { id: '1', ref: 'slow.txt' },

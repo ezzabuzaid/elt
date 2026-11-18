@@ -12,7 +12,7 @@ import {
   WebArticle,
 } from './index.ts';
 
-test('downloads defer real extraction and fingerprint revalidated bytes, redirects and charset', async () => {
+test('downloads defer real extraction and fingerprint revalidated bytes, redirects and charset', async (t) => {
   let revision = 1;
   let target = '/article';
   let contentType = 'text/html; charset=utf-8';
@@ -46,7 +46,7 @@ test('downloads defer real extraction and fingerprint revalidated bytes, redirec
     cache: new Map(),
     headers: { 'cache-control': 'no-cache' },
   });
-  const signal = AbortSignal.timeout(10_000);
+  const signal = t.signal;
   const first = await new WebArticle([new CountedHTML()], http).download(
     upstream.origin,
     signal,
@@ -89,7 +89,7 @@ test('downloads defer real extraction and fingerprint revalidated bytes, redirec
   assert.equal(extractions, 1);
 });
 
-test('native Markdown is fingerprinted with its HTML companion, which read() requests and extract() reuses', async () => {
+test('native Markdown is fingerprinted with its HTML companion, which read() requests and extract() reuses', async (t) => {
   const requests: string[] = [];
   let markdown = 1;
   let html = 1;
@@ -115,7 +115,7 @@ test('native Markdown is fingerprinted with its HTML companion, which read() req
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
   );
-  const signal = AbortSignal.timeout(5000);
+  const signal = t.signal;
   const first = await reader.download(upstream.origin, signal);
   assert(first.fingerprint);
   assert.deepEqual(requests, ['markdown', 'html']);
@@ -149,7 +149,7 @@ test('native Markdown is fingerprinted with its HTML companion, which read() req
   assert.deepEqual(requests, ['markdown', 'html', 'markdown', 'html']);
 });
 
-test('an HTML page is fingerprinted with its advertised Markdown alternate, which read() requests and extract() reuses', async () => {
+test('an HTML page is fingerprinted with its advertised Markdown alternate, which read() requests and extract() reuses', async (t) => {
   const requests: string[] = [];
   let alternate: 'none' | 'available' | 'missing' = 'none';
   let markdown = 1;
@@ -177,7 +177,7 @@ test('an HTML page is fingerprinted with its advertised Markdown alternate, whic
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
   );
-  const signal = AbortSignal.timeout(5000);
+  const signal = t.signal;
   const plain = await reader.download(upstream.origin, signal);
   assert(plain.fingerprint);
   alternate = 'available';
@@ -239,7 +239,7 @@ test('deferred extraction retains attributed failures and cancellation', async (
   await assert.rejects(download.extract(), (error) => error === reason);
 });
 
-test('an unchanged rejected Markdown response cannot hide an edited HTML fallback', async () => {
+test('an unchanged rejected Markdown response cannot hide an edited HTML fallback', async (t) => {
   let revision = 1;
   await using upstream = await new HttpServer().start((request, response) => {
     if (request.headers.accept?.startsWith('text/markdown')) {
@@ -254,7 +254,7 @@ test('an unchanged rejected Markdown response cannot hide an edited HTML fallbac
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
   );
-  const signal = AbortSignal.timeout(5000);
+  const signal = t.signal;
   const fingerprints = new Set<string>();
   for (revision = 1; revision <= 2; revision++) {
     const download = await reader.download(upstream.origin, signal);

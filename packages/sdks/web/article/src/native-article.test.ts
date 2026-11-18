@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 
 import { HTMLExtraction, MarkdownExtraction, WebArticle } from './index.ts';
 
-test('native Markdown keeps its raw source while HTML supplies article boundaries and missing metadata', async () => {
+test('native Markdown keeps its raw source while HTML supplies article boundaries and missing metadata', async (t) => {
   const markdown =
     '\n[Skip to content](#main)\n\n[Journal home](/)\n\nRead the [field results](/results).\n\n| Plot | Count |\n| --- | --- |\n| North | 7 |\n\n```js\n  sample();\n```\n\n[Privacy policy](/privacy)\n\n{"@type":"BlogPosting"}\n';
   await using upstream = await new HttpServer().start((request, response) => {
@@ -36,7 +36,7 @@ test('native Markdown keeps its raw source while HTML supplies article boundarie
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(`${upstream.origin}/report`, AbortSignal.timeout(5000));
+  ).fetch(`${upstream.origin}/report`, t.signal);
   assert.ok(article);
   assert.doesNotMatch(
     article.textContent,
@@ -65,7 +65,7 @@ test('native Markdown keeps its raw source while HTML supplies article boundarie
   );
 });
 
-test('unavailable or unreadable HTML companions preserve the complete native article', async () => {
+test('unavailable or unreadable HTML companions preserve the complete native article', async (t) => {
   for (const mode of ['unavailable', 'empty', 'markdown', 'invalid-xhtml']) {
     await using upstream = await new HttpServer().start((request, response) => {
       if (request.headers.accept?.startsWith('text/markdown')) {
@@ -89,7 +89,7 @@ test('unavailable or unreadable HTML companions preserve the complete native art
     const article = await new WebArticle(
       [new MarkdownExtraction(), new HTMLExtraction()],
       got,
-    ).fetch(upstream.origin, AbortSignal.timeout(5000));
+    ).fetch(upstream.origin, t.signal);
     assert.ok(article);
     assert.equal(article.title, 'Native report');
     assert.equal(
@@ -100,7 +100,7 @@ test('unavailable or unreadable HTML companions preserve the complete native art
   }
 });
 
-test('cancellation during the HTML companion request preserves the original reason', async () => {
+test('cancellation during the HTML companion request preserves the original reason', async (t) => {
   const started = Promise.withResolvers<void>();
   const controller = new AbortController();
   const reason = new Error('Stop the companion download');
@@ -118,17 +118,14 @@ test('cancellation during the HTML companion request preserves the original reas
   const pending = new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(
-    upstream.origin,
-    AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
-  );
+  ).fetch(upstream.origin, AbortSignal.any([controller.signal, t.signal]));
   const rejected = assert.rejects(pending, (error) => error === reason);
   await started.promise;
   controller.abort(reason);
   await rejected;
 });
 
-test('advertised Markdown reuses its HTML page for isolation without overwriting native metadata', async () => {
+test('advertised Markdown reuses its HTML page for isolation without overwriting native metadata', async (t) => {
   for (const viaHeader of [true, false]) {
     let htmlRequests = 0;
     await using upstream = await new HttpServer().start((request, response) => {
@@ -155,7 +152,7 @@ test('advertised Markdown reuses its HTML page for isolation without overwriting
     const article = await new WebArticle(
       [new MarkdownExtraction(), new HTMLExtraction()],
       got,
-    ).fetch(upstream.origin, AbortSignal.timeout(5000));
+    ).fetch(upstream.origin, t.signal);
     assert.ok(article);
     assert.equal(
       article.textContent,

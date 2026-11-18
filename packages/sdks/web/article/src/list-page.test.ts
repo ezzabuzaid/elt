@@ -15,14 +15,12 @@ async function extract(
   extraction: Extraction,
   contentType: string,
   body: string,
+  signal: AbortSignal,
 ) {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.writeHead(200, { 'content-type': contentType }).end(body);
   });
-  return await new WebArticle([extraction], got).fetch(
-    upstream.origin,
-    AbortSignal.timeout(5000),
-  );
+  return await new WebArticle([extraction], got).fetch(upstream.origin, signal);
 }
 
 // Three posts of a blog index, an article element each, with long excerpts.
@@ -31,7 +29,7 @@ const blogIndex = `
         <article><h2><a href="/workers-observability/">Observability for Workers</a></h2><p>Every Worker now gets traces and logs with no code change. We describe how the data flows from the edge to your dashboard, what it costs to keep, and how to export it to the tools your team already uses.</p></article>
         <article><h2><a href="https://blog.google/technology/ai/gemini-update/">A Gemini update for developers</a></h2><p>A guest post from a partner team about the models that power the new features, how we tested them with customers over the summer, and which limits we plan to remove before the end of the year.</p></article>`;
 
-test('a page that lists pages of its own origin is still an article, labeled a list', async () => {
+test('a page that lists pages of its own origin is still an article, labeled a list', async (t) => {
   for (const { name, html } of [
     {
       // As anthropic.com/news/features: cards inside one article element, og:type website, no JSON-LD.
@@ -69,14 +67,19 @@ test('a page that lists pages of its own origin is still an article, labeled a l
       </main></body></html>`,
     },
   ]) {
-    const article = await extract(new HTMLExtraction(), 'text/html', html);
+    const article = await extract(
+      new HTMLExtraction(),
+      'text/html',
+      html,
+      t.signal,
+    );
 
     assert.ok(article, name);
     assert.equal(article.list, true, name);
   }
 });
 
-test('an article that links many pages is not labeled a list', async () => {
+test('an article that links many pages is not labeled a list', async (t) => {
   for (const { name, html } of [
     {
       // As this-week-in-rust.org: a roundup of links to other origins.
@@ -133,14 +136,19 @@ test('an article that links many pages is not labeled a list', async () => {
       html: '<html><body><article><p>Our releases this year:</p><table><tr><td><a href="/releases/1">Release one</a></td></tr><tr><td><a href="/releases/2">Release two</a></td></tr></table></article></body></html>',
     },
   ]) {
-    const article = await extract(new HTMLExtraction(), 'text/html', html);
+    const article = await extract(
+      new HTMLExtraction(),
+      'text/html',
+      html,
+      t.signal,
+    );
 
     assert.ok(article, name);
     assert.equal(article.list, false, name);
   }
 });
 
-test('a live blog that declares LiveBlogPosting is not labeled a list, although each update links its permalink, a share address and other articles', async () => {
+test('a live blog that declares LiveBlogPosting is not labeled a list, although each update links its permalink, a share address and other articles', async (t) => {
   // theguardian.com/business/live/2026/oct/30/uk-house-price-growth-crypto-industry-6bn-binance-hack-eurozone-france-gdp-latest-news-updates,
   // trimmed: each update links its own permalink with a query, and a mailto share address.
   const share =
@@ -154,21 +162,24 @@ test('a live blog that declares LiveBlogPosting is not labeled a list, although 
         <article><p><a href="?page=with%3Ablock-6ae4b1c68f08f802b2b66e2e#block-6ae4b1c68f08f802b2b66e2e">15.05 GMT</a></p><p>Binance is working with law enforcement, blockchain intelligence firms, token issuers and other exchange to trace and recover stolen funds, Richard Teng continues.</p><p>“We will do everything in our power to make sure that these bad actors are held accountable.”</p>${share}</article>
         <article><p><a href="?page=with%3Ablock-6ae49d7d8f08f9d01ef827f6#block-6ae49d7d8f08f9d01ef827f6">13.40 GMT</a></p><p>Shares in companies exposed to the crypto world are dropping sharply at the start of trading in New York.</p><p>Coinbase, the US crypto exchange, are down 11.5% at the start of trading.</p><p><strong>Strategy</strong>, which pioneered <a href="https://www.theguardian.com/technology/2024/dec/31/microstrategy-software-firm-big-bitcoin-bet">the idea of being a Bitcoin treasury company</a> are down 10%.</p>${share}</article>
       </main></body></html>`,
+    t.signal,
   );
 
   assert.equal(article?.list, false);
 });
 
-test('a native Markdown page that lists pages of its own origin is labeled a list', async () => {
+test('a native Markdown page that lists pages of its own origin is labeled a list', async (t) => {
   const index = await extract(
     new MarkdownExtraction(),
     'text/markdown',
     '# Posts\n\n- [First post](/posts/first)\n- [Second post](/posts/second)\n- [Third post](/posts/third)\n',
+    t.signal,
   );
   const post = await extract(
     new MarkdownExtraction(),
     'text/markdown',
     '# A post\n\nSome prose that names [one page](/about) and [another page](/contact) of the site, and then says more about the garden study and what it found.\n',
+    t.signal,
   );
 
   assert.equal(index?.list, true);

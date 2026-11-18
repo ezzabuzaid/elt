@@ -15,8 +15,8 @@
     "@eltjs/transcription-local": "0.0.1"
   },
   "devDependencies": {
-    "@zukhruf/fs": "^0.8.25",
-    "@zukhruf/pool": "^0.8.25",
-    "@zukhruf/testing": "^0.8.25"
+    "@zukhruf/fs": "^0.8.27",
+    "@zukhruf/pool": "^0.8.27",
+    "@zukhruf/testing": "^0.8.27"
   }
 }

@@ -15,6 +15,7 @@ import { promisify } from 'node:util';
 import { ChangeWatcher } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
+import { waitFor } from '@zukhruf/testing/async';
 
 import { macOSAccess } from '@eltjs/sdk-macos-app-database';
 
@@ -398,11 +399,11 @@ test('a read its signal stops rejects with the reason at once and never resolves
     {},
     removal.signal,
   );
-  await t.waitFor(
+  await waitFor(
     () => {
       assert.ok(helper.began(), 'the EventKit helper never began its read');
     },
-    { interval: 10, timeout: 60_000 },
+    { signal: t.signal, interval: 10 },
   );
   removal.abort(removed);
   const outcome = await reading.then(
@@ -465,11 +466,11 @@ test('a read of only the accounts and lists its signal stops rejects with the re
   const reading = new RemindersStore(helper.path, {
     env: process.env,
   }).collections({}, removal.signal);
-  await t.waitFor(
+  await waitFor(
     () => {
       assert.ok(helper.began(), 'the EventKit helper never began its read');
     },
-    { interval: 10, timeout: 60_000 },
+    { signal: t.signal, interval: 10 },
   );
   removal.abort(removed);
   const outcome = await reading.then(

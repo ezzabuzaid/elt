@@ -6,7 +6,7 @@ import got from 'got';
 
 import { HTMLExtraction, MarkdownExtraction, WebArticle } from './index.ts';
 
-test("an HTML page's localized versions are the language copies that its head and its Link header declare, itself included, resolved, without fragments and without repeats", async () => {
+test("an HTML page's localized versions are the language copies that its head and its Link header declare, itself included, resolved, without fragments and without repeats", async (t) => {
   // The head of aws.amazon.com/de/training/startups/ on 2026-11-02, trimmed.
   await using upstream = await new HttpServer().start((request, response) => {
     response.writeHead(200, {
@@ -23,7 +23,7 @@ test("an HTML page's localized versions are the language copies that its head an
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     `${upstream.origin}/de/training/startups/`,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);
@@ -35,7 +35,7 @@ test("an HTML page's localized versions are the language copies that its head an
   ]);
 });
 
-test('a page whose head declares no canonical URL takes the one of its Link header, and a canonical URL in its head wins over the header', async () => {
+test('a page whose head declares no canonical URL takes the one of its Link header, and a canonical URL in its head wins over the header', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     const head =
       request.url === '/declared'
@@ -54,18 +54,15 @@ test('a page whose head declares no canonical URL takes the one of its Link head
 
   const undeclared = await reader.fetch(
     `${upstream.origin}/undeclared`,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
-  const declared = await reader.fetch(
-    `${upstream.origin}/declared`,
-    AbortSignal.timeout(5000),
-  );
+  const declared = await reader.fetch(`${upstream.origin}/declared`, t.signal);
 
   assert.equal(undeclared?.canonicalUrl, `${upstream.origin}/from-header`);
   assert.equal(declared?.canonicalUrl, `${upstream.origin}/from-head`);
 });
 
-test('a native Markdown page, which has no head, takes its canonical URL and its localized versions from its Link header', async () => {
+test('a native Markdown page, which has no head, takes its canonical URL and its localized versions from its Link header', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     response
       .writeHead(200, {
@@ -80,7 +77,7 @@ test('a native Markdown page, which has no head, takes its canonical URL and its
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(`${upstream.origin}/report.md`, AbortSignal.timeout(5000));
+  ).fetch(`${upstream.origin}/report.md`, t.signal);
 
   assert.ok(article);
   assert.equal(article.canonicalUrl, `${upstream.origin}/report`);

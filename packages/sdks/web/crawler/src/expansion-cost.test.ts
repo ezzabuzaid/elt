@@ -107,7 +107,7 @@ async function run(crawl: Crawl, log: string[]) {
   return pages;
 }
 
-test("a small site's program page comes back in the first run, before the large site's child sitemaps are all read", async () => {
+test("a small site's program page comes back in the first run, before the large site's child sitemaps are all read", async (t) => {
   const log: string[] = [];
   await using microsoft = await new HttpServer().start(
     website(log, () => large(() => microsoft.origin, 40)),
@@ -126,7 +126,7 @@ test("a small site's program page comes back in the first run, before the large 
       [`${list.origin}/programs`],
       null,
       {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
         include: [
           new URLPattern(`${microsoft.origin}/*`),
           new URLPattern(`${vercel.origin}/*`),
@@ -142,7 +142,7 @@ test("a small site's program page comes back in the first run, before the large 
   assert.ok(children.length < 40, `${children.length} child sitemaps`);
 });
 
-test("the large site's other child sitemaps are read in later runs, each once, until its program page comes back, and their routes are recorded", async () => {
+test("the large site's other child sitemaps are read in later runs, each once, until its program page comes back, and their routes are recorded", async (t) => {
   const log: string[] = [];
   await using microsoft = await new HttpServer().start(
     website(log, () => large(() => microsoft.origin, 40)),
@@ -153,7 +153,7 @@ test("the large site's other child sitemaps are read in later runs, each once, u
     })),
   );
   const options = {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
     include: [new URLPattern(`${microsoft.origin}/*`)] as const,
     expand,
   };
@@ -212,7 +212,7 @@ test("the large site's other child sitemaps are read in later runs, each once, u
   assert.ok(routes.includes('/sitemaps/39.xml /startups'), routes.join('\n'));
 });
 
-test("origins take turns: one starting site's many child sitemaps do not hold up another site's page", async () => {
+test("origins take turns: one starting site's many child sitemaps do not hold up another site's page", async (t) => {
   const log: string[] = [];
   await using microsoft = await new HttpServer().start(
     website(log, () => large(() => microsoft.origin, 40)),
@@ -241,7 +241,7 @@ test("origins take turns: one starting site's many child sitemaps do not hold up
         ],
         null,
         {
-          signal: AbortSignal.timeout(120_000),
+          signal: t.signal,
           include: [new URLPattern(`${vercel.origin}/*`)],
         },
       ),
@@ -256,7 +256,7 @@ test("origins take turns: one starting site's many child sitemaps do not hold up
   assert.ok(handed < lastChild, log.join('\n'));
 });
 
-test('a second expanded site whose robots.txt names no sitemap gets its /sitemap.xml guess, after another site read a sitemap', async () => {
+test('a second expanded site whose robots.txt names no sitemap gets its /sitemap.xml guess, after another site read a sitemap', async (t) => {
   await using vercel = await new HttpServer().start(
     website([], () => small(() => vercel.origin)),
   );
@@ -281,7 +281,7 @@ test('a second expanded site whose robots.txt names no sitemap gets its /sitemap
       [`${list.origin}/programs`],
       null,
       {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
         include: [
           new URLPattern(`${vercel.origin}/*`),
           new URLPattern(`${pinecone.origin}/*`),
@@ -322,7 +322,7 @@ test('a run that continues a crawl held back by the budget reads its list again 
     new FixedRevisit({ every: hour }),
   );
   const options = {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
     include: [
       new URLPattern(`${microsoft.origin}/*`),
       new URLPattern(`${vercel.origin}/*`),
@@ -358,7 +358,7 @@ test('a run that continues a crawl held back by the budget reads its list again 
   assert.ok(!log.some((line) => line.endsWith(' /programs')), log.join('\n'));
 });
 
-test('a run that continues a crawl at once does not read its list again before the list is due', async () => {
+test('a run that continues a crawl at once does not read its list again before the list is due', async (t) => {
   const log: string[] = [];
   await using microsoft = await new HttpServer().start(
     website(log, () => large(() => microsoft.origin, 40)),
@@ -378,7 +378,7 @@ test('a run that continues a crawl at once does not read its list again before t
     new FixedRevisit({ every: hour }),
   );
   const options = {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
     include: [new URLPattern(`${microsoft.origin}/*`)] as const,
     expand,
   };

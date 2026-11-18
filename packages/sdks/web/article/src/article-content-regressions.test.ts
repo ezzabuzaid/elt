@@ -29,7 +29,7 @@ test('a page whose stylesheet jsdom cannot parse writes nothing to the console',
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(`${upstream.origin}/startups`, AbortSignal.timeout(5000));
+  ).fetch(`${upstream.origin}/startups`, t.signal);
 
   assert.match(article?.textContent ?? '', /\$100,000 in credits/);
   assert.deepEqual(
@@ -38,7 +38,7 @@ test('a page whose stylesheet jsdom cannot parse writes nothing to the console',
   );
 });
 
-test('a page with an apostrophe inside a single-quoted attribute keeps its article', async () => {
+test('a page with an apostrophe inside a single-quoted attribute keeps its article', async (t) => {
   // Trimmed from circleci.com/startup-program/ on 2026-10-30: the FAQ's
   // analytics attribute is single-quoted and holds "What's", which ends the
   // attribute early. Browsers recover from such markup (HTML Standard §13.2).
@@ -57,7 +57,7 @@ test('a page with an apostrophe inside a single-quoted attribute keeps its artic
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     `${upstream.origin}/startup-program/`,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.match(
@@ -70,7 +70,7 @@ test('a page with an apostrophe inside a single-quoted attribute keeps its artic
   );
 });
 
-test('a discovered article retains its introductory summary before the main body', async () => {
+test('a discovered article retains its introductory summary before the main body', async (t) => {
   // Mirrors the separate front matter and body in the captured Fowler articles.
   // Original fixture prose keeps this independent of the live publisher.
 
@@ -116,7 +116,7 @@ test('a discovered article retains its introductory summary before the main body
   });
 
   // Each origin answers one request a second, so a crawl takes seconds.
-  const signal = AbortSignal.timeout(120_000);
+  const signal = t.signal;
   const pages = (
     await Array.fromAsync(
       new Origins(got, null, globalThis)
@@ -149,7 +149,7 @@ test('a discovered article retains its introductory summary before the main body
   );
 });
 
-test('a feed article retains a figure caption containing a descriptive link', async () => {
+test('a feed article retains a figure caption containing a descriptive link', async (t) => {
   // Mirrors the linked figure caption in the captured slide-template article.
   // Trafilatura 2.3.1 retains this prose in the same synthetic document.
 
@@ -185,7 +185,7 @@ test('a feed article retains a figure caption containing a descriptive link', as
   });
 
   // Each origin answers one request a second, so a crawl takes seconds.
-  const signal = AbortSignal.timeout(120_000);
+  const signal = t.signal;
   const pages = (
     await Array.fromAsync(
       new Origins(got, null, globalThis)
@@ -220,7 +220,7 @@ test('a feed article retains a figure caption containing a descriptive link', as
   assert(article.content.includes(`href="${upstream.origin}/library"`));
 });
 
-test('a feed article retains acknowledgments and an authorship disclosure after its main body', async () => {
+test('a feed article retains acknowledgments and an authorship disclosure after its main body', async (t) => {
   // Mirrors the appendix outside the main body in the captured Fowler articles.
   // Trafilatura 2.3.1 preserves both paragraphs in this synthetic document.
 
@@ -267,7 +267,7 @@ test('a feed article retains acknowledgments and an authorship disclosure after 
   });
 
   // Each origin answers one request a second, so a crawl takes seconds.
-  const signal = AbortSignal.timeout(120_000);
+  const signal = t.signal;
   const pages = (
     await Array.fromAsync(
       new Origins(got, null, globalThis)

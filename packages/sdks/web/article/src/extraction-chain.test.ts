@@ -21,7 +21,7 @@ test('an article reader requires at least one extraction', () => {
   );
 });
 
-test('a non-HTML extraction receives response bytes and returns its article unchanged', async () => {
+test('a non-HTML extraction receives response bytes and returns its article unchanged', async (t) => {
   let requests = 0;
   await using upstream = await new HttpServer().start((_request, response) => {
     requests++;
@@ -64,7 +64,7 @@ test('a non-HTML extraction receives response bytes and returns its article unch
   }
   const result = await new WebArticle([new MarkdownExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.deepEqual(result, article);
   assert.equal(requests, 1);
@@ -72,7 +72,7 @@ test('a non-HTML extraction receives response bytes and returns its article unch
 
 // HTMLExtraction cannot deliberately reject a valid page or fail at a chosen
 // point; test-local subclasses exercise that public extension boundary.
-test('extractions run in order on fresh DOMs, download once and stop at the first article', async () => {
+test('extractions run in order on fresh DOMs, download once and stop at the first article', async (t) => {
   let requests = 0;
   const attempts: string[] = [];
   class DecliningExtraction extends HTMLExtraction {
@@ -110,10 +110,7 @@ test('extractions run in order on fresh DOMs, download once and stop at the firs
     ],
     got,
   );
-  const article = await reader.fetch(
-    upstream.origin,
-    AbortSignal.timeout(5000),
-  );
+  const article = await reader.fetch(upstream.origin, t.signal);
   assert.ok(article);
   assert.equal(article.title, 'Field report');
   assert.equal(
@@ -124,7 +121,7 @@ test('extractions run in order on fresh DOMs, download once and stop at the firs
   assert.equal(requests, 1);
 });
 
-test('exhausting the extraction array preserves an empty result without another download', async () => {
+test('exhausting the extraction array preserves an empty result without another download', async (t) => {
   let requests = 0;
   await using upstream = await new HttpServer().start((_request, response) => {
     requests++;
@@ -135,14 +132,11 @@ test('exhausting the extraction array preserves an empty result without another 
     [new HTMLExtraction(), new HTMLExtraction()],
     got,
   );
-  assert.equal(
-    await reader.fetch(upstream.origin, AbortSignal.timeout(5000)),
-    null,
-  );
+  assert.equal(await reader.fetch(upstream.origin, t.signal), null);
   assert.equal(requests, 1);
 });
 
-test('extraction failures and cancellation stop the chain and preserve their cause', async () => {
+test('extraction failures and cancellation stop the chain and preserve their cause', async (t) => {
   for (const cancelled of [false, true]) {
     const controller = new AbortController();
     const reason = new Error(
@@ -172,7 +166,7 @@ test('extraction failures and cancellation stop the chain and preserve their cau
     await assert.rejects(
       reader.fetch(
         upstream.origin,
-        AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+        AbortSignal.any([controller.signal, t.signal]),
       ),
       (error: unknown) => {
         if (cancelled) return error === reason;

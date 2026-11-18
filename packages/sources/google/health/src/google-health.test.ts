@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { waitFor } from '@zukhruf/testing/async';
 import { Msw } from '@zukhruf/testing/msw';
 import { Postgres } from '@zukhruf/testing/postgres';
 import { http } from 'msw';
@@ -998,9 +999,9 @@ test(
     // After the first pass, checks that find nothing moved run before the
     // device syncs.
     const sync = async (from: number) => {
-      await t.waitFor(() => assert.ok(probes() >= from + 3), {
+      await waitFor(() => assert.ok(probes() >= from + 3), {
+        signal: t.signal,
         interval: 5,
-        timeout: 20_000,
       });
       devices[0] = {
         lastSyncTime: '2026-10-15T09:00:00Z',
@@ -1035,7 +1036,7 @@ test(
       ],
     }).watch({
       // A pass that never comes ends the watch, so the assertion fails.
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(25_000)]),
+      signal: AbortSignal.any([controller.signal, t.signal]),
     })) {
       woken.push({ streams: outcomes.length, synced });
       if (woken.length === 1) syncing.push(sync(probes()));

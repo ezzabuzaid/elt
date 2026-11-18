@@ -6,7 +6,7 @@ import got from 'got';
 
 import { HTMLExtraction, WebArticle } from './index.ts';
 
-test('unmarked link-only navigation returns no article', async () => {
+test('unmarked link-only navigation returns no article', async (t) => {
   // A local page reproduces the reported markup without publisher changes.
   for (const html of [
     '<html><body><div><a href="/">Home</a><a href="/login">Log in</a></div></body></html>',
@@ -22,14 +22,14 @@ test('unmarked link-only navigation returns no article', async () => {
 
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
 
     assert.equal(article, null);
   }
 });
 
-test('a short linked post needs no article markup or minimum prose length', async () => {
+test('a short linked post needs no article markup or minimum prose length', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(
@@ -39,7 +39,7 @@ test('a short linked post needs no article markup or minimum prose length', asyn
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);
@@ -50,7 +50,7 @@ test('a short linked post needs no article markup or minimum prose length', asyn
   assert.ok(article.content.includes(`href="${upstream.origin}/results"`));
 });
 
-test('declared articles retain posts consisting entirely of links', async () => {
+test('declared articles retain posts consisting entirely of links', async (t) => {
   for (const html of [
     '<html><body><article><p><a href="/first">First finding</a> <a href="/second">Second finding</a></p></article></body></html>',
     '<html><body><div role="article"><p><a href="/first">First finding</a> <a href="/second">Second finding</a></p></div></body></html>',
@@ -64,7 +64,7 @@ test('declared articles retain posts consisting entirely of links', async () => 
 
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
 
     assert.ok(article);
@@ -77,7 +77,7 @@ test('declared articles retain posts consisting entirely of links', async () => 
   }
 });
 
-test('a standalone table retains cells whose entire contents are links', async () => {
+test('a standalone table retains cells whose entire contents are links', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(`<html><body><table>
@@ -89,7 +89,7 @@ test('a standalone table retains cells whose entire contents are links', async (
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);

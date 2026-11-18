@@ -9,7 +9,7 @@ import { HTMLExtraction, WebArticle } from './index.ts';
 // cerebras.ai/blog's markup, trimmed: every post declares only the site's
 // name as its title, and the real title is the page's one h1. The <base>
 // gives the page cerebras.ai's address, as the local server's is 127.0.0.1.
-test("a page that declares only the site's name as its title takes the title of its one h1", async () => {
+test("a page that declares only the site's name as its title takes the title of its one h1", async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html' }).end(`
       <html><head><base href="https://www.cerebras.ai/blog/moe-guide-scale"><title>Cerebras</title>
@@ -25,7 +25,7 @@ test("a page that declares only the site's name as its title takes the title of 
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);
@@ -35,7 +35,7 @@ test("a page that declares only the site's name as its title takes the title of 
   );
 });
 
-test('a short declared title stays when the page has more than one h1', async () => {
+test('a short declared title stays when the page has more than one h1', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html' }).end(`
       <html><head><title>Voxtral 3</title>
@@ -50,7 +50,7 @@ test('a short declared title stays when the page has more than one h1', async ()
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);

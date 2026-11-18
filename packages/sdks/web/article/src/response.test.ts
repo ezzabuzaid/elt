@@ -12,7 +12,7 @@ import {
   WebArticle,
 } from './index.ts';
 
-test('reading a downloaded response reuses its original bytes and defers extraction', async () => {
+test('reading a downloaded response reuses its original bytes and defers extraction', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     requests.push(request.url ?? '');
@@ -23,7 +23,7 @@ test('reading a downloaded response reuses its original bytes and defers extract
         .writeHead(200, { 'content-type': 'text/html; charset=windows-1252' })
         .end(Buffer.from('<article><p>A café report.</p></article>', 'latin1'));
   });
-  const signal = AbortSignal.timeout(5000);
+  const signal = t.signal;
   const response = await got(`${upstream.origin}/start`, { signal });
   const originalBody = response.body;
   const extracted: ArticlePage[] = [];
@@ -47,7 +47,7 @@ test('reading a downloaded response reuses its original bytes and defers extract
   assert.equal(fetched.fingerprint, download.fingerprint);
 });
 
-test('a supplied Markdown response requests its HTML companion in read() and fingerprints its changes', async () => {
+test('a supplied Markdown response requests its HTML companion in read() and fingerprints its changes', async (t) => {
   const requests: string[] = [];
   let revision = 1;
   await using upstream = await new HttpServer().start((request, response) => {
@@ -66,7 +66,7 @@ test('a supplied Markdown response requests its HTML companion in read() and fin
         );
     }
   });
-  const signal = AbortSignal.timeout(5000);
+  const signal = t.signal;
   const http = got.extend({ headers: { 'x-client': 'shared' } });
   const response = await http(upstream.origin, {
     signal,
@@ -94,7 +94,7 @@ test('a supplied Markdown response requests its HTML companion in read() and fin
   assert.deepEqual(requests, ['markdown', 'html', 'html']);
 });
 
-test('supplied HTML follows advertised Markdown and keeps the original HTML as its companion', async () => {
+test('supplied HTML follows advertised Markdown and keeps the original HTML as its companion', async (t) => {
   for (const declaration of ['header', 'markup']) {
     const requests: string[] = [];
     await using upstream = await new HttpServer().start((request, response) => {
@@ -116,7 +116,7 @@ test('supplied HTML follows advertised Markdown and keeps the original HTML as i
           );
       }
     });
-    const signal = AbortSignal.timeout(5000);
+    const signal = t.signal;
     const response = await got(upstream.origin, { signal });
     const download = await new WebArticle(
       [new MarkdownExtraction(), new HTMLExtraction()],
@@ -132,7 +132,7 @@ test('supplied HTML follows advertised Markdown and keeps the original HTML as i
   }
 });
 
-test('supplied rejected and unreadable Markdown responses retain the HTML fallback', async () => {
+test('supplied rejected and unreadable Markdown responses retain the HTML fallback', async (t) => {
   for (const mode of ['406', 'empty', 'malformed']) {
     const requests: string[] = [];
     await using upstream = await new HttpServer().start((request, response) => {
@@ -150,7 +150,7 @@ test('supplied rejected and unreadable Markdown responses retain the HTML fallba
           .end('<article><p>Readable fallback.</p></article>');
       }
     });
-    const signal = AbortSignal.timeout(5000);
+    const signal = t.signal;
     const response = await got(upstream.origin, {
       signal,
       headers: { accept: 'text/markdown' },
@@ -165,13 +165,13 @@ test('supplied rejected and unreadable Markdown responses retain the HTML fallba
   }
 });
 
-test('supplied HTTP failures retain attribution and cancellation preserves the exact reason', async () => {
+test('supplied HTTP failures retain attribution and cancellation preserves the exact reason', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     response
       .writeHead(Number(request.url?.slice(1)), { 'content-type': 'text/html' })
       .end('<article><p>A complete report.</p></article>');
   });
-  const signal = AbortSignal.timeout(5000);
+  const signal = t.signal;
   const reader = new WebArticle([new HTMLExtraction()], got);
   for (const status of [304, 404, 406, 500]) {
     const response = await got(`${upstream.origin}/${status}`, {

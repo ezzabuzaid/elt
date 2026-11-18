@@ -6,7 +6,7 @@ import got from 'got';
 
 import { HTMLExtraction, WebArticle } from './index.ts';
 
-test('publication datelines do not become authors or erase dates mentioned in prose', async () => {
+test('publication datelines do not become authors or erase dates mentioned in prose', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html' }).end(`
       <html><head><title>Field notes</title></head><body><article>
@@ -18,7 +18,7 @@ test('publication datelines do not become authors or erase dates mentioned in pr
   });
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article);
   assert.equal(article.byline, null);
@@ -28,7 +28,7 @@ test('publication datelines do not become authors or erase dates mentioned in pr
   assert.match(article.textContent, /Read the field study/);
 });
 
-test('author metadata and author markup survive dateline normalization', async () => {
+test('author metadata and author markup survive dateline normalization', async (t) => {
   for (const { head, byline, expected } of [
     { head: '<meta name="author" content="May">', byline: '', expected: 'May' },
     {
@@ -75,7 +75,7 @@ test('author metadata and author markup survive dateline normalization', async (
     );
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
     assert.ok(article);
     assert.equal(article.byline, expected);
@@ -84,7 +84,7 @@ test('author metadata and author markup survive dateline normalization', async (
   }
 });
 
-test('dateline hints in IDs and composite class names do not label localized dates as authors', async () => {
+test('dateline hints in IDs and composite class names do not label localized dates as authors', async (t) => {
   for (const { attributes, date } of [
     { attributes: 'id="dateline"', date: 'mercredi 21 octobre 2026' },
     { attributes: 'class="post-dateLine muted"', date: '٢١ أكتوبر ٢٠٢٦' },
@@ -102,7 +102,7 @@ test('dateline hints in IDs and composite class names do not label localized dat
     );
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
     assert.ok(article);
     assert.equal(article.byline, null);

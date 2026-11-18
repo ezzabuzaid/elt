@@ -8,7 +8,7 @@ import { marked } from 'marked';
 
 import { HTMLExtraction, WebArticle } from './index.ts';
 
-test('Markdown preserves article structure and excludes the same unsafe content and footer as HTML', async () => {
+test('Markdown preserves article structure and excludes the same unsafe content and footer as HTML', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html');
     response.end(`<html><head><title>Field observations</title></head><body><article>
@@ -24,7 +24,7 @@ test('Markdown preserves article structure and excludes the same unsafe content 
   });
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article);
   assert.ok('markdown' in article);
@@ -61,7 +61,7 @@ test('Markdown preserves article structure and excludes the same unsafe content 
   );
 });
 
-test('Markdown keeps escaped HTML as literal prose and leaves code unchanged', async () => {
+test('Markdown keeps escaped HTML as literal prose and leaves code unchanged', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html');
     response.end(
@@ -70,7 +70,7 @@ test('Markdown keeps escaped HTML as literal prose and leaves code unchanged', a
   });
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article);
   const rendered = JSDOM.fragment(await marked.parse(article.markdown));
@@ -85,7 +85,7 @@ test('Markdown keeps escaped HTML as literal prose and leaves code unchanged', a
   );
 });
 
-test('Markdown keeps short linked posts, headerless tables and literal code fences', async () => {
+test('Markdown keeps short linked posts, headerless tables and literal code fences', async (t) => {
   for (const body of [
     '<p>Try this <a href="https://tools.example/viewer">small viewer</a>.</p>',
     '<table><tr><td>North</td><td>7</td></tr><tr><td>South</td><td>9</td></tr></table>',
@@ -99,7 +99,7 @@ test('Markdown keeps short linked posts, headerless tables and literal code fenc
     );
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
     assert.ok(article);
     if (body.startsWith('<table>')) {

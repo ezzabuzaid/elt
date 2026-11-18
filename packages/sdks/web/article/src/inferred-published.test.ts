@@ -8,7 +8,7 @@ import { HTMLExtraction, WebArticle } from './index.ts';
 
 // research.google/blog's markup, trimmed: the date is a paragraph in a block
 // after the h1, and the page declares no date.
-test('a date that the page shows only as text under its title is inferred, and publishedTime stays null', async () => {
+test('a date that the page shows only as text under its title is inferred, and publishedTime stays null', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html' }).end(`
       <html><head><title>The sleep framework</title></head><body><main>
@@ -20,7 +20,7 @@ test('a date that the page shows only as text under its title is inferred, and p
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);
@@ -29,7 +29,7 @@ test('a date that the page shows only as text under its title is inferred, and p
 });
 
 // ai.meta.com/blog's markup, trimmed: the date is a span in a block after the h1.
-test('a date in a span beside the title is inferred', async () => {
+test('a date in a span beside the title is inferred', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html' }).end(`
       <html><head><title>Introducing Muse Spark 1.1</title></head><body><main>
@@ -41,7 +41,7 @@ test('a date in a span beside the title is inferred', async () => {
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);
@@ -49,7 +49,7 @@ test('a date in a span beside the title is inferred', async () => {
   assert.equal(article.inferredPublished, '2026-07-09T00:00:00.000Z');
 });
 
-test('a declared date wins over a different date in the text, in publishedTime and in the inferred date', async () => {
+test('a declared date wins over a different date in the text, in publishedTime and in the inferred date', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html' }).end(`
       <html><head><title>The sleep framework</title>
@@ -67,7 +67,7 @@ test('a declared date wins over a different date in the text, in publishedTime a
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);
@@ -75,7 +75,7 @@ test('a declared date wins over a different date in the text, in publishedTime a
   assert.equal(article.inferredPublished, '2026-10-26T23:03:24.000Z');
 });
 
-test('a page that shows no date has no publishedTime and no inferred date', async () => {
+test('a page that shows no date has no publishedTime and no inferred date', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html' }).end(`
       <html><head><title>The sleep framework</title></head><body><main>
@@ -87,7 +87,7 @@ test('a page that shows no date has no publishedTime and no inferred date', asyn
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);

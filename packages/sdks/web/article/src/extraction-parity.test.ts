@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 
 import { ArticleError, HTMLExtraction, WebArticle } from './index.ts';
 
-test('one reader isolates redirected encoded articles, empty pages and failed pages', async () => {
+test('one reader isolates redirected encoded articles, empty pages and failed pages', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     requests.push(request.url ?? '/');
@@ -43,7 +43,7 @@ test('one reader isolates redirected encoded articles, empty pages and failed pa
     } else response.writeHead(404).end();
   });
   const reader = new WebArticle([new HTMLExtraction()], got);
-  const signal = AbortSignal.timeout(5000);
+  const signal = t.signal;
   const [first, second, empty, failed] = await Promise.allSettled(
     ['/redirect', '/second', '/empty', '/missing'].map((path) =>
       reader.fetch(`${upstream.origin}${path}`, signal),

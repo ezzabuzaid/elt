@@ -14,13 +14,13 @@
     "@eltjs/elt": "*",
     "@eltjs/sdk-apple-notification-center": "0.0.1",
     "@eltjs/source-apple-macos": "0.0.1",
-    "@zukhruf/snapshot-differential": "^0.8.25"
+    "@zukhruf/snapshot-differential": "^0.8.27"
   },
   "devDependencies": {
     "@eltjs/elt-sqlite": "*",
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/fs": "^0.8.25",
-    "@zukhruf/sqlite-open": "^0.8.25",
-    "@zukhruf/testing": "^0.8.25"
+    "@zukhruf/fs": "^0.8.27",
+    "@zukhruf/sqlite-open": "^0.8.27",
+    "@zukhruf/testing": "^0.8.27"
   }
 }

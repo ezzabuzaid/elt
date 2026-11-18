@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 
 import { TemporaryFiles } from '@zukhruf/fs';
 import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
+import { waitFor } from '@zukhruf/testing/async';
 
 import { ImageFormat } from './document-formats/image-format.ts';
 import { MacOSDocumentParser } from './macos-document-parser.ts';
@@ -137,9 +138,9 @@ test('the warmed parser preserves OCR, concurrent responses and image errors, an
   );
   // The reads take idle workers; the eager pool replaces the killed one after
   // its back-off (1 s after an early exit).
-  await t.waitFor(
+  await waitFor(
     async () => assert.equal((await workerPids()).length, workers),
-    { interval: 100, timeout: 30_000 },
+    { signal: t.signal, interval: 100 },
   );
   const recovered = await workerPids();
   assert.equal(recovered.length, workers);
@@ -323,9 +324,9 @@ test('an image still times out after warm-up, and the pool replaces its worker',
   assert.equal(await format.text(path), 'Meet tomorrow');
   // The read takes an idle worker; the eager pool replaces the killed one
   // after its back-off (1 s after an early exit).
-  await t.waitFor(
+  await waitFor(
     async () => assert.equal((await workerPids()).length, pids.length),
-    { interval: 100, timeout: 30_000 },
+    { signal: t.signal, interval: 100 },
   );
   const recovered = await workerPids();
   assert.equal(recovered.length, pids.length);
@@ -415,7 +416,7 @@ test('the parser keeps processing queued images while its other OCR workers are 
   );
   results.catch(() => undefined);
   try {
-    await t.waitFor(
+    await waitFor(
       () => {
         assert.equal(
           completed,
@@ -423,7 +424,7 @@ test('the parser keeps processing queued images while its other OCR workers are 
           'the available worker must drain the queue while the others are paused',
         );
       },
-      { interval: 10, timeout: 5_000 },
+      { signal: t.signal, interval: 10 },
     );
   } finally {
     for (const pid of paused) process.kill(pid, 'SIGCONT');
@@ -536,9 +537,9 @@ test('a worker exits when its parent dies by SIGKILL, even with its main thread 
     // A warm-up that failed already ended the worker, which would prove nothing.
     process.kill(worker, 0);
     parent.kill('SIGKILL');
-    await t.waitFor(
+    await waitFor(
       () => assert.throws(() => process.kill(worker, 0), { code: 'ESRCH' }),
-      { interval: 100, timeout: 30_000 },
+      { signal: t.signal, interval: 100 },
     );
   } catch (error) {
     process.kill(worker, 'SIGKILL');

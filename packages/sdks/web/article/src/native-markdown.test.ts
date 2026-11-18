@@ -12,7 +12,7 @@ import {
   WebArticle,
 } from './index.ts';
 
-test('the configured extraction order requests native Markdown before HTML and keeps HTML-only readers working', async () => {
+test('the configured extraction order requests native Markdown before HTML and keeps HTML-only readers working', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     if (request.headers.accept?.startsWith('text/markdown')) {
       response.setHeader('content-type', 'text/markdown; charset=utf-8');
@@ -27,14 +27,14 @@ test('the configured extraction order requests native Markdown before HTML and k
   const native = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(upstream.origin, AbortSignal.timeout(5000));
+  ).fetch(upstream.origin, t.signal);
   assert.equal(
     native?.markdown,
     '# Native version\n\nPublisher-provided content.',
   );
   const html = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.equal(html?.title, 'HTML version');
   assert.match(html?.textContent ?? '', /HTML fallback content/);
@@ -61,7 +61,7 @@ test('native Markdown with a stylesheet jsdom cannot parse writes nothing to the
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(upstream.origin, AbortSignal.timeout(5000));
+  ).fetch(upstream.origin, t.signal);
 
   assert.match(article?.markdown ?? '', /\$100,000 in credits/);
   assert.deepEqual(
@@ -70,7 +70,7 @@ test('native Markdown with a stylesheet jsdom cannot parse writes nothing to the
   );
 });
 
-test('native Markdown retains its source, tables, linked prose and code while producing safe HTML', async () => {
+test('native Markdown retains its source, tables, linked prose and code while producing safe HTML', async (t) => {
   const markdown =
     '# Café report\n\nRead the [results](/results).\n\n| Item | Count |\n| --- | --- |\n| Tea | 2 |\n\n```js\n  a < b;\n```\n\n<script>alert(1)</script>\n';
   await using upstream = await new HttpServer().start((_request, response) => {
@@ -80,7 +80,7 @@ test('native Markdown retains its source, tables, linked prose and code while pr
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(upstream.origin, AbortSignal.timeout(5000));
+  ).fetch(upstream.origin, t.signal);
   assert.ok(article);
   assert.equal(article.markdown, markdown);
   assert.equal(article.title, 'Café report');
@@ -102,7 +102,7 @@ test('native Markdown retains its source, tables, linked prose and code while pr
   assert.match(article.textContent, /Tea\s+2/);
 });
 
-test('native front matter supplies metadata without becoming article prose or coercing publication dates', async () => {
+test('native front matter supplies metadata without becoming article prose or coercing publication dates', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/markdown; charset=iso-8859-1');
     response.end(
@@ -115,7 +115,7 @@ test('native front matter supplies metadata without becoming article prose or co
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(upstream.origin, AbortSignal.timeout(5000));
+  ).fetch(upstream.origin, t.signal);
   assert.ok(article);
   assert.equal(article.title, 'Café metadata');
   assert.equal(article.byline, 'Lina');
@@ -128,7 +128,7 @@ test('native front matter supplies metadata without becoming article prose or co
   );
 });
 
-test('advertised Markdown alternatives outrank HTML through HTTP Link and HTML link declarations', async () => {
+test('advertised Markdown alternatives outrank HTML through HTTP Link and HTML link declarations', async (t) => {
   for (const viaHeader of [true, false]) {
     for (const contentType of [
       'text/markdown; charset=utf-8',
@@ -159,7 +159,7 @@ test('advertised Markdown alternatives outrank HTML through HTTP Link and HTML l
       const article = await new WebArticle(
         [new MarkdownExtraction(), new HTMLExtraction()],
         got,
-      ).fetch(`${upstream.origin}/start`, AbortSignal.timeout(5000));
+      ).fetch(`${upstream.origin}/start`, t.signal);
       assert.equal(article?.title, 'Native alternative');
       assert.equal(article?.url, `${upstream.origin}/native/story.md`);
       assert.equal(
@@ -170,7 +170,7 @@ test('advertised Markdown alternatives outrank HTML through HTTP Link and HTML l
   }
 });
 
-test('unavailable, malformed and misleading Markdown alternatives preserve the original HTML article', async () => {
+test('unavailable, malformed and misleading Markdown alternatives preserve the original HTML article', async (t) => {
   for (const alternative of ['missing', 'empty', 'invalid', 'html']) {
     await using upstream = await new HttpServer().start((request, response) => {
       if (request.url === '/story') {
@@ -195,14 +195,14 @@ test('unavailable, malformed and misleading Markdown alternatives preserve the o
     const article = await new WebArticle(
       [new MarkdownExtraction(), new HTMLExtraction()],
       got,
-    ).fetch(`${upstream.origin}/story`, AbortSignal.timeout(5000));
+    ).fetch(`${upstream.origin}/story`, t.signal);
     assert.equal(article?.title, 'Original article');
     assert.equal(article?.url, `${upstream.origin}/story`);
     assert.match(article?.textContent ?? '', /complete fallback article/);
   }
 });
 
-test('negotiated Markdown rejection or unreadable content retries the same page as HTML', async () => {
+test('negotiated Markdown rejection or unreadable content retries the same page as HTML', async (t) => {
   for (const mode of ['406', 'empty', 'invalid']) {
     await using upstream = await new HttpServer().start((request, response) => {
       if (request.headers.accept?.startsWith('text/markdown')) {
@@ -221,13 +221,13 @@ test('negotiated Markdown rejection or unreadable content retries the same page 
     const article = await new WebArticle(
       [new MarkdownExtraction(), new HTMLExtraction()],
       got,
-    ).fetch(upstream.origin, AbortSignal.timeout(5000));
+    ).fetch(upstream.origin, t.signal);
     assert.equal(article?.title, 'Readable fallback');
     assert.match(article?.textContent ?? '', /remains readable as HTML/);
   }
 });
 
-test('a Markdown request that a site redirects to an HTML app shell, saying Vary: Accept, gives the page a browser gets under its own URL', async () => {
+test('a Markdown request that a site redirects to an HTML app shell, saying Vary: Accept, gives the page a browser gets under its own URL', async (t) => {
   // linear.app on 2026-10-30, trimmed: a Markdown request is sent to
   // /index.md, which answers every request with the app's loading shell.
   await using upstream = await new HttpServer().start((request, response) => {
@@ -257,7 +257,7 @@ test('a Markdown request that a site redirects to an HTML app shell, saying Vary
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(`${upstream.origin}/`, AbortSignal.timeout(5000));
+  ).fetch(`${upstream.origin}/`, t.signal);
 
   assert.equal(article?.url, `${upstream.origin}/`);
   assert.equal(article?.title, 'Linear – The system for product development');
@@ -267,7 +267,7 @@ test('a Markdown request that a site redirects to an HTML app shell, saying Vary
   );
 });
 
-test('a Markdown request that a site redirects to an HTML app shell, saying Vary: *, gives the page a browser gets', async () => {
+test('a Markdown request that a site redirects to an HTML app shell, saying Vary: *, gives the page a browser gets', async (t) => {
   // No redirect in the startup-credits crawl of 2026-10-30 sent Vary: *; it says that anything in the
   // request, the Accept header too, can have chosen the answer (RFC 9110, section 12.5.5).
   await using upstream = await new HttpServer().start((request, response) => {
@@ -294,13 +294,13 @@ test('a Markdown request that a site redirects to an HTML app shell, saying Vary
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(`${upstream.origin}/startups`, AbortSignal.timeout(5000));
+  ).fetch(`${upstream.origin}/startups`, t.signal);
 
   assert.equal(article?.url, `${upstream.origin}/startups`);
   assert.equal(article?.title, 'Startup program');
 });
 
-test('a redirect that Vary says Accept chose but that sends a browser to the same page asks the page once more as a browser, and no more', async () => {
+test('a redirect that Vary says Accept chose but that sends a browser to the same page asks the page once more as a browser, and no more', async (t) => {
   // www.notion.so/startups on 2026-10-30: a move to another address that varies on Accept.
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
@@ -325,7 +325,7 @@ test('a redirect that Vary says Accept chose but that sends a browser to the sam
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(`${upstream.origin}/startups`, AbortSignal.timeout(5000));
+  ).fetch(`${upstream.origin}/startups`, t.signal);
 
   assert.equal(article?.url, `${upstream.origin}/new/startups`);
   assert.equal(article?.title, 'Notion for Startups');
@@ -337,7 +337,7 @@ test('a redirect that Vary says Accept chose but that sends a browser to the sam
   ]);
 });
 
-test('a page asked again as a browser after a failed Markdown redirect still prefers the Markdown it advertises', async () => {
+test('a page asked again as a browser after a failed Markdown redirect still prefers the Markdown it advertises', async (t) => {
   // No site seen on 2026-10-30 does both: this one stands for a site whose
   // Accept redirect fails while the Markdown that its page advertises works.
   await using upstream = await new HttpServer().start((request, response) => {
@@ -371,7 +371,7 @@ test('a page asked again as a browser after a failed Markdown redirect still pre
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(`${upstream.origin}/guide`, AbortSignal.timeout(5000));
+  ).fetch(`${upstream.origin}/guide`, t.signal);
 
   assert.equal(article?.title, 'Native guide');
   assert.equal(
@@ -380,7 +380,7 @@ test('a page asked again as a browser after a failed Markdown redirect still pre
   );
 });
 
-test('a Markdown request that Accept redirects to Markdown is read as Markdown without asking the page as a browser', async () => {
+test('a Markdown request that Accept redirects to Markdown is read as Markdown without asking the page as a browser', async (t) => {
   // linear.app/docs/mcp on 2026-10-30, trimmed.
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
@@ -411,7 +411,7 @@ test('a Markdown request that Accept redirects to Markdown is read as Markdown w
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(`${upstream.origin}/docs/mcp`, AbortSignal.timeout(5000));
+  ).fetch(`${upstream.origin}/docs/mcp`, t.signal);
 
   assert.equal(article?.title, 'MCP server');
   assert.deepEqual(
@@ -420,7 +420,7 @@ test('a Markdown request that Accept redirects to Markdown is read as Markdown w
   );
 });
 
-test('a redirect whose Vary names only other headers is not asked again', async () => {
+test('a redirect whose Vary names only other headers is not asked again', async (t) => {
   // www.zendesk.com/startups/ and www.cloudflare.com/forstartups/ on 2026-10-30 vary on
   // accept-encoding; other sites vary on Accept-Language.
   const requests: string[] = [];
@@ -444,13 +444,13 @@ test('a redirect whose Vary names only other headers is not asked again', async 
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(`${upstream.origin}/startups/`, AbortSignal.timeout(5000));
+  ).fetch(`${upstream.origin}/startups/`, t.signal);
 
   assert.equal(article?.title, 'Zendesk for Startups');
   assert.deepEqual(requests, ['/startups/', '/business/startups/']);
 });
 
-test('a page whose browser request fails after a failed Markdown redirect fails with its own URL instead of giving the shell', async () => {
+test('a page whose browser request fails after a failed Markdown redirect fails with its own URL instead of giving the shell', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     if (
       request.url === '/' &&
@@ -470,7 +470,7 @@ test('a page whose browser request fails after a failed Markdown redirect fails 
     new WebArticle(
       [new MarkdownExtraction(), new HTMLExtraction()],
       got.extend({ retry: { limit: 0 } }),
-    ).fetch(`${upstream.origin}/`, AbortSignal.timeout(5000)),
+    ).fetch(`${upstream.origin}/`, t.signal),
     (error) => {
       assert.ok(error instanceof ArticleError);
       assert.equal(error.url, `${upstream.origin}/`);
@@ -481,7 +481,7 @@ test('a page whose browser request fails after a failed Markdown redirect fails 
   );
 });
 
-test('Markdown files served as plain text retain short linked posts', async () => {
+test('Markdown files served as plain text retain short linked posts', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/plain; charset=utf-8');
     response.end('[A useful reference](/reference).');
@@ -489,12 +489,12 @@ test('Markdown files served as plain text retain short linked posts', async () =
   const article = await new WebArticle(
     [new MarkdownExtraction(), new HTMLExtraction()],
     got,
-  ).fetch(`${upstream.origin}/post.md?edition=2`, AbortSignal.timeout(5000));
+  ).fetch(`${upstream.origin}/post.md?edition=2`, t.signal);
   assert.equal(article?.markdown, '[A useful reference](/reference).');
   assert.match(article?.content ?? '', /useful reference/);
 });
 
-test('cancellation during an alternate download preserves the reason and does not fall back', async () => {
+test('cancellation during an alternate download preserves the reason and does not fall back', async (t) => {
   const started = Promise.withResolvers<void>();
   const controller = new AbortController();
   const reason = new Error('Stop the alternate download');
@@ -517,7 +517,7 @@ test('cancellation during an alternate download preserves the reason and does no
     got,
   ).fetch(
     `${upstream.origin}/story`,
-    AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+    AbortSignal.any([controller.signal, t.signal]),
   );
   const rejected = assert.rejects(fetching, (error) => error === reason);
   await started.promise;
@@ -525,7 +525,7 @@ test('cancellation during an alternate download preserves the reason and does no
   await rejected;
 });
 
-test('executable front matter is rejected instead of evaluated', async () => {
+test('executable front matter is rejected instead of evaluated', async (t) => {
   for (const language of ['js', 'javascript']) {
     await using upstream = await new HttpServer().start(
       (_request, response) => {
@@ -538,7 +538,7 @@ test('executable front matter is rejected instead of evaluated', async () => {
     await assert.rejects(
       new WebArticle([new MarkdownExtraction()], got).fetch(
         upstream.origin,
-        AbortSignal.timeout(5000),
+        t.signal,
       ),
       (error) => {
         assert(error instanceof ArticleError);

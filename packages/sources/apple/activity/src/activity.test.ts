@@ -13,7 +13,7 @@ import { crc32 } from 'node:zlib';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -1422,7 +1422,7 @@ test('Activity loads a Bluetooth event whose product ID Biome stored as -1, as i
   );
 });
 
-test('an Activity watch wakes only the streams whose segments or database changed', async () => {
+test('an Activity watch wakes only the streams whose segments or database changed', async (t) => {
   await using scratch = await new TemporaryFiles().directory('activity-');
   const location = await activityFixture(scratch.path);
   const record = (bundleId: string, days: number): Slot => ({
@@ -1466,7 +1466,7 @@ test('an Activity watch wakes only the streams whose segments or database change
     ],
   }).watch({
     // A pass that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   });
   for await (const { outcomes } of watch) {
     woken.push(outcomes.map(({ copy }) => copy.from.name));
@@ -1611,7 +1611,7 @@ test('an Activity watch keeps every stream current while its stores hold still',
     ],
   }).watch({
     // A check that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   });
   try {
     await watching.next();
@@ -1626,9 +1626,9 @@ test('an Activity watch keeps every stream current while its stores hold still',
     const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
     // The check is due once the watch waits for its next poll.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     await clock.tickAsync(50);
     await timebox(

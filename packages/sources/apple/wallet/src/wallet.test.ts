@@ -11,7 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -1732,7 +1732,7 @@ test('a Wallet watch keeps every stream current while passd changes nothing', as
     ],
   }).watch({
     // A check that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   });
   try {
     await watching.next();
@@ -1747,9 +1747,9 @@ test('a Wallet watch keeps every stream current while passd changes nothing', as
     const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
     // The check is due once the watch waits for its next poll.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     await clock.tickAsync(1000);
     await timebox(

@@ -73,8 +73,6 @@ function siteCrawler(revisit: RevisitPolicy<unknown>) {
   );
 }
 
-const options = () => ({ signal: AbortSignal.timeout(120_000) });
-
 const request: CrawlRequest = {
   url: 'https://site.test/a',
   listingUrl: 'https://site.test/',
@@ -103,17 +101,17 @@ test('a page that is not due is not requested and comes out as deferred after th
   const crawler = siteCrawler(new AdaptiveRevisit());
 
   const first = await crawled(
-    crawler.crawl(['https://site.test/'], null, options()),
+    crawler.crawl(['https://site.test/'], null, { signal: t.signal }),
   );
   t.mock.timers.setTime(hour);
   requests.length = 0;
   const early = await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, options()),
+    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
   );
   t.mock.timers.setTime(day);
   requests.length = 0;
   const due = await crawled(
-    crawler.crawl(['https://site.test/'], early.memento, options()),
+    crawler.crawl(['https://site.test/'], early.memento, { signal: t.signal }),
   );
 
   assert.deepEqual(first.pages, [{ path: '/a', change: 'unknown' }]);
@@ -125,7 +123,7 @@ test('a page that is not due is not requested and comes out as deferred after th
   assert.deepEqual(requests, ['/', '/a']);
 });
 
-test('a caller that keeps no memento gets every page on every crawl', async () => {
+test('a caller that keeps no memento gets every page on every crawl', async (t) => {
   const requests: string[] = [];
   using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
@@ -135,9 +133,11 @@ test('a caller that keeps no memento gets every page on every crawl', async () =
   );
   const crawler = siteCrawler(new AdaptiveRevisit());
 
-  await crawled(crawler.crawl(['https://site.test/'], null, options()));
+  await crawled(
+    crawler.crawl(['https://site.test/'], null, { signal: t.signal }),
+  );
   const again = await crawled(
-    crawler.crawl(['https://site.test/'], null, options()),
+    crawler.crawl(['https://site.test/'], null, { signal: t.signal }),
   );
 
   assert.deepEqual(again.pages, [{ path: '/a', change: 'unknown' }]);
@@ -157,12 +157,12 @@ test('a page whose body changed is handed back as modified', async (t) => {
   const crawler = siteCrawler(new FixedRevisit({ every: hour }));
 
   const first = await crawled(
-    crawler.crawl(['https://site.test/'], null, options()),
+    crawler.crawl(['https://site.test/'], null, { signal: t.signal }),
   );
   body = '<p>Second</p>';
   t.mock.timers.setTime(hour);
   const changed = await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, options()),
+    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
   );
 
   assert.deepEqual(changed.pages, [{ path: '/a', change: 'modified' }]);
@@ -182,11 +182,11 @@ test('a visit is timed at the start of its crawl, so a page due one interval lat
   const crawler = siteCrawler(new FixedRevisit({ every: hour }));
 
   const first = await crawled(
-    crawler.crawl(['https://site.test/'], null, options()),
+    crawler.crawl(['https://site.test/'], null, { signal: t.signal }),
   );
   t.mock.timers.setTime(hour);
   const next = await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, options()),
+    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
   );
 
   assert.deepEqual(next.pages, [{ path: '/a', change: 'unmodified' }]);
@@ -210,18 +210,20 @@ test('a failed page is due again two hours later even when nothing lists it, and
   const crawler = siteCrawler(new AdaptiveRevisit());
 
   const first = await crawled(
-    crawler.crawl(['https://site.test/'], null, options()),
+    crawler.crawl(['https://site.test/'], null, { signal: t.signal }),
   );
   t.mock.timers.setTime(hour);
   const waiting = await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, options()),
+    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
   );
   listed = false;
   broken = false;
   t.mock.timers.setTime(2 * hour);
   requests.length = 0;
   const retried = await crawled(
-    crawler.crawl(['https://site.test/'], waiting.memento, options()),
+    crawler.crawl(['https://site.test/'], waiting.memento, {
+      signal: t.signal,
+    }),
   );
 
   assert.deepEqual(first.failed, ['/a']);
@@ -248,18 +250,20 @@ test('a gone page waits a day, is not deferred meanwhile, and is handed back onc
   const crawler = siteCrawler(new AdaptiveRevisit());
 
   const first = await crawled(
-    crawler.crawl(['https://site.test/'], null, options()),
+    crawler.crawl(['https://site.test/'], null, { signal: t.signal }),
   );
   t.mock.timers.setTime(hour);
   requests.length = 0;
   const waiting = await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, options()),
+    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
   );
   const waitingRequests = requests.splice(0);
   gone = false;
   t.mock.timers.setTime(day);
   const back = await crawled(
-    crawler.crawl(['https://site.test/'], waiting.memento, options()),
+    crawler.crawl(['https://site.test/'], waiting.memento, {
+      signal: t.signal,
+    }),
   );
 
   assert.deepEqual(waitingRequests, ['/']);
@@ -286,11 +290,9 @@ test('a listing that gives a page another lastModified makes it due at once, and
   );
   const hinted = async (memento: unknown) => {
     const hints: (string | null)[] = [];
-    const crawl = crawler.crawl(
-      ['https://site.test/sitemap.xml'],
-      memento,
-      options(),
-    );
+    const crawl = crawler.crawl(['https://site.test/sitemap.xml'], memento, {
+      signal: t.signal,
+    });
     for await (const entry of crawl)
       if ('response' in entry) hints.push(entry.lastModified);
     return { hints, memento: JSON.parse(JSON.stringify(crawl.snapshot())) };
@@ -333,13 +335,15 @@ test('a known page that is due and that no listing names goes after the pages th
   );
 
   const first = await crawled(
-    crawler.crawl(['https://site.test/feed.json'], null, options()),
+    crawler.crawl(['https://site.test/feed.json'], null, { signal: t.signal }),
   );
   items = ['/b'];
   t.mock.timers.setTime(1);
   requests.length = 0;
   await crawled(
-    crawler.crawl(['https://site.test/feed.json'], first.memento, options()),
+    crawler.crawl(['https://site.test/feed.json'], first.memento, {
+      signal: t.signal,
+    }),
   );
 
   assert.deepEqual(requests, ['/feed.json', '/b', '/a']);
@@ -355,18 +359,22 @@ test('fail makes a handed-back page due as a failed one: it is not deferred, and
     ),
   );
   const crawler = siteCrawler(new AdaptiveRevisit());
-  const crawl = crawler.crawl(['https://site.test/'], null, options());
+  const crawl = crawler.crawl(['https://site.test/'], null, {
+    signal: t.signal,
+  });
   for await (const entry of crawl)
     if ('response' in entry) crawl.fail(entry.url);
   const memento = JSON.parse(JSON.stringify(crawl.snapshot()));
 
   t.mock.timers.setTime(hour);
   const waiting = await crawled(
-    crawler.crawl(['https://site.test/'], memento, options()),
+    crawler.crawl(['https://site.test/'], memento, { signal: t.signal }),
   );
   t.mock.timers.setTime(2 * hour);
   const retried = await crawled(
-    crawler.crawl(['https://site.test/'], waiting.memento, options()),
+    crawler.crawl(['https://site.test/'], waiting.memento, {
+      signal: t.signal,
+    }),
   );
 
   assert.deepEqual(waiting.pages, []);
@@ -396,7 +404,7 @@ test('a linked page that is not due spends no LinkReader budget, so the budget r
   );
   // No page is handed back, as no page links /nothing, so a linked page downloads only when LinkReader admits it.
   const linksOnly = (): CrawlOptions => ({
-    ...options(),
+    ...{ signal: t.signal },
     include: [new URLPattern({ pathname: '/nothing' })],
   });
 
@@ -432,12 +440,12 @@ test('AlwaysRevisit makes every visited URL due in the next crawl, failed and go
   const crawler = siteCrawler(new AlwaysRevisit());
 
   const first = await crawled(
-    crawler.crawl(['https://site.test/'], null, options()),
+    crawler.crawl(['https://site.test/'], null, { signal: t.signal }),
   );
   t.mock.timers.setTime(1);
   requests.length = 0;
   await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, options()),
+    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
   );
 
   assert.deepEqual(requests.sort(), ['/', '/a', '/broken', '/gone']);
@@ -571,7 +579,7 @@ test('nextDue gives when the next crawl has a known URL due, starting URLs inclu
       [new LinkReader({ maxDepth: 1, maxPages: 100 })],
       new AdaptiveRevisit(),
     )
-    .crawl(['https://site.test/'], null, options());
+    .crawl(['https://site.test/'], null, { signal: t.signal });
   const before = crawl.nextDue();
 
   await crawled(crawl);
@@ -604,14 +612,14 @@ test('a feed is due again within half the time its items cover, whatever the pol
     new AdaptiveRevisit(),
   );
 
-  const crawl = crawler.crawl(['https://site.test/feed.xml'], null, options());
+  const crawl = crawler.crawl(['https://site.test/feed.xml'], null, {
+    signal: t.signal,
+  });
   await crawled(crawl);
   dated = false;
-  const undated = crawler.crawl(
-    ['https://site.test/feed.xml'],
-    null,
-    options(),
-  );
+  const undated = crawler.crawl(['https://site.test/feed.xml'], null, {
+    signal: t.signal,
+  });
   await crawled(undated);
 
   // The items cover four hours, so the feed is due within two; its pages a day later.

@@ -37,7 +37,7 @@ import { type ExtractorRun } from './record-extractor.ts';
 import { WebSource } from './web-source.ts';
 import { WebStream } from './web-stream.ts';
 
-test('committed groups skip extraction after 304 and identical 200, but fresh and full scans extract', async () => {
+test('committed groups skip extraction after 304 and identical 200, but fresh and full scans extract', async (t) => {
   await using cache = await new TemporaryFiles().directory('web-cache-');
   let revision = 1;
   let extractions = 0;
@@ -80,7 +80,7 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
     cache: new Map(),
     headers: { 'cache-control': 'no-cache' },
   });
-  const signal = AbortSignal.timeout(10_000);
+  const signal = t.signal;
   async function scan(
     state: unknown,
     configuration = incremental,

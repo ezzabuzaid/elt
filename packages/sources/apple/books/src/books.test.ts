@@ -22,7 +22,7 @@ import { promisify } from 'node:util';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import { referenceDate } from '@eltjs/codec-apple-reference-date';
 import {
@@ -1448,7 +1448,7 @@ function watchBooks(
   }).watch({ signal });
 }
 
-test('a Books watch loads only the streams of the store that changed, while Books keeps its databases open', async () => {
+test('a Books watch loads only the streams of the store that changed, while Books keeps its databases open', async (t) => {
   await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const source = new AppleBooksSource(location);
@@ -1469,7 +1469,7 @@ test('a Books watch loads only the streams of the store that changed, while Book
     streams,
     join(scratch.path, 'import'),
     // A pass that never comes ends the watch, so the assertion fails.
-    AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    AbortSignal.any([controller.signal, t.signal]),
   )) {
     woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1)
@@ -1502,7 +1502,7 @@ test(
     // chmod denies nothing on Windows, and nothing to root.
     skip: process.platform === 'win32' || process.getuid?.() === 0,
   },
-  async () => {
+  async (t) => {
     await using scratch = await new TemporaryFiles().directory('books-');
     const location = await booksFixture(scratch.path);
     const source = new AppleBooksSource(location);
@@ -1521,7 +1521,7 @@ test(
       [source.annotations, source.assetDetails],
       join(scratch.path, 'import'),
       // A pass that never comes ends the watch, so the assertion fails.
-      AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+      AbortSignal.any([controller.signal, t.signal]),
     )) {
       passes.push([...outcomes]);
       if (passes.length === 1) {
@@ -2158,7 +2158,7 @@ test(
   },
 );
 
-test('a Books watch with a missing database loads the other streams, and the read of the missing store says why, as the user’s to fix', async () => {
+test('a Books watch with a missing database loads the other streams, and the read of the missing store says why, as the user’s to fix', async (t) => {
   await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   await rm(location.files.themes);
@@ -2170,7 +2170,7 @@ test('a Books watch with a missing database loads the other streams, and the rea
     source,
     [source.libraryAssets, source.themes],
     join(scratch.path, 'import'),
-    AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    AbortSignal.any([controller.signal, t.signal]),
   )) {
     passes.push([...outcomes]);
     controller.abort();
@@ -2189,7 +2189,7 @@ test('a Books watch with a missing database loads the other streams, and the rea
   assert.equal(failure.failureType, 'config');
 });
 
-test('a Books watch loads the streams of each store and preference file that changes', async () => {
+test('a Books watch loads the streams of each store and preference file that changes', async (t) => {
   await using scratch = await new TemporaryFiles().directory('books-');
   const location = await booksFixture(scratch.path);
   const source = new AppleBooksSource(location);
@@ -2218,7 +2218,7 @@ test('a Books watch loads the streams of each store and preference file that cha
     streams,
     join(scratch.path, 'import'),
     // A pass that never comes ends the watch, so the assertion fails.
-    AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+    AbortSignal.any([controller.signal, t.signal]),
   )) {
     woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1)
@@ -3030,7 +3030,7 @@ test('a Books watch keeps every stream current while its stores hold still', asy
     ],
   }).watch({
     // A check that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   });
   try {
     await watching.next();
@@ -3045,9 +3045,9 @@ test('a Books watch keeps every stream current while its stores hold still', asy
     const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
     // The check is due once the watch waits for its next poll.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     await clock.tickAsync(1000);
     await timebox(

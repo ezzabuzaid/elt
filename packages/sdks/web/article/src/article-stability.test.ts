@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 
 import { HTMLExtraction, WebArticle } from './index.ts';
 
-test('article extraction preserves inline punctuation and preformatted spacing', async () => {
+test('article extraction preserves inline punctuation and preformatted spacing', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html');
     response.end(`<html><body><article>
@@ -18,7 +18,7 @@ test('article extraction preserves inline punctuation and preformatted spacing',
   });
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert(article);
   const content = JSDOM.fragment(article.content);
@@ -31,7 +31,7 @@ test('article extraction preserves inline punctuation and preformatted spacing',
   );
 });
 
-test('ignored comments and insignificant whitespace do not change extracted HTML', async () => {
+test('ignored comments and insignificant whitespace do not change extracted HTML', async (t) => {
   let spaces = 4;
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html');
@@ -41,9 +41,9 @@ test('ignored comments and insignificant whitespace do not change extracted HTML
     </article></body></html>`);
   });
   const reader = new WebArticle([new HTMLExtraction()], got);
-  const first = await reader.fetch(upstream.origin, AbortSignal.timeout(5000));
+  const first = await reader.fetch(upstream.origin, t.signal);
   spaces = 17;
-  const second = await reader.fetch(upstream.origin, AbortSignal.timeout(5000));
+  const second = await reader.fetch(upstream.origin, t.signal);
   assert(first && second);
   assert.match(first.textContent, /The independent review found/);
   assert.equal(second.content, first.content);

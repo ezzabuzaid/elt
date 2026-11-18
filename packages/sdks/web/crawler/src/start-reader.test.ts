@@ -56,7 +56,7 @@ function marketplace(requests: string[]) {
   });
 }
 
-test('a crawl that only reads its starting pages requests none of the pages they link', async () => {
+test('a crawl that only reads its starting pages requests none of the pages they link', async (t) => {
   const requests: string[] = [];
   using server = mockWeb(marketplace(requests));
 
@@ -64,7 +64,7 @@ test('a crawl that only reads its starting pages requests none of the pages they
     new Origins(noRetries, null, globalThis)
       .crawler(noRetries, [new StartReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/en'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
   );
 
@@ -78,7 +78,7 @@ test('a crawl that only reads its starting pages requests none of the pages they
   );
 });
 
-test('each starting page is handed back as a page of its own provenance', async () => {
+test('each starting page is handed back as a page of its own provenance', async (t) => {
   const requests: string[] = [];
   using server = mockWeb(marketplace(requests));
 
@@ -86,7 +86,7 @@ test('each starting page is handed back as a page of its own provenance', async 
     new Origins(noRetries, null, globalThis)
       .crawler(noRetries, [new StartReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/en', 'https://site.test/ar'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
   );
 

@@ -15,6 +15,7 @@ import { test } from 'node:test';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -574,7 +575,7 @@ test(
 
     const passes = run.watch({
       // A batch that never comes ends the watch, so the assertion fails.
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+      signal: AbortSignal.any([controller.signal, t.signal]),
     });
     for (let next = passes.next(); ;) {
       const pass = await next;
@@ -586,9 +587,9 @@ test(
       // After the stop, the watch ends: a pass it still gave is counted above.
       if (controller.signal.aborted) continue;
       // The poll is due once the watch waits for it.
-      await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      await waitFor(() => assert.ok(clock.countTimers() > 0), {
+        signal: t.signal,
         interval: 1,
-        timeout: 10_000,
       });
       if (batches.length === 1) {
         await writeArchive(dir.path, { 'Profile 1': [page, supertab] });
@@ -599,9 +600,9 @@ test(
       else {
         await clock.tickAsync(1500);
         // The window's poll was read: the watch waits for the next one.
-        await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+        await waitFor(() => assert.ok(clock.countTimers() > 0), {
+          signal: t.signal,
           interval: 1,
-          timeout: 10_000,
         });
         controller.abort();
       }

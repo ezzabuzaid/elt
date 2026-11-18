@@ -5,6 +5,7 @@ import { type TestContext, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { waitFor } from '@zukhruf/testing/async';
 import { Postgres } from '@zukhruf/testing/postgres';
 import {
   type Database,
@@ -173,8 +174,8 @@ function watcher(t: TestContext, source: SqlServerSource, url: string) {
   const controller = new AbortController();
   const watch = watchSqlServer(source, url, clock, controller.signal);
   const check = async () => {
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
-      timeout: 30_000,
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
     });
     await clock.tickAsync(30_000);
   };
@@ -1665,8 +1666,8 @@ test(
     const watch = watcher(t, source, warehouse.connectionString);
     const pass = watch.next();
     try {
-      await t.waitFor(() => assert.equal(signals.failures.length, 3), {
-        timeout: 30_000,
+      await waitFor(() => assert.equal(signals.failures.length, 3), {
+        signal: t.signal,
       });
       assert.deepEqual(
         signals.failures.map(({ error, failureType }) => [
@@ -1730,8 +1731,8 @@ test(
     await using watch = watcher(t, source, warehouse.connectionString);
     const pass = watch.next();
 
-    await t.waitFor(() => assert.equal(signals.failures.length, 2), {
-      timeout: 30_000,
+    await waitFor(() => assert.equal(signals.failures.length, 2), {
+      signal: t.signal,
     });
     assert.deepEqual(
       signals.failures.map(({ error, failureType }) => [
@@ -1779,9 +1780,9 @@ test(
     }
 
     // An idle connection that nothing closed stays 30 s.
-    await t.waitFor(
+    await waitFor(
       async () => assert.equal(await sessionsOf(admin, reader.login), 0),
-      { timeout: 5000 },
+      { signal: t.signal },
     );
   },
 );
@@ -1912,12 +1913,12 @@ test(
     assert.equal(settled, false);
     // Checks on the clock, with real time between them for what the hop forwarded
     // before it stalled to drain, and for the driver to give up on its cancel.
-    await t.waitFor(
+    await waitFor(
       async () => {
         await clock.tickAsync(hourMs);
         assert.ok(settled);
       },
-      { interval: 500, timeout: 60_000 },
+      { signal: t.signal, interval: 500 },
     );
     const error = await run;
 
@@ -2058,8 +2059,8 @@ test(
         );
       for (const { id } of recordset) await admin.request().batch(`KILL ${id}`);
       await watch.check();
-      await t.waitFor(() => assert.ok(signals.failures.length > 0), {
-        timeout: 30_000,
+      await waitFor(() => assert.ok(signals.failures.length > 0), {
+        signal: t.signal,
       });
       const failures = signals.failures.map(({ error, failureType }) => [
         error instanceof SqlServerLoginError,

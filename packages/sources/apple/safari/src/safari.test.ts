@@ -20,7 +20,7 @@ import { deflateSync } from 'node:zlib';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import { referenceDate } from '@eltjs/codec-apple-reference-date';
 import {
@@ -2306,7 +2306,7 @@ function watchSafari(
   }).watch({ signal });
 }
 
-test('a Safari watch wakes only the streams of the store that changed, while Safari keeps its databases open', async () => {
+test('a Safari watch wakes only the streams of the store that changed, while Safari keeps its databases open', async (t) => {
   await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   const source = new AppleSafariSource(location);
@@ -2331,7 +2331,7 @@ test('a Safari watch wakes only the streams of the store that changed, while Saf
     streams,
     join(scratch.path, 'import'),
     // A pass that never comes ends the watch, so the assertion fails.
-    AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    AbortSignal.any([controller.signal, t.signal]),
   )) {
     woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1)
@@ -3109,7 +3109,7 @@ test('Safari keeps a year of history when it has written no preferences', async 
   );
 });
 
-test('a Safari watch wakes history when a profile History.db appears, and a property list’s streams when it goes and comes back', async () => {
+test('a Safari watch wakes history when a profile History.db appears, and a property list’s streams when it goes and comes back', async (t) => {
   await using scratch = await new TemporaryFiles().directory('safari-');
   const location = await safariFixture(scratch.path);
   const source = new AppleSafariSource(location);
@@ -3122,7 +3122,7 @@ test('a Safari watch wakes history when a profile History.db appears, and a prop
     [source.historyVisits, source.bookmarks],
     join(scratch.path, 'import'),
     // A pass that never comes ends the watch, so the assertion fails.
-    AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    AbortSignal.any([controller.signal, t.signal]),
   )) {
     woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1) {
@@ -3252,7 +3252,7 @@ test('while Safari is closed, a Safari watch makes no pass while its stores hold
     ],
   }).watch({
     // A check that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   });
   try {
     await watching.next();
@@ -3260,9 +3260,9 @@ test('while Safari is closed, a Safari watch makes no pass while its stores hold
     // A pass that a check starts would come here.
     const after = watching.next();
     // The check is due once the watch waits for its next poll.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     await clock.tickAsync(1000);
     // Waits for a check the watch recorded, as its sync history keeps it.

@@ -23,7 +23,7 @@ const paragraphs = [
 ] as const;
 const body = `<article><h1>Field observations</h1>${paragraphs.map((text) => `<p>${text}</p>`).join('')}</article>`;
 
-test('chosen websites and feeds compose with extraction without merging URL variants or losing successful pages', async () => {
+test('chosen websites and feeds compose with extraction without merging URL variants or losing successful pages', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     switch (request.url) {
@@ -69,7 +69,7 @@ test('chosen websites and feeds compose with extraction without merging URL vari
   const reader = new WebArticle([new HTMLExtraction()], got);
   for (const input of ['/', '/feed.xml']) {
     // Each origin answers one request a second, so a crawl takes seconds.
-    const signal = AbortSignal.timeout(120_000);
+    const signal = t.signal;
     const pages = (
       await Array.fromAsync(
         crawler.crawl([`${upstream.origin}${input}`], null, { signal }),
@@ -119,7 +119,7 @@ test('chosen websites and feeds compose with extraction without merging URL vari
   }
 });
 
-test('fetches an article with metadata and excludes surrounding navigation', async () => {
+test('fetches an article with metadata and excludes surrounding navigation', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(`<html lang="en"><head>
@@ -134,7 +134,7 @@ test('fetches an article with metadata and excludes surrounding navigation', asy
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     `${upstream.origin}/story`,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);
@@ -153,7 +153,7 @@ test('fetches an article with metadata and excludes surrounding navigation', asy
   assert.match(article.content, /<p>/);
 });
 
-test('redirects retain the fetched URL and resolve canonical and content links against the HTML base', async () => {
+test('redirects retain the fetched URL and resolve canonical and content links against the HTML base', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     if (request.url === '/old') {
       response.writeHead(302, { location: '/archive/story?edition=2' }).end();
@@ -167,7 +167,7 @@ test('redirects retain the fetched URL and resolve canonical and content links a
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     `${upstream.origin}/old`,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);
@@ -181,7 +181,7 @@ test('redirects retain the fetched URL and resolve canonical and content links a
   );
 });
 
-test('plain text retains the article heading and paragraph boundaries in minified HTML', async () => {
+test('plain text retains the article heading and paragraph boundaries in minified HTML', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html');
     response.end(
@@ -190,7 +190,7 @@ test('plain text retains the article heading and paragraph boundaries in minifie
   });
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article);
   assert.equal(
@@ -200,7 +200,7 @@ test('plain text retains the article heading and paragraph boundaries in minifie
   assert.equal(article.length, article.textContent.length);
 });
 
-test('extracted HTML removes executable markup without dropping article prose', async () => {
+test('extracted HTML removes executable markup without dropping article prose', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html');
     response.end(
@@ -209,7 +209,7 @@ test('extracted HTML removes executable markup without dropping article prose', 
   });
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article?.content);
   assert.doesNotMatch(
@@ -220,7 +220,7 @@ test('extracted HTML removes executable markup without dropping article prose', 
   assert.ok(article.textContent.includes(paragraphs[0]));
 });
 
-test('reading an article never executes its scripts or fetches embedded resources', async () => {
+test('reading an article never executes its scripts or fetches embedded resources', async (t) => {
   const resourceRequests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     if (request.url !== '/story') {
@@ -245,7 +245,7 @@ test('reading an article never executes its scripts or fetches embedded resource
   });
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     `${upstream.origin}/story`,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article);
   assert.ok(article.textContent.includes(paragraphs[0]));
@@ -256,7 +256,7 @@ test('reading an article never executes its scripts or fetches embedded resource
   assert.deepEqual(resourceRequests, []);
 });
 
-test('injected request deadlines close an unfinished response and preserve the timeout cause', async () => {
+test('injected request deadlines close an unfinished response and preserve the timeout cause', async (t) => {
   const closed = Promise.withResolvers<void>();
   let streaming = false;
   await using upstream = await new HttpServer().start((_request, response) => {
@@ -270,7 +270,7 @@ test('injected request deadlines close an unfinished response and preserve the t
     got.extend({ timeout: { request: 250 }, retry: { limit: 0 } }),
   );
   await assert.rejects(
-    reader.fetch(upstream.origin, AbortSignal.timeout(5000)),
+    reader.fetch(upstream.origin, t.signal),
     (error: unknown) =>
       error instanceof ArticleError && error.cause instanceof TimeoutError,
   );
@@ -278,7 +278,7 @@ test('injected request deadlines close an unfinished response and preserve the t
   await closed.promise;
 });
 
-test('permanent HTTP and extraction failures do not repeat their downloads', async () => {
+test('permanent HTTP and extraction failures do not repeat their downloads', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     requests.push(request.url ?? '/');
@@ -290,7 +290,7 @@ test('permanent HTTP and extraction failures do not repeat their downloads', asy
     await assert.rejects(
       new WebArticle([new HTMLExtraction()], got).fetch(
         `${upstream.origin}${path}`,
-        AbortSignal.timeout(5000),
+        t.signal,
       ),
       (error: unknown) => {
         assert(error instanceof ArticleError);
@@ -302,7 +302,7 @@ test('permanent HTTP and extraction failures do not repeat their downloads', asy
   assert.deepEqual(requests, ['/missing', '/not-modified', '/json']);
 });
 
-test('HTTP, transport and unsupported content failures identify the failed URL', async () => {
+test('HTTP, transport and unsupported content failures identify the failed URL', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     if (request.url === '/redirect') {
       response.writeHead(302, { location: '/unavailable' }).end();
@@ -320,7 +320,7 @@ test('HTTP, transport and unsupported content failures identify the failed URL',
     await assert.rejects(
       new WebArticle([new HTMLExtraction()], got).fetch(
         `${upstream.origin}${path}`,
-        AbortSignal.timeout(5000),
+        t.signal,
       ),
       (error: unknown) => {
         assert.ok(error instanceof ArticleError);
@@ -335,7 +335,7 @@ test('HTTP, transport and unsupported content failures identify the failed URL',
   }
 });
 
-test('truncated and corrupt response bodies fail instead of returning partial article text', async () => {
+test('truncated and corrupt response bodies fail instead of returning partial article text', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     const html = `<html><head><title>Field observations</title></head><body>${body}</body></html>`;
     response.setHeader('content-type', 'text/html; charset=utf-8');
@@ -351,7 +351,7 @@ test('truncated and corrupt response bodies fail instead of returning partial ar
     await assert.rejects(
       new WebArticle([new HTMLExtraction()], got).fetch(
         `${upstream.origin}${path}`,
-        AbortSignal.timeout(5000),
+        t.signal,
       ),
       (error: unknown) => {
         assert.ok(error instanceof ArticleError);
@@ -363,7 +363,7 @@ test('truncated and corrupt response bodies fail instead of returning partial ar
   }
 });
 
-test('cancellation before and during a download preserves the caller reason', async () => {
+test('cancellation before and during a download preserves the caller reason', async (t) => {
   for (const phase of ['before', 'headers', 'body']) {
     const controller = new AbortController();
     const reason = new Error(`Stopped during ${phase}`);
@@ -380,14 +380,14 @@ test('cancellation before and during a download preserves the caller reason', as
     await assert.rejects(
       new WebArticle([new HTMLExtraction()], got).fetch(
         upstream.origin,
-        AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+        AbortSignal.any([controller.signal, t.signal]),
       ),
       (error: unknown) => error === reason,
     );
   }
 });
 
-test('cancelling a streaming page leaves concurrent and later calls usable on the same reader', async () => {
+test('cancelling a streaming page leaves concurrent and later calls usable on the same reader', async (t) => {
   const started = Promise.withResolvers<void>();
   const controller = new AbortController();
   const reason = new Error('Stop only the unfinished article');
@@ -405,7 +405,7 @@ test('cancelling a streaming page leaves concurrent and later calls usable on th
   const stopped = assert.rejects(
     reader.fetch(
       `${upstream.origin}/streaming`,
-      AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+      AbortSignal.any([controller.signal, t.signal]),
     ),
     (error: unknown) => error === reason,
   );
@@ -414,7 +414,7 @@ test('cancelling a streaming page leaves concurrent and later calls usable on th
     // A complete second request gives the first time to enter body consumption.
     const concurrent = await reader.fetch(
       `${upstream.origin}/complete`,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
     assert.equal(concurrent?.title, 'Field observations');
   } finally {
@@ -423,12 +423,12 @@ test('cancelling a streaming page leaves concurrent and later calls usable on th
   }
   const subsequent = await reader.fetch(
     `${upstream.origin}/complete`,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(subsequent?.textContent.includes(paragraphs[0]));
 });
 
-test('empty and navigation-only pages return no article', async () => {
+test('empty and navigation-only pages return no article', async (t) => {
   for (const html of [
     '',
     '<html><body><nav><a href="/">Home</a><a href="/login">Log in</a></nav></body></html>',
@@ -444,14 +444,14 @@ test('empty and navigation-only pages return no article', async () => {
     assert.equal(
       await new WebArticle([new HTMLExtraction()], got).fetch(
         upstream.origin,
-        AbortSignal.timeout(5000),
+        t.signal,
       ),
       null,
     );
   }
 });
 
-test('standard structured metadata takes precedence and absent publication dates stay unknown', async () => {
+test('standard structured metadata takes precedence and absent publication dates stay unknown', async (t) => {
   for (const structured of [true, false]) {
     await using upstream = await new HttpServer().start(
       (_request, response) => {
@@ -475,7 +475,7 @@ test('standard structured metadata takes precedence and absent publication dates
     );
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
     assert.ok(article);
     assert.equal(
@@ -491,7 +491,7 @@ test('standard structured metadata takes precedence and absent publication dates
   }
 });
 
-test('decodes HTTP and HTML charset declarations and preserves Unicode', async () => {
+test('decodes HTTP and HTML charset declarations and preserves Unicode', async (t) => {
   for (const declaration of ['http', 'html', 'utf8']) {
     await using upstream = await new HttpServer().start(
       (_request, response) => {
@@ -512,7 +512,7 @@ test('decodes HTTP and HTML charset declarations and preserves Unicode', async (
     );
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
     assert.ok(article);
     assert.equal(article.title, 'Café & rivière');
@@ -525,7 +525,7 @@ test('decodes HTTP and HTML charset declarations and preserves Unicode', async (
   }
 });
 
-test('invalid and non-web canonical declarations cannot become article identities', async () => {
+test('invalid and non-web canonical declarations cannot become article identities', async (t) => {
   for (const href of [
     'http://[invalid',
     'javascript:alert(1)',
@@ -541,14 +541,14 @@ test('invalid and non-web canonical declarations cannot become article identitie
     );
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
     assert.ok(article);
     assert.equal(article.canonicalUrl, null);
   }
 });
 
-test('short posts retain their prose instead of being rejected by a length threshold', async () => {
+test('short posts retain their prose instead of being rejected by a length threshold', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html');
     response.end(
@@ -557,7 +557,7 @@ test('short posts retain their prose instead of being rejected by a length thres
   });
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article);
   assert.equal(
@@ -566,7 +566,7 @@ test('short posts retain their prose instead of being rejected by a length thres
   );
 });
 
-test('prose in plain div elements remains readable without an article or paragraph tag', async () => {
+test('prose in plain div elements remains readable without an article or paragraph tag', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(
@@ -575,14 +575,14 @@ test('prose in plain div elements remains readable without an article or paragra
   });
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article);
   assert.ok(article.textContent.includes(paragraphs[0]));
   assert.ok(article.textContent.includes(paragraphs[1]));
 });
 
-test('a standalone data table remains readable without surrounding paragraph tags', async () => {
+test('a standalone data table remains readable without surrounding paragraph tags', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(
@@ -591,14 +591,14 @@ test('a standalone data table remains readable without surrounding paragraph tag
   });
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article);
   assert.match(article.textContent, /Spring\s+37 mm/);
   assert.match(article.textContent, /Autumn\s+52 mm/);
 });
 
-test('compressed pages respect the HTTP charset over conflicting HTML metadata', async () => {
+test('compressed pages respect the HTTP charset over conflicting HTML metadata', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     const html = Buffer.from(
       `<html><head><meta charset="utf-8"><title>Café observations</title></head><body>${body.replace('garden study', 'café study')}</body></html>`,
@@ -615,7 +615,7 @@ test('compressed pages respect the HTTP charset over conflicting HTML metadata',
   for (const path of ['/gzip', '/brotli']) {
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       `${upstream.origin}${path}`,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
     assert.ok(article);
     assert.equal(article.title, 'Café observations');
@@ -624,7 +624,7 @@ test('compressed pages respect the HTTP charset over conflicting HTML metadata',
   }
 });
 
-test('plain text keeps data-table columns distinguishable', async () => {
+test('plain text keeps data-table columns distinguishable', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html');
     response.end(
@@ -633,7 +633,7 @@ test('plain text keeps data-table columns distinguishable', async () => {
   });
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article);
   assert.match(article.textContent, /SEASON\s+RAINFALL/i);

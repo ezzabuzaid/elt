@@ -6,7 +6,7 @@ import got from 'got';
 
 import { HTMLExtraction, WebArticle } from './index.ts';
 
-test('short linked prose survives beside a longer subscription section', async () => {
+test('short linked prose survives beside a longer subscription section', async (t) => {
   // Reproduces the nested prose, link density and competing sidebar observed
   // in a live short post. A local page keeps the public HTTP test deterministic.
 
@@ -40,7 +40,7 @@ test('short linked prose survives beside a longer subscription section', async (
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);

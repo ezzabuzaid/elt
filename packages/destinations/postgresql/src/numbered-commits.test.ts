@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
+import { waitFor } from '@zukhruf/testing/async';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
@@ -445,14 +446,14 @@ test('a commit still in flight keeps every later commit of the database from bei
     () => 'committed',
     () => 'failed',
   );
-  const pid = await t.waitFor(
+  const pid = await waitFor(
     async () => {
       const [blocked] = await watcher<{ pid: number }[]>`
         SELECT pid FROM pg_locks WHERE NOT granted AND relation = to_regclass('a.notes')`;
       assert.ok(blocked, 'no commit waits for a.notes yet');
       return blocked.pid;
     },
-    { interval: 10, timeout: 10_000 },
+    { signal: t.signal, interval: 10 },
   );
   await run(url, b.connection);
 

@@ -13,7 +13,7 @@ import { promisify } from 'node:util';
 
 import { TemporaryFiles } from '@zukhruf/fs';
 import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -854,11 +854,11 @@ test('a Reminders pass the host stops while EventKit reads ends at once and is r
   const removed = new Error('the user removed this connector');
 
   const loading = reminders.load({ signal: removal.signal });
-  await t.waitFor(
+  await waitFor(
     () => {
       assert.ok(helper.began(), 'the EventKit helper never began its read');
     },
-    { interval: 10, timeout: 60_000 },
+    { signal: t.signal, interval: 10 },
   );
   removal.abort(removed);
   const outcome = await loading.then(
@@ -1463,7 +1463,7 @@ test(
           steps: [new Copy(source.lists, destination.table('lists'))],
         }),
       ],
-    }).watch({ signal: AbortSignal.timeout(60_000) });
+    }).watch({ signal: t.signal });
     try {
       await watching.next();
 
@@ -1567,7 +1567,7 @@ test(
           ),
         }),
       ],
-    }).watch({ signal: AbortSignal.timeout(60_000) });
+    }).watch({ signal: t.signal });
     try {
       await watching.next();
       using out = open(data, { readOnly: true });

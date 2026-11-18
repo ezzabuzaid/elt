@@ -4440,7 +4440,7 @@ test('one pipeline loads each connection into its own schema, and a failing conn
   );
 });
 
-test('each watch pass is recorded under its own connection when it completes', async () => {
+test('each watch pass is recorded under its own connection when it completes', async (t) => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const sql = clients.adopt(
@@ -4487,7 +4487,7 @@ test('each watch pass is recorded under its own connection when it completes', a
   const controller = new AbortController();
   const passes: string[] = [];
   for await (const { connection } of pipeline.watch({
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   })) {
     passes.push(connection.name);
     if (passes.length === 4) controller.abort();
@@ -4512,7 +4512,7 @@ test('each watch pass is recorded under its own connection when it completes', a
   assert.deepEqual([...overlapping], []);
 });
 
-test('stream_status keeps each stream own latest outcome when a watch pass reads only what changed', async () => {
+test('stream_status keeps each stream own latest outcome when a watch pass reads only what changed', async (t) => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const sql = clients.adopt(
@@ -4565,7 +4565,7 @@ test('stream_status keeps each stream own latest outcome when a watch pass reads
   const controller = new AbortController();
   let passes = 0;
   for await (const _pass of pipeline.watch({
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   }))
     if (++passes === 2) controller.abort();
 

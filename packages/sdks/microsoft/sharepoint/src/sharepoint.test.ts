@@ -118,13 +118,10 @@ function refusal(
   );
 }
 
-test('a Graph call carries the bearer token that the client credentials of the app get', async () => {
+test('a Graph call carries the bearer token that the client credentials of the app get', async (t) => {
   using microsoftSide = microsoft(() => Response.json(sales));
 
-  const site = await microsoftSide.client.site(
-    SITE_URL,
-    AbortSignal.timeout(5000),
-  );
+  const site = await microsoftSide.client.site(SITE_URL, t.signal);
 
   assert.deepEqual(site, sales);
   const token = microsoftSide.requests.find((request) =>
@@ -145,7 +142,7 @@ test('a Graph call carries the bearer token that the client credentials of the a
   );
 });
 
-test('the site, its drives, lists, columns, pages and text web parts come back as Graph gives them', async () => {
+test('the site, its drives, lists, columns, pages and text web parts come back as Graph gives them', async (t) => {
   const LIST_ID = 'b1c2d3e4-0000-4000-8000-00000000000a';
   const PAGE_ID = 'f7a9c0d1-0000-4000-8000-00000000000b';
   const documentsDrive = {
@@ -320,7 +317,7 @@ test('the site, its drives, lists, columns, pages and text web parts come back a
     }
   });
   const { client } = microsoftSide;
-  const signal = AbortSignal.timeout(5000);
+  const signal = t.signal;
 
   const site = await client.site(SITE_URL, signal);
   const drives = await client.drives(site.id, signal);
@@ -361,7 +358,7 @@ test('the site, its drives, lists, columns, pages and text web parts come back a
   ]);
 });
 
-test('a client secret that Entra ID refuses fails with a SharePointCredentialsError, and no Graph request is sent', async () => {
+test('a client secret that Entra ID refuses fails with a SharePointCredentialsError, and no Graph request is sent', async (t) => {
   const { clock } = fakeClock();
   using server = new Msw().intercept(
     http.post(
@@ -386,7 +383,7 @@ test('a client secret that Entra ID refuses fails with a SharePointCredentialsEr
   });
 
   await assert.rejects(
-    client.site(SITE_URL, AbortSignal.timeout(5000)),
+    client.site(SITE_URL, t.signal),
     SharePointCredentialsError,
   );
   assert.deepEqual(
@@ -397,7 +394,7 @@ test('a client secret that Entra ID refuses fails with a SharePointCredentialsEr
   );
 });
 
-test('a 429 waits the Retry-After on the clock, then the request is sent again', async () => {
+test('a 429 waits the Retry-After on the clock, then the request is sent again', async (t) => {
   let served = 0;
   using microsoftSide = microsoft(() =>
     served++ === 0
@@ -407,10 +404,7 @@ test('a 429 waits the Retry-After on the clock, then the request is sent again',
       : Response.json(sales),
   );
 
-  const site = await microsoftSide.client.site(
-    SITE_URL,
-    AbortSignal.timeout(5000),
-  );
+  const site = await microsoftSide.client.site(SITE_URL, t.signal);
 
   assert.deepEqual(site, sales);
   assert.deepEqual(microsoftSide.waits, [7000]);
@@ -421,7 +415,7 @@ for (const [status, code] of [
   [503, 'serviceNotAvailable'],
   [504, 'gatewayTimeout'],
 ] as const) {
-  test(`a ${status} waits on the clock, then the request is sent again`, async () => {
+  test(`a ${status} waits on the clock, then the request is sent again`, async (t) => {
     let served = 0;
     using microsoftSide = microsoft(() =>
       served++ === 0
@@ -429,10 +423,7 @@ for (const [status, code] of [
         : Response.json(sales),
     );
 
-    const site = await microsoftSide.client.site(
-      SITE_URL,
-      AbortSignal.timeout(5000),
-    );
+    const site = await microsoftSide.client.site(SITE_URL, t.signal);
 
     assert.deepEqual(site, sales);
     assert.equal(microsoftSide.graphRequests().length, 2);
@@ -443,7 +434,7 @@ for (const [status, code] of [
   });
 }
 
-test('a request that Graph answers 429 every time fails with a GraphError after five tries', async () => {
+test('a request that Graph answers 429 every time fails with a GraphError after five tries', async (t) => {
   using microsoftSide = microsoft(() =>
     refusal(429, 'TooManyRequests', 'Too many requests', {
       'retry-after': '1',
@@ -451,7 +442,7 @@ test('a request that Graph answers 429 every time fails with a GraphError after 
   );
 
   await assert.rejects(
-    microsoftSide.client.site(SITE_URL, AbortSignal.timeout(5000)),
+    microsoftSide.client.site(SITE_URL, t.signal),
     (error: unknown) => {
       assert.ok(error instanceof GraphError);
       assert.equal(error.status, 429);
@@ -463,7 +454,7 @@ test('a request that Graph answers 429 every time fails with a GraphError after 
   assert.deepEqual(microsoftSide.waits, [1000, 1000, 1000, 1000]);
 });
 
-test('a Retry-After of more than 60 seconds fails at once, with no wait', async () => {
+test('a Retry-After of more than 60 seconds fails at once, with no wait', async (t) => {
   using microsoftSide = microsoft(() =>
     refusal(429, 'TooManyRequests', 'Too many requests', {
       'retry-after': '61',
@@ -471,7 +462,7 @@ test('a Retry-After of more than 60 seconds fails at once, with no wait', async 
   );
 
   await assert.rejects(
-    microsoftSide.client.site(SITE_URL, AbortSignal.timeout(5000)),
+    microsoftSide.client.site(SITE_URL, t.signal),
     (error: unknown) => {
       assert.ok(error instanceof GraphError);
       assert.equal(error.status, 429);
@@ -482,7 +473,7 @@ test('a Retry-After of more than 60 seconds fails at once, with no wait', async 
   assert.deepEqual(microsoftSide.waits, []);
 });
 
-test('a Retry-After given as an HTTP date waits until that date on the clock', async () => {
+test('a Retry-After given as an HTTP date waits until that date on the clock', async (t) => {
   let served = 0;
   // The fake clock's Date.now is 2026-11-17T12:00:00Z.
   using microsoftSide = microsoft(() =>
@@ -493,23 +484,20 @@ test('a Retry-After given as an HTTP date waits until that date on the clock', a
       : Response.json(sales),
   );
 
-  const site = await microsoftSide.client.site(
-    SITE_URL,
-    AbortSignal.timeout(5000),
-  );
+  const site = await microsoftSide.client.site(SITE_URL, t.signal);
 
   assert.deepEqual(site, sales);
   assert.deepEqual(microsoftSide.waits, [30_000]);
   assert.equal(microsoftSide.graphRequests().length, 2);
 });
 
-test('a site that the app holds no grant on fails with a SharePointAccessError that names the site URL', async () => {
+test('a site that the app holds no grant on fails with a SharePointAccessError that names the site URL', async (t) => {
   using microsoftSide = microsoft(() =>
     refusal(403, 'accessDenied', 'Access denied'),
   );
 
   await assert.rejects(
-    microsoftSide.client.site(SITE_URL, AbortSignal.timeout(5000)),
+    microsoftSide.client.site(SITE_URL, t.signal),
     (error: unknown) => {
       assert.ok(error instanceof SharePointAccessError);
       assert.equal(error.resource, SITE_URL);
@@ -529,13 +517,13 @@ test('a site that the app holds no grant on fails with a SharePointAccessError t
   );
 });
 
-test('a token that Graph refuses fails with a SharePointAccessError too', async () => {
+test('a token that Graph refuses fails with a SharePointAccessError too', async (t) => {
   using microsoftSide = microsoft(() =>
     refusal(401, 'InvalidAuthenticationToken', 'Access token is empty.'),
   );
 
   await assert.rejects(
-    microsoftSide.client.site(SITE_URL, AbortSignal.timeout(5000)),
+    microsoftSide.client.site(SITE_URL, t.signal),
     (error: unknown) => {
       assert.ok(error instanceof SharePointAccessError);
       assert.equal(error.resource, SITE_URL);
@@ -551,13 +539,13 @@ test('a token that Graph refuses fails with a SharePointAccessError too', async 
   );
 });
 
-test('a site URL that no site is at fails with a SharePointSiteNotFoundError', async () => {
+test('a site URL that no site is at fails with a SharePointSiteNotFoundError', async (t) => {
   using microsoftSide = microsoft(() =>
     refusal(404, 'itemNotFound', 'Requested site could not be found'),
   );
 
   await assert.rejects(
-    microsoftSide.client.site(SITE_URL, AbortSignal.timeout(5000)),
+    microsoftSide.client.site(SITE_URL, t.signal),
     (error: unknown) => {
       assert.ok(error instanceof SharePointSiteNotFoundError);
       assert.equal(error.url, SITE_URL);
@@ -566,7 +554,7 @@ test('a site URL that no site is at fails with a SharePointSiteNotFoundError', a
   );
 });
 
-test('a drive delta follows each nextLink and ends at the deltaLink', async () => {
+test('a drive delta follows each nextLink and ends at the deltaLink', async (t) => {
   const folder = {
     id: '01FOLDER',
     name: 'Proposals',
@@ -625,11 +613,7 @@ test('a drive delta follows each nextLink and ends at the deltaLink', async () =
   );
 
   const pages = await Array.fromAsync(
-    microsoftSide.client.driveDelta(
-      'drive-1',
-      undefined,
-      AbortSignal.timeout(5000),
-    ),
+    microsoftSide.client.driveDelta('drive-1', undefined, t.signal),
   );
 
   assert.deepEqual(pages, [
@@ -644,7 +628,7 @@ test('a drive delta follows each nextLink and ends at the deltaLink', async () =
   );
 });
 
-test('a list items delta gives the fields of each item', async () => {
+test('a list items delta gives the fields of each item', async (t) => {
   const item = {
     id: '3',
     eTag: '"5a58bb09-1fba-41c1-8125-69da264370a0,4"',
@@ -667,18 +651,13 @@ test('a list items delta gives the fields of each item', async () => {
   );
 
   const pages = await Array.fromAsync(
-    microsoftSide.client.listItemsDelta(
-      SITE_ID,
-      'events',
-      undefined,
-      AbortSignal.timeout(5000),
-    ),
+    microsoftSide.client.listItemsDelta(SITE_ID, 'events', undefined, t.signal),
   );
 
   assert.deepEqual(pages, [{ items: [item], deltaLink }]);
 });
 
-test('a list items delta follows each nextLink and ends at the deltaLink', async () => {
+test('a list items delta follows each nextLink and ends at the deltaLink', async (t) => {
   const item = (id: string, title: string) => ({
     id,
     eTag: `"5a58bb09-1fba-41c1-8125-69da264370a0,${id}"`,
@@ -703,12 +682,7 @@ test('a list items delta follows each nextLink and ends at the deltaLink', async
   });
 
   const pages = await Array.fromAsync(
-    microsoftSide.client.listItemsDelta(
-      SITE_ID,
-      'events',
-      undefined,
-      AbortSignal.timeout(5000),
-    ),
+    microsoftSide.client.listItemsDelta(SITE_ID, 'events', undefined, t.signal),
   );
 
   assert.deepEqual(pages, [
@@ -718,7 +692,7 @@ test('a list items delta follows each nextLink and ends at the deltaLink', async
   assert.equal(microsoftSide.graphRequests().length, 2);
 });
 
-test('a list read in full gives every item of each page, for a list that Graph serves no delta for', async () => {
+test('a list read in full gives every item of each page, for a list that Graph serves no delta for', async (t) => {
   const request = (id: string, title: string) => ({
     id,
     eTag: `"5a58bb09-1fba-41c1-8125-69da264370a0,${id}"`,
@@ -748,7 +722,7 @@ test('a list read in full gives every item of each page, for a list that Graph s
   const items = await microsoftSide.client.listItems(
     SITE_ID,
     'requests',
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.deepEqual(
@@ -760,7 +734,7 @@ test('a list read in full gives every item of each page, for a list that Graph s
   );
 });
 
-test('a delta link outside Graph is refused before the token is sent anywhere', async () => {
+test('a delta link outside Graph is refused before the token is sent anywhere', async (t) => {
   using microsoftSide = microsoft(
     () => refusal(500, 'unexpected', 'Graph was not asked'),
     http.get('https://attacker.example/*', () => Response.json({ value: [] })),
@@ -771,7 +745,7 @@ test('a delta link outside Graph is refused before the token is sent anywhere', 
       microsoftSide.client.driveDelta(
         'drive-1',
         'https://attacker.example/v1.0/drives/drive-1/root/delta?token=x',
-        AbortSignal.timeout(5000),
+        t.signal,
       ),
     ),
     /is not a Microsoft Graph v1\.0 link/,
@@ -783,7 +757,7 @@ test('a delta link outside Graph is refused before the token is sent anywhere', 
   );
 });
 
-test('a link from a host that only starts like Graph is refused before any request', async () => {
+test('a link from a host that only starts like Graph is refused before any request', async (t) => {
   using microsoftSide = microsoft(
     () => refusal(500, 'unexpected', 'Graph was not asked'),
     http.get('https://graph.microsoft.com.evil.example/*', () =>
@@ -796,7 +770,7 @@ test('a link from a host that only starts like Graph is refused before any reque
       microsoftSide.client.driveDelta(
         'drive-1',
         'https://graph.microsoft.com.evil.example/v1.0/drives/drive-1/root/delta?token=x',
-        AbortSignal.timeout(5000),
+        t.signal,
       ),
     ),
     /is not a Microsoft Graph v1\.0 link/,
@@ -805,7 +779,7 @@ test('a link from a host that only starts like Graph is refused before any reque
   assert.deepEqual(microsoftSide.requests, []);
 });
 
-test('a nextLink outside Graph in a page of a collection is refused before the request goes there', async () => {
+test('a nextLink outside Graph in a page of a collection is refused before the request goes there', async (t) => {
   const documents = {
     id: 'b!CbtYWrofwUGBJWnaJkNwoNrBLp_kC3RKklSXPwrdeP0',
     name: 'Documents',
@@ -827,7 +801,7 @@ test('a nextLink outside Graph in a page of a collection is refused before the r
   );
 
   await assert.rejects(
-    microsoftSide.client.drives(SITE_ID, AbortSignal.timeout(5000)),
+    microsoftSide.client.drives(SITE_ID, t.signal),
     /is not a Microsoft Graph v1\.0 link/,
   );
 
@@ -839,7 +813,7 @@ test('a nextLink outside Graph in a page of a collection is refused before the r
   );
 });
 
-test('a delta link that Graph no longer serves fails with a DeltaExpiredError', async () => {
+test('a delta link that Graph no longer serves fails with a DeltaExpiredError', async (t) => {
   const expired = `${GRAPH}/drives/drive-1/root/delta?token=from-last-year`;
   using microsoftSide = microsoft((url) =>
     url.searchParams.get('token') === 'from-last-year'
@@ -851,11 +825,7 @@ test('a delta link that Graph no longer serves fails with a DeltaExpiredError', 
 
   await assert.rejects(
     Array.fromAsync(
-      microsoftSide.client.driveDelta(
-        'drive-1',
-        expired,
-        AbortSignal.timeout(5000),
-      ),
+      microsoftSide.client.driveDelta('drive-1', expired, t.signal),
     ),
     (error: unknown) => {
       assert.ok(error instanceof DeltaExpiredError);
@@ -866,7 +836,7 @@ test('a delta link that Graph no longer serves fails with a DeltaExpiredError', 
   );
 });
 
-test('a malformed delta link fails with a GraphError that keeps the status and code of Graph', async () => {
+test('a malformed delta link fails with a GraphError that keeps the status and code of Graph', async (t) => {
   using microsoftSide = microsoft(() =>
     refusal(400, 'invalidRequest', 'Invalid request'),
   );
@@ -876,7 +846,7 @@ test('a malformed delta link fails with a GraphError that keeps the status and c
       microsoftSide.client.driveDelta(
         'drive-1',
         `${GRAPH}/drives/drive-1/root/delta?token=not-a-token`,
-        AbortSignal.timeout(5000),
+        t.signal,
       ),
     ),
     (error: unknown) => {
@@ -889,7 +859,7 @@ test('a malformed delta link fails with a GraphError that keeps the status and c
   );
 });
 
-test('a download writes the bytes of the file to the path', async () => {
+test('a download writes the bytes of the file to the path', async (t) => {
   const bytes = Uint8Array.from({ length: 300_000 }, (_, index) => index % 251);
   const signed =
     'https://contoso.sharepoint.com/sites/Sales/_layouts/15/download.aspx';
@@ -908,12 +878,7 @@ test('a download writes the bytes of the file to the path', async () => {
   );
   const path = join(directory.path, 'Proposal.docx');
 
-  await microsoftSide.client.download(
-    'drive-1',
-    '01FILE',
-    path,
-    AbortSignal.timeout(5000),
-  );
+  await microsoftSide.client.download('drive-1', '01FILE', path, t.signal);
 
   assert.deepEqual(new Uint8Array(await readFile(path)), bytes);
   const download = microsoftSide.requests.find(
@@ -923,7 +888,7 @@ test('a download writes the bytes of the file to the path', async () => {
   assert.equal(download.headers.get('authorization'), null);
 });
 
-test('a download whose connection breaks before the body arrives rejects', async () => {
+test('a download whose connection breaks before the body arrives rejects', async (t) => {
   const signed =
     'https://contoso.sharepoint.com/sites/Sales/_layouts/15/download.aspx';
   let sent = false;
@@ -958,13 +923,13 @@ test('a download whose connection breaks before the body arrives rejects', async
       'drive-1',
       '01FILE',
       join(directory.path, 'Proposal.docx'),
-      AbortSignal.timeout(5000),
+      t.signal,
     ),
   );
   assert.ok(sent);
 });
 
-test('a download whose file cannot be written rejects, so no file passes as stored', async () => {
+test('a download whose file cannot be written rejects, so no file passes as stored', async (t) => {
   const signed =
     'https://contoso.sharepoint.com/sites/Sales/_layouts/15/download.aspx';
   using microsoftSide = microsoft(
@@ -986,7 +951,7 @@ test('a download whose file cannot be written rejects, so no file passes as stor
       'drive-1',
       '01FILE',
       join(directory.path, 'missing folder', 'Proposal.docx'),
-      AbortSignal.timeout(5000),
+      t.signal,
     ),
     { code: 'ENOENT' },
   );

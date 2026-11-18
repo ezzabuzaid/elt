@@ -17,7 +17,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import {
   type IndexedDBWrite,
@@ -2517,7 +2517,7 @@ test(
 
     const passes = run.watch({
       // A batch that never comes ends the watch, so the assertion fails.
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+      signal: AbortSignal.any([controller.signal, t.signal]),
     });
     for (let next = passes.next(); ;) {
       const pass = await next;
@@ -2529,9 +2529,9 @@ test(
       // After the stop, the watch ends: a pass it still gave is counted above.
       if (controller.signal.aborted) continue;
       // The poll is due once the watch waits for it.
-      await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+      await waitFor(() => assert.ok(clock.countTimers() > 0), {
+        signal: t.signal,
         interval: 1,
-        timeout: 10_000,
       });
       if (batches.length === 1) {
         await store.save([
@@ -2552,9 +2552,9 @@ test(
       else {
         await clock.tickAsync(1500);
         // The window's poll was read: the watch waits for the next one.
-        await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+        await waitFor(() => assert.ok(clock.countTimers() > 0), {
+          signal: t.signal,
           interval: 1,
-          timeout: 10_000,
         });
         controller.abort();
       }
@@ -2565,7 +2565,7 @@ test(
   },
 );
 
-test('a Slack watch wakes when the app records a download', async () => {
+test('a Slack watch wakes when the app records a download', async (t) => {
   const { dir, store } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
@@ -2579,7 +2579,7 @@ test('a Slack watch wakes when the app records a download', async () => {
 
   for await (const { outcomes } of run.watch({
     // A batch that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   })) {
     batches.push(counts(outcomes));
     if (batches.length === 1)
@@ -2664,7 +2664,7 @@ test('a Slack watch makes no pass while the app saves nothing, and keeps every s
   const controller = new AbortController();
   const watching = (await pipeline(source, dir.path, clock)).watch({
     // A check that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   });
   try {
     await watching.next();
@@ -2672,9 +2672,9 @@ test('a Slack watch makes no pass while the app saves nothing, and keeps every s
     // A pass that a check starts would come here.
     const after = watching.next();
     // The check is due once the watch waits for its next poll.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     await clock.tickAsync(1000);
     // Waits for a check the watch recorded, as its sync history keeps it.

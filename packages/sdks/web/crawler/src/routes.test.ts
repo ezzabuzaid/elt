@@ -90,7 +90,7 @@ function listRoutes(list: string) {
   ];
 }
 
-test('the routes connect a list to the program page that the home page it links gives through its menu and its robots.txt sitemap, with the text of each link', async () => {
+test('the routes connect a list to the program page that the home page it links gives through its menu and its robots.txt sitemap, with the text of each link', async (t) => {
   await using site = await new HttpServer().start(
     website([], () => ({
       '/': '<nav><a href="/startups">Startups</a><a href="/pricing">Pricing</a></nav>',
@@ -114,7 +114,7 @@ test('the routes connect a list to the program page that the home page it links 
 
   const lines = await routes(
     programs(new AdaptiveRevisit()).crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
       include: [new URLPattern(`${site.origin}/*`)],
       expand,
     }),
@@ -135,7 +135,7 @@ test('the routes connect a list to the program page that the home page it links 
   );
 });
 
-test('a list that links one page twice names it at each link, with the text of each, as a page does not keep its links unique', async () => {
+test('a list that links one page twice names it at each link, with the text of each, as a page does not keep its links unique', async (t) => {
   await using site = await new HttpServer().start(
     website([], () => ({
       '/startups': '<p>Credits.</p>',
@@ -150,7 +150,7 @@ test('a list that links one page twice names it at each link, with the text of e
 
   const lines = await routes(
     programs(new AdaptiveRevisit()).crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
       include: [new URLPattern(`${site.origin}/*`)],
       expand,
     }),
@@ -166,7 +166,7 @@ test('a list that links one page twice names it at each link, with the text of e
   );
 });
 
-test('a program page that the list also links keeps the routes from the home page that name it, and is downloaded once', async () => {
+test('a program page that the list also links keeps the routes from the home page that name it, and is downloaded once', async (t) => {
   const requests: string[] = [];
   await using site = await new HttpServer().start(
     website(requests, () => ({
@@ -189,7 +189,7 @@ test('a program page that the list also links keeps the routes from the home pag
 
   const lines = await routes(
     programs(new AdaptiveRevisit()).crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
       include: [new URLPattern(`${site.origin}/*`)],
       expand,
     }),
@@ -212,7 +212,7 @@ test('a program page that the list also links keeps the routes from the home pag
   assert.equal(requests.filter((path) => path === '/startups').length, 1);
 });
 
-test('every page expanded on one origin has a route to its robots.txt, which the crawl reads once, and a sitemap on another host keeps its routes', async () => {
+test('every page expanded on one origin has a route to its robots.txt, which the crawl reads once, and a sitemap on another host keeps its routes', async (t) => {
   const sister: string[] = [];
   await using showcase = await new HttpServer().start(
     website(sister, () => ({
@@ -253,7 +253,7 @@ test('every page expanded on one origin has a route to its robots.txt, which the
   );
   await routes(
     programs(new AdaptiveRevisit()).crawl([`${single.origin}/programs`], null, {
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
       include: [new URLPattern(`${alone.origin}/*`)],
       expand,
     }),
@@ -261,7 +261,7 @@ test('every page expanded on one origin has a route to its robots.txt, which the
 
   const lines = await routes(
     programs(new AdaptiveRevisit()).crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
       include: [
         new URLPattern(`${site.origin}/*`),
         new URLPattern(`${showcase.origin}/*`),
@@ -288,7 +288,7 @@ test('every page expanded on one origin has a route to its robots.txt, which the
   );
 });
 
-test('a URL that a list names and that redirects names the URL it was redirected to, whose routes follow', async () => {
+test('a URL that a list names and that redirects names the URL it was redirected to, whose routes follow', async (t) => {
   await using site = await new HttpServer().start(
     website([], () => ({
       '/old': { redirect: '/home' },
@@ -305,7 +305,7 @@ test('a URL that a list names and that redirects names the URL it was redirected
 
   const lines = await routes(
     programs(new AdaptiveRevisit()).crawl([`${list.origin}/programs`], null, {
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
       include: [new URLPattern(`${site.origin}/*`)],
       expand,
     }),
@@ -324,7 +324,7 @@ test('a URL that a list names and that redirects names the URL it was redirected
   );
 });
 
-test('a feed names each item with its title, and a sitemap names its pages and its child sitemaps without text', async () => {
+test('a feed names each item with its title, and a sitemap names its pages and its child sitemaps without text', async (t) => {
   await using site = await new HttpServer().start(
     website([], () => ({
       '/feed.xml': xml(
@@ -356,7 +356,7 @@ test('a feed names each item with its title, and a sitemap names its pages and i
           `${site.origin}/index.xml`,
         ],
         null,
-        { signal: AbortSignal.timeout(120_000) },
+        { signal: t.signal },
       ),
   );
 
@@ -371,7 +371,7 @@ test('a feed names each item with its title, and a sitemap names its pages and i
   );
 });
 
-test('a list read again in a later crawl names a page that is known and not due, and the crawl does not download that page again', async () => {
+test('a list read again in a later crawl names a page that is known and not due, and the crawl does not download that page again', async (t) => {
   const requests: string[] = [];
   await using site = await new HttpServer().start(
     website(requests, () => ({
@@ -392,7 +392,7 @@ test('a list read again in a later crawl names a page that is known and not due,
     ),
   );
   const options = {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
     include: [new URLPattern(`${site.origin}/*`)] as const,
   };
   const first = crawler.crawl([`${list.origin}/programs`], null, options);
@@ -412,7 +412,7 @@ test('a list read again in a later crawl names a page that is known and not due,
   assert.equal(requests.filter((path) => path === '/startups').length, 1);
 });
 
-test('a crawl that stops after it hands back the routes of a list gives them again when it resumes', async () => {
+test('a crawl that stops after it hands back the routes of a list gives them again when it resumes', async (t) => {
   await using site = await new HttpServer().start(
     website([], () => ({
       '/startups': '<p>Credits.</p>',
@@ -426,7 +426,7 @@ test('a crawl that stops after it hands back the routes of a list gives them aga
   );
   const crawler = programs(new AdaptiveRevisit());
   const options = {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
     include: [new URLPattern(`${site.origin}/*`)] as const,
   };
   const first = crawler.crawl([`${list.origin}/programs`], null, options);
@@ -446,7 +446,7 @@ test('a crawl that stops after it hands back the routes of a list gives them aga
   );
 });
 
-test('a failure says whether its URL is a page or a document, such as a broken sitemap', async () => {
+test('a failure says whether its URL is a page or a document, such as a broken sitemap', async (t) => {
   await using site = await new HttpServer().start((request, response) => {
     if (request.url === '/robots.txt')
       response
@@ -469,7 +469,7 @@ test('a failure says whether its URL is a page or a document, such as a broken s
     [`${list.origin}/programs`],
     null,
     {
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
       include: [new URLPattern(`${site.origin}/*`)],
       expand,
     },
@@ -483,7 +483,7 @@ test('a failure says whether its URL is a page or a document, such as a broken s
   ]);
 });
 
-test('a page that LinkReader does not admit in a later crawl gives null for LinkReader, which says that the page names more than its routes', async () => {
+test('a page that LinkReader does not admit in a later crawl gives null for LinkReader, which says that the page names more than its routes', async (t) => {
   let pages = '<a href="/listed">Listed</a>';
   await using site = await new HttpServer().start(
     website([], () => ({
@@ -501,7 +501,7 @@ test('a page that LinkReader does not admit in a later crawl gives null for Link
     [new LinkReader({ maxDepth: 2, maxPages: 1 })],
     new FixedRevisit({ every: 0 }),
   );
-  const options = { signal: AbortSignal.timeout(120_000) };
+  const options = { signal: t.signal };
   // Each group of the crawl as "listing routes", with "-" for a reader that skipped it.
   const groups = async (crawl: Crawl) => {
     const lines: string[] = [];
@@ -528,7 +528,7 @@ test('a page that LinkReader does not admit in a later crawl gives null for Link
   assert.ok(lines.includes('/listed -'), lines.join('\n'));
 });
 
-test('a page that the crawl downloaded keeps its routes after the budget of LinkReader is spent', async () => {
+test('a page that the crawl downloaded keeps its routes after the budget of LinkReader is spent', async (t) => {
   await using site = await new HttpServer().start(
     website([], () => ({
       '/': '<a href="/a">A</a>',
@@ -546,7 +546,7 @@ test('a page that the crawl downloaded keeps its routes after the budget of Link
         new AdaptiveRevisit(),
       )
       .crawl([`${site.origin}/`], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
         // No page is handed back: LinkReader admits each page that it reads.
         include: [new URLPattern({ pathname: '/none' })],
       }),

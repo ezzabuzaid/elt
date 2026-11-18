@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url';
 
 import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, UnchangedJournal, open } from '@zukhruf/sqlite-open';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -1128,7 +1129,7 @@ test('a Chromium watch loads only the streams of the store that changed, while t
   // its own, before the visit. The history records the first such check at
   // once; the watch checks again each second.
   const visit = async () => {
-    await t.waitFor(
+    await waitFor(
       () =>
         assert.equal(
           chromium.read(
@@ -1136,7 +1137,7 @@ test('a Chromium watch loads only the streams of the store that changed, while t
           ).length,
           1,
         ),
-      { interval: 5, timeout: 10_000 },
+      { signal: t.signal, interval: 5 },
     );
     await setTimeout(1_500);
     addVisit(browser, 12, 1, t2);
@@ -1145,7 +1146,7 @@ test('a Chromium watch loads only the streams of the store that changed, while t
 
   for await (const { outcomes } of chromium.watch(
     // A pass that never comes ends the watch, so the assertion fails.
-    AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
+    AbortSignal.any([controller.signal, t.signal]),
   )) {
     woken.push(outcomes.map(({ copy }) => copy.from.name));
     // A check that changes nothing makes no pass.

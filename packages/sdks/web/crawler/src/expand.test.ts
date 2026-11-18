@@ -66,7 +66,7 @@ function website(
 
 const xml = (body: string) => ({ type: 'application/xml', body });
 
-test('the home page that a list links on another website gives its links on every origin that match the expand patterns, and not the others', async () => {
+test('the home page that a list links on another website gives its links on every origin that match the expand patterns, and not the others', async (t) => {
   const third: string[] = [];
   await using elsewhere = await new HttpServer().start(
     website(third, () => ({
@@ -93,7 +93,7 @@ test('the home page that a list links on another website gives its links on ever
       [`${list.origin}/programs`],
       null,
       {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
         include: [
           new URLPattern(`${site.origin}/*`),
           new URLPattern(`${elsewhere.origin}/*`),
@@ -115,7 +115,7 @@ test('the home page that a list links on another website gives its links on ever
   assert.ok(!third.includes('/cloud/pricing'), third.join(' '));
 });
 
-test('the sitemaps that the robots.txt of a linked home page declares give only the pages that match the expand patterns', async () => {
+test('the sitemaps that the robots.txt of a linked home page declares give only the pages that match the expand patterns', async (t) => {
   const company: string[] = [];
   await using site = await new HttpServer().start(
     website(company, () => ({
@@ -145,7 +145,7 @@ test('the sitemaps that the robots.txt of a linked home page declares give only 
       [`${list.origin}/programs`],
       null,
       {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
         include: [new URLPattern(`${site.origin}/*`)],
         expand,
       },
@@ -160,7 +160,7 @@ test('the sitemaps that the robots.txt of a linked home page declares give only 
   assert.ok(!company.includes('/blog/launch'), company.join(' '));
 });
 
-test('a page that an expansion finds is not expanded again: its links and the sitemaps of its own website are not read', async () => {
+test('a page that an expansion finds is not expanded again: its links and the sitemaps of its own website are not read', async (t) => {
   const third: string[] = [];
   await using elsewhere = await new HttpServer().start(
     website(third, () => ({
@@ -196,7 +196,7 @@ test('a page that an expansion finds is not expanded again: its links and the si
       [`${list.origin}/programs`],
       null,
       {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
         include: [
           new URLPattern(`${site.origin}/*`),
           new URLPattern(`${elsewhere.origin}/*`),
@@ -219,7 +219,7 @@ test('a page that an expansion finds is not expanded again: its links and the si
   assert.ok(!third.includes('/startup-sitemap.xml'), third.join(' '));
 });
 
-test('a list that an expansion finds hands back only the pages that match, and expands none of them', async () => {
+test('a list that an expansion finds hands back only the pages that match, and expands none of them', async (t) => {
   const fourth: string[] = [];
   await using elsewhere = await new HttpServer().start(
     website(fourth, () => ({
@@ -254,7 +254,7 @@ test('a list that an expansion finds hands back only the pages that match, and e
         new AdaptiveRevisit(),
       )
       .crawl([`${list.origin}/programs`], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
         include: [
           new URLPattern(`${site.origin}/*`),
           new URLPattern(`${elsewhere.origin}/*`),
@@ -276,7 +276,7 @@ test('a list that an expansion finds hands back only the pages that match, and e
   assert.ok(!fourth.includes('/startups-apply'), fourth.join(' '));
 });
 
-test('a page that a sitemap or a feed lists on another website is not expanded', async () => {
+test('a page that a sitemap or a feed lists on another website is not expanded', async (t) => {
   const company: string[] = [];
   await using site = await new HttpServer().start(
     website(company, () => ({
@@ -311,7 +311,7 @@ test('a page that a sitemap or a feed lists on another website is not expanded',
         [`${listing.origin}${start}`],
         null,
         {
-          signal: AbortSignal.timeout(120_000),
+          signal: t.signal,
           include: [new URLPattern(`${site.origin}/*`)],
           expand,
         },
@@ -323,7 +323,7 @@ test('a page that a sitemap or a feed lists on another website is not expanded',
   }
 });
 
-test('a page that a sitemap and a list both name is expanded, whether the sitemap names it before or after its download', async () => {
+test('a page that a sitemap and a list both name is expanded, whether the sitemap names it before or after its download', async (t) => {
   await using site = await new HttpServer().start(
     website([], () => ({
       '/': '<a href="/startups">Startups</a>',
@@ -351,7 +351,7 @@ test('a page that a sitemap and a list both name is expanded, whether the sitema
         [`${list.origin}/sitemap.xml`, `${list.origin}/programs`],
         null,
         {
-          signal: AbortSignal.timeout(120_000),
+          signal: t.signal,
           include: [new URLPattern(`${site.origin}/*`)],
           expand,
         },
@@ -366,7 +366,7 @@ test('a page that a sitemap and a list both name is expanded, whether the sitema
   }
 });
 
-test('without expand patterns, the home page that a list links on another website is handed back and not expanded', async () => {
+test('without expand patterns, the home page that a list links on another website is handed back and not expanded', async (t) => {
   const company: string[] = [];
   await using site = await new HttpServer().start(
     website(company, () => ({
@@ -392,7 +392,7 @@ test('without expand patterns, the home page that a list links on another websit
       [`${list.origin}/programs`],
       null,
       {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
         include: [new URLPattern(`${site.origin}/*`)],
       },
     ),
@@ -402,7 +402,7 @@ test('without expand patterns, the home page that a list links on another websit
   assert.deepEqual(company, ['/robots.txt', '/']);
 });
 
-test('a crawl stopped at any entry and resumed from its snapshot expands the same pages, and still not the pages of the starting website', async () => {
+test('a crawl stopped at any entry and resumed from its snapshot expands the same pages, and still not the pages of the starting website', async (t) => {
   await using site = await new HttpServer().start(
     website([], () => ({
       '/': '<a href="/startups">Startups</a>',
@@ -450,7 +450,7 @@ test('a crawl stopped at any entry and resumed from its snapshot expands the sam
   const whole = await handed(
     crawler().crawl([`${list.origin}/programs`], null, {
       ...options,
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
     }),
   );
   assert.deepEqual(whole, expected);
@@ -460,7 +460,7 @@ test('a crawl stopped at any entry and resumed from its snapshot expands the sam
   for (let stop = 1, stopped = true; stopped; stop++) {
     const first = crawler().crawl([`${list.origin}/programs`], null, {
       ...options,
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
     });
     const pages = new Set<string>();
     let seen = 0;
@@ -476,7 +476,7 @@ test('a crawl stopped at any entry and resumed from its snapshot expands the sam
     for (const url of await handed(
       crawler().crawl([], snapshot, {
         ...options,
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
     ))
       pages.add(url);

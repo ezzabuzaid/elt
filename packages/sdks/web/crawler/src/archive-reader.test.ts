@@ -41,7 +41,7 @@ function location(entry: CrawledPage | CrawlFailure) {
   return { url, lastModified, listingUrl };
 }
 
-test('website archives discover older posts beyond the feed, following pagination without following articles or off-site links', async () => {
+test('website archives discover older posts beyond the feed, following pagination without following articles or off-site links', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -83,9 +83,7 @@ test('website archives discover older posts beyond the feed, following paginatio
     }
   });
   assert.deepEqual(
-    (
-      await crawl(listings(), upstream.origin, AbortSignal.timeout(120_000))
-    ).map(location),
+    (await crawl(listings(), upstream.origin, t.signal)).map(location),
     [
       // The starting page is a list, and an archive it links is one of its pages too.
       {
@@ -146,7 +144,7 @@ test('archive failures remain attributable, archives do not suppress the sitemap
   }
 });
 
-test('dead discovered archive links do not discard history, while a dead starting URL still fails', async () => {
+test('dead discovered archive links do not discard history, while a dead starting URL still fails', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');
     if (request.url === '/')
@@ -160,9 +158,9 @@ test('dead discovered archive links do not discard history, while a dead startin
   });
   // A missing /sitemap.xml guess is an ordinary answer.
   assert.deepEqual(
-    (
-      await crawl(listings(), upstream.origin, AbortSignal.timeout(120_000))
-    ).map((entry) => ('error' in entry ? entry.error.url : location(entry))),
+    (await crawl(listings(), upstream.origin, t.signal)).map((entry) =>
+      'error' in entry ? entry.error.url : location(entry),
+    ),
     [
       // The starting page lists its archives; the dead ones are skipped as pages too.
       {
@@ -178,18 +176,14 @@ test('dead discovered archive links do not discard history, while a dead startin
     ],
   );
   assert.deepEqual(
-    (
-      await crawl(
-        listings(),
-        `${upstream.origin}/archive/`,
-        AbortSignal.timeout(120_000),
-      )
-    ).map((entry) => ('error' in entry ? entry.error.url : entry.url)),
+    (await crawl(listings(), `${upstream.origin}/archive/`, t.signal)).map(
+      (entry) => ('error' in entry ? entry.error.url : entry.url),
+    ),
     [`${upstream.origin}/archive/`],
   );
 });
 
-test('advertised content indexes work without archive-shaped URLs', async () => {
+test('advertised content indexes work without archive-shaped URLs', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');
     if (request.url === '/') response.end('<a href="/writing">All Content</a>');
@@ -201,9 +195,9 @@ test('advertised content indexes work without archive-shaped URLs', async () => 
     else response.writeHead(404).end();
   });
   assert.deepEqual(
-    (
-      await crawl(listings(), upstream.origin, AbortSignal.timeout(120_000))
-    ).map((entry) => ('error' in entry ? entry.error.url : location(entry))),
+    (await crawl(listings(), upstream.origin, t.signal)).map((entry) =>
+      'error' in entry ? entry.error.url : location(entry),
+    ),
     [
       // The starting page is a list, and the content index it links is one of its pages too.
       {
@@ -220,7 +214,7 @@ test('advertised content indexes work without archive-shaped URLs', async () => 
   );
 });
 
-test('a starting HTML archive follows HTTP pagination links and resolves redirected listings', async () => {
+test('a starting HTML archive follows HTTP pagination links and resolves redirected listings', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     response.setHeader('content-type', 'text/html');
     switch (request.url) {
@@ -244,13 +238,9 @@ test('a starting HTML archive follows HTTP pagination links and resolves redirec
     }
   });
   assert.deepEqual(
-    (
-      await crawl(
-        listings(),
-        `${upstream.origin}/history`,
-        AbortSignal.timeout(120_000),
-      )
-    ).map(location),
+    (await crawl(listings(), `${upstream.origin}/history`, t.signal)).map(
+      location,
+    ),
     [
       {
         url: `${upstream.origin}/first`,
@@ -266,7 +256,7 @@ test('a starting HTML archive follows HTTP pagination links and resolves redirec
   );
 });
 
-test('a self-linked archive and calendar indexes expose the full history', async () => {
+test('a self-linked archive and calendar indexes expose the full history', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -313,11 +303,7 @@ test('a self-linked archive and calendar indexes expose the full history', async
         response.writeHead(404).end();
     }
   });
-  const pages = await crawl(
-    listings(),
-    upstream.origin,
-    AbortSignal.timeout(120_000),
-  );
+  const pages = await crawl(listings(), upstream.origin, t.signal);
   assert.deepEqual(
     pages.map((page) => location(page).url).sort(),
     [
@@ -339,7 +325,7 @@ test('a self-linked archive and calendar indexes expose the full history', async
   assert.ok(!requests.includes('/listed-by-essay'));
 });
 
-test('archives found on a crawled page are followed, and keep that page as provenance', async () => {
+test('archives found on a crawled page are followed, and keep that page as provenance', async (t) => {
   for (const historyStatus of [200, 503]) {
     await using upstream = await new HttpServer().start((request, response) => {
       if (request.url === '/')
@@ -377,7 +363,7 @@ test('archives found on a crawled page are followed, and keep that page as prove
         new AdaptiveRevisit(),
       ),
       upstream.origin,
-      AbortSignal.timeout(120_000),
+      t.signal,
     );
     const failures = entries.flatMap((entry) =>
       'error' in entry
@@ -409,7 +395,7 @@ test('archives found on a crawled page are followed, and keep that page as prove
   }
 });
 
-test('an archive that returns a feed is not read as a listing', async () => {
+test('an archive that returns a feed is not read as a listing', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -424,17 +410,13 @@ test('an archive that returns a feed is not read as a listing', async () => {
         .end('<rss><channel><item><link>/item</link></item></channel></rss>');
     else response.writeHead(404).end();
   });
-  const entries = await crawl(
-    listings(),
-    upstream.origin,
-    AbortSignal.timeout(120_000),
-  );
+  const entries = await crawl(listings(), upstream.origin, t.signal);
   assert.ok(!requests.includes('/item'));
   assert.ok(entries.every((entry) => !entry.url.endsWith('/item')));
 });
 
 // The shape of a classifieds category page: many links outside `include` before the listings.
-test('links nobody downloads do not use up turns, so listings are not starved behind them', async () => {
+test('links nobody downloads do not use up turns, so listings are not starved behind them', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -460,7 +442,7 @@ test('links nobody downloads do not use up turns, so listings are not starved be
       new AdaptiveRevisit(),
     )
     .crawl([`${upstream.origin}/m`], null, {
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
       include: [new URLPattern({ pathname: '/search/*' })],
     }))
     assert.ok(!('error' in entry));
@@ -474,7 +456,7 @@ test('links nobody downloads do not use up turns, so listings are not starved be
   assert.equal(requests.filter((url) => url.startsWith('/tag/')).length, 0);
 });
 
-test('new feed pages are handed back before a long archive chain finishes, and the chain still completes', async () => {
+test('new feed pages are handed back before a long archive chain finishes, and the chain still completes', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -503,7 +485,7 @@ test('new feed pages are handed back before a long archive chain finishes, and t
   });
   const handed: string[] = [];
   for await (const entry of listings().crawl([upstream.origin], null, {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
     include: [new URLPattern({ pathname: '/new/*' })],
   }))
     if (!('progress' in entry) && !('deferred' in entry))
@@ -530,7 +512,7 @@ test('new feed pages are handed back before a long archive chain finishes, and t
   );
 });
 
-test('archive backfill keeps progressing while many listed pages wait', async () => {
+test('archive backfill keeps progressing while many listed pages wait', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -559,7 +541,7 @@ test('archive backfill keeps progressing while many listed pages wait', async ()
   });
   const handed: string[] = [];
   for await (const entry of listings().crawl([upstream.origin], null, {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
     include: [new URLPattern({ pathname: '/new/*' })],
   }))
     if (!('progress' in entry) && !('deferred' in entry))
@@ -579,7 +561,7 @@ test('archive backfill keeps progressing while many listed pages wait', async ()
   );
 });
 
-test('a URL found as an archive and then listed as a page downloads in the page lane', async () => {
+test('a URL found as an archive and then listed as a page downloads in the page lane', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -600,7 +582,7 @@ test('a URL found as an archive and then listed as a page downloads in the page 
   });
   const handed: string[] = [];
   for await (const entry of listings().crawl([upstream.origin], null, {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
   }))
     if (!('progress' in entry) && !('deferred' in entry))
       handed.push(location(entry).url);
@@ -617,7 +599,7 @@ test('a URL found as an archive and then listed as a page downloads in the page 
   assert.equal(requests.filter((url) => url === '/2020/').length, 1);
 });
 
-test('a calendar archive is a real year at the start of the path, so numeric ids and model-year filters are pages', async () => {
+test('a calendar archive is a real year at the start of the path, so numeric ids and model-year filters are pages', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -637,9 +619,9 @@ test('a calendar archive is a real year at the start of the path, so numeric ids
     else response.end(list ?? '<main><p>A page</p></main>');
   });
 
-  const pages = (
-    await crawl(listings(), `${upstream.origin}/`, AbortSignal.timeout(120_000))
-  ).map((entry) => new URL(location(entry).url).pathname);
+  const pages = (await crawl(listings(), `${upstream.origin}/`, t.signal)).map(
+    (entry) => new URL(location(entry).url).pathname,
+  );
 
   // The three archives are read as lists, so their pages come back.
   for (const path of [

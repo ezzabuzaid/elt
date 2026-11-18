@@ -3323,7 +3323,7 @@ test('a full refresh loads every stream as an incremental first pass does, its f
 test(
   'a WhatsApp watch wakes each stream once, then only the streams of a store WhatsApp committed to, including a store it creates later',
   { timeout: 30_000 },
-  async () => {
+  async (t) => {
     const { dir, whatsapp } = await scratch();
     await using _ = dir;
     removeStore(whatsapp, 'businesses');
@@ -3346,7 +3346,7 @@ test(
 
     for await (const { outcomes } of run.watch({
       // A pass that never comes ends the watch, so the assertion fails.
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+      signal: AbortSignal.any([controller.signal, t.signal]),
     })) {
       // The copies of a pass end in any order.
       woken.push(outcomes.map(({ copy }) => copy.from.name).sort());

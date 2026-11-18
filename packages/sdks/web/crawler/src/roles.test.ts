@@ -84,7 +84,7 @@ function blogCrawler() {
   );
 }
 
-test('a starting page that its sitemap lists as a page is handed back once, with the sitemap provenance', async () => {
+test('a starting page that its sitemap lists as a page is handed back once, with the sitemap provenance', async (t) => {
   const requests: string[] = [];
   using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
@@ -107,7 +107,7 @@ test('a starting page that its sitemap lists as a page is handed back once, with
     new Origins(noRetries, null, globalThis)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
       .crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
   );
 
@@ -121,13 +121,13 @@ test('a starting page that its sitemap lists as a page is handed back once, with
   );
 });
 
-test('a feed item that is also an archive is read as a list, and handed back as a page once', async () => {
+test('a feed item that is also an archive is read as a list, and handed back as a page once', async (t) => {
   const requests: string[] = [];
   using server = mockWeb(blog(requests));
 
   const handed = await pages(
     blogCrawler().crawl(['https://site.test/'], null, {
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
     }),
   );
 
@@ -142,11 +142,11 @@ test('a feed item that is also an archive is read as a list, and handed back as 
   );
 });
 
-test('a run that continues a crawl hands back again a page that it reads for another role, as each run hands back each page once', async () => {
+test('a run that continues a crawl hands back again a page that it reads for another role, as each run hands back each page once', async (t) => {
   const requests: string[] = [];
   using server = mockWeb(blog(requests));
   const crawler = blogCrawler();
-  const signal = AbortSignal.timeout(120_000);
+  const signal = t.signal;
   const first = crawler.crawl(['https://site.test/'], null, { signal });
   const before: string[] = [];
   let snapshot;
@@ -169,7 +169,7 @@ test('a run that continues a crawl hands back again a page that it reads for ano
   );
 });
 
-test('a URL downloaded again for a role it adds is not admitted again, so it spends no reader budget twice', async () => {
+test('a URL downloaded again for a role it adds is not admitted again, so it spends no reader budget twice', async (t) => {
   const requests: string[] = [];
   using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
@@ -189,7 +189,7 @@ test('a URL downloaded again for a role it adds is not admitted again, so it spe
       new AdaptiveRevisit(),
     )
     .crawl(['https://site.test/'], null, {
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
     });
   let last: CrawlMemento | undefined;
   for await (const entry of crawl)

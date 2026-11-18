@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -721,7 +721,7 @@ test('an import of one profile holds its spaces, their items and its favorites o
   });
 });
 
-test('a watch loads each write of the sidebar, and fails as config when it goes away', async () => {
+test('a watch loads each write of the sidebar, and fails as config when it goes away', async (t) => {
   await using dir = await new TemporaryFiles().directory('arc-watch-');
   const file = await writeSidebar(dir.path, sidebar());
   const { pipeline, read } = await arcImport(dir.path, dir.path, globalThis);
@@ -737,7 +737,7 @@ test('a watch loads each write of the sidebar, and fails as config when it goes 
   }[] = [];
   try {
     for await (const { outcomes } of pipeline.watch({
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+      signal: AbortSignal.any([controller.signal, t.signal]),
     })) {
       batches.push({
         streams: outcomes.map(({ copy }) => copy.from.name).sort(),
@@ -781,16 +781,16 @@ test('a watch over a sidebar that holds still runs no pass and records it curren
   const controller = new AbortController();
   const watching = pipeline.watch({
     // A check that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   });
   try {
     await watching.next();
     // A pass that a check starts would come here.
     const after = watching.next();
     // The check is due once the watch waits for its next poll.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     await clock.tickAsync(1000);
 

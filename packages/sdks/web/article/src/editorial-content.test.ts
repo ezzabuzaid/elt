@@ -6,7 +6,7 @@ import got from 'got';
 
 import { HTMLExtraction, WebArticle } from './index.ts';
 
-test('editorial asides retain explanations and contributor lists inside an article', async () => {
+test('editorial asides retain explanations and contributor lists inside an article', async (t) => {
   // Local markup reproduces the captured editorial sidebars without relying on a publisher.
 
   await using upstream = await new HttpServer().start((_request, response) => {
@@ -32,7 +32,7 @@ test('editorial asides retain explanations and contributor lists inside an artic
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article);
   assert.match(
@@ -49,7 +49,7 @@ test('editorial asides retain explanations and contributor lists inside an artic
   assert.doesNotMatch(article.textContent, /exclusive offers/);
 });
 
-test('unmarked pages still exclude class-based navigation and advertising', async () => {
+test('unmarked pages still exclude class-based navigation and advertising', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(`<html><head><title>Checking the field readings</title></head><body><div id="Box">
@@ -68,7 +68,7 @@ test('unmarked pages still exclude class-based navigation and advertising', asyn
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article);
   assert.match(article.textContent, /The field team recorded readings/);
@@ -78,7 +78,7 @@ test('unmarked pages still exclude class-based navigation and advertising', asyn
   );
 });
 
-test('footer cleanup preserves author metadata without emitting promotional footer prose', async () => {
+test('footer cleanup preserves author metadata without emitting promotional footer prose', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(`<html><head><title>Garden measurements</title></head><body><article>
@@ -91,7 +91,7 @@ test('footer cleanup preserves author metadata without emitting promotional foot
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
   assert.ok(article);
   assert.equal(article.byline, 'Lina Haddad');
@@ -99,7 +99,7 @@ test('footer cleanup preserves author metadata without emitting promotional foot
   assert.doesNotMatch(article.textContent, /Subscribe for equipment offers/);
 });
 
-test('an incidental entry widget does not replace semantic article content', async () => {
+test('an incidental entry widget does not replace semantic article content', async (t) => {
   for (const container of [
     'article',
     'main',
@@ -123,7 +123,7 @@ test('an incidental entry widget does not replace semantic article content', asy
 
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
     assert.ok(article);
     assert.match(article.textContent, /Our team compared the sensor readings/);
@@ -132,7 +132,7 @@ test('an incidental entry widget does not replace semantic article content', asy
   }
 });
 
-test('a short linked post retains the outbound resource in its title row', async () => {
+test('a short linked post retains the outbound resource in its title row', async (t) => {
   // A classic WordPress theme puts the post's .entry inside its .post: still one post.
   for (const { open, close } of [
     { open: '<div class="entry">', close: '</div>' },
@@ -156,7 +156,7 @@ test('a short linked post retains the outbound resource in its title row', async
 
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
     assert.ok(article, open);
     assert.ok(
@@ -172,7 +172,7 @@ test('a short linked post retains the outbound resource in its title row', async
   }
 });
 
-test('a short link post keeps its prose when a hidden link card and a members-only notice hold more words', async () => {
+test('a short link post keeps its prose when a hidden link card and a members-only notice hold more words', async (t) => {
   // kottke.org's markup, trimmed: one sentence of prose, a link card that is
   // hidden from assistive technology, and a modal for non-members.
   await using upstream = await new HttpServer().start((_request, response) => {
@@ -197,7 +197,7 @@ test('a short link post keeps its prose when a hidden link card and a members-on
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);
@@ -208,7 +208,7 @@ test('a short link post keeps its prose when a hidden link card and a members-on
   assert.doesNotMatch(article.textContent, /neverending login loop/);
 });
 
-test('a page of several posts is not taken for its first post', async () => {
+test('a page of several posts is not taken for its first post', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(`<html><head><title>Field notes</title></head><body>
@@ -219,7 +219,7 @@ test('a page of several posts is not taken for its first post', async () => {
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);
@@ -227,7 +227,7 @@ test('a page of several posts is not taken for its first post', async () => {
   assert.match(article.textContent, /moved the second probe to the shade/);
 });
 
-test('a short post excludes surrounding sponsorship, recommendations and site footer', async () => {
+test('a short post excludes surrounding sponsorship, recommendations and site footer', async (t) => {
   for (const postClass of ['entry', 'h-entry', 'hentry']) {
     await using upstream = await new HttpServer().start(
       (_request, response) => {
@@ -249,7 +249,7 @@ test('a short post excludes surrounding sponsorship, recommendations and site fo
 
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
     assert.ok(article);
     assert.match(article.textContent, /captures an unusual bird call/);

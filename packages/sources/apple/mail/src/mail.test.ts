@@ -23,7 +23,7 @@ import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -2460,7 +2460,7 @@ async function nextPass(watch: ReturnType<typeof watchMail>) {
   return pass.value.outcomes.map(({ copy }) => copy.from.name);
 }
 
-test('An Accounts store that is not there leaves Mail’s watch running', async () => {
+test('An Accounts store that is not there leaves Mail’s watch running', async (t) => {
   await using dir = await new TemporaryFiles().directory(
     'elt-mail-accounts-watch-',
   );
@@ -2474,7 +2474,7 @@ test('An Accounts store that is not there leaves Mail’s watch running', async 
     source,
     [source.accounts, source.messages],
     join(dir.path, 'import'),
-    AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+    AbortSignal.any([abort.signal, t.signal]),
   );
   assert.deepEqual(await nextPass(watch), ['accounts', 'messages']);
 
@@ -2506,12 +2506,12 @@ async function firstWatchFailure(
       source,
       [source.messages],
       directory,
-      AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+      AbortSignal.any([controller.signal, t.signal]),
     ));
   })();
   try {
     let failure: Record<string, unknown> | undefined;
-    await t.waitFor(
+    await waitFor(
       () => {
         using out = open(join(directory, 'data.sqlite'), { readOnly: true });
         failure = out
@@ -2521,7 +2521,7 @@ async function firstWatchFailure(
           .get();
         assert.ok(failure);
       },
-      { interval: 10, timeout: 10000 },
+      { signal: t.signal, interval: 10 },
     );
     assert.ok(failure);
     return failure;
@@ -2595,7 +2595,7 @@ test('Mail’s streams fail as system for an index that is not a database, while
   assert.equal(text.failure_type, 'system');
 });
 
-test('Mail’s watch refreshes only accounts and smtpServers when only the Accounts store commits', async () => {
+test('Mail’s watch refreshes only accounts and smtpServers when only the Accounts store commits', async (t) => {
   await using dir = await new TemporaryFiles().directory(
     'elt-mail-accounts-watch-',
   );
@@ -2612,7 +2612,7 @@ test('Mail’s watch refreshes only accounts and smtpServers when only the Accou
     source,
     [source.accounts, source.smtpServers, source.messages],
     join(dir.path, 'import'),
-    AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+    AbortSignal.any([abort.signal, t.signal]),
   );
   assert.deepEqual(await nextPass(watch), [
     'accounts',
@@ -2641,7 +2641,7 @@ test('Mail’s watch refreshes only accounts and smtpServers when only the Accou
   assert.equal((await watch.next()).done, true);
 });
 
-test('Mail watches index commits and file-only downloads, and cancels', async () => {
+test('Mail watches index commits and file-only downloads, and cancels', async (t) => {
   await using dir = await new TemporaryFiles().directory('elt-mail-watch-');
   const store = await fixture(join(dir.path, 'Mail'));
   // Outside the Mail directory, as ~/Library/Accounts is.
@@ -2654,7 +2654,7 @@ test('Mail watches index commits and file-only downloads, and cancels', async ()
     source,
     [source.messages, source.attachments],
     join(dir.path, 'import'),
-    AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+    AbortSignal.any([abort.signal, t.signal]),
   );
   assert.deepEqual(await nextPass(watch), ['messages', 'attachments']);
   // A first commit absorbs the fixture's last writes, which FSEvents can
@@ -3210,7 +3210,7 @@ test('a Mail watch makes no pass while Mail and the Accounts store hold still, a
     ],
   }).watch({
     // A check that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   });
   try {
     await watching.next();
@@ -3218,9 +3218,9 @@ test('a Mail watch makes no pass while Mail and the Accounts store hold still, a
     // A pass that a check starts would come here.
     const after = watching.next();
     // The check is due once the watch waits for its next poll.
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0), {
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
       interval: 1,
-      timeout: 10_000,
     });
     await clock.tickAsync(1000);
     // Waits for a check the watch recorded, as its sync history keeps it.

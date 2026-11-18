@@ -14,6 +14,7 @@ import { gzipSync } from 'node:zlib';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -888,7 +889,7 @@ test(
 
     const passes = pipeline.watch({
       // A batch that never comes ends the watch, so the assertion fails.
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+      signal: AbortSignal.any([controller.signal, t.signal]),
     });
     for (let next = passes.next(); ;) {
       const pass = await next;
@@ -905,7 +906,7 @@ test(
           "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7) VALUES (12, 'NOTE-NEW', 'New', 2, 1)",
         );
         // A one-second poll sees the commit and starts a pass.
-        await t.waitFor(
+        await waitFor(
           async () => {
             await clock.tickAsync(1000);
             assert.equal(
@@ -913,12 +914,12 @@ test(
               2,
             );
           },
-          { interval: 10, timeout: 10_000 },
+          { signal: t.signal, interval: 10 },
         );
       }
       // A later poll finds no change, so a spurious batch would show first.
       else {
-        await t.waitFor(
+        await waitFor(
           async () => {
             await clock.tickAsync(1000);
             const current = out
@@ -928,7 +929,7 @@ test(
               .get();
             assert.equal(current?.later, 1);
           },
-          { interval: 10, timeout: 10_000 },
+          { signal: t.signal, interval: 10 },
         );
         controller.abort();
       }
@@ -972,9 +973,9 @@ const quitNotes = async (t: TestContext): Promise<boolean> => {
       );
       return false;
     }
-  await t.waitFor(async () => assert.equal(await notesRunning(), false), {
+  await waitFor(async () => assert.equal(await notesRunning(), false), {
+    signal: t.signal,
     interval: 100,
-    timeout: 10_000,
   });
   return true;
 };
@@ -1011,7 +1012,7 @@ test(
     try {
       const passing = watching.next();
 
-      await t.waitFor(
+      await waitFor(
         async () => {
           assert.equal(await notesRunning(), true);
           assert.match(
@@ -1019,7 +1020,7 @@ test(
             /\(hidden\)/,
           );
         },
-        { interval: 100, timeout: 10_000 },
+        { signal: t.signal, interval: 100 },
       );
 
       assert.equal(await notesInFront(), false);
@@ -1029,7 +1030,7 @@ test(
       controller.abort();
       await watching.return(undefined);
       // Leave Notes as a watch leaves it: running, hidden.
-      await launchNotesHidden(AbortSignal.timeout(10_000));
+      await launchNotesHidden(t.signal);
     }
   },
 );
@@ -1050,7 +1051,7 @@ test('a Notes upkeep run whose watch stopped launches no Notes', async (t) => {
     await sleep(1000);
     assert.equal(await notesRunning(), false);
   } finally {
-    await launchNotesHidden(AbortSignal.timeout(10_000));
+    await launchNotesHidden(t.signal);
   }
 });
 
@@ -1099,7 +1100,7 @@ test('a Notes watch keeps every stream current while Notes runs and the note sto
     ],
   }).watch({
     // A check that never comes ends the watch, so the assertion fails.
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    signal: AbortSignal.any([controller.signal, t.signal]),
   });
   try {
     await watching.next();
@@ -1113,7 +1114,7 @@ test('a Notes watch keeps every stream current while Notes runs and the note sto
     // A pass that a check starts would come here.
     const after = watching.next();
     // Nothing changes, so only the watch's next check can move current_as_of.
-    await t.waitFor(
+    await waitFor(
       async () => {
         await clock.tickAsync(1000);
         const rows = status.all();
@@ -1125,7 +1126,7 @@ test('a Notes watch keeps every stream current while Notes runs and the note sto
           `not current: ${JSON.stringify(rows)}`,
         );
       },
-      { interval: 10, timeout: 10_000 },
+      { signal: t.signal, interval: 10 },
     );
 
     assert.equal(

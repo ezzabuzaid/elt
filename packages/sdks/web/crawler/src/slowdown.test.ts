@@ -107,8 +107,6 @@ function gaps(started: readonly number[]) {
   return started.slice(1).map((at, index) => at - (started[index] ?? at));
 }
 
-const options = () => ({ signal: AbortSignal.timeout(120_000) });
-
 test('cancelling a crawl while it waits out a slowdown rejects at once with the signal reason', async () => {
   const requests: string[] = [];
   using server = new Msw().intercept(
@@ -153,7 +151,7 @@ test('cancelling a crawl while it waits out a slowdown rejects at once with the 
   assert.deepEqual(requests, ['/robots.txt', '/sitemap.xml', '/a']);
 });
 
-test('a refusal slows the requests to its own origin and not to another origin', async () => {
+test('a refusal slows the requests to its own origin and not to another origin', async (t) => {
   const time = clock(0);
   const started = new Map<string, number[]>();
   using server = new Msw().intercept(
@@ -179,7 +177,7 @@ test('a refusal slows the requests to its own origin and not to another origin',
     read(0, null, time).crawler.crawl(
       ['https://site.test/sitemap.xml', 'https://other.test/sitemap.xml'],
       null,
-      options(),
+      { signal: t.signal },
     ),
     time,
   );
@@ -189,7 +187,7 @@ test('a refusal slows the requests to its own origin and not to another origin',
   assert.deepEqual(gaps(started.get('https://other.test') ?? []), [1000]);
 });
 
-test('after a 429 block ends, the next read spaces its requests to that origin', async () => {
+test('after a 429 block ends, the next read spaces its requests to that origin', async (t) => {
   const time = clock(0);
   let blocking = true;
   const started: { path: string; at: number }[] = [];
@@ -211,7 +209,9 @@ test('after a 429 block ends, the next read spaces its requests to that origin',
   );
   const first = read(0, null, time);
   const blocked = await crawled(
-    first.crawler.crawl(['https://site.test/sitemap.xml'], null, options()),
+    first.crawler.crawl(['https://site.test/sitemap.xml'], null, {
+      signal: t.signal,
+    }),
     time,
   );
   blocking = false;
@@ -222,7 +222,7 @@ test('after a 429 block ends, the next read spaces its requests to that origin',
     read(0, first.origins.snapshot(), time).crawler.crawl(
       ['https://site.test/sitemap.xml'],
       blocked,
-      options(),
+      { signal: t.signal },
     ),
     time,
   );
@@ -236,7 +236,7 @@ test('after a 429 block ends, the next read spaces its requests to that origin',
   assert.deepEqual(gaps(started.map(({ at }) => at)), [1900]);
 });
 
-test('each 5xx answer slows the next request to its origin by one second', async () => {
+test('each 5xx answer slows the next request to its origin by one second', async (t) => {
   const time = clock(0);
   const statuses = [500, 501, 503, 504, 599];
   const started = new Map<string, number[]>();
@@ -259,7 +259,7 @@ test('each 5xx answer slows the next request to its origin by one second', async
     read(0, null, time).crawler.crawl(
       statuses.map((status) => `https://s${status}.test/sitemap.xml`),
       null,
-      options(),
+      { signal: t.signal },
     ),
     time,
   );
@@ -272,7 +272,7 @@ test('each 5xx answer slows the next request to its origin by one second', async
     );
 });
 
-test('Got retries no refusal: a 503 is answered once, and its slowdown spaces the next requests', async () => {
+test('Got retries no refusal: a 503 is answered once, and its slowdown spaces the next requests', async (t) => {
   const time = clock(0);
   const started: { path: string; at: number }[] = [];
   using server = new Msw().intercept(
@@ -289,11 +289,9 @@ test('Got retries no refusal: a 503 is answered once, and its slowdown spaces th
   );
 
   await crawled(
-    read(1, null, time).crawler.crawl(
-      ['https://site.test/sitemap.xml'],
-      null,
-      options(),
-    ),
+    read(1, null, time).crawler.crawl(['https://site.test/sitemap.xml'], null, {
+      signal: t.signal,
+    }),
     time,
   );
 
@@ -305,7 +303,7 @@ test('Got retries no refusal: a 503 is answered once, and its slowdown spaces th
   assert.deepEqual(gaps(started.map(({ at }) => at)), [2000, 1900]);
 });
 
-test('a page whose connection dropped and then answered 503 counts one refusal, and Got does not retry the 503', async () => {
+test('a page whose connection dropped and then answered 503 counts one refusal, and Got does not retry the 503', async (t) => {
   const requests: string[] = [];
   const attempts: ('drop' | 503)[] = ['drop', 503];
   // msw gives a network error no code, so Got would not retry it; the
@@ -335,7 +333,9 @@ test('a page whose connection dropped and then answered 503 counts one refusal, 
     const time = clock(0);
     const { crawler, origins } = read(2, null, time);
     await crawled(
-      crawler.crawl(['https://site.test/sitemap.xml'], null, options()),
+      crawler.crawl(['https://site.test/sitemap.xml'], null, {
+        signal: t.signal,
+      }),
       time,
     );
 
@@ -347,7 +347,7 @@ test('a page whose connection dropped and then answered 503 counts one refusal, 
   }
 });
 
-test('a 408 that Got retried away does not slow the origin', async () => {
+test('a 408 that Got retried away does not slow the origin', async (t) => {
   const requests: string[] = [];
   let timeouts = 1;
   using server = new Msw().intercept(
@@ -366,7 +366,9 @@ test('a 408 that Got retried away does not slow the origin', async () => {
   const time = clock(0);
   const { crawler, origins } = read(1, null, time);
   await crawled(
-    crawler.crawl(['https://site.test/sitemap.xml'], null, options()),
+    crawler.crawl(['https://site.test/sitemap.xml'], null, {
+      signal: t.signal,
+    }),
     time,
   );
 
@@ -375,7 +377,7 @@ test('a 408 that Got retried away does not slow the origin', async () => {
   assert.equal(slowdownOf(origins), 0);
 });
 
-test('each further refusal doubles the slowdown', async () => {
+test('each further refusal doubles the slowdown', async (t) => {
   const time = clock(0);
   const started: number[] = [];
   using server = new Msw().intercept(
@@ -392,11 +394,9 @@ test('each further refusal doubles the slowdown', async () => {
   );
 
   await crawled(
-    read(0, null, time).crawler.crawl(
-      ['https://site.test/sitemap.xml'],
-      null,
-      options(),
-    ),
+    read(0, null, time).crawler.crawl(['https://site.test/sitemap.xml'], null, {
+      signal: t.signal,
+    }),
     time,
   );
 
@@ -404,7 +404,7 @@ test('each further refusal doubles the slowdown', async () => {
   assert.deepEqual(gaps(started), [2000, 3000, 5000]);
 });
 
-test('answers that are not refusals shorten the slowdown step by step, until it ends', async () => {
+test('answers that are not refusals shorten the slowdown step by step, until it ends', async (t) => {
   const time = clock(0);
   const pages = [
     '/a',
@@ -426,7 +426,9 @@ test('answers that are not refusals shorten the slowdown step by step, until it 
 
   const { crawler, origins } = read(0, null, time);
   await crawled(
-    crawler.crawl(['https://site.test/sitemap.xml'], null, options()),
+    crawler.crawl(['https://site.test/sitemap.xml'], null, {
+      signal: t.signal,
+    }),
     time,
   );
 
@@ -448,7 +450,7 @@ test('answers that are not refusals shorten the slowdown step by step, until it 
 
 // A read of site.test whose page /a answers 503 and whose other pages
 // answer, then a second read from its mementos, whose sitemap also names /new.
-async function readAgain(pages: readonly string[]) {
+async function readAgain(pages: readonly string[], signal: AbortSignal) {
   const time = clock(0);
   const started: { path: string; at: number }[] = [];
   let again = false;
@@ -487,7 +489,7 @@ async function readAgain(pages: readonly string[]) {
   };
   const first = crawler(null);
   const memento = await crawled(
-    first.crawler.crawl(['https://site.test/sitemap.xml'], null, options()),
+    first.crawler.crawl(['https://site.test/sitemap.xml'], null, { signal }),
     time,
   );
   started.length = 0;
@@ -496,15 +498,15 @@ async function readAgain(pages: readonly string[]) {
     crawler(first.origins.snapshot()).crawler.crawl(
       ['https://site.test/sitemap.xml'],
       memento,
-      options(),
+      { signal },
     ),
     time,
   );
   return { complete: memento.crawl === null, started };
 }
 
-test('a slowdown carries over to the next read after a complete crawl', async () => {
-  const { complete, started } = await readAgain(['/a']);
+test('a slowdown carries over to the next read after a complete crawl', async (t) => {
+  const { complete, started } = await readAgain(['/a'], t.signal);
 
   assert.equal(complete, true);
   assert.deepEqual(
@@ -515,15 +517,11 @@ test('a slowdown carries over to the next read after a complete crawl', async ()
   assert.deepEqual(gaps(started.map(({ at }) => at)), [1900]);
 });
 
-test('the next read starts from the shortened slowdown, not from its peak', async () => {
-  const { complete, started } = await readAgain([
-    '/a',
-    '/1',
-    '/2',
-    '/3',
-    '/4',
-    '/5',
-  ]);
+test('the next read starts from the shortened slowdown, not from its peak', async (t) => {
+  const { complete, started } = await readAgain(
+    ['/a', '/1', '/2', '/3', '/4', '/5'],
+    t.signal,
+  );
 
   assert.equal(complete, true);
   assert.deepEqual(
@@ -539,7 +537,7 @@ test('the next read starts from the shortened slowdown, not from its peak', asyn
   );
 });
 
-test('a slowdown adds to the Crawl-delay, as Nutch adds its back-off to the server delay', async () => {
+test('a slowdown adds to the Crawl-delay, as Nutch adds its back-off to the server delay', async (t) => {
   const time = clock(0);
   // site.test asks for 2 s and refuses once; other.test asks for 1 s and refuses twice.
   const refusals = new Map([
@@ -568,11 +566,9 @@ test('a slowdown adds to the Crawl-delay, as Nutch adds its back-off to the serv
 
   for (const host of refusals.keys())
     await crawled(
-      read(0, null, time).crawler.crawl(
-        [`https://${host}/sitemap.xml`],
-        null,
-        options(),
-      ),
+      read(0, null, time).crawler.crawl([`https://${host}/sitemap.xml`], null, {
+        signal: t.signal,
+      }),
       time,
     );
 
@@ -582,7 +578,7 @@ test('a slowdown adds to the Crawl-delay, as Nutch adds its back-off to the serv
   assert.deepEqual(gaps(started.get('other.test') ?? []), [2000, 3000]);
 });
 
-test('a robots.txt that answers 503 also slows its origin after the block', async () => {
+test('a robots.txt that answers 503 also slows its origin after the block', async (t) => {
   const time = clock(0);
   let refusing = true;
   const started: { path: string; at: number }[] = [];
@@ -599,7 +595,9 @@ test('a robots.txt that answers 503 also slows its origin after the block', asyn
   );
   const first = read(0, null, time);
   const blocked = await crawled(
-    first.crawler.crawl(['https://site.test/sitemap.xml'], null, options()),
+    first.crawler.crawl(['https://site.test/sitemap.xml'], null, {
+      signal: t.signal,
+    }),
     time,
   );
   refusing = false;
@@ -610,7 +608,7 @@ test('a robots.txt that answers 503 also slows its origin after the block', asyn
     read(0, first.origins.snapshot(), time).crawler.crawl(
       ['https://site.test/sitemap.xml'],
       blocked,
-      options(),
+      { signal: t.signal },
     ),
     time,
   );
@@ -622,7 +620,7 @@ test('a robots.txt that answers 503 also slows its origin after the block', asyn
   assert.equal(wait, 1900);
 });
 
-test('repeated refusals never make the slowdown longer than one minute', async () => {
+test('repeated refusals never make the slowdown longer than one minute', async (t) => {
   const time = clock(0);
   const started: number[] = [];
   using server = new Msw().intercept(
@@ -648,7 +646,7 @@ test('repeated refusals never make the slowdown longer than one minute', async (
     crawler.crawl(
       ['https://site.test/a.xml', 'https://site.test/b.xml'],
       null,
-      options(),
+      { signal: t.signal },
     ),
     time,
   );
@@ -658,7 +656,7 @@ test('repeated refusals never make the slowdown longer than one minute', async (
   assert.equal(slowdownOf(origins), 60_000);
 });
 
-test('Got retries no refusal of robots.txt: one 503 blocks and slows its origin', async () => {
+test('Got retries no refusal of robots.txt: one 503 blocks and slows its origin', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
@@ -673,7 +671,9 @@ test('Got retries no refusal of robots.txt: one 503 blocks and slows its origin'
   const time = clock(0);
   const { crawler, origins } = read(1, null, time);
   await crawled(
-    crawler.crawl(['https://site.test/sitemap.xml'], null, options()),
+    crawler.crawl(['https://site.test/sitemap.xml'], null, {
+      signal: t.signal,
+    }),
     time,
   );
 
@@ -682,7 +682,7 @@ test('Got retries no refusal of robots.txt: one 503 blocks and slows its origin'
   assert.notEqual(origins.snapshot()['https://site.test']?.blocked, null);
 });
 
-test('a robots.txt whose connection dropped before Got retried it does not slow its origin', async () => {
+test('a robots.txt whose connection dropped before Got retried it does not slow its origin', async (t) => {
   const requests: string[] = [];
   let drops = 1;
   // msw gives a network error no code, so Got would not retry it; the
@@ -709,7 +709,9 @@ test('a robots.txt whose connection dropped before Got retried it does not slow 
     const time = clock(0);
     const { crawler, origins } = read(1, null, time);
     await crawled(
-      crawler.crawl(['https://site.test/sitemap.xml'], null, options()),
+      crawler.crawl(['https://site.test/sitemap.xml'], null, {
+        signal: t.signal,
+      }),
       time,
     );
 

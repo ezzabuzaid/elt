@@ -51,7 +51,7 @@ async function results(crawl: Crawl) {
   return entries;
 }
 
-test('crawls links itself and preserves URL identity, provenance and Got responses', async () => {
+test('crawls links itself and preserves URL identity, provenance and Got responses', async (t) => {
   const requests: string[] = [];
   const responses = new Map<string, Response>();
   using server = new Msw().intercept(
@@ -100,7 +100,7 @@ test('crawls links itself and preserves URL identity, provenance and Got respons
           new AdaptiveRevisit(),
         )
         .crawl(['https://site.test/'], null, {
-          signal: AbortSignal.timeout(120_000),
+          signal: t.signal,
         }),
     )
   ).map(pageOf);
@@ -130,7 +130,7 @@ test('crawls links itself and preserves URL identity, provenance and Got respons
   }
 });
 
-test('each found URL is requested once for each role it adds, and a redirect is a request of its own, so a target that two URLs reach downloads once', async () => {
+test('each found URL is requested once for each role it adds, and a redirect is a request of its own, so a target that two URLs reach downloads once', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     noRobots,
@@ -166,7 +166,7 @@ test('each found URL is requested once for each role it adds, and a redirect is 
           new AdaptiveRevisit(),
         )
         .crawl(['https://site.test/'], null, {
-          signal: AbortSignal.timeout(120_000),
+          signal: t.signal,
         }),
     )
   ).map(pageOf);
@@ -185,7 +185,7 @@ test('each found URL is requested once for each role it adds, and a redirect is 
   );
 });
 
-test('failures are handed out with their URL while independent pages continue, and a new crawl retries', async () => {
+test('failures are handed out with their URL while independent pages continue, and a new crawl retries', async (t) => {
   let broken = true;
   const requests: string[] = [];
   using server = new Msw().intercept(
@@ -210,7 +210,7 @@ test('failures are handed out with their URL while independent pages continue, a
   );
   const entries = await results(
     crawler.crawl(['https://site.test/'], null, {
-      signal: AbortSignal.timeout(120_000),
+      signal: t.signal,
     }),
   );
   assert.equal(entries.length, 2);
@@ -226,7 +226,7 @@ test('failures are handed out with their URL while independent pages continue, a
   const retried = (
     await results(
       crawler.crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
     )
   ).map(pageOf);
@@ -237,7 +237,7 @@ test('failures are handed out with their URL while independent pages continue, a
   assert.equal(requests.filter((path) => path === '/bad').length, 2);
 });
 
-test('a failed starting URL is handed out as a failure', async () => {
+test('a failed starting URL is handed out as a failure', async (t) => {
   using server = new Msw().intercept(
     noRobots,
     http.get(
@@ -253,7 +253,7 @@ test('a failed starting URL is handed out as a failure', async () => {
         new AdaptiveRevisit(),
       )
       .crawl(['https://site.test/missing'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
   );
   assert.equal(entries.length, 1);
@@ -262,7 +262,7 @@ test('a failed starting URL is handed out as a failure', async () => {
   assert.equal(failure.error.url, 'https://site.test/missing');
 });
 
-test('consumer backpressure and early break stop fetching, and crawls remain isolated', async () => {
+test('consumer backpressure and early break stop fetching, and crawls remain isolated', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     noRobots,
@@ -282,7 +282,7 @@ test('consumer backpressure and early break stop fetching, and crawls remain iso
     new AdaptiveRevisit(),
   );
   for await (const entry of crawler.crawl(['https://site.test/'], null, {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
   })) {
     if ('progress' in entry || 'deferred' in entry) continue;
     assert.equal(pageOf(entry).url, 'https://site.test/child');
@@ -293,12 +293,12 @@ test('consumer backpressure and early break stop fetching, and crawls remain iso
   const [first, second] = await Promise.all([
     results(
       crawler.crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
     ),
     results(
       crawler.crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
     ),
   ]);
@@ -316,7 +316,7 @@ test('consumer backpressure and early break stop fetching, and crawls remain iso
 test(
   'cancellation interrupts an in-flight request with the exact reason',
   { timeout: 10000 },
-  async () => {
+  async (t) => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     using server = new Msw().intercept(
@@ -337,7 +337,7 @@ test(
     );
     const run = Array.fromAsync(
       crawler.crawl(['https://site.test/slow'], null, {
-        signal: AbortSignal.any([stop.signal, AbortSignal.timeout(120_000)]),
+        signal: AbortSignal.any([stop.signal, t.signal]),
       }),
     );
     try {
@@ -359,7 +359,7 @@ test(
   },
 );
 
-test('validates readers and starting URLs and accepts an empty crawl', async () => {
+test('validates readers and starting URLs and accepts an empty crawl', async (t) => {
   assert.throws(
     () =>
       new Origins(got, null, globalThis).crawler(
@@ -375,18 +375,14 @@ test('validates readers and starting URLs and accepts an empty crawl', async () 
     new AdaptiveRevisit(),
   );
   assert.deepEqual(
-    await Array.fromAsync(
-      crawler.crawl([], null, { signal: AbortSignal.timeout(120_000) }),
-    ),
+    await Array.fromAsync(crawler.crawl([], null, { signal: t.signal })),
     [],
   );
   for (const input of ['relative', 'file:///etc/hosts', 'ftp://site.test/feed'])
-    assert.throws(() =>
-      crawler.crawl([input], null, { signal: AbortSignal.timeout(120_000) }),
-    );
+    assert.throws(() => crawler.crawl([input], null, { signal: t.signal }));
 });
 
-test('include hands back only matching pages and never requests non-matching pages beyond the link limits', async () => {
+test('include hands back only matching pages and never requests non-matching pages beyond the link limits', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     noRobots,
@@ -409,7 +405,7 @@ test('include hands back only matching pages and never requests non-matching pag
           new AdaptiveRevisit(),
         )
         .crawl(['https://site.test/'], null, {
-          signal: AbortSignal.timeout(120_000),
+          signal: t.signal,
           include: [new URLPattern({ pathname: '/keep/*' })],
         }),
     )
@@ -422,7 +418,7 @@ test('include hands back only matching pages and never requests non-matching pag
   assert.deepEqual(requests, ['/', '/x1', '/keep/1']);
 });
 
-test('Got hooks see options.context.page only for handed-back pages that no reader reads as a document', async () => {
+test('Got hooks see options.context.page only for handed-back pages that no reader reads as a document', async (t) => {
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -458,7 +454,7 @@ test('Got hooks see options.context.page only for handed-back pages that no read
           new AdaptiveRevisit(),
         )
         .crawl(['https://site.test/'], null, {
-          signal: AbortSignal.timeout(120_000),
+          signal: t.signal,
           include: [new URLPattern({ pathname: '/keep/*' })],
         }),
     )
@@ -479,7 +475,7 @@ test('Got hooks see options.context.page only for handed-back pages that no read
   });
 });
 
-test('a snapshot resumes the crawl without repeating finished work and hands out the last entry again', async () => {
+test('a snapshot resumes the crawl without repeating finished work and hands out the last entry again', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     noRobots,
@@ -500,7 +496,7 @@ test('a snapshot resumes the crawl without repeating finished work and hands out
     new AdaptiveRevisit(),
   );
   const first = crawler.crawl(['https://site.test/'], null, {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
   });
   const handed: string[] = [];
   for await (const entry of first) {
@@ -514,7 +510,7 @@ test('a snapshot resumes the crawl without repeating finished work and hands out
   const resumed = (
     await results(
       crawler.crawl(['https://site.test/'], snapshot, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
     )
   ).map(pageOf);
@@ -527,7 +523,7 @@ test('a snapshot resumes the crawl without repeating finished work and hands out
   assert.deepEqual(requests, ['/p2', '/p3', '/deep']);
 });
 
-test('a failure is marked as a page only for a page include matches, not for a starting URL or a declared listing', async () => {
+test('a failure is marked as a page only for a page include matches, not for a starting URL or a declared listing', async (t) => {
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -548,7 +544,7 @@ test('a failure is marked as a page only for a page include matches, not for a s
         new AdaptiveRevisit(),
       )
       .crawl(['https://site.test/', 'https://site.test/missing'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
         include: [new URLPattern({ pathname: '/keep/*' })],
       }),
   );
@@ -597,7 +593,7 @@ function progressCrawler(origins: Origins) {
   );
 }
 
-test('every downloaded URL that is not handed back as a page or failure is handed out once as progress', async () => {
+test('every downloaded URL that is not handed back as a page or failure is handed out once as progress', async (t) => {
   const requests: string[] = [];
   using server = progressSite(requests);
   const entries = await Array.fromAsync(
@@ -605,7 +601,7 @@ test('every downloaded URL that is not handed back as a page or failure is hande
       ['https://site.test/'],
       null,
       {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
         include: [new URLPattern({ pathname: '/keep/*' })],
       },
     ),
@@ -630,11 +626,11 @@ test('every downloaded URL that is not handed back as a page or failure is hande
   assert.deepEqual(requests.toSorted(), [...progress, ...handed].toSorted());
 });
 
-test('a snapshot taken at a progress entry resumes without downloading the documents read before it', async () => {
+test('a snapshot taken at a progress entry resumes without downloading the documents read before it', async (t) => {
   const requests: string[] = [];
   using server = progressSite(requests);
   const options: CrawlOptions = {
-    signal: AbortSignal.timeout(120_000),
+    signal: t.signal,
     include: [new URLPattern({ pathname: '/keep/*' })],
   };
   const origins = new Origins(noRetries, null, globalThis);
@@ -677,7 +673,7 @@ test('a snapshot taken at a progress entry resumes without downloading the docum
   ]);
 });
 
-test('a page labeled Latin-1 in its Content-Type is handed back, and every reader reads it by that charset', async () => {
+test('a page labeled Latin-1 in its Content-Type is handed back, and every reader reads it by that charset', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
@@ -715,7 +711,7 @@ test('a page labeled Latin-1 in its Content-Type is handed back, and every reade
         new AdaptiveRevisit(),
       )
       .crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
   );
   assert.deepEqual(
@@ -732,7 +728,7 @@ test('a page labeled Latin-1 in its Content-Type is handed back, and every reade
   assert.ok(requests.includes('/archives/caf%C3%A9/'), requests.join(' '));
 });
 
-test('a page labeled only by its <meta charset> is read by that charset', async () => {
+test('a page labeled only by its <meta charset> is read by that charset', async (t) => {
   const requests: string[] = [];
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
@@ -758,13 +754,13 @@ test('a page labeled only by its <meta charset> is read by that charset', async 
         new AdaptiveRevisit(),
       )
       .crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
   );
   assert.ok(requests.includes('/caf%C3%A9'), requests.join(' '));
 });
 
-test('an unlabeled page is read as UTF-8, and one that is not valid UTF-8 is still handed back with its links followed', async () => {
+test('an unlabeled page is read as UTF-8, and one that is not valid UTF-8 is still handed back with its links followed', async (t) => {
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -792,7 +788,7 @@ test('an unlabeled page is read as UTF-8, and one that is not valid UTF-8 is sti
         new AdaptiveRevisit(),
       )
       .crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
   );
   assert.deepEqual(
@@ -803,7 +799,7 @@ test('an unlabeled page is read as UTF-8, and one that is not valid UTF-8 is sti
   );
 });
 
-test('a reader that throws on a response does not stop the readers after it or drop the page', async () => {
+test('a reader that throws on a response does not stop the readers after it or drop the page', async (t) => {
   // A reader that cannot read anything, placed before the built-in readers.
   class BrokenReader extends Reader<never, null> {
     readonly notes = z.never();
@@ -835,7 +831,7 @@ test('a reader that throws on a response does not stop the readers after it or d
         new AdaptiveRevisit(),
       )
       .crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
   );
   assert.deepEqual(
@@ -862,7 +858,7 @@ test('a reader that throws on a response does not stop the readers after it or d
   );
 });
 
-test('a declared listing that one reader cannot read keeps what the other readers find in it', async () => {
+test('a declared listing that one reader cannot read keeps what the other readers find in it', async (t) => {
   using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -883,7 +879,7 @@ test('a declared listing that one reader cannot read keeps what the other reader
         new AdaptiveRevisit(),
       )
       .crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
   );
   assert.deepEqual(

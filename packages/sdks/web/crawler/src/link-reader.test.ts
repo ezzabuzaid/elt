@@ -43,7 +43,7 @@ async function results(crawl: Crawl) {
   return entries;
 }
 
-test('depth and page limits bound which pages contribute links, while every found page is handed back', async () => {
+test('depth and page limits bound which pages contribute links, while every found page is handed back', async (t) => {
   const requests: string[] = [];
   using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
@@ -65,7 +65,7 @@ test('depth and page limits bound which pages contribute links, while every foun
       new Origins(got, null, globalThis)
         .crawler(got, [new LinkReader(limits)], new AdaptiveRevisit())
         .crawl(['https://site.test/'], null, {
-          signal: AbortSignal.timeout(120_000),
+          signal: t.signal,
         }),
     );
     assert.deepEqual(pages.map(pathOf), paths, JSON.stringify(limits));
@@ -86,7 +86,7 @@ test('invalid link limits fail on construction', () => {
   }
 });
 
-test('Markdown pages contribute their links on the starting origin', async () => {
+test('Markdown pages contribute their links on the starting origin', async (t) => {
   const requests: string[] = [];
   using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
@@ -113,14 +113,14 @@ test('Markdown pages contribute their links on the starting origin', async () =>
         new AdaptiveRevisit(),
       )
       .crawl(['https://site.test/'], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
   );
   assert.deepEqual(pages.map(pathOf), ['/guide.md', '/deeper.md']);
   assert.deepEqual(requests, ['/', '/guide.md', '/deeper.md']);
 });
 
-test('feed-only starts do not turn their articles into new link roots', async () => {
+test('feed-only starts do not turn their articles into new link roots', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     assert.ok(request.url);
@@ -150,14 +150,14 @@ test('feed-only starts do not turn their articles into new link roots', async ()
         new AdaptiveRevisit(),
       )
       .crawl([`${upstream.origin}/feed`], null, {
-        signal: AbortSignal.timeout(120_000),
+        signal: t.signal,
       }),
   );
   assert.deepEqual(pages.map(pathOf), ['/article']);
   assert.deepEqual(requests, ['/robots.txt', '/feed', '/article']);
 });
 
-test('archive pages contribute their links, and declarations with non-HTTP URLs are ignored', async () => {
+test('archive pages contribute their links, and declarations with non-HTTP URLs are ignored', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     if (request.url === '/')
       response
@@ -187,7 +187,7 @@ test('archive pages contribute their links, and declarations with non-HTTP URLs 
         ],
         new AdaptiveRevisit(),
       )
-      .crawl([upstream.origin], null, { signal: AbortSignal.timeout(120_000) }),
+      .crawl([upstream.origin], null, { signal: t.signal }),
   );
   assert.deepEqual(pages.map(pathOf), ['/archive/', '/article']);
 });

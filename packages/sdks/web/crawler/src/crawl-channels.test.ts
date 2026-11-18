@@ -59,17 +59,13 @@ function crawler() {
   );
 }
 
-const options = () => ({ signal: AbortSignal.timeout(120_000) });
-
-test('a crawl publishes its start, each URL it requested with its lane, roles and listing, and its end', async () => {
+test('a crawl publishes its start, each URL it requested with its lane, roles and listing, and its end', async (t) => {
   using server = new Msw().intercept(site());
   using listened = listen();
 
-  for await (const _ of crawler().crawl(
-    ['https://site.test/'],
-    null,
-    options(),
-  ));
+  for await (const _ of crawler().crawl(['https://site.test/'], null, {
+    signal: t.signal,
+  }));
 
   const [started] = listened.heard;
   assert.ok(started instanceof CrawlStarted);
@@ -104,15 +100,13 @@ test('a crawl publishes its start, each URL it requested with its lane, roles an
   assert.equal(ended.complete, true);
 });
 
-test("a request publishes how long the crawl waited for its origin's delay", async () => {
+test("a request publishes how long the crawl waited for its origin's delay", async (t) => {
   using server = new Msw().intercept(site());
   using listened = listen();
 
-  for await (const _ of crawler().crawl(
-    ['https://site.test/'],
-    null,
-    options(),
-  ));
+  for await (const _ of crawler().crawl(['https://site.test/'], null, {
+    signal: t.signal,
+  }));
 
   const waits = listened.heard.flatMap((message) =>
     message instanceof CrawlRequested && message.served === 'network'
@@ -129,15 +123,13 @@ test("a request publishes how long the crawl waited for its origin's delay", asy
   );
 });
 
-test("a crawl publishes its consumer's time with each entry as the entry's hand-off", async () => {
+test("a crawl publishes its consumer's time with each entry as the entry's hand-off", async (t) => {
   using server = new Msw().intercept(site());
   using listened = listen();
 
-  for await (const entry of crawler().crawl(
-    ['https://site.test/'],
-    null,
-    options(),
-  ))
+  for await (const entry of crawler().crawl(['https://site.test/'], null, {
+    signal: t.signal,
+  }))
     if ('response' in entry && entry.url === 'https://site.test/a')
       await sleep(200);
 
@@ -154,7 +146,7 @@ test("a crawl publishes its consumer's time with each entry as the entry's hand-
   assert.ok((handOffs[1]?.[1] ?? Infinity) < 100, String(handOffs[1]?.[1]));
 });
 
-test('an origin that answers 429 publishes its block until its Retry-After', async () => {
+test('an origin that answers 429 publishes its block until its Retry-After', async (t) => {
   using server = new Msw().intercept(
     site((path) =>
       path === '/a'
@@ -168,11 +160,9 @@ test('an origin that answers 429 publishes its block until its Retry-After', asy
   using listened = listen();
   const before = Date.now();
 
-  for await (const _ of crawler().crawl(
-    ['https://site.test/'],
-    null,
-    options(),
-  ));
+  for await (const _ of crawler().crawl(['https://site.test/'], null, {
+    signal: t.signal,
+  }));
 
   const blocks = listened.heard.filter(
     (message) => message instanceof OriginBlocked,
@@ -182,17 +172,15 @@ test('an origin that answers 429 publishes its block until its Retry-After', asy
   assert.ok((blocks[0]?.until ?? 0) >= before + 119_000);
 });
 
-test('a request that gets no answer publishes its error', async () => {
+test('a request that gets no answer publishes its error', async (t) => {
   using server = new Msw().intercept(
     site((path) => (path === '/b' ? HttpResponse.error() : undefined)),
   );
   using listened = listen();
 
-  for await (const _ of crawler().crawl(
-    ['https://site.test/'],
-    null,
-    options(),
-  ));
+  for await (const _ of crawler().crawl(['https://site.test/'], null, {
+    signal: t.signal,
+  }));
 
   const failed = listened.heard.flatMap((message) =>
     message instanceof CrawlRequested && 'error' in message.outcome
@@ -202,7 +190,7 @@ test('a request that gets no answer publishes its error', async () => {
   assert.deepEqual(failed, ['/b']);
 });
 
-test('two crawls of one read that run at the same time put their own crawl on every message', async () => {
+test('two crawls of one read that run at the same time put their own crawl on every message', async (t) => {
   using server = new Msw().intercept(
     site(),
     http.get('https://other.test/*', ({ request }) =>
@@ -217,7 +205,7 @@ test('two crawls of one read that run at the same time put their own crawl on ev
   const crawl = (start: string) =>
     origins
       .crawler(client, [new ListingReader()], new AdaptiveRevisit())
-      .crawl([start], null, options());
+      .crawl([start], null, { signal: t.signal });
   const onSite = crawl('https://site.test/');
   const onOther = crawl('https://other.test/');
 

@@ -13,7 +13,7 @@ const fortuneContext = [
   { stnMeta: { '@id': 'https://stnvideo.com', '@type': '@json' } },
 ];
 
-test('the article date and headline come from JSON-LD whatever form its schema.org @context takes', async () => {
+test('the article date and headline come from JSON-LD whatever form its schema.org @context takes', async (t) => {
   for (const context of [
     'https://schema.org',
     fortuneContext,
@@ -39,7 +39,7 @@ test('the article date and headline come from JSON-LD whatever form its schema.o
 
     const article = await new WebArticle([new HTMLExtraction()], got).fetch(
       upstream.origin,
-      AbortSignal.timeout(5000),
+      t.signal,
     );
 
     assert.ok(article, JSON.stringify(context));
@@ -56,7 +56,7 @@ test('the article date and headline come from JSON-LD whatever form its schema.o
   }
 });
 
-test('a JSON-LD script that is not JSON leaves the article and the date of a valid script', async () => {
+test('a JSON-LD script that is not JSON leaves the article and the date of a valid script', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html' }).end(`
       <html><head><title>Beef imports fall short | Fortune</title>
@@ -74,7 +74,7 @@ test('a JSON-LD script that is not JSON leaves the article and the date of a val
 
   const article = await new WebArticle([new HTMLExtraction()], got).fetch(
     upstream.origin,
-    AbortSignal.timeout(5000),
+    t.signal,
   );
 
   assert.ok(article);
