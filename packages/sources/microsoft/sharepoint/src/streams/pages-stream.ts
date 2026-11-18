@@ -70,6 +70,7 @@ export class PagesStream extends SnapshotStream {
   constructor() {
     super({
       name: 'pages',
+      restricted: true,
       description:
         'One record for each modern page of the Site Pages library of the site, with the HTML of its text web parts. Primary key siteUrl, pageId. An incremental read deletes a page that Graph no longer lists.',
       properties,

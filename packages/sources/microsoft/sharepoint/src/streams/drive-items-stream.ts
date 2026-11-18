@@ -7,13 +7,20 @@ import {
   fileExtension,
 } from '@eltjs/elt';
 import {
+  DeltaExpiredError,
   type DeltaPage,
   type DriveItem,
   GraphError,
   type PresentDriveItem,
 } from '@eltjs/sdk-microsoft-sharepoint';
 
-import { DeltaStream } from '../delta-stream.ts';
+import {
+  type DeltaState,
+  DeltaStream,
+  type Link,
+  resumeLink,
+} from '../delta-stream.ts';
+import type { ScopeFolder } from '../folder-scope.ts';
 import type { SharePointRun } from '../sharepoint-run.ts';
 import {
   createdBy,
@@ -105,16 +112,45 @@ const properties = {
   },
 } as const;
 
+// The scope folders of one drive, and each item under them with the folder
+// that holds it.
+class Subtrees {
+  readonly #roots: ReadonlySet<string>;
+  readonly items: Map<string, string>;
+
+  constructor(roots: readonly string[], items: Map<string, string>) {
+    this.#roots = new Set(roots);
+    this.items = items;
+  }
+
+  isRoot(id: string): boolean {
+    return this.#roots.has(id);
+  }
+
+  contains(id: string): boolean {
+    return this.#roots.has(id) || this.items.has(id);
+  }
+
+  // The item and each item under it.
+  subtree(id: string): readonly string[] {
+    const found = [id];
+    for (let index = 0; index < found.length; index += 1)
+      for (const [item, parent] of this.items)
+        if (parent === found[index]) found.push(item);
+    return found;
+  }
+}
+
 export class DriveItemsStream extends DeltaStream<DriveItem> {
   constructor() {
     super({
       name: 'driveItems',
       description:
-        'One record for each file and folder of each document library of the site, without the root folder of the library, which drives describes. A copy can take the content of a file through the file of the stream; a field that accepts only some file names downloads only those files. Primary key siteUrl, driveId, itemId. Read through the drive delta of Graph: the first read loads every item, and later reads apply the changes and deletions after it.',
+        'One record for each file and folder of each document library of the site, without the root folder of the library, which drives describes. A site limited to folders loads only those folders and what they hold. A copy can take the content of a file through the file of the stream; a field that accepts only some file names downloads only those files. Primary key siteUrl, driveId, itemId. Read through the drive delta of Graph: the first read loads every item, and later reads apply the changes and deletions after it.',
       properties,
       primaryKey: ['siteUrl', 'driveId', 'itemId'],
       covers:
-        'Every file and folder of every document library of each configured site, then the changes that the drive delta of Graph reports.',
+        'Every file and folder of every document library of each configured site, or of its scope folders, then the changes that the drive delta of Graph reports.',
       supportsFileTransfer: true,
     });
   }
@@ -172,6 +208,196 @@ export class DriveItemsStream extends DeltaStream<DriveItem> {
       if (file !== null) await rm(file, { force: true });
     }
   }
+
+  // A site limited to folders loads the scope folders and each item under
+  // them (ADR 0003). The first read takes the delta link of each drive, then
+  // lists the folders, so a change during the listing comes again in the next
+  // read. Later reads apply the changes of the drive delta to the items under
+  // the folders: an item that leaves them is deleted with what it holds, and
+  // a folder that enters them is listed, since a delta gives no item again
+  // when its folder moves. Other scope folders than the state was read with
+  // start the site over with a RESET.
+  protected override async *scoped(
+    configuration: CopyConfiguration,
+    saved: DeltaState | null,
+    url: string,
+    folders: readonly ScopeFolder[],
+    run: SharePointRun,
+    signal: AbortSignal,
+  ): AsyncGenerator<SourceMessage> {
+    // The scope folders as the checkpoint names them.
+    const ids = folders.map((it) => `${it.driveId}/${it.item.id}`);
+    const from =
+      saved !== null &&
+      saved.scope !== undefined &&
+      sameMembers(saved.scope.folders, ids) &&
+      !this.gained(saved.fields)
+        ? saved
+        : null;
+    if (saved !== null && from === null) yield* this.reset();
+    try {
+      yield* this.#folders(configuration, from, url, folders, ids, run, signal);
+    } catch (error) {
+      if (!(error instanceof DeltaExpiredError)) throw error;
+      yield* this.reset();
+      yield* this.#folders(configuration, null, url, folders, ids, run, signal);
+    }
+  }
+
+  async *#folders(
+    configuration: CopyConfiguration,
+    from: DeltaState | null,
+    url: string,
+    folders: readonly ScopeFolder[],
+    ids: readonly string[],
+    run: SharePointRun,
+    signal: AbortSignal,
+  ): AsyncGenerator<SourceMessage> {
+    const links = new Map<string, Link>(Object.entries(from?.links ?? {}));
+    const items = new Map<string, Map<string, string>>(
+      Object.entries(from?.scope?.items ?? {}).map(([drive, parents]) => [
+        drive,
+        new Map(Object.entries(parents)),
+      ]),
+    );
+    const state = () =>
+      this.state(links, {
+        folders: ids,
+        items: Object.fromEntries(
+          [...items].map(([drive, parents]) => [
+            drive,
+            Object.fromEntries(parents),
+          ]),
+        ),
+      });
+    for (const driveId of new Set(folders.map((it) => it.driveId))) {
+      const roots = folders.filter((it) => it.driveId === driveId);
+      const trees = new Subtrees(
+        roots.map((it) => it.item.id),
+        items.get(driveId) ?? new Map(),
+      );
+      items.set(driveId, trees.items);
+      const link = links.get(driveId);
+      if (link === undefined) {
+        const delta = await run.client.latestDriveDeltaLink(driveId, signal);
+        for (const root of roots)
+          yield* this.#enter(
+            configuration,
+            url,
+            driveId,
+            root.item,
+            trees,
+            run,
+            signal,
+          );
+        links.set(driveId, { delta });
+        yield state();
+        continue;
+      }
+      for await (const page of run.client.driveDelta(
+        driveId,
+        resumeLink(link),
+        signal,
+      )) {
+        for (const item of page.items)
+          yield* this.#change(
+            configuration,
+            url,
+            driveId,
+            item,
+            trees,
+            run,
+            signal,
+          );
+        links.set(
+          driveId,
+          'deltaLink' in page
+            ? { delta: page.deltaLink }
+            : { next: page.nextLink },
+        );
+        yield state();
+      }
+    }
+  }
+
+  // An item that enters the scope, and each item under it, listed.
+  async *#enter(
+    configuration: CopyConfiguration,
+    url: string,
+    driveId: string,
+    item: PresentDriveItem,
+    trees: Subtrees,
+    run: SharePointRun,
+    signal: AbortSignal,
+  ): AsyncGenerator<SourceMessage> {
+    yield* this.messages(configuration, url, driveId, item, run, signal);
+    if (item.folder === undefined) return;
+    // A queue that grows as the walk finds folders.
+    const folders = [item.id];
+    for (const folder of folders) {
+      for (const child of await run.client.children(driveId, folder, signal)) {
+        trees.items.set(child.id, folder);
+        yield* this.messages(configuration, url, driveId, child, run, signal);
+        if (child.folder !== undefined) folders.push(child.id);
+      }
+    }
+  }
+
+  // One item of a delta of a drive with scope folders. An item outside them
+  // that a delta gives before its new folder enters them loads when that
+  // folder enters, since the folder is listed then.
+  async *#change(
+    configuration: CopyConfiguration,
+    url: string,
+    driveId: string,
+    item: DriveItem,
+    trees: Subtrees,
+    run: SharePointRun,
+    signal: AbortSignal,
+  ): AsyncGenerator<SourceMessage> {
+    if (item.deleted !== undefined) {
+      yield* this.#leave(configuration, url, driveId, item.id, trees);
+      return;
+    }
+    if (item.root !== undefined) return;
+    const parent = item.parentReference.id;
+    if (
+      !trees.isRoot(item.id) &&
+      (parent === undefined || !trees.contains(parent))
+    ) {
+      yield* this.#leave(configuration, url, driveId, item.id, trees);
+      return;
+    }
+    const entering = !trees.contains(item.id);
+    if (!trees.isRoot(item.id) && parent !== undefined)
+      trees.items.set(item.id, parent);
+    if (entering)
+      yield* this.#enter(configuration, url, driveId, item, trees, run, signal);
+    else yield* this.messages(configuration, url, driveId, item, run, signal);
+  }
+
+  // An item that left the scope, or was deleted, with each item under it.
+  *#leave(
+    configuration: CopyConfiguration,
+    url: string,
+    driveId: string,
+    id: string,
+    trees: Subtrees,
+  ): Generator<SourceMessage> {
+    if (!trees.contains(id)) return;
+    for (const gone of trees.subtree(id)) {
+      trees.items.delete(gone);
+      yield* this.deletion(configuration, {
+        siteUrl: url,
+        driveId,
+        itemId: gone,
+      });
+    }
+  }
+}
+
+function sameMembers(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((it) => b.includes(it));
 }
 
 function record(

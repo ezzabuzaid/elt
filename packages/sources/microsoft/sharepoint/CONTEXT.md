@@ -21,8 +21,16 @@ A stream that Graph lists in full on each read, which an incremental copy compar
 _Avoid_: Full stream, listing
 
 **Delta state**:
-The checkpoint of a delta stream for one site: the fields that its reads carried, and the delta link or the next link of each collection.
+The checkpoint of a delta stream for one site: the fields that its reads carried, the delta link or the next link of each collection, and for a scoped site its scope folders and the items under them.
 _Avoid_: Cursor, token, watermark
+
+**Scope folder**:
+A folder in a document library that limits a site, named by its full URL, such as `https://contoso.sharepoint.com/sites/Sales/Shared Documents/Proposals`. A site with scope folders is a scoped site: it loads only the scope folders and what they hold.
+_Avoid_: Collection (a collection is a whole library or list), path, filter
+
+**Restricted stream**:
+A stream that loads nothing for a scoped site, because no record of it shows which folder holds it: `lists`, `listColumns`, `listItems`, `accessRequests` and `pages`.
+_Avoid_: Excluded stream, disabled stream
 
 **Reload**:
 A read of each collection of a site from the start, after a `RESET`, because the delta state can no longer tell what changed. It commits one time, when it ends.

@@ -1082,3 +1082,35 @@ test('a site version changes when the lastModifiedDateTime of a page changes, an
     await checks.return();
   }
 });
+
+test('the item at a path asks Graph for each name of the path whole, so a name with # or % finds its folder', async (t) => {
+  const folder = {
+    id: '01RND',
+    name: 'R&D #2 100%',
+    size: 0,
+    folder: { childCount: 0 },
+    parentReference: {
+      driveId: 'drive-1',
+      id: '01BIDS',
+      path: '/drives/drive-1/root:/Bids',
+    },
+    webUrl: `${SITE_URL}/Shared%20Documents/Bids/R%26D%20%232%20100%25`,
+    createdDateTime: '2025-02-03T04:05:06Z',
+    lastModifiedDateTime: '2026-11-15T10:00:00Z',
+    eTag: '"{0A1B2C3D-0000-4000-8000-000000000009},1"',
+  };
+  using graph = microsoft((url) =>
+    url.pathname === '/v1.0/drives/drive-1/root:/Bids/R%26D%20%232%20100%25'
+      ? Response.json(folder)
+      : refusal(404, 'itemNotFound', 'The resource could not be found.'),
+  );
+
+  const found = await graph.client.driveItemAt(
+    'drive-1',
+    'Bids/R&D #2 100%',
+    t.signal,
+  );
+
+  assert.equal(found.id, '01RND');
+  assert.equal(found.name, 'R&D #2 100%');
+});

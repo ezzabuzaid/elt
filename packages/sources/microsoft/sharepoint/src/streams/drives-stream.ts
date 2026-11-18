@@ -40,7 +40,7 @@ export class DrivesStream extends SnapshotStream {
     super({
       name: 'drives',
       description:
-        'One record for each document library of the site, as Graph shows it: a drive of files and folders. Primary key siteUrl, driveId. An incremental read deletes a library that Graph no longer lists.',
+        'One record for each document library of the site, as Graph shows it: a drive of files and folders. A site limited to folders loads only the libraries that hold them. Primary key siteUrl, driveId. An incremental read deletes a library that Graph no longer lists.',
       properties,
       primaryKey: ['siteUrl', 'driveId'],
       covers: 'Every document library of each configured site.',
@@ -52,16 +52,18 @@ export class DrivesStream extends SnapshotStream {
     run: SharePointRun,
     signal: AbortSignal,
   ): AsyncGenerator<RecordDraft<typeof properties>> {
+    const scope = await run.scope(url, signal);
     for (const drive of await run.drives(url, signal))
-      yield {
-        siteUrl: url,
-        driveId: drive.id,
-        name: drive.name,
-        description: drive.description ?? null,
-        driveType: drive.driveType,
-        webUrl: drive.webUrl,
-        createdDateTime: instant(drive.createdDateTime),
-        lastModifiedDateTime: instant(drive.lastModifiedDateTime),
-      };
+      if (scope === 'site' || scope.some((it) => it.driveId === drive.id))
+        yield {
+          siteUrl: url,
+          driveId: drive.id,
+          name: drive.name,
+          description: drive.description ?? null,
+          driveType: drive.driveType,
+          webUrl: drive.webUrl,
+          createdDateTime: instant(drive.createdDateTime),
+          lastModifiedDateTime: instant(drive.lastModifiedDateTime),
+        };
   }
 }

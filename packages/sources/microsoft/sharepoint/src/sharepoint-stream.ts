@@ -62,6 +62,9 @@ type StreamDefinition = {
   // What a pass over the stream reads, for the sync history.
   readonly covers: string;
   readonly supportsFileTransfer?: true;
+  // Whether a site limited to folders loads nothing of the stream, because no
+  // record of it shows which folder holds it.
+  readonly restricted?: true;
 };
 
 /**
@@ -72,6 +75,7 @@ type StreamDefinition = {
 export abstract class SharePointStream {
   readonly stream: Stream;
   readonly covers: string;
+  readonly restricted: boolean;
 
   constructor({
     name,
@@ -80,6 +84,7 @@ export abstract class SharePointStream {
     primaryKey,
     covers,
     supportsFileTransfer,
+    restricted,
   }: StreamDefinition) {
     this.stream = new Stream({
       name,
@@ -97,6 +102,7 @@ export abstract class SharePointStream {
       supportsFileTransfer,
     });
     this.covers = covers;
+    this.restricted = restricted === true;
   }
 
   abstract extract(

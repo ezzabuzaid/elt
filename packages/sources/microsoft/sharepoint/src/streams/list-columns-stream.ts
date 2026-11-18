@@ -55,6 +55,7 @@ export class ListColumnsStream extends SnapshotStream {
   constructor() {
     super({
       name: 'listColumns',
+      restricted: true,
       description:
         'One record for each column of each list of the site that is not hidden from Graph. Primary key siteUrl, listId, columnId. An incremental read deletes a column that Graph no longer lists.',
       properties,

@@ -47,6 +47,7 @@ export class ListsStream extends SnapshotStream {
   constructor() {
     super({
       name: 'lists',
+      restricted: true,
       description:
         'One record for each list of the site, hidden lists and document libraries included. Graph leaves out the lists it marks system. Primary key siteUrl, listId. An incremental read deletes a list that Graph no longer lists.',
       properties,

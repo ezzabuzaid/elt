@@ -39,7 +39,12 @@ import {
   SharePointSiteNotFoundError,
 } from '@eltjs/sdk-microsoft-sharepoint';
 
-import { SharePointSource } from './sharepoint-source.ts';
+import {
+  SharePointFolderNotFoundError,
+  type SharePointSite,
+  SharePointSource,
+  restrictedSharePointStreams,
+} from './sharepoint-source.ts';
 
 // --- Graph: the sites of one tenant, stubbed below fetch with msw ----------
 
@@ -146,6 +151,14 @@ const driveRoot = (driveId: string): Json => ({
   lastModifiedDateTime: MODIFIED,
 });
 
+// Where an item is: in the folder parent, or at the root of its drive.
+// Graph documents that a delta can leave out the path of a nested item.
+function parentReference(driveId: string, parent: string | undefined): Json {
+  return parent === undefined
+    ? { driveId, id: `${driveId}-root`, path: `/drives/${driveId}/root:` }
+    : { driveId, id: parent };
+}
+
 function driveFile(
   driveId: string,
   id: string,
@@ -153,7 +166,8 @@ function driveFile(
   {
     size = 100,
     modified = MODIFIED,
-  }: { size?: number; modified?: string } = {},
+    parent,
+  }: { size?: number; modified?: string; parent?: string } = {},
 ): Json {
   return {
     id,
@@ -163,11 +177,7 @@ function driveFile(
       mimeType: 'application/octet-stream',
       hashes: { quickXorHash: `quick-${id}` },
     },
-    parentReference: {
-      driveId,
-      id: `${driveId}-root`,
-      path: `/drives/${driveId}/root:`,
-    },
+    parentReference: parentReference(driveId, parent),
     webUrl: `${SALES}/Shared Documents/${name}`,
     createdDateTime: CREATED,
     lastModifiedDateTime: modified,
@@ -179,17 +189,18 @@ function driveFile(
   };
 }
 
-function driveFolder(driveId: string, id: string, name: string): Json {
+function driveFolder(
+  driveId: string,
+  id: string,
+  name: string,
+  { parent }: { parent?: string } = {},
+): Json {
   return {
     id,
     name,
     size: 0,
     folder: { childCount: 0 },
-    parentReference: {
-      driveId,
-      id: `${driveId}-root`,
-      path: `/drives/${driveId}/root:`,
-    },
+    parentReference: parentReference(driveId, parent),
     webUrl: `${SALES}/Shared Documents/${name}`,
     createdDateTime: CREATED,
     lastModifiedDateTime: MODIFIED,
@@ -311,6 +322,12 @@ function delta(
   const token = url.searchParams.get('token');
   const first = root === undefined ? [] : [root];
   const link = (value: string) => `${base}?token=${value}`;
+  // The delta link of the feed as it is now, with no item (live, 2026-11-18).
+  if (token === 'latest')
+    return Response.json({
+      value: [],
+      '@odata.deltaLink': link(`delta.${feed.version}`),
+    });
   if (token === null || token.startsWith('start.')) {
     const [, since = String(feed.version), offset = '0'] =
       token?.split('.') ?? [];
@@ -329,6 +346,16 @@ function delta(
     value: [...first, ...feed.changesAfter(version)],
     '@odata.deltaLink': link(`delta.${feed.version}`),
   });
+}
+
+// The ID of the folder that holds a drive item.
+function parentOf(item: Json): unknown {
+  const reference = item.parentReference;
+  return typeof reference === 'object' &&
+    reference !== null &&
+    'id' in reference
+    ? reference.id
+    : undefined;
 }
 
 function route(world: World, url: URL): Response {
@@ -368,6 +395,41 @@ function route(world: World, url: URL): Response {
         url,
         driveRoot(first),
       );
+    // The item at a path from the root, by name at each level, without
+    // regard to case, as SharePoint matches names (live, 2026-11-18).
+    const byPath = /^\/root:\/(.+)$/.exec(rest);
+    if (byPath !== null) {
+      let found: Json | undefined;
+      for (const name of byPath[1]?.split('/') ?? []) {
+        const parent = found === undefined ? `${first}-root` : found.id;
+        found = drive.entry.feed.items
+          .values()
+          .find(
+            (item) =>
+              String(item.name).toLowerCase() === name.toLowerCase() &&
+              parentOf(item) === parent,
+          );
+        if (found === undefined) return refusal(404, 'itemNotFound');
+      }
+      return Response.json(found);
+    }
+    // The items in a folder, page by page with a next link (live,
+    // 2026-11-18). Each child names its folder in parentReference.id.
+    const children = /^\/items\/([^/]+)\/children$/.exec(rest);
+    if (children !== null) {
+      const all = drive.entry.feed.items
+        .values()
+        .filter((item) => parentOf(item) === children[1])
+        .toArray();
+      const offset = Number(url.searchParams.get('$skiptoken') ?? '0');
+      const end = offset + world.pageSize;
+      return Response.json({
+        value: all.slice(offset, end),
+        ...(end < all.length && {
+          '@odata.nextLink': `${GRAPH}/drives/${first}/items/${children[1]}/children?$skiptoken=${end}`,
+        }),
+      });
+    }
     const content = /^\/items\/([^/]+)\/content$/.exec(rest);
     const bytes = drive.site.contents.get(content?.[1] ?? '');
     if (content !== null)
@@ -506,7 +568,7 @@ function microsoft(world: World) {
         .map(({ pathname, search }) =>
           decodeURIComponent(pathname.slice('/v1.0'.length) + search),
         ),
-    source: (sites: readonly string[] = [SALES]) =>
+    source: (sites: readonly SharePointSite[] = [SALES]) =>
       new SharePointSource({
         client: new SharePointClient({
           tenantId: TENANT,
@@ -1607,4 +1669,544 @@ test('a pass over a large library holds one drive item at a time, so it loads in
     column(dir.path, 'SELECT count(*) FROM driveItems'),
     [60_000],
   );
+});
+
+// --- Scope folders -------------------------------------------------------------
+
+// The Sales site, whose Documents library holds Proposals (Brief.docx, and
+// Proposals 2025 with Bid.docx) beside Team Bios (CV.docx) and Budget.xlsx,
+// and whose Branding library holds a Proposals folder of its own.
+function proposalsSite(): FakeSite {
+  const sales = salesSite();
+  const documents = sales.drives[0];
+  assert.ok(documents !== undefined);
+  for (const item of [
+    driveFile('b!documents', 'file-brief', 'Brief.docx', {
+      parent: 'folder-proposals',
+    }),
+    driveFolder('b!documents', 'folder-2025', 'Proposals 2025', {
+      parent: 'folder-proposals',
+    }),
+    driveFile('b!documents', 'file-bid', 'Bid.docx', { parent: 'folder-2025' }),
+    driveFolder('b!documents', 'folder-bios', 'Team Bios'),
+    driveFile('b!documents', 'file-cv', 'CV.docx', { parent: 'folder-bios' }),
+  ])
+    documents.feed.put(item);
+  sales.drives.push({
+    id: 'b!branding',
+    name: 'Branding',
+    feed: new Feed([
+      driveFolder('b!branding', 'branding-proposals', 'Proposals'),
+      driveFile('b!branding', 'file-logo', 'Logo.docx', {
+        parent: 'branding-proposals',
+      }),
+    ]),
+  });
+  return sales;
+}
+
+const PROPOSALS = `${SALES}/Documents/Proposals`;
+
+test('a scope folder URL where the site has no folder fails only that site, as a config failure', async () => {
+  for (const missing of [
+    `${SALES}/Archive/Proposals`,
+    `${SALES}/Documents/Pricing`,
+    `${SALES}/Documents/Budget.xlsx`,
+  ]) {
+    await using dir = await new TemporaryFiles().directory('sharepoint-');
+    const marketing = { ...salesSite(), url: MARKETING, id: 'marketing-id' };
+    using graph = microsoft({
+      sites: [proposalsSite(), marketing],
+      pageSize: 200,
+    });
+    const source = graph.source([
+      MARKETING,
+      { url: SALES, folders: [missing] },
+    ]);
+    const pipeline = await warehouse(source, dir.path);
+
+    const failed = await failedRun(pipeline.run());
+
+    const { streams } = await source.discover();
+    assert.deepEqual(
+      Object.keys(failed).sort(),
+      streams.map((stream) => stream.name).sort(),
+      missing,
+    );
+    for (const failures of Object.values(failed)) {
+      assert.deepEqual(failures?.[0]?.partition, { siteUrl: SALES });
+      assert.equal(failures?.[0]?.failureType, 'config');
+      const { error } = failures?.[0] ?? {};
+      assert.ok(error instanceof SharePointFolderNotFoundError, missing);
+      assert.equal(error.url, missing);
+    }
+    assert.deepEqual(
+      column(dir.path, 'SELECT DISTINCT siteUrl FROM driveItems'),
+      [MARKETING],
+    );
+  }
+});
+
+test('a scope folder that someone renamed fails its site as a config failure, and keeps the rows of the pass before', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const sales = proposalsSite();
+  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  const pipeline = await warehouse(
+    graph.source([{ url: SALES, folders: [PROPOSALS] }]),
+    dir.path,
+  );
+  await pipeline.run();
+  const before = rows(
+    dir.path,
+    'SELECT itemId FROM driveItems ORDER BY itemId',
+  );
+  assert.deepEqual(
+    before.map(({ itemId }) => itemId),
+    ['file-bid', 'file-brief', 'folder-2025', 'folder-proposals'],
+  );
+  sales.drives[0]?.feed.put(
+    driveFolder('b!documents', 'folder-proposals', 'Proposals Archive'),
+  );
+
+  const failed = await failedRun(pipeline.run());
+
+  const failure = failed.driveItems?.[0];
+  assert.equal(failure?.failureType, 'config');
+  assert.ok(failure?.error instanceof SharePointFolderNotFoundError);
+  assert.equal(failure.error.url, PROPOSALS);
+  assert.deepEqual(
+    rows(dir.path, 'SELECT itemId FROM driveItems ORDER BY itemId'),
+    before,
+  );
+});
+
+test('a scoped site loads only its scope folders and what they hold, downloads only their files, and nothing of the restricted streams', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const sales = proposalsSite();
+  for (const id of ['file-brief', 'file-bid', 'file-cv', 'file-logo'])
+    sales.contents.set(id, await wordDocument(`# ${id}`));
+  using graph = microsoft({ sites: [sales], pageSize: 1 });
+
+  await (
+    await warehouse(
+      graph.source([{ url: SALES, folders: [PROPOSALS] }]),
+      dir.path,
+      { documents: true },
+    )
+  ).run();
+
+  assert.deepEqual(
+    rows(
+      dir.path,
+      'SELECT driveId, itemId, parentId FROM driveItems ORDER BY itemId',
+    ),
+    [
+      { driveId: 'b!documents', itemId: 'file-bid', parentId: 'folder-2025' },
+      {
+        driveId: 'b!documents',
+        itemId: 'file-brief',
+        parentId: 'folder-proposals',
+      },
+      {
+        driveId: 'b!documents',
+        itemId: 'folder-2025',
+        parentId: 'folder-proposals',
+      },
+      {
+        driveId: 'b!documents',
+        itemId: 'folder-proposals',
+        parentId: 'b!documents-root',
+      },
+    ],
+  );
+  assert.deepEqual(
+    graph
+      .requests()
+      .filter((request) => request.endsWith('/content'))
+      .sort(),
+    [
+      '/drives/b!documents/items/file-bid/content',
+      '/drives/b!documents/items/file-brief/content',
+    ],
+  );
+  assert.deepEqual(column(dir.path, 'SELECT driveId FROM drives'), [
+    'b!documents',
+  ]);
+  assert.deepEqual(column(dir.path, 'SELECT siteUrl FROM sites'), [SALES]);
+  // The export is public API: a stream that joins or leaves it changes what
+  // a scoped site keeps, so the list is pinned on purpose.
+  assert.deepEqual(restrictedSharePointStreams, [
+    'lists',
+    'listColumns',
+    'listItems',
+    'accessRequests',
+    'pages',
+  ]);
+  for (const stream of restrictedSharePointStreams)
+    assert.deepEqual(
+      column(dir.path, `SELECT count(*) FROM "${stream}"`),
+      [0],
+      stream,
+    );
+});
+
+// The items under Proposals in the Documents library of proposalsSite().
+const proposalsTree = [
+  'file-bid',
+  'file-brief',
+  'folder-2025',
+  'folder-proposals',
+];
+
+const itemIds = (directory: string) =>
+  column(directory, 'SELECT itemId FROM driveItems ORDER BY itemId');
+
+async function scopedRun(
+  sales: FakeSite,
+  folders: readonly [string, ...string[]] = [PROPOSALS],
+) {
+  const dir = await new TemporaryFiles().directory('sharepoint-');
+  const graph = microsoft({ sites: [sales], pageSize: 200 });
+  const pipeline = await warehouse(
+    graph.source([{ url: SALES, folders }]),
+    dir.path,
+  );
+  await pipeline.run();
+  return {
+    dir,
+    graph,
+    pipeline,
+    async [Symbol.asyncDispose]() {
+      graph[Symbol.dispose]();
+      await dir[Symbol.asyncDispose]();
+    },
+  };
+}
+
+test('a later read of a scoped site loads nothing of what changed outside its scope folders', async () => {
+  const sales = proposalsSite();
+  for (const id of ['file-cv', 'file-cv-2', 'file-logo'])
+    sales.contents.set(id, await wordDocument(`# ${id}`));
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  const pipeline = await warehouse(
+    graph.source([{ url: SALES, folders: [PROPOSALS] }]),
+    dir.path,
+    { documents: true },
+  );
+  await pipeline.run();
+  const [documents, branding] = sales.drives;
+  documents?.feed.put(
+    driveFile('b!documents', 'file-cv-2', 'CV 2.docx', {
+      parent: 'folder-bios',
+    }),
+  );
+  documents?.feed.put(
+    driveFile('b!documents', 'file-budget', 'Budget.xlsx', {
+      modified: '2026-11-18T09:00:00Z',
+    }),
+  );
+  documents?.feed.remove('file-cv');
+  branding?.feed.put(
+    driveFile('b!branding', 'file-logo', 'Logo.docx', {
+      parent: 'branding-proposals',
+      modified: '2026-11-18T09:00:00Z',
+    }),
+  );
+  const asked = graph.requests().length;
+
+  const second = await pipeline.run();
+
+  assert.deepEqual(counts(second).driveItems, nothing);
+  assert.deepEqual(itemIds(dir.path), proposalsTree);
+  assert.deepEqual(
+    graph
+      .requests()
+      .slice(asked)
+      .filter((request) => request.endsWith('/content')),
+    [],
+  );
+});
+
+test('an edit inside a scope folder updates its row, and a renamed folder inside it keeps what it holds', async () => {
+  const sales = proposalsSite();
+  await using run = await scopedRun(sales);
+  const documents = sales.drives[0];
+  documents?.feed.put(
+    driveFile('b!documents', 'file-brief', 'Brief.docx', {
+      parent: 'folder-proposals',
+      modified: '2026-11-18T09:00:00Z',
+    }),
+  );
+  documents?.feed.put(
+    driveFolder('b!documents', 'folder-2025', 'Won 2025', {
+      parent: 'folder-proposals',
+    }),
+  );
+
+  const second = await run.pipeline.run();
+
+  assert.deepEqual(itemIds(run.dir.path), proposalsTree);
+  assert.equal(counts(second).driveItems?.deleted, 0);
+  assert.deepEqual(
+    rows(
+      run.dir.path,
+      "SELECT itemId, name, lastModifiedDateTime FROM driveItems WHERE itemId IN ('file-brief', 'folder-2025') ORDER BY itemId",
+    ),
+    [
+      {
+        itemId: 'file-brief',
+        name: 'Brief.docx',
+        lastModifiedDateTime: '2026-11-18T09:00:00.000Z',
+      },
+      {
+        itemId: 'folder-2025',
+        name: 'Won 2025',
+        lastModifiedDateTime: '2026-11-16T08:00:00.000Z',
+      },
+    ],
+  );
+});
+
+test('an item that moves out of the scope folders is deleted with everything under it', async () => {
+  const sales = proposalsSite();
+  await using run = await scopedRun(sales);
+  sales.drives[0]?.feed.put(
+    driveFolder('b!documents', 'folder-2025', 'Proposals 2025', {
+      parent: 'folder-bios',
+    }),
+  );
+
+  const second = await run.pipeline.run();
+
+  assert.deepEqual(itemIds(run.dir.path), ['file-brief', 'folder-proposals']);
+  assert.deepEqual(counts(second).driveItems, { count: 0, deleted: 2 });
+});
+
+test('a folder that moves into a scope folder loads with everything under it, though the delta gives only the folder', async () => {
+  const sales = proposalsSite();
+  await using run = await scopedRun(sales);
+  sales.drives[0]?.feed.put(
+    driveFolder('b!documents', 'folder-bios', 'Team Bios', {
+      parent: 'folder-proposals',
+    }),
+  );
+
+  await run.pipeline.run();
+
+  assert.deepEqual(itemIds(run.dir.path), [
+    'file-bid',
+    'file-brief',
+    'file-cv',
+    'folder-2025',
+    'folder-bios',
+    'folder-proposals',
+  ]);
+});
+
+test('a folder made in a scope folder loads with its file, though the delta gives the file first', async () => {
+  const sales = proposalsSite();
+  await using run = await scopedRun(sales);
+  const documents = sales.drives[0];
+  documents?.feed.put(
+    driveFile('b!documents', 'file-rfp', 'RFP.docx', { parent: 'folder-2026' }),
+  );
+  documents?.feed.put(
+    driveFolder('b!documents', 'folder-2026', 'Proposals 2026', {
+      parent: 'folder-proposals',
+    }),
+  );
+
+  await run.pipeline.run();
+
+  assert.deepEqual(itemIds(run.dir.path), [
+    ...proposalsTree.slice(0, 2),
+    'file-rfp',
+    'folder-2025',
+    'folder-2026',
+    'folder-proposals',
+  ]);
+});
+
+test('a folder deleted inside a scope folder takes everything under it', async () => {
+  const sales = proposalsSite();
+  await using run = await scopedRun(sales);
+  sales.drives[0]?.feed.remove('folder-2025');
+
+  const second = await run.pipeline.run();
+
+  assert.deepEqual(itemIds(run.dir.path), ['file-brief', 'folder-proposals']);
+  assert.deepEqual(counts(second).driveItems, { count: 0, deleted: 2 });
+});
+
+test('a scoped first read that fails partway loads every item of the scope folders on the next run', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const world: World = { sites: [proposalsSite()], pageSize: 200 };
+  using graph = microsoft(world);
+  const pipeline = await warehouse(
+    graph.source([{ url: SALES, folders: [PROPOSALS] }]),
+    dir.path,
+  );
+  world.intercept = (url) =>
+    url.pathname.endsWith('/items/folder-2025/children')
+      ? refusal(500, 'generalException')
+      : undefined;
+  const failed = await failedRun(pipeline.run());
+  assert.equal(failed.driveItems?.[0]?.failureType, 'system');
+  world.intercept = undefined;
+
+  await pipeline.run();
+
+  assert.deepEqual(itemIds(dir.path), proposalsTree);
+});
+
+test('a delta link that Graph no longer serves reloads a scoped site', async () => {
+  const sales = proposalsSite();
+  await using run = await scopedRun(sales);
+  const documents = sales.drives[0];
+  assert.ok(documents !== undefined);
+  documents.feed.remove('file-bid');
+  documents.feed.expiredBefore = documents.feed.version;
+  const asked = run.graph.requests().length;
+
+  await run.pipeline.run();
+
+  const again = run.graph.requests().slice(asked);
+  assert.ok(
+    again.some((request) => request.includes('/root/delta?token=latest')),
+    'the reload takes a new delta link',
+  );
+  assert.ok(
+    again.some((request) =>
+      request.includes('/items/folder-proposals/children'),
+    ),
+    'the reload lists the scope folder again',
+  );
+  assert.deepEqual(itemIds(run.dir.path), [
+    'file-brief',
+    'folder-2025',
+    'folder-proposals',
+  ]);
+});
+
+test('a site read in full and then limited to folders keeps no row outside them in any stream', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  using graph = microsoft({ sites: [proposalsSite()], pageSize: 200 });
+  await (await warehouse(graph.source([SALES]), dir.path)).run();
+  assert.ok(itemIds(dir.path).includes('file-cv'));
+
+  await (
+    await warehouse(
+      graph.source([{ url: SALES, folders: [PROPOSALS] }]),
+      dir.path,
+    )
+  ).run();
+
+  assert.deepEqual(itemIds(dir.path), proposalsTree);
+  assert.deepEqual(column(dir.path, 'SELECT driveId FROM drives'), [
+    'b!documents',
+  ]);
+  for (const stream of restrictedSharePointStreams)
+    assert.deepEqual(
+      column(dir.path, `SELECT count(*) FROM "${stream}"`),
+      [0],
+      stream,
+    );
+});
+
+test('other scope folders start the site over: the rows of the old folder go, and the new folder loads', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  using graph = microsoft({ sites: [proposalsSite()], pageSize: 200 });
+  await (
+    await warehouse(
+      graph.source([{ url: SALES, folders: [PROPOSALS] }]),
+      dir.path,
+    )
+  ).run();
+
+  await (
+    await warehouse(
+      graph.source([{ url: SALES, folders: [`${SALES}/Documents/Team Bios`] }]),
+      dir.path,
+    )
+  ).run();
+
+  assert.deepEqual(itemIds(dir.path), ['file-cv', 'folder-bios']);
+});
+
+test('a scope folder URL as the browser shows it, with %20 and in another case, names the same folder', async () => {
+  for (const url of [
+    `${SALES}/Documents/Proposals/Proposals%202025`,
+    `${SALES}/documents/PROPOSALS/proposals 2025/`,
+  ]) {
+    await using run = await scopedRun(proposalsSite(), [url]);
+    assert.deepEqual(itemIds(run.dir.path), ['file-bid', 'folder-2025'], url);
+  }
+});
+
+test('a scope folder loads from the library that its URL names, when another library holds a folder at the same path', async () => {
+  await using run = await scopedRun(proposalsSite(), [
+    `${SALES}/Branding/Proposals`,
+  ]);
+
+  assert.deepEqual(
+    rows(
+      run.dir.path,
+      'SELECT driveId, itemId FROM driveItems ORDER BY itemId',
+    ),
+    [
+      { driveId: 'b!branding', itemId: 'branding-proposals' },
+      { driveId: 'b!branding', itemId: 'file-logo' },
+    ],
+  );
+  assert.deepEqual(column(run.dir.path, 'SELECT driveId FROM drives'), [
+    'b!branding',
+  ]);
+});
+
+test('a site named by its URL beside a scoped site still loads all of it', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const marketing = { ...proposalsSite(), url: MARKETING, id: 'marketing-id' };
+  using graph = microsoft({
+    sites: [proposalsSite(), marketing],
+    pageSize: 200,
+  });
+
+  await (
+    await warehouse(
+      graph.source([MARKETING, { url: SALES, folders: [PROPOSALS] }]),
+      dir.path,
+    )
+  ).run();
+
+  assert.deepEqual(
+    rows(
+      dir.path,
+      'SELECT siteUrl, count(*) AS items FROM driveItems GROUP BY siteUrl ORDER BY siteUrl',
+    ),
+    [
+      { siteUrl: MARKETING, items: 9 },
+      { siteUrl: SALES, items: 4 },
+    ],
+  );
+  for (const stream of ['lists', 'listItems', 'accessRequests', 'pages'])
+    assert.deepEqual(
+      column(dir.path, `SELECT DISTINCT siteUrl FROM "${stream}"`),
+      [MARKETING],
+      stream,
+    );
+});
+
+test('the sync history names the scope folders of each site as the selection of the pass', async () => {
+  await using run = await scopedRun(proposalsSite());
+
+  const [selection] = column(
+    run.dir.path,
+    "SELECT selection FROM extraction_coverage WHERE stream = 'driveItems'",
+  );
+
+  assert.deepEqual(JSON.parse(String(selection)), {
+    sites: [SALES],
+    folders: { [SALES]: [PROPOSALS] },
+  });
 });

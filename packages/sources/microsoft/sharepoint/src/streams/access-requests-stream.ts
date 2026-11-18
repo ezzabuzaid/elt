@@ -12,6 +12,7 @@ export class AccessRequestsStream extends SnapshotStream {
   constructor() {
     super({
       name: 'accessRequests',
+      restricted: true,
       description:
         'One record for each item of the lists of the requests for access to the site (template accessRequest), with the value of each column as JSON, as listItems has. Graph serves no item delta for these lists, so each read lists their items in full. Primary key siteUrl, listId, itemId. An incremental read deletes an item that Graph no longer lists.',
       properties: listItemProperties,

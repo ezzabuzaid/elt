@@ -12,7 +12,9 @@ import { SharePointStream } from './sharepoint-stream.ts';
 /**
  * A stream that Graph lists whole on each read, with no change feed: an
  * incremental copy compares each read with the snapshot of the last one,
- * writes what changed and deletes what Graph no longer lists.
+ * writes what changed and deletes what Graph no longer lists. A restricted
+ * stream lists nothing for a site limited to folders, so the diff deletes
+ * what an earlier read of the whole site loaded.
  */
 export abstract class SnapshotStream extends SharePointStream {
   async *extract(
@@ -22,9 +24,12 @@ export abstract class SnapshotStream extends SharePointStream {
     run: SharePointRun,
     signal: AbortSignal,
   ): AsyncGenerator<SourceMessage> {
+    const scope = await run.scope(siteUrl, signal);
     yield* diffSnapshot(
       configuration,
-      this.#records(siteUrl, run, signal),
+      this.restricted && scope !== 'site'
+        ? []
+        : this.#records(siteUrl, run, signal),
       state,
       { policy: new ClosedWorld(), signal },
     );

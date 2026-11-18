@@ -32,7 +32,7 @@ const parentReference = z.object({
 });
 
 /** A file or a folder of a drive, as it is now. */
-const presentDriveItem = z.object({
+export const presentDriveItem = z.object({
   id: z.string(),
   name: z.string(),
   size: z.number(),

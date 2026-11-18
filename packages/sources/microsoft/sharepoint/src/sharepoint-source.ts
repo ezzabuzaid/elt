@@ -16,6 +16,10 @@ import {
   SiteVersion,
 } from '@eltjs/sdk-microsoft-sharepoint';
 
+import {
+  SharePointFolderNotFoundError,
+  type SharePointSite,
+} from './folder-scope.ts';
 import { SharePointRun } from './sharepoint-run.ts';
 import type { SharePointStream } from './sharepoint-stream.ts';
 import { AccessRequestsStream } from './streams/access-requests-stream.ts';
@@ -44,6 +48,16 @@ const readersByStream = new Map<Stream, SharePointStream>(
   Object.values(readers).map((reader) => [reader.stream, reader]),
 );
 
+export { SharePointFolderNotFoundError, type SharePointSite };
+
+/**
+ * The streams that load nothing for a site limited to folders, since no
+ * record of them shows which folder holds it.
+ */
+export const restrictedSharePointStreams = Object.values(readers)
+  .filter((reader) => reader.restricted)
+  .map((reader) => reader.stream.name);
+
 // How often a watch reads the version of each site, and how long one read,
 // three requests to Graph with their retries, can take.
 const checkIntervalMs = 60_000;
@@ -51,9 +65,10 @@ const checkTimeoutMs = 30_000;
 
 export type SharePointSourceOptions = {
   readonly client: SharePointClient;
-  // The URLs of the sites, such as https://contoso.sharepoint.com/sites/Sales.
-  // A Sites.Selected app cannot list its sites, so the host names them.
-  readonly sites: readonly string[];
+  // The sites, by URL, such as https://contoso.sharepoint.com/sites/Sales, or
+  // by URL with the folders that limit them. A Sites.Selected app cannot list
+  // its sites, so the host names them.
+  readonly sites: readonly SharePointSite[];
 };
 
 /**
@@ -75,6 +90,8 @@ export class SharePointSource extends Source<SharePointRun> {
 
   readonly #client: SharePointClient;
   readonly #siteUrls: readonly string[];
+  // The folder URLs of each site that the host limited to folders.
+  readonly #folders: ReadonlyMap<string, readonly string[]>;
 
   constructor({ client, sites }: SharePointSourceOptions) {
     super();
@@ -84,7 +101,21 @@ export class SharePointSource extends Source<SharePointRun> {
     // of the identity: adding a site keeps the checkpoints of the others.
     this.identity = `sharepoint:${client.tenantId}`;
     this.#client = client;
-    this.#siteUrls = Object.freeze([...sites]);
+    this.#siteUrls = Object.freeze(
+      sites.map((site) => (typeof site === 'string' ? site : site.url)),
+    );
+    if (new Set(this.#siteUrls).size !== this.#siteUrls.length)
+      throw new TypeError('SharePoint names each site URL once');
+    const folders = new Map<string, readonly string[]>();
+    for (const site of sites) {
+      if (typeof site === 'string') continue;
+      if (site.folders.length === 0)
+        throw new TypeError(
+          `SharePoint site ${site.url} names no folder; name the site by its URL alone to load all of it`,
+        );
+      folders.set(site.url, Object.freeze([...site.folders]));
+    }
+    this.#folders = folders;
     Object.freeze(this);
   }
 
@@ -92,6 +123,7 @@ export class SharePointSource extends Source<SharePointRun> {
     SharePointAccessError,
     SharePointCredentialsError,
     SharePointSiteNotFoundError,
+    SharePointFolderNotFoundError,
   ];
 
   protected override partitions(): readonly Partition[] {
@@ -99,13 +131,21 @@ export class SharePointSource extends Source<SharePointRun> {
   }
 
   protected override open(): Promise<SharePointRun> {
-    return SharePointRun.open(this.#client);
+    return SharePointRun.open(this.#client, this.#folders);
   }
 
   override coverage(stream: Stream): ExtractionCoverage {
+    const reader = this.#reader(stream);
     return {
-      description: this.#reader(stream).covers,
-      selection: { sites: [...this.#siteUrls] },
+      description: reader.restricted
+        ? `${reader.covers} A site limited to folders loads none of it.`
+        : reader.covers,
+      selection: {
+        sites: [...this.#siteUrls],
+        folders: Object.fromEntries(
+          [...this.#folders].map(([site, urls]) => [site, [...urls]]),
+        ),
+      },
     };
   }
 

@@ -9,12 +9,14 @@ import type {
   Site,
 } from '@eltjs/sdk-microsoft-sharepoint';
 
+import { type SiteScope, resolveFolders } from './folder-scope.ts';
+
 /**
  * One read of SharePoint: the client, the site, drives and lists that the
  * run read, and the folder of the files that it staged. Each stream of the
- * run sees the same drives and lists of a site, so the delta streams read the
- * collections that the drives and lists streams load. A read that Graph
- * refused is not kept: the next stream to ask for it asks Graph again.
+ * run sees the same drives, lists and scope of a site, so the delta streams
+ * read the collections that the drives and lists streams load. A read that
+ * Graph refused is not kept: the next stream to ask for it asks Graph again.
  */
 export class SharePointRun implements AsyncDisposable {
   readonly client: SharePointClient;
@@ -22,15 +24,27 @@ export class SharePointRun implements AsyncDisposable {
   readonly #sites = new Map<string, Site>();
   readonly #drives = new Map<string, readonly Drive[]>();
   readonly #lists = new Map<string, readonly List[]>();
+  readonly #scopes = new Map<string, SiteScope>();
+  // The folder URLs of each site that the host limited to folders.
+  readonly #folders: ReadonlyMap<string, readonly string[]>;
 
-  private constructor(client: SharePointClient, staging: TemporaryDirectory) {
+  private constructor(
+    client: SharePointClient,
+    folders: ReadonlyMap<string, readonly string[]>,
+    staging: TemporaryDirectory,
+  ) {
     this.client = client;
+    this.#folders = folders;
     this.#staging = staging;
   }
 
-  static async open(client: SharePointClient): Promise<SharePointRun> {
+  static async open(
+    client: SharePointClient,
+    folders: ReadonlyMap<string, readonly string[]>,
+  ): Promise<SharePointRun> {
     return new SharePointRun(
       client,
+      folders,
       await new TemporaryFiles().directory('elt-sharepoint-'),
     );
   }
@@ -59,6 +73,25 @@ export class SharePointRun implements AsyncDisposable {
     const lists = await this.client.lists(id, signal);
     this.#lists.set(url, lists);
     return lists;
+  }
+
+  // The whole site, or the folders the host limited it to, each resolved
+  // once a run, so a folder renamed since the last run fails this one.
+  async scope(url: string, signal: AbortSignal): Promise<SiteScope> {
+    const known = this.#scopes.get(url);
+    if (known !== undefined) return known;
+    const urls = this.#folders.get(url);
+    const scope =
+      urls === undefined
+        ? 'site'
+        : await resolveFolders(
+            this.client,
+            await this.drives(url, signal),
+            urls,
+            signal,
+          );
+    this.#scopes.set(url, scope);
+    return scope;
   }
 
   // Where a file named name stages in the run's folder. The caller removes

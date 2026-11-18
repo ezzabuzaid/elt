@@ -100,7 +100,7 @@ await new Pipeline({
 ## How to use it
 
 1. Make a `SharePointClient` from the app registration of Microsoft Entra ID: the tenant ID, the client ID and a client secret. The host reads these values, for example from its environment. The source and the SDK read no environment variable.
-2. Make a `SharePointSource` with the client and the URL of each site. The identity of the source is `sharepoint:<tenantId>`, the tenant of the client.
+2. Make a `SharePointSource` with the client and the URL of each site. To load only some folders of a site, give the site as `{ url, folders }` (see [Scope](#scope)). The identity of the source is `sharepoint:<tenantId>`, the tenant of the client.
 3. Copy each stream with `syncMode: 'incremental'` and `destinationSyncMode: 'append_dedup'`. Each stream deduplicates on its primary key and sends deletions. Give each copy an ID that holds the source identity, such as `sharepoint:<tenantId>/driveItems`, so that two tenants can be in one pipeline.
 4. To get the text of documents, store the files of `driveItems` with `file.accepting(parser).store(files)`, and derive their text with a `DocumentText` computed dataset (see [elt](../../../elt/README.md#attachment-text)). A file that the parser cannot read gets a row with its error in the dataset, and fails no copy.
 
@@ -110,13 +110,42 @@ Each site is a partition of each stream, with a checkpoint of its own. Thus a si
 
 The app needs the Graph application permission `Sites.Selected`, and an administrator must grant it read access to each site. With `Sites.Selected`, the app cannot list its sites, so the host names them ([SDK ADR 0002](../../../sdks/microsoft/sharepoint/docs/adr/0002-a-sites-selected-app-cannot-list-its-sites-so-callers-name-site-urls.md)).
 
-| Error                         | When                                                                  | Failure type |
-| ----------------------------- | --------------------------------------------------------------------- | ------------ |
-| `SharePointAccessError`       | Graph refused the token (401) or the access to a site (403).          | `config`     |
-| `SharePointSiteNotFoundError` | No site is at a URL (404).                                            | `config`     |
-| Any other error               | Graph failed in another way, for example 500 or a refused delta link. | `system`     |
+| Error                           | When                                                                  | Failure type |
+| ------------------------------- | --------------------------------------------------------------------- | ------------ |
+| `SharePointAccessError`         | Graph refused the token (401) or the access to a site (403).          | `config`     |
+| `SharePointSiteNotFoundError`   | No site is at a URL (404).                                            | `config`     |
+| `SharePointFolderNotFoundError` | No folder of the site is at a scope folder URL.                       | `config`     |
+| Any other error                 | Graph failed in another way, for example 500 or a refused delta link. | `system`     |
 
 A site that fails fails only its partition. The other sites load and save their checkpoints.
+
+## Scope
+
+A site can load only some of its folders:
+
+```ts
+new SharePointSource({
+  client,
+  sites: [
+    {
+      url: 'https://contoso.sharepoint.com/sites/Sales',
+      folders: [
+        'https://contoso.sharepoint.com/sites/Sales/Shared Documents/Proposals',
+      ],
+    },
+  ],
+});
+```
+
+Each folder is the full URL of a folder in a document library of the site, as the browser shows it. A URL with spaces and one with `%20` name the same folder, and case does not matter. A site that the host names by its URL alone loads all of it.
+
+- Each run finds each scope folder from its URL: the library whose URL starts it, then the item at the rest of the path. If no folder is there, for example because someone renamed or moved it, the site fails with `SharePointFolderNotFoundError`, a `config` failure. The source never loads nothing in silence.
+- `driveItems` loads the scope folders and each file and folder under them. Only those files are downloaded.
+- `drives` loads only the libraries that hold a scope folder. `sites` loads the site.
+- `lists`, `listColumns`, `listItems`, `accessRequests` and `pages` load nothing: no record of them shows which folder holds it. The source exports these names as `restrictedSharePointStreams`.
+- The first read of a scoped site takes the delta link of each library with a scope folder, then lists the scope folders and what they hold. A change during the listing comes again in the next read.
+- Later reads read the changes of each library after its delta link, and keep only the items under the scope folders. An item that moves out of them, or is deleted, is deleted with each item under it. A folder that moves into them is listed with each item under it, because a delta does not give the items of a folder again when the folder moves.
+- The checkpoint keeps the scope folders and the items under them by ID, not by path. A rename inside a scope folder keeps its items. Other scope folders than the checkpoint holds, a site that was read in full and is now scoped, and the other way round, start the site over with a `RESET`. Thus narrowing a site removes every row outside its scope folders.
 
 ## Streams
 
@@ -207,9 +236,11 @@ Not checked live:
 - That the `lastModifiedDateTime` of a list moves when one of its items changes, which `SiteVersion` uses. The app has only a read grant, and no test site is available.
 - A pass of this source over the site. `src/sharepoint-live.test.ts` makes one, and skips unless `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID` and `SHAREPOINT_CLIENT_SECRET` are set. It downloads only the workbooks of the site.
 
+- Scope folders (2026-11-18), with the app token: `GET /drives/{id}/root:/02 BD Resources/Proposal Repository` answered 200 with the folder, and a path with no item answered 404 `itemNotFound`. `GET /drives/{id}/root/delta?token=latest` answered 200 with no item and a delta link, and the delta from that link answered 200 with a delta link. `GET /drives/{id}/items/{id}/children` paged with a next link, and each child gave the folder in `parentReference.id`.
 - A second pass 12 hours later (2026-11-18), from the checkpoints of the first, loaded only what the deltas gave: 10 drive items and 10 list items, no deletion. 3 files that people edited had a new `lastModifiedDateTime`; 4 folders had a new `size`, since a file in them changed; 3 documents had a new `eTag` and the same `cTag`, a change of their metadata and not of their content.
 
 ## Decisions
 
+- [ADR 0003](./docs/adr/0003-a-site-limited-to-folders-is-named-by-folder-urls-and-tracked-by-item-ids.md): a site limited to folders is named by folder URLs and tracked by item IDs.
 - [ADR 0001](./docs/adr/0001-the-delta-queries-are-the-change-feed-of-drive-items-and-list-items.md): the delta queries are the change feed of drive items and list items.
 - [ADR 0002](./docs/adr/0002-a-list-whose-delta-graph-refuses-is-read-in-full.md): a list whose delta Graph refuses is read in full.

@@ -6,7 +6,13 @@ import type { z } from 'zod';
 
 import { type Column, column } from './column.ts';
 import { type DeltaPage, deltaPage } from './delta.ts';
-import { DRIVE_ITEM_FIELDS, type DriveItem, driveItem } from './drive-item.ts';
+import {
+  DRIVE_ITEM_FIELDS,
+  type DriveItem,
+  type PresentDriveItem,
+  driveItem,
+  presentDriveItem,
+} from './drive-item.ts';
 import { DRIVE_FIELDS, type Drive, drive } from './drive.ts';
 import {
   DeltaExpiredError,
@@ -132,6 +138,60 @@ export class SharePointClient {
     return this.#delta(
       link ?? `/drives/${driveId}/root/delta?$select=${DRIVE_ITEM_FIELDS}`,
       driveItem,
+      `the drive ${driveId}`,
+      signal,
+    );
+  }
+
+  /**
+   * The delta link of a drive as it is now, without its items: a later
+   * `driveDelta` from it gives only the changes after this call.
+   */
+  async latestDriveDeltaLink(
+    driveId: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const page = await this.#graph.json(
+      `/drives/${driveId}/root/delta?token=latest&$select=${DRIVE_ITEM_FIELDS}`,
+      deltaPage(driveItem),
+      `the drive ${driveId}`,
+      signal,
+    );
+    if (!('deltaLink' in page))
+      throw new TypeError(
+        `Graph answered the latest delta of the drive ${driveId} with a next link, not a delta link`,
+      );
+    return page.deltaLink;
+  }
+
+  /**
+   * The file or the folder at `path` from the root of a drive, such as
+   * `02 BD Resources/Proposals`. No item there fails with a GraphError of
+   * status 404.
+   */
+  driveItemAt(
+    driveId: string,
+    path: string,
+    signal: AbortSignal,
+  ): Promise<PresentDriveItem> {
+    const segments = path.split('/').map(encodeURIComponent).join('/');
+    return this.#graph.json(
+      `/drives/${driveId}/root:/${segments}?$select=${DRIVE_ITEM_FIELDS}`,
+      presentDriveItem,
+      `the drive ${driveId}`,
+      signal,
+    );
+  }
+
+  /** The files and folders directly in a folder of a drive. */
+  children(
+    driveId: string,
+    folderId: string,
+    signal: AbortSignal,
+  ): Promise<readonly PresentDriveItem[]> {
+    return this.#graph.collection(
+      `/drives/${driveId}/items/${folderId}/children?$select=${DRIVE_ITEM_FIELDS}`,
+      presentDriveItem,
       `the drive ${driveId}`,
       signal,
     );

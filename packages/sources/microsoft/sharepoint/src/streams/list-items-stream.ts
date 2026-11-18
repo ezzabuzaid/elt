@@ -13,6 +13,7 @@ export class ListItemsStream extends DeltaStream<ListItem> {
   constructor() {
     super({
       name: 'listItems',
+      restricted: true,
       description:
         'One record for each item of each list of the site, the items of document libraries included, with the value of each column as JSON. The lists of the requests for access are in accessRequests. Primary key siteUrl, listId, itemId. Read through the list items delta of Graph: the first read loads every item, and later reads apply the changes and deletions after it.',
       properties: listItemProperties,

@@ -4,19 +4,29 @@ import {
   type DeltaPage,
 } from '@eltjs/sdk-microsoft-sharepoint';
 
+import type { ScopeFolder } from './folder-scope.ts';
 import type { SharePointRun } from './sharepoint-run.ts';
 import { SharePointStream } from './sharepoint-stream.ts';
 
 // Where the delta query of one collection stands: the delta link of its last
 // page once a read reached it, or the next link of the page a read reached
 // before it.
-type Link = { readonly delta: string } | { readonly next: string };
+export type Link = { readonly delta: string } | { readonly next: string };
+
+// A site limited to folders: its scope folders, as driveId/itemId, and each
+// item under them, by drive, with the folder that holds it.
+export type FolderState = {
+  readonly folders: readonly string[];
+  readonly items: Readonly<Record<string, Readonly<Record<string, string>>>>;
+};
 
 // Where a site stands: the link of each collection, a drive or a list, by its
-// ID, and the fields the reads carried.
-type DeltaState = {
+// ID, the fields the reads carried, and the scope of a site that the host
+// limited to folders.
+export type DeltaState = {
   readonly fields: readonly string[];
   readonly links: Readonly<Record<string, Link>>;
+  readonly scope?: FolderState;
 };
 
 type Read = (links: ReadonlyMap<string, Link>) => AsyncGenerator<SourceMessage>;
@@ -30,9 +40,37 @@ function link(value: unknown): Link | undefined {
   return undefined;
 }
 
-function resumeLink(saved: Link | undefined): string | undefined {
+export function resumeLink(saved: Link | undefined): string | undefined {
   if (saved === undefined) return undefined;
   return 'delta' in saved ? saved.delta : saved.next;
+}
+
+function texts(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((it) => typeof it === 'string');
+}
+
+function folderState(value: unknown): FolderState | undefined {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('folders' in value) ||
+    !texts(value.folders) ||
+    !('items' in value) ||
+    typeof value.items !== 'object' ||
+    value.items === null
+  )
+    return undefined;
+  const items: Record<string, Record<string, string>> = {};
+  for (const [drive, parents] of Object.entries(value.items)) {
+    if (typeof parents !== 'object' || parents === null) return undefined;
+    const byItem: Record<string, string> = {};
+    for (const [item, parent] of Object.entries(parents)) {
+      if (typeof parent !== 'string') return undefined;
+      byItem[item] = parent;
+    }
+    items[drive] = byItem;
+  }
+  return { folders: value.folders, items };
 }
 
 function parse(state: unknown): DeltaState | null {
@@ -42,8 +80,7 @@ function parse(state: unknown): DeltaState | null {
   if (
     typeof state !== 'object' ||
     !('fields' in state) ||
-    !Array.isArray(state.fields) ||
-    !state.fields.every((field) => typeof field === 'string') ||
+    !texts(state.fields) ||
     !('links' in state) ||
     typeof state.links !== 'object' ||
     state.links === null
@@ -55,7 +92,10 @@ function parse(state: unknown): DeltaState | null {
     if (parsed === undefined) throw unknown();
     links[collection] = parsed;
   }
-  return { fields: state.fields, links };
+  if (!('scope' in state)) return { fields: state.fields, links };
+  const scope = folderState(state.scope);
+  if (scope === undefined) throw unknown();
+  return { fields: state.fields, links, scope };
 }
 
 /**
@@ -64,9 +104,11 @@ function parse(state: unknown): DeltaState | null {
  * a checkpoint after each page, so a first load that fails resumes at the
  * next link it saved. Later reads apply the changes after each delta link:
  * an item with the deleted facet is a deletion. When Graph no longer serves
- * a link, when a collection of the state is gone, or when the stream carries
- * a field that the state was read without, the stream starts the site over
- * with a RESET and loads every item again.
+ * a link, when a collection of the state is gone, when the stream carries a
+ * field that the state was read without, or when the site was read with
+ * scope folders, the stream starts the site over with a RESET and loads every
+ * item again. A site that the host limited to folders loads nothing of a
+ * restricted stream, and the scoped read of the others (ADR 0003).
  */
 export abstract class DeltaStream<Item> extends SharePointStream {
   // The IDs of the collections of the site that this stream reads.
@@ -103,18 +145,26 @@ export abstract class DeltaStream<Item> extends SharePointStream {
     run: SharePointRun,
     signal: AbortSignal,
   ): AsyncGenerator<SourceMessage> {
+    const saved =
+      configuration.syncMode === 'incremental' ? parse(state) : null;
+    const scope = await run.scope(siteUrl, signal);
+    if (scope !== 'site') {
+      yield* this.restricted
+        ? this.#nothing(saved)
+        : this.scoped(configuration, saved, siteUrl, scope, run, signal);
+      return;
+    }
     const collections = await this.collections(siteUrl, run, signal);
     const read: Read = (links) =>
       this.#read(configuration, siteUrl, collections, links, run, signal);
-    const saved =
-      configuration.syncMode === 'incremental' ? parse(state) : null;
     if (saved === null) {
       yield* read(new Map());
       return;
     }
     const links = new Map(Object.entries(saved.links));
     if (
-      this.#gained(saved.fields) ||
+      saved.scope !== undefined ||
+      this.gained(saved.fields) ||
       links.keys().some((collection) => !collections.includes(collection))
     ) {
       yield* this.#reload(read);
@@ -126,6 +176,21 @@ export abstract class DeltaStream<Item> extends SharePointStream {
       if (!(error instanceof DeltaExpiredError)) throw error;
       yield* this.#reload(read);
     }
+  }
+
+  // The read of a site that the host limited to folders, by a stream that
+  // is not restricted. saved is the state of the last read, whole or scoped.
+  protected scoped(
+    _configuration: CopyConfiguration,
+    _saved: DeltaState | null,
+    _siteUrl: string,
+    _folders: readonly ScopeFolder[],
+    _run: SharePointRun,
+    _signal: AbortSignal,
+  ): AsyncGenerator<SourceMessage> {
+    throw new TypeError(
+      `SharePoint ${this.stream.name} has no read for a site limited to folders`,
+    );
   }
 
   // A DELETE in an incremental read; a full refresh replaces every row, so
@@ -142,8 +207,36 @@ export abstract class DeltaStream<Item> extends SharePointStream {
   // "Reset"), so readers see the site fill again page by page, and a reload
   // that fails resumes at the last link it saved. A hidden reload of a
   // partition, as of a whole stream (elt ADR 0007), is backlog #4572.
-  async *#reload(read: Read): AsyncGenerator<SourceMessage> {
+  protected *reset(): Generator<SourceMessage> {
     yield { type: 'RESET', stream: this.stream.name };
+  }
+
+  protected state(
+    links: ReadonlyMap<string, Link>,
+    scope?: FolderState,
+  ): SourceMessage {
+    const site = { fields: this.#fields, links: Object.fromEntries(links) };
+    return {
+      type: 'STATE',
+      stream: this.stream.name,
+      state: scope === undefined ? site : { ...site, scope },
+    };
+  }
+
+  // Whether the stream carries a field that a state was read without.
+  protected gained(read: readonly string[]): boolean {
+    return this.#fields.some((field) => !read.includes(field));
+  }
+
+  // A restricted stream loads nothing for a site limited to folders. A RESET
+  // empties what an earlier read of the whole site loaded.
+  *#nothing(saved: DeltaState | null): Generator<SourceMessage> {
+    if (saved !== null && saved.scope === undefined) yield* this.reset();
+    yield this.state(new Map(), { folders: [], items: {} });
+  }
+
+  async *#reload(read: Read): AsyncGenerator<SourceMessage> {
+    yield* this.reset();
     yield* read(new Map());
   }
 
@@ -156,11 +249,6 @@ export abstract class DeltaStream<Item> extends SharePointStream {
     signal: AbortSignal,
   ): AsyncGenerator<SourceMessage> {
     const links = new Map(from);
-    const state = (): SourceMessage => ({
-      type: 'STATE',
-      stream: this.stream.name,
-      state: { fields: this.#fields, links: Object.fromEntries(links) },
-    });
     for (const collection of collections) {
       const start = resumeLink(links.get(collection));
       for await (const page of this.pages(
@@ -185,7 +273,7 @@ export abstract class DeltaStream<Item> extends SharePointStream {
             ? { delta: page.deltaLink }
             : { next: page.nextLink },
         );
-        yield state();
+        yield this.state(links);
       }
     }
   }
@@ -196,9 +284,5 @@ export abstract class DeltaStream<Item> extends SharePointStream {
   // fields, and leaves filling them in to the source.
   get #fields(): readonly string[] {
     return Object.keys(this.stream.jsonSchema.properties ?? {});
-  }
-
-  #gained(read: readonly string[]): boolean {
-    return this.#fields.some((field) => !read.includes(field));
   }
 }
