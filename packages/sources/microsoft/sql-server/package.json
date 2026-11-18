@@ -1,6 +1,6 @@
 {
   "name": "@eltjs/source-microsoft-sql-server",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "description": "An elt source for one SQL Server database: each user table that the login can read becomes a stream.",
   "license": "Apache-2.0",
   "repository": {
@@ -42,15 +42,15 @@
     "access": "public"
   },
   "dependencies": {
-    "@eltjs/elt": "^0.3.14",
-    "@eltjs/sdk-microsoft-sql-server": "^0.3.14",
+    "@eltjs/elt": "^0.3.15",
+    "@eltjs/sdk-microsoft-sql-server": "^0.3.15",
     "@zukhruf/async": "^0.8.27",
     "@zukhruf/snapshot-differential": "^0.8.27"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
     "@types/mssql": "^12.3.0",
-    "@eltjs/elt-postgresql": "^0.3.14",
+    "@eltjs/elt-postgresql": "^0.3.15",
     "@zukhruf/testing": "^0.8.27",
     "mssql": "^12.7.4",
     "postgres": "^3.4.9"
