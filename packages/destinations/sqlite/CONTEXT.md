@@ -109,5 +109,5 @@ How long the history keeps a position readable after its commit: 30 days by defa
 _Avoid_: TTL, expiry (an expired position is the result), vacuum
 
 **Min valid**:
-`min_valid` of `_elt_epoch`: the oldest position that a reading reads exactly. Each commit moves it to the newest position that is older than the retention. It never passes the newest position. A position older than it is expired.
+`min_valid` of `_elt_epoch`: the oldest position that a reading reads exactly. Each commit moves it to the newest position that is older than the retention, and a clear sets it to its own commit; `expired_by` names which one set it last. It never passes the newest position. A position older than it is expired.
 _Avoid_: Low-water mark, horizon, oldest version

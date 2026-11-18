@@ -17,10 +17,12 @@ const commits = '"_elt_commits"';
 // How the file numbers its commits. The epoch names the numbering: it is
 // made with the tables, so a file made again, or tables another version
 // declared otherwise, start a numbering of their own. min_valid is the oldest
-// position that the history still reads, as SQL Server's MIN_VALID_VERSION.
+// position that the history still reads, as SQL Server's MIN_VALID_VERSION,
+// and expired_by says what set it last: the retention, or a clear that forgot
+// the rows of its table.
 const numbering = new Declaration(
   [
-    `CREATE TABLE ${epochs} ("id" INTEGER PRIMARY KEY CHECK ("id" = 1), "epoch" TEXT NOT NULL, "min_valid" INTEGER NOT NULL DEFAULT 0) STRICT`,
+    `CREATE TABLE ${epochs} ("id" INTEGER PRIMARY KEY CHECK ("id" = 1), "epoch" TEXT NOT NULL, "min_valid" INTEGER NOT NULL DEFAULT 0, "expired_by" TEXT CHECK ("expired_by" IN ('retention', 'clear'))) STRICT`,
     `CREATE TABLE ${loads} ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "connector" TEXT, "dataset" TEXT, "opened_at" TEXT NOT NULL, "closed_at" TEXT, CHECK (("connector" IS NULL) <> ("dataset" IS NULL))) STRICT`,
     `CREATE TABLE ${commits} ("number" INTEGER PRIMARY KEY AUTOINCREMENT, "load" INTEGER NOT NULL REFERENCES ${loads} ("id"), "committed_at" TEXT NOT NULL) STRICT`,
     `CREATE INDEX "_elt_commits_load" ON ${commits} ("load", "number")`,
@@ -191,9 +193,26 @@ function retain(database: DatabaseSync, { clock, retention }: Retaining): void {
   if (older <= minValid) return;
   const expired = readNumbering(database)?.ends.findLast((end) => end <= older);
   if (expired === undefined || expired <= minValid) return;
-  expireHistory(database, expired);
-  database.prepare(`UPDATE ${epochs} SET "min_valid" = ?`).run(expired);
-  database.prepare(`DELETE FROM ${commits} WHERE "number" < ?`).run(expired);
+  expire(database, expired, 'retention');
+}
+
+// Expires each position before commit number, inside its transaction: the
+// history keeps no row that only a reading before it reads, and the
+// numbering keeps no commit before it and no closed load left with none.
+// The clear of a copy calls it with its own commit, so the rows it removes
+// leave the file, as Delta Lake's VACUUM removes the files a DELETE left for
+// time travel; a reading before the clear is expired, not one that shows a
+// table that is gone.
+export function expire(
+  database: DatabaseSync,
+  number: number,
+  by: 'retention' | 'clear',
+): void {
+  expireHistory(database, number);
+  database
+    .prepare(`UPDATE ${epochs} SET "min_valid" = ?, "expired_by" = ?`)
+    .run(number, by);
+  database.prepare(`DELETE FROM ${commits} WHERE "number" < ?`).run(number);
   database
     .prepare(
       `DELETE FROM ${loads} WHERE "closed_at" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ${commits} AS c WHERE c."load" = ${loads}."id")`,
@@ -237,8 +256,9 @@ export type Numbering = {
   // The number of the newest commit, 0 before the first.
   readonly newest: number;
   // The oldest position that a reading reads exactly; 0 until the retention
-  // first deletes history.
+  // or a clear first deletes history, and what set it last.
   readonly minValid: number;
+  readonly expiredBy: 'retention' | 'clear' | null;
   // The commits that are positions, ascending.
   readonly ends: readonly number[];
 };
@@ -286,7 +306,9 @@ export function expiry(
   if (number > numbered.newest)
     return `Position ${position} is past the newest commit of this file, ${numbered.newest}`;
   if (number < numbered.minValid)
-    return `Position ${position} is older than the retention of this file: its history keeps no row that only a reading before commit ${numbered.minValid} reads`;
+    return numbered.expiredBy === 'clear'
+      ? `Position ${position} is before commit ${numbered.minValid}, a clear that forgot the rows of its table: the history keeps no row that only a reading before it reads`
+      : `Position ${position} is older than the retention of this file: its history keeps no row that only a reading before commit ${numbered.minValid} reads`;
   return undefined;
 }
 
@@ -308,7 +330,9 @@ export function readNumbering(
   let row;
   try {
     row = database
-      .prepare(`SELECT "epoch", "min_valid" FROM ${file}.${epochs}`)
+      .prepare(
+        `SELECT "epoch", "min_valid", "expired_by" FROM ${file}.${epochs}`,
+      )
       .get();
   } catch (error) {
     if (Error.isError(error) && /^no such (table|column): /.test(error.message))
@@ -318,6 +342,10 @@ export function readNumbering(
   const epoch = row?.epoch;
   if (typeof epoch !== 'string') return null;
   const minValid = Number(row?.min_valid);
+  const expiredBy =
+    row?.expired_by === 'retention' || row?.expired_by === 'clear'
+      ? row.expired_by
+      : null;
   const newest = Number(
     database
       .prepare(
@@ -346,7 +374,7 @@ export function readNumbering(
       reach = Math.max(reach, span.value.last);
     if (reach === end) ends.push(end);
   }
-  return { epoch, newest, minValid, ends };
+  return { epoch, newest, minValid, expiredBy, ends };
 }
 
 // When a commit of the file was made, or undefined when it has no commit of

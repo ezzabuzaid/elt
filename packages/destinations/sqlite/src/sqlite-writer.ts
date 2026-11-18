@@ -30,7 +30,7 @@ import type { SQLiteDestination } from './sqlite-destination.ts';
 import { SQLiteFileStore } from './sqlite-file-store.ts';
 import { SQLiteHistory, rowHash } from './sqlite-history.ts';
 import { identifiers, quote } from './sqlite-identifiers.ts';
-import { SQLiteLoad } from './sqlite-loads.ts';
+import { SQLiteLoad, expire } from './sqlite-loads.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
 const writersTable = new Declaration(
@@ -316,7 +316,9 @@ export abstract class SQLiteWriter extends Writer {
   }
 
   // A clear that empties a table is a change readers see, so it is a load of
-  // one numbered commit, and the history keeps the rows it removes.
+  // one numbered commit. It forgets the rows it removes: the history keeps
+  // none of them, so neither they nor their stored files stay, and each
+  // position before the clear expires, as no reading can read it exactly.
   override async clear(
     { writer, clock, connection }: Clearing,
     committed?: (values: FieldValues) => Promise<void>,
@@ -331,17 +333,14 @@ export abstract class SQLiteWriter extends Writer {
       if (owner !== undefined && owner !== writer)
         throw new TargetOwnedError(this.table.name, String(owner), writer);
       // Emptied, not dropped: views built on the table keep working. With no
-      // rows left, only the history refers to stored files.
+      // rows left, nothing refers to its stored files.
       if (this.exists(database, this.table.location)) {
-        this.history.create(database, this.written);
-        this.#keepRows(
-          database,
-          SQLiteLoad.once(database, connection, {
-            clock,
-            retention: this.destination.retention,
-          }),
-        );
+        const cleared = SQLiteLoad.once(database, connection, {
+          clock,
+          retention: this.destination.retention,
+        });
         database.exec(`DELETE FROM ${this.table.quotedName}`);
+        expire(database, cleared, 'clear');
         // Clearing a copy also abandons the reload it left open.
         database.exec(`DROP TABLE IF EXISTS ${quote(this.#hiddenName)}`);
         // A file column declared after the table's last load has no chunks.

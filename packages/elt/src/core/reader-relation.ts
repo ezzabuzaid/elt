@@ -10,9 +10,9 @@ export type ReaderRelation = {
 export const readerCatalog: ReaderRelation = Object.freeze({
   name: 'catalog',
   description:
-    'One row per readable view, table and column, explaining meaning and use. Discover sync_status and extraction_coverage before judging freshness or completeness. Raw tables are not listed.',
+    'One row per readable view and column, explaining meaning and use. Discover sync_status and extraction_coverage before judging freshness or completeness. Tables are not listed: readers query the views.',
   columns: Object.freeze({
-    kind: 'view, table or column.',
+    kind: 'view or column.',
     name: 'Relation name, or relation.column.',
     data_type: 'Column type; NULL for relations.',
     description:

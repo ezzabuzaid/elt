@@ -447,21 +447,16 @@ test('a pass that stays open longer than the window leaves the position before i
   ]);
 });
 
-test('a clear after the window deletes the history that only positions older than the window read', async () => {
+test('a clear expires more than the retention: the positions start at the clear, and the history keeps no row of the table', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-retention-');
   const { destination, pipeline, pass } = notesFile(scratch.path, window);
   await pass([note('n1', 1, 'first'), checkpoint('notes', 1)]);
   await pass([note('n1', 2, 'second'), checkpoint('notes', 2)]);
-  const second = newest(destination);
-  outwait();
 
   await pipeline([]).clear();
 
-  assert.equal(positions(destination)[0], second);
-  assert.deepEqual(
-    replaced(destination, 'notes').map(({ body }) => body),
-    ['second'],
-  );
+  assert.deepEqual(positions(destination), [newest(destination)]);
+  assert.deepEqual(replaced(destination, 'notes'), []);
 });
 
 // Documents keyed by id, each with the bytes of one file.

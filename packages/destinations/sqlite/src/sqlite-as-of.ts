@@ -28,19 +28,23 @@ export const asOfFunctions = {
   _elt_unversioned(reason: SQLInputValue): never {
     throw new Error(String(reason));
   },
-  // The guard knows the epoch and min_valid of the file only, so it gives
-  // the position as the newest commit: a file made again has another epoch.
+  // The guard knows the epoch, min_valid and expired_by of the file only, so
+  // it gives the position as the newest commit: a file made again has
+  // another epoch.
   _elt_readable(
     schema: SQLInputValue,
     position: SQLInputValue,
     epoch: SQLInputValue,
     minValid: SQLInputValue,
+    expiredBy: SQLInputValue,
   ): 1 {
     const asked = parsePosition(String(position));
     const expired = expiry(
       {
         epoch: String(epoch),
         minValid: Number(minValid),
+        expiredBy:
+          expiredBy === 'retention' || expiredBy === 'clear' ? expiredBy : null,
         newest: asked.number,
         ends: [],
       },
@@ -233,7 +237,7 @@ export function selectAsOf(
     guard === undefined
       ? (table: string) => `FROM ${file}.${quote(table)} AS "r" WHERE`
       : (table: string) =>
-          `FROM ${file}."_elt_epoch" AS "e" CROSS JOIN ${file}.${quote(table)} AS "r" WHERE "_elt_readable"(${literal(schema)}, ${literal(`${guard.epoch}:${guard.number}`)}, "e"."epoch", "e"."min_valid") AND`;
+          `FROM ${file}."_elt_epoch" AS "e" CROSS JOIN ${file}.${quote(table)} AS "r" WHERE "_elt_readable"(${literal(schema)}, ${literal(`${guard.epoch}:${guard.number}`)}, "e"."epoch", "e"."min_valid", "e"."expired_by") AND`;
   return `SELECT ${current} ${from(target)} "r"."committed_in" <= ${number} UNION ALL SELECT ${replaced} ${from(history)} "r"."committed_in" <= ${number} AND "r"."replaced_in" > ${number}`;
 }
 

@@ -4354,7 +4354,7 @@ test('file flush failure or cancellation leaves SQLite rows and checkpoints at t
   );
 });
 
-test('stored file references follow committed SQLite rows and the rows of their history, including rejected updates, failures, deletions and clear', async () => {
+test('stored file references follow committed SQLite rows and the rows of their history, including rejected updates, failures and deletions, and a clear forgets them', async () => {
   await using scratch = await new TemporaryFiles().directory(
     'elt-local-sqlite-',
   );
@@ -4473,7 +4473,7 @@ test('stored file references follow committed SQLite rows and the rows of their 
   await pipeline.clear();
   assert.deepEqual(loaded(), []);
   assert.equal(saved(), undefined);
-  assert.equal((await storedFiles()).length, 2);
+  assert.equal((await storedFiles()).length, 0);
 });
 
 test('a file whose own name ends in an extension too long to keep is stored under its hash alone', async () => {
@@ -4727,19 +4727,19 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
   await snapshot.run();
   assert.equal(loaded('snapshot'), undefined);
   // The history of each table keeps the rows that left it, and so their
-  // files.
+  // files, until a clear forgets them.
   assert.equal((await readFile(at(empty))).length, 0);
   assert.deepEqual(await readFile(at(original)), content);
   await pipeline.clear();
-  assert.deepEqual(await readFile(at(original)), content);
+  await assert.rejects(readFile(at(original)), { code: 'ENOENT' });
   source.scripts = { docs: [{ ...record('docs', 'a', 1), file: path }] };
   await snapshot.run();
   await rm(at(String(loaded('snapshot'))));
   await assert.rejects(snapshot.run(), PipelineError);
   assert.equal(loaded('snapshot'), empty);
-  // The clear empties the table, and the history still refers to the file
-  // that is gone, which the storage reports.
-  await assert.rejects(snapshot.clear(), /Stored attachment is missing/);
+  // The clear forgets the rows of the table, so nothing refers any more to
+  // the file that is gone.
+  await snapshot.clear();
   assert.equal(loaded('snapshot'), undefined);
 });
 

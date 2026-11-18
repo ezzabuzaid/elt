@@ -631,7 +631,7 @@ test('the rows of a partition that a later pass resets read as of the position b
   );
 });
 
-test('a clear empties the target at a position of its own, and the rows it cleared read as of the position before it', async () => {
+test('a clear empties the target at a position of its own and forgets the rows it cleared: the position before it expires, naming the clear, and the history keeps none of them', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-as-of-');
   const { destination, connection } = notesFile(scratch.path);
   const notesPipeline = connection({
@@ -643,18 +643,33 @@ test('a clear empties the target at a position of its own, and the rows it clear
   });
   await notesPipeline.run();
   const before = newest(destination);
-  const rows = asOf(destination, 'SELECT * FROM notes ORDER BY id');
+  await connection({
+    notes: [note('notes', 'n1', 2), checkpoint('notes', 2)],
+  }).run();
 
   await notesPipeline.clear();
   const cleared = destination.reading();
   if ('expired' in cleared) assert.fail(cleared.expired);
   using _cleared = cleared;
+  const earlier = destination.reading(before);
+  if (!('expired' in earlier)) {
+    earlier[Symbol.dispose]();
+    assert.fail('the position before the clear is still readable');
+  }
+  const [recorded] = storedRows(
+    destination.path,
+    "SELECT history FROM _elt_histories WHERE target = 'notes'",
+  );
 
   assert.notEqual(cleared.position, before);
   assert.deepEqual(cleared.sql.prepare('SELECT * FROM notes').all(), []);
+  assert.match(earlier.expired, /a clear that forgot the rows of its table/);
   assert.deepEqual(
-    asOf(destination, 'SELECT * FROM notes ORDER BY id', before),
-    rows,
+    storedRows(
+      destination.path,
+      `SELECT count(*) AS n FROM "${String(recorded?.history)}"`,
+    ),
+    [{ n: 0 }],
   );
 });
 
@@ -1588,7 +1603,7 @@ test('the files of the documents that a reload of another shape swapped out read
   assert.equal(orphans(destination), 0);
 });
 
-test('the files of the documents that a clear removed read with their own bytes as of the position before it, also after a later pass saved a new file', async () => {
+test('a clear forgets the files of the documents it removed: the position before it expires, and no chunk of them stays, also after a later pass saved a new file', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-as-of-');
   const stream = documents();
   const { destination, connection } = notesFile(scratch.path, stream);
@@ -1617,8 +1632,18 @@ test('the files of the documents that a clear removed read with their own bytes 
     copy,
   ).run();
 
+  const earlier = destination.reading(before);
+  if (!('expired' in earlier)) earlier[Symbol.dispose]();
+
   assert.deepEqual(texts(destination), { d3: 'third' });
-  assert.deepEqual(texts(destination, before), { d1: 'first', d2: 'second' });
+  assert.ok('expired' in earlier, 'the position before the clear expired');
+  assert.deepEqual(
+    storedRows(
+      destination.path,
+      `SELECT count(DISTINCT file) AS n FROM ${chunks}`,
+    ),
+    [{ n: 1 }],
+  );
   assert.equal(orphans(destination), 0);
 });
 

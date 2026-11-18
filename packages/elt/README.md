@@ -175,6 +175,7 @@ To reset or reassign a target, clear it with the copy that owns it, as the Clear
 - `pipeline.clear()` clears every copy. `pipeline.clear([copy])` sends each copy to its connection. `connection.clear()` clears the copies of one connection.
 - A clear empties each target, releases its writer and removes the checkpoint of the copy. The next run loads again from the start.
 - A clear empties a table. It does not drop it. Thus views over the table, such as the [warehouse](../../infra/README.md) views, continue to work.
+- A clear forgets the rows that it removes, as Delta Lake's `VACUUM` after a `DELETE` does: the history of the table keeps none of them, their stored files go, and each position before the clear expires, because no reading can read it exactly. Thus a host that must keep nothing of a scope, such as data that it no longer may hold, clears the copy and loads it again ([ADR 0023](./docs/adr/0023-a-clear-forgets-the-rows-it-removes.md)).
 - A clear refuses a target that a different writer owns.
 - A target that a person dropped by hand also releases its writer. Its copy loads it again from no checkpoint, because a resume would load only what changed since the checkpoint.
 
