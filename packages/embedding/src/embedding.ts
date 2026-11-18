@@ -1,3 +1,5 @@
+import { Vector } from '@zukhruf/vectors';
+import { toSql } from '@zukhruf/vectors/sqlite';
 import { APICallError, type EmbeddingModel, embedMany } from 'ai';
 
 import {
@@ -136,7 +138,9 @@ export class Embedding extends Rule<string, Uint8Array> {
 
 // A vector with no usable length has no unit vector: the division gives NaN,
 // which a search would rank as an answer. The row fails, and the next refresh
-// asks again.
+// asks again. It divides the model's float64 numbers and rounds to float32
+// after; UnitVector.normalize of @zukhruf/vectors rounds before it divides,
+// which gives other last bits (zukhruf #4694), so the division stays here.
 function unitVector(
   embedding: readonly number[],
 ): RuleResult<Readonly<Record<string, Uint8Array>>> {
@@ -145,9 +149,7 @@ function unitVector(
     return { error: `The model answered a vector of length ${length}.` };
   return {
     value: {
-      vector: new Uint8Array(
-        Float32Array.from(embedding, (value) => value / length).buffer,
-      ),
+      vector: toSql(Vector.from(embedding.map((value) => value / length))),
     },
   };
 }

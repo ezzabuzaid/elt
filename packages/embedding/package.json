@@ -38,6 +38,7 @@
   },
   "dependencies": {
     "@eltjs/elt": "^0.4.0",
+    "@zukhruf/vectors": "^0.8.32",
     "ai": "^7.0.165"
   },
   "devDependencies": {
