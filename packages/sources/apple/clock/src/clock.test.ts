@@ -757,6 +757,19 @@ test('a Clock watch goes on when a preference file is removed, and loads it agai
 
 test('this Mac Clock stores load read-only through the real pipeline', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Clock requires macOS');
+  // Clock reads the stores as macOS 27 lays them out. An older macOS, such as
+  // the macOS 26 of GitHub's runners (CI run 44391479307), lacks columns the
+  // source reads and fails with MissingColumnsError, so this check of the
+  // real store runs on macOS 27 or later.
+  const macOS = Number(
+    execFileSync('/usr/bin/sw_vers', ['-productVersion'], {
+      encoding: 'utf8',
+    }).split('.')[0],
+  );
+  if (macOS < 27)
+    return t.skip(
+      `Clock reads the stores of macOS 27, and this Mac runs macOS ${macOS}`,
+    );
   await using dir = await new TemporaryFiles().directory('clock-live-');
   const location = clockLocation(homedir());
   const run = await pipeline(new AppleClockSource(location), dir.path);

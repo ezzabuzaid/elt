@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -944,6 +944,19 @@ test(
 test('this Mac’s call history loads every stream, one row per stored record', async (t) => {
   if (process.platform !== 'darwin')
     return t.skip('Call History requires macOS');
+  // Call History reads the store as macOS 27 lays it out. An older macOS,
+  // such as the macOS 26 of GitHub's runners (CI run 44391479307), lacks
+  // columns the source reads and fails with MissingColumnsError, so this
+  // check of the real store runs on macOS 27 or later.
+  const macOS = Number(
+    execFileSync('/usr/bin/sw_vers', ['-productVersion'], {
+      encoding: 'utf8',
+    }).split('.')[0],
+  );
+  if (macOS < 27)
+    return t.skip(
+      `Call History reads the store of macOS 27, and this Mac runs macOS ${macOS}`,
+    );
   await using dir = await new TemporaryFiles().directory('elt-calls-live-');
   const out = join(dir.path, 'out.sqlite');
 
