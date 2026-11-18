@@ -13,12 +13,12 @@
     "@eltjs/elt": "*",
     "@eltjs/google-auth": "0.0.1",
     "@eltjs/sdk-google-health": "0.0.1",
-    "@zukhruf/async": "^0.8.27",
+    "@zukhruf/async": "^0.8.31",
     "p-memoize": "^8.0.0"
   },
   "devDependencies": {
-    "@eltjs/elt-postgresql": "^0.3.13",
-    "@zukhruf/testing": "^0.8.27",
+    "@eltjs/elt-postgresql": "*",
+    "@zukhruf/testing": "^0.8.31",
     "msw": "^3.0.3",
     "postgres": "^3.4.9"
   }

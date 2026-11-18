@@ -12,7 +12,7 @@
     "@eltjs/elt-sqlite": "*",
     "@eltjs/sdk-web-crawler": "0.0.1",
     "@eltjs/source-web-pages": "0.0.1",
-    "@zukhruf/single-flight": "^0.8.27",
+    "@zukhruf/single-flight": "^0.8.31",
     "hono": "4.13.14",
     "html-react-parser": "6.1.9",
     "react": "19.3.1",

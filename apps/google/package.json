@@ -4,7 +4,7 @@
   "type": "module",
   "dependencies": {
     "@eltjs/elt": "*",
-    "@eltjs/elt-postgresql": "^0.3.13",
+    "@eltjs/elt-postgresql": "*",
     "@eltjs/google-auth": "0.0.1",
     "@eltjs/source-google-health": "0.0.1",
     "@eltjs/source-google-search-console": "0.0.1"
