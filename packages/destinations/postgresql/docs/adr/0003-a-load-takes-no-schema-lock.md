@@ -18,6 +18,6 @@ The DDL locks stay. They are transaction locks on the schema around the table th
 ## Consequences
 
 - A second load or clear of a schema does not wait for one that runs. A checkpoint store keeps runs of one copy apart, as each host does.
-- Two first loads into a new schema that start at the same moment can fail one time. No host starts them in that way.
+- The first commit of a table is DDL too: it can make the schema and `<schema>._elt_writers`. Datahub loaded several connections into one schema, and four of five first commits failed with `23505` (backlog #3250). Thus the first commit takes the lock of the schema, and makes the schema in a transaction of its own before the commit, which begins only when it holds the lock. A transaction that waits for an advisory lock inside it does not refresh its catalog cache, so its `CREATE SCHEMA IF NOT EXISTS` does not see the schema that the holder made.
 
-Sources: elt ed76393a, d973cd3.
+Sources: elt ed76393a, d973cd3; #3250.

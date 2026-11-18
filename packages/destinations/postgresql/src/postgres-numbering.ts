@@ -1,6 +1,6 @@
 import type postgres from 'postgres';
 
-import { schemaLock } from './postgres-session.ts';
+import { lockSchema } from './postgres-session.ts';
 
 // A session, or a transaction of one.
 type Queries = postgres.Sql | postgres.TransactionSql;
@@ -56,7 +56,7 @@ export async function installNumbering(sql: postgres.Sql): Promise<void> {
     await sql`SELECT to_regclass(${epochs}) IS NOT NULL AS "made"`;
   if (numbering?.made === true) return;
   await sql.begin(async (transaction) => {
-    await transaction`SELECT pg_advisory_xact_lock(hashtextextended(${schemaLock(shared)}, 0))`;
+    await lockSchema(transaction, shared);
     for (const statement of tables) await transaction.unsafe(statement);
   });
 }

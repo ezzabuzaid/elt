@@ -32,6 +32,10 @@ _Avoid_: Buffer, staging table
 The table `_elt_next_<hash>` that a reload commits into. When the stream ends with no failure, the load gives its rows to the table by difference if the table still has the stream's shape, and swaps it in if not.
 _Avoid_: Shadow table, temp table
 
+**Dependent view**:
+A view, or a materialized view, that reads a raw table, its history or its reader view, directly or through other views, for example a view that an agent made over `marts.search_console_sitemaps`. A change of the table makes it again over the new table, with its owner, comments and privileges.
+_Avoid_: Downstream object, dependency (a dependency is the relation that a view reads)
+
 **Swap wait**:
 The time, at most 3 seconds, that a change of a stored table waits for readers to let go before it fails the copy.
 _Avoid_: Timeout (a statement timeout is a setting of a role)

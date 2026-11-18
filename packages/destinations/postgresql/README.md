@@ -110,7 +110,7 @@ Sources describe their data with the `description` of JSON Schema: at the root f
 
 A run holds one connection to the schema and takes no lock. Loads into one schema run side by side, and a [checkpoint store](#checkpoints) keeps two runs of one copy apart. See [ADR 0003](./docs/adr/0003-a-load-takes-no-schema-lock.md).
 
-- Postgres refuses two sessions that make one schema or one table at the same moment. Thus two first loads into a new schema that start together can fail one time. No host starts them in that way.
+- Postgres refuses two sessions that make one schema or one table at the same moment. Thus the first commits of the tables of one schema take turns for the DDL that they share: the schema and `_elt_writers`. The schema is made in a transaction of its own, which begins only when the lock of the schema is held, because a transaction that waits for an advisory lock does not see the catalog changes that it waited for. Connections that load into one schema can start together.
 - As in the Postgres destination of Airbyte, no transaction stays open between commits. Thus the read of the source holds no locks on the targets and keeps nothing from vacuum, however many tables a run loads. See [ADR 0002](./docs/adr/0002-no-transaction-stays-open-between-commits.md).
 - The prepare of a stream only checks the stored table and makes its stage. Thus a run that fails before the first commit of a stream leaves nothing of that stream.
 - Each stream stages its operations in a `TEMP` table that only its session sees, and commits them at its own checkpoints. Each commit is one short transaction.
@@ -133,10 +133,11 @@ Shape changes:
 
 - When the columns, types or `NOT NULL`s of a stored table do not fit the stream, the load [evolves it](../../elt/README.md#shape-changes) in place before it reads, as the Postgres destination of Airbyte does. `ALTER TABLE` adds a nullable column, drops a column that the stream dropped (with its chunk table, for a file column), and converts a column with a new type `USING column::type`. Before the conversion, each stored value that is not null must cast back to itself (`column::type::old IS DISTINCT FROM column` finds none), so `1.5` in `double precision` fails the load to `bigint`, naming the column, and `2` converts. A conversion from `text` is the parse that the load applies to each new value, so the conversion itself refuses a value it cannot parse. It keeps `NOT NULL` and the primary key on the explicit key columns of the target, and moves the key when they change. The reader view is made again over the result.
 - The change waits at most 3 seconds for readers to let go. Otherwise it fails the copy until the next run.
-- A value that does not convert, rows that repeat a new key, or a view of a different schema built on the reader view fail the change. The table stays as it was.
+- A value that does not convert, or rows that repeat a new key, fail the change. The table stays as it was.
+- The views that read the table, its history or its reader view, also views that elt did not make, read the table again after the change, with their owners, options, comments and privileges. A view that does not fit the change, such as one that reads a column that the change drops, fails the change, and the error names the view. See [ADR 0006](./docs/adr/0006-a-change-of-a-table-makes-the-views-over-it-again.md).
 - A [reset](../../elt/README.md#resets) of the full stream, or an overwrite whose stored table does not fit, reloads into a hidden table `_elt_next_<hash>`. The first commit of the reload makes it. When the stream ends with no failure:
   - If the stored table still has the stream's shape, the load changes it in place, by difference: each row that the hidden table has again stays, with its commit and its `loaded_at`; each other row goes into the history; and each new row enters. The table keeps its indexes, its triggers and the views that depend on it.
-  - If not, the load swaps the hidden table in, also with a wait of at most 3 seconds, and drops the chunk table of a file column that it does not have now. The history keeps every row of the old table. A view built on the table or its reader view refuses the swap.
+  - If not, the load swaps the hidden table in, also with a wait of at most 3 seconds, and drops the chunk table of a file column that it does not have now. The history keeps every row of the old table. The swapped-in table and its reader view keep the privileges of the old ones, and the views over them read the new table, as for a change of shape.
 
 ## Commit numbers and positions
 
@@ -286,6 +287,7 @@ What the relations tell:
 - [ADR 0003](./docs/adr/0003-a-load-takes-no-schema-lock.md): a load takes no schema lock.
 - [ADR 0004](./docs/adr/0004-an-overwrite-deletes-rows-and-does-not-truncate.md): an overwrite deletes rows and does not truncate.
 - [ADR 0005](./docs/adr/0005-the-history-install-publishes-the-catalog.md): the history install publishes the catalog.
+- [ADR 0006](./docs/adr/0006-a-change-of-a-table-makes-the-views-over-it-again.md): a change of a table makes the views over it again.
 
 ## Development
 
@@ -307,6 +309,8 @@ src/
   postgres-numbering.ts           commit numbers, loads and positions
   postgres-as-of.ts               a reading of the database as of a position
   postgres-views.ts               publishPostgresViews
+  postgres-dependents.ts          the views over a table, made again over its change
+  postgres-privileges.ts          the privileges of a relation, kept across its change
   postgres-checkpoint-store.ts    PostgresCheckpointStore
   postgres-sync-history.ts        PostgresSyncHistory and the catalog
   postgres-sync-history-schema.ts the tables and views of the history

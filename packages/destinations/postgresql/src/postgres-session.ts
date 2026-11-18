@@ -1,6 +1,6 @@
 import postgres from 'postgres';
 
-import { identifier } from './identifier.ts';
+import { identifier, quote } from './identifier.ts';
 
 // One session, closed however the work using it ends.
 export class PostgresSession implements AsyncDisposable {
@@ -39,8 +39,36 @@ export function schemaName(schema: string): string {
   return schema;
 }
 
-// Serializes the DDL that creates one schema and its views, which Postgres
-// refuses to run in two sessions at once.
-export function schemaLock(schema: string): string {
-  return `elt:${schema}`;
+// The advisory lock of a schema's DDL, as hashtextextended keys it.
+const schemaKey = (schema: string) => `elt:${schema}`;
+
+// Serializes, until the transaction ends, the DDL that makes a schema and the
+// objects its loads, views and checkpoints share: Postgres refuses a second
+// session's CREATE SCHEMA or CREATE TABLE of the same name with 23505.
+export async function lockSchema(
+  sql: postgres.ISql,
+  schema: string,
+): Promise<void> {
+  await sql`SELECT pg_advisory_xact_lock(hashtextextended(${schemaKey(schema)}, 0))`;
+}
+
+// Makes the schema in a transaction of its own, which begins only once the
+// schema's lock is held. A session refreshes its catalog cache when a
+// transaction begins and when it locks a relation, not when it takes an
+// advisory lock, so a transaction that waited for the lock could still miss
+// the schema that the holder made, and its CREATE SCHEMA IF NOT EXISTS would
+// fail with 23505. sql is a session outside any transaction.
+export async function makeSchema(
+  sql: postgres.Sql,
+  schema: string,
+): Promise<void> {
+  const key = schemaKey(schema);
+  await sql`SELECT pg_advisory_lock(hashtextextended(${key}, 0))`;
+  try {
+    await sql.begin((transaction) =>
+      transaction.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quote(schema)}`),
+    );
+  } finally {
+    await sql`SELECT pg_advisory_unlock(hashtextextended(${key}, 0))`;
+  }
 }

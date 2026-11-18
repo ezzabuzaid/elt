@@ -3,7 +3,7 @@ import type postgres from 'postgres';
 import type { ReaderRelation } from '@eltjs/elt';
 
 import { identifier, quote } from './identifier.ts';
-import { schemaLock, schemaName } from './postgres-session.ts';
+import { lockSchema, schemaName } from './postgres-session.ts';
 
 export type PostgresView = ReaderRelation & { readonly query: string };
 
@@ -45,7 +45,7 @@ export async function publishPostgresViews(
   // A failed definition restores every replaced view, even if the caller
   // catches the error and continues its transaction.
   await sql.savepoint(async (transaction) => {
-    await transaction`SELECT pg_advisory_xact_lock(hashtextextended(${schemaLock(schema)}, 0))`;
+    await lockSchema(transaction, schema);
     await transaction.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quote(schema)}`);
     for (const view of views.toReversed())
       await transaction.unsafe(

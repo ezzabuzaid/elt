@@ -6,7 +6,7 @@ import { quote } from './identifier.ts';
 import {
   PostgresSession,
   connectionUrl,
-  schemaLock,
+  lockSchema,
   schemaName,
 } from './postgres-session.ts';
 
@@ -108,10 +108,7 @@ export class PostgresCheckpointStore extends CheckpointStore {
     );
     if (found?.exists === true) return;
     await sql.begin(async (transaction) => {
-      await transaction.unsafe(
-        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-        [schemaLock(this.schema)],
-      );
+      await lockSchema(transaction, this.schema);
       await transaction.unsafe(
         `CREATE SCHEMA IF NOT EXISTS ${quote(this.schema)}`,
       );
