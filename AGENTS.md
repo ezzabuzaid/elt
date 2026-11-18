@@ -23,7 +23,7 @@ Before proposing a change to a package's rule, state why the rule exists and wha
 
 When CI is green for a push of `main`, the Release workflow publishes the public `@eltjs/*` packages if the conventional commits ask for it (README, Release). Before a push, list `git log origin/main..HEAD`, and push only finished commits. The workflow pushes a `chore(release): publish <version>` commit to `main`, so pull before you push.
 
-A new package has `"private": true` until Ezz says to release it. A private package asks for a public one with `"*"`, or npm workspaces stop linking it after a release. CI runs on Linux and checks only the public packages, so check the macOS packages on a Mac before you push.
+A new package has `"private": true` until Ezz says to release it. A private package asks for a public one with `"*"`, or npm workspaces stop linking it after a release. CI checks every package except `proactive` (README, CI), so check `proactive` on a Mac before you push.
 
 ## The app lives in context-compiler
 

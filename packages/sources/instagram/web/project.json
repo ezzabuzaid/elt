@@ -2,5 +2,5 @@
   "name": "source-instagram-web",
   "sourceRoot": "packages/sources/instagram/web/src",
   "projectType": "library",
-  "tags": ["layer:island"]
+  "tags": ["layer:island", "platform:darwin"]
 }

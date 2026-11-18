@@ -503,4 +503,4 @@ To see what the next release would be:
 npx nx release version --dry-run
 ```
 
-CI checks every package. A project tagged `platform:darwin` runs on a macOS runner: it reads a facility of macOS (its databases, `plutil`, `osascript`), or it depends on a Swift helper that only `swiftc` builds. The rest run on Linux. `proactive` needs macOS and Docker at once, which no GitHub runner has, so CI does not run it: check it on a Mac before you push.
+CI checks every package. A project tagged `platform:darwin` runs on a macOS runner: it reads a facility of macOS (its databases, the login keychain, `plutil`, `osascript`), or it depends on a Swift helper that only `swiftc` builds. The rest run on Linux. `proactive` needs macOS and Docker at once, which no GitHub runner has, so CI does not run it: check it on a Mac before you push.
