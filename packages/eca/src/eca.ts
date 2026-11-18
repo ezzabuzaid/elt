@@ -70,53 +70,51 @@ export class Eca<Sql, Data> {
   }
 
   // At most two readings are open: a step's before and its after. The before
-  // closes once its step has evaluated, so a long pause holds no more.
+  // closes once its step has evaluated, so a long pause holds no more. A
+  // failure of the warehouse or of the condition gives the matches before it
+  // and the cursor after the last good step.
   async #walk<R extends Rule<Sql, Data>>(
     rule: R,
     from: Cursor,
     now: Temporal.Instant,
   ): Promise<Outcome<Sql, Data, R>> {
-    const positions = await this.#warehouse.stable(from.position);
-    if ('expired' in positions) return { rule, expired: positions.expired };
-    const opened = await this.#warehouse.read(from.position);
-    if ('expired' in opened) return { rule, expired: opened.expired };
-    let held: Open<Sql> = opened;
-    let before: Reading<Sql> = { sql: opened.sql, ...from };
     const matches: Data[] = [];
-    // Evaluates one step, or gives the outcome of its failure: the cursor
-    // stays after the last step that evaluated.
-    const step = async (after: Reading<Sql>) => {
-      try {
-        matches.push(...(await rule.condition.evaluate(before, after)));
-      } catch (error) {
-        return { rule, matches, error, cursor: encode(before) };
-      }
-      before = after;
-      return undefined;
-    };
-    // A step in which time does not move changes nothing.
-    const until = (at: Temporal.Instant) =>
-      Temporal.Instant.compare(at, before.at) > 0
-        ? step({ ...before, at })
-        : undefined;
+    let done: Cursor = from;
+    let held: Open<Sql> | undefined;
     try {
+      const positions = await this.#warehouse.stable(from.position);
+      if ('expired' in positions) return { rule, expired: positions.expired };
+      const opened = await this.#warehouse.read(from.position);
+      if ('expired' in opened) return { rule, expired: opened.expired };
+      held = opened;
+      let before: Reading<Sql> = { sql: opened.sql, ...from };
+      const step = async (after: Reading<Sql>) => {
+        matches.push(...(await rule.condition.evaluate(before, after)));
+        before = done = after;
+      };
+      // A step in which time does not move changes nothing.
+      const until = async (at: Temporal.Instant) => {
+        if (Temporal.Instant.compare(at, before.at) > 0)
+          await step({ ...before, at });
+      };
       for (const position of positions) {
         const reading = await this.#warehouse.read(position);
         if ('expired' in reading) return { rule, expired: reading.expired };
         try {
           const at = latest(reading.at, before.at, now);
-          const failed =
-            (await until(at)) ??
-            (await step({ sql: reading.sql, position, at }));
-          if (failed !== undefined) return failed;
+          await until(at);
+          await step({ sql: reading.sql, position, at });
         } finally {
           await dispose(held);
           held = reading;
         }
       }
-      return (await until(now)) ?? { rule, matches, cursor: encode(before) };
+      await until(now);
+      return { rule, matches, cursor: encode(done) };
+    } catch (error) {
+      return { rule, matches, error, cursor: encode(done) };
     } finally {
-      await dispose(held);
+      if (held !== undefined) await dispose(held);
     }
   }
 }

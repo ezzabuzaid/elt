@@ -22,8 +22,9 @@ export type Rule<Sql, Data> = { readonly condition: Condition<Sql, Data> };
  * at the next evaluation.
  * - The walk ended: each match of each step, and the cursor at the newest
  *   position.
- * - The condition threw at a step: the matches of the steps before it, the
- *   error, and the cursor after the last good step.
+ * - The condition threw at a step, or a `stable()` or `read()` of the
+ *   warehouse rejected: the matches of the steps before it, the error, and
+ *   the cursor after the last good step.
  * - The cursor names a position that the warehouse can no longer read, such
  *   as one older than its retention or of a warehouse made again.
  */

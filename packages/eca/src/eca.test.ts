@@ -425,6 +425,106 @@ test('each rule of an evaluation gives its own outcome, in order, and one whose 
   assert.deepEqual(matched.matches, ['t1']);
 });
 
+test('a warehouse read that rejects at a position gives that rule the matches before it, a cursor after the last good step and the error, disposes each reading it opened, and stops no other rule', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { destination, pass, eca: plain } = warehouse(scratch.path);
+  await pass([task('t1', 1, 'done'), checkpoint(1)]);
+  const cursor = await plain().start();
+  await pass([task('t1', 2, 'open'), checkpoint(2)]);
+  await pass([task('t2', 1, 'open'), checkpoint(3)]);
+  const third = destination.positions();
+  if ('expired' in third) assert.fail(third.expired);
+  const broken = third.at(-1);
+  await pass([task('t3', 1, 'open'), checkpoint(4)]);
+  let rejected = false;
+  let held = 0;
+  const eca = new Eca<DatabaseSync, string>({
+    warehouse: {
+      stable: async (after) => destination.positions(after),
+      read: async (position) => {
+        if (position === broken && !rejected) {
+          rejected = true;
+          throw new Error('the reader stopped');
+        }
+        const reading = destination.reading(position);
+        if ('expired' in reading) return reading;
+        held++;
+        return {
+          sql: reading.sql,
+          position: reading.position,
+          at: reading.at,
+          [Symbol.dispose]() {
+            held--;
+            reading[Symbol.dispose]();
+          },
+        };
+      },
+    },
+    clock: globalThis,
+  });
+  const other: Rule<DatabaseSync, string> = { condition: opened.condition };
+
+  const [failed, matched] = await Array.fromAsync(
+    eca.evaluate([
+      { rule: opened, cursor },
+      { rule: other, cursor },
+    ]),
+  );
+  if (failed === undefined || !('error' in failed))
+    assert.fail(JSON.stringify(failed));
+  const resumed = await walked(eca, opened, failed.cursor);
+
+  assert.equal(failed.rule, opened);
+  assert.deepEqual(failed.matches, ['t1']);
+  assert.match(String(failed.error), /the reader stopped/);
+  assert.deepEqual(resumed.matches, ['t2', 't3']);
+  assert.ok(matched !== undefined && 'matches' in matched);
+  assert.ok(!('error' in matched));
+  assert.equal(matched.rule, other);
+  assert.deepEqual(matched.matches, ['t1', 't2', 't3']);
+  assert.equal(held, 0);
+});
+
+test('a warehouse whose stable rejects gives that rule no matches, its own cursor and the error, and stops no other rule', async () => {
+  await using scratch = await new TemporaryFiles().directory('eca-');
+  const { destination, pass } = warehouse(scratch.path);
+  await pass([task('t1', 1, 'done'), checkpoint(1)]);
+  let rejected = false;
+  const eca = new Eca<DatabaseSync, string>({
+    warehouse: {
+      stable: async (after) => {
+        if (!rejected) {
+          rejected = true;
+          throw new Error('the reader stopped');
+        }
+        return destination.positions(after);
+      },
+      read: async (position) => destination.reading(position),
+    },
+    clock: globalThis,
+  });
+  const cursor = await eca.start();
+  await pass([task('t1', 2, 'open'), checkpoint(2)]);
+  const other: Rule<DatabaseSync, string> = { condition: opened.condition };
+
+  const [failed, matched] = await Array.fromAsync(
+    eca.evaluate([
+      { rule: opened, cursor },
+      { rule: other, cursor },
+    ]),
+  );
+
+  if (failed === undefined || !('error' in failed))
+    assert.fail(JSON.stringify(failed));
+  assert.equal(failed.rule, opened);
+  assert.deepEqual(failed.matches, []);
+  assert.equal(failed.cursor, cursor);
+  assert.match(String(failed.error), /the reader stopped/);
+  assert.ok(matched !== undefined && 'matches' in matched);
+  assert.ok(!('error' in matched));
+  assert.deepEqual(matched.matches, ['t1']);
+});
+
 test('a cursor that eca did not make is a TypeError', async () => {
   await using scratch = await new TemporaryFiles().directory('eca-');
   const { pass, eca } = warehouse(scratch.path);

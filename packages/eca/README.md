@@ -132,10 +132,10 @@ See [ADR 0010](./docs/adr/0010-eca-is-a-stateless-reader-over-warehouse-position
 | Outcome                            | When                                                   | The cursor                  |
 | ---------------------------------- | ------------------------------------------------------ | --------------------------- |
 | `{ rule, matches, cursor }`        | The walk ended                                         | At the newest position, now |
-| `{ rule, matches, error, cursor }` | The condition threw at a step                          | After the last good step    |
+| `{ rule, matches, error, cursor }` | The condition threw, or the warehouse rejected         | After the last good step    |
 | `{ rule, expired }`                | The warehouse can no longer read the cursor's position | None                        |
 
-- A failure keeps the matches of the steps before it. The next evaluation goes on from the last good step, so a failure that passes, such as a lock, loses nothing. The other rules of the call still run. See [ADR 0008](./docs/adr/0008-a-failing-condition-is-yielded-with-the-matches-before-it.md).
+- A failure is a condition that throws at a step, or a `stable()` or `read()` of the warehouse that rejects, such as a reader that stopped. It keeps the matches of the steps before it. The next evaluation goes on from the last good step, so a failure that passes, such as a lock, loses nothing. A failure before the first step keeps the rule's own cursor. eca disposes each reading that it opened. The other rules of the call still run. See [ADR 0008](./docs/adr/0008-a-failing-condition-is-yielded-with-the-matches-before-it.md).
 - A position expires when it is older than the retention of the warehouse, or when a fresh run made the warehouse again. The reason says which. The host decides what to do: start the rule again with `start()`, or tell the user. eca never skips it silently.
 - A cursor that eca did not make is a `TypeError`. A warehouse with no position yet makes `start()` throw: load it first.
 
