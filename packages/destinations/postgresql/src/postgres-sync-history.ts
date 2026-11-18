@@ -4,6 +4,7 @@ import {
   type Connection,
   type CopyOutcome,
   type DeclaredCopy,
+  type FailureType,
   type RecordedPass,
   type StreamCheck,
   SyncHistory,
@@ -19,7 +20,7 @@ import {
 import { identifier } from './identifier.ts';
 import { PostgresDestination } from './postgres-destination.ts';
 import { grantReading, installNumbering } from './postgres-numbering.ts';
-import { lockSchema } from './postgres-session.ts';
+import { PostgresSession, lockSchema } from './postgres-session.ts';
 import {
   syncHistoryTables,
   syncHistoryViews,
@@ -89,46 +90,60 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
   }
 
   // Every selected stream is declared before reading, even if it produces no
-  // rows or the process dies: an unfinished attempt stays running, never success.
+  // rows or the process dies. The pass's own session holds a lock on its
+  // attempt until the pipeline disposes the pass, and Postgres lets go of
+  // the locks of a session that ends, also of a killed process. So an attempt
+  // of the connection that runs while no session holds its lock will get no
+  // outcome, and the next attempt records it as failed, as Que and GoodJob
+  // tell a running job from an abandoned one by its advisory lock.
   override async begin(
     connection: Connection<PostgresTable>,
     copies: readonly DeclaredCopy<PostgresTable>[],
     at: Date,
   ): Promise<RecordedPass<PostgresTable>> {
     const schema = this.#schema(connection);
-    const id = await this.#write(async (transaction) => {
-      const [attempt] = await transaction<{ id: string }[]>`
-        INSERT INTO _warehouse.sync_attempts (connector, source, started_at)
-        VALUES (${connection.name}, ${connection.source.identity}, ${at}) RETURNING id`;
-      if (attempt === undefined)
-        throw new Error('Sync attempt was not recorded');
-      for (const { copy, coverage } of copies)
+    const session = new PostgresSession(this.#url, 'elt-sync-history');
+    try {
+      const id = await session.sql.begin(async (transaction) => {
+        await failEnded(transaction, connection.name, at);
+        const [attempt] = await transaction<{ id: string }[]>`
+          INSERT INTO _warehouse.sync_attempts (connector, source, started_at)
+          VALUES (${connection.name}, ${connection.source.identity}, ${at}) RETURNING id`;
+        if (attempt === undefined)
+          throw new Error('Sync attempt was not recorded');
+        // A session lock outlives the transaction, so no reader sees the
+        // attempt before its lock is held. A try never waits: when the hash
+        // of another running attempt takes the key, that key is held anyway.
         await transaction`
-          INSERT INTO _warehouse.extraction_coverage
-            (attempt_id, stream, target_schema, target_table, sync_mode,
-             destination_sync_mode, description, selection)
-          VALUES (${attempt.id}, ${copy.from.name}, ${schema},
-            ${copy.to.name}, ${copy.configuration.syncMode},
-            ${copy.configuration.destinationSyncMode}, ${coverage.description},
-            ${transaction.json(coverage.selection)})`;
-      return attempt.id;
-    });
-    return {
-      finish: (outcomes, upstream, ended) =>
-        this.#finish(id, outcomes, upstream, ended),
-      fail: (error, failureType, ended) =>
-        this.#write(async (transaction) => {
+          SELECT pg_try_advisory_lock(${transaction.unsafe(attemptLock)}, hashtext(${attempt.id}))`;
+        for (const { copy, coverage } of copies)
           await transaction`
-            UPDATE _warehouse.extraction_coverage SET status = 'failed',
-              failures = ${transaction.json([recordedFailure({ partition: null, error, failureType })])}
-            WHERE attempt_id = ${id}`;
-          await transaction`
-            UPDATE _warehouse.sync_attempts SET status = 'failed',
-              completed_at = ${ended}, error = ${errorMessage(error)},
-              failure_type = ${failureType}
-            WHERE id = ${id}`;
-        }),
-    };
+            INSERT INTO _warehouse.extraction_coverage
+              (attempt_id, stream, target_schema, target_table, sync_mode,
+               destination_sync_mode, description, selection)
+            VALUES (${attempt.id}, ${copy.from.name}, ${schema},
+              ${copy.to.name}, ${copy.configuration.syncMode},
+              ${copy.configuration.destinationSyncMode}, ${coverage.description},
+              ${transaction.json(coverage.selection)})`;
+        return attempt.id;
+      });
+      return {
+        finish: async (outcomes, upstream, ended) => {
+          await session.sql.begin((transaction) =>
+            finish(transaction, id, outcomes, upstream, ended),
+          );
+        },
+        fail: async (error, failureType, ended) => {
+          await session.sql.begin((transaction) =>
+            fail(transaction, [id], error, failureType, ended),
+          );
+        },
+        [Symbol.asyncDispose]: () => session[Symbol.asyncDispose](),
+      };
+    } catch (error) {
+      await session[Symbol.asyncDispose]();
+      throw error;
+    }
   }
 
   // Creates the history's tables, publishes its views and the catalog, and
@@ -159,32 +174,6 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
     return destination.schema;
   }
 
-  #finish(
-    id: string,
-    outcomes: readonly CopyOutcome<PostgresTable>[],
-    upstream: ReadonlyMap<string, Date>,
-    ended: Date,
-  ): Promise<void> {
-    return this.#write(async (transaction) => {
-      for (const outcome of outcomes)
-        await transaction`
-          UPDATE _warehouse.extraction_coverage SET
-            status = ${copyStatus(outcome)},
-            written_count = ${outcome.count}, deleted_count = ${outcome.deleted},
-            failures = ${transaction.json(outcome.failures.map(recordedFailure))}
-          WHERE attempt_id = ${id} AND stream = ${outcome.copy.from.name}`;
-      for (const [stream, at] of upstream)
-        await transaction`
-          UPDATE _warehouse.extraction_coverage SET upstream_current_as_of = ${at}
-          WHERE attempt_id = ${id} AND stream = ${stream}`;
-      await transaction`
-        UPDATE _warehouse.sync_attempts SET completed_at = ${ended},
-          status = ${passStatus(outcomes)}, error = ${passError(outcomes)},
-          failure_type = ${passFailureType(outcomes)}
-        WHERE id = ${id}`;
-    });
-  }
-
   #write<T>(work: (transaction: postgres.TransactionSql) => Promise<T>) {
     return this.#connect((sql) => sql.begin(work));
   }
@@ -201,4 +190,80 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
       await sql.end();
     }
   }
+}
+
+// The key space of the lock that the session of each running attempt holds,
+// apart from the two-key locks of the checkpoints and the commit numbers.
+const attemptLock = `hashtext('elt:sync-attempt')`;
+
+// Records as failed each attempt of connector that runs while no session
+// holds its lock: the session that ran it ended first, so no outcome will
+// come. Only Postgres knows which sessions live, so a try of each lock is the
+// test, and the lock it takes ends with the transaction.
+async function failEnded(
+  transaction: postgres.TransactionSql,
+  connector: string,
+  at: Date,
+): Promise<void> {
+  const ended = await transaction<{ id: string }[]>`
+    WITH running AS MATERIALIZED (
+      SELECT id FROM _warehouse.sync_attempts
+      WHERE connector = ${connector} AND status = 'running'
+    )
+    SELECT id FROM running
+    WHERE pg_try_advisory_xact_lock(${transaction.unsafe(attemptLock)}, hashtext(id::text))`;
+  if (ended.length > 0)
+    await fail(
+      transaction,
+      ended.map(({ id }) => id),
+      new Error(
+        'The session running this pass ended before the pass did: its process stopped, or lost the database',
+      ),
+      'system',
+      at,
+    );
+}
+
+// Attempts that produced no outcomes, so what they committed is unknown.
+async function fail(
+  transaction: postgres.TransactionSql,
+  ids: readonly string[],
+  error: unknown,
+  failureType: FailureType,
+  at: Date,
+): Promise<void> {
+  await transaction`
+    UPDATE _warehouse.extraction_coverage SET status = 'failed',
+      failures = ${transaction.json([recordedFailure({ partition: null, error, failureType })])}
+    WHERE attempt_id IN ${transaction(ids)}`;
+  await transaction`
+    UPDATE _warehouse.sync_attempts SET status = 'failed',
+      completed_at = ${at}, error = ${errorMessage(error)},
+      failure_type = ${failureType}
+    WHERE id IN ${transaction(ids)}`;
+}
+
+async function finish(
+  transaction: postgres.TransactionSql,
+  id: string,
+  outcomes: readonly CopyOutcome<PostgresTable>[],
+  upstream: ReadonlyMap<string, Date>,
+  ended: Date,
+): Promise<void> {
+  for (const outcome of outcomes)
+    await transaction`
+      UPDATE _warehouse.extraction_coverage SET
+        status = ${copyStatus(outcome)},
+        written_count = ${outcome.count}, deleted_count = ${outcome.deleted},
+        failures = ${transaction.json(outcome.failures.map(recordedFailure))}
+      WHERE attempt_id = ${id} AND stream = ${outcome.copy.from.name}`;
+  for (const [stream, at] of upstream)
+    await transaction`
+      UPDATE _warehouse.extraction_coverage SET upstream_current_as_of = ${at}
+      WHERE attempt_id = ${id} AND stream = ${stream}`;
+  await transaction`
+    UPDATE _warehouse.sync_attempts SET completed_at = ${ended},
+      status = ${passStatus(outcomes)}, error = ${passError(outcomes)},
+      failure_type = ${passFailureType(outcomes)}
+    WHERE id = ${id}`;
 }

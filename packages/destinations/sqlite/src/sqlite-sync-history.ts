@@ -101,6 +101,8 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
         write(path, (database) =>
           fail(database, id, error, failureType, ended),
         ),
+      // Each write opens the file and closes it, so a pass holds nothing.
+      [Symbol.asyncDispose]: async () => {},
     };
   }
 

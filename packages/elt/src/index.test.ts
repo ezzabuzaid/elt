@@ -1667,6 +1667,7 @@ class MemoryHistory extends SyncHistory<NamedTarget> {
           `fail ${connection.name} ${Error.isError(error) ? error.message : String(error)}`,
         );
       },
+      [Symbol.asyncDispose]: async () => {},
     };
   }
 
@@ -2402,7 +2403,7 @@ class Discarding extends Destination {
 class Forgetful extends SyncHistory {
   async install() {}
   async recordChecks() {}
-  async begin() { return { finish: async () => {}, fail: async () => {} }; }
+  async begin() { return { finish: async () => {}, fail: async () => {}, [Symbol.asyncDispose]: async () => {} }; }
 }
 const source = new Notes();
 const pipeline = new Pipeline({

@@ -20,8 +20,10 @@ export type StreamCheck = { readonly stream: string; readonly at: Date };
 // One pass as recorded: declared before its read, closed with what it loaded.
 // upstream holds, by stream, when its source said its upstream was last
 // current; a stream it does not hold was read from a live upstream. at is
-// when the pass ended, on the clock of its pipeline.
-export type RecordedPass<Target extends DestinationTarget> = {
+// when the pass ended, on the clock of its pipeline. The pipeline disposes it
+// once the pass ended, with an outcome or not, so a history may hold what
+// shows that the pass still runs, such as a database session.
+export type RecordedPass<Target extends DestinationTarget> = AsyncDisposable & {
   finish(
     outcomes: readonly CopyOutcome<Target>[],
     upstream: ReadonlyMap<string, Date>,

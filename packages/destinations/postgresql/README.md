@@ -296,6 +296,7 @@ A refresh is a load in `_warehouse._elt_loads`, under the name of its dataset, s
 - Before a pass reads, the history inserts one `sync_attempts` row, with the connection name as `connector` and the source identity as `source`. It inserts one `extraction_coverage` row for each selected stream, with the declared `coverage(stream)` of the source and the schema of the destination as `target_schema`. The outcomes close them.
 - A run declares each stream that a connection selected. A watch pass reads only the streams whose change signals changed, so an attempt vouches only for its own `extraction_coverage` rows.
 - A connection that is not valid or that stopped, a failed change signal and a failed upkeep each record a failed attempt with no outcomes.
+- Each attempt has a session of its own until its pass ends, and that session holds a lock on the attempt. A pass whose process stopped, for example a container restart, stays `running` until the next attempt of its connection begins. That attempt records it as `failed`, because no session holds its lock. The pipeline records a failed change signal while a pass of the same connection runs, and the running pass stays `running`. No host option is necessary, because Postgres knows which sessions are alive. See [ADR 0009](./docs/adr/0009-a-running-attempt-holds-a-lock-of-its-session.md).
 - `_warehouse` tables are made only when they are missing.
 
 The relations in `marts`:
@@ -341,6 +342,7 @@ Each [view](#declare-a-view) and [computed dataset](#declare-a-computed-dataset)
 - [ADR 0006](./docs/adr/0006-a-change-of-a-table-makes-the-views-over-it-again.md): a change of a table makes the views over it again.
 - [ADR 0007](./docs/adr/0007-readers-are-named-on-the-sync-history.md): readers are named on the sync history.
 - [ADR 0008](./docs/adr/0008-derived-datasets-follow-elt-sqlite.md): derived datasets follow elt-sqlite.
+- [ADR 0009](./docs/adr/0009-a-running-attempt-holds-a-lock-of-its-session.md): a running attempt holds a lock of its session.
 
 ## Development
 

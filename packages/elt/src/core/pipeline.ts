@@ -540,7 +540,7 @@ export class Pipeline<Target extends DestinationTarget> {
         }
       }),
     );
-    const record = await this.history.begin(
+    await using record = await this.history.begin(
       connection,
       steps.map((copy) => ({ copy, coverage: source.coverage(copy.from) })),
       this.#now(),
@@ -548,7 +548,7 @@ export class Pipeline<Target extends DestinationTarget> {
     // The pass runs in the stores that subscribers bind to its start, so a
     // subscriber's async context follows the pass's work, as a span's
     // context follows it (Node diagnostics_channel, Channel.runStores).
-    return passChannels.start.runStores(
+    return await passChannels.start.runStores(
       new PassStarted(connection),
       async () => {
         const read = await replicate(
@@ -623,7 +623,7 @@ export class Pipeline<Target extends DestinationTarget> {
         steps.findIndex(({ from }) => from.name === copy.from.name) === index,
     );
     try {
-      const record = await this.history.begin(
+      await using record = await this.history.begin(
         connection,
         streams.map((copy) => ({
           copy,

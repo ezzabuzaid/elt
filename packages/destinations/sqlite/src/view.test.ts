@@ -184,7 +184,11 @@ class ElsewhereHistory extends SyncHistory<SQLiteTable> {
   override async install(): Promise<void> {}
 
   override async begin(): Promise<RecordedPass<SQLiteTable>> {
-    return { finish: async () => {}, fail: async () => {} };
+    return {
+      finish: async () => {},
+      fail: async () => {},
+      [Symbol.asyncDispose]: async () => {},
+    };
   }
 }
 
