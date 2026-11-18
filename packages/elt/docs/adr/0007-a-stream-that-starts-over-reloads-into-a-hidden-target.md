@@ -15,6 +15,6 @@ The engine saves each checkpoint as `{ state, reloading }`. Thus a reload that f
 
 - Postgres makes the hidden table `_elt_next_<hash>` at the first commit of the reload. It swaps it in at `complete()`, with a lock timeout of 3 seconds. A swap that times out fails the copy, and the next run continues the reload.
 - SQLite makes the same hidden table and renames it in at `complete()`, with its reader view. File chunks that rows of either table refer to stay while a reload is open.
-- A `RESET` of a partition still replaces only that partition at the next commit.
+- A `RESET` of a partition still replaced only that partition at the next commit. ADR 0024 reloads it into the hidden target too.
 
 Sources: elt 312d8a29, c77d75db.

@@ -14,6 +14,7 @@ import {
   Writer,
   describeTarget,
   errorMessage,
+  readPartitions,
   reloadMode,
 } from '@eltjs/elt';
 
@@ -31,7 +32,12 @@ import {
   installNumbering,
 } from './postgres-numbering.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
-import { PostgresSession, lockSchema, makeSchema } from './postgres-session.ts';
+import {
+  PostgresSession,
+  type Queries,
+  lockSchema,
+  makeSchema,
+} from './postgres-session.ts';
 import type { PostgresTable } from './postgres-table.ts';
 
 const batchSize = 1000;
@@ -378,6 +384,7 @@ export abstract class PostgresWriter extends Writer {
       }
       // Clearing a copy also abandons the reload it left open.
       await transaction.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
+      await this.#reloaded(transaction);
       for (const column of this.table.columns.filter(
         (column) => column.storesFile,
       )) {
@@ -510,8 +517,11 @@ export abstract class PostgresWriter extends Writer {
   // keeps its indexes, its triggers and what depends on it. Each row of the
   // hidden target that no row matches enters with this commit, and the
   // loaded_at of the load that wrote it.
-  async #reloadInPlace(sql: Transaction, committedIn: number): Promise<void> {
-    const target = { table: this.qualifiedName, id: 'ctid' };
+  async #reloadInPlace(
+    sql: Transaction,
+    committedIn: number,
+    target: Side = { table: this.qualifiedName, id: 'ctid' },
+  ): Promise<void> {
     const reloaded = { table: this.#hidden, id: 'ctid' };
     await this.#history.remove(
       sql,
@@ -524,6 +534,30 @@ export abstract class PostgresWriter extends Writer {
       [committedIn],
     );
     await sql.unsafe(`DROP TABLE ${this.#hidden}`);
+  }
+
+  // Gives a completed reload of some partitions their rows of the hidden
+  // target, in place and by difference: the rows of the target in those
+  // partitions are replaced as #reloadInPlace replaces a whole target, and
+  // the rows of every other partition stay as they are.
+  async #reloadPartitionsInPlace(
+    sql: Transaction,
+    partitions: readonly Partition[],
+    committedIn: number,
+  ): Promise<void> {
+    const scoped = quote(`_elt_reloaded_${this.#hash}`);
+    const [within, values] = this.#within(partitions);
+    await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${scoped}`);
+    await sql.unsafe(
+      `CREATE TEMP TABLE ${scoped} AS SELECT ctid AS "row" FROM ${this.qualifiedName} WHERE ${within}`,
+      values,
+    );
+    await this.#reloadInPlace(sql, committedIn, {
+      table: this.qualifiedName,
+      id: 'ctid',
+      rows: `ctid IN (SELECT "row" FROM pg_temp.${scoped})`,
+    });
+    await sql.unsafe(`DROP TABLE pg_temp.${scoped}`);
   }
 
   // Refuses a cast of column from its stored type from that would change a
@@ -679,6 +713,27 @@ export abstract class PostgresWriter extends Writer {
   // partitioned, as a WHERE clause over the target's or the stage's columns.
   #scope(partition: Partition | null): [string, string[]] {
     if (partition === null) return ['', []];
+    const [condition, values] = this.#within([partition]);
+    return [` WHERE ${condition}`, values];
+  }
+
+  // The rows of any of the partitions, as a condition over the target's or
+  // the stage's columns, with one JSON parameter for each partition: NULL for
+  // a row that does not name its partition, such as a staged DELETE whose
+  // key leaves the partition out.
+  #within(partitions: readonly Partition[]): [string, string[]] {
+    const each = partitions.map((partition, index) =>
+      this.#partition(partition, `$${index + 1}::text::json`),
+    );
+    return [
+      each.length === 0
+        ? 'FALSE'
+        : each.map(([condition]) => `(${condition})`).join(' OR '),
+      each.map(([, value]) => value),
+    ];
+  }
+
+  #partition(partition: Partition, parameter: string): [string, string] {
     const columns = Object.keys(partition).map((field) => {
       const column = this.table.columns.find(
         (column) => column.field === field,
@@ -690,9 +745,66 @@ export abstract class PostgresWriter extends Writer {
       return column;
     });
     return [
-      ` WHERE ${columns.map((column, index) => `${column.quotedName} = ${column.valueFrom('$1::text::json', index)}`).join(' AND ')}`,
-      [JSON.stringify(columns.map((column) => column.encode(partition)))],
+      columns
+        .map(
+          (column, index) =>
+            `${column.quotedName} = ${column.valueFrom(parameter, index)}`,
+        )
+        .join(' AND '),
+      JSON.stringify(columns.map((column) => column.encode(partition))),
     ];
+  }
+
+  get #reloads(): string {
+    return `${quote(this.schema)}."_elt_reloads"`;
+  }
+
+  // The partitions that an open reload of the target reloads, in the
+  // writer's own table beside it, written in the commit that opens or
+  // continues the reload, so a run that resumes the reload continues it. A
+  // reload of the whole stream has no row.
+  async #reloading(sql: Queries): Promise<Reloads> {
+    const [made] = await sql.unsafe(
+      'SELECT to_regclass($1) IS NOT NULL AS "exists"',
+      [this.#reloads],
+    );
+    if (made?.exists !== true) return wholeStream;
+    const [row] = await sql.unsafe<{ partitions: string }[]>(
+      `SELECT "partitions" FROM ${this.#reloads} WHERE "target" = $1`,
+      [this.table.name],
+    );
+    return row === undefined
+      ? wholeStream
+      : new SomePartitions(
+          readPartitions(this.stream, JSON.parse(row.partitions)),
+        );
+  }
+
+  async #reload(sql: Transaction, reloads: Reloads): Promise<void> {
+    if (!(reloads instanceof SomePartitions)) {
+      await this.#reloaded(sql);
+      return;
+    }
+    // The first reloads of the schema's tables make the table together.
+    await lockSchema(sql, this.schema);
+    await sql.unsafe(
+      `CREATE TABLE IF NOT EXISTS ${this.#reloads} ("target" TEXT PRIMARY KEY, "partitions" TEXT NOT NULL)`,
+    );
+    await sql.unsafe(
+      `INSERT INTO ${this.#reloads} ("target", "partitions") VALUES ($1, $2) ON CONFLICT ("target") DO UPDATE SET "partitions" = excluded."partitions"`,
+      [this.table.name, JSON.stringify(reloads.partitions)],
+    );
+  }
+
+  async #reloaded(sql: Queries): Promise<void> {
+    const [made] = await sql.unsafe(
+      'SELECT to_regclass($1) IS NOT NULL AS "exists"',
+      [this.#reloads],
+    );
+    if (made?.exists === true)
+      await sql.unsafe(`DELETE FROM ${this.#reloads} WHERE "target" = $1`, [
+        this.table.name,
+      ]);
   }
 
   // One stream's load. Operations wait in a session-private TEMP stage, so no
@@ -711,15 +823,22 @@ export abstract class PostgresWriter extends Writer {
   ): Promise<Stage> {
     const { sql } = load;
     const stage = quote(`_elt_stage_${this.#hash}`);
+    // The rows of a commit that belong to the partitions a reload reloads.
+    const reloadStage = quote(`_elt_reload_stage_${this.#hash}`);
+    const staging = (table: string) =>
+      `CREATE TEMP TABLE ${table} (${seq} BIGINT PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')}, ${version} TEXT)`;
+    // What an open reload reloads; the whole stream until a RESET of a
+    // partition opens one.
+    let reloads: Reloads = wholeStream;
     const stores = this.table.columns
       .filter((column) => column.storesFile)
       .map((column) => new PostgresFileStore(this.schema, this.table, column));
     let mode: ReloadMode = await load.transaction(async (sql) => {
       await this.#refuse(sql, writer);
       await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${stage}`);
-      await sql.unsafe(
-        `CREATE TEMP TABLE ${stage} (${seq} BIGINT PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')}, ${version} TEXT)`,
-      );
+      await sql.unsafe(staging(stage));
+      await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${reloadStage}`);
+      await sql.unsafe(staging(reloadStage));
       for (const store of stores) await store.stage(sql);
       const target = await storedFit(
         sql,
@@ -735,8 +854,11 @@ export abstract class PostgresWriter extends Writer {
         hidden,
       });
       // A hidden target no reload continues is a leftover readers never saw.
-      if (decided !== 'continue')
+      if (decided === 'continue') reloads = await this.#reloading(sql);
+      else {
         await sql.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
+        await this.#reloaded(sql);
+      }
       await this.#view?.refuse(sql, target === 'stale');
       if (decided === 'evolve') {
         await this.#evolve(sql, stage, load);
@@ -746,6 +868,11 @@ export abstract class PostgresWriter extends Writer {
       return decided;
     });
     const fresh = mode === 'create' || mode === 'reload';
+    // The reload as the last commit left it, which a discard goes back to.
+    let committed: { readonly mode: ReloadMode; readonly reloads: Reloads } = {
+      mode,
+      reloads,
+    };
     const open = () => mode === 'reload' || mode === 'continue';
     const into = () => (open() ? this.#hidden : this.qualifiedName);
     const tables = () => [
@@ -817,11 +944,21 @@ export abstract class PostgresWriter extends Writer {
             // The whole stream starts over in a new hidden target.
             await drop();
             mode = 'reload';
+            reloads = wholeStream;
             return;
           }
           const [rows, values] = this.#scope(partition);
           await sql.unsafe(`DELETE FROM ${stage}${rows}`, values);
           resets.push(partition);
+          // The partition starts over in a hidden target, and readers see its
+          // rows as they were until the stream ends. An overwrite replaces
+          // the whole target anyway.
+          if (this.replaces) return;
+          if (mode === 'load') {
+            mode = 'reload';
+            reloads = new SomePartitions([partition]);
+          } else if (open() && reloads instanceof SomePartitions)
+            reloads = reloads.with(partition);
           return;
         }
         // Each file is read here, before the source advances past it. The
@@ -873,6 +1010,7 @@ export abstract class PostgresWriter extends Writer {
             await sql.unsafe(`CREATE TABLE ${this.#tableSQL(this.#hidden)}`);
             await this.build(sql, this.#hidden);
           }
+          if (open()) await this.#reload(sql, reloads);
           const replacing = await claiming.claim(sql, committedIn);
           // The rows of a hidden target were never shown, so only the target
           // keeps the rows a commit replaces.
@@ -886,7 +1024,30 @@ export abstract class PostgresWriter extends Writer {
           for (const store of stores) await store.publish(sql);
           const written = { loadedAt: load.loadedAt, committedIn };
           if (replacing) await this.#replace(sql, stage, written);
-          else await this.merge(sql, stage, written, into(), history);
+          else if (open() && reloads instanceof SomePartitions) {
+            // The rows of the reloaded partitions go to the hidden target,
+            // the others to the target. A DELETE whose key does not name
+            // its partition goes to both, so the reload cannot bring back a
+            // row that the source deleted.
+            const [within, values] = this.#within(reloads.partitions);
+            await sql.unsafe(
+              `INSERT INTO ${reloadStage} SELECT * FROM ${stage} WHERE (${within}) IS TRUE OR (${op} = 'D' AND (${within}) IS NULL)`,
+              values,
+            );
+            await sql.unsafe(
+              `DELETE FROM ${stage} WHERE (${within}) IS TRUE`,
+              values,
+            );
+            await this.merge(
+              sql,
+              stage,
+              written,
+              this.qualifiedName,
+              this.#history,
+            );
+            await this.merge(sql, reloadStage, written, this.#hidden, null);
+            await sql.unsafe(`TRUNCATE ${reloadStage}`);
+          } else await this.merge(sql, stage, written, into(), history);
           await sql.unsafe(`TRUNCATE ${stage}`);
           await this.#history.expire(sql);
           for (const store of stores) await store.prune(sql, tables());
@@ -894,6 +1055,7 @@ export abstract class PostgresWriter extends Writer {
         claiming = claimed;
         // Its first commit made the hidden target, so the reload continues.
         if (mode === 'reload') mode = 'continue';
+        committed = { mode, reloads };
         resets = [];
       },
       complete: async () => {
@@ -905,8 +1067,22 @@ export abstract class PostgresWriter extends Writer {
             this.qualifiedName,
             stage,
           );
-          if (target === 'fits') await this.#reloadInPlace(sql, committedIn);
+          // A reload of partitions keeps the target's shape: prepare evolves
+          // a stored target before it loads.
+          if (reloads instanceof SomePartitions && target === 'fits')
+            await this.#reloadPartitionsInPlace(
+              sql,
+              reloads.partitions,
+              committedIn,
+            );
+          else if (reloads instanceof SomePartitions)
+            throw new TypeError(
+              `${this.qualifiedName} changed its shape while some of its partitions reloaded; clear the copy to load it again`,
+            );
+          else if (target === 'fits')
+            await this.#reloadInPlace(sql, committedIn);
           else await this.#swap(sql, committedIn);
+          await this.#reloaded(sql);
           await this.#history.expire(sql);
           for (const store of stores)
             await store.prune(sql, [
@@ -915,16 +1091,48 @@ export abstract class PostgresWriter extends Writer {
             ]);
         });
         mode = 'load';
+        reloads = wholeStream;
+        committed = { mode, reloads };
       },
-      discard: drop,
+      // A RESET that no commit took is undone with the operations after it:
+      // the source's checkpoint does not know it.
+      discard: async () => {
+        await drop();
+        ({ mode, reloads } = committed);
+      },
       [Symbol.asyncDispose]: async () => {
         await drop();
         await sql.unsafe(`DROP TABLE pg_temp.${stage}`);
+        await sql.unsafe(`DROP TABLE pg_temp.${reloadStage}`);
         for (const store of stores) await store.unstage(sql);
       },
     };
   }
 }
+
+// What an open reload reloads: the whole stream, or some partitions of it,
+// while the others load into the target as before, as Delta Lake's
+// replaceWhere replaces only the rows that its condition selects.
+class WholeStream {}
+
+class SomePartitions {
+  readonly partitions: readonly Partition[];
+
+  constructor(partitions: readonly Partition[]) {
+    this.partitions = Object.freeze([...partitions]);
+  }
+
+  // These partitions and partition, which a later RESET reloads too.
+  with(partition: Partition): SomePartitions {
+    return this.partitions.some((other) => isDeepStrictEqual(other, partition))
+      ? this
+      : new SomePartitions([...this.partitions, partition]);
+  }
+}
+
+type Reloads = WholeStream | SomePartitions;
+
+const wholeStream = new WholeStream();
 
 // Whether a stage's commit claims its target: the first does, the later ones
 // find it claimed.

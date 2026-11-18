@@ -1,5 +1,6 @@
 import { hash } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
+import { isDeepStrictEqual } from 'node:util';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { transaction } from '@zukhruf/sqlite-transaction';
@@ -20,6 +21,7 @@ import {
   Writer,
   describeTarget,
   errorMessage,
+  readPartitions,
   reloadMode,
 } from '@eltjs/elt';
 
@@ -57,6 +59,30 @@ type Side = {
   readonly id: string;
   readonly rows?: string;
 };
+
+// What an open reload reloads: the whole stream, or some partitions of it,
+// while the others load into the target as before, as Delta Lake's
+// replaceWhere replaces only the rows that its condition selects.
+class WholeStream {}
+
+class SomePartitions {
+  readonly partitions: readonly Partition[];
+
+  constructor(partitions: readonly Partition[]) {
+    this.partitions = Object.freeze([...partitions]);
+  }
+
+  // These partitions and partition, which a later RESET reloads too.
+  with(partition: Partition): SomePartitions {
+    return this.partitions.some((other) => isDeepStrictEqual(other, partition))
+      ? this
+      : new SomePartitions([...this.partitions, partition]);
+  }
+}
+
+type Reloads = WholeStream | SomePartitions;
+
+const wholeStream = new WholeStream();
 
 // One stream's load. Operations, and the chunks of their files, wait in
 // connection-private TEMP tables, so another stream's commit never publishes
@@ -185,9 +211,10 @@ export abstract class SQLiteWriter extends Writer {
     database: DatabaseSync,
     next: Side,
     committedIn: number,
+    target: Side = this.#target,
   ): void {
-    const { table, id } = this.#target;
-    const leaving = this.#unmatched(this.#target, next);
+    const { table, id } = target;
+    const leaving = this.#unmatched(target, next);
     this.history.keep(
       database,
       committedIn,
@@ -343,6 +370,7 @@ export abstract class SQLiteWriter extends Writer {
         expire(database, cleared, 'clear');
         // Clearing a copy also abandons the reload it left open.
         database.exec(`DROP TABLE IF EXISTS ${quote(this.#hiddenName)}`);
+        this.#reloaded(database);
         // A file column declared after the table's last load has no chunks.
         for (const column of this.table.columns) {
           const chunks = SQLiteFileStore.tableName(this.table, column);
@@ -464,6 +492,24 @@ export abstract class SQLiteWriter extends Writer {
   // partitioned, as a WHERE clause over the target's or the stage's columns.
   #scope(partition: Partition | null): [string, SQLInputValue[]] {
     if (partition === null) return ['', []];
+    const [condition, values] = this.#partition(partition);
+    return [` WHERE ${condition}`, values];
+  }
+
+  // The rows of any of the partitions, as a condition over the target's or
+  // the stage's columns: NULL for a row that does not name its partition,
+  // such as a staged DELETE whose key leaves the partition out.
+  #within(partitions: readonly Partition[]): [string, SQLInputValue[]] {
+    const each = partitions.map((partition) => this.#partition(partition));
+    return [
+      each.length === 0
+        ? 'FALSE'
+        : each.map(([condition]) => `(${condition})`).join(' OR '),
+      each.flatMap(([, values]) => values),
+    ];
+  }
+
+  #partition(partition: Partition): [string, SQLInputValue[]] {
     const columns = Object.keys(partition).map((field) => {
       const column = this.table.columns.find(
         (column) => column.field === field,
@@ -475,9 +521,49 @@ export abstract class SQLiteWriter extends Writer {
       return column;
     });
     return [
-      ` WHERE ${columns.map((column) => `${column.quotedName} = ?`).join(' AND ')}`,
+      columns.map((column) => `${column.quotedName} = ?`).join(' AND '),
       columns.map((column) => column.encode(partition)),
     ];
+  }
+
+  // The partitions that an open reload of the target reloads, in the
+  // writer's own table beside it, written in the commit that opens or
+  // continues the reload, so a run that resumes the reload continues it. A
+  // reload of the whole stream has no row.
+  #makeReloads(database: DatabaseSync): void {
+    database.exec(
+      'CREATE TABLE IF NOT EXISTS "_elt_reloads" ("target" TEXT PRIMARY KEY, "partitions" TEXT NOT NULL) STRICT',
+    );
+  }
+
+  #reloading(database: DatabaseSync): Reloads {
+    if (!this.exists(database, '_elt_reloads')) return wholeStream;
+    const partitions = database
+      .prepare('SELECT "partitions" FROM "_elt_reloads" WHERE "target" = ?')
+      .get(this.table.location)?.partitions;
+    return typeof partitions === 'string'
+      ? new SomePartitions(readPartitions(this.stream, JSON.parse(partitions)))
+      : wholeStream;
+  }
+
+  #reload(database: DatabaseSync, reloads: Reloads): void {
+    if (!(reloads instanceof SomePartitions)) {
+      this.#reloaded(database);
+      return;
+    }
+    this.#makeReloads(database);
+    database
+      .prepare(
+        'INSERT INTO "_elt_reloads" ("target", "partitions") VALUES (?, ?) ON CONFLICT ("target") DO UPDATE SET "partitions" = excluded."partitions"',
+      )
+      .run(this.table.location, JSON.stringify(reloads.partitions));
+  }
+
+  #reloaded(database: DatabaseSync): void {
+    if (this.exists(database, '_elt_reloads'))
+      database
+        .prepare('DELETE FROM "_elt_reloads" WHERE "target" = ?')
+        .run(this.table.location);
   }
 
   // A reload's hidden target, beside the target and invisible to readers.
@@ -627,15 +713,41 @@ export abstract class SQLiteWriter extends Writer {
     database: DatabaseSync,
     hidden: string,
     committedIn: number,
+    target: Side = this.#target,
   ): void {
     const reloaded = { table: hidden, id: rowid };
-    this.#removeUnmatched(database, reloaded, committedIn);
+    this.#removeUnmatched(database, reloaded, committedIn, target);
     database
       .prepare(
-        `INSERT INTO ${this.table.quotedName} (${this.written.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, "loaded_at", ?, ${version} FROM ${hidden} WHERE ${rowid} IN (${this.#unmatched(reloaded, this.#target)}) ORDER BY ${rowid}`,
+        `INSERT INTO ${this.table.quotedName} (${this.written.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, "loaded_at", ?, ${version} FROM ${hidden} WHERE ${rowid} IN (${this.#unmatched(reloaded, target)}) ORDER BY ${rowid}`,
       )
       .run(committedIn);
     database.exec(`DROP TABLE ${hidden}`);
+  }
+
+  // Gives a completed reload of some partitions their rows of the hidden
+  // target, in place and by difference: the rows of the target in those
+  // partitions are replaced as #reloadInPlace replaces a whole target, and
+  // the rows of every other partition stay as they are.
+  #reloadPartitionsInPlace(
+    database: DatabaseSync,
+    hidden: string,
+    partitions: readonly Partition[],
+    committedIn: number,
+  ): void {
+    const scoped = quote(`_elt_reloaded_${this.hash}`);
+    const [within, values] = this.#within(partitions);
+    database.exec(`DROP TABLE IF EXISTS temp.${scoped}`);
+    database
+      .prepare(
+        `CREATE TEMP TABLE ${scoped} AS SELECT ${rowid} AS "row" FROM ${this.table.quotedName} WHERE ${within}`,
+      )
+      .run(...values);
+    this.#reloadInPlace(database, hidden, committedIn, {
+      ...this.#target,
+      rows: `${rowid} IN (SELECT "row" FROM temp.${scoped})`,
+    });
+    database.exec(`DROP TABLE temp.${scoped}`);
   }
 
   // Replaces the target with the hidden target, whose rows readers see from
@@ -667,7 +779,12 @@ export abstract class SQLiteWriter extends Writer {
     const { database, loadedAt } = load;
     const name = quote(`_elt_stage_${this.hash}`);
     const stage = `temp.${name}`;
+    // The rows of a commit that belong to the partitions a reload reloads.
+    const reloadName = quote(`_elt_reload_stage_${this.hash}`);
+    const reloadStage = `temp.${reloadName}`;
     const hidden = quote(this.#hiddenName);
+    const staging = (table: string) =>
+      `CREATE TEMP TABLE ${table} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')}, ${version} TEXT)`;
     const stores = this.table.columns
       .filter((column) => column.storesFile)
       .map((column) => ({
@@ -675,6 +792,9 @@ export abstract class SQLiteWriter extends Writer {
         store: new SQLiteFileStore(database, this.table, column),
       }));
     let mode: ReloadMode;
+    // What an open reload reloads; the whole stream until a RESET of a
+    // partition opens one.
+    let reloads: Reloads = wholeStream;
     const open = (at: ReloadMode) => at === 'reload' || at === 'continue';
     const into = () => (open(mode) ? hidden : this.table.quotedName);
     const tables = () =>
@@ -702,8 +822,11 @@ export abstract class SQLiteWriter extends Writer {
           hidden: this.#declaration(this.#hiddenName).drift(database),
         });
         // A hidden target no reload continues is a leftover readers never saw.
-        if (next !== 'continue')
+        if (next === 'continue') reloads = this.#reloading(database);
+        else {
           database.exec(`DROP TABLE IF EXISTS ${hidden}`);
+          this.#reloaded(database);
+        }
         if (!open(next) && this.table.readerView !== undefined)
           this.#refuseReaderView(
             database,
@@ -716,15 +839,20 @@ export abstract class SQLiteWriter extends Writer {
         }
         if (next === 'load' && !this.replaces) this.inspect(database);
         database.exec(`DROP TABLE IF EXISTS ${stage}`);
-        database.exec(
-          `CREATE TEMP TABLE ${name} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')}, ${version} TEXT)`,
-        );
+        database.exec(staging(name));
+        database.exec(`DROP TABLE IF EXISTS ${reloadStage}`);
+        database.exec(staging(reloadName));
         for (const { store } of stores) store.stage();
         return next;
       },
       { mode: 'immediate' },
     );
     const fresh = mode === 'create' || mode === 'reload';
+    // The reload as the last commit left it, which a discard goes back to.
+    let committed: { readonly mode: ReloadMode; readonly reloads: Reloads } = {
+      mode,
+      reloads,
+    };
     const columns = this.table.columns.map((column) => column.quotedName);
     const record = database.prepare(
       `INSERT INTO ${stage} (${op}, ${columns.join(', ')}, ${version}) VALUES ('R', ${columns.map(() => '?').join(', ')}, ?)`,
@@ -773,11 +901,21 @@ export abstract class SQLiteWriter extends Writer {
             // The whole stream starts over in a new hidden target.
             drop();
             mode = 'reload';
+            reloads = wholeStream;
             return;
           }
           const [rows, values] = this.#scope(partition);
           database.prepare(`DELETE FROM ${stage}${rows}`).run(...values);
           resets.push(partition);
+          // The partition starts over in a hidden target, and readers see its
+          // rows as they were until the stream ends. An overwrite replaces
+          // the whole target anyway.
+          if (this.replaces) return;
+          if (mode === 'load') {
+            mode = 'reload';
+            reloads = new SomePartitions([partition]);
+          } else if (open(mode) && reloads instanceof SomePartitions)
+            reloads = reloads.with(partition);
           return;
         }
         if (operation.type === 'DELETE') {
@@ -820,6 +958,7 @@ export abstract class SQLiteWriter extends Writer {
               database.exec(`CREATE TABLE ${this.table.definition(hidden)}`);
               this.build(database, hidden);
             }
+            if (open(mode)) this.#reload(database, reloads);
             const replacing = claim();
             // The rows of a hidden target were never shown, so only the
             // target keeps the rows a commit replaces.
@@ -835,16 +974,32 @@ export abstract class SQLiteWriter extends Writer {
               database.prepare(`DELETE FROM ${into()}${rows}`).run(...values);
             }
             for (const { store } of stores) store.publish();
-            if (replacing)
-              this.#replace(database, stage, { loadedAt, committedIn });
-            else
+            const stamp = { loadedAt, committedIn };
+            if (replacing) this.#replace(database, stage, stamp);
+            else if (open(mode) && reloads instanceof SomePartitions) {
+              // The rows of the reloaded partitions go to the hidden target,
+              // the others to the target. A DELETE whose key does not name
+              // its partition goes to both, so the reload cannot bring back
+              // a row that the source deleted.
+              const [within, values] = this.#within(reloads.partitions);
+              database
+                .prepare(
+                  `INSERT INTO ${reloadStage} SELECT * FROM ${stage} WHERE (${within}) IS TRUE OR (${op} = 'D' AND (${within}) IS NULL)`,
+                )
+                .run(...values, ...values);
+              database
+                .prepare(`DELETE FROM ${stage} WHERE (${within}) IS TRUE`)
+                .run(...values);
               this.merge(
                 database,
                 stage,
-                { loadedAt, committedIn },
-                into(),
-                history,
+                stamp,
+                this.table.quotedName,
+                this.history,
               );
+              this.merge(database, reloadStage, stamp, hidden, null);
+              database.exec(`DELETE FROM ${reloadStage}`);
+            } else this.merge(database, stage, stamp, into(), history);
             // Files of the rows a reset emptied, and of staged rows it dropped.
             if (resets.length > 0) prune();
             drop();
@@ -854,6 +1009,7 @@ export abstract class SQLiteWriter extends Writer {
         claim = claimed;
         // Its first commit made the hidden target, so the reload continues.
         if (mode === 'reload') mode = 'continue';
+        committed = { mode, reloads };
       },
       complete: async () => {
         if (!open(mode)) return;
@@ -866,23 +1022,45 @@ export abstract class SQLiteWriter extends Writer {
             this.#dropRetiredChunks(database);
             this.history.create(database, this.written);
             // A target of another shape cannot take the rows of the hidden
-            // target in place.
-            if (this.#declaration(this.table.name).drift(database) === 'fits')
-              this.#reloadInPlace(database, hidden, committedIn);
+            // target in place. A reload of partitions keeps the target's
+            // shape: prepare evolves a stored target before it loads.
+            const fits =
+              this.#declaration(this.table.name).drift(database) === 'fits';
+            if (reloads instanceof SomePartitions && fits)
+              this.#reloadPartitionsInPlace(
+                database,
+                hidden,
+                reloads.partitions,
+                committedIn,
+              );
+            else if (reloads instanceof SomePartitions)
+              throw new TypeError(
+                `${this.table.quotedName} changed its shape while some of its partitions reloaded; clear the copy to load it again`,
+              );
+            else if (fits) this.#reloadInPlace(database, hidden, committedIn);
             else this.#swap(database, hidden, committedIn);
+            this.#reloaded(database);
             if (this.table.readerView !== undefined)
               this.installReaderView(database, this.table.readerView);
             this.describe(database);
             mode = 'load';
+            reloads = wholeStream;
+            committed = { mode, reloads };
             prune();
           },
           { mode: 'immediate' },
         );
       },
-      discard: async () => drop(),
+      // A RESET that no commit took is undone with the operations after it:
+      // the source's checkpoint does not know it.
+      discard: async () => {
+        drop();
+        ({ mode, reloads } = committed);
+      },
       [Symbol.asyncDispose]: async () => {
         drop();
         database.exec(`DROP TABLE ${stage}`);
+        database.exec(`DROP TABLE ${reloadStage}`);
         for (const { store } of stores) store.unstage();
       },
     };

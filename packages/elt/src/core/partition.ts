@@ -61,6 +61,19 @@ export function readPartition(
   };
 }
 
+// The partitions that a destination kept, such as the partitions an open
+// reload of a target reloads, each checked as a source's partition is.
+export function readPartitions(stream: Stream, value: unknown): Partition[] {
+  if (!Array.isArray(value))
+    throw new TypeError(
+      `Stream ${stream.name} kept partitions that are not a list`,
+    );
+  const identity = partitionIdentity(stream);
+  return value.map(
+    (entry: unknown) => readPartition(identity, entry).partition,
+  );
+}
+
 // Every record and deletion names the partition it was read for, so a
 // connector cannot load rows without, or under the wrong, partition value.
 export function assertInPartition(

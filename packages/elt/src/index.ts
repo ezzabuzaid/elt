@@ -45,7 +45,11 @@ export { Int64Format } from './core/formats/int64-format.ts';
 export { LocalTimestampFormat } from './core/formats/local-timestamp-format.ts';
 export { isTimestamp } from './core/formats/timestamp-format.ts';
 export { Identifiers } from './core/identifiers.ts';
-export type { Partition, PartitionState } from './core/partition.ts';
+export {
+  type Partition,
+  type PartitionState,
+  readPartitions,
+} from './core/partition.ts';
 export {
   type Pass,
   Pipeline,

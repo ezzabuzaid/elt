@@ -6376,6 +6376,214 @@ test('a reset replaces only its partition at the next commit, and one a failure 
   assert.deepEqual(await loaded(), ['a2', 'b1', 'b2']);
 });
 
+test('a reset of a partition reloads it into a hidden target: readers keep its old rows until the stream ends, the other partitions load as before, a failed reload resumes, and a deletion that the reload reads stays deleted', async () => {
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { account: { type: 'string' }, id: { type: 'string' } },
+    },
+    primaryKey: ['account', 'id'],
+    partitionKey: ['account'],
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  // What each partition emits on the next run.
+  let script: Record<string, (SourceMessage | Error)[]> = {};
+  class Resetting extends LiveSource {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'resetting';
+    protected readonly catalog = new Catalog([items]);
+    protected override partitions() {
+      return [{ account: 'a' }, { account: 'b' }];
+    }
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      _state: unknown,
+      partition: Partition | null,
+    ) {
+      for (const message of script[String(partition?.account)] ?? []) {
+        if (Error.isError(message)) throw message;
+        yield message;
+      }
+    }
+  }
+  const record = (account: string, id: string) => ({
+    stream: 'items',
+    data: { account, id },
+  });
+  const removal = (account: string, id: string) => ({
+    type: 'DELETE' as const,
+    stream: 'items',
+    key: { account, id },
+  });
+  const reset = { type: 'RESET' as const, stream: 'items' };
+  const state = { type: 'STATE' as const, stream: 'items', state: {} };
+  await using scratch = await new TemporaryFiles().directory('elt-reset-');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'items.sqlite'),
+  });
+  const loaded = () => {
+    using database = open(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT account, id FROM items ORDER BY account, id')
+      .all()
+      .map(({ account, id }) => `${account}${id}`);
+  };
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Resetting(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(items, destination.table('items'), {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+  script = {
+    a: [record('a', '1'), record('a', '2'), state],
+    b: [record('b', '1'), state],
+  };
+  await pipeline.run();
+
+  script = {
+    a: [reset, record('a', '3'), record('a', '4'), state, new Error('gone')],
+    b: [record('b', '2'), state],
+  };
+  await assert.rejects(pipeline.run(), PipelineError);
+  const whileReloading = loaded();
+  script = { a: [removal('a', '3'), record('a', '5'), state], b: [state] };
+  await pipeline.run();
+
+  assert.deepEqual(
+    { whileReloading, reloaded: loaded() },
+    {
+      whileReloading: ['a1', 'a2', 'b1', 'b2'],
+      reloaded: ['a4', 'a5', 'b1', 'b2'],
+    },
+  );
+});
+
+test('a reset of a partition that a failure discards before a commit opens no reload, so the next run loads the partition as before', async () => {
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { account: { type: 'string' }, id: { type: 'string' } },
+    },
+    primaryKey: ['account', 'id'],
+    partitionKey: ['account'],
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  // What each partition emits on the next run.
+  let script: Record<string, (SourceMessage | Error)[]> = {};
+  class Resetting extends LiveSource {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'resetting';
+    protected readonly catalog = new Catalog([items]);
+    protected override partitions() {
+      return [{ account: 'a' }, { account: 'b' }];
+    }
+    override changeSignals(streams: readonly Stream[]) {
+      return filled(streams);
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      _state: unknown,
+      partition: Partition | null,
+    ) {
+      for (const message of script[String(partition?.account)] ?? []) {
+        if (Error.isError(message)) throw message;
+        yield message;
+      }
+    }
+  }
+  const record = (account: string, id: string) => ({
+    stream: 'items',
+    data: { account, id },
+  });
+  const reset = { type: 'RESET' as const, stream: 'items' };
+  const state = { type: 'STATE' as const, stream: 'items', state: {} };
+  await using scratch = await new TemporaryFiles().directory('elt-reset-');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'items.sqlite'),
+  });
+  const loaded = () => {
+    using database = open(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT account, id FROM items ORDER BY account, id')
+      .all()
+      .map(({ account, id }) => `${account}${id}`);
+  };
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Resetting(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(items, destination.table('items'), {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+  script = {
+    a: [record('a', '1'), record('a', '2'), state],
+    b: [record('b', '1'), state],
+  };
+  await pipeline.run();
+  script = {
+    a: [reset, record('a', '3'), new Error('gone')],
+    b: [record('b', '2'), state],
+  };
+  await assert.rejects(pipeline.run(), PipelineError);
+
+  script = { a: [record('a', '4'), state], b: [state] };
+  await pipeline.run();
+
+  assert.deepEqual(loaded(), ['a1', 'a2', 'a4', 'b1', 'b2']);
+});
+
 test('a full refresh ignores resets, so an appending copy keeps its history', async () => {
   let messages: SourceMessage[] = [];
   const items = new Stream({

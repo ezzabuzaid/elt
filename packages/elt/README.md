@@ -133,7 +133,8 @@ A stream that emits deletions can also send `{ type: 'RESET', stream }`. It send
 - Readers see the earlier rows until the stream ends with no failure. Then the hidden target takes the place of the target.
 - A reload that fails stays hidden. The engine saves with each checkpoint whether a reload is open, so the next run resumes the reload from its last checkpoint.
 - The destination drops a hidden target that no checkpoint continues. A new reset starts the reload again.
-- For a partitioned stream, a reset applies only to the partition that the source reads. The next commit drops the rows of that partition, and keeps only what the source emits after the reset.
+- For a partitioned stream, a reset applies only to the partition that the source reads. The partition starts again in the hidden target, and the other partitions load into the target as before: readers see the earlier rows of the partition until the stream ends with no failure, and the new rows of the other partitions at each commit. Then the rows of the partition are replaced by difference, as Delta Lake's `replaceWhere` replaces only the rows that its condition selects. The destination records the partitions that a reload reloads, beside the hidden target, so a resumed reload continues them. A deletion whose key does not name its partition applies to the target and the hidden target. See [ADR 0024](./docs/adr/0024-a-reset-of-a-partition-reloads-it-into-a-hidden-target.md).
+- A reset that no commit took is undone with the operations after it, when a failure discards them: the checkpoint of the source does not know it.
 - A reset drops the operations that the stream staged before it, in its scope.
 - `Source.read` gives each reset the scope of its partition.
 - A full refresh ignores a reset, because a full refresh starts again in all cases. Thus an appending copy keeps its history.
