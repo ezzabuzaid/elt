@@ -1,4 +1,4 @@
-import { type Gauge, delay } from '@zukhruf/async';
+import { Cond, type Gauge, delay } from '@zukhruf/async';
 
 import {
   type StreamCheck,
@@ -280,9 +280,11 @@ export class Pipeline<Target extends DestinationTarget> {
       string,
       { readonly failures: number; readonly at: number }
     >();
-    let wake = Promise.withResolvers<void>();
+    const changed = new Cond();
     // An abort wakes the loop below, whether or not the source heeds it.
-    watching.addEventListener('abort', () => wake.resolve(), { once: true });
+    watching.addEventListener('abort', () => changed.broadcast(), {
+      once: true,
+    });
     let finished = false;
     // Change signals that cannot be read as declared, which the history
     // records once the connection stopped, and a check the history could not
@@ -321,7 +323,7 @@ export class Pipeline<Target extends DestinationTarget> {
               await this.#recordFailure(connection, error, [...streams.keys()]);
             } catch (suppressed) {
               unrecorded = { error: suppressed };
-              wake.resolve();
+              changed.broadcast();
               return;
             }
           }
@@ -396,7 +398,8 @@ export class Pipeline<Target extends DestinationTarget> {
                 pending.add(name);
               } else unchangedAt.set(name, at);
             }
-            if (pending.size > 0 && told.size === streams.size) wake.resolve();
+            if (pending.size > 0 && told.size === streams.size)
+              changed.broadcast();
             const current = [...streams.values()].flatMap((stream) => {
               const checkedAt = unchangedAt.get(stream.name);
               return checkedAt !== undefined &&
@@ -429,7 +432,7 @@ export class Pipeline<Target extends DestinationTarget> {
         controller.abort();
         await Promise.all(keeping);
         finished = true;
-        wake.resolve();
+        changed.broadcast();
       }
     })();
     try {
@@ -444,19 +447,18 @@ export class Pipeline<Target extends DestinationTarget> {
             if (at <= this.#clock.Date.now()) pending.add(name);
         if (pending.size === 0) {
           if (finished) break;
-          // Each wait has its own wake. Each thing that wakes the loop also
-          // shows in the checks above, so a wake from before this wait has
-          // nothing to tell, and a retry timer that ends before the Date of
-          // its retry makes the loop wait again, not spin.
-          const woken = (wake = Promise.withResolvers<void>());
+          // Each thing that wakes the loop also shows in the checks above, so
+          // a wake from before this wait has nothing to tell, and a retry
+          // timer that ends before the Date of its retry makes the loop wait
+          // again, not spin.
           const due = Math.min(...[...retries.values()].map(({ at }) => at));
           const retrying = Number.isFinite(due)
             ? this.#clock.setTimeout(
-                () => woken.resolve(),
+                () => changed.broadcast(),
                 due - this.#clock.Date.now(),
               )
             : undefined;
-          await woken.promise;
+          await changed.wait({ signal: undefined });
           if (retrying !== undefined) this.#clock.clearTimeout(retrying);
           continue;
         }

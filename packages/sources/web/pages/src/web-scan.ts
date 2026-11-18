@@ -1,4 +1,4 @@
-import { Latch, untilAborted } from '@zukhruf/async';
+import { Cond } from '@zukhruf/async';
 import { z } from 'zod';
 
 import { routeHows } from '@eltjs/sdk-web-crawler';
@@ -38,13 +38,8 @@ export const outbox = z.array(
 );
 export type Outbox = z.infer<typeof outbox>;
 
-// The crawl of the input goes on; arrived opens when it gives more groups or ends.
-class Crawling {
-  readonly arrived: Latch;
-  constructor(arrived: Latch) {
-    this.arrived = arrived;
-  }
-}
+// The crawl of the input goes on.
+class Crawling {}
 
 /** How the crawl of one input in a read ended: whether it reached its end, when it ended, and the pages whose last visit failed. */
 export type CrawlEnd = {
@@ -65,26 +60,25 @@ class Ended {
 // routes stream has not taken yet.
 class Delivery {
   readonly #groups: Outbox[number][] = [];
-  #state: Crawling | Ended = new Crawling(new Latch());
+  #state: Crawling | Ended = new Crawling();
+  // Wakes the takers when the crawl gives more groups or ends.
+  readonly #changed = new Cond();
 
   give(groups: Outbox) {
     if (groups.length === 0 || this.#state instanceof Ended) return;
     this.#groups.push(...groups);
-    const { arrived } = this.#state;
-    this.#state = new Crawling(new Latch());
-    arrived.open();
+    this.#changed.broadcast();
   }
 
   end(crawl: CrawlEnd | null) {
     if (this.#state instanceof Ended) return;
-    const { arrived } = this.#state;
     this.#state = new Ended(crawl);
-    arrived.open();
+    this.#changed.broadcast();
   }
 
   async ended(signal: AbortSignal | undefined): Promise<CrawlEnd | null> {
     while (this.#state instanceof Crawling)
-      await untilAborted(this.#state.arrived.wait(), signal);
+      await this.#changed.wait({ signal });
     return this.#state.crawl;
   }
 
@@ -96,7 +90,7 @@ class Delivery {
         continue;
       }
       if (this.#state instanceof Ended) return;
-      await untilAborted(this.#state.arrived.wait(), signal);
+      await this.#changed.wait({ signal });
     }
   }
 }
