@@ -5,7 +5,7 @@
   "dependencies": {
     "@eltjs/eca": "*",
     "@eltjs/elt": "*",
-    "@eltjs/elt-postgresql": "0.0.1",
+    "@eltjs/elt-postgresql": "^0.3.13",
     "@eltjs/sdk-apple-accounts": "0.0.1",
     "@eltjs/sdk-apple-eventkit": "0.0.1",
     "@eltjs/sdk-apple-mail": "0.0.1",

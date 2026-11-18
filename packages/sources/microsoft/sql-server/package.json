@@ -50,7 +50,7 @@
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
     "@types/mssql": "^12.3.0",
-    "@eltjs/elt-postgresql": "0.0.1",
+    "@eltjs/elt-postgresql": "^0.3.13",
     "@zukhruf/testing": "^0.8.27",
     "mssql": "^12.7.4",
     "postgres": "^3.4.9"

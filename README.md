@@ -36,7 +36,7 @@ The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and 
 Every destination supports overwrite, append, and deduplication:
 
 - **SQLite** (`elt-sqlite`): strict tables with inferred or explicitly selected columns, including text and attachment bytes.
-- **Postgres** (`elt-postgresql`): typed tables in one schema per connector, loaded without blocking readers, and [documented SQL views](packages/destinations/postgresql/README.md#documented-views) defined by the consuming application.
+- **Postgres** (`elt-postgresql`): typed tables in one schema per connector, loaded without blocking readers, with a history of each row for readings as of a position, and the [views](packages/destinations/postgresql/README.md#declare-a-view) and [computed datasets](packages/destinations/postgresql/README.md#declare-a-computed-dataset) that a pipeline derives.
 
 See the READMEs for [Mail streams](packages/sources/apple/mail/README.md), [Contacts streams](packages/sources/apple/contacts/README.md), [Calendar streams](packages/sources/apple/calendar/README.md), [Reminders streams](packages/sources/apple/reminders/README.md), [Safari streams](packages/sources/apple/safari/README.md), [Books streams](packages/sources/apple/books/README.md), [Activity streams](packages/sources/apple/activity/README.md), [Accounts streams](packages/sources/apple/accounts/README.md), [Call History streams](packages/sources/apple/call-history/README.md), [Clock streams](packages/sources/apple/clock/README.md), [Notification Center streams](packages/sources/apple/notification-center/README.md), [Wallet streams](packages/sources/apple/wallet/README.md), [Slack streams](packages/sources/slack/desktop/README.md), [Teams streams](packages/sources/microsoft/teams/README.md), [WhatsApp streams](packages/sources/whatsapp/desktop/README.md), [Instagram streams](packages/sources/instagram/web/README.md), [Search Console streams](packages/sources/google/search-console/README.md), [SQL Server streams](packages/sources/microsoft/sql-server/README.md), and [destination behavior](packages/elt/README.md#keys-cursors-and-schemas).
 
@@ -484,7 +484,7 @@ Each package owns its docs: a README, a glossary in `CONTEXT.md`, its decisions 
 
 - [elt](packages/elt/README.md): sync modes, keys and cursors, checkpoints, snapshot streams, stored files, watching, failures, the sync history and derived datasets.
 - [elt-sqlite](packages/destinations/sqlite/README.md): the SQLite destination, its checkpoints and sync history, `View` and `ComputedDataset`, with a recipe that searches the text of stored files.
-- [elt-postgresql](packages/destinations/postgresql/README.md): the Postgres destination, its reader views, documented views, checkpoints and sync history.
+- [elt-postgresql](packages/destinations/postgresql/README.md): the Postgres destination, its reader views, positions and readings, checkpoints and sync history with its readers, `View` and `ComputedDataset`.
 - Each source package has its own README, with its streams, access, limitations and live checks.
 - [EventKit Reminders notes](docs/eventkit-reminders.md): native API findings and implementation decisions.
 - [Source-authoring guide](.agents/skills/add-elt-source/SKILL.md): repository conventions for implementing sources.
