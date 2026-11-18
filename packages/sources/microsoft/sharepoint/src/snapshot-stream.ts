@@ -30,13 +30,21 @@ export abstract class SnapshotStream extends SharePointStream {
     );
   }
 
+  // The pages of a collection can give one item twice, as when it changes
+  // while a read pages through them, and a snapshot diff fails on a key that
+  // a scan gives twice. The last one is the newest.
   async *#records(
     siteUrl: string,
     run: SharePointRun,
     signal: AbortSignal,
   ): AsyncGenerator<Record<string, unknown>> {
-    for await (const draft of this.scan(siteUrl, run, signal))
-      yield this.validated(draft);
+    const records = new Map<string, Record<string, unknown>>();
+    for await (const draft of this.scan(siteUrl, run, signal)) {
+      const record = this.validated(draft);
+      const key = this.stream.primaryKey.map((field) => record[field]);
+      records.set(JSON.stringify(key), record);
+    }
+    yield* records.values();
   }
 
   // Every record of the site, as Graph lists it now.

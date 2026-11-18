@@ -153,7 +153,7 @@ A site that fails fails only its partition. The other sites load and save their 
 
 The checkpoint of a site is `{ fields, links }`: the fields that the reads carried, and for each collection ID `{ delta }`, its delta link, or `{ next }`, the next link of the page that a read got to.
 
-**Snapshot** streams list their records in full on each read. An incremental copy compares each read with the snapshot of the last read, writes only the records that changed, and deletes the keys that Graph no longer lists (`ClosedWorld`).
+**Snapshot** streams list their records in full on each read. An incremental copy compares each read with the snapshot of the last read, writes only the records that changed, and deletes the keys that Graph no longer lists (`ClosedWorld`). A read keeps one record for each primary key. When the pages of a collection give one item two times, for example because it changed during the read, the last one is the record.
 
 `accessRequests` is a snapshot stream because Graph refuses the item delta of an access request list ([ADR 0002](./docs/adr/0002-a-list-whose-delta-graph-refuses-is-read-in-full.md)). The source finds these lists by their template, `accessRequest`. `listItems` does not read them.
 
@@ -178,7 +178,7 @@ Graph sends change notifications (webhooks) only to a public URL, so the source 
 ## Limits
 
 - The `fields` of a list item and the `settings` of a column pass through JSON numbers. SharePoint keeps Number and Currency columns as doubles, so each value loads exactly; only its text can differ from what Graph sent, such as `1.1` for `1.10`.
-- The snapshot streams read each collection whole: the columns of a list, the pages of a site and the items of an access request list. SharePoint keeps these small. Files and list items go through the delta feeds, one page at a time.
+- The snapshot streams read each collection whole: the columns of a list, the pages of a site and the items of an access request list. A read of a site keeps all its records until it ends, to keep one record for each key. SharePoint keeps these collections small. Files and list items go through the delta feeds, one page at a time.
 
 - The source reads no versions of files and no permissions of items. `/sites/{id}/permissions` answers 403 to a `Sites.Selected` app.
 - The source reads no text from images or videos. The text of documents is derived data: a `DocumentText` dataset of the host makes it.
@@ -206,6 +206,8 @@ Not checked live:
 - An expired delta link: none was available. Graph documents a 410, and the tests stub it.
 - That the `lastModifiedDateTime` of a list moves when one of its items changes, which `SiteVersion` uses. The app has only a read grant, and no test site is available.
 - A pass of this source over the site. `src/sharepoint-live.test.ts` makes one, and skips unless `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID` and `SHAREPOINT_CLIENT_SECRET` are set. It downloads only the workbooks of the site.
+
+- A second pass 12 hours later (2026-11-18), from the checkpoints of the first, loaded only what the deltas gave: 10 drive items and 10 list items, no deletion. 3 files that people edited had a new `lastModifiedDateTime`; 4 folders had a new `size`, since a file in them changed; 3 documents had a new `eTag` and the same `cTag`, a change of their metadata and not of their content.
 
 ## Decisions
 

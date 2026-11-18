@@ -5,8 +5,10 @@ import { type TestContext, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { untilAborted } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
+import { waitFor } from '@zukhruf/testing/async';
 import { Msw } from '@zukhruf/testing/msw';
 import { http } from 'msw';
 import { parseOffice } from 'officeparser';
@@ -31,9 +33,11 @@ import {
 } from '@eltjs/elt-sqlite';
 import { OfficeDocumentParser } from '@eltjs/parser-office/office-document-parser';
 import {
+  GraphError,
   SharePointAccessError,
   SharePointClient,
   SharePointCredentialsError,
+  SharePointSiteNotFoundError,
 } from '@eltjs/sdk-microsoft-sharepoint';
 
 import { SharePointSource } from './sharepoint-source.ts';
@@ -116,7 +120,7 @@ type FakeSite = {
   refusal?: number;
   drives: FakeDrive[];
   lists: FakeList[];
-  readonly pages: FakePage[];
+  pages: FakePage[];
   // The content of each file, by its item ID.
   readonly contents: Map<string, Uint8Array>;
 };
@@ -337,7 +341,10 @@ function route(world: World, url: URL): Response {
     );
     if (site === undefined) return refusal(404, 'itemNotFound');
     if (site.refusal !== undefined)
-      return refusal(site.refusal, 'accessDenied');
+      return refusal(
+        site.refusal,
+        site.refusal === 403 ? 'accessDenied' : 'generalException',
+      );
     return Response.json({
       id: site.id,
       name: byUrl[2]?.split('/').at(-1),
@@ -517,15 +524,17 @@ function microsoft(world: World) {
 // --- The warehouse: the host's copies into SQLite ---------------------------
 
 // The host's import: an incremental copy of each stream into a table of its
-// name. With documents, the driveItems copy stores each file that the Office
-// parser reads, and a DocumentText dataset derives their text.
+// name, or with fullRefresh a full refresh that overwrites it. With
+// documents, the driveItems copy stores each file that the Office parser
+// reads, and a DocumentText dataset derives their text.
 async function warehouse(
   source: SharePointSource,
   directory: string,
   {
     documents = false,
+    fullRefresh = false,
     clock = globalThis,
-  }: { documents?: boolean; clock?: PipelineClock } = {},
+  }: { documents?: boolean; fullRefresh?: boolean; clock?: PipelineClock } = {},
 ) {
   const destination = new SQLiteDestination({
     path: join(directory, 'warehouse.sqlite'),
@@ -566,8 +575,15 @@ async function warehouse(
           ([stream, target]) =>
             new Copy(stream, target, {
               id: `${source.identity}/${stream.name}`,
-              syncMode: 'incremental',
-              destinationSyncMode: 'append_dedup',
+              ...(fullRefresh
+                ? {
+                    syncMode: 'full_refresh',
+                    destinationSyncMode: 'overwrite',
+                  }
+                : {
+                    syncMode: 'incremental',
+                    destinationSyncMode: 'append_dedup',
+                  }),
             }),
         ),
       }),
@@ -732,6 +748,28 @@ test('a first run loads every stream of the site, with Graph values in the forms
       },
     ],
   );
+  const instants = {
+    createdDateTime: '2026-01-02T03:04:05.000Z',
+    lastModifiedDateTime: '2026-11-16T08:00:00.000Z',
+  };
+  assert.deepEqual(
+    Object.fromEntries(
+      ['sites', 'drives', 'lists', 'listItems', 'pages'].map((table) => [
+        table,
+        rows(
+          dir.path,
+          `SELECT DISTINCT createdDateTime, lastModifiedDateTime FROM ${table}`,
+        ),
+      ]),
+    ),
+    {
+      sites: [instants],
+      drives: [instants],
+      lists: [instants],
+      listItems: [instants],
+      pages: [instants],
+    },
+  );
 });
 
 test('a second run with no change in SharePoint writes nothing', async () => {
@@ -859,6 +897,16 @@ test('a first load that fails resumes at the next link it saved, without reading
 
   assert.deepEqual(Object.keys(failed), ['driveItems']);
   assert.deepEqual(committed, ['Budget.xlsx', 'Proposals', 'a.docx', 'b.docx']);
+  assert.equal(
+    graph
+      .requests()
+      .filter(
+        (request) =>
+          request.startsWith('/drives/b!documents/root/delta') &&
+          !request.includes('token='),
+      ).length,
+    1,
+  );
   assert.deepEqual(
     graph
       .requests()
@@ -971,6 +1019,59 @@ test('a site that refuses the app fails only its own partition, as a config fail
   );
 });
 
+test('a site URL where SharePoint has no site fails only its own partition, as a config failure', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  using graph = microsoft({ sites: [salesSite()], pageSize: 200 });
+
+  const failed = await failedRun(
+    (await warehouse(graph.source([MARKETING, SALES]), dir.path)).run(),
+  );
+
+  assert.equal(Object.keys(failed).length, 8);
+  for (const [stream, failures] of Object.entries(failed)) {
+    assert.equal(failures.length, 1, stream);
+    assert.deepEqual(failures[0]?.partition, { siteUrl: MARKETING }, stream);
+    assert.equal(failures[0]?.failureType, 'config', stream);
+    assert.ok(
+      failures[0]?.error instanceof SharePointSiteNotFoundError,
+      stream,
+    );
+  }
+  assert.deepEqual(
+    column(dir.path, 'SELECT DISTINCT siteUrl FROM driveItems'),
+    [SALES],
+  );
+});
+
+test('a site that Graph fails with 500 fails only its own partition, as a system failure', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const marketing: FakeSite = {
+    ...salesSite(),
+    url: MARKETING,
+    id: 'contoso.sharepoint.com,1,2',
+    refusal: 500,
+  };
+  using graph = microsoft({ sites: [salesSite(), marketing], pageSize: 200 });
+
+  const failed = await failedRun(
+    (await warehouse(graph.source([MARKETING, SALES]), dir.path)).run(),
+  );
+
+  assert.equal(Object.keys(failed).length, 8);
+  for (const [stream, failures] of Object.entries(failed)) {
+    const [failure] = failures;
+    assert.equal(failures.length, 1, stream);
+    assert.deepEqual(failure?.partition, { siteUrl: MARKETING }, stream);
+    assert.equal(failure?.failureType, 'system', stream);
+    assert.ok(failure?.error instanceof GraphError, stream);
+    assert.equal(failure.error.status, 500, stream);
+  }
+  assert.deepEqual(
+    column(dir.path, 'SELECT DISTINCT siteUrl FROM driveItems'),
+    [SALES],
+  );
+});
+
 test('a client secret that Entra ID refuses fails every stream as a config failure', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
   using graph = microsoft({
@@ -1009,9 +1110,11 @@ test('a change to the version of a site wakes the streams of a watch', async (t:
     projects.lastModifiedDateTime = '2026-11-17T09:00:30Z';
 
     const next = watch.next();
-    await t.waitFor(() => assert.ok(clock.countTimers() > 0));
+    await waitFor(() => assert.ok(clock.countTimers() > 0), {
+      signal: t.signal,
+    });
     await clock.tickAsync(60_000);
-    const woken = await next;
+    const woken = await untilAborted(next, t.signal);
 
     assert.ok(!woken.done);
     assert.deepEqual(
@@ -1103,6 +1206,316 @@ test('a library that SharePoint removed takes its files with it', async () => {
   assert.deepEqual(
     column(dir.path, 'SELECT name FROM driveItems ORDER BY name'),
     ['Budget.xlsx', 'Proposals'],
+  );
+});
+
+test('a library and a list that SharePoint added start their own first load, and the other collections load no row again', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const sales = salesSite();
+  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  const pipeline = await warehouse(graph.source(), dir.path);
+  await pipeline.run();
+  sales.drives.push({
+    id: 'b!archive',
+    name: 'Archive',
+    feed: new Feed([driveFile('b!archive', 'file-old', 'Old.docx')]),
+  });
+  sales.lists.push({
+    id: 'list-tasks',
+    name: 'Tasks',
+    template: 'genericList',
+    hidden: false,
+    columns: [textColumn('col-title', 'Title')],
+    feed: new Feed([listItem('3', { Title: 'Review' })]),
+    lastModifiedDateTime: MODIFIED,
+  });
+
+  const second = await pipeline.run();
+
+  assert.deepEqual(counts(second), {
+    sites: nothing,
+    drives: { count: 1, deleted: 0 },
+    driveItems: { count: 1, deleted: 0 },
+    lists: { count: 1, deleted: 0 },
+    listColumns: { count: 1, deleted: 0 },
+    listItems: { count: 1, deleted: 0 },
+    accessRequests: nothing,
+    pages: nothing,
+  });
+  assert.deepEqual(
+    rows(dir.path, 'SELECT driveId, name FROM driveItems ORDER BY name'),
+    [
+      { driveId: 'b!documents', name: 'Budget.xlsx' },
+      { driveId: 'b!archive', name: 'Old.docx' },
+      { driveId: 'b!documents', name: 'Proposals' },
+    ],
+  );
+  assert.deepEqual(
+    rows(dir.path, 'SELECT listId, itemId FROM listItems ORDER BY listId'),
+    [
+      { listId: 'list-projects', itemId: '1' },
+      { listId: 'list-tasks', itemId: '3' },
+    ],
+  );
+});
+
+test('an edited page updates its row, and a deleted page, list and column remove theirs', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const sales = salesSite();
+  sales.pages.push({
+    id: 'page-news',
+    title: 'News',
+    parts: ['<p>Results of the quarter</p>'],
+  });
+  sales.lists.push({
+    id: 'list-tasks',
+    name: 'Tasks',
+    template: 'genericList',
+    hidden: false,
+    columns: [textColumn('col-title', 'Title')],
+    feed: new Feed(),
+    lastModifiedDateTime: MODIFIED,
+  });
+  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  const pipeline = await warehouse(graph.source(), dir.path);
+  await pipeline.run();
+  sales.pages = [
+    {
+      id: 'page-home',
+      title: 'Home',
+      parts: ['<p>Welcome to the new Sales</p>'],
+    },
+  ];
+  sales.lists = sales.lists
+    .filter(({ id }) => id !== 'list-tasks')
+    .map((list) =>
+      list.id === 'list-projects'
+        ? {
+            ...list,
+            columns: list.columns.filter(({ id }) => id !== 'col-status'),
+          }
+        : list,
+    );
+
+  const second = await pipeline.run();
+
+  assert.deepEqual(rows(dir.path, 'SELECT pageId, html FROM pages'), [
+    { pageId: 'page-home', html: '<p>Welcome to the new Sales</p>' },
+  ]);
+  assert.deepEqual(
+    column(dir.path, 'SELECT listId FROM lists ORDER BY listId'),
+    ['list-access', 'list-documents', 'list-projects'],
+  );
+  assert.deepEqual(
+    rows(
+      dir.path,
+      'SELECT listId, columnId FROM listColumns ORDER BY listId, columnId',
+    ),
+    [
+      { listId: 'list-access', columnId: 'col-title' },
+      { listId: 'list-documents', columnId: 'col-title' },
+      { listId: 'list-projects', columnId: 'col-title' },
+    ],
+  );
+  assert.deepEqual(counts(second).pages, { count: 1, deleted: 1 });
+  assert.deepEqual(counts(second).lists, { count: 0, deleted: 1 });
+  assert.deepEqual(counts(second).listColumns, { count: 0, deleted: 2 });
+});
+
+test('two sites whose libraries, lists and items have the same IDs keep a row each', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const marketing: FakeSite = {
+    ...salesSite(),
+    url: MARKETING,
+    id: 'contoso.sharepoint.com,1,2',
+  };
+  const projects = marketing.lists.find(({ id }) => id === 'list-projects');
+  assert.ok(projects !== undefined);
+  projects.feed.put(listItem('1', { Title: 'Campaign', Status: 'Done' }));
+  using graph = microsoft({ sites: [salesSite(), marketing], pageSize: 200 });
+
+  await (await warehouse(graph.source([SALES, MARKETING]), dir.path)).run();
+
+  const both = (n: number) => [
+    { siteUrl: MARKETING, n },
+    { siteUrl: SALES, n },
+  ];
+  assert.deepEqual(
+    Object.fromEntries(
+      [
+        'sites',
+        'drives',
+        'driveItems',
+        'lists',
+        'listColumns',
+        'listItems',
+        'accessRequests',
+        'pages',
+      ].map((table) => [
+        table,
+        rows(
+          dir.path,
+          `SELECT siteUrl, count(*) AS n FROM ${table} GROUP BY siteUrl ORDER BY siteUrl`,
+        ),
+      ]),
+    ),
+    {
+      sites: both(1),
+      drives: both(1),
+      driveItems: both(2),
+      lists: both(3),
+      listColumns: both(4),
+      listItems: both(1),
+      accessRequests: both(1),
+      pages: both(1),
+    },
+  );
+  assert.deepEqual(
+    rows(
+      dir.path,
+      "SELECT siteUrl, json_extract(fields, '$.Title') AS title FROM listItems ORDER BY siteUrl",
+    ),
+    [
+      { siteUrl: MARKETING, title: 'Campaign' },
+      { siteUrl: SALES, title: 'Launch' },
+    ],
+  );
+});
+
+test('a full refresh over feeds that give a deleted item sends no deletion and loads the items there are', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const sales = salesSite();
+  const [documents] = sales.drives;
+  const projects = sales.lists.find(({ id }) => id === 'list-projects');
+  assert.ok(documents !== undefined && projects !== undefined);
+  // Each feed gives an item with the deleted facet in its read from the start,
+  // which is the only read of a full refresh.
+  documents.feed.put({ id: 'file-old', deleted: { state: 'deleted' } });
+  projects.feed.put({ id: '9', deleted: { state: 'deleted' } });
+  using graph = microsoft({ sites: [sales], pageSize: 200 });
+
+  const results = await (
+    await warehouse(graph.source(), dir.path, { fullRefresh: true })
+  ).run();
+
+  assert.deepEqual(counts(results).driveItems, { count: 2, deleted: 0 });
+  assert.deepEqual(counts(results).listItems, { count: 1, deleted: 0 });
+  assert.deepEqual(
+    column(dir.path, 'SELECT itemId FROM driveItems ORDER BY itemId'),
+    ['file-budget', 'folder-proposals'],
+  );
+  assert.deepEqual(column(dir.path, 'SELECT itemId FROM listItems'), ['1']);
+});
+
+test('a field that a stream gained after its checkpoint was saved starts the site over with a RESET', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const sales = salesSite();
+  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  const source = graph.source();
+  const pipeline = await warehouse(source, dir.path);
+  await pipeline.run();
+  // An older version of the source, whose listItems had no contentTypeId, is
+  // platform setup that no operation exposes. So the checkpoint store's own
+  // run saves the state that version saved: this run's state without the
+  // field. The store accepts it only under the binding of the copy, which
+  // elt makes from the source, the target and the selection of the copy.
+  const [connection] = pipeline.connections;
+  const copy = connection?.steps.find((step) => step.from === source.listItems);
+  assert.ok(connection?.checkpoints !== undefined && copy !== undefined);
+  const { id } = copy;
+  assert.ok(id !== undefined);
+  const { fileReads, syncMode, destinationSyncMode, cursorField, dedupPolicy } =
+    copy.configuration;
+  const binding = {
+    copy: {
+      source: source.identity,
+      target: connection.destination.location(copy.to),
+      selection: {
+        fileReads,
+        syncMode,
+        destinationSyncMode,
+        cursorField,
+        dedupPolicy,
+      },
+    },
+    shape: copy.from,
+  };
+  await connection.checkpoints.run(new Map([[id, binding]]), async (run) =>
+    run.save(
+      id,
+      JSON.stringify(await run.state(id), (key, value: unknown) =>
+        key === 'fields' && Array.isArray(value)
+          ? value.filter((field) => field !== 'contentTypeId')
+          : value,
+      ),
+      false,
+    ),
+  );
+  const projects = sales.lists.find((list) => list.id === 'list-projects');
+  assert.ok(projects !== undefined);
+  // Changes that the saved links do not tell: only a load from the start
+  // reads item 2, and only a RESET removes the row of item 1.
+  projects.feed.items.delete('1');
+  projects.feed.items.set(
+    '2',
+    listItem('2', { Title: 'Pricing', Status: 'Active' }),
+  );
+
+  const second = await pipeline.run();
+
+  assert.deepEqual(
+    rows(dir.path, 'SELECT listId, itemId, contentTypeId FROM listItems'),
+    [{ listId: 'list-projects', itemId: '2', contentTypeId: '0x0100' }],
+  );
+  assert.deepEqual(counts(second).listItems, { count: 1, deleted: 0 });
+  assert.deepEqual(counts(second).driveItems, nothing);
+});
+
+test('an item that the pages of a list of access requests give twice loads once, as the later page gives it', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const sales = salesSite();
+  const items = `/sites/${sales.id}/lists/list-access/items`;
+  // Item 8 changed while the read paged through the items, so both pages
+  // give it.
+  const world: World = {
+    sites: [sales],
+    pageSize: 200,
+    intercept: (url) => {
+      if (decodeURIComponent(url.pathname) !== `/v1.0${items}`)
+        return undefined;
+      const token = url.searchParams.get('$skiptoken');
+      if (token === null)
+        return Response.json({
+          value: [
+            listItem('7', { Title: 'Request from Kim' }),
+            listItem('8', { Title: 'Request from Lee' }),
+          ],
+          '@odata.nextLink': `${GRAPH}${items}?$expand=fields&$skiptoken=2`,
+        });
+      if (token === '2')
+        return Response.json({
+          value: [
+            listItem('8', { Title: 'Request from Lee, approved' }),
+            listItem('9', { Title: 'Request from Ana' }),
+          ],
+        });
+      return undefined;
+    },
+  };
+  using graph = microsoft(world);
+
+  await (await warehouse(graph.source(), dir.path)).run();
+
+  assert.deepEqual(
+    rows(
+      dir.path,
+      "SELECT itemId, json_extract(fields, '$.Title') AS title FROM accessRequests ORDER BY itemId",
+    ),
+    [
+      { itemId: '7', title: 'Request from Kim' },
+      { itemId: '8', title: 'Request from Lee, approved' },
+      { itemId: '9', title: 'Request from Ana' },
+    ],
   );
 });
 
