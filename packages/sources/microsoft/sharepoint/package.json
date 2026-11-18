@@ -1,24 +1,50 @@
 {
   "name": "@eltjs/source-microsoft-sharepoint",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.3.9",
+  "description": "An elt source for SharePoint Online sites: files, lists, list items and pages through the Microsoft Graph delta feeds.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ezzabuzaid/elt",
+    "directory": "packages/sources/microsoft/sharepoint"
+  },
+  "bugs": {
+    "url": "https://github.com/ezzabuzaid/elt/issues"
+  },
+  "homepage": "https://github.com/ezzabuzaid/elt/tree/main/packages/sources/microsoft/sharepoint#readme",
+  "keywords": [
+    "elt",
+    "sharepoint",
+    "microsoft-graph",
+    "source"
+  ],
   "type": "module",
   "exports": {
+    "./package.json": "./package.json",
     "./sharepoint-source": {
       "types": "./dist/sharepoint-source.d.ts",
       "default": "./dist/sharepoint-source.js"
     }
   },
+  "files": [
+    "dist",
+    "!dist/spec/**",
+    "!**/*.tsbuildinfo",
+    "!**/*.test.*"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "@eltjs/elt": "*",
-    "@eltjs/sdk-microsoft-sharepoint": "*",
+    "@eltjs/elt": "^0.3.9",
+    "@eltjs/sdk-microsoft-sharepoint": "^0.3.9",
     "@zukhruf/async": "^0.8.25",
     "@zukhruf/fs": "^0.8.25",
     "@zukhruf/snapshot-differential": "^0.8.25"
   },
   "devDependencies": {
-    "@eltjs/elt-sqlite": "*",
-    "@eltjs/parser-office": "*",
+    "@eltjs/elt-sqlite": "^0.3.9",
+    "@eltjs/parser-office": "^0.3.9",
     "@sinonjs/fake-timers": "15.4.0",
     "@zukhruf/sqlite-open": "^0.8.25",
     "@zukhruf/testing": "^0.8.25",

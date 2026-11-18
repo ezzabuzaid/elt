@@ -1,13 +1,39 @@
 {
   "name": "@eltjs/sdk-microsoft-sharepoint",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.3.9",
+  "description": "Reads SharePoint Online sites through Microsoft Graph with an app-only token: drives, lists, pages, delta feeds, downloads and a change signal. It knows nothing of elt.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ezzabuzaid/elt",
+    "directory": "packages/sdks/microsoft/sharepoint"
+  },
+  "bugs": {
+    "url": "https://github.com/ezzabuzaid/elt/issues"
+  },
+  "homepage": "https://github.com/ezzabuzaid/elt/tree/main/packages/sdks/microsoft/sharepoint#readme",
+  "keywords": [
+    "sharepoint",
+    "microsoft-graph",
+    "delta-query",
+    "sites-selected"
+  ],
   "type": "module",
   "exports": {
+    "./package.json": "./package.json",
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
+  },
+  "files": [
+    "dist",
+    "!dist/spec/**",
+    "!**/*.tsbuildinfo",
+    "!**/*.test.*"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@azure/msal-node": "^7.2.2",

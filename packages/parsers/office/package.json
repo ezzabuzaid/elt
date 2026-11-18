@@ -1,16 +1,45 @@
 {
   "name": "@eltjs/parser-office",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.3.9",
+  "description": "A DocumentParser of elt that gives the plain text of Word, PowerPoint, Excel, OpenDocument, PDF and RTF files with officeparser, on any platform.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ezzabuzaid/elt",
+    "directory": "packages/parsers/office"
+  },
+  "bugs": {
+    "url": "https://github.com/ezzabuzaid/elt/issues"
+  },
+  "homepage": "https://github.com/ezzabuzaid/elt/tree/main/packages/parsers/office#readme",
+  "keywords": [
+    "elt",
+    "document-parser",
+    "docx",
+    "pptx",
+    "xlsx",
+    "pdf",
+    "officeparser"
+  ],
   "type": "module",
   "exports": {
+    "./package.json": "./package.json",
     "./office-document-parser": {
       "types": "./dist/office-document-parser.d.ts",
       "default": "./dist/office-document-parser.js"
     }
   },
+  "files": [
+    "dist",
+    "!dist/spec/**",
+    "!**/*.tsbuildinfo",
+    "!**/*.test.*"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "@eltjs/elt": "*",
+    "@eltjs/elt": "^0.3.9",
     "officeparser": "^8.8.0"
   },
   "devDependencies": {
