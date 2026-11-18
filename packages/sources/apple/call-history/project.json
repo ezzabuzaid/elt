@@ -2,5 +2,5 @@
   "name": "source-apple-call-history",
   "sourceRoot": "packages/sources/apple/call-history/src",
   "projectType": "library",
-  "tags": ["layer:island"]
+  "tags": ["layer:island", "platform:darwin"]
 }

@@ -2,5 +2,5 @@
   "name": "source-apple-safari",
   "sourceRoot": "packages/sources/apple/safari/src",
   "projectType": "library",
-  "tags": ["layer:island"]
+  "tags": ["layer:island", "platform:darwin"]
 }

@@ -493,7 +493,7 @@ Each package owns its docs: a README, a glossary in `CONTEXT.md`, its decisions 
 
 Releases need no command. The packages that Nx tags `npm:public`, because their package.json is not private, are released together, as their conventional commits on `main` ask: a `feat`, `fix` or `refactor` bumps the patch version while the major version is 0, a breaking change bumps the minor version, and `build`, `chore`, `docs`, `test` and `ci` release nothing.
 
-When CI is green for a push to `main`, `.github/workflows/release.yml` runs `nx release version`, which versions the packages, commits `chore(release): publish <version>`, tags `release/<version>` and pushes both, and then `nx release publish`, which publishes to npm. Nothing reaches npm unless `main` has its release commit and tag, and a version already on npm is skipped. The release runs only for the commit CI tested; when `main` has moved on, the newer commit's CI run releases it.
+When CI is green for a push to `main`, `.github/workflows/release.yml` runs `nx release version`, which versions the packages, commits `chore(release): publish <version>`, tags `release/<version>` and pushes both, and then zukhruf's `nx-release-publish` action, which publishes to npm and publishes once more the packages that a failed publish (a Rekor 409) left behind. Nothing reaches npm unless `main` has its release commit and tag, and a version already on npm is skipped. The release runs only for the commit CI tested; when `main` has moved on, the newer commit's CI run releases it.
 
 Below 1.0, Nx moves each bump down one step: a `feat` releases a patch, and a breaking change (`!` or a `BREAKING CHANGE:` footer) releases a minor. A `^0.x.y` range takes every patch, so mark a change to a public signature as breaking. Nx gives a commit to the projects whose files it changes, so an empty commit releases nothing. To release a version that the commits do not ask for, run `npx nx release version <version>` with the exact version: it commits, tags and pushes, and the workflow publishes.
 
@@ -503,4 +503,4 @@ To see what the next release would be:
 npx nx release version --dry-run
 ```
 
-CI runs on Linux, so it checks only the published packages. The other packages need macOS: check them on a Mac before you push.
+CI checks every package. A project tagged `platform:darwin` runs on a macOS runner: it reads a facility of macOS (its databases, `plutil`, `osascript`), or it depends on a Swift helper that only `swiftc` builds. The rest run on Linux. `proactive` needs macOS and Docker at once, which no GitHub runner has, so CI does not run it: check it on a Mac before you push.

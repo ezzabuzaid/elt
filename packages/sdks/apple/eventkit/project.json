@@ -2,7 +2,7 @@
   "name": "sdk-apple-eventkit",
   "sourceRoot": "packages/sdks/apple/eventkit/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
+  "tags": ["layer:island", "layer:sdk", "platform:darwin"],
   "targets": {
     "helper": {
       "command": "sh packages/sdks/apple/eventkit/src/helper/build.sh packages/sdks/apple/eventkit/dist/eventkit-helper",

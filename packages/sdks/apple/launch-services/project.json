@@ -2,5 +2,5 @@
   "name": "sdk-apple-launch-services",
   "sourceRoot": "packages/sdks/apple/launch-services/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"]
+  "tags": ["layer:island", "layer:sdk", "platform:darwin"]
 }

@@ -2,5 +2,5 @@
   "name": "source-apple-contacts",
   "sourceRoot": "packages/sources/apple/contacts/src",
   "projectType": "library",
-  "tags": ["layer:island"]
+  "tags": ["layer:island", "platform:darwin"]
 }

@@ -2,5 +2,5 @@
   "name": "source-apple-clock",
   "sourceRoot": "packages/sources/apple/clock/src",
   "projectType": "library",
-  "tags": ["layer:island"]
+  "tags": ["layer:island", "platform:darwin"]
 }

@@ -2,5 +2,5 @@
   "name": "source-arc-desktop",
   "sourceRoot": "packages/sources/arc/desktop/src",
   "projectType": "library",
-  "tags": ["layer:island"]
+  "tags": ["layer:island", "platform:darwin"]
 }

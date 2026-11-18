@@ -2,5 +2,5 @@
   "name": "source-apple-reminders",
   "sourceRoot": "packages/sources/apple/reminders/src",
   "projectType": "library",
-  "tags": ["layer:island"]
+  "tags": ["layer:island", "platform:darwin"]
 }

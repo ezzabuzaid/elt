@@ -2,7 +2,7 @@
   "name": "proactive",
   "sourceRoot": "apps/proactive/src",
   "projectType": "application",
-  "tags": ["test:docker"],
+  "tags": ["test:docker", "platform:darwin"],
   "targets": {
     "start": {
       "dependsOn": ["build"],

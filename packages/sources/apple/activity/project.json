@@ -2,5 +2,5 @@
   "name": "source-apple-activity",
   "sourceRoot": "packages/sources/apple/activity/src",
   "projectType": "library",
-  "tags": ["layer:island"]
+  "tags": ["layer:island", "platform:darwin"]
 }

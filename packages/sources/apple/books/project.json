@@ -2,5 +2,5 @@
   "name": "source-apple-books",
   "sourceRoot": "packages/sources/apple/books/src",
   "projectType": "library",
-  "tags": ["layer:island"]
+  "tags": ["layer:island", "platform:darwin"]
 }

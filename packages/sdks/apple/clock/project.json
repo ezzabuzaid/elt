@@ -2,5 +2,5 @@
   "name": "sdk-apple-clock",
   "sourceRoot": "packages/sdks/apple/clock/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"]
+  "tags": ["layer:island", "layer:sdk", "platform:darwin"]
 }

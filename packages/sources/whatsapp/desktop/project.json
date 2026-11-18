@@ -2,5 +2,5 @@
   "name": "source-whatsapp-desktop",
   "sourceRoot": "packages/sources/whatsapp/desktop/src",
   "projectType": "library",
-  "tags": ["layer:island"]
+  "tags": ["layer:island", "platform:darwin"]
 }

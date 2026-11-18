@@ -10,10 +10,12 @@ on:
 # own run, even when it is run again: release.yml releases a commit only after
 # CI passes for it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: ${{ github.workflow }}-${{ case(github.event_name == 'pull_request', github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
+  # affected-range reads this workflow's runs to find the last green commit.
+  actions: read
   contents: read
 
 jobs:
@@ -24,28 +26,41 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up the workspace
         uses: JanuaryLabs/zukhruf/.github/actions/setup-workspace@main
 
-      # elt-sqlite's tests read the destination with the sqlite3 program.
-      - name: Install sqlite3
-        run: sudo apt-get install -y sqlite3
+      - name: Find what changed
+        uses: JanuaryLabs/zukhruf/.github/actions/affected-range@main
 
-      - parallel:
-          - name: Check Nx workspace sync
-            run: npx nx sync:check
+      # The checks of the whole tree run beside the affected targets.
+      - name: Check Nx workspace sync
+        background: true
+        run: npx nx sync:check
 
-          - name: Check formatting
-            run: npx prettier --check .
+      - name: Check formatting
+        background: true
+        run: npx prettier --check .
 
-      # Only the published packages. The other packages need macOS (swiftc,
-      # plutil, osascript), so no Linux runner can build them. elt-postgresql
-      # is here for the tests of the SQL Server source.
-      - name: Lint, type check, test and build the published packages
-        run: npx nx run-many -t lint typecheck test build --projects=tag:npm:public,elt-postgresql
+      - name: Audit the workflows
+        background: true
+        uses: zizmorcore/zizmor-action@v0.8.1
+        with:
+          advanced-security: false
+          annotations: true
+
+      # The projects tagged platform:darwin run in the darwin job. elt-sqlite's
+      # tests read the destination with sqlite3, which the runner image has. The
+      # profile goes to .nx, which git ignores, so the formatting check never
+      # reads it.
+      - name: Lint, type check, test and build what changed
+        run: npx nx affected -t lint typecheck test build --exclude='tag:platform:darwin'
         env:
-          NX_PROFILE: nx-profile.json
+          NX_PROFILE: .nx/nx-profile.json
+
+      - name: Wait for the checks of the whole tree
+        wait-all:
 
       # CI hides the output of tasks that pass, so the Nx task profile and the
       # junit file of each project are kept to find the slow tasks and tests.
@@ -53,6 +68,45 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
+          # The profile is under .nx, which the action skips unless told.
+          include-hidden-files: true
           path: |
-            nx-profile.json
+            .nx/nx-profile.json
             packages/**/test-results.xml
+            apps/**/test-results.xml
+
+  # A project that reads a facility of macOS (its databases, plutil, osascript,
+  # a Swift helper that swiftc builds) runs on a macOS runner, and so does a
+  # project that depends on one with a Swift helper, because it cannot build
+  # elsewhere. proactive needs macOS and Docker at once, and no GitHub runner
+  # has both, so neither job runs it.
+  darwin:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up the workspace
+        uses: JanuaryLabs/zukhruf/.github/actions/setup-workspace@main
+
+      - name: Find what changed
+        uses: JanuaryLabs/zukhruf/.github/actions/affected-range@main
+
+      - name: Lint, type check, test and build what changed
+        run: npx nx affected -t lint typecheck test build --exclude='*,!tag:platform:darwin,proactive'
+        env:
+          NX_PROFILE: .nx/nx-profile.json
+
+      - name: Keep the task profile and test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: darwin
+          include-hidden-files: true
+          path: |
+            .nx/nx-profile.json
+            packages/**/test-results.xml
+            apps/**/test-results.xml

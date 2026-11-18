@@ -2,5 +2,5 @@
   "name": "sdk-apple-wallet",
   "sourceRoot": "packages/sdks/apple/wallet/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"]
+  "tags": ["layer:island", "layer:sdk", "platform:darwin"]
 }

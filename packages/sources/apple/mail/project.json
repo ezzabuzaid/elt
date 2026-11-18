@@ -2,5 +2,5 @@
   "name": "source-apple-mail",
   "sourceRoot": "packages/sources/apple/mail/src",
   "projectType": "library",
-  "tags": ["layer:island"]
+  "tags": ["layer:island", "platform:darwin"]
 }

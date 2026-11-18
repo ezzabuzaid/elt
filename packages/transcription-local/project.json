@@ -2,7 +2,7 @@
   "name": "transcription-local",
   "sourceRoot": "packages/transcription-local/src",
   "projectType": "library",
-  "tags": ["layer:island"],
+  "tags": ["layer:island", "platform:darwin"],
   "targets": {
     "helper": {
       "command": "node packages/transcription-local/build.mjs",
