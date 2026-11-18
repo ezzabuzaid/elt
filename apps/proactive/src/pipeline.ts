@@ -10,6 +10,10 @@ import { warehouseUrl } from './warehouse.ts';
 
 export default new Pipeline({
   clock: globalThis,
-  history: new PostgresSyncHistory({ url: warehouseUrl }),
+  // agent_reader reads the warehouse as of a position with its own session.
+  history: new PostgresSyncHistory({
+    url: warehouseUrl,
+    readers: ['agent_reader'],
+  }),
   connections: [appleMessages, slack, whatsapp, appleCalendar, appleMail],
 });

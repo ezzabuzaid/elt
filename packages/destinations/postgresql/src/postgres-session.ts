@@ -2,6 +2,9 @@ import postgres from 'postgres';
 
 import { identifier, quote } from './identifier.ts';
 
+// A session, or a transaction of one, for work that runs only statements.
+export type Queries = Pick<postgres.Sql, 'unsafe'>;
+
 // One session, closed however the work using it ends.
 export class PostgresSession implements AsyncDisposable {
   readonly sql: postgres.Sql;
@@ -57,11 +60,16 @@ export async function lockSchema(
 // transaction begins and when it locks a relation, not when it takes an
 // advisory lock, so a transaction that waited for the lock could still miss
 // the schema that the holder made, and its CREATE SCHEMA IF NOT EXISTS would
-// fail with 23505. sql is a session outside any transaction.
+// fail with 23505. A schema that this session already sees needs no lock; one
+// that it misses, also by a stale cache, is made under the lock. sql is a
+// session outside any transaction.
 export async function makeSchema(
   sql: postgres.Sql,
   schema: string,
 ): Promise<void> {
+  const [made] =
+    await sql`SELECT to_regnamespace(${quote(schema)}) IS NOT NULL AS "exists"`;
+  if (made?.exists === true) return;
   const key = schemaKey(schema);
   await sql`SELECT pg_advisory_lock(hashtextextended(${key}, 0))`;
   try {

@@ -16,7 +16,9 @@ import {
   recordedFailure,
 } from '@eltjs/elt';
 
+import { identifier } from './identifier.ts';
 import { PostgresDestination } from './postgres-destination.ts';
+import { grantReading, installNumbering } from './postgres-numbering.ts';
 import { lockSchema } from './postgres-session.ts';
 import {
   syncHistoryTables,
@@ -25,33 +27,47 @@ import {
 import type { PostgresTable } from './postgres-table.ts';
 import { type PostgresView, publishPostgresViews } from './postgres-views.ts';
 
-// Lists what readers of marts can query, from the comments every load and
-// publication writes there.
+// Lists what readers of marts query, its views, from the comments every load
+// and publication writes there. A table in marts, such as the raw table of a
+// computed dataset, is not for readers, as in the catalog of elt-sqlite.
 const catalog: PostgresView = {
   ...readerCatalog,
-  query: `SELECT CASE c.relkind WHEN 'v' THEN 'view' ELSE 'table' END AS kind,
-      c.relname::text AS name, NULL::text AS data_type,
+  query: `SELECT 'view' AS kind, c.relname::text AS name, NULL::text AS data_type,
       obj_description(c.oid, 'pg_class') AS description
     FROM pg_class c
-    WHERE c.relnamespace = 'marts'::regnamespace AND c.relkind IN ('v', 'r')
+    WHERE c.relnamespace = 'marts'::regnamespace AND c.relkind = 'v'
     UNION ALL
     SELECT 'column', c.relname || '.' || a.attname,
       format_type(a.atttypid, a.atttypmod), col_description(c.oid, a.attnum)
     FROM pg_class c
     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-    WHERE c.relnamespace = 'marts'::regnamespace AND c.relkind IN ('v', 'r')
+    WHERE c.relnamespace = 'marts'::regnamespace AND c.relkind = 'v'
     ORDER BY 2`,
 };
 
 // Records every pass in the _warehouse schema, and shows readers that history
 // and the catalog through views in marts. Who may read marts is the
-// database's own grant.
+// database's own grant. readers are the roles that read the database as of
+// a position with their own session, such as an agent's read-only role:
+// each install grants them what a reading needs, as dbt applies the grants
+// a model declares after each build, so no host names the objects of the
+// numbering.
 export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
   readonly #url: string;
+  readonly #readers: readonly string[];
 
-  constructor({ url }: { url: string }) {
+  constructor({
+    url,
+    readers = [],
+  }: {
+    url: string;
+    readers?: readonly string[];
+  }) {
     super();
     this.#url = url;
+    this.#readers = Object.freeze(
+      readers.map((role) => identifier(role, 'reader role')),
+    );
     Object.freeze(this);
   }
 
@@ -115,18 +131,22 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
     };
   }
 
-  // Creates the history's tables and publishes its views and the catalog;
-  // safe to repeat.
+  // Creates the history's tables, publishes its views and the catalog, and
+  // grants each reader the numbering; safe to repeat.
   override async install(): Promise<void> {
-    await this.#write(async (transaction) => {
-      // The numbering of the destinations makes _warehouse too, under the
-      // same lock.
-      await lockSchema(transaction, '_warehouse');
-      for (const statement of syncHistoryTables)
-        await transaction.unsafe(statement);
-      await publishPostgresViews(transaction, {
-        schema: 'marts',
-        views: [...syncHistoryViews, catalog],
+    await this.#connect(async (sql) => {
+      if (this.#readers.length > 0) await installNumbering(sql);
+      await sql.begin(async (transaction) => {
+        // The numbering of the destinations makes _warehouse too, under the
+        // same lock.
+        await lockSchema(transaction, '_warehouse');
+        for (const statement of syncHistoryTables)
+          await transaction.unsafe(statement);
+        await publishPostgresViews(transaction, {
+          schema: 'marts',
+          views: [...syncHistoryViews, catalog],
+        });
+        for (const role of this.#readers) await grantReading(transaction, role);
       });
     });
   }
@@ -165,14 +185,18 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
     });
   }
 
-  async #write<T>(work: (transaction: postgres.TransactionSql) => Promise<T>) {
+  #write<T>(work: (transaction: postgres.TransactionSql) => Promise<T>) {
+    return this.#connect((sql) => sql.begin(work));
+  }
+
+  async #connect<T>(work: (sql: postgres.Sql) => Promise<T>): Promise<T> {
     const sql = postgres(this.#url, {
       max: 1,
       onnotice: () => {},
       connection: { application_name: 'elt-sync-history' },
     });
     try {
-      return await sql.begin(work);
+      return await work(sql);
     } finally {
       await sql.end();
     }

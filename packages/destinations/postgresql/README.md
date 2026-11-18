@@ -44,7 +44,7 @@ await new Pipeline({
 ```
 
 - `PostgresDestination({ url, schema })` loads each table of a connection into one schema. The first load makes the schema.
-- The URL holds credentials, so it stays private: `location()` names only the schema and the table.
+- The URL holds credentials, so `location()`, which checkpoints keep, names only the schema and the table. `destination.url` gives the URL to the views and computed datasets of the destination; it is a getter, so JSON and `util.inspect` do not show it.
 - The destination checks the declarations without a connection to the database.
 - A schema name must have at most 63 bytes, must not hold NUL, and must not start with `pg_`.
 
@@ -145,7 +145,7 @@ Each commit has a number. One numbering orders the commits of every schema of th
 
 - The numbering is in the schema `_warehouse`, beside the [sync history](#sync-history). The first load or clear in the database makes it. It takes the same lock as the sync history, because Postgres refuses two sessions that make one schema at the same moment. Thus first loads into many schemas can start together.
 - `_warehouse._elt_commits` has one row for each commit: its `number`, its `load` and its `committed_at`. The sequence `_warehouse._elt_commit_numbers` gives the numbers. A commit takes its number at its start, so two commits that run at the same time can end in a different order than their numbers.
-- `_warehouse._elt_loads` has one row for each load: its `connector` (the name of the connection), its `opened_at`, and its `closed_at`, which is null while the load is open. A load opens when a pass starts to load, and closes when the pass ends. When a load opens, it closes each load of the same connector that is still open: the process of that pass ended first, for example because it was killed. A closed load cannot commit: a commit locks the row of its load (`FOR SHARE`), so a close at the same time waits for the commit, or makes it fail.
+- `_warehouse._elt_loads` has one row for each load: its `connector` (the name of the connection) or its `dataset` (the name of a computed dataset), its `opened_at`, and its `closed_at`, which is null while the load is open. A load of a connection opens when a pass starts to load, and closes when the pass ends; a load of a dataset is one refresh. When a load opens, it closes each load of the same connector or dataset that is still open: the process of that pass or refresh ended first, for example because it was killed. A closed load cannot commit: a commit locks the row of its load (`FOR SHARE`), so a close at the same time waits for the commit, or makes it fail.
 - A clear that empties a table is a load of one commit, in the same transaction. It does not close the open loads of its connector.
 - A commit into a [hidden table](./CONTEXT.md) shows nothing to readers. When the stream ends, one more commit gives the rows to the table with its number, and readers see them from that commit on.
 - A change of shape that casts a column or drops one with values is a commit of the load too. The history keeps each row that it changes, as it was, and the row hash of the row becomes null, so the next record of the row writes it again. A change of type that the history cannot follow by a [widening](./CONTEXT.md) is a commit of the load too, even when it changes no row.
@@ -160,7 +160,8 @@ How a reader knows which numbers are done:
 
 The history of a table:
 
-- `<schema>._elt_history_<hash>` keeps each row that a commit replaced or removed, with `replaced_in`, the number of that commit, as a SQL Server temporal table keeps its history beside the current table. The writes that keep rows are a deduplicating upsert that changes the values (behind the same cursor guard), a staged `DELETE`, a reset of a partition, an overwrite, a reload, a change of shape, and `clear()`. A write into a hidden table keeps nothing, because no reader saw its rows.
+- `<schema>._elt_history_<hash>` keeps each row that a commit replaced or removed, with `replaced_in`, the number of that commit, as a SQL Server temporal table keeps its history beside the current table. The writes that keep rows are a deduplicating upsert that changes the values (behind the same cursor guard), a staged `DELETE`, a reset of a partition, an overwrite, a reload, and a change of shape. A write into a hidden table keeps nothing, because no reader saw its rows.
+- `clear()` forgets the rows that it removes. Its commit C sets `min_valid` to C, if it is higher, with `expired_by` `clear`, and the history of the cleared table deletes each of its rows, with the stored files that only they refer to. A reading or `positions(after)` before C gives `{ expired }`, with the reason that a clear forgot the rows of its table. The history of another table keeps its rows with `replaced_in <= C` until its next commit or the retention deletes them; a reading skips them, as for a change of type.
 - Each column of the history has the type of the table's column of the same name. It takes each new column of the table. A column that the table drops stays in the history with its last type.
 - When a change of shape, or the swap of a reload, gives a column of the table another type, the history changes the type of its column in the same commit. This includes a column that the table dropped and a later change adds back with another type. Delta Lake, Iceberg, BigQuery and Snowflake change a type in place only when the change is a widening, and they read the past with its own schema, which one Postgres view cannot do. The destination follows the same rule:
   - A widening maps each old value to one new value exactly, with no loss: any type to `text`, `bigint` to `numeric`, `date` to `timestamp without time zone`, and an array whose item widens. The history casts its column with the same cast (`USING column::type`), and each position stays readable.
@@ -178,7 +179,7 @@ Retention:
 
 A reading as of a position:
 
-- Each [reader view](#reader-views) reads its table as of the position that its transaction sets in `elt.position`: the rows of the table with `committed_in <= P`, and the rows of the history with `committed_in <= P < replaced_in`. A session that sets nothing reads the table as it is now, and no row of the history. A view built on a reader view, such as a documented view in `marts` or a view of the host in another schema, refers to it by OID and reads as of the same position. A read makes no object.
+- Each [reader view](#reader-views) reads its table as of the position that its transaction sets in `elt.position`: the rows of the table with `committed_in <= P`, and the rows of the history with `committed_in <= P < replaced_in`. A session that sets nothing reads the table as it is now, and no row of the history. A view built on a reader view, such as a [view](#declare-a-view) in `marts` or a view of the host in another schema, reads as of the same position. A read makes no object.
 - `await destination.reading(position?)` opens its own session and gives `{ sql, position, at }`, or `{ expired }`. Dispose it with `await using` to end the session. It takes the high-water mark, then begins `REPEATABLE READ READ ONLY`, so no commit after it opens shows. With no position, it reads the newest position. Below the newest commit that its snapshot sees, it sets `elt.position` for its transaction. `at` is when the commit of the position was made.
 - A position of a different epoch, past the newest settled commit, or before `min_valid`, gives `{ expired }`. A number that is not a position, such as a commit inside a pass, and a string that is not a position, throw a `TypeError`.
 - The [sync history](#sync-history) keeps no row versions. A reading below the newest commit fails each of its views in `marts`, with the message that it cannot be read as of a position. The tables in `_warehouse` read as they are now.
@@ -208,44 +209,81 @@ A reading as of a position:
 - A table that evolves or reloads gets its view again, as [above](#locks-and-commits).
 - The view reads its table and the [history](#commit-numbers-and-positions) of the table as of a position. Each column of the history has the type that the column of the table has now, so the view reads it with no cast.
 
-## Documented views
-
-`publishPostgresViews(transaction, { schema, views })` publishes normal SQL views with native view and column comments. Each `PostgresView` gives `name`, `query`, `description`, and `columns`, a map from the output column names to their descriptions. The application gives the SQL and the meaning. Postgres gets the output types.
-
-With a `postgres` client `sql` and a table `raw.notes`:
+## Declare a view
 
 ```ts
-import { publishPostgresViews } from '@eltjs/elt-postgresql';
+import { PostgresDestination, View } from '@eltjs/elt-postgresql';
 
-await sql.begin(async (transaction) => {
-  await publishPostgresViews(transaction, {
-    schema: 'knowledge',
-    views: [
-      {
-        name: 'notes',
-        query: 'SELECT id, title FROM raw.notes',
-        description: 'One row per note, identified by id.',
-        columns: {
-          id: 'Source note identifier.',
-          title: 'Note title.',
-        },
-      },
-    ],
-  });
+const marts = new PostgresDestination({ url, schema: 'marts' });
+
+const unread = new View({
+  into: marts,
+  name: 'unread_count',
+  description: 'How many messages each chat has that the user did not read.',
+  columns: {
+    chat: 'The chat.',
+    n: 'Number of messages that the user did not read.',
+  },
+  sql: 'SELECT chat, count(*) AS n FROM messages WHERE read = 0 GROUP BY chat',
 });
 ```
 
-- Give trusted SQL of the application as one query. Each output column must have one description, and no description can be empty. A query that adds a second statement fails.
-- Names follow the limit of 63 bytes of the destination.
-- The publisher makes the schema when it is not there. It takes the lock of the schema, so other publishers of that schema wait. It replaces only the views that you give.
-- List each view after the views that it reads. The publisher drops the views in the reverse order and makes them in the given order.
-- It never drops with `CASCADE`. A dependent view out of the list stops the publication.
-- A savepoint restores the earlier views and comments on each failure, also when the caller catches the error and continues the transaction.
-- An empty list does nothing.
-- The caller owns the connection and the transaction. A replace makes the views again, so apply explicit grants again after the publication, in the same transaction. Default grants still apply.
-- The application selects which content it shows. In the warehouse, default privileges on `marts` make each published view readable.
-- `PostgresSyncHistory` uses this publisher for its views, and the Search Console views use it for their content.
-- Views show the tables as the query reads them. A publication does not copy rows or start refreshes. Read their descriptions with `obj_description` and `col_description`, as for table comments.
+Give the view to the pipeline in `derived`. The view is `marts.unread_count`: it lives in the schema of `into`, and the bare names of its SQL, such as `messages`, are found in that schema too. Name a relation of another schema with its schema, such as `raw.raw_messages`.
+
+- A view names no inputs. Its SQL reads them, as in [elt-sqlite](../sqlite/docs/adr/0001-a-view-names-no-inputs.md).
+- The view appears when its query compiles. Thus a reader never finds a view that fails.
+- While the SQL reads a raw table or a reader view that a copy of the pipeline has not made yet, the view waits. It appears at the refresh after that copy loads. Postgres tells which relation is missing (`42P01`), and the view waits only when the pipeline makes that relation.
+- While the SQL reads a view or a computed dataset that comes before it in `derived` and that still waits, the view waits too, as dbt skips a model whose upstream model was skipped.
+- Any other error of the query, for example a misspelled table, is a dataset failure. It fails the run with the error of Postgres.
+- The columns must be the same as the columns that the query gives. `marts.catalog` lists them with their descriptions when the view is in `marts`.
+- A refresh that changes nothing leaves the view as it was. The refresh makes the query in a savepoint and compares its definition with the stored one, so the view keeps its OID, its grants and its readers.
+- A changed declaration replaces the view in one transaction. The views that read it, also views that elt did not make, read the new view, with their owners, comments and privileges ([ADR 0006](./docs/adr/0006-a-change-of-a-table-makes-the-views-over-it-again.md)). The view keeps its own privileges.
+
+## Declare a computed dataset
+
+```ts
+import { DocumentText } from '@eltjs/elt';
+import { ComputedDataset } from '@eltjs/elt-postgresql';
+
+const text = new ComputedDataset({
+  into: marts,
+  name: 'document_text',
+  description: 'The text of each stored document.',
+  from: [documents],
+  compute: new DocumentText({
+    parser: () => parser,
+    files: files.directory,
+    column: 'documentRef',
+  }),
+});
+```
+
+`documents` is the target of a copy, and `from` can name more than one. The rule reads each row that those copies loaded, through the reader view of a target that has one. `from` can also name a `View` that comes before the computed dataset in `derived`. See [Write a rule](../../elt/README.md#write-a-rule) in elt.
+
+A computed dataset keeps one output row for each key, in the table `raw_<name>` in the schema of `into`, beside its history. Readers query the view `<name>` in the same schema. Its columns are the same as in [elt-sqlite](../sqlite/README.md#declare-a-computed-dataset): the key, `input_hash`, `rule`, `status` (`computed`, `empty` or `failed`), `error`, and the columns of the rule. A `text` column of a rule is `TEXT`, and a `blob` column is `BYTEA`.
+
+At each refresh, the computed dataset compares the inputs with the output rows:
+
+- It computes each key that is new, or whose input or rule identity changed. The refresh after the passes also computes each key whose status is `failed`, once for each pass.
+- It deletes each output row whose key no input has any more.
+- It keeps an output row when the rule stops handling its input.
+- Each call of the rule commits as it settles, so readers see the output rows as they land. The calls run side by side; their commits take turns on the one session of the refresh.
+- When the declaration of the raw table changes, the refresh makes the table again. The history keeps each row of the old table, and the views over the dataset read the new one.
+
+A refresh is a load in `_warehouse._elt_loads`, under the name of its dataset, so a [reading](#commit-numbers-and-positions) shows the computed dataset as of a position:
+
+- Each transaction of the refresh that changes a row takes one commit number. A transaction that changes no row takes none. No commit inside a refresh that is open is a position.
+- The raw table has `committed_in` and `_elt_row_hash` after the columns of the rule. The view `<name>` does not show them, and it reads as of the position of its reading, as a reader view does. A computed dataset has no `loaded_at`.
+- A rule column cannot have the name of the key, of an engine column, of `committed_in`, `_elt_row_hash` or `replaced_in`. The constructor refuses such a rule with a `TypeError` that names the column and the dataset.
+- When the rule makes a row again with the same values, for example a `failed` row that fails again with the same error, the row stays as it is, with its commit.
+- Before a commit changes or deletes an output row, it copies the row into the history of the raw table.
+
+## When something fails
+
+- **A rule failure** gives an output row with the status `failed` and the reason in `error`. The run continues, and the refresh after the next pass tries the input again.
+- **A dataset failure**, for example a query that Postgres refuses, rejects the run, or it stops the watch, with a `DerivedDatasetError` that names the dataset.
+- **A table that is gone**, for example one that a person dropped by hand, is no failure. A computed dataset that reads it waits and keeps its output rows. When the copy loads the table again, the dataset asks the rule only for inputs that changed.
+- **A copy that failed** keeps its last committed rows. The derived datasets read those rows.
 
 ## Sync history
 
@@ -253,7 +291,8 @@ await sql.begin(async (transaction) => {
 
 - It records only connections with a Postgres destination. It refuses other connections when the pipeline validates.
 - It records into `_warehouse.sync_attempts`, `_warehouse.extraction_coverage` and `_warehouse.stream_checks`. The last one holds the latest check of each stream by a watch that found it unchanged.
-- `install()` makes those tables and publishes the `marts` views `sync_attempts`, `extraction_coverage`, `sync_status`, `stream_status` and `catalog`, in one transaction. The pipeline calls it before each run and watch, and it is safe to repeat. It grants nothing. See [ADR 0005](./docs/adr/0005-the-history-install-publishes-the-catalog.md).
+- `install()` makes those tables and publishes the `marts` views `sync_attempts`, `extraction_coverage`, `sync_status`, `stream_status` and `catalog`, in one transaction. The pipeline calls it before each run and watch, and it is safe to repeat. See [ADR 0005](./docs/adr/0005-the-history-install-publishes-the-catalog.md).
+- `new PostgresSyncHistory({ url, readers: ['agent_reader'] })` names the roles that read the database as of a position with their own session: `new PostgresDestination({ url: readerUrl, schema })`, then `positions()` and `reading()`. Each install grants each reader what a reading needs, which is the numbering in `_warehouse` and nothing else of it, as dbt applies the grants that a model declares after each build. Thus no host names the objects of the numbering, and a reader keeps its grants when the numbering is made again. The install grants nothing else: who may read `marts` is a grant of the database, such as its default privileges. A role that does not exist fails the install.
 - Before a pass reads, the history inserts one `sync_attempts` row, with the connection name as `connector` and the source identity as `source`. It inserts one `extraction_coverage` row for each selected stream, with the declared `coverage(stream)` of the source and the schema of the destination as `target_schema`. The outcomes close them.
 - A run declares each stream that a connection selected. A watch pass reads only the streams whose change signals changed, so an attempt vouches only for its own `extraction_coverage` rows.
 - A connection that is not valid or that stopped, a failed change signal and a failed upkeep each record a failed attempt with no outcomes.
@@ -263,7 +302,7 @@ The relations in `marts`:
 
 | Relation              | Contents                                                                                                                                                                                                                                         |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `catalog`             | Each view, table and column in `marts`, with its description. The start point of a reader.                                                                                                                                                       |
+| `catalog`             | Each view and column in `marts`, with its description. The start point of a reader. A table is not for readers, also when it is in `marts`, such as the raw table of a computed dataset.                                                         |
 | `sync_status`         | For each connection: the latest attempt, the end of the last successful pass, and `current_as_of` (the oldest of its streams).                                                                                                                   |
 | `stream_status`       | For each connection and stream: the latest attempt that declared the stream with the status of its copy, and the last attempt in which that copy succeeded. A watch pass reads only changed streams, so judge a stream here, by `current_as_of`. |
 | `sync_attempts`       | The kept history of attempts, with start and end times, status and errors.                                                                                                                                                                       |
@@ -288,6 +327,8 @@ What the relations tell:
 - [ADR 0004](./docs/adr/0004-an-overwrite-deletes-rows-and-does-not-truncate.md): an overwrite deletes rows and does not truncate.
 - [ADR 0005](./docs/adr/0005-the-history-install-publishes-the-catalog.md): the history install publishes the catalog.
 - [ADR 0006](./docs/adr/0006-a-change-of-a-table-makes-the-views-over-it-again.md): a change of a table makes the views over it again.
+- [ADR 0007](./docs/adr/0007-readers-are-named-on-the-sync-history.md): readers are named on the sync history.
+- [ADR 0008](./docs/adr/0008-derived-datasets-follow-elt-sqlite.md): derived datasets follow elt-sqlite.
 
 ## Development
 
@@ -308,7 +349,9 @@ src/
   postgres-history.ts             the history of a table, and the row hash
   postgres-numbering.ts           commit numbers, loads and positions
   postgres-as-of.ts               a reading of the database as of a position
-  postgres-views.ts               publishPostgresViews
+  view.ts                         View
+  computed-dataset.ts             ComputedDataset
+  postgres-views.ts               the publication of views, for View and the sync history
   postgres-dependents.ts          the views over a table, made again over its change
   postgres-privileges.ts          the privileges of a relation, kept across its change
   postgres-checkpoint-store.ts    PostgresCheckpointStore

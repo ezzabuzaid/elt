@@ -3,6 +3,7 @@ import type postgres from 'postgres';
 import type { PipelineClock } from '@eltjs/elt';
 
 import {
+  type LoadOwner,
   closeLoad,
   commitNumber,
   installNumbering,
@@ -16,28 +17,30 @@ export type Transaction = postgres.Sql;
 
 // A run's one connection to the database, and its record in the numbering of the
 // database: open from the start of the load until it is disposed, with a
-// number for each commit. No transaction stays open between commits, so
+// number for each commit. A connection's pass loads, and so does a refresh
+// of a derived dataset. No transaction stays open between commits, so
 // reading the source holds no locks on the targets and keeps nothing from
 // vacuum.
 export class PostgresLoad implements AsyncDisposable {
   readonly #connection: PostgresSession;
   readonly #clock: PipelineClock;
   readonly #retention: Temporal.Duration;
-  readonly #connector: string;
+  readonly #owner: LoadOwner;
   readonly #id: string;
   // When the load began, which each row it writes keeps in loaded_at.
   readonly loadedAt: string;
 
   private constructor(
     connection: PostgresSession,
-    { clock, connection: connector, retention }: Owner,
+    owner: LoadOwner,
+    { clock, retention }: Retaining,
     id: string,
     loadedAt: Date,
   ) {
     this.#connection = connection;
     this.#clock = clock;
     this.#retention = retention;
-    this.#connector = connector;
+    this.#owner = owner;
     this.#id = id;
     this.loadedAt = loadedAt.toISOString();
   }
@@ -46,13 +49,17 @@ export class PostgresLoad implements AsyncDisposable {
     return this.#connection.sql;
   }
 
-  static async open(url: string, owner: Owner): Promise<PostgresLoad> {
+  static async open(
+    url: string,
+    owner: LoadOwner,
+    retaining: Retaining,
+  ): Promise<PostgresLoad> {
     const connection = new PostgresSession(url, 'elt');
     try {
-      const loadedAt = new Date(owner.clock.Date.now());
+      const loadedAt = new Date(retaining.clock.Date.now());
       await installNumbering(connection.sql);
-      const id = await openLoad(connection.sql, owner.connection, loadedAt);
-      return new PostgresLoad(connection, owner, id, loadedAt);
+      const id = await openLoad(connection.sql, owner, loadedAt);
+      return new PostgresLoad(connection, owner, retaining, id, loadedAt);
     } catch (error) {
       await connection[Symbol.asyncDispose]();
       throw error;
@@ -79,7 +86,7 @@ export class PostgresLoad implements AsyncDisposable {
   number(sql: Transaction): Promise<number> {
     return commitNumber(
       sql,
-      { load: this.#id, connector: this.#connector },
+      { load: this.#id, owner: this.#owner },
       new Date(this.#clock.Date.now()),
       this.#retention,
     );
@@ -101,10 +108,9 @@ export class PostgresLoad implements AsyncDisposable {
   }
 }
 
-// What opens a load: the clock that dates it, the connection it records, and
-// how long the history keeps a position readable.
-type Owner = {
+// What a load keeps of its destination: the clock that dates it, and how
+// long the history keeps a position readable.
+type Retaining = {
   readonly clock: PipelineClock;
-  readonly connection: string;
   readonly retention: Temporal.Duration;
 };

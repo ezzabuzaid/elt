@@ -1,8 +1,8 @@
 import { errorMessage } from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
-import type { Transaction } from './postgres-load.ts';
 import { Privileges } from './postgres-privileges.ts';
+import type { Queries } from './postgres-session.ts';
 
 // A view, or a materialized view, as it stood before a change, with what
 // makes it again: its definition with every name qualified, its options and
@@ -76,7 +76,7 @@ const dependents = `
 // root that existed keeps its privileges in the relation that has its name
 // after the change.
 export async function rebindDependents<T>(
-  sql: Transaction,
+  sql: Queries,
   roots: readonly string[],
   change: () => Promise<T>,
 ): Promise<T> {
@@ -119,7 +119,7 @@ export async function rebindDependents<T>(
   return result;
 }
 
-async function make(sql: Transaction, view: SavedView): Promise<void> {
+async function make(sql: Queries, view: SavedView): Promise<void> {
   const options = view.options === null ? '' : ` WITH (${view.options})`;
   let data = '';
   if (view.kind === 'MATERIALIZED VIEW')

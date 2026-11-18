@@ -785,7 +785,7 @@ test("a reload's rows name the commit that swapped them in, not the commits that
   );
 });
 
-test('a clear is a commit of its connection, and its number is a position', async () => {
+test('a clear is a commit of its connection, and its number is the first position, as it expires each one before it', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const url = database.connectionString;
@@ -808,8 +808,5 @@ test('a clear is a commit of its connection, and its number is a position', asyn
     WHERE c.number > ${Number(loaded)}`;
 
   assert.equal(clear?.connector, 'raw');
-  assert.deepEqual(await walkable(destination), [
-    Number(loaded),
-    Number(clear?.number),
-  ]);
+  assert.deepEqual(await walkable(destination), [Number(clear?.number)]);
 });

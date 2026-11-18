@@ -1,5 +1,6 @@
 import type postgres from 'postgres';
 
+import { quote } from './identifier.ts';
 import { lockSchema } from './postgres-session.ts';
 
 // A session, or a transaction of one.
@@ -21,9 +22,9 @@ const numbers = `${shared}."_elt_commit_numbers"`;
 // at its end rather than wrap to a number that names another commit.
 const tables = [
   `CREATE SCHEMA IF NOT EXISTS ${shared}`,
-  `CREATE TABLE IF NOT EXISTS ${epochs} ("id" integer PRIMARY KEY CHECK ("id" = 1), "epoch" text NOT NULL, "min_valid" integer NOT NULL DEFAULT 0, "expired_by" text CHECK ("expired_by" IN ('retention', 'type')))`,
-  `CREATE TABLE IF NOT EXISTS ${loads} ("id" bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, "connector" text NOT NULL, "opened_at" timestamptz NOT NULL, "closed_at" timestamptz)`,
-  `CREATE INDEX IF NOT EXISTS "_elt_loads_open" ON ${loads} ("connector") WHERE "closed_at" IS NULL`,
+  `CREATE TABLE IF NOT EXISTS ${epochs} ("id" integer PRIMARY KEY CHECK ("id" = 1), "epoch" text NOT NULL, "min_valid" integer NOT NULL DEFAULT 0, "expired_by" text CHECK ("expired_by" IN ('retention', 'type', 'clear')))`,
+  `CREATE TABLE IF NOT EXISTS ${loads} ("id" bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, "connector" text, "dataset" text, "opened_at" timestamptz NOT NULL, "closed_at" timestamptz, CHECK (("connector" IS NULL) <> ("dataset" IS NULL)))`,
+  `CREATE INDEX IF NOT EXISTS "_elt_loads_open" ON ${loads} ("connector", "dataset") WHERE "closed_at" IS NULL`,
   `CREATE SEQUENCE IF NOT EXISTS ${numbers} AS integer`,
   `CREATE TABLE IF NOT EXISTS ${commits} ("number" integer PRIMARY KEY, "load" bigint NOT NULL REFERENCES ${loads} ("id"), "committed_at" timestamptz NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS "_elt_commits_load" ON ${commits} ("load", "number")`,
@@ -61,23 +62,46 @@ export async function installNumbering(sql: postgres.Sql): Promise<void> {
   });
 }
 
-// Records a load of connector that opens at openedAt, and gives its id. A
-// connection runs one pass at a time, so a load of it that is still open is
-// one whose process ended during it: the new load closes it, as the sync
-// history of a sole writer fails such a pass.
+// What writes a load: a connection's pass, or a refresh of a derived dataset.
+// Each runs one at a time, and a name of one never names the other.
+export type LoadOwner =
+  { readonly connector: string } | { readonly dataset: string };
+
+// The column of _elt_loads that names owner, and its name there.
+function owned(owner: LoadOwner): readonly ['connector' | 'dataset', string] {
+  return 'connector' in owner
+    ? ['connector', owner.connector]
+    : ['dataset', owner.dataset];
+}
+
+// Lets role read the positions and the readings of the database with its own
+// session, as a reader that did not load does: the numbering, and nothing
+// else of _warehouse. Its object names stay this module's own.
+export async function grantReading(sql: Queries, role: string): Promise<void> {
+  await sql.unsafe(`GRANT USAGE ON SCHEMA ${shared} TO ${quote(role)}`);
+  await sql.unsafe(
+    `GRANT SELECT ON ${epochs}, ${commits}, ${loads}, ${numbers} TO ${quote(role)}`,
+  );
+}
+
+// Records a load of owner that opens at openedAt, and gives its id. A
+// connection runs one pass at a time, and a dataset one refresh, so a load of
+// it that is still open is one whose process ended during it: the new load
+// closes it, as the sync history of a sole writer fails such a pass.
 export async function openLoad(
   sql: postgres.Sql,
-  connector: string,
+  owner: LoadOwner,
   openedAt: Date,
 ): Promise<string> {
+  const [column, name] = owned(owner);
   return sql.begin(async (transaction) => {
     const [load] = await transaction<{ id: string }[]>`
-      INSERT INTO ${transaction.unsafe(loads)} ("connector", "opened_at")
-      VALUES (${connector}, ${openedAt}) RETURNING "id"`;
+      INSERT INTO ${transaction.unsafe(loads)} (${transaction(column)}, "opened_at")
+      VALUES (${name}, ${openedAt}) RETURNING "id"`;
     if (load === undefined) throw new Error('The load was not recorded');
     await transaction`
       UPDATE ${transaction.unsafe(loads)} SET "closed_at" = ${openedAt}
-      WHERE "connector" = ${connector} AND "closed_at" IS NULL AND "id" <> ${load.id}`;
+      WHERE ${transaction(column)} = ${name} AND "closed_at" IS NULL AND "id" <> ${load.id}`;
     return load.id;
   });
 }
@@ -93,13 +117,13 @@ export async function closeLoad(
 }
 
 // Takes the next number inside the transaction of a commit of load, and
-// records the commit. A load that a later load of its connector closed has
+// records the commit. A load that a later load of its owner closed has
 // ended, and a commit after its end would move a position that readers were
 // already given: the commit locks the row of its load, so a close that runs
 // at the same time waits for the commit or makes it fail.
 export async function commitNumber(
   sql: Queries,
-  { load, connector }: { load: string; connector: string },
+  { load, owner }: { load: string; owner: LoadOwner },
   committedAt: Date,
   retention: Temporal.Duration,
 ): Promise<number> {
@@ -114,7 +138,9 @@ export async function commitNumber(
     WHERE "id" = ${load} AND "closed_at" IS NULL FOR SHARE`;
   if (open === undefined)
     throw new Error(
-      `A later load of connection ${connector} closed this load, so it cannot commit; a connection runs one pass at a time`,
+      'connector' in owner
+        ? `A later load of connection ${owner.connector} closed this load, so it cannot commit; a connection runs one pass at a time`
+        : `A later refresh of dataset ${owner.dataset} closed this one, so it cannot commit; a dataset refreshes one at a time`,
     );
   await sql`
     INSERT INTO ${sql.unsafe(commits)} ("number", "load", "committed_at")
@@ -198,7 +224,7 @@ export async function commitOnce(
   if (load === undefined) throw new Error('The load was not recorded');
   const number = await commitNumber(
     sql,
-    { load: load.id, connector },
+    { load: load.id, owner: { connector } },
     at,
     retention,
   );
@@ -207,14 +233,16 @@ export async function commitOnce(
 }
 
 // Makes each position before the commit changedIn expire, inside that
-// commit.
+// commit, for by: a change of type that is not a widening, or a clear that
+// forgets the rows it removes.
 export async function expireBefore(
   sql: Pick<postgres.Sql, 'unsafe'>,
   changedIn: number,
+  by: 'type' | 'clear',
 ): Promise<void> {
   await sql.unsafe(
-    `UPDATE ${epochs} SET "min_valid" = $1, "expired_by" = 'type' WHERE "min_valid" < $1`,
-    [changedIn],
+    `UPDATE ${epochs} SET "min_valid" = $1, "expired_by" = $2 WHERE "min_valid" < $1`,
+    [changedIn, by],
   );
 }
 
@@ -223,7 +251,7 @@ export type Numbering = {
   readonly epoch: string;
   // The oldest commit that a reading can read as of, and what set it last.
   readonly minValid: number;
-  readonly expiredBy: 'retention' | 'type' | null;
+  readonly expiredBy: 'retention' | 'type' | 'clear' | null;
   // Every number at or below it is a commit that a reader sees, or one that
   // rolled back: the high-water mark of event stores, which skips the gaps
   // that rolled back and stops below the first number still in flight.
@@ -271,7 +299,7 @@ export async function numberingIn(
     {
       epoch: string;
       min_valid: number;
-      expired_by: 'retention' | 'type' | null;
+      expired_by: 'retention' | 'type' | 'clear' | null;
     }[]
   >`SELECT "epoch", "min_valid", "expired_by" FROM ${sql.unsafe(epochs)}`;
   if (row === undefined) return null;
@@ -367,9 +395,14 @@ export function expiry(
   if (number > numbered.settled)
     return `Position ${position} is past the newest commit of this database, ${numbered.settled}`;
   if (number < numbered.minValid)
-    return numbered.expiredBy === 'type'
-      ? `Position ${position} is before commit ${numbered.minValid}, which changed the type of a column to one that does not hold each earlier value: the history keeps no row that only a reading before that commit reads`
-      : `Position ${position} is before commit ${numbered.minValid}, the oldest position that the retention of the database keeps readable: the history keeps no row that only a reading before it reads`;
+    switch (numbered.expiredBy) {
+      case 'type':
+        return `Position ${position} is before commit ${numbered.minValid}, which changed the type of a column to one that does not hold each earlier value: the history keeps no row that only a reading before that commit reads`;
+      case 'clear':
+        return `Position ${position} is before commit ${numbered.minValid}, a clear that forgot the rows of its table: the history keeps no row that only a reading before it reads`;
+      default:
+        return `Position ${position} is before commit ${numbered.minValid}, the oldest position that the retention of the database keeps readable: the history keeps no row that only a reading before it reads`;
+    }
   return undefined;
 }
 

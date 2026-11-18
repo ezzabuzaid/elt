@@ -38,7 +38,6 @@ import {
   PostgresColumns,
   PostgresDestination,
   PostgresSyncHistory,
-  publishPostgresViews,
 } from './index.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
 
@@ -115,136 +114,6 @@ class Messages extends LiveSource {
 const rows = (stream: Stream, data: readonly object[]): SourceMessage[] =>
   data.map((row) => ({ stream: stream.name, data: row }));
 
-test('documented views expose live data and replace atomically without dropping outside dependents', async () => {
-  await using database = await databases.database();
-  await using clients = new AsyncDisposableStack();
-  const sql = clients.adopt(
-    postgres(database.connectionString, { max: 2, onnotice: () => {} }),
-    (sql) => sql.end(),
-  );
-  await sql`CREATE TABLE source_notes (id integer PRIMARY KEY, title text)`;
-  await sql`INSERT INTO source_notes VALUES (1, 'First')`;
-  const schema = 'read"ing';
-  const notes = {
-    name: 'note"s',
-    query: 'SELECT id, title FROM source_notes',
-    description: "One row per note. Quotes: ' and \\; DROP TABLE source_notes;",
-    columns: { id: 'Source note ID.', title: "The note's title." },
-  };
-  const titles = {
-    name: 'titles',
-    query: 'SELECT title FROM "read""ing"."note""s"',
-    description: 'One title per note.',
-    columns: { title: 'Note title.' },
-  };
-  await sql.begin((transaction) =>
-    publishPostgresViews(transaction, { schema, views: [notes, titles] }),
-  );
-  const metadata = () => sql`
-    SELECT obj_description(c.oid, 'pg_class') AS description,
-      a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type,
-      col_description(c.oid, a.attnum) AS column_description
-    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-    JOIN pg_attribute a ON a.attrelid = c.oid
-    WHERE n.nspname = ${schema} AND c.relname = ${notes.name}
-      AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum`;
-  assert.deepEqual(
-    [...(await metadata())],
-    [
-      {
-        description: notes.description,
-        name: 'id',
-        type: 'integer',
-        column_description: notes.columns.id,
-      },
-      {
-        description: notes.description,
-        name: 'title',
-        type: 'text',
-        column_description: notes.columns.title,
-      },
-    ],
-  );
-  assert.deepEqual(
-    [...(await sql`SELECT * FROM "read""ing".titles`)],
-    [{ title: 'First' }],
-  );
-  await sql`UPDATE source_notes SET title = 'Changed' WHERE id = 1`;
-  assert.deepEqual(
-    [...(await sql`SELECT * FROM "read""ing".titles`)],
-    [{ title: 'Changed' }],
-  );
-
-  const revised = {
-    ...notes,
-    query: 'SELECT id::text AS id, title FROM source_notes',
-    description: 'One note, with its ID represented as text.',
-    columns: { id: 'Text note ID.', title: 'Current title.' },
-  };
-  await sql.begin((transaction) =>
-    publishPostgresViews(transaction, { schema, views: [revised, titles] }),
-  );
-  const revisedMetadata = [...(await metadata())];
-  assert.equal(revisedMetadata[0]?.type, 'text');
-  assert.equal(revisedMetadata[0]?.description, revised.description);
-  assert.equal(revisedMetadata[0]?.column_description, revised.columns.id);
-
-  // Even a caller that handles a failed publication cannot commit half of it.
-  await sql.begin(async (transaction) => {
-    const incomplete: Record<string, string>[] = [
-      {},
-      { title: 'Title.', missing: 'No such column.' },
-    ];
-    for (const columns of incomplete)
-      await assert.rejects(
-        publishPostgresViews(transaction, {
-          schema,
-          views: [notes, { ...titles, columns }],
-        }),
-        /must describe exactly its output columns/,
-      );
-    await assert.rejects(
-      publishPostgresViews(transaction, {
-        schema,
-        views: [
-          notes,
-          { ...titles, query: `${titles.query}; DROP TABLE source_notes` },
-        ],
-      }),
-      /multiple commands.*prepared statement/,
-    );
-    await assert.rejects(
-      publishPostgresViews(transaction, { schema, views: [notes, notes] }),
-      /Duplicate view names/,
-    );
-    await assert.rejects(
-      publishPostgresViews(transaction, {
-        schema,
-        views: [{ ...notes, description: '\0' }],
-      }),
-      /Invalid view description/,
-    );
-    assert.deepEqual(
-      [...(await transaction`SELECT id FROM source_notes`)],
-      [{ id: 1 }],
-    );
-  });
-  assert.deepEqual([...(await metadata())], revisedMetadata);
-  await sql`CREATE VIEW outside AS SELECT id FROM "read""ing"."note""s"`;
-  await assert.rejects(
-    sql.begin((transaction) =>
-      publishPostgresViews(transaction, { schema, views: [notes, titles] }),
-    ),
-    /other objects depend on it/,
-  );
-  assert.deepEqual([...(await sql`SELECT * FROM outside`)], [{ id: '1' }]);
-  assert.deepEqual(
-    [...(await sql`SELECT * FROM "read""ing".titles`)],
-    [{ title: 'Changed' }],
-  );
-  assert.deepEqual([...(await metadata())], revisedMetadata);
-});
-
 test('two loads into one schema commit side by side across their commits, and readers keep reading', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
@@ -298,7 +167,7 @@ test('two loads into one schema commit side by side across their commits, and re
   );
 });
 
-test('Postgres stores per-field attachment references and reconciles only the files that its committed rows and the rows of their history retain', async () => {
+test('Postgres stores per-field attachment references and reconciles only the files that its committed rows and the rows of their history retain, and a clear forgets them', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-local-pg-');
 
   await using database = await databases.database();
@@ -451,7 +320,7 @@ test('Postgres stores per-field attachment references and reconciles only the fi
   await pipeline.clear();
   assert.equal((await loaded()).length, 0);
   for (const directory of directories)
-    assert.equal((await storedFiles(directory)).length, 2);
+    assert.equal((await storedFiles(directory)).length, 0);
 });
 
 test('renamed file columns keep their original bytes and stored files through later commits', async () => {
@@ -934,8 +803,8 @@ test('file text and bounded original bytes survive replay, replacement and delet
   assert.equal(await orphanCount(), 0);
 
   await pipeline.clear();
-  // The clear empties the table, and its history keeps each row it cleared,
-  // and so every chunk.
+  // The clear empties the table and forgets each row it cleared, so no row
+  // of its history keeps a chunk.
   assert.equal(
     (await sql`SELECT count(*)::int AS n FROM apple_notes.attachments`)[0]?.n,
     0,
@@ -945,7 +814,7 @@ test('file text and bounded original bytes survive replay, replacement and delet
     (
       await sql.unsafe(`SELECT count(*)::int AS n FROM ${store.qualifiedName}`)
     )[0]?.n,
-    4,
+    0,
   );
   assert.equal(
     (await sql`SELECT count(*)::int AS n FROM apple_notes._elt_checkpoints`)[0]

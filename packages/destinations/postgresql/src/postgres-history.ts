@@ -1,14 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import type postgres from 'postgres';
-
 import { quote } from './identifier.ts';
 import type { EncodedValue } from './postgres-column.ts';
 import { storedColumns } from './postgres-fit.ts';
 import { expireBefore, minValid } from './postgres-numbering.ts';
-
-// A session, or a transaction of one, such as a clear's.
-type Queries = Pick<postgres.Sql, 'unsafe'>;
+import type { Queries } from './postgres-session.ts';
 
 export const version = '"_elt_row_hash"';
 
@@ -75,7 +71,7 @@ export class TargetHistory {
     });
     if (rewritten) {
       const changedIn = await change();
-      await expireBefore(sql, changedIn);
+      await expireBefore(sql, changedIn, 'type');
       await sql.unsafe(
         `DELETE FROM ${this.qualifiedName} WHERE "replaced_in" <= $1`,
         [changedIn],
@@ -132,6 +128,28 @@ export class TargetHistory {
       `INSERT INTO ${this.qualifiedName} (${quoted.join(', ')}, "replaced_in") SELECT ${quoted.map((column) => `"_elt_old".${column}`).join(', ')}, ${Math.trunc(replacedIn)} ${rows}`,
       [...params],
     );
+  }
+
+  // Deletes the rows of the target that where selects, in commit replacedIn,
+  // and keeps them first. where is a WHERE clause over the target named
+  // "_elt_old", or nothing for every row.
+  async remove(
+    sql: Queries,
+    replacedIn: number,
+    target: string,
+    where: string,
+    params: readonly string[] = [],
+  ): Promise<void> {
+    await this.keep(
+      sql,
+      replacedIn,
+      target,
+      `FROM ${target} AS "_elt_old"${where}`,
+      params,
+    );
+    await sql.unsafe(`DELETE FROM ${target} AS "_elt_old"${where}`, [
+      ...params,
+    ]);
   }
 }
 

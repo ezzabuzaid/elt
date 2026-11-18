@@ -33,11 +33,6 @@ const writer = stack.adopt(
 
 await pipeline.run({ signal: shutdown.signal });
 
-// A reading takes its position from the numbering in _warehouse, which the
-// pass made. agent_reader reads that and nothing else of _warehouse.
-await writer`GRANT USAGE ON SCHEMA _warehouse TO agent_reader`;
-await writer`GRANT SELECT ON _warehouse._elt_epoch, _warehouse._elt_commits, _warehouse._elt_loads, _warehouse._elt_commit_numbers TO agent_reader`;
-
 // The positions and readings of the database, as agent_reader. No load goes
 // through this destination.
 const reader = new PostgresDestination({ url: readerUrl, schema: 'marts' });

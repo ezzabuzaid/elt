@@ -45,7 +45,7 @@ roles: warehouse (loads, owns the database) · agent_reader (reads marts only)
 The privileges are the barrier.
 
 - `warehouse` logs in, owns the `warehouse` database, loads the raw schemas and publishes `marts`.
-- `agent_reader` has `CONNECT` on the database, `USAGE` on `marts` and `SELECT` on its relations, and nothing else. It has no `TEMP`, no `CREATE`, and no access to the raw schemas. Views run with the rights of their owner.
+- `agent_reader` has `CONNECT` on the database, `USAGE` on `marts` and `SELECT` on its relations, and, once a pipeline names it as a reader, `SELECT` on the commit numbering in `_warehouse`. It has nothing else. It has no `TEMP`, no `CREATE`, and no access to the raw schemas. Views run with the rights of their owner.
 - `agent_reader` is `NOINHERIT`, with a limit of 5 connections.
 - The settings of `agent_reader` are only defaults, because a session can change them: `default_transaction_read_only = on`, `statement_timeout = 30s`, `idle_in_transaction_session_timeout = 60s` and `search_path = marts`.
 
@@ -55,7 +55,7 @@ The Postgres image runs the scripts in `infra/init` one time, when it makes the 
 
 - `01-roles.sh` makes the roles `warehouse` and `agent_reader` and the database `warehouse`, in the `postgres` database. It reads the passwords from `WAREHOUSE_PASSWORD` and `AGENT_PASSWORD`.
 - `02-marts.sh` runs `infra/init/marts/contract.sql` in the `warehouse` database. The contract revokes `PUBLIC` access to the database and to `public`, gives `agent_reader` `CONNECT`, makes `marts` owned by `warehouse`, gives `agent_reader` `USAGE` on `marts`, and sets default privileges so that each table and view that the `warehouse` role makes in `marts` is readable by `agent_reader`.
-- No application code grants access.
+- No application code grants access to `marts`. A pipeline whose readings run as `agent_reader` names it in `PostgresSyncHistory({ readers })`, which grants it the commit numbering in `_warehouse` and nothing else of it.
 - To apply a changed contract, make the volume again with `npx nx run infra:reset`.
 - `PostgresSyncHistory` publishes `catalog` when the pipeline installs it. elt-postgresql makes each reader view with its table, at the first commit of the stream. A later commit does not replace it.
 

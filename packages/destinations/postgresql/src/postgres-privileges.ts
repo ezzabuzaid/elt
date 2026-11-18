@@ -1,5 +1,5 @@
 import { quote } from './identifier.ts';
-import type { Transaction } from './postgres-load.ts';
+import type { Queries } from './postgres-session.ts';
 
 // One privilege a role holds on a relation, or on one column of it.
 type Grant = {
@@ -41,11 +41,11 @@ export class Privileges {
     this.#grants = grants;
   }
 
-  static async of(sql: Transaction, relation: string): Promise<Privileges> {
+  static async of(sql: Queries, relation: string): Promise<Privileges> {
     return new Privileges(await sql.unsafe<Grant[]>(grantsOf, [relation]));
   }
 
-  async apply(sql: Transaction, relation: string): Promise<void> {
+  async apply(sql: Queries, relation: string): Promise<void> {
     const keptKeys = new Set(this.#grants.map(key));
     const held = await sql.unsafe<Grant[]>(grantsOf, [relation]);
     const heldKeys = new Set(held.map(key));

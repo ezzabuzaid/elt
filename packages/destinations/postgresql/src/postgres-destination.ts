@@ -56,6 +56,12 @@ export class PostgresDestination extends Destination<PostgresTable> {
     Object.freeze(this);
   }
 
+  // The connection URL, for the views and computed datasets of the
+  // destination. A getter, so neither JSON nor util.inspect shows it.
+  get url(): string {
+    return this.#url;
+  }
+
   override location(target: PostgresTable): string {
     return `${quote(this.schema)}.${target.quotedName}`;
   }
@@ -66,10 +72,11 @@ export class PostgresDestination extends Destination<PostgresTable> {
     clock: PipelineClock;
     connection: string;
   }): Promise<Load<PostgresTable>> {
-    const load = await PostgresLoad.open(this.#url, {
-      ...owner,
-      retention: this.retention,
-    });
+    const load = await PostgresLoad.open(
+      this.#url,
+      { connector: owner.connection },
+      { clock: owner.clock, retention: this.retention },
+    );
     return {
       prepare: (configuration, target, binding) =>
         this.createWriter(configuration, target).prepare(load, binding),

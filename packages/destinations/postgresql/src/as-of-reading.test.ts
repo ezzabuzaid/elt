@@ -29,7 +29,6 @@ import {
   PostgresDestination,
   PostgresSyncHistory,
   type PostgresTable,
-  publishPostgresViews,
 } from './index.ts';
 
 const databases = new Postgres({ environment: process.env });
@@ -735,8 +734,10 @@ test('the rows of a partition that a later pass resets read as of the position b
   );
 });
 
-test('a clear empties the target at a position of its own, and the rows it cleared read as of the position before it', async () => {
+test('a clear empties the target at a position of its own and forgets the rows it cleared: the position before it expires, naming the clear, and the history keeps none of them', async () => {
   await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = client(database.connectionString, clients);
   const { destination, connection } = warehouse(database.connectionString);
   const pipeline = connection({
     notes: [
@@ -747,25 +748,30 @@ test('a clear empties the target at a position of its own, and the rows it clear
   });
   await pipeline.run();
   const before = await newest(destination);
-  const rows = await asOf(
-    destination,
-    'SELECT * FROM marts.raw_notes ORDER BY id',
-  );
+  await connection({
+    notes: [note('notes', 'n1', 2), checkpoint('notes', 2)],
+  }).run();
 
   await pipeline.clear();
   const cleared = await destination.reading();
   if ('expired' in cleared) assert.fail(cleared.expired);
   await using _cleared = cleared;
+  const earlier = await destination.reading(before);
+  if (!('expired' in earlier)) {
+    await earlier[Symbol.asyncDispose]();
+    assert.fail('the position before the clear is still readable');
+  }
+  const [history] = await sql<{ name: string }[]>`
+    SELECT format('%I.%I', n.nspname, c.relname) AS name
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname LIKE '\_elt\_history\_%'`;
 
   assert.notEqual(cleared.position, before);
   assert.deepEqual([...(await cleared.sql`SELECT * FROM marts.raw_notes`)], []);
+  assert.match(earlier.expired, /a clear that forgot the rows of its table/);
   assert.deepEqual(
-    await asOf(
-      destination,
-      'SELECT * FROM marts.raw_notes ORDER BY id',
-      before,
-    ),
-    rows,
+    [...(await sql.unsafe(`SELECT count(*)::int AS n FROM ${history?.name}`))],
+    [{ n: 0 }],
   );
 });
 
@@ -1154,7 +1160,7 @@ test('a stream whose field changes type, or that drops a field, evolves the tabl
   );
 });
 
-test('a view over the reader view, and a published view of marts that names it with its schema, read as of the position', async () => {
+test('views over the reader view, in marts and in another schema, read as of the position', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const sql = client(database.connectionString, clients);
@@ -1162,19 +1168,7 @@ test('a view over the reader view, and a published view of marts that names it w
   await connection({
     notes: [note('notes', 'n1', 1), checkpoint('notes', 1)],
   }).run();
-  await sql.begin((transaction) =>
-    publishPostgresViews(transaction, {
-      schema: 'marts',
-      views: [
-        {
-          name: 'note_bodies',
-          description: 'Bodies of notes.',
-          columns: { id: 'Note id.', body: 'Text of the note.' },
-          query: 'SELECT id, body FROM marts.raw_notes',
-        },
-      ],
-    }),
-  );
+  await sql`CREATE VIEW marts.note_bodies AS SELECT id, body FROM marts.raw_notes`;
   await sql`CREATE SCHEMA reports`;
   await sql`CREATE VIEW reports.long_notes AS SELECT id FROM marts.note_bodies WHERE length(body) > 1`;
   const before = await newest(destination);

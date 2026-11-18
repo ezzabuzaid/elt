@@ -1,6 +1,6 @@
 # elt-postgresql
 
-A host wants the data that elt copies in a Postgres database, with typed columns, which readers query while the loads run. The Postgres destination loads the tables of each connection into one schema, keeps a reader view of each table in a different schema, and publishes documented views. Its checkpoint store and its sync history keep their data in the same database. The words that all of elt uses, for example pass, commit, writer and checkpoint, are in the glossary of [elt](../../elt/CONTEXT.md).
+A host wants the data that elt copies in a Postgres database, with typed columns, which readers query while the loads run. The Postgres destination loads the tables of each connection into one schema, keeps a reader view of each table in a different schema, and keeps the views and computed datasets that the pipeline derives from them. Its checkpoint store and its sync history keep their data in the same database. The words that all of elt uses, for example pass, commit, writer and checkpoint, are in the glossary of [elt](../../elt/CONTEXT.md).
 
 ## Language
 
@@ -14,11 +14,15 @@ _Avoid_: Staging table, source table
 
 **Reader view**:
 The view that a load keeps of a raw table in a different schema, with `withReaderView`, for example `marts.search_console_sitemaps`. It shows the external schema of the stream, its columns and `loaded_at`, with their comments. The internal columns `committed_in`, `_elt_row_hash` and `replaced_in` are for the SQL of the destination only.
-_Avoid_: Mart (a mart is the schema `marts`), documented view
+_Avoid_: Mart (a mart is the schema `marts`), view (a view is a derived dataset)
 
-**Documented view**:
-A view that the application defines with SQL and publishes with `publishPostgresViews`, with a description of the view and of each column.
-_Avoid_: Reader view, materialized view
+**View**:
+A derived dataset that Postgres computes on each read, such as `marts.unread_count`: a `View` that a pipeline declares in `derived`. It appears when its query compiles, and it waits while a relation that the pipeline makes is missing. See the glossary of [elt](../../elt/CONTEXT.md).
+_Avoid_: Documented view, reader view (a reader view is the view of one raw table)
+
+**Computed dataset**:
+A derived dataset that a rule computes on write, one row for each input key, in the table `raw_<name>` with the view `<name>`, such as `marts.document_text`.
+_Avoid_: Materialized view (Postgres refreshes a materialized view whole)
 
 **Comment**:
 The native Postgres description of a table, view or column. The descriptions of the source become comments.
@@ -69,7 +73,7 @@ A change of the type of a column that maps each old value to one value of the ne
 _Avoid_: Promotion, relaxation (the names that Iceberg and BigQuery use), compatible change
 
 **Min valid**:
-`min_valid` in `_warehouse._elt_epoch`: the oldest commit that a reading can read as of. The retention sets it to the newest position older than its window, and a change of type that is not a widening sets it to its own commit; `expired_by` names which one set it last. Each position before it is expired.
+`min_valid` in `_warehouse._elt_epoch`: the oldest commit that a reading can read as of. The retention sets it to the newest position older than its window, and a change of type that is not a widening, or a clear, sets it to its own commit; `expired_by` names which one set it last. Each position before it is expired.
 _Avoid_: Low-water mark
 
 **Retention**:

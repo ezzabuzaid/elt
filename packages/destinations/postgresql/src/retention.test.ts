@@ -455,7 +455,7 @@ test('a pass that stays open longer than the window leaves the position before i
   assert.deepEqual(await asOf(destination, body, first), [{ body: 'first' }]);
 });
 
-test('a clear after the window deletes the history that only positions older than the window read', async () => {
+test('a clear expires more than the retention: the positions start at the clear, and the history keeps no row of the table', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const sql = client(database.connectionString, clients);
@@ -464,19 +464,20 @@ test('a clear after the window deletes the history that only positions older tha
     Temporal.Duration.from({ seconds: 1 }),
   );
   await pass({ notes: [note('n1', 1, 'first'), checkpoint('notes', 1)] }).run();
-  const first = await newest(destination);
   const pipeline = pass({
     notes: [note('n1', 2, 'second'), checkpoint('notes', 2)],
   });
   await pipeline.run();
   const second = await newest(destination);
-  elapse({ milliseconds: 1500 });
 
   await pipeline.clear();
 
-  assert.deepEqual(await kept(sql), ['second']);
-  assert.match(await expiredReading(destination, first), retentionReason);
-  assert.deepEqual(await asOf(destination, body, second), [{ body: 'second' }]);
+  assert.deepEqual(await kept(sql), []);
+  assert.match(
+    await expiredReading(destination, second),
+    /a clear that forgot the rows of its table/,
+  );
+  assert.deepEqual(await destination.positions(), [await newest(destination)]);
 });
 
 test('a commit after the window deletes the stored files that only expired history rows refer to, and keeps the files of current rows and of newer history rows', async () => {

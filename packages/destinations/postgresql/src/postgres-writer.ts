@@ -25,7 +25,11 @@ import { PostgresFileStore } from './postgres-file-store.ts';
 import { storedColumns, storedFit } from './postgres-fit.ts';
 import { TargetHistory, rowHash, version } from './postgres-history.ts';
 import type { PostgresLoad, Transaction } from './postgres-load.ts';
-import { commitOnce, installNumbering } from './postgres-numbering.ts';
+import {
+  commitOnce,
+  expireBefore,
+  installNumbering,
+} from './postgres-numbering.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
 import { PostgresSession, lockSchema, makeSchema } from './postgres-session.ts';
 import type { PostgresTable } from './postgres-table.ts';
@@ -215,15 +219,11 @@ export abstract class PostgresWriter extends Writer {
   ): Promise<void> {
     const target = { table: this.qualifiedName, id: 'ctid' };
     const staged = { table: stage, id: seq, rows: this.kept(stage) };
-    const leaving = this.#unmatched(target, staged);
-    await this.#history.keep(
+    await this.#history.remove(
       sql,
       written.committedIn,
       this.qualifiedName,
-      `FROM ${this.qualifiedName} AS "_elt_old" WHERE "_elt_old".ctid IN (${leaving})`,
-    );
-    await sql.unsafe(
-      `DELETE FROM ${this.qualifiedName} WHERE ctid IN (${leaving})`,
+      ` WHERE "_elt_old".ctid IN (${this.#unmatched(target, staged)})`,
     );
     await this.initialize(sql, false);
     await sql.unsafe(
@@ -358,7 +358,9 @@ export abstract class PostgresWriter extends Writer {
       );
       if (row !== undefined && row.writer !== writer)
         throw new TargetOwnedError(this.table.name, String(row.writer), writer);
-      // Emptied, not dropped: views built on the table, such as marts, keep working.
+      // Emptied, not dropped: views built on the table, such as marts, keep
+      // working. The rows it removes are forgotten: each position before the
+      // clear expires, so the history keeps none of them, nor their files.
       const [table] = await transaction.unsafe(
         'SELECT to_regclass($1) IS NOT NULL AS "exists"',
         [this.qualifiedName],
@@ -370,18 +372,8 @@ export abstract class PostgresWriter extends Writer {
           new Date(clock.Date.now()),
           this.#retention,
         );
-        await this.#history.create(
-          transaction,
-          this.qualifiedName,
-          async () => committedIn,
-        );
-        await this.#history.keep(
-          transaction,
-          committedIn,
-          this.qualifiedName,
-          `FROM ${this.qualifiedName} AS "_elt_old"`,
-        );
         await transaction.unsafe(`DELETE FROM ${this.qualifiedName}`);
+        await expireBefore(transaction, committedIn, 'clear');
         await this.#history.expire(transaction);
       }
       // Clearing a copy also abandons the reload it left open.
@@ -394,7 +386,8 @@ export abstract class PostgresWriter extends Writer {
           'SELECT to_regclass($1) IS NOT NULL AS "exists"',
           [store.qualifiedName],
         );
-        // With no rows left, only the history refers to stored files.
+        // No row is left in the table or its history, so no stored file
+        // stays.
         if (chunks?.exists === true)
           await store.prune(transaction, [this.#history.qualifiedName]);
       }
@@ -520,15 +513,11 @@ export abstract class PostgresWriter extends Writer {
   async #reloadInPlace(sql: Transaction, committedIn: number): Promise<void> {
     const target = { table: this.qualifiedName, id: 'ctid' };
     const reloaded = { table: this.#hidden, id: 'ctid' };
-    const leaving = this.#unmatched(target, reloaded);
-    await this.#history.keep(
+    await this.#history.remove(
       sql,
       committedIn,
       this.qualifiedName,
-      `FROM ${this.qualifiedName} AS "_elt_old" WHERE "_elt_old".ctid IN (${leaving})`,
-    );
-    await sql.unsafe(
-      `DELETE FROM ${this.qualifiedName} WHERE ctid IN (${leaving})`,
+      ` WHERE "_elt_old".ctid IN (${this.#unmatched(target, reloaded)})`,
     );
     await sql.unsafe(
       `INSERT INTO ${this.qualifiedName} (${this.written.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, "loaded_at", $1::integer, ${version} FROM ${this.#hidden} WHERE ctid IN (${this.#unmatched(reloaded, target)}) ORDER BY ctid`,
@@ -890,14 +879,9 @@ export abstract class PostgresWriter extends Writer {
           const history = open() ? null : this.#history;
           for (const partition of resets) {
             const [rows, values] = this.#scope(partition);
-            await history?.keep(
-              sql,
-              committedIn,
-              into(),
-              `FROM ${into()} AS "_elt_old"${rows}`,
-              values,
-            );
-            await sql.unsafe(`DELETE FROM ${into()}${rows}`, values);
+            if (history === null)
+              await sql.unsafe(`DELETE FROM ${into()}${rows}`, values);
+            else await history.remove(sql, committedIn, into(), rows, values);
           }
           for (const store of stores) await store.publish(sql);
           const written = { loadedAt: load.loadedAt, committedIn };
