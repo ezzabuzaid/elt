@@ -285,7 +285,7 @@ As in [elt-postgresql](../postgresql/README.md#reader-views). `committed_in`, `_
 
 ## Declare a view
 
-As in [elt-postgresql](../postgresql/README.md#declare-a-view). The view lives in the schema of `into`, and the bare names of its SQL must be found in that schema, as in Postgres. SQL Server resolves a bare name inside a view through the schema of the view and then `dbo` (to probe; if the probe shows the default schema of the user, the destination refuses a bare name at the declaration). Name a relation of another schema with its schema, such as `sharepoint.raw_drive_items`. A missing relation is error 208 (`Invalid object name`), and the view waits only when the pipeline makes that relation. A refresh that changes nothing compares the stored definition (`OBJECT_DEFINITION`) with the new text, and leaves the view as it was.
+As in [elt-postgresql](../postgresql/README.md#declare-a-view). The view lives in the schema of `into`, and the bare names of its SQL must be found in that schema, as in Postgres. SQL Server resolves a bare name inside a view through the schema of the view and then `dbo`, for each user; the default schema of the user takes no part ([probe of 2026-11-20](./docs/adr/0006-a-change-of-a-table-refreshes-the-views-over-it.md#probe-2026-11-20-a-bare-table-name-inside-a-view)). Name a relation of another schema with its schema, such as `sharepoint.raw_drive_items`. A missing relation is error 208 (`Invalid object name`), and the view waits only when the pipeline makes that relation. A refresh that changes nothing compares the stored definition (`OBJECT_DEFINITION`) with the new text, and leaves the view as it was.
 
 ## Declare a computed dataset
 
@@ -367,15 +367,17 @@ Checked on 2026-11-19 (Node.js 26.13.0; npm search for `sql server destination`,
 
 ## Probes to run before code
 
-Each decision above that depends on the behavior of the server has a probe. Run each one on the Azure SQL database of datahub and on SQL Server 2025 in Docker, and paste the output into the ADR:
+Each decision above that depends on the behavior of the server has a probe. Run each one on the Azure SQL database of datahub and on SQL Server 2025 in Docker, and paste the output into the ADR.
 
-- `MIN_ACTIVE_ROWVERSION()` read before a `SNAPSHOT` transaction: a commit at or below the mark is always visible to the snapshot ([ADR 0002](./docs/adr/0002-a-commit-number-is-the-rowversion-of-its-commit-row.md)).
-- `MERGE` with `OUTPUT` into the history, through composable DML, on a table with a `VECTOR` column and a DiskANN index ([ADR 0005](./docs/adr/0005-a-commit-is-one-merge-whose-output-keeps-the-replaced-rows-in-the-history.md)).
-- `OPENJSON … WITH (v NVARCHAR(MAX) '$.v')` with `CAST(v AS VECTOR(1536))` for a batch of 64 vectors ([ADR 0011](./docs/adr/0011-a-batch-travels-as-one-json-parameter-that-openjson-reads.md)).
-- `sp_rename` of a table while a view reads it, then `sp_refreshview`; and the error of a `SCHEMABINDING` view ([ADR 0006](./docs/adr/0006-a-change-of-a-table-refreshes-the-views-over-it.md)).
-- `is_read_committed_snapshot_on` and `snapshot_isolation_state` of the datahub database.
-- How SQL Server resolves a bare table name inside a view in the schema `marts`, when the user that runs the query has another default schema.
-- Whether a point-in-time restore of Azure SQL changes `recovery_fork_guid` in `sys.database_recovery_status`, so a restored database can start a new epoch.
+All seven ran on 2026-11-20, on Azure SQL Database (datahub BILLING) and on SQL Server 2025 (RTM-CU11) in Docker, except where a line says otherwise. Two results contradict a decision and need Ezz.
+
+- Done: `MIN_ACTIVE_ROWVERSION()` read before a `SNAPSHOT` transaction: a commit at or below the mark is always visible to the snapshot. Holds ([ADR 0002, probe](./docs/adr/0002-a-commit-number-is-the-rowversion-of-its-commit-row.md#probe-2026-11-20-the-high-water-mark-and-a-snapshot-transaction)).
+- Done: `MERGE` with `OUTPUT` into the history, through composable DML, on a table with a `VECTOR` column and a DiskANN index. Holds; the index was on Azure SQL only, because SQL Server 2025 in Docker has none ([ADR 0005, probe](./docs/adr/0005-a-commit-is-one-merge-whose-output-keeps-the-replaced-rows-in-the-history.md#probe-2026-11-20)).
+- Done: `OPENJSON … WITH (v NVARCHAR(MAX) '$.v')` with `CAST(v AS VECTOR(1536))` for a batch of 64 vectors. Holds; a base64 column must be `varchar(max)` for `BASE64_DECODE` ([ADR 0011, probe](./docs/adr/0011-a-batch-travels-as-one-json-parameter-that-openjson-reads.md#probe-2026-11-20)).
+- Done: `sp_rename` of a table while a view reads it, then `sp_refreshview`; and the error of a `SCHEMABINDING` view. The refresh holds; **a `SCHEMABINDING` view does not stop an `ADD` or a change of a column that it does not read, which contradicts the decision: needs Ezz** ([ADR 0006, probe](./docs/adr/0006-a-change-of-a-table-refreshes-the-views-over-it.md#probe-2026-11-20-sp_rename-sp_refreshview-and-schemabinding)).
+- Done: `is_read_committed_snapshot_on` and `snapshot_isolation_state` of the datahub database. Both on ([ADR 0010, probe](./docs/adr/0010-a-reading-sets-its-position-in-the-session-context-and-reads-row-versions.md#probe-2026-11-20)).
+- Done: How SQL Server resolves a bare table name inside a view in the schema `marts`, when the user that runs the query has another default schema. The schema of the view, then `dbo`, never the default schema of the user; the user with another default schema ran in Docker only ([ADR 0006, probe](./docs/adr/0006-a-change-of-a-table-refreshes-the-views-over-it.md#probe-2026-11-20-a-bare-table-name-inside-a-view)).
+- Done: Whether a point-in-time restore of Azure SQL changes `recovery_fork_guid` in `sys.database_recovery_status`, so a restored database can start a new epoch. Ran in Docker only (Ezz, 2026-11-19): on SQL Server 2025 each restore changes it and the numbers repeat after the restore point; **Azure SQL Database has no `sys.database_recovery_status`, which contradicts the epoch rule there: needs Ezz** ([ADR 0002, probe](./docs/adr/0002-a-commit-number-is-the-rowversion-of-its-commit-row.md#probe-2026-11-20-recovery_fork_guid-after-a-restore)).
 
 ## Decisions
 

@@ -30,3 +30,30 @@ SQL Server gives both parts:
 - To probe: the two settings of the datahub database.
 
 Sources: elt-postgresql README, "A reading as of a position"; `sql-server-database.ts` of sdk-microsoft-sql-server, which reads `snapshot_isolation_state`.
+
+## Probe (2026-11-20)
+
+**The decision holds as written.** The datahub database (BILLING) has both settings on. SQL Server 2025 in Docker has both off by default, which is the case where the first load fails with the failure type `config`. A read-only key of the session context refuses a change.
+
+```text
+Azure SQL Database (datahub BILLING), Microsoft SQL Azure (RTM) - 12.0.2000.8, EngineEdition 5
+SQL> SELECT is_read_committed_snapshot_on, snapshot_isolation_state, snapshot_isolation_state_desc FROM sys.databases WHERE database_id = DB_ID()
+  {"is_read_committed_snapshot_on":true,"snapshot_isolation_state":1,"snapshot_isolation_state_desc":"ON"}
+
+SQL Server 2025 in Docker, 17.0.5065.9, EngineEdition 3, a new database
+SQL> SELECT is_read_committed_snapshot_on, snapshot_isolation_state, snapshot_isolation_state_desc FROM sys.databases WHERE database_id = DB_ID()
+  {"is_read_committed_snapshot_on":false,"snapshot_isolation_state":0,"snapshot_isolation_state_desc":"OFF"}
+
+Both servers
+SQL> EXEC sp_set_session_context @key = N'elt.position', @value = N'42', @read_only = 1;
+     SELECT SESSION_CONTEXT(N'elt.position') AS position, TRY_CAST(SESSION_CONTEXT(N'elt.position') AS bigint) AS as_bigint;
+  {"position":"42","as_bigint":"42"}
+SQL> EXEC sp_set_session_context @key = N'elt.position', @value = N'43';
+  ERROR 15664 (state 1): Cannot set key 'elt.position' in the session context. The key has been set as read_only for this session.
+SQL> SELECT SESSION_CONTEXT(N'elt.position') AS position_after_attempt
+  {"position_after_attempt":"42"}
+```
+
+- Before the `SNAPSHOT` probe of ADR 0002, the probe ran `ALTER DATABASE probe SET ALLOW_SNAPSHOT_ISOLATION ON` and `ALTER DATABASE probe SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE` in Docker. No setting of BILLING was changed.
+- The key stays across the requests of one connection of `mssql`, which does not reset the session between them.
+- The probe of a restore and `recovery_fork_guid` is in [ADR 0002](./0002-a-commit-number-is-the-rowversion-of-its-commit-row.md#probe-2026-11-20-recovery_fork_guid-after-a-restore), where the epoch is decided.
