@@ -1,6 +1,6 @@
 # The SQL Server destination takes the declarations of elt-postgresql
 
-Status: proposed, for Ezz's review (2026-11-19).
+Status: accepted by Ezz (2026-11-19).
 
 Datahub keeps the datasets of its semantic layer in a SQLite file today, and it computes vectors of staff text (backlog #4738). Ezz chose on 2026-11-19 that these datasets, and the vectors, live in Azure SQL, where datahub already keeps its other data (backlog #4736). elt has a SQLite destination and a Postgres destination. Both give the same contract: one writer for each target (elt ADR 0008), the location of a target inside its destination (elt ADR 0009), evolve and reload (elt ADRs 0006, 0007), numbered commits with positions, a history of each row and retention (elt-sqlite ADR 0009), a clear that forgets (elt ADR 0023), views and computed datasets (elt-postgresql ADR 0008), and the status of each derived dataset (elt ADR 0025).
 
@@ -35,6 +35,6 @@ A host must change its destination and nothing else of its pipeline. elt-postgre
 
 - datahub moves from `SQLiteDestination` to `SqlServerDestination` and keeps its views, computed datasets and readers of `derived_status`. Its SQL changes only where SQLite SQL and T-SQL differ.
 - The destination needs SQL Server 2025, Azure SQL Database, or Azure SQL Managed Instance with the always-up-to-date policy, for the `VECTOR` and `JSON` types.
-- This is the third destination that keeps the shared rules. ADR 0012 moves them into elt.
+- This is the third destination that keeps the shared rules. ADR 0012 moves them into elt before this destination is built, and the destination takes them from there.
 
 Sources: backlog #4736, #4738; elt-postgresql ADR 0008.

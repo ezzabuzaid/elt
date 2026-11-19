@@ -1,6 +1,6 @@
 # A change of a table refreshes the views over it
 
-Status: proposed, for Ezz's review (2026-11-19).
+Status: accepted by Ezz (2026-11-19).
 
 elt-postgresql ADR 0006 saves, drops and makes again each view over a table that a change replaces, because Postgres binds a view to the OID of its tables and refuses `DROP TABLE` while a view reads it. SQLite finds the tables of a view by name at each read, so it needs nothing.
 

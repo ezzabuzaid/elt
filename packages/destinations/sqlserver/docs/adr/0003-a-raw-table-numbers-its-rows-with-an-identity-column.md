@@ -1,6 +1,6 @@
 # A raw table numbers its rows with an identity column
 
-Status: proposed, for Ezz's review (2026-11-19).
+Status: accepted by Ezz (2026-11-19).
 
 An overwrite and a reload replace the rows of a table by difference (elt-sqlite README, Commit numbers and positions): the rows match as multisets by `_elt_row_hash`, so two rows with the same values are two rows, and the commit removes one of them and keeps the other. The difference must name one row of a table with no key. SQLite names it by `_rowid_`, and Postgres by `ctid`. SQL Server has no documented row locator: `%%physloc%%` is undocumented, and it changes when a row moves to another page.
 

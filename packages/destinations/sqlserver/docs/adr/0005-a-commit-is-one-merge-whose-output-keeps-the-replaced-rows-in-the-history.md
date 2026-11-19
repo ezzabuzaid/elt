@@ -1,6 +1,6 @@
 # A commit is one MERGE whose output keeps the replaced rows in the history
 
-Status: proposed, for Ezz's review (2026-11-19).
+Status: accepted by Ezz (2026-11-19).
 
 A commit applies the operations of its stage to its table, with the result that they would have one at a time: a staged delete removes its key, `replace` keeps the last record, and `cursor_newer` keeps the first record with the greatest cursor. Before it changes or removes a row, it keeps the row in the history with `replaced_in`. A row that comes again with the same row hash stays as it is. elt-postgresql does this with `INSERT … ON CONFLICT` behind a cursor guard, and a separate copy into the history.
 

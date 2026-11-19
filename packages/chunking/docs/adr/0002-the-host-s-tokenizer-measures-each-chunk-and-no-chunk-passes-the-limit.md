@@ -1,6 +1,6 @@
 # The host's tokenizer measures each chunk, and no chunk passes the limit
 
-Status: proposed, for Ezz's review (2026-11-19)
+Status: accepted by Ezz (2026-11-19).
 
 A model refuses a text over its limit of tokens. Only the tokenizer of that model can say how many tokens a text counts. Two models of the hosts of elt already use different tokenizers: OpenAI's `text-embedding-3-small` uses `cl100k_base` (`js-tiktoken` `getEncodingNameForModel`), and EmbeddingGemma, the local model of the `Embedding` README, uses the SentencePiece vocabulary of Gemma.
 

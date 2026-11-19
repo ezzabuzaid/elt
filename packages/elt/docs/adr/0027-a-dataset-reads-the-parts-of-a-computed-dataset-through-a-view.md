@@ -1,6 +1,6 @@
 # A dataset reads the parts of a computed dataset through a view
 
-Status: proposed, for Ezz's review (2026-11-19). Design on paper for `@eltjs/chunking` (backlog #4737).
+Status: accepted by Ezz (2026-11-19). Design on paper for `@eltjs/chunking` (backlog #4737).
 
 The `from` of a computed dataset names the targets of copies and the `View`s before it in `derived`, never another computed dataset (`from: readonly (SQLiteTable | View)[]` in elt-sqlite, and `(PostgresTable | View)[]` in elt-postgresql). A view can read the view of a computed dataset that comes before it. The chunks of a text are the parts of a computed dataset (ADR 0026), and the `Embedding` rule must read them.
 

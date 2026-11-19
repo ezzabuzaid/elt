@@ -1,6 +1,6 @@
 # Chunking is a rule of its own package that runs before the embedding
 
-Status: proposed, for Ezz's review (2026-11-19)
+Status: accepted by Ezz (2026-11-19).
 
 The `Embedding` rule makes one vector for each loaded row. A SharePoint proposal can count more than 8,191 tokens, the limit of `text-embedding-3-small`. Then its row fails, and each pass tries it again. Datahub wants each proposal cut into chunks and each chunk embedded (backlog #4740). Ezz chose on 2026-11-19 to cut in the elt core, not in a SQL view that counts characters.
 

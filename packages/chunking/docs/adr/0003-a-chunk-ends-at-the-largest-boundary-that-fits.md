@@ -1,6 +1,6 @@
 # A chunk ends at the largest boundary that fits
 
-Status: proposed, for Ezz's review (2026-11-19)
+Status: accepted by Ezz (2026-11-19).
 
 A chunk that ends inside a sentence gives a vector of half a thought. A chunk that ends inside a character corrupts the text. The leaders cut recursively: they try the largest boundary first, and they split again only the pieces that do not fit.
 

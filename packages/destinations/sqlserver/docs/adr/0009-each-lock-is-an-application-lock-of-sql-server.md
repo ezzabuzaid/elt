@@ -1,6 +1,6 @@
 # Each lock is an application lock of SQL Server
 
-Status: proposed, for Ezz's review (2026-11-19).
+Status: accepted by Ezz (2026-11-19).
 
 The siblings hold three kinds of lock:
 

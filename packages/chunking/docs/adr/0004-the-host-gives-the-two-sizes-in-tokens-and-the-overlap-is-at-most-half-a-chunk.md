@@ -1,6 +1,6 @@
 # The host gives the two sizes in tokens, and the overlap is at most half a chunk
 
-Status: proposed, for Ezz's review (2026-11-19)
+Status: accepted by Ezz (2026-11-19).
 
 The leaders do not agree on a size of a chunk or of its overlap:
 

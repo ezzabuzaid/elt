@@ -1,6 +1,6 @@
 # The rule identity of a chunk is the package version, the tokenizer and the two sizes
 
-Status: proposed, for Ezz's review (2026-11-19)
+Status: accepted by Ezz (2026-11-19).
 
 A computed dataset makes an output again when its rule identity changes ([ADR 0005 of elt](../../../elt/docs/adr/0005-an-output-is-made-again-when-its-rule-identity-changes.md)). The chunks of a text change when the vocabulary changes, when a size changes, or when the code that cuts changes. ADR 0005 of elt rejects a version number that a person increases, because a person forgets it.
 

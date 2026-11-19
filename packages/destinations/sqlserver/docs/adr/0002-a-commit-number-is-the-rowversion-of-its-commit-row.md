@@ -1,6 +1,6 @@
 # A commit number is the rowversion of its commit row
 
-Status: proposed, for Ezz's review (2026-11-19).
+Status: accepted by Ezz (2026-11-19).
 
 A reader needs the high-water mark: the highest commit number below which each number is settled, so that a snapshot shows each commit at or below it. Commits of many connections run side by side, so a number can still be in flight while a higher one has committed.
 

@@ -1,6 +1,6 @@
 # @eltjs/chunking
 
-> **Design on paper, for review.** No code, `package.json` or `tsconfig` exists yet. Each ADR is `proposed, for Ezz's review (2026-11-19)`. Backlog #4737. The engine change that this package needs is in [ADR 0026](../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md) and [ADR 0027](../elt/docs/adr/0027-a-dataset-reads-the-parts-of-a-computed-dataset-through-a-view.md) of elt.
+> **Design on paper, accepted by Ezz on 2026-11-19.** No code, `package.json` or `tsconfig` exists yet. It is built after the shared refresh moves into elt (#4649). Backlog #4737. The engine change that this package needs is in [ADR 0026](../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md) and [ADR 0027](../elt/docs/adr/0027-a-dataset-reads-the-parts-of-a-computed-dataset-through-a-view.md) of elt.
 
 `Chunking` is a rule of a computed dataset. It cuts the text of each loaded row into chunks. Each chunk counts at most `maxTokens` tokens, as the tokenizer of the embedding model counts them. Then the `Embedding` rule of [`@eltjs/embedding`](../embedding/README.md) makes one vector for each chunk.
 
@@ -92,9 +92,9 @@ new Pipeline({
 ```
 
 - `tokenizer` is the tokenizer of the embedding model. `text-embedding-3-small` uses `cl100k_base`. The package does not choose a tokenizer, because each model has its own ([ADR 0002](./docs/adr/0002-the-host-s-tokenizer-measures-each-chunk-and-no-chunk-passes-the-limit.md)).
-- `maxTokens` and `overlapTokens` have no default. The example uses the defaults of OpenAI's own file search, 800 and 400 ([ADR 0004](./docs/adr/0004-the-host-gives-the-two-sizes-in-tokens-and-the-overlap-is-at-most-half-a-chunk.md)).
+- `maxTokens` and `overlapTokens` have no default. The example uses the defaults of OpenAI's own file search, 800 and 400 ([ADR 0004](./docs/adr/0004-the-host-gives-the-two-sizes-in-tokens-and-the-overlap-is-at-most-half-a-chunk.md)). Datahub takes its sizes from an eval on its own proposals.
 - `key` and `fields` are as in `Embedding`: the column that identifies a row, and the columns whose text the rule cuts, joined with line breaks. A row with no text in these columns has no chunks.
-- A search joins `document_chunk_vectors` to `document_chunks_parts` on `id = part_hash`, and gets the ref, the order and the text of each chunk that matched.
+- A search joins `document_chunk_vectors` to `document_chunks_parts` on `id = part_hash`, and gets the ref, the order, the text and the offsets of each chunk that matched.
 
 ## The signatures
 
@@ -111,7 +111,8 @@ export abstract class TableRule<Input, Output> {
     readonly name: string;
     readonly description: string;
   };
-  abstract readonly output: Readonly<Record<string, RuleColumn>>; // the columns of each part
+  abstract readonly output: Readonly<Record<string, RuleColumn>>; // the content columns of each part, in its part hash
+  abstract readonly place: Readonly<Record<string, RuleColumn>>; // the place columns of each part, not in its part hash
   abstract readonly batch: number;
   abstract readonly concurrency: number;
   abstract read(
@@ -132,7 +133,7 @@ export type Tokenizer = {
   count(text: string): number;
 };
 
-export class Chunking extends TableRule<string, string> {
+export class Chunking extends TableRule<string, string | number> {
   constructor(options: {
     tokenizer: Tokenizer;
     maxTokens: number;
@@ -143,33 +144,36 @@ export class Chunking extends TableRule<string, string> {
 }
 ```
 
-`Chunking` has one output column, `text`. Its batch is 32 inputs and its concurrency is 1: the work is synchronous, so calls side by side gain nothing, and a batch keeps the commits few.
+`Chunking` has two content columns, `text` and `tokens`, and two place columns, `start` and `end` ([ADR 0006](./docs/adr/0006-each-chunk-gives-its-offsets-and-its-count-of-tokens.md)). Its batch is 32 inputs and its concurrency is 1: the work is synchronous, so calls side by side gain nothing, and a batch keeps the commits few.
 
 ## What happens underneath
 
-| Call or event                              | What happens                                                                                                                                                                                                                                  |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `new Chunking({ … })`                      | Refuses `maxTokens` below 1, `overlapTokens` below 0, and `overlapTokens` above half of `maxTokens`, with a `RangeError` that names the value                                                                                                 |
-| `read(row)`                                | Gives the key and the text of `fields`, joined with line breaks. `null` when the row has no key or no text                                                                                                                                    |
-| `identity(text)`                           | `@eltjs/chunking@<version> <tokenizer.name> <maxTokens>/<overlapTokens>`, the same for each input ([ADR 0005](./docs/adr/0005-the-rule-identity-of-a-chunk-is-the-package-version-the-tokenizer-and-the-two-sizes.md))                        |
-| `compute(texts)`, a text that fits         | One part: the text with its white space at the start and the end removed                                                                                                                                                                      |
-| `compute(texts)`, a longer text            | Cuts at the largest boundary that fits: paragraph, line, sentence, word, grapheme ([ADR 0003](./docs/adr/0003-a-chunk-ends-at-the-largest-boundary-that-fits.md)). Counts the text of each chunk with `tokenizer.count`                       |
-| `compute(texts)`, overlap                  | Each chunk after the first starts with the last whole pieces of the chunk before it, up to `overlapTokens` tokens. Each chunk starts after the start of the chunk before it                                                                   |
-| a refresh writes an output                 | Writes the output row and its parts in one transaction. A part with the same values keeps its commit. A part beyond the new count goes into the history ([ADR 0026 of elt](../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md)) |
-| the text of a document changes             | Its input hash changes, so the refresh cuts it again. The chunks before the change have the same text, the same part hash, and keep their vectors. Only new chunk texts go to the model                                                       |
-| the package is released, or a size changes | The rule identity changes, so the next refresh cuts each text again. Each chunk text that did not change keeps its part hash and its vector                                                                                                   |
-| the document is removed                    | The refresh deletes its output row and its parts. The vector of a part hash that no chunk has any more is deleted by the refresh of the vectors                                                                                               |
+| Call or event                              | What happens                                                                                                                                                                                                                                                               |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `new Chunking({ … })`                      | Refuses `maxTokens` below 1, `overlapTokens` below 0, and `overlapTokens` above half of `maxTokens`, with a `RangeError` that names the value                                                                                                                              |
+| `read(row)`                                | Gives the key and the text of `fields`, joined with line breaks. `null` when the row has no key or no text                                                                                                                                                                 |
+| `identity(text)`                           | `@eltjs/chunking@<version> <tokenizer.name> <maxTokens>/<overlapTokens>`, the same for each input ([ADR 0005](./docs/adr/0005-the-rule-identity-of-a-chunk-is-the-package-version-the-tokenizer-and-the-two-sizes.md))                                                     |
+| `compute(texts)`, a text that fits         | One part: the text with its white space at the start and the end removed                                                                                                                                                                                                   |
+| `compute(texts)`, a longer text            | Cuts at the largest boundary that fits: paragraph, line, sentence, word, grapheme ([ADR 0003](./docs/adr/0003-a-chunk-ends-at-the-largest-boundary-that-fits.md)). Counts the text of each chunk with `tokenizer.count`                                                    |
+| `compute(texts)`, overlap                  | Each chunk after the first starts with the last whole pieces of the chunk before it, up to `overlapTokens` tokens. Each chunk starts after the start of the chunk before it                                                                                                |
+| a refresh writes an output                 | Writes the output row and its parts in one transaction. A part with the same values keeps its commit. A part beyond the new count goes into the history ([ADR 0026 of elt](../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md))                              |
+| the text of a document changes             | Its input hash changes, so the refresh cuts it again. The chunks before the change have the same text, the same part hash, and keep their vectors. The chunks after it only move: their offsets change, and their part hashes do not. Only new chunk texts go to the model |
+| the package is released, or a size changes | The rule identity changes, so the next refresh cuts each text again. Each chunk text that did not change keeps its part hash and its vector                                                                                                                                |
+| the document is removed                    | The refresh deletes its output row and its parts. The vector of a part hash that no chunk has any more is deleted by the refresh of the vectors                                                                                                                            |
 
 ## The columns
 
 The computed dataset `document_chunks` has two reader views. `document_chunks` has one row for each key, with the columns of each computed dataset: the key, `input_hash`, `rule`, `status` and `error`. `document_chunks_parts` has one row for each chunk:
 
-| Column      | Holds                                                                                                     |
-| ----------- | --------------------------------------------------------------------------------------------------------- |
-| the key     | the key of the input, with the name that the rule gives, for example `ref`                                |
-| `seq`       | the order of the chunk in its text, from 0                                                                |
-| `part_hash` | the SHA-256 of the columns of the rule of the part. Two chunks with the same text have the same part hash |
-| `text`      | the text of the chunk: a slice of the input, with no white space at the start or the end                  |
+| Column      | Holds                                                                                                                      |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------- |
+| the key     | the key of the input, with the name that the rule gives, for example `ref`                                                 |
+| `seq`       | the order of the chunk in its text, from 0                                                                                 |
+| `part_hash` | the SHA-256 of the content columns of the part, `text` and `tokens`. Two chunks with the same text have the same part hash |
+| `text`      | the text of the chunk: a slice of the input, with no white space at the start or the end                                   |
+| `tokens`    | the count of tokens of `text`, as `tokenizer.count` gives it                                                               |
+| `start`     | the offset of the first code point of the chunk in the input, from 0                                                       |
+| `end`       | the offset after the last code point of the chunk, so the chunk is the slice from `start` to `end`                         |
 
 A key whose status is `failed` or `empty` has no parts.
 
@@ -186,10 +190,10 @@ A key whose status is `failed` or `empty` has no parts.
 
 | Now                                                                                                            | Later                                                                                                                                                  | Never                                                                                                    |
 | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `TableRule` and parts in `@eltjs/elt`, and a parts table in each destination (ADR 0026 of elt)                 | Integer rule columns, for `start`, `end` and `tokens` of each chunk, so that a reader can cite and highlight a chunk (open question 5)                 | A chunk size in characters for a model whose limit is in tokens (Ezz, 2026-11-19)                        |
+| `TableRule` and parts in `@eltjs/elt`, and a parts table in each destination (ADR 0026 of elt)                 | Boundaries from the structure of a document, such as headings and tables, when a `DocumentParser` gives structure (Unstructured's `chunk_by_title`)    | A chunk size in characters for a model whose limit is in tokens (Ezz, 2026-11-19)                        |
 | `part_hash`, so that a dataset that reads the parts keys them by content                                       | `from` names a computed dataset, with no view between them, when a third host writes the same view (ADR 0027 of elt)                                   | A chunker inside `Embedding`, as pgai's vectorizer has its `chunking` inside it (ADR 0001)               |
-| `Chunking`: boundaries of Unicode text segmentation, a fit that the host's tokenizer checks, overlap in tokens | Boundaries from the structure of a document, such as headings and tables, when a `DocumentParser` gives structure (Unstructured's `chunk_by_title`)    | A random id for each chunk (LlamaIndex `uuid4`, .NET `Guid.NewGuid()`): a refresh compares states by key |
-|                                                                                                                | Semantic breakpoints from the vectors of sentences (LlamaIndex `SemanticSplitterNodeParser`, .NET `SemanticSimilarityChunker`). This needs model calls | A default chunk size                                                                                     |
+| `Chunking`: boundaries of Unicode text segmentation, a fit that the host's tokenizer checks, overlap in tokens | Semantic breakpoints from the vectors of sentences (LlamaIndex `SemanticSplitterNodeParser`, .NET `SemanticSimilarityChunker`). This needs model calls | A random id for each chunk (LlamaIndex `uuid4`, .NET `Guid.NewGuid()`): a refresh compares states by key |
+| Integer rule columns, and the `tokens`, `start` and `end` of each chunk (ADR 0006)                             |                                                                                                                                                        | A default chunk size                                                                                     |
 |                                                                                                                | A ready `Tokenizer` for OpenAI's vocabularies, when a third host writes the same two lines over `gpt-tokenizer`                                        | A vocabulary that loads from the network at run time (LangChain's `tiktoken.pages.dev`)                  |
 |                                                                                                                | A `locale` for sentence boundaries                                                                                                                     | A cut inside a character (LangChain's `TokenTextSplitter`)                                               |
 
@@ -242,7 +246,7 @@ No package does all six. The cut is the knowledge of this package. The count is 
 | Package or host                                    | What it takes                                                                                                         |
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | datahub, `apps/semantic-layer/elt` (backlog #4740) | `Chunking` over `sharepoint_document_text`, then `Embedding` with `text-embedding-3-small`, kept in Azure SQL (#4736) |
-| `@eltjs/elt`                                       | gives `TableRule`, `TableRuleResult`, `LoadedRow` and `RuleColumn`                                                    |
+| `@eltjs/elt`                                       | gives `TableRule`, `TableRuleResult`, `LoadedRow` and `RuleColumn`, with its `integer` kind                           |
 | each destination                                   | keeps the parts of a `TableRule` (ADR 0026 of elt)                                                                    |
 | `gpt-tokenizer`                                    | taken by the host, not by this package, for a `Tokenizer` of OpenAI's vocabularies                                    |
 
@@ -260,14 +264,14 @@ No package does all six. The cut is the knowledge of this package. The count is 
 | The vector of each chunk                                                | the embedding model                     | `@eltjs/embedding`, unchanged                |
 | The rank of a document from its chunks, such as its best chunk (MaxP)   | the host                                | the host's search                            |
 
-## Open questions for Ezz
+## Ezz's rulings (2026-11-19)
 
-1. **The name of the engine kind.** `TableRule`, after the SQL table function (Postgres set-returning function, Snowflake UDTF, Hive UDTF), with "part" for each row it gives? Or `PartsRule`, or `SplitRule`?
-2. **The order with #4649.** SQL Server is the third destination that keeps computed datasets, and its paper asks to move the refresh into elt ([ADR 0012 of elt-sqlserver](../destinations/sqlserver/docs/adr/0012-the-third-destination-moves-the-rules-that-the-three-destinations-share-into-elt.md)). Build the parts once in that shared refresh (recommended), or in the SQLite and Postgres copies now, mirrored, and in SQL Server later?
-3. **The key of a chunk for the model.** The part hash, so that a chunk whose text did not change keeps its vector when the chunks before it move? Or `ref` and `seq`, so that each moved chunk is embedded again?
-4. **The sizes for SharePoint proposals.** OpenAI's file search defaults (800 and 400), datahub's vector store today (4,096 and 1,365, `apps/backend/src/core/openai/store/vector-store.ts`), or an eval as for staff search (#3350)?
-5. **Offsets and counts of each chunk.** `start`, `end` and `tokens` need an integer rule column. Add it now, beside the `vector(n)` column of [ADR 0007 of elt-sqlserver](../destinations/sqlserver/docs/adr/0007-a-rule-column-can-be-a-vector-with-a-fixed-number-of-dimensions.md), or later?
-6. **The limit of the overlap.** At most half of a chunk, as OpenAI, or below a chunk, as LangChain and .NET?
+1. **The name of the engine kind** is `TableRule`, with "part" for each row it gives ([ADR 0026 of elt](../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md)).
+2. **The order with #4649.** The parts are written one time, in the refresh that moves into elt before the SQL Server destination ([ADR 0012 of elt-sqlserver](../destinations/sqlserver/docs/adr/0012-the-rules-that-the-destinations-share-move-into-elt-before-the-third-destination.md)).
+3. **The key of a chunk for the model** is its part hash, so a chunk whose text did not change keeps its vector.
+4. **The sizes for SharePoint proposals** come from an eval on datahub's own proposals, as for staff search (#3350).
+5. **Offsets and counts of each chunk** come now: `tokens` as a content column, `start` and `end` as place columns, out of the part hash ([ADR 0006](./docs/adr/0006-each-chunk-gives-its-offsets-and-its-count-of-tokens.md)).
+6. **The limit of the overlap** is half of a chunk ([ADR 0004](./docs/adr/0004-the-host-gives-the-two-sizes-in-tokens-and-the-overlap-is-at-most-half-a-chunk.md)).
 
 ## Decisions
 
@@ -276,4 +280,5 @@ No package does all six. The cut is the knowledge of this package. The count is 
 - [ADR 0003](./docs/adr/0003-a-chunk-ends-at-the-largest-boundary-that-fits.md): a chunk ends at the largest boundary that fits.
 - [ADR 0004](./docs/adr/0004-the-host-gives-the-two-sizes-in-tokens-and-the-overlap-is-at-most-half-a-chunk.md): the host gives the two sizes in tokens, and the overlap is at most half a chunk.
 - [ADR 0005](./docs/adr/0005-the-rule-identity-of-a-chunk-is-the-package-version-the-tokenizer-and-the-two-sizes.md): the rule identity of a chunk is the package version, the tokenizer and the two sizes.
+- [ADR 0006](./docs/adr/0006-each-chunk-gives-its-offsets-and-its-count-of-tokens.md): each chunk gives its offsets and its count of tokens.
 - In elt: [ADR 0026](../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md), a rule can give many parts for one input, and [ADR 0027](../elt/docs/adr/0027-a-dataset-reads-the-parts-of-a-computed-dataset-through-a-view.md), a dataset reads the parts of a computed dataset through a view.

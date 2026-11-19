@@ -1,6 +1,6 @@
 # A reading sets its position in the session context and reads row versions
 
-Status: proposed, for Ezz's review (2026-11-19).
+Status: accepted by Ezz (2026-11-19).
 
 A reader view reads its table as of a position: the rows with `committed_in <= P`, and the rows of the history with `committed_in <= P < replaced_in`. elt-postgresql gives the position to each reader view through the setting `elt.position` of the transaction, and a reading is a `REPEATABLE READ READ ONLY` transaction. Readers must also never wait for a load.
 

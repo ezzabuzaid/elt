@@ -1,6 +1,6 @@
 # A key is indexed by its hash
 
-Status: proposed, for Ezz's review (2026-11-19).
+Status: accepted by Ezz (2026-11-19).
 
 A deduplicating load upserts on a unique index of the key (elt-postgresql: `_elt_dedup_<hash>`), and a computed dataset keeps one output row for each key (elt-sqlite ADR 0002). Two facts of SQL Server stop a plain unique index on the key columns:
 

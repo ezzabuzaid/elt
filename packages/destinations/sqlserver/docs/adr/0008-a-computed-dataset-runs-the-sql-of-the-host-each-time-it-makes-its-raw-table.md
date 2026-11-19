@@ -1,6 +1,6 @@
 # A computed dataset runs the SQL of the host each time it makes its raw table
 
-Status: proposed, for Ezz's review (2026-11-19).
+Status: accepted by Ezz (2026-11-19).
 
 An approximate search of Azure SQL needs a vector index on the column: `CREATE VECTOR INDEX … WITH (METRIC = 'cosine', TYPE = 'DiskANN')`. The index has options that change with the engine (the version 3 index refuses the old `TOP_N`, `@zukhruf/vectors` README). A computed dataset makes its raw table again when its declaration changes (elt-sqlite ADR 0004), and an index that the host made by hand is then gone. The host also cannot make the index before the first refresh makes the table.
 
@@ -29,6 +29,6 @@ The leaders:
 - A vector index exists from the first make of the table, and it stays across each make.
 - An index made on an empty table starts exact, and Azure SQL builds its graph about 16 seconds after the rows come (`@zukhruf/vectors` README).
 - SQL Server 2025 in Docker has no DiskANN index, so a test of `afterCreate` uses another statement, such as a nonclustered index on `status`.
-- Open question: the name `afterCreate`, and whether the same option belongs on `View` (no: a view has no table to index).
+- `View` does not take `afterCreate`: a view has no table to index.
 
 Sources: backlog #4738; `@zukhruf/vectors` README, "SQL Server: what the probes found".
