@@ -1,0 +1,6 @@
+{
+  "name": "chunking",
+  "sourceRoot": "packages/chunking/src",
+  "projectType": "library",
+  "tags": ["layer:island"]
+}

@@ -1,16 +1,18 @@
 # @eltjs/chunking
 
-> **Design on paper, accepted by Ezz on 2026-11-19.** No code, `package.json` or `tsconfig` exists yet. It is built after the shared refresh moves into elt (#4649). Backlog #4737. The engine change that this package needs is in [ADR 0026](../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md) and [ADR 0027](../elt/docs/adr/0027-a-dataset-reads-the-parts-of-a-computed-dataset-through-a-view.md) of elt.
-
 `Chunking` is a rule of a computed dataset. It cuts the text of each loaded row into chunks. Each chunk counts at most `maxTokens` tokens, as the tokenizer of the embedding model counts them. Then the `Embedding` rule of [`@eltjs/embedding`](../embedding/README.md) makes one vector for each chunk.
 
-Today a computed dataset keeps one output row for each key ([ADR 0002 of elt-sqlite](../destinations/sqlite/docs/adr/0002-a-computed-dataset-keeps-one-output-row-for-each-key.md)), and `read()` gives one key and one input (`packages/elt/src/core/rule.ts:40-42`). Thus a long SharePoint proposal is one vector. When its text counts more than 8,191 tokens, the limit of OpenAI's `text-embedding-3-small`, it is one failed row, and each pass tries it again ([ADR 0007 of elt-sqlite](../destinations/sqlite/docs/adr/0007-each-pass-tries-an-input-at-most-once.md)). One vector of a long text also loses the meaning of each part of it. Ezz chose on 2026-11-19 to solve this in the elt core, not with a SQL view that cuts by characters.
+```sh
+npm install @eltjs/chunking gpt-tokenizer
+```
+
+Without chunks, `Embedding` makes one vector for each loaded row. A long SharePoint proposal is then one vector. When its text counts more than 8,191 tokens, the limit of OpenAI's `text-embedding-3-small`, it is one failed row, and each pass tries it again ([ADR 0007 of elt-sqlite](../destinations/sqlite/docs/adr/0007-each-pass-tries-an-input-at-most-once.md)). One vector of a long text also loses the meaning of each part of it. `Chunking` is a table rule of elt: it gives many parts for one input ([ADR 0026 of elt](../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md)). Ezz chose on 2026-11-19 to solve this in the elt core, not with a SQL view that cuts by characters.
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../elt/CONTEXT.md) for the words of all of elt.
 
 ## Cut documents into chunks, then embed each chunk
 
-This example works the same for each destination: `elt-sqlite`, `elt-postgresql` and `elt-sqlserver` (#4736). Only the import of `View` and `ComputedDataset` changes.
+This example works the same for each destination that keeps the parts of a table rule (ADR 0026 of elt): `elt-sqlite` today, then `elt-postgresql` and `elt-sqlserver` (#4736). Only the import of `View` and `ComputedDataset` changes. The [recipe](./docs/recipes/cut-documents-into-chunks-and-embed-each-chunk.md) runs it end to end on SQLite.
 
 ```ts
 import { countTokens } from 'gpt-tokenizer/encoding/cl100k_base';
@@ -78,6 +80,7 @@ const vectors = new ComputedDataset({
   from: [chunkTexts],
   compute: new Embedding({
     model,
+    dimensions: 1536,
     clock: globalThis,
     key: 'id',
     fields: ['text'],
@@ -95,6 +98,7 @@ new Pipeline({
 - `maxTokens` and `overlapTokens` have no default. The example uses the defaults of OpenAI's own file search, 800 and 400 ([ADR 0004](./docs/adr/0004-the-host-gives-the-two-sizes-in-tokens-and-the-overlap-is-at-most-half-a-chunk.md)). Datahub takes its sizes from an eval on its own proposals.
 - `key` and `fields` are as in `Embedding`: the column that identifies a row, and the columns whose text the rule cuts, joined with line breaks. A row with no text in these columns has no chunks.
 - A search joins `document_chunk_vectors` to `document_chunks_parts` on `id = part_hash`, and gets the ref, the order, the text and the offsets of each chunk that matched.
+- The sentence and word boundaries come from `Intl.Segmenter` with the root locale, `und`. Node resolves `und` to the default locale of the process, but V8 gave the same sentences for `und`, `en`, `de` and `ja` (probe, Node 26.13.0).
 
 ## The signatures
 
@@ -165,7 +169,7 @@ export class Chunking extends TableRule<string, typeof content, typeof place> {
 
 | Call or event                              | What happens                                                                                                                                                                                                                                                               |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `new Chunking({ … })`                      | Refuses `maxTokens` below 1, `overlapTokens` below 0, and `overlapTokens` above half of `maxTokens`, with a `RangeError` that names the value                                                                                                                              |
+| `new Chunking({ … })`                      | Refuses a size that is not an integer, `maxTokens` below 1, `overlapTokens` below 0, and `overlapTokens` above half of `maxTokens`, with a `RangeError` that names the value                                                                                               |
 | `read(row)`                                | Gives the key and the text of `fields`, joined with line breaks. `null` when the row has no key or no text                                                                                                                                                                 |
 | `identity(text)`                           | `@eltjs/chunking@<version> <tokenizer.name> <maxTokens>/<overlapTokens>`, the same for each input ([ADR 0005](./docs/adr/0005-the-rule-identity-of-a-chunk-is-the-package-version-the-tokenizer-and-the-two-sizes.md))                                                     |
 | `compute(texts)`, a text that fits         | One part: the text with its white space at the start and the end removed                                                                                                                                                                                                   |

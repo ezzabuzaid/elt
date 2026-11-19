@@ -247,6 +247,9 @@
     },
     {
       "path": "./packages/parsers/office"
+    },
+    {
+      "path": "./packages/chunking"
     }
   ]
 }

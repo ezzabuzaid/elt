@@ -1,0 +1,50 @@
+{
+  "name": "@eltjs/chunking",
+  "version": "0.5.0",
+  "private": true,
+  "description": "A rule of an elt computed dataset: it cuts the text of each loaded row into chunks that each count at most a number of tokens of the embedding model's tokenizer, so each chunk can get its own vector.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ezzabuzaid/elt",
+    "directory": "packages/chunking"
+  },
+  "bugs": {
+    "url": "https://github.com/ezzabuzaid/elt/issues"
+  },
+  "homepage": "https://github.com/ezzabuzaid/elt/tree/main/packages/chunking#readme",
+  "keywords": [
+    "elt",
+    "chunking",
+    "text-splitter",
+    "tokens",
+    "embedding",
+    "rag"
+  ],
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/chunking.d.ts",
+      "default": "./dist/chunking.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/spec/**",
+    "!**/*.tsbuildinfo",
+    "!**/*.test.*"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@eltjs/elt": "*"
+  },
+  "devDependencies": {
+    "@eltjs/elt-sqlite": "*",
+    "@zukhruf/fs": "^0.8.31",
+    "@zukhruf/sqlite-open": "^0.8.31",
+    "gpt-tokenizer": "^4.1.2"
+  }
+}
