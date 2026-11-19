@@ -6,10 +6,14 @@ import postgres from 'postgres';
 import {
   type Connection,
   DerivedDataset,
+  type OutputRow,
   type PipelineClock,
+  type PreparedOutputs,
   type RefreshTrigger,
   type Rule,
-  errorMessage,
+  type StoredOutput,
+  computedColumns,
+  refreshComputed,
 } from '@eltjs/elt';
 
 import { identifier, quote } from './identifier.ts';
@@ -25,31 +29,13 @@ import { makeSchema } from './postgres-session.ts';
 import type { PostgresTable } from './postgres-table.ts';
 import { View, made } from './view.ts';
 
-// The columns the dataset keeps on every output row beside the rule's own.
-const engineColumns = {
-  input_hash:
-    'SHA-256 of the input the row was made from; the row is made again when its input changes.',
-  rule: 'What made the row, such as the parser of its format or the model; the row is made again when that changes. unsupported: the rule does not handle the input.',
-  status:
-    'computed: the rule made the row. empty: the rule found nothing to keep, such as a photo without words. failed: the rule failed, error says why, and the refresh after the passes tries again, at most once for each pass.',
-  error: 'Why the rule failed. NULL unless status is failed.',
-};
-
 // The names a rule column cannot take: the dataset's own, and the history's.
 const ownColumns = [
-  ...Object.keys(engineColumns),
+  ...Object.keys(computedColumns),
   'committed_in',
   '_elt_row_hash',
   'replaced_in',
 ];
-
-type Stored = {
-  readonly inputHash: string;
-  readonly rule: string;
-  readonly status: string;
-};
-
-type Status = 'computed' | 'empty' | 'failed';
 
 // Data computed on write from what the pipeline's copies load into one
 // Postgres database: a rule makes one output row for each input, such as the
@@ -121,7 +107,7 @@ export class ComputedDataset<
         type: 'text',
         constraint: ' PRIMARY KEY',
       },
-      ...Object.keys(engineColumns).map((column) => ({
+      ...Object.keys(computedColumns).map((column) => ({
         name: column,
         type: 'text',
         constraint: column === 'error' ? '' : ' NOT NULL',
@@ -146,7 +132,7 @@ export class ComputedDataset<
       this.#columns,
       new TargetComments(description, {
         [compute.key.name]: compute.key.description,
-        ...engineColumns,
+        ...computedColumns,
         ...Object.fromEntries(
           Object.entries(compute.output).map(([column, { description }]) => [
             column,
@@ -211,33 +197,29 @@ export class ComputedDataset<
       'computed',
       clock,
     );
-    const inputs = await this.#inputs(load.sql, connections);
-    if (inputs === null) {
-      await status.waiting();
-      return;
-    }
-    try {
-      await this.#update(load, status, inputs, trigger, signal);
-    } catch (error) {
-      // A stop is not the dataset's failure.
-      if (signal?.aborted !== true) await status.failed(errorMessage(error));
-      throw error;
-    }
+    await refreshComputed({
+      rule: this.#rule,
+      inputs: await this.#inputs(load.sql, connections),
+      prepare: (keys) => this.#prepare(load, status, keys, signal),
+      status,
+      trigger,
+      signal,
+    });
   }
 
-  // Brings the output rows in step with inputs, and tells status how many
-  // are due and how many settled.
-  async #update(
+  // Makes the schema, brings the table to its declaration, removes the rows
+  // whose key has no input, and gives the output table to write. Each
+  // transaction takes the number of its commit at its first change, so one
+  // that changes no row takes none. The load has one session, so the commits
+  // of the calls take turns.
+  async #prepare(
     load: PostgresLoad,
     status: PostgresDerivedStatus,
-    inputs: Map<string, Input>,
-    trigger: RefreshTrigger,
+    keys: ReadonlySet<string>,
     signal: AbortSignal | undefined,
-  ): Promise<void> {
+  ): Promise<PreparedOutputs<Output>> {
     const key = quote(this.#rule.key.name);
     const table = this.#qualified(this.#table);
-    // The number of a transaction's commit, taken at its first change, so a
-    // transaction that changes no row takes none.
     const commits = (sql: Transaction) => {
       let number: Promise<number> | undefined;
       return () => (number ??= load.number(sql));
@@ -246,12 +228,12 @@ export class ComputedDataset<
     const stored = await load.transaction(async (sql) => {
       const commit = commits(sql);
       await this.#declare(sql, commit);
-      const rows = new Map<string, Stored>();
+      const rows = new Map<string, StoredOutput>();
       const gone: string[] = [];
       for (const row of await sql.unsafe<
         { key: string; input_hash: string; rule: string; status: string }[]
       >(`SELECT ${key} AS "key", "input_hash", "rule", "status" FROM ${table}`))
-        if (inputs.has(row.key))
+        if (keys.has(row.key))
           rows.set(row.key, {
             inputHash: row.input_hash,
             rule: row.rule,
@@ -277,27 +259,22 @@ export class ComputedDataset<
     const store = async (
       sql: Transaction,
       commit: () => Promise<number>,
-      id: string,
-      inputHash: string,
-      rule: string,
-      status: Status,
-      error: string | null,
-      values: Readonly<Record<string, Output>>,
+      output: OutputRow<Output>,
     ) => {
       const row = [
-        id,
-        inputHash,
-        rule,
-        status,
-        error,
+        output.key,
+        output.inputHash,
+        output.rule,
+        output.status,
+        output.error,
         ...Object.keys(this.#rule.output).map(
-          (column) => values[column] ?? null,
+          (column) => output.values[column] ?? null,
         ),
       ];
       const version = rowHash(hashed, row);
       const [before] = await sql.unsafe<{ hash: string }[]>(
         `SELECT "_elt_row_hash" AS "hash" FROM ${table} WHERE ${key} = $1`,
-        [id],
+        [output.key],
       );
       if (before?.hash === version) return;
       const number = await commit();
@@ -307,7 +284,7 @@ export class ComputedDataset<
           number,
           table,
           `FROM ${table} AS "_elt_old" WHERE "_elt_old".${key} = $1`,
-          [id],
+          [output.key],
         );
       await sql.unsafe(
         `INSERT INTO ${table} (${written.join(', ')}) VALUES (${written.map((_, index) => `$${index + 1}`).join(', ')}) ON CONFLICT (${key}) DO UPDATE SET ${written
@@ -317,155 +294,26 @@ export class ComputedDataset<
         [...row.map(parameter), number, version],
       );
     };
-    // The load has one session, so the commits of the calls take turns.
     const session = new Lock();
     const settle = (work: (sql: Transaction) => Promise<void>) =>
       session.run(() => load.transaction(work), { signal });
-    const due: {
-      readonly id: string;
-      readonly input: Input;
-      readonly inputHash: string;
-      readonly rule: string;
-    }[] = [];
-    for (const [id, input] of inputs) {
-      if (signal?.aborted) return;
-      const inputHash = hash('sha256', JSON.stringify(input));
-      const rule = await this.#rule.identity(input);
-      const before = stored.get(id);
-      // A rule that does not handle the input keeps what it made before.
-      if (rule === null) {
-        if (before?.status === 'computed') continue;
-        if (before?.rule === 'unsupported' && before.inputHash === inputHash)
-          continue;
-        await settle((sql) =>
-          store(
-            sql,
-            commits(sql),
-            id,
-            inputHash,
-            'unsupported',
-            'empty',
-            null,
-            {},
-          ),
-        );
-        continue;
-      }
-      if (
-        before !== undefined &&
-        before.inputHash === inputHash &&
-        before.rule === rule
-      ) {
-        // A failed input waits for the refresh after the passes.
-        if (before.status !== 'failed' || trigger.kind === 'commit') continue;
-      }
-      // The passes try each input, as it is now, at most once: the refresh
-      // after them leaves what a commit refresh of the same passes tried.
-      const attempt = `${id}\0${inputHash}\0${rule}`;
-      if (trigger.tried.has(attempt)) continue;
-      if (trigger.kind === 'commit') trigger.tried.add(attempt);
-      due.push({ id, input, inputHash, rule });
-    }
-    await status.refreshing({
-      ...(await this.#counts(load.sql, inputs)),
-      pending: due.length,
-    });
-    // A pool of calls, each taking the next batch once its own committed, so
-    // a slow call holds only its place, as a worker pool keeps its other
-    // workers busy. A call that fails stops the pool taking more.
-    const failures: unknown[] = [];
-    let next = 0;
-    await Promise.all(
-      Array.from({ length: this.#rule.concurrency }, async () => {
-        while (failures.length === 0 && signal?.aborted !== true) {
-          const batch = due.slice(next, next + this.#rule.batch);
-          next += this.#rule.batch;
-          if (batch.length === 0) return;
-          let results;
-          try {
-            results = await this.#rule.compute(
-              batch.map(({ input }) => input),
-              signal,
-            );
-          } catch (error) {
-            failures.push(error);
-            return;
-          }
-          // Each call commits on its own, so readers see rows as they land.
-          await settle(async (sql) => {
-            const commit = commits(sql);
-            for (const [index, { id, inputHash, rule }] of batch.entries()) {
-              const result = results[index];
-              if (result === undefined || 'gone' in result) continue;
-              if ('value' in result)
-                await store(
-                  sql,
-                  commit,
-                  id,
-                  inputHash,
-                  rule,
-                  'computed',
-                  null,
-                  result.value,
-                );
-              else if ('error' in result)
-                await store(
-                  sql,
-                  commit,
-                  id,
-                  inputHash,
-                  rule,
-                  'failed',
-                  result.error,
-                  {},
-                );
-              else
-                await store(
-                  sql,
-                  commit,
-                  id,
-                  inputHash,
-                  rule,
-                  'empty',
-                  null,
-                  {},
-                );
-            }
-            await status.settled(sql, batch.length);
-          });
-        }
-      }),
-    );
-    if (failures.length > 0) throw failures[0];
-    if (signal?.aborted === true) return;
-    await status.current({
-      ...(await this.#counts(load.sql, inputs)),
-      pending: 0,
-    });
-  }
-
-  // How many inputs there are, and how many output rows have each status.
-  async #counts(
-    sql: Transaction,
-    inputs: ReadonlyMap<string, Input>,
-  ): Promise<{
-    inputs: number;
-    computed: number;
-    empty: number;
-    failed: number;
-  }> {
-    const counted = new Map(
-      (
-        await sql.unsafe<{ status: string; n: number }[]>(
-          `SELECT "status", count(*)::int AS "n" FROM ${this.#qualified(this.#table)} GROUP BY "status"`,
-        )
-      ).map(({ status, n }) => [status, n]),
-    );
     return {
-      inputs: inputs.size,
-      computed: counted.get('computed') ?? 0,
-      empty: counted.get('empty') ?? 0,
-      failed: counted.get('failed') ?? 0,
+      stored,
+      store: (output) => settle((sql) => store(sql, commits(sql), output)),
+      settle: (outputs, settled) =>
+        settle(async (sql) => {
+          const commit = commits(sql);
+          for (const output of outputs) await store(sql, commit, output);
+          await status.settled(sql, settled);
+        }),
+      counts: async () =>
+        new Map(
+          (
+            await load.sql.unsafe<{ status: string; n: number }[]>(
+              `SELECT "status", count(*)::int AS "n" FROM ${table} GROUP BY "status"`,
+            )
+          ).map(({ status, n }) => [status, n]),
+        ),
     };
   }
 

@@ -2,7 +2,7 @@ import {
   type Connection,
   DerivedDataset,
   type PipelineClock,
-  errorMessage,
+  refreshView,
 } from '@eltjs/elt';
 
 import { openDestination } from './open-destination.ts';
@@ -14,11 +14,7 @@ import { type SQLiteView, publishSQLiteViews } from './sqlite-views.ts';
 // A view over what the pipeline loads into one SQLite file: derived data
 // that SQLite computes on each read, as a dbt model materialized as a view
 // is. Its inputs are the relations its SQL reads, so it names none of them.
-// It appears once its query compiles, so a reader never finds a view that
-// fails; until a copy of the pipeline has made each table it reads, and each
-// derived dataset before it that it reads has appeared, it waits, as dbt
-// skips a model whose upstream model was skipped. Any other error of its
-// query is the view's own failure.
+// It appears, or waits, as refreshView of elt says.
 export class View extends DerivedDataset<SQLiteTable> {
   readonly name: string;
   // The SQLite file the view lives in, where a computed dataset after it
@@ -63,31 +59,23 @@ export class View extends DerivedDataset<SQLiteTable> {
     readonly clock: PipelineClock;
   }): Promise<void> {
     using database = openDestination(this.into.path);
-    const status = new SQLiteDerivedStatus(database, this.name, 'view', clock);
-    try {
-      try {
+    await refreshView({
+      publish: async () => {
         database.prepare(this.#view.query);
-      } catch (error) {
-        const missing = Error.isError(error)
-          ? /^no such table: (?:main\.)?(.+)$/.exec(error.message)?.[1]
-          : undefined;
-        const missingName = missing?.toLowerCase();
-        if (
-          missingName !== undefined &&
-          (this.#made(connections).has(missingName) ||
-            earlier.some(({ name }) => name.toLowerCase() === missingName))
-        ) {
-          status.waiting();
-          return;
-        }
-        throw error;
-      }
-      publishSQLiteViews(database, { views: [this.#view] });
-    } catch (error) {
-      status.failed(errorMessage(error));
-      throw error;
-    }
-    status.current();
+        publishSQLiteViews(database, { views: [this.#view] });
+      },
+      missing: (error) =>
+        Error.isError(error)
+          ? /^no such table: (?:main\.)?(.+)$/
+              .exec(error.message)?.[1]
+              ?.toLowerCase()
+          : undefined,
+      awaited: new Set([
+        ...this.#made(connections),
+        ...earlier.map(({ name }) => name.toLowerCase()),
+      ]),
+      status: new SQLiteDerivedStatus(database, this.name, 'view', clock),
+    });
   }
 
   // The tables and reader views the pipeline's copies make in this view's

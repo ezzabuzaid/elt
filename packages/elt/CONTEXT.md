@@ -172,6 +172,10 @@ _Avoid_: Cache, index, materialized view
 The pipeline brings one derived dataset in step with the commits. Each commit of a copy asks for one, so a refresh can run while a copy loads, and it reads only what committed. A refresh makes again only what changed.
 _Avoid_: Rebuild, recompute, sync, update
 
+**Derived status**:
+What the refreshes of one derived dataset left, which readers see in `derived_status`: `waiting`, `refreshing`, `current` or `failed`, with `as_of`, the time that the last refresh which ended began to read, and the counts of a computed dataset.
+_Avoid_: Health, freshness (freshness is how current a stream is)
+
 **Dataset failure**:
 A failure of a derived dataset itself, for example SQL that its store refuses. It rejects the run, or it stops the watch.
 _Avoid_: Crash, error (a rule failure is also an error)

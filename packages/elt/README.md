@@ -1078,6 +1078,15 @@ A destination that numbers its commits gives positions, so a reader can read it 
 - `readingExpiry(numbering, position, store, where)` gives why a reading cannot read as of a position: of another epoch, past the high-water mark, or before `min_valid` and what set it (the retention, a change of type that is not a widening, or a clear). It throws a `TypeError` for a commit inside a pass.
 - `staleness({ epoch, minValid, expiredBy }, position, store)` gives why a position that the store once had is no longer read exactly: of another epoch, or before `min_valid`. A reader that knows only these three values, such as a guard inside a view, asks it.
 
+## Derived datasets of a destination
+
+Each destination keeps its own `View` and `ComputedDataset`, and drives three rules of `@eltjs/elt` with its own storage:
+
+- `refreshComputed({ rule, inputs, prepare, status, trigger, signal })` brings the outputs of a computed dataset in step with its inputs. The destination gives `inputs`, or `null` while a relation that the dataset reads is gone, and `prepare(keys)`, which makes the table match its declaration, removes each row whose key has no input, and gives the stored rows with `store`, `settle` and `counts`. Each write is one commit. The rule decides what is due: an input whose hash or rule identity changed, or a failed row on the refresh after the passes, each input at most once for each pass. It runs `rule.concurrency` calls of `rule.batch` inputs, and each call commits on its own.
+- `refreshView({ publish, missing, awaited, status })` publishes a view, or lets it wait while the relation that the store's error names is one that a copy or an earlier derived dataset makes. Any other error is the view's own failure.
+- `DerivedStatus` gives the states of a row of `derived_status`: `waiting`, `refreshing` with counts, `current` with `as_of`, and `failed`. A destination writes the values in its `write`, and takes settled inputs off `pending` inside its own commit.
+- `computedColumns` names the columns that each output row keeps beside the rule's own, with their descriptions.
+
 ## The same concepts in other systems
 
 | Here                       | Elsewhere                                                                    |
@@ -1168,5 +1177,8 @@ src/core/
   derived-dataset.ts    DerivedDataset: the port of each kind
   derived-refreshes.ts  the refreshes of a watch, one at a time
   rule.ts               Rule, RuleResult, LoadedRow, RuleColumn
+  computed-refresh.ts   refreshComputed: what is due, and the pool of rule calls
+  view-refresh.ts       refreshView: when a view waits
+  derived-status.ts     DerivedStatus: the states of derived_status
   document-text.ts      DocumentText: the text of each stored file
 ```

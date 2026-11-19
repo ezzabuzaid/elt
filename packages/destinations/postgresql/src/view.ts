@@ -4,7 +4,7 @@ import {
   type Connection,
   DerivedDataset,
   type PipelineClock,
-  errorMessage,
+  refreshView,
 } from '@eltjs/elt';
 
 import { PostgresDerivedStatus } from './postgres-derived-status.ts';
@@ -21,11 +21,7 @@ import {
 // data that Postgres computes on each read, as a dbt model materialized as a
 // view is. It lives in the schema of into, where its SQL's bare names resolve
 // too. Its inputs are the relations its SQL reads, so it names none of them.
-// It appears once its query compiles, so a reader never finds a view that
-// fails; until a copy of the pipeline has made each relation it reads, and
-// each derived dataset before it that it reads has appeared, it waits, as dbt
-// skips a model whose upstream model was skipped. Any other error of its
-// query is the view's own failure.
+// It appears, or waits, as refreshView of elt says.
 export class View extends DerivedDataset<PostgresTable> {
   readonly name: string;
   // The database and schema the view lives in, where a computed dataset
@@ -75,33 +71,27 @@ export class View extends DerivedDataset<PostgresTable> {
     readonly clock: PipelineClock;
   }): Promise<void> {
     await using session = new PostgresSession(this.into.url, 'elt-derived');
-    const status = new PostgresDerivedStatus(
-      session.sql,
-      this.qualifiedName,
-      'view',
-      clock,
-    );
-    try {
-      await session.sql.begin((transaction) =>
-        publishPostgresViews(transaction, {
-          schema: this.into.schema,
-          views: [this.#view],
-        }),
-      );
-    } catch (error) {
-      const missing = missingRelation(error, this.into.schema);
-      if (
-        missing !== undefined &&
-        (made(connections, this.into).has(missing) ||
-          earlier.some((dataset) => derivedRelation(dataset) === missing))
-      ) {
-        await status.waiting();
-        return;
-      }
-      await status.failed(errorMessage(error));
-      throw error;
-    }
-    await status.current();
+    await refreshView({
+      publish: async () => {
+        await session.sql.begin((transaction) =>
+          publishPostgresViews(transaction, {
+            schema: this.into.schema,
+            views: [this.#view],
+          }),
+        );
+      },
+      missing: (error) => missingRelation(error, this.into.schema),
+      awaited: new Set([
+        ...made(connections, this.into),
+        ...earlier.flatMap((dataset) => derivedRelation(dataset) ?? []),
+      ]),
+      status: new PostgresDerivedStatus(
+        session.sql,
+        this.qualifiedName,
+        'view',
+        clock,
+      ),
+    });
   }
 }
 

@@ -3,6 +3,13 @@ export type { PipelineClock } from './core/clock.ts';
 export { Connection } from './core/connection.ts';
 export { Copy, type CopyOutcome, type CopyResult } from './core/copy.ts';
 export {
+  type OutputRow,
+  type PreparedOutputs,
+  type StoredOutput,
+  computedColumns,
+  refreshComputed,
+} from './core/computed-refresh.ts';
+export {
   CopyConfiguration,
   type DedupPolicy,
 } from './core/copy-configuration.ts';
@@ -17,6 +24,7 @@ export {
   DerivedDatasetError,
   type RefreshTrigger,
 } from './core/derived-dataset.ts';
+export { type DerivedCounts, DerivedStatus } from './core/derived-status.ts';
 export { DocumentParser } from './core/document-parser.ts';
 export { DocumentText } from './core/document-text.ts';
 export {
@@ -141,5 +149,6 @@ export {
   SyncHistory,
   type SyncStatus,
 } from './state/sync-history.ts';
+export { refreshView } from './core/view-refresh.ts';
 export { syncHistoryRelations } from './state/sync-history-relations.ts';
 export { LocalFiles } from './storage/local-files.ts';

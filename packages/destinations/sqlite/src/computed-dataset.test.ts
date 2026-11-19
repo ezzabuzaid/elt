@@ -7,6 +7,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { Latch } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { open } from '@zukhruf/sqlite-open';
 import { timebox, waitFor } from '@zukhruf/testing/async';
 
 import {
@@ -14,9 +15,11 @@ import {
   Connection,
   Copy,
   type CopyConfiguration,
+  DerivedDatasetError,
   DocumentParser,
   DocumentText,
   Gauge,
+  type LoadedRow,
   Pipeline,
   PipelineError,
   Rule,
@@ -41,13 +44,14 @@ class Version extends Gauge<number> {
 }
 
 // Rows that name stored files by ref, loaded into raw_files and read through
-// files; rows can change between runs. Its notes come from a second store,
-// which fails every read while notesGone is set, as an app's missing store
-// does. A watch sees every stream change at its start, and again each time
+// files; rows can change between runs, and every read of them fails while
+// filesGone is set. Its notes come from a second store, which fails every
+// read while notesGone is set, as an app's missing store does. A watch sees every stream change at its start, and again each time
 // the test moves the version of its upstream.
 class Files extends Source {
   readonly identity = 'files';
   rows: readonly { readonly id: string; readonly ref: string }[] = [];
+  filesGone = false;
   notesGone = false;
   readonly version = new Version();
   readonly files = new Stream({
@@ -98,6 +102,7 @@ class Files extends Source {
       if (this.notesGone) throw new Error('the notes store is gone');
       return;
     }
+    if (this.filesGone) throw new Error('the files store is gone');
     for (const row of this.rows)
       yield { stream: configuration.stream.name, data: row };
   }
@@ -609,6 +614,234 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
     controller.abort();
     await watching.return(undefined);
   }
+});
+
+test('derived_status gives as_of as the time the last refresh began to read, which refreshing_since shows while that refresh runs', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await filesImport(scratch.path);
+  await files.file('a.txt', 'invoice');
+  files.source.rows = [{ id: '1', ref: 'a.txt' }];
+  files.parser().failing.add('a.txt');
+  await files.pipeline.run();
+  // A failed file is read again only by the refresh after the passes, the
+  // last refresh of the run; it waits on released, and it runs at least
+  // 20 ms, so the time it began and the time it ended differ.
+  files.parser().failing.delete('a.txt');
+  const released = new Latch();
+  files.parser().holding.set('a.txt', released);
+  const status = `SELECT state, as_of, refreshed_at, refreshing_since FROM derived_status WHERE dataset = 'file_text'`;
+
+  const running = files.pipeline.run();
+  const [whileHeld] = await timebox(
+    () => {
+      assert.equal(files.parser().parsed.length, 2);
+      return files.read(status);
+    },
+    {
+      minTimeout: 10,
+      maxRetryTime: 10_000,
+      shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+    },
+  );
+  await sleep(20);
+  released.open();
+  await running;
+  const [after] = files.read(status);
+
+  assert.equal(whileHeld.state, 'refreshing');
+  assert.equal(typeof whileHeld.refreshing_since, 'string');
+  assert.deepEqual(
+    { state: after.state, as_of: after.as_of, since: after.refreshing_since },
+    { state: 'current', as_of: whileHeld.refreshing_since, since: null },
+  );
+  assert.ok(
+    after.refreshed_at > after.as_of,
+    `refreshed_at ${after.refreshed_at} is not after as_of ${after.as_of}`,
+  );
+});
+
+// A stand-in for a model behind the Rule port, which a host calls for each
+// file: each call answers after 50 ms, so a call that fails at once ends
+// before the calls beside it; a call that names a ref in refused fails, and
+// one that names a ref in holding waits until its refresh stops, then
+// rejects with the stop, as an AI SDK call that honors its AbortSignal does.
+// A real model needs the network and a key, and its answers vary, so a test
+// cannot hold its calls or know what they return.
+class Model extends Rule<string, string> {
+  override readonly key = { name: 'ref', description: 'The file.' };
+  override readonly output: Rule<string, string>['output'] = {
+    answer: { type: 'text', description: 'What the model answered.' },
+  };
+  override readonly batch = 1;
+  override readonly concurrency: number;
+  // The inputs of each call, in the order the calls began.
+  readonly calls: string[][] = [];
+  readonly refused = new Set<string>();
+  readonly holding = new Set<string>();
+
+  constructor(concurrency: number) {
+    super();
+    this.concurrency = concurrency;
+  }
+
+  override read(row: LoadedRow) {
+    return typeof row.ref === 'string'
+      ? { key: row.ref, input: row.ref }
+      : null;
+  }
+
+  override async identity() {
+    return 'model-1';
+  }
+
+  override async compute(inputs: readonly string[], signal?: AbortSignal) {
+    this.calls.push([...inputs]);
+    if (inputs.some((ref) => this.refused.has(ref)))
+      throw new Error(`the model refused ${inputs.join(', ')}`);
+    if (inputs.some((ref) => this.holding.has(ref)))
+      await new Promise<never>((_, reject) =>
+        signal?.addEventListener('abort', () => reject(signal.reason), {
+          once: true,
+        }),
+      );
+    await sleep(50);
+    return inputs.map((ref) => ({ value: { answer: ref.toUpperCase() } }));
+  }
+}
+
+// The rows of Files, loaded into raw_files and read through files, and the
+// computed dataset answers, which model makes from each file a row names.
+function modelImport(directory: string, model: Model) {
+  const source = new Files();
+  const destination = new SQLiteDestination({
+    path: join(directory, 'data.sqlite'),
+  });
+  const target = destination.table('raw_files').withReaderView('files');
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'files',
+        source,
+        destination,
+        steps: [new Copy(source.files, target)],
+      }),
+    ],
+    derived: [
+      new ComputedDataset({
+        into: destination,
+        name: 'answers',
+        description: 'What the model answered for each file a row names.',
+        from: [target],
+        compute: model,
+      }),
+    ],
+  });
+  return {
+    source,
+    pipeline,
+    path: destination.path,
+    read: (sql: string) => shell(destination.path, sql).rows,
+  };
+}
+
+test('a rule call that fails stops the calls after it: the call beside it lands its row, no later file reaches the model, and the run rejects with the failure', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const model = new Model(2);
+  const answers = modelImport(scratch.path, model);
+  answers.source.rows = ['a.txt', 'b.txt', 'c.txt', 'd.txt'].map(
+    (ref, index) => ({ id: String(index), ref }),
+  );
+  model.refused.add('a.txt');
+
+  const error = await answers.pipeline.run().then(
+    () => assert.fail('the run reported no failure'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof DerivedDatasetError, String(error));
+  assert.deepEqual(
+    {
+      message: error.message,
+      calls: model.calls,
+      rows: answers.read(
+        'SELECT ref, status, answer FROM answers ORDER BY ref',
+      ),
+    },
+    {
+      message: 'Derived dataset answers failed: the model refused a.txt',
+      calls: [['a.txt'], ['b.txt']],
+      rows: [{ ref: 'b.txt', status: 'computed', answer: 'B.TXT' }],
+    },
+  );
+});
+
+test('a refresh that its watch stops while the model answers stays refreshing in derived_status, with no error, as a stop is not the dataset’s failure', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const model = new Model(1);
+  const answers = modelImport(scratch.path, model);
+  answers.source.rows = [{ id: '0', ref: 'a.txt' }];
+  model.holding.add('a.txt');
+  const status = `SELECT state, error, pending FROM derived_status WHERE dataset = 'answers'`;
+  const controller = new AbortController();
+  const watching = answers.pipeline.watch({ signal: controller.signal });
+
+  let held;
+  try {
+    await watching.next();
+    held = await timebox(
+      () => {
+        assert.deepEqual(model.calls, [['a.txt']]);
+        return answers.read(status);
+      },
+      {
+        minTimeout: 10,
+        maxRetryTime: 10_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+
+  assert.deepEqual(
+    { held, stopped: answers.read(status) },
+    {
+      held: [{ state: 'refreshing', error: null, pending: 1 }],
+      stopped: [{ state: 'refreshing', error: null, pending: 1 }],
+    },
+  );
+});
+
+test('a computed dataset whose input table a person dropped waits in derived_status, and keeps the rows it made', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const answers = modelImport(scratch.path, new Model(1));
+  answers.source.rows = [{ id: '0', ref: 'a.txt' }];
+  await answers.pipeline.run();
+  // No operation of elt drops a loaded table: a person does it by hand, and
+  // the copy cannot load it again while its store is gone.
+  {
+    using database = open(answers.path);
+    database.exec('DROP TABLE raw_files');
+  }
+  answers.source.filesGone = true;
+
+  await answers.pipeline.run().catch(() => undefined);
+
+  assert.deepEqual(
+    {
+      status: answers.read(
+        `SELECT state, error FROM derived_status WHERE dataset = 'answers'`,
+      ),
+      rows: answers.read('SELECT ref, status, answer FROM answers'),
+    },
+    {
+      status: [{ state: 'waiting', error: null }],
+      rows: [{ ref: 'a.txt', status: 'computed', answer: 'A.TXT' }],
+    },
+  );
 });
 
 // A rule that only names its columns: the dataset checks them when it is

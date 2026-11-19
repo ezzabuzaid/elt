@@ -1,6 +1,6 @@
 import type postgres from 'postgres';
 
-import type { PipelineClock } from '@eltjs/elt';
+import { DerivedStatus, type PipelineClock } from '@eltjs/elt';
 
 import { type Queries, lockSchema } from './postgres-session.ts';
 
@@ -16,27 +16,12 @@ export const derivedStatusTable = `CREATE TABLE IF NOT EXISTS _warehouse.derived
     inputs bigint, computed bigint, empty bigint, failed bigint, pending bigint
   )`;
 
-// The counts of a computed dataset's rows, as its refresh tells them.
-export type DerivedCounts = {
-  readonly inputs: number;
-  readonly computed: number;
-  readonly empty: number;
-  readonly failed: number;
-  readonly pending: number;
-};
-
-// What one refresh of a derived dataset tells readers, as Snowflake keeps the
-// state and DATA_TIMESTAMP of each dynamic table, and pgai the pending items
-// of each vectorizer. A refresh that begins keeps as_of, the data of the
-// last refresh that ended, until it ends too. dataset is the name with its
+// The derived_status of the database, where dataset is the name with its
 // schema.
-export class PostgresDerivedStatus {
+export class PostgresDerivedStatus extends DerivedStatus {
   readonly #sql: postgres.Sql;
   readonly #dataset: string;
   readonly #kind: 'view' | 'computed';
-  readonly #clock: PipelineClock;
-  // When this refresh began to read, which its end gives as as_of.
-  readonly #since: string;
 
   // sql is a session outside any transaction, between the dataset's own.
   constructor(
@@ -45,23 +30,10 @@ export class PostgresDerivedStatus {
     kind: 'view' | 'computed',
     clock: PipelineClock,
   ) {
+    super(clock);
     this.#sql = sql;
     this.#dataset = dataset;
     this.#kind = kind;
-    this.#clock = clock;
-    this.#since = this.#now();
-  }
-
-  waiting(): Promise<void> {
-    return this.#write({ state: 'waiting', refreshing_since: null });
-  }
-
-  refreshing(counts: DerivedCounts): Promise<void> {
-    return this.#write({
-      state: 'refreshing',
-      refreshing_since: this.#since,
-      ...counts,
-    });
   }
 
   // Inside the transaction of a commit that settled count inputs.
@@ -72,24 +44,9 @@ export class PostgresDerivedStatus {
     );
   }
 
-  current(counts?: DerivedCounts): Promise<void> {
-    return this.#write({
-      state: 'current',
-      as_of: this.#since,
-      refreshed_at: this.#now(),
-      refreshing_since: null,
-      error: null,
-      ...counts,
-    });
-  }
-
-  failed(error: string): Promise<void> {
-    return this.#write({ state: 'failed', refreshing_since: null, error });
-  }
-
   // In a transaction of its own, which takes no commit number: the status is
   // no data of a position.
-  async #write(
+  protected override async write(
     values: Readonly<Record<string, string | number | null>>,
   ): Promise<void> {
     const columns = ['dataset', 'kind', ...Object.keys(values)];
@@ -105,9 +62,5 @@ export class PostgresDerivedStatus {
         [this.#dataset, this.#kind, ...Object.values(values)],
       );
     });
-  }
-
-  #now(): string {
-    return new Date(this.#clock.Date.now()).toISOString();
   }
 }

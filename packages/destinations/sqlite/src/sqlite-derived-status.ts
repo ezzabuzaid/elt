@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { transaction } from '@zukhruf/sqlite-transaction';
 
-import type { PipelineClock } from '@eltjs/elt';
+import { DerivedStatus, type PipelineClock } from '@eltjs/elt';
 
 export const derivedStatus = '"_elt_derived_status"';
 
@@ -21,26 +21,11 @@ export const derivedStatusTable = `CREATE TABLE ${derivedStatus} (
 
 const declaration = new Declaration([derivedStatusTable], { rows: 'replace' });
 
-// The counts of a computed dataset's rows, as its refresh tells them.
-export type DerivedCounts = {
-  readonly inputs: number;
-  readonly computed: number;
-  readonly empty: number;
-  readonly failed: number;
-  readonly pending: number;
-};
-
-// What one refresh of a derived dataset tells readers, as Snowflake keeps the
-// state and DATA_TIMESTAMP of each dynamic table, and pgai the pending items
-// of each vectorizer. A refresh that begins keeps as_of, the data of the
-// last refresh that ended, until it ends too.
-export class SQLiteDerivedStatus {
+// The derived_status of the file: each write is a transaction of its own.
+export class SQLiteDerivedStatus extends DerivedStatus {
   readonly #database: DatabaseSync;
   readonly #dataset: string;
   readonly #kind: 'view' | 'computed';
-  readonly #clock: PipelineClock;
-  // When this refresh began to read, which its end gives as as_of.
-  readonly #since: string;
 
   constructor(
     database: DatabaseSync,
@@ -48,23 +33,10 @@ export class SQLiteDerivedStatus {
     kind: 'view' | 'computed',
     clock: PipelineClock,
   ) {
+    super(clock);
     this.#database = database;
     this.#dataset = dataset;
     this.#kind = kind;
-    this.#clock = clock;
-    this.#since = this.#now();
-  }
-
-  waiting(): void {
-    this.#write({ state: 'waiting', refreshing_since: null });
-  }
-
-  refreshing(counts: DerivedCounts): void {
-    this.#write({
-      state: 'refreshing',
-      refreshing_since: this.#since,
-      ...counts,
-    });
   }
 
   // Inside the transaction of a commit that settled count inputs.
@@ -76,22 +48,9 @@ export class SQLiteDerivedStatus {
       .run(count, this.#dataset);
   }
 
-  current(counts?: DerivedCounts): void {
-    this.#write({
-      state: 'current',
-      as_of: this.#since,
-      refreshed_at: this.#now(),
-      refreshing_since: null,
-      error: null,
-      ...counts,
-    });
-  }
-
-  failed(error: string): void {
-    this.#write({ state: 'failed', refreshing_since: null, error });
-  }
-
-  #write(values: Readonly<Record<string, string | number | null>>): void {
+  protected override async write(
+    values: Readonly<Record<string, string | number | null>>,
+  ): Promise<void> {
     transaction(
       this.#database,
       () => {
@@ -110,9 +69,5 @@ export class SQLiteDerivedStatus {
       },
       { mode: 'immediate' },
     );
-  }
-
-  #now(): string {
-    return new Date(this.#clock.Date.now()).toISOString();
   }
 }

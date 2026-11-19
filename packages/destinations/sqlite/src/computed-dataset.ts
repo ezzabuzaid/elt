@@ -1,5 +1,4 @@
-import { hash } from 'node:crypto';
-import type { DatabaseSync, SQLInputValue, SQLOutputValue } from 'node:sqlite';
+import type { SQLInputValue, SQLOutputValue } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { open } from '@zukhruf/sqlite-open';
@@ -8,10 +7,14 @@ import { transaction } from '@zukhruf/sqlite-transaction';
 import {
   type Connection,
   DerivedDataset,
+  type OutputRow,
   type PipelineClock,
+  type PreparedOutputs,
   type RefreshTrigger,
   type Rule,
-  errorMessage,
+  type StoredOutput,
+  computedColumns,
+  refreshComputed,
 } from '@eltjs/elt';
 
 import { busyTimeout } from './open-destination.ts';
@@ -23,22 +26,6 @@ import { SQLiteLoad } from './sqlite-loads.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { publishSQLiteViews } from './sqlite-views.ts';
 import { View } from './view.ts';
-
-// The columns the dataset keeps on every output row beside the rule's own.
-const engineColumns = {
-  input_hash:
-    'SHA-256 of the input the row was made from; the row is made again when its input changes.',
-  rule: 'What made the row, such as the parser of its format or the model; the row is made again when that changes. unsupported: the rule does not handle the input.',
-  status:
-    'computed: the rule made the row. empty: the rule found nothing to keep, such as a photo without words. failed: the rule failed, error says why, and the refresh after the passes tries again, at most once for each pass.',
-  error: 'Why the rule failed. NULL unless status is failed.',
-};
-
-type Stored = {
-  readonly inputHash: string;
-  readonly rule: string;
-  readonly status: string;
-};
 
 // Data computed on write from what the pipeline's copies load: a rule makes
 // one output row for each input, such as the text of each stored file, as
@@ -98,7 +85,7 @@ export class ComputedDataset<
     const taken = new Map(
       [
         compute.key.name,
-        ...Object.keys(engineColumns),
+        ...Object.keys(computedColumns),
         'committed_in',
         '_elt_row_hash',
       ].map((column) => [identifiers.key(column), column]),
@@ -113,7 +100,7 @@ export class ComputedDataset<
     }
     this.#columns = Object.freeze([
       compute.key.name,
-      ...Object.keys(engineColumns),
+      ...Object.keys(computedColumns),
       ...Object.keys(compute.output),
     ]);
     const ruleColumns = Object.entries(compute.output).map(
@@ -184,35 +171,30 @@ export class ComputedDataset<
       'computed',
       clock,
     );
-    const inputs = this.#inputs(connections);
-    if (inputs === null) {
-      status.waiting();
-      return;
-    }
-    try {
-      await this.#update(load, status, inputs, trigger, signal);
-    } catch (error) {
-      // A stop is not the dataset's failure.
-      if (signal?.aborted !== true) status.failed(errorMessage(error));
-      throw error;
-    }
+    await refreshComputed({
+      rule: this.#rule,
+      inputs: this.#inputs(connections),
+      prepare: async (keys) => this.#prepare(load, status, keys),
+      status,
+      trigger,
+      signal,
+    });
   }
 
-  // Brings the output rows in step with inputs, and tells status how many
-  // are due and how many settled.
-  async #update(
+  // Brings the table to its declaration, in the commit that keeps each row a
+  // new declaration drops in the history, removes the rows whose key has no
+  // input, and gives the output table to write. Each transaction takes the
+  // number of its commit at its first change, so one that changes no row
+  // takes none.
+  #prepare(
     load: SQLiteLoad,
     status: SQLiteDerivedStatus,
-    inputs: Map<string, Input>,
-    trigger: RefreshTrigger,
-    signal: AbortSignal | undefined,
-  ): Promise<void> {
+    keys: ReadonlySet<string>,
+  ): PreparedOutputs<Output> {
     const { database } = load;
     const key = this.#rule.key.name;
     const table = quote(this.#table);
     const byKey = `FROM ${table} AS "_elt_old" WHERE "_elt_old".${quote(key)} = ?`;
-    // The number of a transaction's commit, taken at its first change, so a
-    // transaction that changes no row takes none.
     const commits = () => {
       let number: number | undefined;
       return () => (number ??= load.commit());
@@ -242,7 +224,7 @@ export class ComputedDataset<
               description: this.#description,
               columns: {
                 [key]: this.#rule.key.description,
-                ...engineColumns,
+                ...computedColumns,
                 ...Object.fromEntries(
                   Object.entries(this.#rule.output).map(
                     ([column, { description }]) => [column, description],
@@ -253,7 +235,7 @@ export class ComputedDataset<
             },
           ],
         });
-        const rows = new Map<string, Stored>();
+        const rows = new Map<string, StoredOutput>();
         const remove = database.prepare(
           `DELETE FROM ${table} WHERE ${quote(key)} = ?`,
         );
@@ -263,7 +245,7 @@ export class ComputedDataset<
           )
           .all()) {
           const id = String(row.key);
-          if (!inputs.has(id)) {
+          if (!keys.has(id)) {
             this.#history.keep(database, commit(), byKey, [id]);
             remove.run(id);
           } else
@@ -290,157 +272,52 @@ export class ComputedDataset<
     // Writes a row in the commit that commit numbers, unless the stored row
     // has the same values: then it keeps its commit. The history keeps the
     // row it replaces.
-    const store = (
-      commit: () => number,
-      id: string,
-      inputHash: string,
-      rule: string,
-      status: 'computed' | 'empty' | 'failed',
-      error: string | null,
-      values: Readonly<Record<string, Output>>,
-    ) => {
+    const store = (commit: () => number, output: OutputRow<Output>) => {
       const row = [
-        id,
-        inputHash,
-        rule,
-        status,
-        error,
+        output.key,
+        output.inputHash,
+        output.rule,
+        output.status,
+        output.error,
         ...Object.keys(this.#rule.output).map(
-          (column) => values[column] ?? null,
+          (column) => output.values[column] ?? null,
         ),
       ];
       const hash = rowHash(hashed, row);
-      const before = version.get(id)?.hash;
+      const before = version.get(output.key)?.hash;
       if (before === hash) return;
       const number = commit();
       if (before !== undefined)
-        this.#history.keep(database, number, byKey, [id]);
+        this.#history.keep(database, number, byKey, [output.key]);
       write.run(...row, number, hash);
     };
-    const due: {
-      readonly id: string;
-      readonly input: Input;
-      readonly inputHash: string;
-      readonly rule: string;
-    }[] = [];
-    for (const [id, input] of inputs) {
-      if (signal?.aborted) return;
-      const inputHash = hash('sha256', JSON.stringify(input));
-      const rule = await this.#rule.identity(input);
-      const before = stored.get(id);
-      // A rule that does not handle the input keeps what it made before.
-      if (rule === null) {
-        if (before?.status === 'computed') continue;
-        if (before?.rule === 'unsupported' && before.inputHash === inputHash)
-          continue;
+    return {
+      stored,
+      store: async (output) => {
+        transaction(database, () => store(commits(), output), {
+          mode: 'immediate',
+        });
+      },
+      settle: async (outputs, settled) => {
         transaction(
           database,
-          () =>
-            store(commits(), id, inputHash, 'unsupported', 'empty', null, {}),
+          () => {
+            const commit = commits();
+            for (const output of outputs) store(commit, output);
+            status.settled(settled);
+          },
           { mode: 'immediate' },
         );
-        continue;
-      }
-      if (
-        before !== undefined &&
-        before.inputHash === inputHash &&
-        before.rule === rule
-      ) {
-        // A failed input waits for the refresh after the passes.
-        if (before.status !== 'failed' || trigger.kind === 'commit') continue;
-      }
-      // The passes try each input, as it is now, at most once: the refresh
-      // after them leaves what a commit refresh of the same passes tried.
-      const attempt = `${id}\0${inputHash}\0${rule}`;
-      if (trigger.tried.has(attempt)) continue;
-      if (trigger.kind === 'commit') trigger.tried.add(attempt);
-      due.push({ id, input, inputHash, rule });
-    }
-    status.refreshing({
-      ...this.#counts(database, inputs),
-      pending: due.length,
-    });
-    // A pool of calls, each taking the next batch once its own committed, so
-    // a slow call holds only its place, as a worker pool keeps its other
-    // workers busy. A call that fails stops the pool taking more.
-    const failures: unknown[] = [];
-    let next = 0;
-    await Promise.all(
-      Array.from({ length: this.#rule.concurrency }, async () => {
-        while (failures.length === 0 && signal?.aborted !== true) {
-          const batch = due.slice(next, next + this.#rule.batch);
-          next += this.#rule.batch;
-          if (batch.length === 0) return;
-          let results;
-          try {
-            results = await this.#rule.compute(
-              batch.map(({ input }) => input),
-              signal,
-            );
-          } catch (error) {
-            failures.push(error);
-            return;
-          }
-          // Each call commits on its own, so readers see rows as they land.
-          transaction(
-            database,
-            () => {
-              const commit = commits();
-              batch.forEach(({ id, inputHash, rule }, index) => {
-                const result = results[index];
-                if (result === undefined || 'gone' in result) return;
-                if ('value' in result)
-                  store(
-                    commit,
-                    id,
-                    inputHash,
-                    rule,
-                    'computed',
-                    null,
-                    result.value,
-                  );
-                else if ('error' in result)
-                  store(
-                    commit,
-                    id,
-                    inputHash,
-                    rule,
-                    'failed',
-                    result.error,
-                    {},
-                  );
-                else store(commit, id, inputHash, rule, 'empty', null, {});
-              });
-              status.settled(batch.length);
-            },
-            { mode: 'immediate' },
-          );
-        }
-      }),
-    );
-    if (failures.length > 0) throw failures[0];
-    if (signal?.aborted === true) return;
-    status.current({ ...this.#counts(database, inputs), pending: 0 });
-  }
-
-  // How many inputs there are, and how many output rows have each status.
-  #counts(
-    database: DatabaseSync,
-    inputs: ReadonlyMap<string, Input>,
-  ): { inputs: number; computed: number; empty: number; failed: number } {
-    const counted = new Map(
-      database
-        .prepare(
-          `SELECT "status", count(*) AS "n" FROM ${quote(this.#table)} GROUP BY "status"`,
-        )
-        .all()
-        .map(({ status, n }) => [String(status), Number(n)]),
-    );
-    return {
-      inputs: inputs.size,
-      computed: counted.get('computed') ?? 0,
-      empty: counted.get('empty') ?? 0,
-      failed: counted.get('failed') ?? 0,
+      },
+      counts: async () =>
+        new Map(
+          database
+            .prepare(
+              `SELECT "status", count(*) AS "n" FROM ${table} GROUP BY "status"`,
+            )
+            .all()
+            .map(({ status, n }) => [String(status), Number(n)]),
+        ),
     };
   }
 
