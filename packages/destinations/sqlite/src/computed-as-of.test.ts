@@ -15,8 +15,9 @@ import {
   Pipeline,
   type PipelineClock,
   Rule,
-  type RuleColumn,
+  type RuleColumns,
   type RuleResult,
+  type RuleValues,
   Source,
   Stream,
 } from '@eltjs/elt';
@@ -70,15 +71,15 @@ class Notes extends Source {
 // Each note's text in capitals, one note a call; a note whose text starts
 // with "bad" fails, one whose text starts with "throw" fails the call, and a
 // call for a note in holding waits until the test releases it.
-class Shout extends Rule<Note, string> {
+class Shout extends Rule<Note, RuleColumns> {
   readonly key = { name: 'id', description: 'Note id.' };
-  readonly output: Readonly<Record<string, RuleColumn>>;
+  readonly output: RuleColumns;
   readonly batch = 1;
   readonly concurrency = 1;
   readonly holding = new Map<string, Hold>();
 
   constructor(
-    output: Readonly<Record<string, RuleColumn>> = {
+    output: RuleColumns = {
       loud: { description: 'The text in capitals.', type: 'text' },
     },
   ) {
@@ -99,7 +100,7 @@ class Shout extends Rule<Note, string> {
 
   async compute(
     inputs: readonly Note[],
-  ): Promise<readonly RuleResult<Readonly<Record<string, string>>>[]> {
+  ): Promise<readonly RuleResult<RuleValues<RuleColumns>>[]> {
     const results = [];
     for (const { id, text } of inputs) {
       const held = this.holding.get(id);

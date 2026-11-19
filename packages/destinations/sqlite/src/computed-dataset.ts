@@ -1,8 +1,10 @@
-import type { SQLInputValue, SQLOutputValue } from 'node:sqlite';
+import type { SQLOutputValue } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { open } from '@zukhruf/sqlite-open';
 import { transaction } from '@zukhruf/sqlite-transaction';
+import { Vector } from '@zukhruf/vectors';
+import { toSql } from '@zukhruf/vectors/sqlite';
 
 import {
   type Connection,
@@ -12,6 +14,8 @@ import {
   type PreparedOutputs,
   type RefreshTrigger,
   type Rule,
+  type RuleColumn,
+  type RuleColumns,
   type StoredOutput,
   computedColumns,
   refreshComputed,
@@ -27,6 +31,15 @@ import type { SQLiteTable } from './sqlite-table.ts';
 import { publishSQLiteViews } from './sqlite-views.ts';
 import { View } from './view.ts';
 
+// The SQLite type of each kind of rule column: a vector is the bytes of
+// @zukhruf/vectors/sqlite, float32 values little-endian, which sqlite-vec reads.
+const types: Readonly<Record<RuleColumn['type'], string>> = {
+  text: 'TEXT',
+  blob: 'BLOB',
+  vector: 'BLOB',
+  integer: 'INTEGER',
+};
+
 // Data computed on write from what the pipeline's copies load: a rule makes
 // one output row for each input, such as the text of each stored file, as
 // pgai's vectorizer keeps an embedding beside each row. The pipeline refreshes
@@ -41,15 +54,12 @@ import { View } from './view.ts';
 // row is a numbered commit, each row names the commit that last wrote it,
 // and the history keeps each row a commit replaced or removed, so the view
 // reads as of a position as the copies' tables do.
-export class ComputedDataset<
-  Input,
-  Output extends SQLInputValue,
-> extends DerivedDataset<SQLiteTable> {
+export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
   readonly name: string;
   readonly #into: SQLiteDestination;
   readonly #description: string;
   readonly #from: readonly (SQLiteTable | View)[];
-  readonly #rule: Rule<Input, Output>;
+  readonly #rule: Rule<Input, RuleColumns>;
   readonly #table: string;
   readonly #declaration: Declaration;
   readonly #history: SQLiteHistory;
@@ -67,7 +77,7 @@ export class ComputedDataset<
     name: string;
     description: string;
     from: readonly (SQLiteTable | View)[];
-    compute: Rule<Input, Output>;
+    compute: Rule<Input, RuleColumns>;
   }) {
     super();
     this.name = name;
@@ -104,8 +114,7 @@ export class ComputedDataset<
       ...Object.keys(compute.output),
     ]);
     const ruleColumns = Object.entries(compute.output).map(
-      ([column, { type }]) =>
-        `${quote(column)} ${type === 'blob' ? 'BLOB' : 'TEXT'}`,
+      ([column, { type }]) => `${quote(column)} ${types[type]}`,
     );
     this.#declaration = new Declaration(
       [
@@ -190,7 +199,7 @@ export class ComputedDataset<
     load: SQLiteLoad,
     status: SQLiteDerivedStatus,
     keys: ReadonlySet<string>,
-  ): PreparedOutputs<Output> {
+  ): PreparedOutputs {
     const { database } = load;
     const key = this.#rule.key.name;
     const table = quote(this.#table);
@@ -272,16 +281,17 @@ export class ComputedDataset<
     // Writes a row in the commit that commit numbers, unless the stored row
     // has the same values: then it keeps its commit. The history keeps the
     // row it replaces.
-    const store = (commit: () => number, output: OutputRow<Output>) => {
+    const store = (commit: () => number, output: OutputRow) => {
       const row = [
         output.key,
         output.inputHash,
         output.rule,
         output.status,
         output.error,
-        ...Object.keys(this.#rule.output).map(
-          (column) => output.values[column] ?? null,
-        ),
+        ...Object.keys(this.#rule.output).map((column) => {
+          const value = output.values[column];
+          return value instanceof Vector ? toSql(value) : (value ?? null);
+        }),
       ];
       const hash = rowHash(hashed, row);
       const before = version.get(output.key)?.hash;

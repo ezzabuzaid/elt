@@ -39,6 +39,7 @@
   "dependencies": {
     "@eltjs/elt": "^0.4.3",
     "@zukhruf/async": "^0.8.31",
+    "@zukhruf/vectors": "^0.8.40",
     "postgres": "^3.4.9"
   },
   "devDependencies": {

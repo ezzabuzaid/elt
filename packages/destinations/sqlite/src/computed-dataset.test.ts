@@ -9,6 +9,8 @@ import { Latch } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 import { timebox, waitFor } from '@zukhruf/testing/async';
+import { Vector } from '@zukhruf/vectors';
+import { fromSql } from '@zukhruf/vectors/sqlite';
 
 import {
   Catalog,
@@ -23,6 +25,9 @@ import {
   Pipeline,
   PipelineError,
   Rule,
+  type RuleColumns,
+  type RuleResult,
+  type RuleValues,
   Source,
   Stream,
 } from '@eltjs/elt';
@@ -667,11 +672,13 @@ test('derived_status gives as_of as the time the last refresh began to read, whi
 // rejects with the stop, as an AI SDK call that honors its AbortSignal does.
 // A real model needs the network and a key, and its answers vary, so a test
 // cannot hold its calls or know what they return.
-class Model extends Rule<string, string> {
+const answered = {
+  answer: { type: 'text', description: 'What the model answered.' },
+} as const;
+
+class Model extends Rule<string, typeof answered> {
   override readonly key = { name: 'ref', description: 'The file.' };
-  override readonly output: Rule<string, string>['output'] = {
-    answer: { type: 'text', description: 'What the model answered.' },
-  };
+  override readonly output = answered;
   override readonly batch = 1;
   override readonly concurrency: number;
   // The inputs of each call, in the order the calls began.
@@ -711,7 +718,7 @@ class Model extends Rule<string, string> {
 
 // The rows of Files, loaded into raw_files and read through files, and the
 // computed dataset answers, which model makes from each file a row names.
-function modelImport(directory: string, model: Model) {
+function modelImport(directory: string, model: Rule<string, RuleColumns>) {
   const source = new Files();
   const destination = new SQLiteDestination({
     path: join(directory, 'data.sqlite'),
@@ -846,9 +853,9 @@ test('a computed dataset whose input table a person dropped waits in derived_sta
 
 // A rule that only names its columns: the dataset checks them when it is
 // constructed, before any input reaches compute.
-class NamedColumns extends Rule<string, string> {
+class NamedColumns extends Rule<string, RuleColumns> {
   override readonly key = { name: 'ref', description: 'The input.' };
-  override readonly output: Rule<string, string>['output'];
+  override readonly output: RuleColumns;
   override readonly batch = 1;
   override readonly concurrency = 1;
 
@@ -892,3 +899,170 @@ for (const [column, owner] of [
       ),
     );
   });
+
+// A size and a vector of 3 dimensions for each file, as a model that measures
+// files gives them; the test sets the answer for each ref.
+const measured = {
+  size: { type: 'integer', description: 'The size of the file.' },
+  vector: {
+    type: 'vector',
+    dimensions: 3,
+    description: 'The file as a vector.',
+  },
+} as const;
+
+class Measure extends Rule<string, typeof measured> {
+  override readonly key = { name: 'ref', description: 'The file.' };
+  override readonly output = measured;
+  override readonly batch = 10;
+  override readonly concurrency = 1;
+  readonly answers = new Map<string, RuleValues<typeof measured>>();
+
+  override read(row: LoadedRow) {
+    return typeof row.ref === 'string'
+      ? { key: row.ref, input: row.ref }
+      : null;
+  }
+
+  override async identity() {
+    return 'measure-1';
+  }
+
+  override async compute(
+    refs: readonly string[],
+  ): Promise<readonly RuleResult<RuleValues<typeof measured>>[]> {
+    return refs.map((ref) => ({ value: this.answers.get(ref) ?? {} }));
+  }
+}
+
+function measuredRows(path: string) {
+  using database = open(path, { readOnly: true });
+  return database
+    .prepare(
+      'SELECT ref, status, error, size, typeof(size) AS stored, vector FROM answers ORDER BY ref',
+    )
+    .all()
+    .map(({ ref, status, error, size, stored, vector }) => ({
+      ref,
+      status,
+      error,
+      size,
+      stored,
+      vector:
+        vector instanceof Uint8Array
+          ? [...fromSql(Vector, vector).values]
+          : vector,
+    }));
+}
+
+test('an integer column keeps each value as an INTEGER, and a vector column keeps the bytes that fromSql of @zukhruf/vectors/sqlite reads back', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const measure = new Measure();
+  const answers = modelImport(scratch.path, measure);
+  answers.source.rows = [
+    { id: '1', ref: 'a.txt' },
+    { id: '2', ref: 'b.txt' },
+  ];
+  measure.answers.set('a.txt', {
+    size: Number.MAX_SAFE_INTEGER,
+    vector: Vector.from([0.5, -1, 2]),
+  });
+
+  await answers.pipeline.run();
+
+  assert.deepEqual(
+    {
+      rows: measuredRows(answers.path),
+      declared: answers.read(
+        "SELECT name, type FROM pragma_table_info('raw_answers') WHERE name IN ('size', 'vector') ORDER BY name",
+      ),
+    },
+    {
+      rows: [
+        {
+          ref: 'a.txt',
+          status: 'computed',
+          error: null,
+          size: Number.MAX_SAFE_INTEGER,
+          stored: 'integer',
+          vector: [0.5, -1, 2],
+        },
+        {
+          ref: 'b.txt',
+          status: 'computed',
+          error: null,
+          size: null,
+          stored: 'null',
+          vector: null,
+        },
+      ],
+      declared: [
+        { name: 'size', type: 'INTEGER' },
+        { name: 'vector', type: 'BLOB' },
+      ],
+    },
+  );
+});
+
+test('a value that does not fit its column fails its row with why: an integer that is not safe names its column, a vector of other dimensions names both counts, and the other rows land', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const measure = new Measure();
+  const answers = modelImport(scratch.path, measure);
+  answers.source.rows = ['a.txt', 'b.txt', 'c.txt', 'd.txt'].map(
+    (ref, index) => ({ id: String(index), ref }),
+  );
+  const fits = Vector.from([1, 2, 3]);
+  measure.answers.set('a.txt', { size: 2 ** 53, vector: fits });
+  measure.answers.set('b.txt', { size: 1.5, vector: fits });
+  measure.answers.set('c.txt', { size: 7, vector: Vector.from([1, 2]) });
+  measure.answers.set('d.txt', { size: 7, vector: fits });
+
+  await answers.pipeline.run();
+
+  assert.deepEqual(
+    measuredRows(answers.path).map(({ ref, status, error, size }) => ({
+      ref,
+      status,
+      error,
+      size,
+    })),
+    [
+      {
+        ref: 'a.txt',
+        status: 'failed',
+        error:
+          'The column size takes a safe integer, and the rule gave 9007199254740992.',
+        size: null,
+      },
+      {
+        ref: 'b.txt',
+        status: 'failed',
+        error: 'The column size takes a safe integer, and the rule gave 1.5.',
+        size: null,
+      },
+      {
+        ref: 'c.txt',
+        status: 'failed',
+        error:
+          'The column vector takes a vector of 3 dimensions, and the rule gave one of 2.',
+        size: null,
+      },
+      { ref: 'd.txt', status: 'computed', error: null, size: 7 },
+    ],
+  );
+});
+
+test('the value of each rule column has the type of its kind, so a rule cannot give a vector column a string or a text column a vector', () => {
+  const values: RuleValues<{
+    readonly text: { readonly type: 'text'; readonly description: string };
+    readonly vector: typeof measured.vector;
+  }>[] = [
+    { text: 'a', vector: Vector.from([1, 2, 3]) },
+    // @ts-expect-error -- a vector column takes a Vector
+    { vector: 'a' },
+    // @ts-expect-error -- a text column takes a string
+    { text: Vector.from([1, 2, 3]) },
+  ];
+
+  assert.equal(values.length, 3);
+});

@@ -261,7 +261,7 @@ const text = new ComputedDataset({
 
 `documents` is the target of a copy, and `from` can name more than one. The rule reads each row that those copies loaded, through the reader view of a target that has one. `from` can also name a `View` that comes before the computed dataset in `derived`. See [Write a rule](../../elt/README.md#write-a-rule) in elt.
 
-A computed dataset keeps one output row for each key, in the table `raw_<name>` in the schema of `into`, beside its history. Readers query the view `<name>` in the same schema. Its columns are the same as in [elt-sqlite](../sqlite/README.md#declare-a-computed-dataset): the key, `input_hash`, `rule`, `status` (`computed`, `empty` or `failed`), `error`, and the columns of the rule. A `text` column of a rule is `TEXT`, and a `blob` column is `BYTEA`.
+A computed dataset keeps one output row for each key, in the table `raw_<name>` in the schema of `into`, beside its history. Readers query the view `<name>` in the same schema. Its columns are the same as in [elt-sqlite](../sqlite/README.md#declare-a-computed-dataset): the key, `input_hash`, `rule`, `status` (`computed`, `empty` or `failed`), `error`, and the columns of the rule. A `text` column of a rule is `TEXT`, a `blob` column is `BYTEA`, and an `integer` column is `BIGINT`. A `vector` column is `BYTEA` that holds the bytes of `toSql` of `@zukhruf/vectors/sqlite`, float32 values little-endian, as in elt-sqlite; `fromSql(Vector, bytes)` of the same package reads them back. The driver `postgres` gives a `BIGINT` as a string by default.
 
 At each refresh, the computed dataset compares the inputs with the output rows:
 

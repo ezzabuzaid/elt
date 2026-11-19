@@ -7,6 +7,8 @@ import { Latch } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { waitFor } from '@zukhruf/testing/async';
 import { Postgres } from '@zukhruf/testing/postgres';
+import { Vector } from '@zukhruf/vectors';
+import { fromSql } from '@zukhruf/vectors/sqlite';
 import postgres from 'postgres';
 
 import {
@@ -16,8 +18,12 @@ import {
   type CopyConfiguration,
   DocumentParser,
   DocumentText,
+  type LoadedRow,
   Pipeline,
   PipelineError,
+  Rule,
+  type RuleResult,
+  type RuleValues,
   Source,
   Stream,
 } from '@eltjs/elt';
@@ -662,6 +668,124 @@ test('the view of a computed dataset, read as of a position, shows the rows it h
     {
       then: [{ ref: 'a.txt', content: 'first draft' }],
       now: [{ ref: 'a.txt', content: 'final' }],
+    },
+  );
+});
+
+// A size and a vector of 3 dimensions for each file, as a model that measures
+// files gives them; the test sets the answer for each ref.
+const measured = {
+  size: { type: 'integer', description: 'The size of the file.' },
+  vector: {
+    type: 'vector',
+    dimensions: 3,
+    description: 'The file as a vector.',
+  },
+} as const;
+
+class Measure extends Rule<string, typeof measured> {
+  override readonly key = { name: 'ref', description: 'The file.' };
+  override readonly output = measured;
+  override readonly batch = 10;
+  override readonly concurrency = 1;
+  readonly answers = new Map<string, RuleValues<typeof measured>>();
+
+  override read(row: LoadedRow) {
+    return typeof row.ref === 'string'
+      ? { key: row.ref, input: row.ref }
+      : null;
+  }
+
+  override async identity() {
+    return 'measure-1';
+  }
+
+  override async compute(
+    refs: readonly string[],
+  ): Promise<readonly RuleResult<RuleValues<typeof measured>>[]> {
+    return refs.map((ref) => ({ value: this.answers.get(ref) ?? {} }));
+  }
+}
+
+test('an integer column keeps each value as a bigint, and a vector column keeps as bytea the bytes that fromSql of @zukhruf/vectors/sqlite reads back', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  const source = new Files();
+  const raw = new PostgresDestination({ url, schema: 'raw' });
+  const target = raw.table('raw_files').withReaderView('marts', 'files');
+  const measure = new Measure();
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new PostgresSyncHistory({ url }),
+    connections: [
+      new Connection({
+        name: 'files',
+        source,
+        destination: raw,
+        steps: [new Copy(source.files, target)],
+      }),
+    ],
+    derived: [
+      new ComputedDataset({
+        into: new PostgresDestination({ url, schema: 'marts' }),
+        name: 'measures',
+        description: 'The size and vector of each file a row names.',
+        from: [target],
+        compute: measure,
+      }),
+    ],
+  });
+  source.rows = [
+    { id: '1', ref: 'a.txt' },
+    { id: '2', ref: 'b.txt' },
+  ];
+  measure.answers.set('a.txt', {
+    size: Number.MAX_SAFE_INTEGER,
+    vector: Vector.from([0.5, -1, 2]),
+  });
+
+  await pipeline.run();
+
+  assert.deepEqual(
+    {
+      rows: (
+        await sql<
+          {
+            ref: string;
+            status: string;
+            size: string | null;
+            vector: Buffer | null;
+          }[]
+        >`SELECT ref, status, size, vector FROM marts.measures ORDER BY ref`
+      ).map(({ vector, ...row }) => ({
+        ...row,
+        vector: vector === null ? null : [...fromSql(Vector, vector).values],
+      })),
+      declared: [
+        ...(await sql`
+          SELECT attname AS name, format_type(atttypid, atttypmod) AS type
+          FROM pg_attribute
+          WHERE attrelid = 'marts.raw_measures'::regclass
+            AND attname IN ('size', 'vector')
+          ORDER BY attname`),
+      ],
+    },
+    {
+      rows: [
+        {
+          ref: 'a.txt',
+          status: 'computed',
+          size: String(Number.MAX_SAFE_INTEGER),
+          vector: [0.5, -1, 2],
+        },
+        { ref: 'b.txt', status: 'computed', size: null, vector: null },
+      ],
+      declared: [
+        { name: 'size', type: 'bigint' },
+        { name: 'vector', type: 'bytea' },
+      ],
     },
   );
 });

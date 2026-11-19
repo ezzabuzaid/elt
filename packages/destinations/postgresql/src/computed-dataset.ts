@@ -1,6 +1,8 @@
 import { hash } from 'node:crypto';
 
 import { Lock } from '@zukhruf/async';
+import { Vector } from '@zukhruf/vectors';
+import { toSql } from '@zukhruf/vectors/sqlite';
 import postgres from 'postgres';
 
 import {
@@ -11,6 +13,8 @@ import {
   type PreparedOutputs,
   type RefreshTrigger,
   type Rule,
+  type RuleColumn,
+  type RuleColumns,
   type StoredOutput,
   computedColumns,
   refreshComputed,
@@ -37,6 +41,15 @@ const ownColumns = [
   'replaced_in',
 ];
 
+// The Postgres type of each kind of rule column: a vector is the bytes of
+// @zukhruf/vectors/sqlite, float32 values little-endian.
+const types: Readonly<Record<RuleColumn['type'], string>> = {
+  text: 'text',
+  blob: 'bytea',
+  vector: 'bytea',
+  integer: 'bigint',
+};
+
 // Data computed on write from what the pipeline's copies load into one
 // Postgres database: a rule makes one output row for each input, such as the
 // text of each stored file, as pgai's vectorizer keeps an embedding beside
@@ -53,15 +66,12 @@ const ownColumns = [
 // a row is a numbered commit, each row names the commit that last wrote it,
 // and the history keeps each row a commit replaced or removed, so the view
 // reads as of a position as the copies' reader views do.
-export class ComputedDataset<
-  Input,
-  Output extends string | Uint8Array,
-> extends DerivedDataset<PostgresTable> {
+export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
   readonly name: string;
   // The database and schema the dataset lives in.
   readonly into: PostgresDestination;
   readonly #from: readonly (PostgresTable | View)[];
-  readonly #rule: Rule<Input, Output>;
+  readonly #rule: Rule<Input, RuleColumns>;
   readonly #table: string;
   readonly #history: TargetHistory;
   readonly #view: TargetReaderView;
@@ -84,7 +94,7 @@ export class ComputedDataset<
     name: string;
     description: string;
     from: readonly (PostgresTable | View)[];
-    compute: Rule<Input, Output>;
+    compute: Rule<Input, RuleColumns>;
   }) {
     super();
     this.name = identifier(name, 'computed dataset name');
@@ -114,7 +124,7 @@ export class ComputedDataset<
       })),
       ...Object.entries(compute.output).map(([column, { type }]) => ({
         name: column,
-        type: type === 'blob' ? 'bytea' : 'text',
+        type: types[type],
         constraint: '',
       })),
       { name: 'committed_in', type: 'integer', constraint: ' NOT NULL' },
@@ -217,7 +227,7 @@ export class ComputedDataset<
     status: PostgresDerivedStatus,
     keys: ReadonlySet<string>,
     signal: AbortSignal | undefined,
-  ): Promise<PreparedOutputs<Output>> {
+  ): Promise<PreparedOutputs> {
     const key = quote(this.#rule.key.name);
     const table = this.#qualified(this.#table);
     const commits = (sql: Transaction) => {
@@ -259,7 +269,7 @@ export class ComputedDataset<
     const store = async (
       sql: Transaction,
       commit: () => Promise<number>,
-      output: OutputRow<Output>,
+      output: OutputRow,
     ) => {
       const row = [
         output.key,
@@ -267,9 +277,10 @@ export class ComputedDataset<
         output.rule,
         output.status,
         output.error,
-        ...Object.keys(this.#rule.output).map(
-          (column) => output.values[column] ?? null,
-        ),
+        ...Object.keys(this.#rule.output).map((column) => {
+          const value = output.values[column];
+          return value instanceof Vector ? toSql(value) : (value ?? null);
+        }),
       ];
       const version = rowHash(hashed, row);
       const [before] = await sql.unsafe<{ hash: string }[]>(
@@ -438,7 +449,9 @@ export class ComputedDataset<
   }
 }
 
-// A value as the driver sends it: text as text, a file's bytes as bytea.
-function parameter(value: string | Uint8Array | null): string | Buffer | null {
+// A value as the driver sends it: bytes as bytea, any other value as it is.
+function parameter(
+  value: string | number | Uint8Array | null,
+): string | number | Buffer | null {
   return value instanceof Uint8Array ? Buffer.from(value) : value;
 }

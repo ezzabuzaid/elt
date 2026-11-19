@@ -13,8 +13,9 @@ import {
   Copy,
   Pipeline,
   Rule,
-  type RuleColumn,
+  type RuleColumns,
   type RuleResult,
+  type RuleValues,
   Source,
   Stream,
 } from '@eltjs/elt';
@@ -72,9 +73,9 @@ class Notes extends Source {
 }
 
 // The body of each note in capitals.
-class Shout extends Rule<Note, string> {
+class Shout extends Rule<Note, RuleColumns> {
   readonly key = { name: 'id', description: 'Note id.' };
-  readonly output: Readonly<Record<string, RuleColumn>> = {
+  readonly output: RuleColumns = {
     loud: { description: 'The body in capitals.', type: 'text' },
   };
   readonly batch = 10;
@@ -93,7 +94,7 @@ class Shout extends Rule<Note, string> {
 
   async compute(
     inputs: readonly Note[],
-  ): Promise<readonly RuleResult<Readonly<Record<string, string>>>[]> {
+  ): Promise<readonly RuleResult<RuleValues<RuleColumns>>[]> {
     return inputs.map(({ body }) => ({ value: { loud: body.toUpperCase() } }));
   }
 }

@@ -20,6 +20,7 @@ new ComputedDataset({
   from: [listings],
   compute: new Embedding({
     model,
+    dimensions: 768,
     clock: globalThis,
     key: 'id',
     fields: ['title', 'description'],
@@ -27,11 +28,12 @@ new ComputedDataset({
 });
 ```
 
+- `dimensions` is the number of values in each vector of the model, for example 768 for EmbeddingGemma and 1,536 for `text-embedding-3-small`. The output column `vector` is a vector column of these dimensions.
 - `clock` waits out the limit of each model call. An app gives `globalThis`, and a test gives a fake clock.
 - `key` is the column that identifies a row. It is the key of the output row.
 - `fields` are the columns whose text makes the vector. The rule joins their text with line breaks. A row with no text in these columns has no vector.
-- The output column `vector` holds a unit vector of float32 values in the byte order of the platform. This is the form that `VectorSearch` of `@zukhruf/embeddings` reads, so the cosine similarity of two vectors is their dot product.
-- The identity of each row is the provider and the id of the model. When you change the model, the next refresh makes every vector again.
+- The output column `vector` holds a `UnitVector` of `@zukhruf/vectors`: float32 values with a length of 1, so the cosine similarity of two vectors is their dot product. Each destination keeps it in its own form. SQLite and Postgres keep the bytes of `toSql` of `@zukhruf/vectors/sqlite`, which `VectorSearch` of `@zukhruf/embeddings` reads.
+- The identity of each row is the provider, the id of the model and the dimensions, for example `openai/text-embedding-3-small (1536 dimensions)`. One model can give vectors of different dimensions, as the `dimensions` option of OpenAI's `text-embedding-3` models does. When you change the model or the dimensions, the next refresh makes every vector again.
 
 ## Failures
 
@@ -43,6 +45,7 @@ A model failure stays on the output row, and the next pass asks again (ADR 0007 
 - A stopped refresh fails no row. The next refresh makes those rows.
 - The rule sends 64 rows to `embedMany` at a time. When the model refuses a call, each row of that call is stored as `failed` with the error, and the next refresh asks again. The load does not fail.
 - A vector with no usable length, because it is all zeros or holds a value that is not finite, has no unit vector. Its row is stored as `failed` with the error, the other rows of the call stay `computed`, and the next refresh asks again.
+- A vector of other dimensions than `dimensions` does not fit its column. Its row is stored as `failed` with an error that names both counts, and the next refresh asks again.
 - To search, declare a view that gives `id` and `vector`, and give its name to `VectorSearch`. A search by publish date, such as `nearest`, also needs `published_at`. A query without a date range does not.
 
 ## Give the model its prompts
@@ -73,6 +76,7 @@ const searches = prompted(
 
 new Embedding({
   model: documents,
+  dimensions: 768,
   clock: globalThis,
   key: 'id',
   fields: ['title', 'description'],
@@ -82,7 +86,7 @@ const { embedding } = await embed({ model: searches, value: 'family sedan' });
 new VectorSearch({ database, table: 'listing_vectors' }).query(embedding);
 ```
 
-Give each wrapped model its own `modelId`. The identity of a row is the provider and the id of the model, so a new prompt with a new `modelId` makes every vector again.
+Give each wrapped model its own `modelId`. The identity of a row names the provider and the id of the model, so a new prompt with a new `modelId` makes every vector again.
 
 On 2026-10-27, 42 OpenSooq listings that `source-opensooq-web` crawled got their vectors from EmbeddingGemma 2 in one run. `nearest` of a bicycle listing gave other bicycle listings first. A second run made no vector again.
 

@@ -40,7 +40,8 @@
     "@zukhruf/mutex": "^0.8.31",
     "@zukhruf/sqlite-drift": "^0.8.31",
     "@zukhruf/sqlite-open": "^0.8.31",
-    "@zukhruf/sqlite-transaction": "^0.8.31"
+    "@zukhruf/sqlite-transaction": "^0.8.31",
+    "@zukhruf/vectors": "^0.8.40"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",

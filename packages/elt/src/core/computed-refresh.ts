@@ -1,9 +1,11 @@
 import { hash } from 'node:crypto';
 
+import { Vector } from '@zukhruf/vectors';
+
 import { errorMessage } from '../state/sync-history.ts';
 import type { RefreshTrigger } from './derived-dataset.ts';
 import type { DerivedStatus } from './derived-status.ts';
-import type { Rule } from './rule.ts';
+import type { Rule, RuleColumns, RuleValues } from './rule.ts';
 
 // The columns a computed dataset keeps on every output row beside its rule's
 // own, with what readers read of each.
@@ -24,26 +26,26 @@ export type StoredOutput = {
 };
 
 // One output row that a refresh writes.
-export type OutputRow<Output> = {
+export type OutputRow = {
   readonly key: string;
   readonly inputHash: string;
   readonly rule: string;
   readonly status: 'computed' | 'empty' | 'failed';
   readonly error: string | null;
-  readonly values: Readonly<Record<string, Output>>;
+  readonly values: RuleValues<RuleColumns>;
 };
 
 // The output table of a computed dataset once its refresh prepared it, as its
 // destination keeps it. Each write is one commit, and a row with the values
 // that the stored row has keeps its commit.
-export type PreparedOutputs<Output> = {
+export type PreparedOutputs = {
   // Each stored row whose key has an input.
   readonly stored: ReadonlyMap<string, StoredOutput>;
   // Writes the row of an input that the rule does not handle.
-  store(row: OutputRow<Output>): Promise<void>;
+  store(row: OutputRow): Promise<void>;
   // Writes the rows of one call, and takes settled inputs off the pending
   // count of the dataset's status in the same commit.
-  settle(rows: readonly OutputRow<Output>[], settled: number): Promise<void>;
+  settle(rows: readonly OutputRow[], settled: number): Promise<void>;
   // How many output rows have each status that some row has.
   counts(): Promise<ReadonlyMap<string, number>>;
 };
@@ -56,8 +58,9 @@ export type PreparedOutputs<Output> = {
 // input at most once, so a failing rule is asked once a pass. A rule's
 // failure on one input is that row's; it never fails the load. inputs is
 // null while a relation that the dataset reads is gone: the dataset waits
-// with what it made, as a view waits.
-export async function refreshComputed<Input, Output>({
+// with what it made, as a view waits. A value that does not fit its column,
+// such as a vector of other dimensions, fails its row.
+export async function refreshComputed<Input>({
   rule,
   inputs,
   prepare,
@@ -65,11 +68,9 @@ export async function refreshComputed<Input, Output>({
   trigger,
   signal,
 }: {
-  readonly rule: Rule<Input, Output>;
+  readonly rule: Rule<Input, RuleColumns>;
   readonly inputs: ReadonlyMap<string, Input> | null;
-  readonly prepare: (
-    keys: ReadonlySet<string>,
-  ) => Promise<PreparedOutputs<Output>>;
+  readonly prepare: (keys: ReadonlySet<string>) => Promise<PreparedOutputs>;
   readonly status: DerivedStatus;
   readonly trigger: RefreshTrigger;
   readonly signal: AbortSignal | undefined;
@@ -87,10 +88,10 @@ export async function refreshComputed<Input, Output>({
   }
 }
 
-async function update<Input, Output>(
-  rule: Rule<Input, Output>,
+async function update<Input>(
+  rule: Rule<Input, RuleColumns>,
   inputs: ReadonlyMap<string, Input>,
-  prepare: (keys: ReadonlySet<string>) => Promise<PreparedOutputs<Output>>,
+  prepare: (keys: ReadonlySet<string>) => Promise<PreparedOutputs>,
   status: DerivedStatus,
   trigger: RefreshTrigger,
   signal: AbortSignal | undefined,
@@ -165,10 +166,7 @@ async function update<Input, Output>(
         // Each call commits on its own, so readers see rows as they land.
         await outputs.settle(
           batch.flatMap(
-            (
-              { key, inputHash, rule: identity },
-              index,
-            ): OutputRow<Output>[] => {
+            ({ key, inputHash, rule: identity }, index): OutputRow[] => {
               const result = results[index];
               if (result === undefined || 'gone' in result) return [];
               const row = {
@@ -178,8 +176,14 @@ async function update<Input, Output>(
                 error: null,
                 values: {},
               };
-              if ('value' in result)
-                return [{ ...row, status: 'computed', values: result.value }];
+              if ('value' in result) {
+                const misfit = misfits(rule.output, result.value);
+                return [
+                  misfit === undefined
+                    ? { ...row, status: 'computed', values: result.value }
+                    : { ...row, status: 'failed', error: misfit },
+                ];
+              }
               if ('error' in result)
                 return [{ ...row, status: 'failed', error: result.error }];
               return [{ ...row, status: 'empty' }];
@@ -196,6 +200,28 @@ async function update<Input, Output>(
     ...counts(await outputs.counts(), inputs),
     pending: 0,
   });
+}
+
+// Why a value does not fit its column, for the first value that does not:
+// an integer column takes a safe integer, which each destination keeps
+// exactly, and a vector column a vector of its dimensions.
+function misfits(
+  columns: RuleColumns,
+  values: RuleValues<RuleColumns>,
+): string | undefined {
+  for (const [name, column] of Object.entries(columns)) {
+    const value = values[name];
+    if (value === undefined) continue;
+    if (column.type === 'integer' && !Number.isSafeInteger(value))
+      return `The column ${name} takes a safe integer, and the rule gave ${String(value)}.`;
+    if (
+      column.type === 'vector' &&
+      value instanceof Vector &&
+      value.dimensions !== column.dimensions
+    )
+      return `The column ${name} takes a vector of ${column.dimensions} dimensions, and the rule gave one of ${value.dimensions}.`;
+  }
+  return undefined;
 }
 
 // How many inputs there are, and how many output rows have each status. A

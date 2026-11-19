@@ -184,6 +184,10 @@ _Avoid_: Crash, error (a rule failure is also an error)
 The class that turns each input of a computed dataset into its output, for example the text of a file or the vector of a listing. The caller gives the rule.
 _Avoid_: Transform, mapper (a mapper changes records while they load), function. eca's rule is a different word, in a different context
 
+**Rule column**:
+A column that a rule adds to each output, with its kind: `text`, `blob`, `integer` (a safe integer) or `vector` (a `Vector` of `@zukhruf/vectors` with a fixed number of dimensions). The kind sets the type of the value, and each destination keeps each kind in its own form.
+_Avoid_: Field (a stream has fields), output column (the dataset adds its own columns too)
+
 **Input**:
 What a rule reads from one row that a copy loaded.
 _Avoid_: Source (a source reads an upstream), record

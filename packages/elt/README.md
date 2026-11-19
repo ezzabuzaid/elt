@@ -1039,12 +1039,12 @@ const pipeline = new Pipeline({
 
 ## Write a rule
 
-A computed dataset gives each input to its rule. A rule is a class that extends `Rule<Input, Output>`:
+A computed dataset gives each input to its rule. A rule is a class that extends `Rule<Input, Columns>`, where `Columns` is the type of its `output`:
 
 | Member                    | Gives                                                                                                |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `key`                     | the name and the description of the key column, for example `ref`                                    |
-| `output`                  | the columns that the rule adds to each output, each `text` or `blob`, with a description             |
+| `output`                  | the rule columns that the rule adds to each output, each with its kind and a description             |
 | `batch`                   | how many inputs one call of `compute` takes, for example the texts of one model call                 |
 | `concurrency`             | how many calls of `compute` run at the same time, for example files that are parsed side by side     |
 | `read(row)`               | the key and the input of one loaded row, or `null` when the row has no input                         |
@@ -1053,12 +1053,39 @@ A computed dataset gives each input to its rule. A rule is a class that extends 
 
 The dataset makes an output again when its input or its rule identity changes. See [ADR 0005](./docs/adr/0005-an-output-is-made-again-when-its-rule-identity-changes.md).
 
+Each rule column has a kind. The kind sets the type of the value that `compute` gives for the column, so a rule that gives a string to a vector column does not compile:
+
+| Kind                                   | Value                                       | SQLite    | Postgres |
+| -------------------------------------- | ------------------------------------------- | --------- | -------- |
+| `{ type: 'text' }`                     | `string`                                    | `TEXT`    | `text`   |
+| `{ type: 'blob' }`                     | `Uint8Array`                                | `BLOB`    | `bytea`  |
+| `{ type: 'integer' }`                  | `number`, a safe integer                    | `INTEGER` | `bigint` |
+| `{ type: 'vector', dimensions: 1536 }` | `Vector` of `@zukhruf/vectors`, 1536 values | `BLOB`    | `bytea`  |
+
+```ts
+const columns = {
+  tokens: { type: 'integer', description: 'The tokens of the text.' },
+  vector: {
+    type: 'vector',
+    dimensions: 1536,
+    description: 'The text as a vector.',
+  },
+} as const;
+
+class Chunks extends Rule<string, typeof columns> {
+  override readonly output = columns;
+  // compute gives { value: { tokens: 12, vector: Vector.from(values) } }
+}
+```
+
+A column with no value is `NULL`. SQLite and Postgres keep a vector as the bytes of `toSql` of `@zukhruf/vectors/sqlite`: float32 values, little-endian. A value that does not fit its column is a rule failure of its input, with an error that names the column: an integer that is not a safe integer, or a vector of other dimensions than its column, with both counts. A `Vector` holds only finite values, so a vector with `NaN` or `Infinity` fails in the rule, where the rule makes it.
+
 Two rules exist:
 
-| Rule                                      | Package            | Input                                                | Output                                                                                                       |
-| ----------------------------------------- | ------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `DocumentText({ parser, files, column })` | `@eltjs/elt`       | the ref in `column`, relative to the folder `files`  | `content`, the text that a `DocumentParser` reads. The rule identity is the parser of the format of the file |
-| `Embedding({ model, key, fields })`       | `@eltjs/embedding` | the text of `fields`, with a line break between them | `vector`, from an AI SDK embedding model. The rule identity is the provider and the id of the model          |
+| Rule                                            | Package            | Input                                                | Output                                                                                                                                               |
+| ----------------------------------------------- | ------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DocumentText({ parser, files, column })`       | `@eltjs/elt`       | the ref in `column`, relative to the folder `files`  | `content`, the text that a `DocumentParser` reads. The rule identity is the parser of the format of the file                                         |
+| `Embedding({ model, dimensions, key, fields })` | `@eltjs/embedding` | the text of `fields`, with a line break between them | `vector`, a vector column of `dimensions`, from an AI SDK embedding model. The rule identity is the provider, the id of the model and the dimensions |
 
 `DocumentText` asks for its parser at each refresh, so a parser that the host changed, for example a new speech model, applies from the next refresh.
 
@@ -1082,7 +1109,7 @@ A destination that numbers its commits gives positions, so a reader can read it 
 
 Each destination keeps its own `View` and `ComputedDataset`, and drives three rules of `@eltjs/elt` with its own storage:
 
-- `refreshComputed({ rule, inputs, prepare, status, trigger, signal })` brings the outputs of a computed dataset in step with its inputs. The destination gives `inputs`, or `null` while a relation that the dataset reads is gone, and `prepare(keys)`, which makes the table match its declaration, removes each row whose key has no input, and gives the stored rows with `store`, `settle` and `counts`. Each write is one commit. The rule decides what is due: an input whose hash or rule identity changed, or a failed row on the refresh after the passes, each input at most once for each pass. It runs `rule.concurrency` calls of `rule.batch` inputs, and each call commits on its own.
+- `refreshComputed({ rule, inputs, prepare, status, trigger, signal })` brings the outputs of a computed dataset in step with its inputs. The destination gives `inputs`, or `null` while a relation that the dataset reads is gone, and `prepare(keys)`, which makes the table match its declaration, removes each row whose key has no input, and gives the stored rows with `store`, `settle` and `counts`. Each write is one commit. The rule decides what is due: an input whose hash or rule identity changed, or a failed row on the refresh after the passes, each input at most once for each pass. It runs `rule.concurrency` calls of `rule.batch` inputs, and each call commits on its own. It fails each output whose value does not fit its rule column, so a destination gets only values that fit: it keeps each kind in its own form.
 - `refreshView({ publish, missing, awaited, withdraw, status })` publishes a view, or lets it wait while the relation that the store's error names is one that a copy or an earlier derived dataset makes. While it waits, `withdraw` removes the view of its name that an earlier declaration made, as dbt drops a model's relation, so a view after it that reads it waits too. Any other error is the view's own failure.
 - `DerivedStatus` gives the states of a row of `derived_status`: `waiting`, `refreshing` with counts, `current` with `as_of`, and `failed`. A destination writes the values in its `write`, and takes settled inputs off `pending` inside its own commit.
 - `computedColumns` names the columns that each output row keeps beside the rule's own, with their descriptions.

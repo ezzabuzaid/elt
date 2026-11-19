@@ -1,14 +1,17 @@
 import { UnitVector, Vector, ZeroVectorError } from '@zukhruf/vectors';
-import { toSql } from '@zukhruf/vectors/sqlite';
 import { APICallError, type EmbeddingModel, embedMany } from 'ai';
 
 import {
   type LoadedRow,
   type PipelineClock,
   Rule,
+  type RuleColumn,
   type RuleResult,
+  type RuleValues,
   errorMessage,
 } from '@eltjs/elt';
+
+type Columns = { readonly vector: Extract<RuleColumn, { type: 'vector' }> };
 
 // How long one call has, its retries included. The AI SDK gives a call no limit,
 // and a model server that never answers takes 3 tries of undici's 300 s header
@@ -19,22 +22,15 @@ const callLimitMs = 120_000;
 
 // The vector of each loaded row's text, made by an embedding model, so a
 // vector search finds rows by meaning, as pgai's vectorizer and LanceDB's
-// embedding functions keep one beside each row. A vector is stored as a unit
-// vector of float32 values in the platform's byte order, the form
-// @zukhruf/embeddings' VectorSearch reads (its ADR 0005): cosine similarity
-// is then a dot product.
-export class Embedding extends Rule<string, Uint8Array> {
+// embedding functions keep one beside each row. A vector is a unit vector of
+// float32 values, which @zukhruf/embeddings' VectorSearch reads (its ADR
+// 0005): cosine similarity is then a dot product.
+export class Embedding extends Rule<string, Columns> {
   override readonly key: {
     readonly name: string;
     readonly description: string;
   };
-  override readonly output = {
-    vector: {
-      type: 'blob',
-      description:
-        'The unit vector of the row text, float32 values in the byte order of the platform. NULL unless status is computed.',
-    },
-  } as const;
+  override readonly output: Columns;
   // Rows embedded and committed together; the model's own limit on values in
   // one call splits a batch further inside embedMany.
   override readonly batch = 64;
@@ -44,23 +40,33 @@ export class Embedding extends Rule<string, Uint8Array> {
   readonly #clock: Pick<PipelineClock, 'setTimeout' | 'clearTimeout'>;
   readonly #fields: readonly string[];
 
-  // key: the column that identifies a row, such as id. fields: the columns
-  // whose text makes the vector, joined by line breaks; a row with none has
-  // no vector. clock waits out the limit of each call (ADR 0019 of elt): an
-  // app gives globalThis.
+  // dimensions: how many values each vector of the model has, such as 1536
+  // for text-embedding-3-small. key: the column that identifies a row, such
+  // as id. fields: the columns whose text makes the vector, joined by line
+  // breaks; a row with none has no vector. clock waits out the limit of each
+  // call (ADR 0019 of elt): an app gives globalThis.
   constructor({
     model,
+    dimensions,
     clock,
     key,
     fields,
   }: {
     model: EmbeddingModel;
+    dimensions: number;
     clock: Pick<PipelineClock, 'setTimeout' | 'clearTimeout'>;
     key: string;
     fields: readonly string[];
   }) {
     super();
     this.#model = model;
+    this.output = {
+      vector: {
+        type: 'vector',
+        dimensions,
+        description: `The unit vector of the row text, ${dimensions} float32 values. NULL unless status is computed.`,
+      },
+    };
     this.#clock = clock;
     this.key = {
       name: key,
@@ -82,17 +88,21 @@ export class Embedding extends Rule<string, Uint8Array> {
     return text === '' ? null : { key: String(key), input: text };
   }
 
-  // The model makes every vector, so its provider and id name them all.
+  // The model and the dimensions make every vector, so they name them all:
+  // one model can give vectors of several sizes, as OpenAI's
+  // text-embedding-3 models do.
   override async identity(): Promise<string> {
-    return typeof this.#model === 'string'
-      ? this.#model
-      : `${this.#model.provider}/${this.#model.modelId}`;
+    const model =
+      typeof this.#model === 'string'
+        ? this.#model
+        : `${this.#model.provider}/${this.#model.modelId}`;
+    return `${model} (${this.output.vector.dimensions} dimensions)`;
   }
 
   override async compute(
     texts: readonly string[],
     signal?: AbortSignal,
-  ): Promise<readonly RuleResult<Readonly<Record<string, Uint8Array>>>[]> {
+  ): Promise<readonly RuleResult<RuleValues<Columns>>[]> {
     const limit = new AbortController();
     const timer = this.#clock.setTimeout(() => limit.abort(), callLimitMs);
     try {
@@ -141,11 +151,9 @@ export class Embedding extends Rule<string, Uint8Array> {
 // an answer. The row fails, and the next refresh asks again.
 function unitVector(
   embedding: readonly number[],
-): RuleResult<Readonly<Record<string, Uint8Array>>> {
+): RuleResult<RuleValues<Columns>> {
   try {
-    return {
-      value: { vector: toSql(UnitVector.normalize(Vector.from(embedding))) },
-    };
+    return { value: { vector: UnitVector.normalize(Vector.from(embedding)) } };
   } catch (failure) {
     if (!(failure instanceof ZeroVectorError || failure instanceof RangeError))
       throw failure;

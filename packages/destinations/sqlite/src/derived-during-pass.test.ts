@@ -88,18 +88,20 @@ class Notes extends Source {
   }
 }
 
+const loud = {
+  loud: { description: 'The id in capitals.', type: 'text' },
+} as const;
+
 // Each note's id in capitals; it fails on the ids in failing, as a model
 // that refuses, holds an id until its latch in holding opens, and records
 // each id it is called with; a call whose signal aborted while it held
 // throws, as a model call that the stop ended.
-class Shout extends Rule<string, string> {
+class Shout extends Rule<string, typeof loud> {
   readonly failing = new Set<string>();
   readonly holding = new Map<string, Latch>();
   readonly calls: string[] = [];
   readonly key = { name: 'id', description: 'Note id.' };
-  readonly output = {
-    loud: { description: 'The id in capitals.', type: 'text' as const },
-  };
+  readonly output = loud;
   readonly batch = 1;
   readonly concurrency = 1;
 

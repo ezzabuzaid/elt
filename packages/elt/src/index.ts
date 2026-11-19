@@ -31,7 +31,9 @@ export {
   type LoadedRow,
   Rule,
   type RuleColumn,
+  type RuleColumns,
   type RuleResult,
+  type RuleValues,
 } from './core/rule.ts';
 export {
   CopyProgress,

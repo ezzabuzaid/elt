@@ -10,6 +10,8 @@ import type {
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 import { waitFor } from '@zukhruf/testing/async';
+import { Vector } from '@zukhruf/vectors';
+import { fromSql } from '@zukhruf/vectors/sqlite';
 import { APICallError } from 'ai';
 
 import {
@@ -176,6 +178,7 @@ function listingsImport(
   clock:
     | Pick<typeof globalThis, 'setTimeout' | 'clearTimeout'>
     | HandClock = globalThis,
+  dimensions: () => number = () => 26,
 ) {
   const source = new Listings();
   const path = join(directory, 'data.sqlite');
@@ -201,6 +204,7 @@ function listingsImport(
           from: [target],
           compute: new Embedding({
             model: model(),
+            dimensions: dimensions(),
             clock,
             key: 'id',
             fields: ['title', 'description'],
@@ -222,7 +226,7 @@ function listingsImport(
         error,
         vector:
           vector instanceof Uint8Array
-            ? [...new Float32Array(vector.slice().buffer)]
+            ? [...fromSql(Vector, vector).values]
             : null,
       }));
   };
@@ -257,14 +261,14 @@ test('each listing with text gets the unit vector of its title and description f
     {
       id: '1',
       status: 'computed',
-      rule: 'test/letters-1',
+      rule: 'test/letters-1 (26 dimensions)',
       error: null,
       vector: unit(letters('red car\nfast')),
     },
     {
       id: '2',
       status: 'computed',
-      rule: 'test/letters-1',
+      rule: 'test/letters-1 (26 dimensions)',
       error: null,
       vector: unit(letters('blue bike')),
     },
@@ -295,10 +299,77 @@ test('the next run embeds only the listings whose text changed, and another mode
   assert.deepEqual(
     listings.vectors().map(({ id, rule }) => ({ id, rule })),
     [
-      { id: '1', rule: 'test/letters-2' },
-      { id: '2', rule: 'test/letters-2' },
+      { id: '1', rule: 'test/letters-2 (26 dimensions)' },
+      { id: '2', rule: 'test/letters-2 (26 dimensions)' },
     ],
   );
+});
+
+test('a model that answers a vector of other dimensions than the rule declares stores that listing failed, naming both counts, and keeps its neighbour', async () => {
+  await using scratch = await new TemporaryFiles().directory('embedding-');
+  const model = new LetterModel('letters-1');
+  const listings = listingsImport(scratch.path, () => model);
+  listings.source.rows = [
+    { id: '1', title: 'red car', description: null },
+    { id: '2', title: 'blue van', description: null },
+  ];
+  model.answers.set('blue van', [3, 4]);
+
+  await listings.run();
+
+  assert.deepEqual(
+    listings.vectors().map(({ id, status, error }) => ({ id, status, error })),
+    [
+      { id: '1', status: 'computed', error: null },
+      {
+        id: '2',
+        status: 'failed',
+        error:
+          'The column vector takes a vector of 26 dimensions, and the rule gave one of 2.',
+      },
+    ],
+  );
+});
+
+test('another number of dimensions embeds every listing again, as one model can give vectors of several sizes', async () => {
+  await using scratch = await new TemporaryFiles().directory('embedding-');
+  const model = new LetterModel('letters-1');
+  let dimensions = 26;
+  const listings = listingsImport(
+    scratch.path,
+    () => model,
+    globalThis,
+    () => dimensions,
+  );
+  listings.source.rows = [
+    { id: '1', title: 'red car', description: null },
+    { id: '2', title: 'blue van', description: null },
+  ];
+  await listings.run();
+  model.embedded.length = 0;
+  dimensions = 2;
+  model.answers.set('red car', [3, 4]);
+  model.answers.set('blue van', [0, 2]);
+
+  await listings.run();
+
+  assert.deepEqual(model.embedded.toSorted(), ['blue van', 'red car']);
+  assert.deepEqual(listings.vectors(), [
+    {
+      id: '1',
+      status: 'computed',
+      rule: 'test/letters-1 (2 dimensions)',
+      error: null,
+      vector: [0.6000000238418579, 0.800000011920929],
+    },
+    {
+      id: '2',
+      status: 'computed',
+      rule: 'test/letters-1 (2 dimensions)',
+      error: null,
+      vector: [0, 1],
+    },
+  ]);
 });
 
 test('a model that refuses a call stores those listings failed with why, the run still succeeds, and the next run embeds them', async () => {
@@ -317,7 +388,7 @@ test('a model that refuses a call stores those listings failed with why, the run
     {
       id: '1',
       status: 'failed',
-      rule: 'test/letters-1',
+      rule: 'test/letters-1 (26 dimensions)',
       error: 'the model server is down',
       vector: null,
     },

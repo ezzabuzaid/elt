@@ -4,25 +4,32 @@ import { join } from 'node:path';
 
 import { errorMessage } from '../state/sync-history.ts';
 import type { DocumentParser } from './document-parser.ts';
-import { type LoadedRow, Rule, type RuleResult } from './rule.ts';
+import {
+  type LoadedRow,
+  Rule,
+  type RuleResult,
+  type RuleValues,
+} from './rule.ts';
+
+const columns = {
+  content: {
+    type: 'text',
+    description:
+      'The text the parser extracted. NULL unless status is computed.',
+  },
+} as const;
 
 // The text of each file a copy stored, read by a DocumentParser, so readers
 // can search attachments with SQL. A stored file's ref names its copy by the
 // SHA-256 of its bytes, so the ref is both the key and the input, and rows of
 // different tables that hold one file share its text.
-export class DocumentText extends Rule<string, string> {
+export class DocumentText extends Rule<string, typeof columns> {
   override readonly key = {
     name: 'ref',
     description:
       "Path of the stored copy, relative to the import's files folder: the value of the file column of every row whose file it is. Join that column to it.",
   };
-  override readonly output = {
-    content: {
-      type: 'text',
-      description:
-        'The text the parser extracted. NULL unless status is computed.',
-    },
-  } as const;
+  override readonly output = columns;
   // One file per call, as many at once as the Mac has cores; an image read
   // beyond the OCR workers waits in the host's pool.
   override readonly batch = 1;
@@ -64,28 +71,26 @@ export class DocumentText extends Rule<string, string> {
   override async compute(
     refs: readonly string[],
     signal?: AbortSignal,
-  ): Promise<readonly RuleResult<Readonly<Record<string, string>>>[]> {
+  ): Promise<readonly RuleResult<RuleValues<typeof columns>>[]> {
     const parser = this.#parser();
     return Promise.all(
-      refs.map(
-        async (ref): Promise<RuleResult<Readonly<Record<string, string>>>> => {
-          const file = join(this.#files, ref);
-          try {
-            const content = await parser.parse(file, signal);
-            return content === null ? { empty: true } : { value: { content } };
-          } catch (failure) {
-            if (
-              signal?.aborted ||
-              (Error.isError(failure) && failure.name === 'AbortError')
-            )
-              return { gone: true };
-            // A commit removed the copy after the refresh listed it; its rows
-            // are gone too, so the file is not a failure.
-            if (await removed(file)) return { gone: true };
-            return { error: errorMessage(failure) };
-          }
-        },
-      ),
+      refs.map(async (ref): Promise<RuleResult<RuleValues<typeof columns>>> => {
+        const file = join(this.#files, ref);
+        try {
+          const content = await parser.parse(file, signal);
+          return content === null ? { empty: true } : { value: { content } };
+        } catch (failure) {
+          if (
+            signal?.aborted ||
+            (Error.isError(failure) && failure.name === 'AbortError')
+          )
+            return { gone: true };
+          // A commit removed the copy after the refresh listed it; its rows
+          // are gone too, so the file is not a failure.
+          if (await removed(file)) return { gone: true };
+          return { error: errorMessage(failure) };
+        }
+      }),
     );
   }
 }

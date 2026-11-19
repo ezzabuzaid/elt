@@ -245,7 +245,9 @@ A computed dataset keeps one output row for each key, in the table `raw_<name>`.
 | `rule`       | the rule identity, for example the parser of the format. `unsupported` when the rule does not handle the input |
 | `status`     | `computed`, `empty` or `failed`                                                                                |
 | `error`      | why the rule failed, or `NULL`                                                                                 |
-| rule columns | the columns of the rule, for example `content`                                                                 |
+| rule columns | the columns of the rule, for example `content`: `TEXT`, `BLOB`, `INTEGER`, or a vector as a `BLOB`             |
+
+A vector column keeps the bytes of `toSql` of `@zukhruf/vectors/sqlite`: float32 values, little-endian, the form that sqlite-vec reads. `fromSql(Vector, bytes)` of the same package reads them back. An integer column keeps an `INTEGER`. See [Write a rule](../../elt/README.md#write-a-rule) in elt for the kinds of rule columns.
 
 At each refresh, the computed dataset compares the inputs with the output rows. See [ADR 0002](./docs/adr/0002-a-computed-dataset-keeps-one-output-row-for-each-key.md):
 
