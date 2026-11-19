@@ -260,7 +260,7 @@ export class WebSource extends Source<WebRead> {
   }
   coverage(stream: Stream) {
     const entry = this.#entry(stream);
-    const { include } = entry.stream;
+    const { include, expand } = entry.stream;
     const inputs = [...this.#inputs(entry)];
     return {
       description: this.#routes.has(stream.name)
@@ -270,22 +270,31 @@ export class WebSource extends Source<WebRead> {
           : this.#failures.has(stream.name)
             ? 'The pages of the crawls of chosen websites and feeds whose last visit failed, as the last crawl of each left them.'
             : 'Records extracted from the pages crawled from chosen websites and feeds that match the configured URL patterns; listing disappearance does not imply deletion.',
+      // The patterns the stream keeps pages by, and those it expands pages by
+      // on the websites a list links, each by the parts of the pattern.
       selection: {
         inputs,
-        ...(include === undefined
-          ? {}
-          : {
-              include: include.map((pattern) => ({
-                protocol: pattern.protocol,
-                username: pattern.username,
-                password: pattern.password,
-                hostname: pattern.hostname,
-                port: pattern.port,
-                pathname: pattern.pathname,
-                search: pattern.search,
-                hash: pattern.hash,
-              })),
-            }),
+        ...Object.fromEntries(
+          Object.entries({ include, expand }).flatMap(([name, patterns]) =>
+            patterns === undefined
+              ? []
+              : [
+                  [
+                    name,
+                    patterns.map((pattern) => ({
+                      protocol: pattern.protocol,
+                      username: pattern.username,
+                      password: pattern.password,
+                      hostname: pattern.hostname,
+                      port: pattern.port,
+                      pathname: pattern.pathname,
+                      search: pattern.search,
+                      hash: pattern.hash,
+                    })),
+                  ],
+                ],
+          ),
+        ),
       },
     };
   }

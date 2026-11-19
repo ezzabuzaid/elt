@@ -3127,6 +3127,43 @@ test('an input is a URL in the form that the URL standard gives it, so one websi
   ]);
 });
 
+test('the coverage of a web stream names the patterns it keeps and the patterns it expands on other websites, so a reader can tell which pages came from expansion', async () => {
+  const source = new WebSource({
+    cachePath: join(tmpdir(), 'web-cache-unused', 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
+    streams: [
+      {
+        stream: new WebStream({
+          name: 'articles',
+          primaryKey: ['pageUrl'],
+          readers: [new ListingReader()],
+          include: [new URLPattern('https://news.test/*')],
+          expand: [new URLPattern({ pathname: '/programs/*' })],
+          extractor: new ArticleExtractor(),
+        }),
+        inputs: ['https://news.test/'],
+      },
+    ],
+  });
+  const articles = (await source.discover()).get('articles');
+  const parts = (pattern: URLPattern) => ({
+    protocol: pattern.protocol,
+    username: pattern.username,
+    password: pattern.password,
+    hostname: pattern.hostname,
+    port: pattern.port,
+    pathname: pattern.pathname,
+    search: pattern.search,
+    hash: pattern.hash,
+  });
+
+  assert.deepEqual(source.coverage(articles).selection, {
+    inputs: ['https://news.test/'],
+    include: [parts(new URLPattern('https://news.test/*'))],
+    expand: [parts(new URLPattern({ pathname: '/programs/*' }))],
+  });
+});
+
 test('an input that is not an http or https URL is refused as the user’s to fix, in a list when the source is made, and by webInput', () => {
   const options = {
     cachePath: join(tmpdir(), 'web-cache-unused', 'web-http.sqlite'),
