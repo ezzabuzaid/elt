@@ -134,13 +134,14 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
   override coverage(_stream: Stream): ExtractionCoverage {
     return {
       description:
-        'What the Slack app keeps on this Mac for each signed-in workspace: its channels, members and apps, only the messages the app has loaded, and the files it downloaded. A workspace appears once the app has saved it, every few minutes while it is open and when it quits.',
+        'What the Slack app keeps on this Mac for each signed-in workspace: its channels, members and apps, only the messages the app has loaded, and the files it downloaded. A workspace appears once the app has saved it: when its window is hidden or closed, when it loses the network, and about once an hour while the window stays visible.',
       selection: this.scope,
     };
   }
 
-  // Slack saves its state every few minutes while it runs and when it
-  // quits, so the store is current only as of its last save.
+  // Slack saves its state when its window is hidden or closed, when it
+  // loses the network, and about once an hour while the window stays
+  // visible, so the store is current only as of its last save.
   override async currentAsOf(): Promise<Date> {
     return this.#store.lastWrite();
   }

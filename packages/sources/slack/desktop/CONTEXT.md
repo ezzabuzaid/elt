@@ -17,7 +17,7 @@ The one record that the web client saves for each signed-in workspace: `persist:
 _Avoid_: Snapshot (the snapshot diff of elt has its own snapshot), dump, workspace record
 
 **Save**:
-One write of a client record into a new blob file. The app saves every few minutes while it runs, and when it quits.
+One write of a client record into a new blob file. The app saves when its window is hidden or closed, when it loses the network, and about once an hour while the window stays visible, as its log shows (`[PERSIST] ... Successfully persisted state`).
 _Avoid_: Sync, flush, commit (a commit is elt's)
 
 **Held range**:

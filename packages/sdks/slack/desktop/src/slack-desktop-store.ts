@@ -30,8 +30,8 @@ const clientRecord = /^persist:slack-client-[A-Z0-9]+-[A-Z0-9]+$/;
 // The app's main process keeps its own state, its downloads among it, apart
 // from the web client's, as JSON it rewrites whole.
 const rootState = 'storage/root-state.json';
-// The app rewrites a record every few minutes into a new blob file and
-// deletes the old one; a read that loses that race reads again.
+// The app rewrites a record into a new blob file at each save and deletes
+// the old one; a read that loses that race reads again.
 const attempts = 3;
 
 // Both Slack builds use the same store format under Electron's userData in
@@ -77,8 +77,9 @@ export class SlackDesktopStore {
   }
 
   // Every signed-in workspace's client as the app last saved it. A workspace
-  // appears once its client has saved, which it does every few minutes while
-  // it is open and when the app quits.
+  // appears once its client has saved: when the window is hidden or closed,
+  // when the app loses the network, and about once an hour while the window
+  // stays visible.
   async clients(): Promise<SlackClient[]> {
     const databases = await this.#read();
     return databases

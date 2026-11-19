@@ -149,7 +149,7 @@ The app keeps no file contents. Its HTTP cache held no `files.slack.com` respons
 
 ## Watching
 
-The app saves the full record of a workspace into a new blob file every few minutes while it runs, and when it quits. The record of a workspace first appears when its client unloads.
+The app saves the full record of a workspace into a new blob file when its window is hidden or closed, when it loses the network, and about once an hour while the window stays visible. A list or a channel that someone opens while the window stays visible can thus take up to an hour to appear; hiding the window saves it at once. The record of a workspace first appears when its client unloads.
 
 - A watch polls the sizes and modification times of the files in the IndexedDB folder, and of `storage/root-state.json`, every second, through `SlackDesktopStore.version()`. Thus a new download also wakes it.
 - A save wakes every selected stream. The snapshot diff writes nothing for the streams that did not change.
