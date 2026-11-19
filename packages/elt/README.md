@@ -1164,7 +1164,7 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0025](./docs/adr/0025-each-derived-dataset-tells-readers-how-current-it-is.md): each derived dataset tells readers how current it is.
 - [ADR 0026](./docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md): a rule can give many parts for one input.
 - [ADR 0027](./docs/adr/0027-a-dataset-reads-the-parts-of-a-computed-dataset-through-a-view.md): a dataset reads the parts of a computed dataset through a view.
-- [ADR 0028](./docs/adr/0028-a-host-names-each-relation-that-readers-query-once.md) (proposed): a host names each relation that readers query once.
+- [ADR 0028](./docs/adr/0028-a-host-names-each-relation-that-readers-query-once.md): a host names each relation that readers query once.
 
 ## Development
 

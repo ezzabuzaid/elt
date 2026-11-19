@@ -290,7 +290,7 @@ One use case each, with a full program that you can run:
 - [ADR 0007](./docs/adr/0007-each-pass-tries-an-input-at-most-once.md): each pass tries an input at most once.
 - [ADR 0008](./docs/adr/0008-a-file-that-several-connections-load-shows-one-pass.md): a file that several connections load shows one pass.
 - [ADR 0009](./docs/adr/0009-the-sqlite-file-numbers-its-commits-and-keeps-a-history-of-each-row.md): the SQLite file numbers its commits and keeps a history of each row.
-- [ADR 0010](./docs/adr/0010-the-raw-table-shares-the-file-with-its-reader-view.md) (proposed): the raw table shares the file with its reader view.
+- [ADR 0010](./docs/adr/0010-the-raw-table-shares-the-file-with-its-reader-view.md): the raw table shares the file with its reader view.
 
 ## Development
 

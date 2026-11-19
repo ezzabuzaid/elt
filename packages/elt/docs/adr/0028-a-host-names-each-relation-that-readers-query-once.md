@@ -1,6 +1,6 @@
 # A host names each relation that readers query once
 
-Status: proposed. Ezz chose this rule on 2026-11-19. The text waits for review before any code (backlog #4886).
+Status: accepted by Ezz (2026-11-19). Backlog #4886.
 
 The readers of a destination are agents and eca rules. They find the data through `catalog`, they read the columns of the external schema, and they read the destination as of a position. Before this decision, the host gave the target of a copy two names: the raw table, such as `raw_notes`, and, when it called `withReaderView`, its reader view, such as `notes`. The reader view was optional. A target with no reader view was not in `catalog`, showed the internal columns `committed_in` and `_elt_row_hash`, and in Postgres did not read as of a position, because only the reader view reads the history of the target. eca reads the whole warehouse as of one position, so such a target gave a rule a wrong reading. A computed dataset already took one name, `<name>`: its destination made the raw table `raw_<name>` and the view `<name>`. Thus the kinds of relation answered one question, "where does a reader find this?", in two ways.
 

@@ -1,6 +1,6 @@
 # Readers look in marts, and elt keeps its tables in _warehouse
 
-Status: proposed. Ezz chose this layout on 2026-11-19. The text waits for review before any code (backlog #4886).
+Status: accepted by Ezz (2026-11-19). Backlog #4886.
 
 Before this decision, a warehouse had three kinds of schema:
 
