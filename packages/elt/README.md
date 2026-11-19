@@ -1087,6 +1087,8 @@ Each destination keeps its own `View` and `ComputedDataset`, and drives three ru
 - `DerivedStatus` gives the states of a row of `derived_status`: `waiting`, `refreshing` with counts, `current` with `as_of`, and `failed`. A destination writes the values in its `write`, and takes settled inputs off `pending` inside its own commit.
 - `computedColumns` names the columns that each output row keeps beside the rule's own, with their descriptions.
 
+The `readPassStatus` of a destination reads its sync history and gives a `PassStatus` of `@eltjs/elt`, with a `StreamPassStatus` for each stream. `combinedPass` shows the latest passes of several connections as one pass: it runs while one of them runs, and it is only as current as the least current one.
+
 ## The same concepts in other systems
 
 | Here                       | Elsewhere                                                                    |
@@ -1168,6 +1170,7 @@ src/state/
   checkpoint-store.ts   CheckpointStore: the checkpoint protocol
   sync-history.ts       SyncHistory and its helpers
   sync-history-relations.ts  the descriptions of the history views
+  pass-status.ts        PassStatus and combinedPass: the latest pass that a history records
 ```
 
 The files of derived data:

@@ -11,12 +11,8 @@ export {
   asOfFunctions,
   asOfSelect,
 } from './sqlite-as-of.ts';
-export {
-  type PassState,
-  type PassStatus,
-  readPassStatus,
-  type StreamPassStatus,
-} from './sqlite-passes.ts';
+export type { PassState, PassStatus, StreamPassStatus } from '@eltjs/elt';
+export { readPassStatus } from './sqlite-passes.ts';
 export { SQLiteSyncHistory } from './sqlite-sync-history.ts';
 export { SQLiteTable } from './sqlite-table.ts';
 export { isReserved } from './reserved.ts';

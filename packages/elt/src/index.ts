@@ -150,5 +150,11 @@ export {
   type SyncStatus,
 } from './state/sync-history.ts';
 export { refreshView } from './core/view-refresh.ts';
+export {
+  type PassState,
+  type PassStatus,
+  type StreamPassStatus,
+  combinedPass,
+} from './state/pass-status.ts';
 export { syncHistoryRelations } from './state/sync-history-relations.ts';
 export { LocalFiles } from './storage/local-files.ts';

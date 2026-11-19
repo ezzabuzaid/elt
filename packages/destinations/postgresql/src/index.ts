@@ -4,12 +4,8 @@ export { PostgresCheckpointStore } from './postgres-checkpoint-store.ts';
 export { PostgresColumn } from './postgres-column.ts';
 export { PostgresColumns } from './postgres-columns.ts';
 export { PostgresDestination } from './postgres-destination.ts';
-export {
-  type PassState,
-  type PassStatus,
-  readPassStatus,
-  type StreamPassStatus,
-} from './postgres-passes.ts';
+export type { PassState, PassStatus, StreamPassStatus } from '@eltjs/elt';
+export { readPassStatus } from './postgres-passes.ts';
 export { PostgresSyncHistory } from './postgres-sync-history.ts';
 export { PostgresTable } from './postgres-table.ts';
 export { View } from './view.ts';
