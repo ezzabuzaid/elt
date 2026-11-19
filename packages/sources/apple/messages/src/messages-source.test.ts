@@ -564,7 +564,7 @@ test(
     );
     // Both native readers report unreadable files through the pipeline.
     for (const [name, content, message] of [
-      ['corrupt.pdf', 'not a pdf', /Error: Cannot read PDF/],
+      ['corrupt.pdf', 'not a pdf', /^Cannot read PDF \(-2700\)$/],
       ['corrupt.heic', Uint8Array.of(0, 1, 2), /Cannot read image/],
       // A PNG cut off after its header: ImageIO returns empty properties,
       // and Vision has no pixels to decode.
