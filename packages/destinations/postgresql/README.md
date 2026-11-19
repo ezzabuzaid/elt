@@ -345,6 +345,7 @@ Each [view](#declare-a-view) and [computed dataset](#declare-a-computed-dataset)
 - [ADR 0007](./docs/adr/0007-readers-are-named-on-the-sync-history.md): readers are named on the sync history.
 - [ADR 0008](./docs/adr/0008-derived-datasets-follow-elt-sqlite.md): derived datasets follow elt-sqlite.
 - [ADR 0009](./docs/adr/0009-a-running-attempt-holds-a-lock-of-its-session.md): a running attempt holds a lock of its session.
+- [ADR 0010](./docs/adr/0010-readers-look-in-marts-and-elt-keeps-its-tables-in-warehouse.md) (proposed): readers look in `marts`, and elt keeps its tables in `_warehouse`.
 
 ## Development
 

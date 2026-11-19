@@ -1158,6 +1158,13 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0019](./docs/adr/0019-a-pipeline-waits-and-reads-the-time-on-the-clock-that-its-caller-gives.md): a pipeline waits and reads the time on the clock that its caller gives.
 - [ADR 0020](./docs/adr/0020-a-source-gives-its-change-signals-and-a-failed-signal-fails-only-its-streams.md): a source gives its change signals, and a failed signal fails only its streams.
 - [ADR 0021](./docs/adr/0021-a-source-keeps-its-upstream-producing-through-an-upkeep.md): a source keeps its upstream producing through an upkeep.
+- [ADR 0022](./docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md): a stream's key is an identity that its upstream enforces.
+- [ADR 0023](./docs/adr/0023-a-clear-forgets-the-rows-it-removes.md): a clear forgets the rows that it removes.
+- [ADR 0024](./docs/adr/0024-a-reset-of-a-partition-reloads-it-into-a-hidden-target.md): a reset of a partition reloads it into a hidden target.
+- [ADR 0025](./docs/adr/0025-each-derived-dataset-tells-readers-how-current-it-is.md): each derived dataset tells readers how current it is.
+- [ADR 0026](./docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md): a rule can give many parts for one input.
+- [ADR 0027](./docs/adr/0027-a-dataset-reads-the-parts-of-a-computed-dataset-through-a-view.md): a dataset reads the parts of a computed dataset through a view.
+- [ADR 0028](./docs/adr/0028-a-host-names-each-relation-that-readers-query-once.md) (proposed): a host names each relation that readers query once.
 
 ## Development
 
