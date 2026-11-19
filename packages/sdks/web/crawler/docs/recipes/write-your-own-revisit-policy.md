@@ -8,8 +8,8 @@
 
 1. **Give a `histories` schema.** The history of a URL is plain data in the crawl memento. The crawler parses it with this zod schema before it gives it to your policy. A policy with no history uses `z.null()`.
 2. **Return `{ due, history }` for each visit.** `due` is a time in milliseconds, or `null` for "never". `history` is what your policy must know at the next visit.
-3. **Extend `IntervalRevisit` to keep its failure rule.** A failed URL is due two hours later, and a gone URL (404 or 410) one day later. You implement only `visited`, which runs after a download that succeeded, a redirect included. Its `outcome` is `modified`, `unmodified` or `unknown`; for a redirect it is the change of the target.
-4. **Extend `RevisitPolicy` to decide failed, gone and redirected URLs too.** You then implement `schedule`, which gets every `outcome`: a `Change`, `'failed'`, `'gone'`, or a redirect `{ redirect, permanent, change }`.
+3. **Extend `IntervalRevisit` to keep its failure rule.** A failed URL is due two hours later. A gone URL (404 or 410, or the third failed visit in a row) is due one day later, and half again as long after each later gone visit, to at most 90 days. You implement only `visited`, which runs after a download that succeeded, a redirect included. Its `outcome` is `modified`, `unmodified` or `unknown`; for a redirect it is the change of the target.
+4. **Extend `RevisitPolicy` to decide failed, gone and redirected URLs too.** You then implement `schedule`, which gets every `outcome`: a `Change`, `'failed'`, `{ gone }` with the number of gone visits since the last visit that succeeded, or a redirect `{ redirect, permanent, change }`.
 5. **Override `due` to read a hint before the download.** The default makes a URL due when its time came, or when a listing gives it another `lastModified` than at the last visit.
 
 ## The program

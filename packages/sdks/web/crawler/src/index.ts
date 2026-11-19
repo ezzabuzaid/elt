@@ -40,6 +40,7 @@ export {
 export {
   RevisitPolicy,
   type Change,
+  type Gone,
   type Known,
   type Outcome,
   type Redirect,

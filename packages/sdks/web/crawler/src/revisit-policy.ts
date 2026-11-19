@@ -20,8 +20,15 @@ export type Redirect = {
   readonly change: Change;
 };
 
-/** What one visit of a URL ended with. Gone is a 404 or 410 answer. */
-export type Outcome = Change | 'failed' | 'gone' | Redirect;
+/**
+ * A visit that found the URL gone: a 404 or 410 answer, or the third failed
+ * visit in a row, as Nutch's db.fetch.retry.max. `gone` counts the gone
+ * visits since the last visit that succeeded, this one included.
+ */
+export type Gone = { readonly gone: number };
+
+/** What one visit of a URL ended with: a change, a failure, gone, or a redirect. */
+export type Outcome = Change | 'failed' | Gone | Redirect;
 
 export type Revisit = {
   readonly request: CrawlRequest;

@@ -32,6 +32,7 @@ import {
   type Change,
   type Outcome,
   type RevisitPolicy,
+  type Schedule,
 } from './revisit-policy.ts';
 import { RobotsRules } from './robots-rules.ts';
 import { httpUrl, webUrl } from './web-url.ts';
@@ -155,15 +156,30 @@ const entrySchema = z.object({
 });
 type Entry = z.infer<typeof entrySchema>;
 
+// The SHA-256 of the last body that a download got, or null when no
+// download got one since the URL was found or last redirected.
+const digestSchema = z.string().nullable();
+
 const lastSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('fetched'), digest: z.string() }),
+  // A body, or a 304 answer, which keeps the body before it, as Nutch's
+  // CrawlDbReducer keeps the old signature for STATUS_FETCH_NOTMODIFIED.
+  z.object({ kind: z.literal('fetched'), digest: digestSchema }),
   z.object({
     kind: z.literal('redirect'),
     target: z.string(),
     // 301 or 308 (RFC 9110 §15.4.2, §15.4.9).
     permanent: z.boolean(),
   }),
-  z.object({ kind: z.literal('failed') }),
+  // No answer to keep. It keeps the body digest before it, as Nutch's
+  // CrawlDbReducer keeps the old signature for STATUS_FETCH_RETRY and
+  // _GONE, and counts the visits since the last one that succeeded: the
+  // failed ones, as CrawlDatum's retriesSinceFetch, and the gone ones.
+  z.object({
+    kind: z.literal('failed'),
+    digest: digestSchema,
+    failures: z.number().int().nonnegative(),
+    gone: z.number().int().nonnegative(),
+  }),
 ]);
 type Last = z.infer<typeof lastSchema>;
 
@@ -172,7 +188,7 @@ const knownUrlSchema = z.object({
   entry: entrySchema,
   // What its last visit got, as Nutch's CrawlDatum keeps a fetched page's
   // signature apart from its redirect statuses: a body with its SHA-256, a
-  // redirect with its target, or no answer to keep.
+  // redirect with its target, or a failure.
   last: lastSchema,
   due: z.number().nullable(),
   history: z.unknown(),
@@ -526,13 +542,7 @@ class CrawlRun implements Crawl {
     const entry = visit?.after.entry ?? before?.entry;
     if (entry === undefined)
       throw new TypeError(`The crawl did not hand back ${url}`);
-    const after = this.#schedule(
-      entry,
-      'failed',
-      null,
-      { kind: 'failed' },
-      before,
-    );
+    const after = this.#failed(entry, 'failed', null, before);
     if (visit) this.#turn = { ...this.#turn, visit: { before, after } };
     else this.#urls.set(url, after);
   }
@@ -544,7 +554,6 @@ class CrawlRun implements Crawl {
         entry,
         'failed',
         null,
-        { kind: 'failed' },
         this.#urls.get(entry.url),
       );
       if (schedule.due !== null && (due === null || schedule.due < due))
@@ -649,7 +658,7 @@ class CrawlRun implements Crawl {
         // robots.txt redirected more than five times: it allows everything
         // and gives the readers nothing.
         if (robots.answer === null) {
-          this.#visited(entry, 'failed', null, { kind: 'failed' }, before);
+          this.#visit(before, this.#failed(entry, 'failed', null, before));
           yield { progress: entry.url, routes: [] };
           continue;
         }
@@ -680,7 +689,7 @@ class CrawlRun implements Crawl {
           this.#requested(entry, 'network', waited, { error: cause });
           const errorResponse =
             cause instanceof RequestError ? cause.response : undefined;
-          this.#visited(entry, 'failed', null, { kind: 'failed' }, before);
+          this.#visit(before, this.#failed(entry, 'failed', null, before));
           yield this.#tolerates(entry, errorResponse?.statusCode)
             ? { progress: entry.url, routes: [] }
             : this.#failure(
@@ -738,20 +747,56 @@ class CrawlRun implements Crawl {
         );
         continue;
       }
+      const known = digestOf(before);
+      if (statusCode === 304) {
+        // Not modified: a visit that succeeded and has no body for the
+        // readers, as Nutch's STATUS_FETCH_NOTMODIFIED. The page is unchanged
+        // as far as the crawl knows, so it is deferred.
+        this.#visited(
+          entry,
+          'unmodified',
+          headers,
+          { kind: 'fetched', digest: known },
+          before,
+        );
+        yield this.#hands(entry)
+          ? {
+              deferred: {
+                url: entry.url,
+                listingUrl: entry.listingUrl,
+                lastModified: entry.lastModified,
+                published: entry.published,
+                localizedVersions: entry.localizedVersions,
+              },
+            }
+          : {
+              progress: entry.url,
+              routes: [
+                {
+                  listingUrl: entry.url,
+                  readers: this.#readers.map(() => null),
+                  redirect: null,
+                },
+              ],
+            };
+        continue;
+      }
       const failed = statusCode < 200 || statusCode > 299;
       let change: Change = 'unknown';
       if (failed)
-        this.#visited(
-          entry,
-          [404, 410].includes(statusCode) ? 'gone' : 'failed',
-          headers,
-          { kind: 'failed' },
+        this.#visit(
           before,
+          this.#failed(
+            entry,
+            [404, 410].includes(statusCode) ? 'gone' : 'failed',
+            headers,
+            before,
+          ),
         );
       else {
         const digest = hash('sha256', response.rawBody);
-        if (before !== undefined && before.last.kind === 'fetched')
-          change = before.last.digest === digest ? 'unmodified' : 'modified';
+        if (known !== null)
+          change = known === digest ? 'unmodified' : 'modified';
         this.#visited(
           entry,
           change,
@@ -885,7 +930,7 @@ class CrawlRun implements Crawl {
   ): CrawlFailure | CrawlProgress {
     const hops = entry.redirect === null ? 1 : entry.redirect.hops + 1;
     if (hops > maxRedirects) {
-      this.#visited(entry, 'failed', headers, { kind: 'failed' }, before);
+      this.#visit(before, this.#failed(entry, 'failed', headers, before));
       return this.#failure(
         entry,
         this.#handedBack(entry),
@@ -943,6 +988,7 @@ class CrawlRun implements Crawl {
     };
   }
 
+  // A visit that succeeded.
   #visited(
     entry: Entry,
     outcome: Outcome,
@@ -950,12 +996,35 @@ class CrawlRun implements Crawl {
     last: Last,
     before: KnownUrl | undefined,
   ) {
-    this.#turn = {
-      ...this.#turn,
-      visit: {
-        before,
-        after: this.#schedule(entry, outcome, headers, last, before),
-      },
+    this.#visit(before, {
+      entry,
+      last,
+      ...this.#schedule(entry, outcome, headers, before),
+    });
+  }
+
+  #visit(before: KnownUrl | undefined, after: KnownUrl) {
+    this.#turn = { ...this.#turn, visit: { before, after } };
+  }
+
+  // A visit that failed or found the URL gone. The third failed visit since
+  // the last one that succeeded, and each later one, is gone, as Nutch's
+  // CrawlDbReducer makes STATUS_FETCH_RETRY gone at db.fetch.retry.max.
+  #failed(
+    entry: Entry,
+    kind: 'failed' | 'gone',
+    headers: Headers | null,
+    before: KnownUrl | undefined,
+  ): KnownUrl {
+    const since =
+      before?.last.kind === 'failed' ? before.last : { failures: 0, gone: 0 };
+    const failures = since.failures + (kind === 'failed' ? 1 : 0);
+    const isGone = kind === 'gone' || failures >= maxFailures;
+    const gone = isGone ? since.gone + 1 : since.gone;
+    return {
+      entry,
+      last: { kind: 'failed', digest: digestOf(before), failures, gone },
+      ...this.#schedule(entry, isGone ? { gone } : 'failed', headers, before),
     };
   }
 
@@ -963,10 +1032,9 @@ class CrawlRun implements Crawl {
     entry: Entry,
     outcome: Outcome,
     headers: Headers | null,
-    last: Last,
     before: KnownUrl | undefined,
-  ): KnownUrl {
-    const { due, history } = this.#revisit.schedule(
+  ): Schedule<unknown> {
+    return this.#revisit.schedule(
       {
         request: this.#request(entry),
         outcome,
@@ -975,7 +1043,6 @@ class CrawlRun implements Crawl {
       },
       before?.history ?? null,
     );
-    return { entry, last, due, history };
   }
 
   #commit() {
@@ -1359,6 +1426,16 @@ class CrawlRun implements Crawl {
         .find((entry) => entry !== undefined)
     );
   }
+}
+
+// The failed visits in a row that make a URL gone, as Nutch's db.fetch.retry.max.
+const maxFailures = 3;
+
+// The body digest that a known URL keeps: none after a redirect.
+function digestOf(known: KnownUrl | undefined) {
+  return known === undefined || known.last.kind === 'redirect'
+    ? null
+    : known.last.digest;
 }
 
 // The redirects that one request follows, as Got's maxRedirects; a longer chain fails, as Got's MaxRedirectsError does.

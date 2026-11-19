@@ -48,6 +48,18 @@ _Avoid_: Quota, cap, limit (a budget leaves nothing out)
 What a visit that redirected ended with: the target, whether it is permanent (301 or 308), and whether the target is the one of the last visit. The revisit policy schedules it as a visit that succeeded ([ADR 0006](./docs/adr/0006-every-crawl-of-a-read-asks-one-record-of-each-origin.md)).
 _Avoid_: Redirect status, moved page
 
+**Failed visit**:
+A visit that got no answer that the crawl can use, such as a 400, a 5xx or a network error. The crawl asks the URL again two hours later. The memento counts the failed visits since the last visit that succeeded ([ADR 0008](./docs/adr/0008-a-failure-has-a-lifecycle.md)).
+_Avoid_: Error alone (an error is what a run hands out), retry
+
+**Gone visit**:
+A visit that answered 404 or 410, or the third failed visit since the last visit that succeeded and each failed visit after it. The crawl asks the URL again one day later, and half again as long after each later gone visit, to at most 90 days. A gone URL is never dropped ([ADR 0008](./docs/adr/0008-a-failure-has-a-lifecycle.md)).
+_Avoid_: Dead, deleted, removed
+
+**Body digest**:
+The SHA-256 of the last body that a download of a URL got. A failed visit, a gone visit and a 304 keep it, so the next download compares with it. A redirect keeps none.
+_Avoid_: Hash, fingerprint (a fingerprint is the web source's), signature
+
 **Reader**:
 A class that reads one response and returns the URLs that it finds there. Each reader finds one kind of URL. A reader does not download, queue or call another reader. The crawler gives each response to every reader.
 _Avoid_: Parser, extractor (an extractor reads pages for a host), plugin
