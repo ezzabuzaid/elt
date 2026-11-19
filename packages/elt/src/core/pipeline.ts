@@ -275,7 +275,9 @@ export class Pipeline<Target extends DestinationTarget> {
     const loading = new Set<string>();
     const loaded = new Set<string>();
     // Each stream whose copy last failed for a system reason: how many times
-    // in a row, and when the watch loads it again.
+    // in a row, and the clock's performance.now() at which the watch loads it
+    // again. A retry time is a deadline, which a monotonic clock keeps: a
+    // wall clock set back or forward would move it.
     const retries = new Map<
       string,
       { readonly failures: number; readonly at: number }
@@ -444,18 +446,18 @@ export class Pipeline<Target extends DestinationTarget> {
         // Retries end with the change signals, as their changes do.
         if (!finished)
           for (const [name, { at }] of retries)
-            if (at <= this.#clock.Date.now()) pending.add(name);
+            if (at <= this.#clock.performance.now()) pending.add(name);
         if (pending.size === 0) {
           if (finished) break;
           // Each thing that wakes the loop also shows in the checks above, so
           // a wake from before this wait has nothing to tell, and a retry
-          // timer that ends before the Date of its retry makes the loop wait
+          // timer that ends before its retry is due makes the loop wait
           // again, not spin.
           const due = Math.min(...[...retries.values()].map(({ at }) => at));
           const retrying = Number.isFinite(due)
             ? this.#clock.setTimeout(
                 () => changed.broadcast(),
-                due - this.#clock.Date.now(),
+                due - this.#clock.performance.now(),
               )
             : undefined;
           await changed.wait({ signal: undefined });
@@ -486,7 +488,7 @@ export class Pipeline<Target extends DestinationTarget> {
           )
             retries.set(name, {
               failures: inARow,
-              at: this.#clock.Date.now() + retryDelayMs(inARow),
+              at: this.#clock.performance.now() + retryDelayMs(inARow),
             });
           else retries.delete(name);
         }

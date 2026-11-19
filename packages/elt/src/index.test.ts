@@ -2347,13 +2347,18 @@ test('a change signal that fails for a system reason is recorded one time for ea
 // the process fired. A watch that spins on its retry starves every timer of
 // the process, node:test's own timeout too, so the scenario runs in a child
 // process that the test kills.
-const lateDateWatch = `
+// A watch whose stream fails once for a system reason, on a clock whose Date
+// and performance the script moves, and whose timers end 100 times early.
+// SCENARIO early-timers: the retry timer ends five times before performance
+// reaches the retry, then performance moves 10 s. SCENARIO clock-set-back:
+// the wall clock is set back an hour, and performance moves 10 s.
+const retryWatch = `
 const { Catalog, Connection, Copy, Destination, Gauge, Pipeline, Source, Stream, SyncHistory, Target, Writer } = await import(process.env.ELT);
-const start = Date.now();
-let now = start;
+let now = Date.now();
+let monotonic = 0;
 const clock = {
   Date: { now: () => now },
-  performance,
+  performance: { now: () => monotonic },
   setTimeout: (callback, ms) => setTimeout(callback, ms / 100),
   clearTimeout: (timer) => clearTimeout(timer),
 };
@@ -2418,37 +2423,56 @@ const failed = await watching.next();
 source.failing = false;
 const retried = watching.next();
 let early = false;
-retried.then(() => { early = now === start; });
-// A timer of the process, after five rounds of the retry timer, all before
-// the Date of the retry.
-await new Promise((resolve) => setTimeout(resolve, 500));
-now += 10_000;
-const loaded = await retried;
+retried.then(() => { early = monotonic === 0; });
+if (process.env.SCENARIO === 'early-timers')
+  // A timer of the process, after five rounds of the retry timer, all before
+  // performance reaches the retry.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+else now -= 3_600_000;
+monotonic += 10_000;
+const loaded = await Promise.race([
+  retried,
+  new Promise((resolve) => setTimeout(() => resolve('late'), 2000).unref()),
+]);
 controller.abort();
 await watching.return(undefined);
-console.log(JSON.stringify({ failed: failures(failed), early, loaded: failures(loaded) }));
+console.log(JSON.stringify({ failed: failures(failed), early, loaded: loaded === 'late' ? loaded : failures(loaded) }));
 `;
 
-test('a watch whose stream failed for a system reason keeps yielding to the process while its timers fire before its Date reaches the retry, and loads the stream again once the Date does', () => {
+// Runs retryWatch in a process of its own, as a loop that starves the
+// timers of its process would starve the test's.
+function watchRetry(scenario: 'early-timers' | 'clock-set-back') {
   const run = spawnSync(
     process.execPath,
-    ['--input-type=module', '-e', lateDateWatch],
+    ['--input-type=module', '-e', retryWatch],
     {
       env: {
         ...process.env,
         ELT: pathToFileURL(join(import.meta.dirname, 'index.ts')).href,
+        SCENARIO: scenario,
       },
       encoding: 'utf8',
       timeout: 10_000,
     },
   );
-
   assert.equal(
     run.status,
     0,
     `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
   );
-  assert.deepEqual(JSON.parse(run.stdout), {
+  return JSON.parse(run.stdout);
+}
+
+test('a watch whose stream failed for a system reason keeps yielding to the process while its timers fire before the retry is due, and loads the stream again once it is', () => {
+  assert.deepEqual(watchRetry('early-timers'), {
+    failed: [['system']],
+    early: false,
+    loaded: [[]],
+  });
+});
+
+test('a wall clock set back an hour while a stream waits for its retry does not delay the retry: it is due on the monotonic clock', () => {
+  assert.deepEqual(watchRetry('clock-set-back'), {
     failed: [['system']],
     early: false,
     loaded: [[]],
