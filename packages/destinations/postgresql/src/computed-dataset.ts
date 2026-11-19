@@ -1,8 +1,6 @@
 import { hash } from 'node:crypto';
 
 import { Lock } from '@zukhruf/async';
-import { Vector } from '@zukhruf/vectors';
-import { toSql } from '@zukhruf/vectors/sqlite';
 import postgres from 'postgres';
 
 import {
@@ -13,10 +11,12 @@ import {
   type PreparedOutputs,
   type RefreshTrigger,
   type Rule,
-  type RuleColumn,
   type RuleColumns,
   type StoredOutput,
+  type TableOutputRow,
+  TableRule,
   computedColumns,
+  partColumns,
   refreshComputed,
 } from '@eltjs/elt';
 
@@ -28,7 +28,9 @@ import { PostgresDestination } from './postgres-destination.ts';
 import { storedColumns } from './postgres-fit.ts';
 import { TargetHistory, rowHash } from './postgres-history.ts';
 import { PostgresLoad, type Transaction } from './postgres-load.ts';
+import { PostgresPartsTable } from './postgres-parts-table.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
+import { ruleColumnTypes, ruleValue } from './postgres-rule-columns.ts';
 import { makeSchema } from './postgres-session.ts';
 import type { PostgresTable } from './postgres-table.ts';
 import { View, made } from './view.ts';
@@ -41,14 +43,12 @@ const ownColumns = [
   'replaced_in',
 ];
 
-// The Postgres type of each kind of rule column: a vector is the bytes of
-// @zukhruf/vectors/sqlite, float32 values little-endian.
-const types: Readonly<Record<RuleColumn['type'], string>> = {
-  text: 'text',
-  blob: 'bytea',
-  vector: 'bytea',
-  integer: 'bigint',
-};
+// A table of the dataset as its declaration makes it, with its history and
+// the view readers query.
+type DeclaredTable = Pick<
+  PostgresPartsTable,
+  'table' | 'declared' | 'statement' | 'history' | 'view'
+>;
 
 // Data computed on write from what the pipeline's copies load into one
 // Postgres database: a rule makes one output row for each input, such as the
@@ -66,22 +66,27 @@ const types: Readonly<Record<RuleColumn['type'], string>> = {
 // a row is a numbered commit, each row names the commit that last wrote it,
 // and the history keeps each row a commit replaced or removed, so the view
 // reads as of a position as the copies' reader views do.
+// A table rule gives many parts for one input: the dataset keeps one output
+// row for each key in raw_<name>, with no rule column, and its parts in
+// raw_<name>_parts, which readers query through the view <name>_parts. The
+// commit that writes an output row writes its parts, and the two tables are
+// one declaration, so a change to either makes both again.
 export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
   readonly name: string;
   // The database and schema the dataset lives in.
   readonly into: PostgresDestination;
   readonly #from: readonly (PostgresTable | View)[];
-  readonly #rule: Rule<Input, RuleColumns>;
+  readonly #compute:
+    | { readonly rule: Rule<Input, RuleColumns> }
+    | {
+        readonly rule: TableRule<Input, RuleColumns, RuleColumns>;
+        readonly parts: PostgresPartsTable;
+      };
   readonly #table: string;
-  readonly #history: TargetHistory;
-  readonly #view: TargetReaderView;
-  // Every column of an output row with its type and its constraint, in table
-  // order.
-  readonly #declared: readonly {
-    name: string;
-    type: string;
-    constraint: string;
-  }[];
+  readonly #output: DeclaredTable;
+  // The rule columns of an output row: none for a table rule, whose columns
+  // are the parts'.
+  readonly #ruleColumns: RuleColumns;
 
   constructor({
     into,
@@ -94,16 +99,38 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
     name: string;
     description: string;
     from: readonly (PostgresTable | View)[];
-    compute: Rule<Input, RuleColumns>;
+    compute:
+      Rule<Input, RuleColumns> | TableRule<Input, RuleColumns, RuleColumns>;
   }) {
     super();
     this.name = identifier(name, 'computed dataset name');
     this.into = into;
     this.#from = Object.freeze([...from]);
-    this.#rule = compute;
+    this.#compute =
+      compute instanceof TableRule
+        ? {
+            rule: compute,
+            parts: new PostgresPartsTable({
+              schema: into.schema,
+              dataset: name,
+              description,
+              rule: compute,
+            }),
+          }
+        : { rule: compute };
+    this.#ruleColumns = compute instanceof TableRule ? {} : compute.output;
     this.#table = identifier(`raw_${name}`, 'computed dataset table name');
-    const taken = new Set([compute.key.name, ...ownColumns]);
-    for (const column of Object.keys(compute.output)) {
+    // A part has a seq and a part hash, and the columns of both groups of a
+    // table rule.
+    const taken = new Set([
+      compute.key.name,
+      ...ownColumns,
+      ...(compute instanceof TableRule ? Object.keys(partColumns) : []),
+    ]);
+    for (const column of [
+      ...Object.keys(compute.output),
+      ...(compute instanceof TableRule ? Object.keys(compute.place) : []),
+    ]) {
       identifier(column, 'rule column name');
       if (taken.has(column))
         throw new TypeError(
@@ -111,7 +138,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
         );
       taken.add(column);
     }
-    this.#declared = Object.freeze([
+    const declared = Object.freeze([
       {
         name: identifier(compute.key.name, 'rule key name'),
         type: 'text',
@@ -122,35 +149,44 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
         type: 'text',
         constraint: column === 'error' ? '' : ' NOT NULL',
       })),
-      ...Object.entries(compute.output).map(([column, { type }]) => ({
+      ...Object.entries(this.#ruleColumns).map(([column, { type }]) => ({
         name: column,
-        type: types[type],
+        type: ruleColumnTypes[type],
         constraint: '',
       })),
       { name: 'committed_in', type: 'integer', constraint: ' NOT NULL' },
       { name: '_elt_row_hash', type: 'text', constraint: ' NOT NULL' },
     ]);
     const table = this.#qualified(this.#table);
-    this.#history = new TargetHistory(
+    const history = new TargetHistory(
       into.schema,
       hash('sha256', JSON.stringify([into.schema, this.#table])).slice(0, 40),
     );
-    this.#view = new TargetReaderView(
-      { schema: into.schema, name },
+    this.#output = Object.freeze({
       table,
-      this.#history.qualifiedName,
-      this.#columns,
-      new TargetComments(description, {
-        [compute.key.name]: compute.key.description,
-        ...computedColumns,
-        ...Object.fromEntries(
-          Object.entries(compute.output).map(([column, { description }]) => [
-            column,
-            description,
-          ]),
-        ),
-      }),
-    );
+      declared,
+      statement: `CREATE TABLE ${table} (${declared
+        .map(
+          ({ name, type, constraint }) => `${quote(name)} ${type}${constraint}`,
+        )
+        .join(', ')}, CHECK ("status" IN ('computed', 'empty', 'failed')))`,
+      history,
+      view: new TargetReaderView(
+        { schema: into.schema, name },
+        table,
+        history.qualifiedName,
+        this.#columns,
+        new TargetComments(description, {
+          [compute.key.name]: compute.key.description,
+          ...computedColumns,
+          ...Object.fromEntries(
+            Object.entries(this.#ruleColumns).map(
+              ([column, { description }]) => [column, description],
+            ),
+          ),
+        }),
+      ),
+    });
     Object.freeze(this);
   }
 
@@ -161,9 +197,18 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
 
   // The key, the engine columns and the rule's, which readers see.
   get #columns(): string[] {
-    return this.#declared
-      .map(({ name }) => name)
-      .filter((name) => name !== 'committed_in' && name !== '_elt_row_hash');
+    return [
+      this.#compute.rule.key.name,
+      ...Object.keys(computedColumns),
+      ...Object.keys(this.#ruleColumns),
+    ];
+  }
+
+  // The tables of the dataset, which one declaration makes.
+  get #tables(): readonly DeclaredTable[] {
+    return 'parts' in this.#compute
+      ? [this.#output, this.#compute.parts]
+      : [this.#output];
   }
 
   override validate(connections: readonly Connection<PostgresTable>[]): void {
@@ -176,7 +221,11 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
           `Computed dataset ${this.name} reads ${target.name}, which no copy of the pipeline loads`,
         );
     const relations = made(connections, this.into);
-    for (const name of [this.name, this.#table])
+    for (const name of [
+      this.name,
+      this.#table,
+      ...('parts' in this.#compute ? this.#compute.parts.names : []),
+    ])
       if (relations.has(`${this.into.schema}.${name}`))
         throw new TypeError(
           `Computed dataset ${this.name} needs ${this.into.schema}.${name}, which a copy of the pipeline makes`,
@@ -207,18 +256,22 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
       'computed',
       clock,
     );
-    await refreshComputed({
-      rule: this.#rule,
+    const refresh = {
       inputs: await this.#inputs(load.sql, connections),
-      prepare: (keys) => this.#prepare(load, status, keys, signal),
+      prepare: (keys: ReadonlySet<string>) =>
+        this.#prepare(load, status, keys, signal),
       status,
       trigger,
       signal,
-    });
+    };
+    const { rule } = this.#compute;
+    await (rule instanceof TableRule
+      ? refreshComputed({ ...refresh, rule })
+      : refreshComputed({ ...refresh, rule }));
   }
 
-  // Makes the schema, brings the table to its declaration, removes the rows
-  // whose key has no input, and gives the output table to write. Each
+  // Makes the schema, brings the tables to their declaration, removes the
+  // rows whose key has no input, and gives the output table to write. Each
   // transaction takes the number of its commit at its first change, so one
   // that changes no row takes none. The load has one session, so the commits
   // of the calls take turns.
@@ -227,9 +280,10 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
     status: PostgresDerivedStatus,
     keys: ReadonlySet<string>,
     signal: AbortSignal | undefined,
-  ): Promise<PreparedOutputs<OutputRow>> {
-    const key = quote(this.#rule.key.name);
-    const table = this.#qualified(this.#table);
+  ): Promise<PreparedOutputs<OutputRow | TableOutputRow>> {
+    const key = quote(this.#compute.rule.key.name);
+    const parts = 'parts' in this.#compute ? this.#compute.parts : undefined;
+    const { table, history } = this.#output;
     const commits = (sql: Transaction) => {
       let number: Promise<number> | undefined;
       return () => (number ??= load.number(sql));
@@ -250,26 +304,28 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
             status: row.status,
           });
         else gone.push(row.key);
-      if (gone.length > 0)
-        await this.#history.remove(
+      if (gone.length > 0) {
+        await history.remove(
           sql,
           await commit(),
           table,
           ` WHERE "_elt_old".${key} IN (SELECT jsonb_array_elements_text($1::text::jsonb))`,
           [JSON.stringify(gone)],
         );
-      await this.#history.expire(sql);
+        await parts?.remove(sql, await commit(), gone);
+      }
+      for (const declared of this.#tables) await declared.history.expire(sql);
       return rows;
     });
-    const written = this.#declared.map(({ name }) => quote(name));
+    const written = this.#output.declared.map(({ name }) => quote(name));
     const hashed = this.#columns.map((name) => ({ name }));
     // Writes a row in the commit that commit numbers, unless the stored row
     // has the same values: then it keeps its commit. The history keeps the
-    // row it replaces.
+    // row it replaces. The row's parts are written in the same commit.
     const store = async (
       sql: Transaction,
       commit: () => Promise<number>,
-      output: OutputRow,
+      output: OutputRow | TableOutputRow,
     ) => {
       const row = [
         output.key,
@@ -277,33 +333,38 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
         output.rule,
         output.status,
         output.error,
-        ...Object.keys(this.#rule.output).map((column) => {
-          const value =
-            output.status === 'computed' ? output.values[column] : undefined;
-          return value instanceof Vector ? toSql(value) : (value ?? null);
-        }),
+        ...Object.keys(this.#ruleColumns).map((column) =>
+          ruleValue('values' in output ? output.values[column] : undefined),
+        ),
       ];
       const version = rowHash(hashed, row);
       const [before] = await sql.unsafe<{ hash: string }[]>(
         `SELECT "_elt_row_hash" AS "hash" FROM ${table} WHERE ${key} = $1`,
         [output.key],
       );
-      if (before?.hash === version) return;
-      const number = await commit();
-      if (before !== undefined)
-        await this.#history.keep(
-          sql,
-          number,
-          table,
-          `FROM ${table} AS "_elt_old" WHERE "_elt_old".${key} = $1`,
-          [output.key],
+      if (before?.hash !== version) {
+        const number = await commit();
+        if (before !== undefined)
+          await history.keep(
+            sql,
+            number,
+            table,
+            `FROM ${table} AS "_elt_old" WHERE "_elt_old".${key} = $1`,
+            [output.key],
+          );
+        await sql.unsafe(
+          `INSERT INTO ${table} (${written.join(', ')}) VALUES (${written.map((_, index) => `$${index + 1}`).join(', ')}) ON CONFLICT (${key}) DO UPDATE SET ${written
+            .slice(1)
+            .map((column) => `${column} = excluded.${column}`)
+            .join(', ')}`,
+          [...row, number, version],
         );
-      await sql.unsafe(
-        `INSERT INTO ${table} (${written.join(', ')}) VALUES (${written.map((_, index) => `$${index + 1}`).join(', ')}) ON CONFLICT (${key}) DO UPDATE SET ${written
-          .slice(1)
-          .map((column) => `${column} = excluded.${column}`)
-          .join(', ')}`,
-        [...row.map(parameter), number, version],
+      }
+      await parts?.write(
+        sql,
+        commit,
+        output.key,
+        'parts' in output ? output.parts : [],
       );
     };
     const session = new Lock();
@@ -329,54 +390,66 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
     };
   }
 
-  // Makes the table, its history and its view, or makes the table again when
-  // its declaration changed: the history keeps each row of the old table, in
-  // a commit, and the views over the old table read the new one.
+  // Makes the tables, their histories and their views, or makes every table
+  // again when the stored columns of one differ from its declaration: the
+  // history of each keeps each row of its old table, in a commit, and the
+  // views over the old tables read the new ones.
   async #declare(
     sql: Transaction,
     commit: () => Promise<number>,
   ): Promise<void> {
-    const table = this.#qualified(this.#table);
-    const stored = await storedColumns(sql, table);
-    const create = `CREATE TABLE ${table} (${this.#declared
-      .map(
-        ({ name, type, constraint }) => `${quote(name)} ${type}${constraint}`,
-      )
-      .join(', ')}, CHECK ("status" IN ('computed', 'empty', 'failed')))`;
-    const fits =
-      stored.length === this.#declared.length &&
-      stored.every(
-        ({ name, type }, index) =>
-          this.#declared[index]?.name === name &&
-          this.#declared[index]?.type === type,
-      );
-    if (stored.length === 0) await sql.unsafe(create);
-    else if (!fits) {
-      const [kept] = await sql.unsafe(`SELECT 1 FROM ${table} LIMIT 1`);
-      if (kept !== undefined) {
-        await this.#history.create(sql, table, commit);
-        await this.#history.keep(
-          sql,
-          await commit(),
-          table,
-          `FROM ${table} AS "_elt_old"`,
-        );
+    const tables = this.#tables;
+    const stored: { name: string; type: string }[][] = [];
+    for (const { table } of tables)
+      stored.push(await storedColumns(sql, table));
+    const missing = stored.every((columns) => columns.length === 0);
+    const fits = tables.every(
+      ({ declared }, index) =>
+        stored[index]?.length === declared.length &&
+        stored[index].every(
+          ({ name, type }, column) =>
+            declared[column]?.name === name && declared[column]?.type === type,
+        ),
+    );
+    if (missing || fits) {
+      for (const { table, statement, history, view } of tables) {
+        if (missing) await sql.unsafe(statement);
+        await history.create(sql, table, commit);
+        await view.describe(sql);
       }
-      await rebindDependents(
-        sql,
-        [table, this.#history.qualifiedName, this.#view.qualifiedName],
-        async () => {
-          await this.#view.drop(sql);
-          await sql.unsafe(`DROP TABLE ${table}`);
-          await sql.unsafe(create);
-          await this.#history.create(sql, table, commit);
-          await this.#view.describe(sql);
-        },
-      );
       return;
     }
-    await this.#history.create(sql, table, commit);
-    await this.#view.describe(sql);
+    for (const [index, { table, history }] of tables.entries()) {
+      if (stored[index]?.length === 0) continue;
+      const [kept] = await sql.unsafe(`SELECT 1 FROM ${table} LIMIT 1`);
+      if (kept === undefined) continue;
+      await history.create(sql, table, commit);
+      await history.keep(
+        sql,
+        await commit(),
+        table,
+        `FROM ${table} AS "_elt_old"`,
+      );
+    }
+    await rebindDependents(
+      sql,
+      tables.flatMap(({ table, history, view }) => [
+        table,
+        history.qualifiedName,
+        view.qualifiedName,
+      ]),
+      async () => {
+        for (const { table, view } of tables) {
+          await view.drop(sql);
+          await sql.unsafe(`DROP TABLE IF EXISTS ${table}`);
+        }
+        for (const { table, statement, history, view } of tables) {
+          await sql.unsafe(statement);
+          await history.create(sql, table, commit);
+          await view.describe(sql);
+        }
+      },
+    );
   }
 
   // Each input by key, from the rows of each relation of from that exists
@@ -410,7 +483,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
         .unsafe(`SELECT * FROM ${relation}`)
         .cursor(1000))
         for (const row of rows) {
-          const read = this.#rule.read(row);
+          const read = this.#compute.rule.read(row);
           if (read !== null && !inputs.has(read.key))
             inputs.set(read.key, read.input);
         }
@@ -448,11 +521,4 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
   #qualified(name: string, schema = this.into.schema): string {
     return `${quote(schema)}.${quote(name)}`;
   }
-}
-
-// A value as the driver sends it: bytes as bytea, any other value as it is.
-function parameter(
-  value: string | number | Uint8Array | null,
-): string | number | Buffer | null {
-  return value instanceof Uint8Array ? Buffer.from(value) : value;
 }
