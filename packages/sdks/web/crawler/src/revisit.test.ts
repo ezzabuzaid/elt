@@ -272,7 +272,8 @@ test('a gone page waits a day, is not deferred meanwhile, and is handed back onc
 });
 
 test('a listing that gives a page another lastModified makes it due at once, and the page carries the new hint', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'], now: 0 });
+  const now = Date.parse('2026-11-01T00:00:00Z');
+  t.mock.timers.enable({ apis: ['Date'], now });
   let lastModified = '2026-10-01';
   using server = mockWeb(
     http.get('https://site.test/*', ({ request }) =>
@@ -299,7 +300,7 @@ test('a listing that gives a page another lastModified makes it due at once, and
   };
 
   const first = await hinted(null);
-  t.mock.timers.setTime(hour);
+  t.mock.timers.setTime(now + hour);
   const same = await hinted(first.memento);
   lastModified = '2026-10-02';
   const changed = await hinted(same.memento);
@@ -627,6 +628,42 @@ test('a feed is due again within half the time its items cover, whatever the pol
   assert.equal(undated.nextDue(), day);
 });
 
+test('a listing makes a page due only by a lastModified that is a later time than the one it gave at the last visit, and not after the crawl starts', () => {
+  const policy = new OnceRevisit();
+  const loaded = policy.schedule(
+    { request, outcome: 'unknown', headers: null, at: 0 },
+    null,
+  );
+  const at = Date.parse('2026-11-01T00:00:00Z');
+  const due = (listed: string, before: string | null) =>
+    policy.due(
+      { ...request, lastModified: listed },
+      { ...loaded, lastModified: before },
+      at,
+    );
+
+  assert.deepEqual(
+    {
+      sameTimeOtherFormat: due('2026-10-01T00:00:00Z', '2026-10-01'),
+      older: due('2026-09-30', '2026-10-01'),
+      later: due('2026-10-02', '2026-10-01'),
+      laterFeedDate: due('Fri, 02 Oct 2026 08:00:00 GMT', '2026-10-01'),
+      firstHint: due('2026-10-01', null),
+      afterTheCrawlStarts: due('2099-01-01', '2026-10-01'),
+      notATime: due('yesterday', '2026-10-01'),
+    },
+    {
+      sameTimeOtherFormat: false,
+      older: false,
+      later: true,
+      laterFeedDate: true,
+      firstHint: true,
+      afterTheCrawlStarts: false,
+      notATime: false,
+    },
+  );
+});
+
 test('OnceRevisit never makes a page that loaded due again, and asks a failed or gone page again as every interval policy does', () => {
   const policy = new OnceRevisit();
   const visit = (outcome: 'unknown' | 'modified' | 'failed' | 'gone') =>
@@ -646,7 +683,7 @@ test('OnceRevisit never makes a page that loaded due again, and asks a failed or
     policy.due(
       { ...request, lastModified: '2026-10-30' },
       { ...loaded, lastModified: '2026-10-01' },
-      0,
+      Date.parse('2026-11-01T00:00:00Z'),
     ),
     true,
   );

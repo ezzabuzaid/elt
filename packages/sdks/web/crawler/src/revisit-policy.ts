@@ -60,14 +60,32 @@ export abstract class RevisitPolicy<History> {
 
   /**
    * Whether a known URL is due in the crawl that starts at `at`. A listing
-   * that gives a lastModified other than at the last visit says the page
-   * changed, so it is due at once.
+   * that gives a lastModified later than the one it gave at the last visit
+   * says the page changed, so it is due at once.
    */
   due(request: CrawlRequest, known: Known<History>, at: number): boolean {
     return (
       (known.due !== null && known.due <= at) ||
-      (request.lastModified !== null &&
-        request.lastModified !== known.lastModified)
+      changedSince(request.lastModified, known.lastModified, at)
     );
   }
+}
+
+/**
+ * Whether a listing's lastModified, a W3C datetime of a sitemap or an RFC 822
+ * date of a feed, is a later time than the one the listing gave at the last
+ * visit. The same time in another format, an earlier time, and a time after
+ * the crawl starts say nothing, as Nutch parses a sitemap's lastmod as a
+ * time and drops one in the future; so does text that is no time.
+ */
+function changedSince(
+  listed: string | null,
+  before: string | null,
+  at: number,
+): boolean {
+  if (listed === null) return false;
+  const time = Date.parse(listed);
+  if (Number.isNaN(time) || time > at) return false;
+  const last = before === null ? Number.NaN : Date.parse(before);
+  return Number.isNaN(last) || time > last;
 }
