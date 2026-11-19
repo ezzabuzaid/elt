@@ -1,5 +1,7 @@
 import type postgres from 'postgres';
 
+import { type NumberedStore, type Numbering, numbering } from '@eltjs/elt';
+
 import { quote } from './identifier.ts';
 import { lockSchema } from './postgres-session.ts';
 
@@ -61,6 +63,12 @@ export async function installNumbering(sql: postgres.Sql): Promise<void> {
     for (const statement of tables) await transaction.unsafe(statement);
   });
 }
+
+// How a Postgres database names itself in the reasons of its positions.
+export const postgresDatabase: NumberedStore = {
+  engine: 'Postgres',
+  noun: 'database',
+};
 
 // What writes a load: a connection's pass, or a refresh of a derived dataset.
 // Each runs one at a time, and a name of one never names the other.
@@ -246,20 +254,6 @@ export async function expireBefore(
   );
 }
 
-// The numbering of a database, as one reader saw it.
-export type Numbering = {
-  readonly epoch: string;
-  // The oldest commit that a reading can read as of, and what set it last.
-  readonly minValid: number;
-  readonly expiredBy: 'retention' | 'type' | 'clear' | null;
-  // Every number at or below it is a commit that a reader sees, or one that
-  // rolled back: the high-water mark of event stores, which skips the gaps
-  // that rolled back and stops below the first number still in flight.
-  readonly settled: number;
-  // The commits that are positions, from minValid to settled, ascending.
-  readonly ends: readonly number[];
-};
-
 // The high-water mark of the numbering, or null when the database has none.
 // pg_locks is not read in a snapshot, so a reader takes the mark first and
 // its snapshot after: each commit at or below the mark has ended by then, so
@@ -287,10 +281,8 @@ export async function settledMark(sql: postgres.Sql): Promise<number | null> {
 }
 
 // The numbering as the snapshot of the transaction sql runs in sees it, with
-// settled taken before the snapshot. A position is a commit that ends a
-// closed load where no load straddles it, so a reader there sees no part of
-// a pass. Commits past the mark that the snapshot sees still reach across
-// the ends before them.
+// settled taken before the snapshot. Commits past the mark that the snapshot
+// sees still reach across the ends before them.
 export async function numberingIn(
   sql: Queries,
   settled: number,
@@ -303,21 +295,19 @@ export async function numberingIn(
     }[]
   >`SELECT "epoch", "min_valid", "expired_by" FROM ${sql.unsafe(epochs)}`;
   if (row === undefined) return null;
-  const spans = (
-    await sql<{ first: number; last: number | null }[]>`
-      SELECT min(c."number") AS "first",
-        CASE WHEN l."closed_at" IS NULL THEN NULL ELSE max(c."number") END AS "last"
-      FROM ${sql.unsafe(commits)} AS c
-      JOIN ${sql.unsafe(loads)} AS l ON l."id" = c."load"
-      GROUP BY l."id" ORDER BY "first"`
-  ).map(({ first, last }) => ({ first, last: last ?? Infinity }));
-  return {
+  const spans = await sql<{ first: number; last: number | null }[]>`
+    SELECT min(c."number") AS "first",
+      CASE WHEN l."closed_at" IS NULL THEN NULL ELSE max(c."number") END AS "last"
+    FROM ${sql.unsafe(commits)} AS c
+    JOIN ${sql.unsafe(loads)} AS l ON l."id" = c."load"
+    GROUP BY l."id"`;
+  return numbering({
     epoch: row.epoch,
     minValid: row.min_valid,
     expiredBy: row.expired_by,
     settled,
-    ends: ends(spans, settled).filter((end) => end >= row.min_valid),
-  };
+    spans,
+  });
 }
 
 // When the commit numbered number was made, and the newest number that the
@@ -332,85 +322,14 @@ export async function committedAt(
   return row;
 }
 
-async function readNumbering(sql: postgres.Sql): Promise<Numbering | null> {
+// The numbering in a snapshot of its own, with the high-water mark taken
+// before it, or null when the database has none.
+export async function readNumbering(
+  sql: postgres.Sql,
+): Promise<Numbering | null> {
   const settled = await settledMark(sql);
   if (settled === null) return null;
   return sql.begin('ISOLATION LEVEL REPEATABLE READ READ ONLY', (transaction) =>
     numberingIn(transaction, settled),
   );
-}
-
-// A sweep line over the loads in order of their first commits: an end is a
-// position when no load that began at or before it ends after it. An open
-// load has no end yet, so it reaches past every later commit.
-function ends(
-  spans: readonly { first: number; last: number }[],
-  settled: number,
-): number[] {
-  const found: number[] = [];
-  const pending = spans.values();
-  let span = pending.next();
-  let reach = 0;
-  for (const end of spans
-    .map(({ last }) => last)
-    .filter((last) => last <= settled)
-    .sort((left, right) => left - right)) {
-    for (; !span.done && span.value.first <= end; span = pending.next())
-      reach = Math.max(reach, span.value.last);
-    if (reach === end) found.push(end);
-  }
-  return found;
-}
-
-// The positions of the database after `after`, ascending, or all of them. A
-// position of another epoch, or past the newest settled commit, is expired.
-export async function positionsAfter(
-  sql: postgres.Sql,
-  after: string | undefined,
-): Promise<readonly string[] | { readonly expired: string }> {
-  const since = after === undefined ? undefined : parsePosition(after);
-  const numbered = await readNumbering(sql);
-  if (since === undefined)
-    return numbered === null
-      ? []
-      : numbered.ends.map((end) => `${numbered.epoch}:${end}`);
-  const expired = expiry(numbered, since);
-  if (expired !== undefined) return { expired };
-  return (numbered?.ends ?? [])
-    .filter((end) => end > since.number)
-    .map((end) => `${since.epoch}:${end}`);
-}
-
-export type Position = { readonly epoch: string; readonly number: number };
-
-export function expiry(
-  numbered: Numbering | null,
-  { epoch, number }: Position,
-): string | undefined {
-  const position = `${epoch}:${number}`;
-  if (numbered === null)
-    return `Position ${position} is of commits this database does not have`;
-  if (epoch !== numbered.epoch)
-    return `Position ${position} is of an earlier numbering: the commits of this database were numbered again since`;
-  if (number > numbered.settled)
-    return `Position ${position} is past the newest commit of this database, ${numbered.settled}`;
-  if (number < numbered.minValid)
-    switch (numbered.expiredBy) {
-      case 'type':
-        return `Position ${position} is before commit ${numbered.minValid}, which changed the type of a column to one that does not hold each earlier value: the history keeps no row that only a reading before that commit reads`;
-      case 'clear':
-        return `Position ${position} is before commit ${numbered.minValid}, a clear that forgot the rows of its table: the history keeps no row that only a reading before it reads`;
-      default:
-        return `Position ${position} is before commit ${numbered.minValid}, the oldest position that the retention of the database keeps readable: the history keeps no row that only a reading before it reads`;
-    }
-  return undefined;
-}
-
-export function parsePosition(position: string): Position {
-  const groups = /^(?<epoch>[^:]+):(?<number>0|[1-9]\d*)$/.exec(
-    position,
-  )?.groups;
-  if (groups?.epoch === undefined || groups.number === undefined)
-    throw new TypeError(`${position} is not a position of a Postgres database`);
-  return { epoch: groups.epoch, number: Number(groups.number) };
 }

@@ -4,7 +4,12 @@ import type { DatabaseSync } from 'node:sqlite';
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { transaction } from '@zukhruf/sqlite-transaction';
 
-import type { PipelineClock } from '@eltjs/elt';
+import {
+  type NumberedStore,
+  type Numbering,
+  type PipelineClock,
+  numbering,
+} from '@eltjs/elt';
 
 import { openDestination } from './open-destination.ts';
 import { expireHistory } from './sqlite-history.ts';
@@ -20,7 +25,7 @@ const commits = '"_elt_commits"';
 // position that the history still reads, as SQL Server's MIN_VALID_VERSION,
 // and expired_by says what set it last: the retention, or a clear that forgot
 // the rows of its table.
-const numbering = new Declaration(
+const tables = new Declaration(
   [
     `CREATE TABLE ${epochs} ("id" INTEGER PRIMARY KEY CHECK ("id" = 1), "epoch" TEXT NOT NULL, "min_valid" INTEGER NOT NULL DEFAULT 0, "expired_by" TEXT CHECK ("expired_by" IN ('retention', 'clear'))) STRICT`,
     `CREATE TABLE ${loads} ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "connector" TEXT, "dataset" TEXT, "opened_at" TEXT NOT NULL, "closed_at" TEXT, CHECK (("connector" IS NULL) <> ("dataset" IS NULL))) STRICT`,
@@ -228,7 +233,7 @@ function begin(
   openedAt: string,
 ): number {
   const [column, name] = owned(owner);
-  numbering.apply(database);
+  tables.apply(database);
   database
     .prepare(
       `INSERT INTO ${epochs} ("id", "epoch") VALUES (1, ?) ON CONFLICT DO NOTHING`,
@@ -250,82 +255,20 @@ function owned(owner: LoadOwner): readonly [string, string] {
     : ['"dataset"', owner.dataset];
 }
 
-// The numbering of a file, as one snapshot reads it.
-export type Numbering = {
-  readonly epoch: string;
-  // The number of the newest commit, 0 before the first.
-  readonly newest: number;
-  // The oldest position that a reading reads exactly; 0 until the retention
-  // or a clear first deletes history, and what set it last.
-  readonly minValid: number;
-  readonly expiredBy: 'retention' | 'clear' | null;
-  // The commits that are positions, ascending.
-  readonly ends: readonly number[];
-};
-
-// A position, as `${epoch}:${number}` names it.
-export type Position = { readonly epoch: string; readonly number: number };
-
-// The positions of the file after `after`, ascending; each one that the
-// retention keeps when after is undefined. database is null while no file is
-// at the path.
-export function positionsAfter(
-  database: DatabaseSync | null,
-  after: string | undefined,
-): readonly string[] | { readonly expired: string } {
-  const since = after === undefined ? undefined : parsePosition(after);
-  const numbered =
-    database === null
-      ? null
-      : transaction(database, () => readNumbering(database), {
-          mode: 'deferred',
-        });
-  if (since === undefined)
-    return numbered === null
-      ? []
-      : numbered.ends
-          .filter((end) => end >= numbered.minValid)
-          .map((end) => `${numbered.epoch}:${end}`);
-  const expired = expiry(numbered, since);
-  if (expired !== undefined) return { expired };
-  return (numbered?.ends ?? [])
-    .filter((end) => end > since.number)
-    .map((end) => `${since.epoch}:${end}`);
-}
-
-// Why a position is not one of the file's commits, or undefined when it is.
-export function expiry(
-  numbered: Numbering | null,
-  { epoch, number }: Position,
-): string | undefined {
-  const position = `${epoch}:${number}`;
-  if (numbered === null)
-    return `Position ${position} is of commits this file does not have`;
-  if (epoch !== numbered.epoch)
-    return `Position ${position} is of an earlier numbering: the commits of this file were numbered again since`;
-  if (number > numbered.newest)
-    return `Position ${position} is past the newest commit of this file, ${numbered.newest}`;
-  if (number < numbered.minValid)
-    return numbered.expiredBy === 'clear'
-      ? `Position ${position} is before commit ${numbered.minValid}, a clear that forgot the rows of its table: the history keeps no row that only a reading before it reads`
-      : `Position ${position} is older than the retention of this file: its history keeps no row that only a reading before commit ${numbered.minValid} reads`;
-  return undefined;
-}
+// How a SQLite file names itself in the reasons of its positions.
+export const sqliteFile: NumberedStore = { engine: 'SQLite', noun: 'file' };
 
 // The numbering of the file, as the snapshot of the open read transaction
 // reads it, or null when the file has none. schema names the file where
 // database attached it. sqlite-drift compares the tables of main only, so the
 // numbering of an attached file is read as it is, and tables it lacks give
-// null. A position is a commit that ends a closed load where no load
-// straddles it, so a reader there sees no part of a pass. A sweep line finds
-// them: taking the loads in order of their first commits, an end is a
-// position when no load that began at or before it ends after it. An open
-// load has no end yet, so it reaches past every later commit.
+// null. SQLite writes one transaction at a time, so each commit that the
+// snapshot sees is settled.
 export function readNumbering(
   database: DatabaseSync,
   schema = 'main',
 ): Numbering | null {
-  if (schema === 'main' && numbering.drift(database) !== 'fits') return null;
+  if (schema === 'main' && tables.drift(database) !== 'fits') return null;
   const file = quote(schema);
   let row;
   try {
@@ -346,7 +289,7 @@ export function readNumbering(
     row?.expired_by === 'retention' || row?.expired_by === 'clear'
       ? row.expired_by
       : null;
-  const newest = Number(
+  const settled = Number(
     database
       .prepare(
         `SELECT coalesce(max("number"), 0) AS "newest" FROM ${file}.${commits}`,
@@ -355,26 +298,14 @@ export function readNumbering(
   );
   const spans = database
     .prepare(
-      `SELECT min(c."number") AS "first", CASE WHEN l."closed_at" IS NULL THEN NULL ELSE max(c."number") END AS "last" FROM ${file}.${commits} AS c JOIN ${file}.${loads} AS l ON l."id" = c."load" GROUP BY l."id" ORDER BY "first"`,
+      `SELECT min(c."number") AS "first", CASE WHEN l."closed_at" IS NULL THEN NULL ELSE max(c."number") END AS "last" FROM ${file}.${commits} AS c JOIN ${file}.${loads} AS l ON l."id" = c."load" GROUP BY l."id"`,
     )
     .all()
     .map((span) => ({
       first: Number(span.first),
-      last: span.last === null ? Infinity : Number(span.last),
+      last: span.last === null ? null : Number(span.last),
     }));
-  const ends: number[] = [];
-  const pending = spans.values();
-  let span = pending.next();
-  let reach = 0;
-  for (const end of spans
-    .map(({ last }) => last)
-    .filter(Number.isFinite)
-    .sort((left, right) => left - right)) {
-    for (; !span.done && span.value.first <= end; span = pending.next())
-      reach = Math.max(reach, span.value.last);
-    if (reach === end) ends.push(end);
-  }
-  return { epoch, newest, minValid, expiredBy, ends };
+  return numbering({ epoch, minValid, expiredBy, settled, spans });
 }
 
 // When a commit of the file was made, or undefined when it has no commit of
@@ -387,15 +318,6 @@ export function committedAt(
     .prepare(`SELECT "committed_at" FROM ${commits} WHERE "number" = ?`)
     .get(number)?.committed_at;
   return typeof at === 'string' ? at : undefined;
-}
-
-export function parsePosition(position: string): Position {
-  const groups = /^(?<epoch>[^:]+):(?<number>0|[1-9]\d*)$/.exec(
-    position,
-  )?.groups;
-  if (groups?.epoch === undefined || groups.number === undefined)
-    throw new TypeError(`${position} is not a position of a SQLite file`);
-  return { epoch: groups.epoch, number: Number(groups.number) };
 }
 
 function now(clock: PipelineClock): string {

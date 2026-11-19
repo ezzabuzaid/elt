@@ -3,6 +3,8 @@ import {
   Destination,
   type Load,
   type PipelineClock,
+  parsePosition,
+  positionsAfter,
 } from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
@@ -12,7 +14,7 @@ import type { PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
 import { PostgresDeduplicatingWriter } from './postgres-deduplicating-writer.ts';
 import { PostgresLoad } from './postgres-load.ts';
-import { positionsAfter } from './postgres-numbering.ts';
+import { postgresDatabase, readNumbering } from './postgres-numbering.ts';
 import { PostgresOverwriteWriter } from './postgres-overwrite-writer.ts';
 import {
   PostgresSession,
@@ -91,8 +93,14 @@ export class PostgresDestination extends Destination<PostgresTable> {
   async positions(
     after?: string,
   ): Promise<readonly string[] | { readonly expired: string }> {
+    const since =
+      after === undefined ? undefined : parsePosition(after, postgresDatabase);
     await using session = new PostgresSession(this.#url, 'elt-positions');
-    return await positionsAfter(session.sql, after);
+    return positionsAfter(
+      await readNumbering(session.sql),
+      since,
+      postgresDatabase,
+    );
   }
 
   // The database as of a position, or as of its newest one, read through the

@@ -1,14 +1,16 @@
 import { resolve } from 'node:path';
 
+import { transaction } from '@zukhruf/sqlite-transaction';
+
 import type { CopyConfiguration, Load, PipelineClock } from '@eltjs/elt';
-import { Destination } from '@eltjs/elt';
+import { Destination, parsePosition, positionsAfter } from '@eltjs/elt';
 
 import { SQLiteAppendWriter } from './sqlite-append-writer.ts';
 import { type SQLiteReading, readAsOf, reader } from './sqlite-as-of.ts';
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
 import { SQLiteDeduplicatingWriter } from './sqlite-deduplicating-writer.ts';
-import { SQLiteLoad, positionsAfter } from './sqlite-loads.ts';
+import { SQLiteLoad, readNumbering, sqliteFile } from './sqlite-loads.ts';
 import { SQLiteOverwriteWriter } from './sqlite-overwrite-writer.ts';
 import { SQLiteTable } from './sqlite-table.ts';
 import type { SQLiteWriter } from './sqlite-writer.ts';
@@ -74,7 +76,15 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     if (this.path === ':memory:')
       throw new TypeError('Positions require a SQLite destination file');
     using database = reader(this.path);
-    return positionsAfter(database, after);
+    const since =
+      after === undefined ? undefined : parsePosition(after, sqliteFile);
+    const numbered =
+      database === null
+        ? null
+        : transaction(database, () => readNumbering(database), {
+            mode: 'deferred',
+          });
+    return positionsAfter(numbered, since, sqliteFile);
   }
 
   // The file as of a position, or as of its newest position: each target,

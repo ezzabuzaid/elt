@@ -56,6 +56,16 @@ export {
   PipelineError,
   WatchError,
 } from './core/pipeline.ts';
+export {
+  type NumberedStore,
+  type Numbering,
+  type Position,
+  numbering,
+  parsePosition,
+  positionsAfter,
+  readingExpiry,
+  staleness,
+} from './core/position.ts';
 export { type ReaderRelation, readerCatalog } from './core/reader-relation.ts';
 export {
   type ReloadMode,

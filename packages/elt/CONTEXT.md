@@ -48,6 +48,22 @@ _Avoid_: Timer (a timer is one wait that the clock starts), scheduler, time prov
 Rows that a destination made durable. A pass can make many commits.
 _Avoid_: Save, write, flush
 
+**Position**:
+`<epoch>:<number>`: the last commit of a closed load, when no other load has commits before and after it. A load is a pass of a connection or a refresh of a derived dataset. A reader at a position sees no part of a pass.
+_Avoid_: Offset, cursor (eca keeps a cursor), checkpoint
+
+**Epoch**:
+The id that names the numbering of a destination's store. A store that is made again has a new epoch, and its numbers start again.
+_Avoid_: Generation, version
+
+**Numbering**:
+The commit numbers of a store as one snapshot reads them: the epoch, `min_valid` (the oldest position that a reading reads exactly), the high-water mark, and the positions between them.
+_Avoid_: Version (a version is a row of a table or of its history), log
+
+**High-water mark**:
+The highest commit number at or below which each number is a commit that the snapshot sees, or one that rolled back. A store that writes one transaction at a time has its newest commit as its mark.
+_Avoid_: Newest commit (in a store that commits in parallel, a commit with a higher number can end first), watermark
+
 **Host**:
 The program that makes a pipeline and starts its runs or its watch, for example the CLI of Context Compiler.
 _Avoid_: App (in Context Compiler, an app is a macOS application), runner

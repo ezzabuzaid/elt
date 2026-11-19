@@ -2,18 +2,18 @@ import { type DatabaseSync, type SQLInputValue, constants } from 'node:sqlite';
 
 import { UnavailableError, open } from '@zukhruf/sqlite-open';
 
+import {
+  type Position,
+  parsePosition,
+  readingExpiry,
+  staleness,
+} from '@eltjs/elt';
+
 import { busyTimeout } from './open-destination.ts';
 import { derivedStatus } from './sqlite-derived-status.ts';
 import { histories } from './sqlite-history.ts';
 import { identifiers, internalColumns, quote } from './sqlite-identifiers.ts';
-import {
-  type Numbering,
-  type Position,
-  committedAt,
-  expiry,
-  parsePosition,
-  readNumbering,
-} from './sqlite-loads.ts';
+import { committedAt, readNumbering, sqliteFile } from './sqlite-loads.ts';
 import { attempts, checks, coverage } from './sqlite-sync-history-schema.ts';
 
 type Versioned = { readonly target: string; readonly history: string };
@@ -29,9 +29,8 @@ export const asOfFunctions = {
   _elt_unversioned(reason: SQLInputValue): never {
     throw new Error(String(reason));
   },
-  // The guard knows the epoch, min_valid and expired_by of the file only, so
-  // it gives the position as the newest commit: a file made again has
-  // another epoch.
+  // The guard knows the epoch, min_valid and expired_by of the file only: a
+  // file made again has another epoch.
   _elt_readable(
     schema: SQLInputValue,
     position: SQLInputValue,
@@ -39,17 +38,16 @@ export const asOfFunctions = {
     minValid: SQLInputValue,
     expiredBy: SQLInputValue,
   ): 1 {
-    const asked = parsePosition(String(position));
-    const expired = expiry(
+    const asked = parsePosition(String(position), sqliteFile);
+    const expired = staleness(
       {
         epoch: String(epoch),
         minValid: Number(minValid),
         expiredBy:
           expiredBy === 'retention' || expiredBy === 'clear' ? expiredBy : null,
-        newest: asked.number,
-        ends: [],
       },
       asked,
+      sqliteFile,
     );
     if (expired === undefined) return 1;
     throw new Error(`${expired} (the file attached as ${String(schema)})`);
@@ -84,7 +82,8 @@ export function readAsOf(
   path: string,
   position: string | undefined,
 ): SQLiteReading | { readonly expired: string } {
-  const asked = position === undefined ? undefined : parsePosition(position);
+  const asked =
+    position === undefined ? undefined : parsePosition(position, sqliteFile);
   const database = reader(path);
   if (database === null) return { expired: `No load has committed to ${path}` };
   using stack = new DisposableStack();
@@ -92,9 +91,8 @@ export function readAsOf(
   database.exec('BEGIN');
   const numbered = readNumbering(database);
   if (asked !== undefined) {
-    const expired = expiry(numbered, asked);
+    const expired = readingExpiry(numbered, asked, sqliteFile, path);
     if (expired !== undefined) return { expired };
-    refuseInsidePass(numbered, asked, path);
   }
   const number = asked?.number ?? numbered?.ends.at(-1);
   const at = number === undefined ? undefined : committedAt(database, number);
@@ -105,7 +103,7 @@ export function readAsOf(
           ? `${path} has no position yet`
           : `Position ${position} names no commit of ${path}`,
     };
-  shadow(database, number, number < numbered.newest);
+  shadow(database, number, number < numbered.settled);
   stack.move();
   return {
     sql: database,
@@ -113,19 +111,6 @@ export function readAsOf(
     at: Temporal.Instant.from(at),
     [Symbol.dispose]: () => database.close(),
   };
-}
-
-// No later load can straddle a position, so one that a reader was given
-// stays one; a commit that is not a position stays inside its pass.
-function refuseInsidePass(
-  numbered: Numbering | null,
-  { epoch, number }: Position,
-  file: string,
-): void {
-  if (!numbered?.ends.includes(number))
-    throw new TypeError(
-      `${epoch}:${number} is not a position of ${file}: a reading of a commit inside a pass would show a part of that pass. Read a position that positions() lists.`,
-    );
 }
 
 // Shadows, for this connection, each target with a TEMP view of what it
@@ -190,15 +175,14 @@ export function readable(
   position: string,
   schema: string,
 ): Position | { readonly expired: string } {
-  const asked = parsePosition(position);
-  const numbered = readNumbering(database, schema);
-  const expired = expiry(numbered, asked);
-  if (expired !== undefined) return { expired };
-  refuseInsidePass(
-    numbered,
+  const asked = parsePosition(position, sqliteFile);
+  const expired = readingExpiry(
+    readNumbering(database, schema),
     asked,
+    sqliteFile,
     schema === 'main' ? 'the file' : `the file attached as ${schema}`,
   );
+  if (expired !== undefined) return { expired };
   return asked;
 }
 

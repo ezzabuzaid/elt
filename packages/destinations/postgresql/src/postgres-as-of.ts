@@ -1,12 +1,11 @@
 import type postgres from 'postgres';
 
+import { parsePosition, readingExpiry } from '@eltjs/elt';
+
 import {
-  type Numbering,
-  type Position,
   committedAt,
-  expiry,
   numberingIn,
-  parsePosition,
+  postgresDatabase,
   settledMark,
 } from './postgres-numbering.ts';
 import { PostgresSession } from './postgres-session.ts';
@@ -34,7 +33,10 @@ export async function readAsOf(
   url: string,
   position: string | undefined,
 ): Promise<PostgresReading | { readonly expired: string }> {
-  const asked = position === undefined ? undefined : parsePosition(position);
+  const asked =
+    position === undefined
+      ? undefined
+      : parsePosition(position, postgresDatabase);
   await using stack = new AsyncDisposableStack();
   const { sql } = stack.use(new PostgresSession(url, 'elt-reading'));
   const settled = await settledMark(sql);
@@ -45,9 +47,13 @@ export async function readAsOf(
   });
   const numbered = await numberingIn(sql, settled);
   if (asked !== undefined) {
-    const expired = expiry(numbered, asked);
+    const expired = readingExpiry(
+      numbered,
+      asked,
+      postgresDatabase,
+      'the database',
+    );
     if (expired !== undefined) return { expired };
-    refuseInsidePass(numbered, asked);
   }
   const number = asked?.number ?? numbered?.ends.at(-1);
   const commit =
@@ -68,16 +74,4 @@ export async function readAsOf(
     at: Temporal.Instant.fromEpochMilliseconds(commit.at.getTime()),
     [Symbol.asyncDispose]: () => owned.disposeAsync(),
   };
-}
-
-// No later load can straddle a position, so one that a reader was given
-// stays one; a commit that is not a position stays inside its pass.
-function refuseInsidePass(
-  numbered: Numbering | null,
-  { epoch, number }: Position,
-): void {
-  if (!numbered?.ends.includes(number))
-    throw new TypeError(
-      `${epoch}:${number} is not a position of the database: a reading of a commit inside a pass would show a part of that pass. Read a position that positions() lists.`,
-    );
 }

@@ -1068,6 +1068,16 @@ Two rules exist:
 - **A dataset failure**, for example SQL that SQLite refuses, rejects the run, or it stops the watch, with a `DerivedDatasetError`. Its `dataset` names the dataset, and its `cause` is the error of the store. The passes that a stopped watch ended are `cancelled` in the sync history, and their records do not name the failure.
 - **A copy that failed** keeps its last committed rows. The derived data of those rows stays as it was.
 
+## Positions of a destination
+
+A destination that numbers its commits gives positions, so a reader can read it as of a commit where no pass is half done. The destination reads its numbering from its own store, and `@eltjs/elt` gives the rules that each destination applies to it:
+
+- `numbering({ epoch, minValid, expiredBy, settled, spans })` finds the positions from the first and last commit of each load, with a sweep line: an end is a position when no load that began at or before it ends after it. An open load has `last: null` and reaches past every later commit. Only the positions from `minValid` to the high-water mark `settled` are kept.
+- `parsePosition(text, store)` reads `<epoch>:<number>`, and refuses other text with a `TypeError` that names the store, such as `{ engine: 'SQLite', noun: 'file' }`.
+- `positionsAfter(numbering, since, store)` gives the positions after `since`, or each one, or `{ expired }` with the reason.
+- `readingExpiry(numbering, position, store, where)` gives why a reading cannot read as of a position: of another epoch, past the high-water mark, or before `min_valid` and what set it (the retention, a change of type that is not a widening, or a clear). It throws a `TypeError` for a commit inside a pass.
+- `staleness({ epoch, minValid, expiredBy }, position, store)` gives why a position that the store once had is no longer read exactly: of another epoch, or before `min_valid`. A reader that knows only these three values, such as a guard inside a view, asks it.
+
 ## The same concepts in other systems
 
 | Here                       | Elsewhere                                                                    |
@@ -1141,6 +1151,7 @@ src/core/
   file-transfer.ts      the save, flush and retain of stored files around each commit
   file-storage.ts       FileStorage: the port of each file storage
   document-parser.ts    DocumentParser: the port of each parser
+  position.ts           Position, Numbering and the rules of positions that each destination applies
   formats/              the string formats
 src/storage/
   local-files.ts        LocalFiles
