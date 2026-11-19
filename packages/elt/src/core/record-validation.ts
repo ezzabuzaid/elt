@@ -296,14 +296,33 @@ function assertRecord<P extends Properties>(
   stream: string,
   source: string,
 ): asserts record is SchemaRecord<P> {
-  if (
-    record === null ||
-    typeof record !== 'object' ||
-    Array.isArray(record) ||
-    Object.keys(record).length !== fields.length
-  )
-    throw new TypeError(`${source} returned an invalid ${stream} record`);
+  const invalid = (problem: string) =>
+    new TypeError(`${source} returned an invalid ${stream} record: ${problem}`);
+  if (record === null) throw invalid('null');
+  if (Array.isArray(record)) throw invalid('an array');
+  if (typeof record !== 'object') throw invalid('not an object');
+  const wrong = keyProblem(record, fields);
+  if (wrong !== undefined) throw invalid(wrong);
   for (const { name, valid } of fields)
     if (!valid(Reflect.get(record, name)))
       throw new TypeError(`${source} returned invalid ${stream}.${name}`);
+}
+
+// The keys of a record that differ from the declared fields, or undefined
+// when it has exactly those. It names keys, never values: a record can hold
+// the user's data.
+function keyProblem(
+  record: object,
+  fields: readonly CheckedField[],
+): string | undefined {
+  const declared = new Set(fields.map(({ name }) => name));
+  const unexpected = Object.keys(record).filter((key) => !declared.has(key));
+  const missing = fields
+    .map(({ name }) => name)
+    .filter((name) => !Object.hasOwn(record, name));
+  const problems = [
+    ...(unexpected.length === 0 ? [] : [`unexpected ${unexpected.join(', ')}`]),
+    ...(missing.length === 0 ? [] : [`missing ${missing.join(', ')}`]),
+  ];
+  return problems.length === 0 ? undefined : problems.join('; ');
 }

@@ -222,10 +222,19 @@ test('record validation enforces every property of the stream schema', () => {
   const rejects = (records: unknown, message: string) =>
     assert.throws(() => validateRecords(stream, records, 'Test'), { message });
   rejects({}, 'Test returned invalid items records');
-  rejects([null], 'Test returned an invalid items record');
-  rejects([{ ...valid, extra: 1 }], 'Test returned an invalid items record');
+  rejects([null], 'Test returned an invalid items record: null');
+  rejects([[valid]], 'Test returned an invalid items record: an array');
+  rejects(['item-1'], 'Test returned an invalid items record: not an object');
+  rejects(
+    [{ ...valid, extra: 1 }],
+    'Test returned an invalid items record: unexpected extra',
+  );
   const { done: _, ...missing } = valid;
-  rejects([missing], 'Test returned an invalid items record');
+  rejects([missing], 'Test returned an invalid items record: missing done');
+  rejects(
+    [{ ...missing, extra: 1, other: 2 }],
+    'Test returned an invalid items record: unexpected extra, other; missing done',
+  );
   for (const [field, value] of [
     ['id', ''],
     ['id', null],
