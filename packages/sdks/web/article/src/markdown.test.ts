@@ -85,6 +85,29 @@ test('Markdown keeps escaped HTML as literal prose and leaves code unchanged', a
   );
 });
 
+test('Markdown keeps a plain ampersand and a less-than sign as they read, and escapes only what would read as an entity or a tag', async (t) => {
+  await using upstream = await new HttpServer().start((_request, response) => {
+    response.setHeader('content-type', 'text/html');
+    response.end(
+      '<article><h2>Need &amp; Want</h2><p><strong>Salt &amp; pepper</strong> when 2 &lt; 3, typed as &amp;amp; or &lt;b&gt;.</p></article>',
+    );
+  });
+  const article = await new WebArticle([new HTMLExtraction()], got).fetch(
+    upstream.origin,
+    t.signal,
+  );
+
+  assert.ok(article);
+  assert.equal(
+    article.markdown,
+    '## Need & Want\n\n**Salt & pepper** when 2 < 3, typed as \\&amp; or \\<b>.',
+  );
+  assert.equal(
+    JSDOM.fragment(await marked.parse(article.markdown)).textContent?.trim(),
+    'Need & Want\nSalt & pepper when 2 < 3, typed as &amp; or <b>.',
+  );
+});
+
 test('Markdown keeps short linked posts, headerless tables and literal code fences', async (t) => {
   for (const body of [
     '<p>Try this <a href="https://tools.example/viewer">small viewer</a>.</p>',

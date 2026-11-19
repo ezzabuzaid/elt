@@ -111,10 +111,13 @@ export class HTMLExtraction extends Extraction {
         content,
         markdown: NodeHtmlMarkdown.translate(content, {
           codeBlockStyle: 'indented',
-          // Escape literal HTML in prose; the converter leaves code spans/blocks alone.
+          // In prose, an & that starts an entity and a < that starts a tag
+          // or a comment would read as HTML; a CommonMark backslash escape
+          // keeps each literal, and every other & and < stays as it reads.
+          // The converter leaves code spans and blocks alone.
           textReplace: [
-            [/&/g, '&amp;'],
-            [/</g, '&lt;'],
+            [/&(?=#?[0-9a-z]+;)/gi, '\\&'],
+            [/<(?=[a-z/!?])/gi, '\\<'],
           ],
         }),
         textContent,
