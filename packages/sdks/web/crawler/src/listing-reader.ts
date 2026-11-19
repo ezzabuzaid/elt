@@ -5,6 +5,7 @@ import {
   defaultExtractFn,
   defaultHeadersOptions,
   defaultHtmlOptions,
+  ignoredUris,
   linkSelectors,
 } from 'feedscout/feeds';
 import {
@@ -293,8 +294,21 @@ function readDeclarations(html: string, url: string, headers: Headers) {
       }),
     ]) {
       const target = httpUrl(uri, url);
-      if (target) feeds.push({ url: target, kind });
+      if (target && !(kind === 'candidate' && neverAFeed(target)))
+        feeds.push({ url: target, kind });
     }
   }
   return feeds;
+}
+
+// A URL that feedscout knows is no feed, such as a record of the WordPress
+// REST API: each WordPress post declares its record as rel=alternate
+// application/json, and fetching it to check for a JSON Feed costs a request
+// for each post. feedscout applies the list to anchors only; a JSON Feed
+// that a page declares this way is read as before.
+function neverAFeed(url: string): boolean {
+  const lower = url.toLowerCase();
+  return ignoredUris.some((pattern) =>
+    typeof pattern === 'string' ? lower.includes(pattern) : pattern.test(url),
+  );
 }

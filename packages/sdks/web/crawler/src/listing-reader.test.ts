@@ -195,6 +195,66 @@ test("a sitemap's xhtml:link language copies of a page are the page's localized 
   );
 });
 
+test('a JSON alternate under the WordPress REST API is never fetched as a feed, as feedscout knows that path is none, while a JSON Feed declared the same way is read', async (t) => {
+  const requested: string[] = [];
+  await using upstream = await new HttpServer().start((request, response) => {
+    requested.push(request.url ?? '');
+    switch (request.url) {
+      case '/':
+        response.setHeader('content-type', 'text/html');
+        response.end(
+          '<html><head><link rel="alternate" type="application/json" href="/wp-json/wp/v2/posts/7"><link rel="alternate" type="application/json" href="/feed.json"></head></html>',
+        );
+        break;
+      case '/headers':
+        response.setHeader('content-type', 'text/html');
+        response.setHeader(
+          'link',
+          '</wp-json/wp/v2/posts/7>; rel="alternate"; type="application/json", </feed.json>; rel="alternate"; type="application/json"',
+        );
+        response.end('<html/>');
+        break;
+      case '/feed.json':
+        response.setHeader('content-type', 'application/json');
+        response.end(
+          '{"version":"https://jsonfeed.org/version/1.1","title":"Journal","items":[{"id":"1","url":"/json-story"}]}',
+        );
+        break;
+      case '/json-story':
+        response.setHeader('content-type', 'text/html');
+        response.end(article);
+        break;
+      default:
+        response.writeHead(404).end();
+    }
+  });
+
+  for (const input of ['/', '/headers']) {
+    requested.length = 0;
+    const found = (
+      await crawl(listings(), `${upstream.origin}${input}`, t.signal)
+    ).map(location);
+
+    assert.deepEqual(
+      {
+        found,
+        restRecordRequested: requested.includes('/wp-json/wp/v2/posts/7'),
+      },
+      {
+        found: [
+          {
+            url: `${upstream.origin}/json-story`,
+            lastModified: null,
+            listingUrl: `${upstream.origin}/feed.json`,
+          },
+        ],
+        restRecordRequested: false,
+      },
+      input,
+    );
+  }
+});
+
 test('JSON alternates are validated without hiding explicit listing errors', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
     switch (request.url) {
