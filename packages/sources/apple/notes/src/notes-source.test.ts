@@ -939,15 +939,17 @@ test(
   },
 );
 
-// What Launch Services lists for app under key: nothing while app does not
-// run, and "(hidden)" for the key hidden while it runs hidden.
-const appInfo = async (key: 'bundleid' | 'hidden', app: string) =>
-  (await execFile('/usr/bin/lsappinfo', ['info', '-only', key, '-app', app]))
-    .stdout;
+// What Launch Services lists for app: nothing while app does not run, its
+// bundle identifier, and "(hidden)" after its name while it runs hidden. It
+// reads the whole listing: before macOS 27 `-only <key>` prints
+// `"<key>"=<value>` (see appRunning), so `-only hidden` never shows
+// "(hidden)" there (CI run 44469378455, macOS 26).
+const appInfo = async (app: string) =>
+  (await execFile('/usr/bin/lsappinfo', ['info', '-app', app])).stdout;
 
 const notesInFront = async () => {
   const { stdout: front } = await execFile('/usr/bin/lsappinfo', ['front']);
-  return (await appInfo('bundleid', front.trim())).includes('com.apple.Notes');
+  return (await appInfo(front.trim())).includes('com.apple.Notes');
 };
 
 // Quits Notes, so that a test can see who launches it, or skips the test.
@@ -985,7 +987,6 @@ test(
   { timeout: 30_000 },
   async (t) => {
     if (!(await quitNotes(t))) return;
-    console.error('#4701 phase: Notes quit');
     await using scratch = await new TemporaryFiles().directory('elt-notes-');
     const path = await noteStoreFixture(scratch.path);
     const source = new AppleNotesSource({ path });
@@ -1013,56 +1014,17 @@ test(
     try {
       const passing = watching.next();
 
-      // Temporary diagnostics for #4701: print each new state the wait sees.
-      let seen = '';
       await waitFor(
         async () => {
-          const state = JSON.stringify({
-            running: await notesRunning(),
-            info: (
-              await execFile('/usr/bin/lsappinfo', [
-                'info',
-                '-app',
-                'com.apple.Notes',
-              ])
-            ).stdout.replaceAll(/\(.*seconds ago \)/g, ''),
-            processes: (
-              await execFile('/bin/ps', ['-axo', 'pid,stat,comm'])
-            ).stdout
-              .split('\n')
-              .filter((line) => /Notes/.test(line)),
-            failures: (() => {
-              try {
-                using database = open(join(scratch.path, 'out.sqlite'), {
-                  readOnly: true,
-                });
-                return database
-                  .prepare('SELECT "status", "error" FROM "_elt_sync_attempts"')
-                  .all();
-              } catch (error) {
-                return String(error);
-              }
-            })(),
-          });
-          if (state !== seen) {
-            seen = state;
-            console.error(`#4701 observed: ${state}`);
-          }
           assert.equal(await notesRunning(), true);
-          assert.match(
-            await appInfo('hidden', 'com.apple.Notes'),
-            /\(hidden\)/,
-          );
+          assert.match(await appInfo('com.apple.Notes'), /\(hidden\)/);
         },
         { signal: t.signal, interval: 100 },
       );
 
-      console.error('#4701 phase: Notes runs hidden');
       assert.equal(await notesInFront(), false);
       controller.abort();
-      console.error('#4701 phase: aborted, awaiting the pass');
       await passing;
-      console.error('#4701 phase: pass ended');
     } finally {
       controller.abort();
       await watching.return(undefined);
