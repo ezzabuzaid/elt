@@ -25,5 +25,9 @@ class SQLiteIdentifiers extends Identifiers {
 
 export const identifiers = Object.freeze(new SQLiteIdentifiers());
 
+// The table that keeps the rows of the reader relation name, beside it in the
+// same file (ADR 0010): raw_<name>, under the naming rule of every relation.
+export const rawTable = (name: string) => identifiers.relation(`raw_${name}`);
+
 // SQLite quotes an identifier in double quotes and doubles each one inside it.
 export const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;

@@ -51,7 +51,7 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
   // Named after the table and its key, so a changed key builds a new index
   // and an unchanged one is never rebuilt.
   get #dedupIndex(): string {
-    return `_elt_dedup_${hash('sha256', JSON.stringify([this.table.name, this.keys.map((key) => key.name)]))}`;
+    return `_elt_dedup_${hash('sha256', JSON.stringify([this.table.raw, this.keys.map((key) => key.name)]))}`;
   }
 
   // A stored table the load merges into must hold keys and cursors of the
@@ -59,7 +59,7 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
   // it exists.
   protected override inspect(database: DatabaseSync): void {
     const existing = database
-      .prepare(`PRAGMA table_info(${this.table.quotedName})`)
+      .prepare(`PRAGMA table_info(${this.table.quotedRaw})`)
       .all();
     const tracked =
       this.cursor === undefined ? this.keys : [...this.keys, this.cursor];
@@ -77,7 +77,7 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     if (
       database
         .prepare(
-          `SELECT 1 FROM ${this.table.quotedName} WHERE ${tracked.map((column) => `${column.quotedName} IS NULL`).join(' OR ')} LIMIT 1`,
+          `SELECT 1 FROM ${this.table.quotedRaw} WHERE ${tracked.map((column) => `${column.quotedName} IS NULL`).join(' OR ')} LIMIT 1`,
         )
         .get()
     )
@@ -92,7 +92,7 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
         .get(this.#dedupIndex) === undefined &&
       database
         .prepare(
-          `SELECT 1 FROM ${this.table.quotedName} GROUP BY ${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(', ')} HAVING count(*) > 1 LIMIT 1`,
+          `SELECT 1 FROM ${this.table.quotedRaw} GROUP BY ${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(', ')} HAVING count(*) > 1 LIMIT 1`,
         )
         .get()
     )
@@ -114,7 +114,7 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
   // The target's key index, built only when it does not exist yet.
   #index(database: DatabaseSync): void {
     this.dropDedupIndexes(database, this.#dedupIndex);
-    this.#unique(database, `"${this.#dedupIndex}"`, this.table.quotedName);
+    this.#unique(database, `"${this.#dedupIndex}"`, this.table.quotedRaw);
   }
 
   #unique(database: DatabaseSync, name: string, on: string): void {

@@ -48,8 +48,9 @@ class Counting extends LiveSource {
   readonly records = new Stream({
     name: 'records',
     jsonSchema: {
+      description: 'One records record.',
       type: 'object',
-      properties: { id: { type: 'integer' } },
+      properties: { id: { description: 'Id of the record.', type: 'integer' } },
       required: ['id'],
     },
     primaryKey: ['id'],

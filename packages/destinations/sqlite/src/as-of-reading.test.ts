@@ -124,8 +124,12 @@ const readings = () =>
   new Stream({
     name: 'readings',
     jsonSchema: {
+      description: 'One readings record.',
       type: 'object',
-      properties: { id: { type: 'string' }, value: { type: 'integer' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        value: { description: 'Value of the record.', type: 'integer' },
+      },
       required: ['id', 'value'],
     },
     supportedSyncModes: ['full_refresh'],
@@ -226,7 +230,7 @@ function lastCommit(destination: SQLiteDestination) {
 function replaced(destination: SQLiteDestination, target: string) {
   const [recorded] = storedRows(
     destination.path,
-    `SELECT history FROM _elt_histories WHERE target = '${target}'`,
+    `SELECT history FROM _elt_histories WHERE target = 'raw_${target}'`,
   );
   if (recorded === undefined) assert.fail(`${target} has no history`);
   return storedRows(
@@ -311,7 +315,7 @@ test('a reading of a commit inside a pass is refused, as it would show half of t
   // The commit is internal, so only the raw table shows it; this test proves it.
   const [written] = storedRows(
     destination.path,
-    "SELECT committed_in FROM notes WHERE id = 'n2'",
+    "SELECT committed_in FROM raw_notes WHERE id = 'n2'",
   );
   const inside = `${before.split(':')[0]}:${written?.committed_in}`;
 
@@ -372,7 +376,9 @@ test('a reading as of a position refuses a stored view that reads a target as ma
     () => destination.reading(before),
     (error) =>
       error instanceof TypeError &&
-      /"qualified_notes" reads "notes" as main\."notes"/.test(error.message),
+      /^View "qualified_notes" reads "raw_notes" through main,/.test(
+        error.message,
+      ),
   );
   assert.deepEqual(
     asOf(destination, 'SELECT id FROM qualified_notes ORDER BY id'),
@@ -446,7 +452,7 @@ test('a deduplicated row whose values changed reads as it was at the position, f
   assert.deepEqual(
     storedRows(
       destination.path,
-      "SELECT body, committed_in, loaded_at FROM notes WHERE id = 'n1'",
+      "SELECT body, committed_in, loaded_at FROM raw_notes WHERE id = 'n1'",
     ),
     [
       {
@@ -575,11 +581,12 @@ test('the rows of a partition that a later pass resets read as of the position b
   const owned = new Stream({
     name: 'owned',
     jsonSchema: {
+      description: 'One owned record.',
       type: 'object',
       properties: {
-        id: { type: 'string' },
-        owner: { type: 'string' },
-        version: { type: 'integer' },
+        id: { description: 'Id of the record.', type: 'string' },
+        owner: { description: 'Owner of the record.', type: 'string' },
+        version: { description: 'Version of the record.', type: 'integer' },
       },
       required: ['id', 'owner', 'version'],
     },
@@ -658,7 +665,7 @@ test('a clear empties the target at a position of its own and forgets the rows i
   }
   const [recorded] = storedRows(
     destination.path,
-    "SELECT history FROM _elt_histories WHERE target = 'notes'",
+    "SELECT history FROM _elt_histories WHERE target = 'raw_notes'",
   );
 
   assert.notEqual(cleared.position, before);
@@ -769,7 +776,7 @@ test('a keyless overwrite that sends one more copy of a stored row inserts only 
   const stored = () =>
     storedRows(
       destination.path,
-      'SELECT id, value, loaded_at, committed_in FROM readings ORDER BY committed_in',
+      'SELECT id, value, loaded_at, committed_in FROM raw_readings ORDER BY committed_in',
     );
   const first = stored();
   await delay(5);
@@ -881,7 +888,7 @@ test('a reload that keeps the shape of the table keeps only the row that left in
   const stored = () =>
     storedRows(
       destination.path,
-      'SELECT id, committed_in, loaded_at FROM notes ORDER BY id',
+      'SELECT id, committed_in, loaded_at FROM raw_notes ORDER BY id',
     );
   const first = stored();
   await delay(5);
@@ -931,11 +938,12 @@ test('a reload that opens the first pass under a new key loads in place rows tha
     new Stream({
       name: 'items',
       jsonSchema: {
+        description: 'One items record.',
         type: 'object',
         properties: {
-          id: { type: 'string' },
-          title: { type: 'string' },
-          version: { type: 'integer' },
+          id: { description: 'Id of the record.', type: 'string' },
+          title: { description: 'Title of the record.', type: 'string' },
+          version: { description: 'Version of the record.', type: 'integer' },
         },
         required: ['id', 'title', 'version'],
       },
@@ -994,9 +1002,9 @@ test('an index and a trigger that a host made on the table stay after a reload t
   {
     // A host's own index and trigger: no operation of elt makes them.
     using database = openDestination(destination.path);
-    database.exec('CREATE INDEX "notes_by_body" ON "notes" ("body")');
+    database.exec('CREATE INDEX "notes_by_body" ON "raw_notes" ("body")');
     database.exec(
-      'CREATE TRIGGER "notes_seen" AFTER INSERT ON "notes" BEGIN SELECT 1; END',
+      'CREATE TRIGGER "notes_seen" AFTER INSERT ON "raw_notes" BEGIN SELECT 1; END',
     );
   }
 
@@ -1015,8 +1023,8 @@ test('an index and a trigger that a host made on the table stay after a reload t
       "SELECT name, tbl_name FROM sqlite_schema WHERE name IN ('notes_by_body', 'notes_seen') ORDER BY name",
     ),
     [
-      { name: 'notes_by_body', tbl_name: 'notes' },
-      { name: 'notes_seen', tbl_name: 'notes' },
+      { name: 'notes_by_body', tbl_name: 'raw_notes' },
+      { name: 'notes_seen', tbl_name: 'raw_notes' },
     ],
   );
 });
@@ -1028,11 +1036,12 @@ test('a keyless overwrite of a stream with fields named rowid and _rowid_ keeps 
   const stream = new Stream({
     name: 'messages',
     jsonSchema: {
+      description: 'One messages record.',
       type: 'object',
       properties: {
-        id: { type: 'string' },
-        rowid: { type: 'integer' },
-        _rowid_: { type: 'integer' },
+        id: { description: 'Id of the record.', type: 'string' },
+        rowid: { description: 'Rowid of the record.', type: 'integer' },
+        _rowid_: { description: 'Rowid of the record.', type: 'integer' },
       },
       required: ['id', 'rowid', '_rowid_'],
     },
@@ -1211,16 +1220,12 @@ test('a view over a view reads as of the position', async () => {
 test('a reader view reads as of the position', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-as-of-');
   const { destination, stream, connection } = notesFile(scratch.path);
-  const copy = new Copy(
-    stream,
-    destination.table('raw_notes').withReaderView('notes'),
-    {
-      id: 'notes',
-      syncMode: 'incremental',
-      destinationSyncMode: 'append_dedup',
-      cursorField: 'version',
-    },
-  );
+  const copy = new Copy(stream, destination.table('notes'), {
+    id: 'notes',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    cursorField: 'version',
+  });
   await connection(
     {
       notes: [
@@ -1328,8 +1333,12 @@ const documents = () =>
   new Stream({
     name: 'documents',
     jsonSchema: {
+      description: 'One documents record.',
       type: 'object',
-      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        version: { description: 'Version of the record.', type: 'integer' },
+      },
       required: ['id', 'version'],
     },
     primaryKey: ['id'],
@@ -1371,8 +1380,8 @@ async function document(
 
 // The chunk table of the bytes of the documents, by the documented rule:
 // _elt_files_ and the first 40 hex digits of the SHA-256 of the JSON of
-// [table, column].
-const chunks = `"_elt_files_${hash('sha256', JSON.stringify(['documents', 'bytes'])).slice(0, 40)}"`;
+// [raw table, column].
+const chunks = `"_elt_files_${hash('sha256', JSON.stringify(['raw_documents', 'bytes'])).slice(0, 40)}"`;
 
 // The text of each document's file, as a reading as of the position, or as
 // of the newest one, puts its chunks together; null when no chunk is left.
@@ -1397,7 +1406,7 @@ function texts(destination: SQLiteDestination, position?: string) {
 function orphans(destination: SQLiteDestination) {
   const [recorded] = storedRows(
     destination.path,
-    "SELECT history FROM _elt_histories WHERE target = 'documents'",
+    "SELECT history FROM _elt_histories WHERE target = 'raw_documents'",
   );
   if (recorded === undefined) assert.fail('documents has no history');
   const [counted] = storedRows(
@@ -1473,7 +1482,7 @@ test('a document whose file changed, or whose fields changed beside the same fil
   assert.deepEqual(
     storedRows(
       destination.path,
-      'SELECT id, committed_in FROM documents ORDER BY id',
+      'SELECT id, committed_in FROM raw_documents ORDER BY id',
     ),
     [
       { id: 'd1', committed_in: last.number },
@@ -1658,11 +1667,12 @@ test('the files of the documents of a partition that a later pass resets read wi
   const owned = new Stream({
     name: 'documents',
     jsonSchema: {
+      description: 'One documents record.',
       type: 'object',
       properties: {
-        id: { type: 'string' },
-        owner: { type: 'string' },
-        version: { type: 'integer' },
+        id: { description: 'Id of the record.', type: 'string' },
+        owner: { description: 'Owner of the record.', type: 'string' },
+        version: { description: 'Version of the record.', type: 'integer' },
       },
       required: ['id', 'owner', 'version'],
     },
@@ -1814,7 +1824,7 @@ test('an overwrite that adds a file column to a stored table keeps the files of 
   const { destination, connection } = notesFile(scratch.path, stream);
   // No column of a chunk table has this name, so SQL that reads it from a
   // table without it fails instead of reading the chunk table's own column.
-  const attachments = `"_elt_files_${hash('sha256', JSON.stringify(['documents', 'attachment'])).slice(0, 40)}"`;
+  const attachments = `"_elt_files_${hash('sha256', JSON.stringify(['raw_documents', 'attachment'])).slice(0, 40)}"`;
   const read = (position?: string) =>
     asOf(
       destination,

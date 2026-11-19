@@ -48,7 +48,11 @@ abstract class LiveSource<
 test('a full refresh checks a snapshot stream’s declaration as an incremental copy does', async () => {
   const deleting = new Stream({
     name: 'deleting',
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    jsonSchema: {
+      description: 'One deleting record.',
+      type: 'object',
+      properties: { id: { description: 'Id of the record.', type: 'string' } },
+    },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
     sourceDefinedCursor: true,
@@ -56,14 +60,22 @@ test('a full refresh checks a snapshot stream’s declaration as an incremental 
   });
   const forgetting = new Stream({
     name: 'forgetting',
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    jsonSchema: {
+      description: 'One forgetting record.',
+      type: 'object',
+      properties: { id: { description: 'Id of the record.', type: 'string' } },
+    },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
     sourceDefinedCursor: true,
   });
   const uncursored = new Stream({
     name: 'uncursored',
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    jsonSchema: {
+      description: 'One uncursored record.',
+      type: 'object',
+      properties: { id: { description: 'Id of the record.', type: 'string' } },
+    },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
   });
@@ -172,8 +184,12 @@ test('a full refresh of a snapshot stream loads every record of each scan as sca
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { id: { type: 'string' }, name: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        name: { description: 'Name of the record.', type: 'string' },
+      },
     },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
@@ -254,8 +270,12 @@ test('a full refresh of a grouped snapshot stream reads every group, also one wh
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { id: { type: 'string' }, name: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        name: { description: 'Name of the record.', type: 'string' },
+      },
     },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],

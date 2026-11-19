@@ -33,6 +33,7 @@ import { SQLiteFileStore } from './sqlite-file-store.ts';
 import { SQLiteHistory, rowHash } from './sqlite-history.ts';
 import { identifiers, quote } from './sqlite-identifiers.ts';
 import { SQLiteLoad, expire } from './sqlite-loads.ts';
+import { SQLiteReaderView } from './sqlite-reader-view.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
 const writersTable = new Declaration(
@@ -96,6 +97,7 @@ export abstract class SQLiteWriter extends Writer {
   readonly table: SQLiteTable;
   // Where the target keeps the rows that its commits replace or remove.
   readonly history: SQLiteHistory;
+  readonly #readerView: SQLiteReaderView;
   readonly #description: TargetDescription;
 
   constructor(
@@ -108,17 +110,17 @@ export abstract class SQLiteWriter extends Writer {
     this.destination = destination;
     this.table = table;
     this.history = new SQLiteHistory(table);
+    this.#readerView = new SQLiteReaderView(table, this.shown);
     this.#description = describeTarget(
       configuration,
       table.columns,
       (column) =>
         `Integer reference to the source file's original bytes. Join ${quote(SQLiteFileStore.tableName(table, column))} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
     );
-    if (table.readerView === undefined) return;
     const { missing } = this.#description;
     if (missing.length > 0)
       throw new TypeError(
-        `Reader view ${table.readerView} needs JSON Schema descriptions for ${missing.join(', ')} of stream ${this.stream.name}`,
+        `Reader view ${table.name} needs JSON Schema descriptions for ${missing.join(', ')} of stream ${this.stream.name}`,
       );
   }
 
@@ -141,7 +143,7 @@ export abstract class SQLiteWriter extends Writer {
       .prepare(
         String.raw`SELECT "name" FROM sqlite_schema WHERE "type" = 'index' AND "tbl_name" = ? AND "name" LIKE '\_elt\_dedup\_%' ESCAPE '\'`,
       )
-      .all(this.table.name))
+      .all(this.table.raw))
       if (name !== kept) database.exec(`DROP INDEX ${quote(String(name))}`);
   }
 
@@ -199,7 +201,7 @@ export abstract class SQLiteWriter extends Writer {
   }
 
   get #target(): Side {
-    return { table: this.table.quotedName, id: rowid };
+    return { table: this.table.quotedRaw, id: rowid };
   }
 
   // The first half of replacing the rows of the target with the rows of
@@ -235,7 +237,7 @@ export abstract class SQLiteWriter extends Writer {
     this.#removeUnmatched(database, staged, committedIn);
     database
       .prepare(
-        `INSERT INTO ${this.table.quotedName} (${this.written.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, ?, ?, ${version} FROM ${stage} WHERE ${seq} IN (${this.#unmatched(staged, this.#target)}) ORDER BY ${seq}`,
+        `INSERT INTO ${this.table.quotedRaw} (${this.written.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, ?, ?, ${version} FROM ${stage} WHERE ${seq} IN (${this.#unmatched(staged, this.#target)}) ORDER BY ${seq}`,
       )
       .run(loadedAt, committedIn);
   }
@@ -246,7 +248,7 @@ export abstract class SQLiteWriter extends Writer {
     this.history.keep(
       database,
       replacedIn,
-      `FROM ${this.table.quotedName} AS "_elt_old"`,
+      `FROM ${this.table.quotedRaw} AS "_elt_old"`,
     );
   }
 
@@ -366,7 +368,7 @@ export abstract class SQLiteWriter extends Writer {
           clock,
           retention: this.destination.retention,
         });
-        database.exec(`DELETE FROM ${this.table.quotedName}`);
+        database.exec(`DELETE FROM ${this.table.quotedRaw}`);
         expire(database, cleared, 'clear');
         // Clearing a copy also abandons the reload it left open.
         database.exec(`DROP TABLE IF EXISTS ${quote(this.#hiddenName)}`);
@@ -385,7 +387,7 @@ export abstract class SQLiteWriter extends Writer {
         .run(this.table.location);
       database.exec('COMMIT');
       database.exec('BEGIN IMMEDIATE');
-      await committed?.(this.values(database, () => [this.table.name]));
+      await committed?.(this.values(database, () => [this.table.raw]));
       database.exec('ROLLBACK');
     } catch (error) {
       if (database.isTransaction) database.exec('ROLLBACK');
@@ -393,7 +395,7 @@ export abstract class SQLiteWriter extends Writer {
     }
   }
 
-  // What the table, its reader view and their columns say to readers,
+  // What the raw table, its reader view and their columns say to readers,
   // rewritten with every load so they follow the stream's schema. The reader
   // view describes only the columns it shows.
   private describe(database: DatabaseSync): void {
@@ -418,7 +420,7 @@ export abstract class SQLiteWriter extends Writer {
     };
     describe(
       database,
-      this.table.name,
+      this.table.raw,
       this.#description.table,
       described({
         ...shown,
@@ -426,54 +428,11 @@ export abstract class SQLiteWriter extends Writer {
           'Number of the commit that last wrote this row: the row of _elt_commits with this number tells when, and in which load.',
       }),
     );
-    if (this.table.readerView !== undefined)
-      describe(
-        database,
-        this.table.readerView,
-        this.#description.table,
-        described(shown),
-      );
-  }
-
-  #viewDefinition(view: string): string {
-    return `CREATE VIEW ${quote(view)} AS SELECT ${this.shown.join(', ')} FROM ${this.table.quotedName}`;
-  }
-
-  // Refuses, before anything is read, a view of other columns or another
-  // table, rather than adopting it. A stale table's view still selects the
-  // stored columns, which evolving the table replaces.
-  #refuseReaderView(
-    database: DatabaseSync,
-    view: string,
-    stale: boolean,
-  ): void {
-    const existing = database
-      .prepare(
-        'SELECT "type", "sql" FROM sqlite_schema WHERE lower("name") = lower(?)',
-      )
-      .get(view);
-    if (existing === undefined) return;
-    const sql = String(existing.sql);
-    const ours = stale
-      ? sql.startsWith(`CREATE VIEW ${quote(view)} AS SELECT `) &&
-        sql.endsWith(` FROM ${this.table.quotedName}`)
-      : sql === this.#viewDefinition(view);
-    if (existing.type !== 'view' || !ours)
-      throw new TypeError(
-        `${quote(view)} is not a view of exactly ${this.table.quotedName}; drop it or delete the database`,
-      );
-  }
-
-  // Created only when absent and never replaced by a commit: replacing a view
-  // readers can see would lock them out. prepare refused any view not this
-  // load's own.
-  private installReaderView(database: DatabaseSync, view: string): void {
-    if (
-      database
-        .prepare('SELECT 1 FROM sqlite_schema WHERE lower("name") = lower(?)')
-        .get(view) === undefined
-    )
-      database.exec(this.#viewDefinition(view));
+    this.#readerView.describe(
+      database,
+      this.#description.table,
+      described(shown),
+    );
   }
 
   // The target as its first commit makes it: its owner, the table, its
@@ -483,8 +442,7 @@ export abstract class SQLiteWriter extends Writer {
     database.exec(this.table.createTableSQL);
     this.history.create(database, this.written);
     this.initialize(database, replacing);
-    if (this.table.readerView !== undefined)
-      this.installReaderView(database, this.table.readerView);
+    this.#readerView.install(database);
     this.describe(database);
   }
 
@@ -623,7 +581,7 @@ export abstract class SQLiteWriter extends Writer {
     );
     for (const { name } of database
       .prepare('SELECT "name" FROM pragma_table_info(?)')
-      .all(this.table.name))
+      .all(this.table.raw))
       if (!files.has(identifiers.key(String(name)))) {
         const chunks = SQLiteFileStore.tableName(this.table, {
           name: String(name),
@@ -650,7 +608,7 @@ export abstract class SQLiteWriter extends Writer {
     ]);
     const changed = database
       .prepare('SELECT "name", "type" FROM pragma_table_info(?)')
-      .all(this.table.name)
+      .all(this.table.raw)
       .filter(
         ({ name, type }) =>
           declared.get(identifiers.key(String(name))) !== String(type),
@@ -662,11 +620,11 @@ export abstract class SQLiteWriter extends Writer {
     this.history.keep(
       database,
       committedIn,
-      `FROM ${this.table.quotedName} AS "_elt_old" WHERE ${rows}`,
+      `FROM ${this.table.quotedRaw} AS "_elt_old" WHERE ${rows}`,
     );
     database
       .prepare(
-        `UPDATE ${this.table.quotedName} SET "committed_in" = ?, "loaded_at" = ? WHERE ${rows}`,
+        `UPDATE ${this.table.quotedRaw} SET "committed_in" = ?, "loaded_at" = ? WHERE ${rows}`,
       )
       .run(committedIn, load.loadedAt);
     return committedIn;
@@ -680,28 +638,26 @@ export abstract class SQLiteWriter extends Writer {
   // it was. The reader view selects the stored columns, and the mode index
   // can cover a dropped key, so both are made again for the new shape.
   #evolve(database: DatabaseSync, load: SQLiteLoad): void {
-    if (this.table.readerView !== undefined)
-      database.exec(`DROP VIEW IF EXISTS ${quote(this.table.readerView)}`);
+    this.#readerView.drop(database);
     this.dropDedupIndexes(database, null);
     const changedIn = this.#keepChanged(database, load);
     this.#dropRetiredChunks(database);
     try {
-      this.#declaration(this.table.name).apply(database);
+      this.#declaration(this.table.raw).apply(database);
     } catch (cause) {
       throw new TypeError(
-        `The rows stored in ${this.table.quotedName} do not fit the new shape of stream ${this.stream.name}: ${errorMessage(cause)}. Clear the copy to load it again, or change the stream so they fit.`,
+        `The rows stored in ${this.table.quotedRaw} do not fit the new shape of stream ${this.stream.name}: ${errorMessage(cause)}. Clear the copy to load it again, or change the stream so they fit.`,
         { cause },
       );
     }
     if (changedIn !== undefined)
       database
         .prepare(
-          `UPDATE ${this.table.quotedName} SET ${version} = NULL WHERE "committed_in" = ?`,
+          `UPDATE ${this.table.quotedRaw} SET ${version} = NULL WHERE "committed_in" = ?`,
         )
         .run(changedIn);
     this.initialize(database, false);
-    if (this.table.readerView !== undefined)
-      this.installReaderView(database, this.table.readerView);
+    this.#readerView.install(database);
     this.describe(database);
   }
 
@@ -719,7 +675,7 @@ export abstract class SQLiteWriter extends Writer {
     this.#removeUnmatched(database, reloaded, committedIn, target);
     database
       .prepare(
-        `INSERT INTO ${this.table.quotedName} (${this.written.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, "loaded_at", ?, ${version} FROM ${hidden} WHERE ${rowid} IN (${this.#unmatched(reloaded, target)}) ORDER BY ${rowid}`,
+        `INSERT INTO ${this.table.quotedRaw} (${this.written.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, "loaded_at", ?, ${version} FROM ${hidden} WHERE ${rowid} IN (${this.#unmatched(reloaded, target)}) ORDER BY ${rowid}`,
       )
       .run(committedIn);
     database.exec(`DROP TABLE ${hidden}`);
@@ -740,7 +696,7 @@ export abstract class SQLiteWriter extends Writer {
     database.exec(`DROP TABLE IF EXISTS temp.${scoped}`);
     database
       .prepare(
-        `CREATE TEMP TABLE ${scoped} AS SELECT ${rowid} AS "row" FROM ${this.table.quotedName} WHERE ${within}`,
+        `CREATE TEMP TABLE ${scoped} AS SELECT ${rowid} AS "row" FROM ${this.table.quotedRaw} WHERE ${within}`,
       )
       .run(...values);
     this.#reloadInPlace(database, hidden, committedIn, {
@@ -756,12 +712,11 @@ export abstract class SQLiteWriter extends Writer {
     database
       .prepare(`UPDATE ${hidden} SET "committed_in" = ?`)
       .run(committedIn);
-    if (this.table.readerView !== undefined)
-      database.exec(`DROP VIEW IF EXISTS ${quote(this.table.readerView)}`);
+    this.#readerView.drop(database);
     if (this.exists(database, this.table.location))
       this.#keepRows(database, committedIn);
-    database.exec(`DROP TABLE IF EXISTS ${this.table.quotedName}`);
-    database.exec(`ALTER TABLE ${hidden} RENAME TO ${this.table.quotedName}`);
+    database.exec(`DROP TABLE IF EXISTS ${this.table.quotedRaw}`);
+    database.exec(`ALTER TABLE ${hidden} RENAME TO ${this.table.quotedRaw}`);
     this.adopt(database);
   }
 
@@ -796,9 +751,9 @@ export abstract class SQLiteWriter extends Writer {
     // partition opens one.
     let reloads: Reloads = wholeStream;
     const open = (at: ReloadMode) => at === 'reload' || at === 'continue';
-    const into = () => (open(mode) ? hidden : this.table.quotedName);
+    const into = () => (open(mode) ? hidden : this.table.quotedRaw);
     const tables = () =>
-      [this.table.name, ...(open(mode) ? [this.#hiddenName] : [])].filter(
+      [this.table.raw, ...(open(mode) ? [this.#hiddenName] : [])].filter(
         (table) => this.exists(database, identifiers.key(table)),
       );
     // Drops the chunks of files that no row of the tables or of the history
@@ -814,7 +769,7 @@ export abstract class SQLiteWriter extends Writer {
       database,
       () => {
         this.#refuse(database, writer);
-        const target = this.#declaration(this.table.name).drift(database);
+        const target = this.#declaration(this.table.raw).drift(database);
         let next = reloadMode({
           reloading,
           destinationSyncMode: this.configuration.destinationSyncMode,
@@ -827,12 +782,7 @@ export abstract class SQLiteWriter extends Writer {
           database.exec(`DROP TABLE IF EXISTS ${hidden}`);
           this.#reloaded(database);
         }
-        if (!open(next) && this.table.readerView !== undefined)
-          this.#refuseReaderView(
-            database,
-            this.table.readerView,
-            target === 'stale',
-          );
+        if (!open(next)) this.#readerView.refuse(database, target === 'stale');
         if (next === 'evolve') {
           this.#evolve(database, load);
           next = 'load';
@@ -994,7 +944,7 @@ export abstract class SQLiteWriter extends Writer {
                 database,
                 stage,
                 stamp,
-                this.table.quotedName,
+                this.table.quotedRaw,
                 this.history,
               );
               this.merge(database, reloadStage, stamp, hidden, null);
@@ -1025,7 +975,7 @@ export abstract class SQLiteWriter extends Writer {
             // target in place. A reload of partitions keeps the target's
             // shape: prepare evolves a stored target before it loads.
             const fits =
-              this.#declaration(this.table.name).drift(database) === 'fits';
+              this.#declaration(this.table.raw).drift(database) === 'fits';
             if (reloads instanceof SomePartitions && fits)
               this.#reloadPartitionsInPlace(
                 database,
@@ -1035,13 +985,12 @@ export abstract class SQLiteWriter extends Writer {
               );
             else if (reloads instanceof SomePartitions)
               throw new TypeError(
-                `${this.table.quotedName} changed its shape while some of its partitions reloaded; clear the copy to load it again`,
+                `${this.table.quotedRaw} changed its shape while some of its partitions reloaded; clear the copy to load it again`,
               );
             else if (fits) this.#reloadInPlace(database, hidden, committedIn);
             else this.#swap(database, hidden, committedIn);
             this.#reloaded(database);
-            if (this.table.readerView !== undefined)
-              this.installReaderView(database, this.table.readerView);
+            this.#readerView.install(database);
             this.describe(database);
             mode = 'load';
             reloads = wholeStream;

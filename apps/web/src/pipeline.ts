@@ -69,7 +69,8 @@ export default async function pipeline() {
         destination,
         checkpoints,
         // The articles stream and the routes, crawls and failures streams
-        // that the source declares beside it, each into a table of its name.
+        // that the source declares beside it, each into the reader view of
+        // its name.
         steps: (await source.discover()).streams.map(
           (stream) =>
             new Copy(stream, destination.table(stream.name), {

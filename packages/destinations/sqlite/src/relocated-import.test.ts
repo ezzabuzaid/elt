@@ -47,8 +47,12 @@ class Notes extends Source {
   readonly notes = new Stream({
     name: 'notes',
     jsonSchema: {
+      description: 'One notes record.',
       type: 'object',
-      properties: { id: { type: 'string' }, title: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        title: { description: 'Title of the record.', type: 'string' },
+      },
       required: ['id', 'title'],
     },
     primaryKey: ['id'],

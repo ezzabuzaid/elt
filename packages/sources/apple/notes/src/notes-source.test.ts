@@ -1193,7 +1193,7 @@ test('a Notes pass over a large store holds one note at a time, so it loads in a
           source,
           destination,
           checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
-          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+          steps: streams.map((stream) => new Copy(stream, destination.table(stream.name), {
             id: stream.name,
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
@@ -1231,7 +1231,7 @@ test('a Notes pass over a large store holds one note at a time, so it loads in a
   assert.deepEqual(
     noteRows(
       join(scratch.path, 'data.sqlite'),
-      "SELECT count(*) AS n FROM raw_notes WHERE id LIKE 'LARGE-%'",
+      "SELECT count(*) AS n FROM notes WHERE id LIKE 'LARGE-%'",
     ),
     [{ n: 60_000 }],
   );

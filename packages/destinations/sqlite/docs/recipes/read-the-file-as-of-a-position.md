@@ -9,7 +9,7 @@
 1. Run a pass. Keep a position from `destination.positions()`.
 2. Run a later pass that changes a row.
 3. Read the file as of the position with `destination.reading(position)`, and as it is now with `destination.reading()`.
-4. To copy a table as of the position into a different database, attach the SQLite file there and run the `SELECT` that `asOfSelect(database, table, position, { schema })` gives, in one read transaction.
+4. To copy a target as of the position into a different database, attach the SQLite file there and run the `SELECT` that `asOfSelect(database, table, position, { schema })` gives for its raw table, `raw_prices` for the reader view `prices`, in one read transaction.
 5. After the retention, a commit deletes the history that only positions before the window read. A reading of such a position gives `{ expired }`.
 
 ## The program
@@ -42,6 +42,7 @@ const prices = new Stream({
   name: 'prices',
   jsonSchema: {
     type: 'object',
+    description: 'The price of each product in the shop.',
     properties: {
       sku: { type: 'string', description: 'Product code.' },
       price: { type: 'integer', description: 'Price in cents.' },
@@ -146,11 +147,11 @@ console.log(
   now.sql.prepare('SELECT sku, price FROM prices ORDER BY sku').all(),
 );
 
-// Copy the table as of the first pass into a database of the reader.
+// Copy the prices as of the first pass into a database of the reader.
 using copy = open(':memory:');
 copy.prepare('ATTACH DATABASE ? AS "shop"').run(destination.path);
 copy.exec('BEGIN');
-const select = asOfSelect(copy, 'prices', monday, { schema: 'shop' });
+const select = asOfSelect(copy, 'raw_prices', monday, { schema: 'shop' });
 if (typeof select !== 'string') throw new Error(select.expired);
 copy.exec(`CREATE TEMP TABLE "monday" AS ${select}`);
 copy.exec('COMMIT');
@@ -177,11 +178,11 @@ node read-as-of-a-position.ts
 The output (the epoch is a new UUID in each run):
 
 ```
-as of a6b6fd2d-1a88-44fc-ae37-8d0ca41f536c:1 [
+as of ed8749d5-04bf-443c-9e97-8456af01c7ea:1 [
   [Object: null prototype] { sku: 'milk', price: 120 },
   [Object: null prototype] { sku: 'tea', price: 300 }
 ]
-now a6b6fd2d-1a88-44fc-ae37-8d0ca41f536c:2 [
+now ed8749d5-04bf-443c-9e97-8456af01c7ea:2 [
   [Object: null prototype] { sku: 'milk', price: 120 },
   [Object: null prototype] { sku: 'tea', price: 350 }
 ]
@@ -190,17 +191,17 @@ copied [
   [Object: null prototype] { sku: 'tea', price: 300 }
 ]
 positions [
-  'a6b6fd2d-1a88-44fc-ae37-8d0ca41f536c:2',
-  'a6b6fd2d-1a88-44fc-ae37-8d0ca41f536c:3'
+  'ed8749d5-04bf-443c-9e97-8456af01c7ea:2',
+  'ed8749d5-04bf-443c-9e97-8456af01c7ea:3'
 ]
 {
-  expired: 'Position a6b6fd2d-1a88-44fc-ae37-8d0ca41f536c:1 is older than the retention of this file: its history keeps no row that only a reading before commit 2 reads'
+  expired: 'Position ed8749d5-04bf-443c-9e97-8456af01c7ea:1 is older than the retention of this file: its history keeps no row that only a reading before commit 2 reads'
 }
 ```
 
 ## Why it works
 
-Each commit has a number. The second pass changes the price of tea, so its commit copies the old row into the history of `prices`, with `replaced_in` 2. A reading as of position 1 shows each current row with `committed_in` ≤ 1 and each history row with `committed_in` ≤ 1 < `replaced_in`. `asOfSelect` gives the same `SELECT`, with the names of the attached file. See [ADR 0009](../adr/0009-the-sqlite-file-numbers-its-commits-and-keeps-a-history-of-each-row.md).
+Each commit has a number. The second pass changes the price of tea, so its commit copies the old row into the history of `raw_prices`, with `replaced_in` 2. A reading as of position 1 shows each current row with `committed_in` ≤ 1 and each history row with `committed_in` ≤ 1 < `replaced_in`. `asOfSelect` gives the same `SELECT`, with the names of the attached file. See [ADR 0009](../adr/0009-the-sqlite-file-numbers-its-commits-and-keeps-a-history-of-each-row.md).
 
 The third pass commits after the retention. Its commit finds position 2, the newest position that is older than the window. It deletes each history row with `replaced_in` ≤ 2, and it sets min valid to 2. Thus `positions()` starts at position 2, and position 1 is expired.
 

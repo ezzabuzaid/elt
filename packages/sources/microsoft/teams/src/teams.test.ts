@@ -1046,17 +1046,11 @@ async function pipeline(
         }),
         steps: streams.map(
           (stream: Stream) =>
-            new Copy(
-              stream,
-              destination
-                .table(`raw_${stream.name}`)
-                .withReaderView(stream.name),
-              {
-                id: stream.name,
-                syncMode: 'incremental',
-                destinationSyncMode: 'append_dedup',
-              },
-            ),
+            new Copy(stream, destination.table(stream.name), {
+              id: stream.name,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
         ),
       }),
     ],

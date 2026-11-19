@@ -106,7 +106,7 @@ function notesImport(directory: string) {
   const destination = new SQLiteDestination({
     path: join(directory, 'notes.sqlite'),
   });
-  const target = destination.table('raw_notes').withReaderView('notes');
+  const target = destination.table('notes');
   const pipeline = new Pipeline({
     clock: globalThis,
     history: new SQLiteSyncHistory(),

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { articleSchema, articleSummarySchema } from '../contract.ts';
 import db from '../db.ts';
 
-// The articles table appears with the first sync's first record.
+// The articles reader view appears with the first sync's first record.
 const loaded = () =>
   db.prepare(`SELECT 1 FROM sqlite_schema WHERE name = 'articles'`).get() !==
   undefined;

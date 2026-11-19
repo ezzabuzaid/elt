@@ -36,8 +36,7 @@ const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
 // One Apple source loaded as the hosts load it: every stream incrementally
-// into raw_<stream> of one SQLite file, read through its documented
-// <snake_stream> view.
+// into the documented reader view <snake_stream> of one SQLite file.
 async function appleImport(source: Source, directory: string) {
   await mkdir(directory, { recursive: true });
   const path = join(directory, 'data.sqlite');
@@ -57,17 +56,11 @@ async function appleImport(source: Source, directory: string) {
         }),
         steps: streams.map(
           (stream) =>
-            new Copy(
-              stream,
-              destination
-                .table(`raw_${stream.name}`)
-                .withReaderView(snake(stream.name)),
-              {
-                id: stream.name,
-                syncMode: 'incremental',
-                destinationSyncMode: 'append_dedup',
-              },
-            ),
+            new Copy(stream, destination.table(snake(stream.name)), {
+              id: stream.name,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
         ),
       }),
     ],
@@ -1709,7 +1702,7 @@ test('an Activity pass over a large knowledgeC holds one event at a time, so it 
           source,
           destination,
           checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
-          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+          steps: streams.map((stream) => new Copy(stream, destination.table(stream.name), {
             id: stream.name,
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
@@ -1751,7 +1744,7 @@ test('an Activity pass over a large knowledgeC holds one event at a time, so it 
   assert.deepEqual(
     {
       ...imported
-        .prepare('SELECT count(*) AS n FROM raw_discoverabilitySignals')
+        .prepare('SELECT count(*) AS n FROM discoverabilitySignals')
         .get(),
     },
     { n: 120_000 },

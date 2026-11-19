@@ -25,7 +25,7 @@ import { busyTimeout } from './open-destination.ts';
 import { SQLiteDerivedStatus } from './sqlite-derived-status.ts';
 import { SQLiteDestination } from './sqlite-destination.ts';
 import { SQLiteHistory, rowHash } from './sqlite-history.ts';
-import { identifiers, quote } from './sqlite-identifiers.ts';
+import { identifiers, quote, rawTable } from './sqlite-identifiers.ts';
 import { SQLiteLoad } from './sqlite-loads.ts';
 import { SQLitePartsTable } from './sqlite-parts-table.ts';
 import { ruleColumnTypes, ruleValue } from './sqlite-rule-columns.ts';
@@ -103,9 +103,9 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
           }
         : { rule: compute };
     this.#ruleColumns = compute instanceof TableRule ? {} : compute.output;
-    this.#table = `raw_${name}`;
+    this.#table = rawTable(name);
     this.#history = new SQLiteHistory({
-      name: this.#table,
+      raw: this.#table,
       location: identifiers.key(this.#table),
     });
     // SQLite takes two names that differ only in ASCII case for one column,
@@ -170,8 +170,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
     const made = connections
       .filter(({ destination }) => this.#same(destination))
       .flatMap(({ steps }) => steps)
-      .flatMap(({ to }) => [to.name, to.readerView])
-      .filter((name) => name !== undefined)
+      .flatMap(({ to }) => [to.name, to.raw])
       .map((name) => name.toLowerCase());
     for (const name of [
       this.name,
@@ -402,19 +401,15 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
           : this.#source(connections, target);
       if (path === undefined) continue;
       using database = open(path, { readOnly: true, timeout: busyTimeout });
-      const relation =
-        target instanceof View
-          ? target.name
-          : (target.readerView ?? target.name);
       if (
         database
           .prepare('SELECT 1 FROM sqlite_schema WHERE lower("name") = lower(?)')
-          .get(relation) === undefined
+          .get(target.name) === undefined
       )
         continue;
       let rows: Record<string, SQLOutputValue>[];
       try {
-        rows = database.prepare(`SELECT * FROM ${quote(relation)}`).all();
+        rows = database.prepare(`SELECT * FROM ${quote(target.name)}`).all();
       } catch (error) {
         if (Error.isError(error) && error.message.startsWith('no such table: '))
           return null;

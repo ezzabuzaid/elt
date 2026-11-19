@@ -116,12 +116,10 @@ const files = new LocalFiles({ directory: join(directory.path, 'files') });
 const sqlite = new SQLiteDestination({
   path: join(directory.path, 'documents.sqlite'),
 });
-const documents = sqlite
-  .table('raw_documents', (c) => [
-    c.text('name').primaryKey(),
-    c.text('documentRef').from(source.documents.file.store(files)),
-  ])
-  .withReaderView('documents');
+const documents = sqlite.table('documents', (c) => [
+  c.text('name').primaryKey(),
+  c.text('documentRef').from(source.documents.file.store(files)),
+]);
 
 const pipeline = new Pipeline({
   history: new SQLiteSyncHistory(),
@@ -196,7 +194,7 @@ Output:
     name: 'scan.pdf',
     status: 'failed',
     content: null,
-    error: 'execution error: Error: Error: Cannot read PDF (-2700)'
+    error: 'Cannot read PDF (-2700)'
   }
 ]
 { found: [ 'invoice-4471.txt' ] }

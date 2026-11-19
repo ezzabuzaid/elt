@@ -1,6 +1,6 @@
 # elt-sqlite
 
-A host wants the data that elt copies in one SQLite file, which a reader can query with `sqlite3 -readonly`. The SQLite destination keeps the stream of each copy as a raw table, a reader view over it, and a catalog that describes each table, view and column. It also has the two kinds of derived dataset: `View` and `ComputedDataset`. The words that all of elt uses, for example pass, refresh, rule and key, are in the glossary of [elt](../../elt/CONTEXT.md).
+A host wants the data that elt copies in one SQLite file, which a reader can query with `sqlite3 -readonly`. The SQLite destination keeps the stream of each copy as a raw table, a reader view over it, and a catalog that describes each view and column. It also has the two kinds of derived dataset: `View` and `ComputedDataset`. The words that all of elt uses, for example pass, refresh, rule and key, are in the glossary of [elt](../../elt/CONTEXT.md).
 
 ## Language
 
@@ -13,11 +13,11 @@ The journal of the SQLite file. SQLite adds each commit to the `-wal` file, and 
 _Avoid_: WAL mode, journal mode
 
 **Raw table**:
-The table that a copy loads, for example `raw_documents`.
+The table that a copy loads, `raw_<name>` for the reader view `<name>`, for example `raw_documents`. The destination names it from the reader name, in the same file as the reader view.
 _Avoid_: Staging table, source table
 
 **Reader view**:
-The view that a copy makes over its raw table with `withReaderView`, for example `documents`. Readers query it. It shows the external schema of the stream.
+The view that a copy makes over its raw table, for example `documents`. The host gives its name, the reader name, to `table`. Each copy has one. Readers query it. It shows the external schema of the stream.
 _Avoid_: View (a `View` is a derived dataset)
 
 **External schema**:

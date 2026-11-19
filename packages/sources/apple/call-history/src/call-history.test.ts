@@ -1140,7 +1140,7 @@ test('a Call History pass over a large store holds one call at a time, so it loa
           source,
           destination,
           checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
-          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+          steps: streams.map((stream) => new Copy(stream, destination.table(stream.name), {
             id: stream.name,
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
@@ -1178,8 +1178,8 @@ test('a Call History pass over a large store holds one call at a time, so it loa
   assert.deepEqual(
     rows(
       join(dir.path, 'data.sqlite'),
-      `SELECT (SELECT count(*) FROM raw_calls) AS calls,
-              (SELECT count(*) FROM raw_callParticipants) AS participants`,
+      `SELECT (SELECT count(*) FROM calls) AS calls,
+              (SELECT count(*) FROM callParticipants) AS participants`,
     ),
     [{ calls: 60_000, participants: 60_000 }],
   );

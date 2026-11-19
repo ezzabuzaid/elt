@@ -183,7 +183,7 @@ function listingsImport(
   const source = new Listings();
   const path = join(directory, 'data.sqlite');
   const destination = new SQLiteDestination({ path });
-  const target = destination.table('raw_listings').withReaderView('listings');
+  const target = destination.table('listings');
   const pipeline = () =>
     new Pipeline({
       clock: globalThis,

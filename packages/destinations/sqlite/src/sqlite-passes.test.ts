@@ -76,7 +76,13 @@ test('a pass and each of its streams read running while it runs and cancelled on
     readonly identity = 'waiting';
     readonly records = new Stream({
       name: 'records',
-      jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+      jsonSchema: {
+        description: 'One records record.',
+        type: 'object',
+        properties: {
+          id: { description: 'Id of the record.', type: 'string' },
+        },
+      },
       supportedSyncModes: ['full_refresh'],
     });
     protected readonly catalog = new Catalog([this.records]);
@@ -196,7 +202,7 @@ test('a pass killed in the middle of a commit leaves a file that the sqlite3 she
       `import { openDestination } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'index.ts')).href)};
        const data = openDestination(process.env.DATABASE);
        data.exec('PRAGMA cache_size = 1; BEGIN IMMEDIATE');
-       data.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000) INSERT INTO notes (id, loaded_at, committed_in, _elt_row_hash) SELECT 'lost-' || i, loaded_at, committed_in, _elt_row_hash FROM n, notes");
+       data.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000) INSERT INTO raw_notes (id, loaded_at, committed_in, _elt_row_hash) SELECT 'lost-' || i, loaded_at, committed_in, _elt_row_hash FROM n, raw_notes");
        process.kill(process.pid, 'SIGKILL');`,
     ],
     {
@@ -482,8 +488,9 @@ function stream(name: string) {
   return new Stream({
     name,
     jsonSchema: {
+      description: 'One test record.',
       type: 'object',
-      properties: { id: { type: 'string' } },
+      properties: { id: { description: 'Id of the record.', type: 'string' } },
       required: ['id'],
     },
     primaryKey: ['id'],
@@ -502,7 +509,7 @@ test('a pass a killed process left running stays running, until a history that i
       identity = 'hanging';
       notes = new Stream({
         name: 'notes',
-        jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+        jsonSchema: { type: 'object', description: 'A note.', properties: { id: { type: 'string', description: 'Note id.' } } },
         supportedSyncModes: ['full_refresh'],
       });
       catalog = new Catalog([this.notes]);
@@ -587,7 +594,11 @@ class Finishing extends LiveSource {
   readonly identity = 'finishing';
   readonly notes = new Stream({
     name: 'notes',
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    jsonSchema: {
+      description: 'One notes record.',
+      type: 'object',
+      properties: { id: { description: 'Id of the record.', type: 'string' } },
+    },
     supportedSyncModes: ['full_refresh'],
   });
   protected readonly catalog = new Catalog([this.notes]);
@@ -892,7 +903,13 @@ test('a connection that copies one stream twice is recorded as a failed pass and
     readonly identity = 'notes';
     readonly notes = new Stream({
       name: 'notes',
-      jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+      jsonSchema: {
+        description: 'One notes record.',
+        type: 'object',
+        properties: {
+          id: { description: 'Id of the record.', type: 'string' },
+        },
+      },
       supportedSyncModes: ['full_refresh'],
     });
     protected readonly catalog = new Catalog([this.notes]);
@@ -960,7 +977,7 @@ test('a connection that copies one stream twice is recorded as a failed pass and
       destination.path,
       'SELECT stream, target_table, status FROM extraction_coverage WHERE attempt_id = (SELECT latest_attempt_id FROM sync_status)',
     ).rows,
-    [{ stream: 'notes', target_table: 'notes', status: 'failed' }],
+    [{ stream: 'notes', target_table: 'raw_notes', status: 'failed' }],
   );
   assert.deepEqual(failed, [new TypeError(why)]);
 });

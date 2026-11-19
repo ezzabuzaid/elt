@@ -288,7 +288,7 @@ Output:
 │ 5       │ 'proposal.txt' │ 4   │ '2ae261ce' │ 25     │ 390   │ 508 │ 'computed' │ 'The work takes six weeks. The farm pays half, and the cooperative pays the other half from its fund for new buildings.'                              │
 └─────────┴────────────────┴─────┴────────────┴────────┴───────┴─────┴────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 [Object: null prototype] {
-  rule: '@eltjs/chunking@0.5.0 cl100k_base 40/20'
+  rule: '@eltjs/chunking@0.6.0 cl100k_base 40/20'
 }
 { embedded: 6 }
 ┌─────────┬────────────────┬─────┬────────────┬────────┬───────┬─────┬────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -302,7 +302,7 @@ Output:
 │ 5       │ 'proposal.txt' │ 4   │ '2ae261ce' │ 25     │ 387   │ 505 │ 'computed' │ 'The work takes six weeks. The farm pays half, and the cooperative pays the other half from its fund for new buildings.'                              │
 └─────────┴────────────────┴─────┴────────────┴────────┴───────┴─────┴────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 [Object: null prototype] {
-  rule: '@eltjs/chunking@0.5.0 cl100k_base 40/20'
+  rule: '@eltjs/chunking@0.6.0 cl100k_base 40/20'
 }
 {
   embedded: [

@@ -1063,19 +1063,17 @@ async function pipeline(
             (stream) =>
               new Copy(
                 stream,
-                destination
-                  .table(
-                    `raw_${stream.name}`,
-                    stream.supportsFileTransfer
-                      ? (columns) => [
-                          ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                          columns
-                            .text('attachmentRef')
-                            .from(stream.file.store(files)),
-                        ]
-                      : undefined,
-                  )
-                  .withReaderView(stream.name),
+                destination.table(
+                  stream.name,
+                  stream.supportsFileTransfer
+                    ? (columns) => [
+                        ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                        columns
+                          .text('attachmentRef')
+                          .from(stream.file.store(files)),
+                      ]
+                    : undefined,
+                ),
                 { id: stream.name, ...modes },
               ),
           ),
@@ -3698,7 +3696,7 @@ test('large WhatsApp passes stream payloads and reuse compact metadata within a 
           source,
           destination,
           checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
-          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+          steps: streams.map((stream) => new Copy(stream, destination.table(stream.name), {
             id: stream.name,
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
@@ -3740,7 +3738,7 @@ test('large WhatsApp passes stream payloads and reuse compact metadata within a 
     readOnly: true,
   });
   assert.deepEqual(
-    { ...imported.prepare('SELECT count(*) AS n FROM raw_messages').get() },
+    { ...imported.prepare('SELECT count(*) AS n FROM messages').get() },
     { n: 60_000 },
   );
 });

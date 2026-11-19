@@ -31,7 +31,11 @@ class Filled extends Gauge<number> {
 test('stored file scopes flush when empty and remain usable across empty, null and populated loads', async () => {
   const stream = new Stream({
     name: 'files',
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    jsonSchema: {
+      description: 'One files record.',
+      type: 'object',
+      properties: { id: { description: 'Id of the record.', type: 'string' } },
+    },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh'],
     supportsFileTransfer: true,

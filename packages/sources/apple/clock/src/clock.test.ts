@@ -127,20 +127,12 @@ async function pipeline(
         }),
         steps: streams.map(
           (stream) =>
-            new Copy(
-              stream,
-              destination
-                .table(stream.name)
-                .withReaderView('reader_' + stream.name),
-              {
-                id: stream.name,
-                syncMode,
-                destinationSyncMode:
-                  syncMode === 'incremental'
-                    ? 'append_dedup'
-                    : 'overwrite_dedup',
-              },
-            ),
+            new Copy(stream, destination.table(stream.name), {
+              id: stream.name,
+              syncMode,
+              destinationSyncMode:
+                syncMode === 'incremental' ? 'append_dedup' : 'overwrite_dedup',
+            }),
         ),
       }),
     ],

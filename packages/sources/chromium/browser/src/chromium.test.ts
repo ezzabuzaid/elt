@@ -39,7 +39,7 @@ const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
 // One browser loaded as the hosts load it: every stream incrementally into
-// raw_<stream> of one SQLite file, read through its <snake_stream> view.
+// the reader view <snake_stream> of one SQLite file.
 async function chromiumImport(source: Source, directory: string) {
   mkdirSync(directory, { recursive: true });
   const path = join(directory, 'data.sqlite');
@@ -54,17 +54,11 @@ async function chromiumImport(source: Source, directory: string) {
     }),
     steps: streams.map(
       (stream) =>
-        new Copy(
-          stream,
-          destination
-            .table(`raw_${stream.name}`)
-            .withReaderView(snake(stream.name)),
-          {
-            id: stream.name,
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-          },
-        ),
+        new Copy(stream, destination.table(snake(stream.name)), {
+          id: stream.name,
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+        }),
     ),
   });
   const history = new SQLiteSyncHistory();
@@ -1330,7 +1324,7 @@ test('a Chromium pass over a large History holds one visit at a time, so it load
           source,
           destination,
           checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
-          steps: [new Copy(source.historyVisits, destination.table('raw_historyVisits'), {
+          steps: [new Copy(source.historyVisits, destination.table('historyVisits'), {
             id: 'historyVisits',
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
@@ -1368,7 +1362,7 @@ test('a Chromium pass over a large History holds one visit at a time, so it load
   });
   assert.deepEqual(
     {
-      ...imported.prepare('SELECT count(*) AS n FROM raw_historyVisits').get(),
+      ...imported.prepare('SELECT count(*) AS n FROM historyVisits').get(),
     },
     { n: 60_000 },
   );

@@ -1,34 +1,39 @@
 import type { Stream } from '@eltjs/elt';
-import { Target } from '@eltjs/elt';
+import { Target, readerCatalog, syncHistoryRelations } from '@eltjs/elt';
 
 import { SQLiteColumn, canonical } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
-import { identifiers, quote } from './sqlite-identifiers.ts';
+import { identifiers, quote, rawTable } from './sqlite-identifiers.ts';
+
+// The relations that the destination makes in each file under a fixed name,
+// in the case SQLite compares them in: the catalog and the views of the sync
+// history. The naming rule already renames a name that starts with _elt_.
+const made = new Set(
+  [readerCatalog, ...Object.values(syncHistoryRelations)].map(({ name }) =>
+    identifiers.key(name),
+  ),
+);
 
 // A reusable target definition. Empty columns mean infer from the Copy's
-// stream. Its own name, its view's and its columns' follow the destination's
-// naming rule, so a field SQLite would take for another still loads.
+// stream. The host names only the reader view; the destination keeps the rows
+// in the raw table beside it. Both names and the columns' follow the
+// destination's naming rule, so a field SQLite would take for another still
+// loads.
 export class SQLiteTable extends Target {
+  // The name readers query: the view of the external schema over the raw table.
   readonly name: string;
+  // The table that the commits of the target write.
+  readonly raw: string;
   readonly columns: readonly SQLiteColumn[];
-  // The name readers query: a documented view of exactly this table.
-  readonly readerView: string | undefined;
 
-  constructor(
-    name: string,
-    columns?: readonly SQLiteColumn[],
-    readerView?: string,
-  ) {
-    if (
-      typeof name !== 'string' ||
-      (readerView !== undefined && typeof readerView !== 'string')
-    )
-      throw new TypeError('A table and its view are named by strings');
-    const table = identifiers.relation(name);
-    const view =
-      readerView === undefined ? undefined : identifiers.relation(readerView);
-    if (view !== undefined && identifiers.key(view) === identifiers.key(table))
-      throw new TypeError('A reader view needs a name of its own');
+  constructor(name: string, columns?: readonly SQLiteColumn[]) {
+    if (typeof name !== 'string')
+      throw new TypeError('A table is named by a string');
+    const view = identifiers.relation(name);
+    if (made.has(identifiers.key(view)))
+      throw new TypeError(
+        `Reader name ${view} is a relation the destination makes`,
+      );
     if (
       columns !== undefined &&
       (!Array.isArray(columns) ||
@@ -56,24 +61,14 @@ export class SQLiteTable extends Target {
         );
     }
     super(fileReads);
-    this.name = table;
+    this.name = view;
+    this.raw = rawTable(view);
     this.columns = Object.freeze(
       identifiers
         .columns(columns ?? [])
         .map(([column, stored]) => column.named(stored)),
     );
-    this.readerView = view;
     Object.freeze(this);
-  }
-
-  // Loads also keep a view of this table under another name, created with the
-  // table and described by the same descriptions, which every column then needs.
-  withReaderView(name: string): SQLiteTable {
-    return new SQLiteTable(
-      this.name,
-      this.columns.length === 0 ? undefined : this.columns,
-      name,
-    );
   }
 
   resolve(stream: Stream): SQLiteTable {
@@ -81,7 +76,6 @@ export class SQLiteTable extends Target {
       return new SQLiteTable(
         this.name,
         SQLiteColumns.fromSchema(stream.jsonSchema),
-        this.readerView,
       );
     const { properties } = stream.jsonSchema;
     // Explicit columns of a stream that declares no properties stand alone.
@@ -97,18 +91,18 @@ export class SQLiteTable extends Target {
     return this;
   }
 
-  // SQLite takes names that differ only in ASCII case for one, so one table
-  // has one location.
+  // SQLite takes names that differ only in ASCII case for one, so one raw
+  // table has one location.
   get location(): string {
-    return identifiers.key(this.name);
+    return identifiers.key(this.raw);
   }
 
-  get quotedName(): string {
-    return quote(this.name);
+  get quotedRaw(): string {
+    return quote(this.raw);
   }
 
   get createTableSQL(): string {
-    return `CREATE TABLE IF NOT EXISTS ${this.definition(this.quotedName)}`;
+    return `CREATE TABLE IF NOT EXISTS ${this.definition(this.quotedRaw)}`;
   }
 
   // A table named name with these columns, as CREATE TABLE spells it.

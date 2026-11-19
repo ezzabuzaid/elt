@@ -36,8 +36,12 @@ const measures = (amount: 'number' | 'integer') =>
   new Stream({
     name: 'measures',
     jsonSchema: {
+      description: 'One measures record.',
       type: 'object',
-      properties: { id: { type: 'string' }, amount: { type: amount } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        amount: { description: 'Amount of the record.', type: amount },
+      },
       required: ['id', 'amount'],
     },
     primaryKey: ['id'],

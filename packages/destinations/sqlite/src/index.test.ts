@@ -94,8 +94,12 @@ test('the public ELT API copies source records into SQLite', async () => {
     readonly records = new Stream({
       name: 'records',
       jsonSchema: {
+        description: 'One records record.',
         type: 'object',
-        properties: { id: { type: 'string' }, name: { type: 'string' } },
+        properties: {
+          id: { description: 'Id of the record.', type: 'string' },
+          name: { description: 'Name of the record.', type: 'string' },
+        },
         required: ['id', 'name'],
       },
       primaryKey: ['id'],
@@ -190,12 +194,7 @@ test('the macOS sqlite3 shell reads the catalog of a loaded file: every describe
         name: 'described',
         source,
         destination,
-        steps: [
-          new Copy(
-            source.records,
-            destination.table('raw_records').withReaderView('records'),
-          ),
-        ],
+        steps: [new Copy(source.records, destination.table('records'))],
       }),
     ],
     history,
@@ -283,7 +282,8 @@ test('every name is sanitized as Airbyte does, around the names SQLite takes as 
       name,
       jsonSchema: {
         type: 'object',
-        properties: { id: { type: 'string' } },
+        description: `One row per ${name} record.`,
+        properties: { id: { type: 'string', description: 'Record id.' } },
         required: ['id'],
       },
       primaryKey: ['id'],
@@ -328,15 +328,11 @@ test('every name is sanitized as Airbyte does, around the names SQLite takes as 
           destination,
           checkpoints,
           steps: [
-            new Copy(
-              odd,
-              destination.table('_ELT_items').withReaderView('odd'),
-              {
-                id: 'odd',
-                syncMode: 'incremental',
-                destinationSyncMode: 'append_dedup',
-              },
-            ),
+            new Copy(odd, destination.table('odd'), {
+              id: 'odd',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
             new Copy(spaced, destination.table('dbo.a b'), {
               id: 'spaced',
               syncMode: 'full_refresh',
@@ -373,7 +369,6 @@ test('every name is sanitized as Airbyte does, around the names SQLite takes as 
         .prepare(`SELECT id FROM "${table}"`)
         .all()
         .map(({ id }) => id);
-    assert.deepEqual(ids(`ELT_items_${sha8('_ELT_items')}`), ['a:id']);
     assert.deepEqual(ids(`dbo_a_b_${sha8('dbo.a b')}`), ['spaced']);
     assert.deepEqual(ids(`dbo_a_b_${sha8('dbo.a_b')}`), ['underscored']);
   }
@@ -410,6 +405,17 @@ test('every name is sanitized as Airbyte does, around the names SQLite takes as 
         : `Field ${index}. Source field: ${JSON.stringify(field)}.`,
     );
 
+  // A reader name that starts with _elt_ loses the prefix the destination
+  // reserves, and its raw table follows it.
+  const reserved = destination.table('_ELT_items');
+  assert.deepEqual(
+    { name: reserved.name, raw: reserved.raw },
+    {
+      name: `ELT_items_${sha8('_ELT_items')}`,
+      raw: `raw_ELT_items_${sha8('_ELT_items')}`,
+    },
+  );
+
   await run([...before, ['New Field', 'New_Field']], 3);
 
   const [reloaded] = view();
@@ -431,12 +437,25 @@ test('array fields load as JSON arrays that SQLite checks and reads element by e
     readonly lists = new Stream({
       name: 'lists',
       jsonSchema: {
+        description: 'One lists record.',
         type: 'object',
         properties: {
-          id: { type: 'string' },
-          counts: { type: 'array', items: { type: 'integer' } },
-          words: { type: ['array', 'null'], items: { type: 'string' } },
-          flags: { type: 'array', items: { type: 'boolean' } },
+          id: { description: 'Id of the record.', type: 'string' },
+          counts: {
+            description: 'Counts of the record.',
+            type: 'array',
+            items: { type: 'integer' },
+          },
+          words: {
+            description: 'Words of the record.',
+            type: ['array', 'null'],
+            items: { type: 'string' },
+          },
+          flags: {
+            description: 'Flags of the record.',
+            type: 'array',
+            items: { type: 'boolean' },
+          },
         },
         required: ['id', 'counts', 'words', 'flags'],
       },
@@ -501,7 +520,7 @@ test('array fields load as JSON arrays that SQLite checks and reads element by e
   }
   using writable = open(destination.path);
   assert.throws(
-    () => writable.exec("UPDATE lists SET counts = '{}' WHERE id = 'a'"),
+    () => writable.exec("UPDATE raw_lists SET counts = '{}' WHERE id = 'a'"),
     /CHECK constraint failed/,
   );
 });
@@ -534,10 +553,15 @@ test('an array element of the wrong type fails its copy for each item type a str
       new Stream({
         name: kind,
         jsonSchema: {
+          description: 'One test record.',
           type: 'object',
           properties: {
-            id: { type: 'string' },
-            values: { type: 'array', items },
+            id: { description: 'Id of the record.', type: 'string' },
+            values: {
+              description: 'Values of the record.',
+              type: 'array',
+              items,
+            },
           },
           required: ['id', 'values'],
         },
@@ -611,11 +635,13 @@ test('an array of objects loads as a JSON array of objects, which SQLite reads f
     readonly pages = new Stream({
       name: 'pages',
       jsonSchema: {
+        description: 'One pages record.',
         type: 'object',
         properties: {
-          id: { type: 'string' },
+          id: { description: 'Id of the record.', type: 'string' },
           // A page's language copies, as it declares them.
           copies: {
+            description: 'Copies of the record.',
             type: ['array', 'null'],
             items: {
               type: 'object',
@@ -693,7 +719,7 @@ test('an array of objects loads as a JSON array of objects, which SQLite reads f
   }
   using writable = open(destination.path);
   assert.throws(
-    () => writable.exec("UPDATE pages SET copies = '{}' WHERE id = 'a'"),
+    () => writable.exec("UPDATE raw_pages SET copies = '{}' WHERE id = 'a'"),
     /CHECK constraint failed/,
   );
 });
@@ -713,10 +739,12 @@ test('an array item whose field is not a scalar fails its copy', async () => {
     readonly pages = new Stream({
       name: 'pages',
       jsonSchema: {
+        description: 'One pages record.',
         type: 'object',
         properties: {
-          id: { type: 'string' },
+          id: { description: 'Id of the record.', type: 'string' },
           copies: {
+            description: 'Copies of the record.',
             type: 'array',
             items: {
               type: 'object',
@@ -787,8 +815,11 @@ test('a source accepts only the stream objects from its own catalog', async () =
     readonly records = new Stream({
       name: 'records',
       jsonSchema: {
+        description: 'One records record.',
         type: 'object',
-        properties: { id: { type: 'string' } },
+        properties: {
+          id: { description: 'Id of the record.', type: 'string' },
+        },
         required: ['id'],
       },
       supportedSyncModes: ['full_refresh'],
@@ -844,8 +875,12 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     readonly records = new Stream({
       name: 'records',
       jsonSchema: {
+        description: 'One records record.',
         type: 'object',
-        properties: { id: { type: 'string' }, version: { type: 'integer' } },
+        properties: {
+          id: { description: 'Id of the record.', type: 'string' },
+          version: { description: 'Version of the record.', type: 'integer' },
+        },
         required: ['id', 'version'],
       },
       supportedSyncModes: ['full_refresh', 'incremental'],
@@ -1096,11 +1131,12 @@ test('a cursor inside the primary key is rejected unless the policy replaces', a
     readonly metrics = new Stream({
       name: 'metrics',
       jsonSchema: {
+        description: 'One metrics record.',
         type: 'object',
         properties: {
-          date: { type: 'string' },
-          query: { type: 'string' },
-          clicks: { type: 'number' },
+          date: { description: 'Date of the record.', type: 'string' },
+          query: { description: 'Query of the record.', type: 'string' },
+          clicks: { description: 'Clicks of the record.', type: 'number' },
         },
         required: ['date', 'query', 'clicks'],
       },
@@ -1209,11 +1245,12 @@ test('replace loads a restated fact that cursor_newer discards', async () => {
     readonly metrics = new Stream({
       name: 'metrics',
       jsonSchema: {
+        description: 'One metrics record.',
         type: 'object',
         properties: {
-          date: { type: 'string' },
-          query: { type: 'string' },
-          clicks: { type: 'number' },
+          date: { description: 'Date of the record.', type: 'string' },
+          query: { description: 'Query of the record.', type: 'string' },
+          clicks: { description: 'Clicks of the record.', type: 'number' },
         },
         required: ['date', 'query', 'clicks'],
       },
@@ -1314,8 +1351,12 @@ test('deletions remove keyed rows from a deduplicating SQLite table', async () =
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { id: { type: 'string' }, name: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        name: { description: 'Name of the record.', type: 'string' },
+      },
     },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
@@ -1409,8 +1450,12 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
     new Stream({
       name: 'items',
       jsonSchema: {
+        description: 'One items record.',
         type: 'object',
-        properties: { id: { type: 'string' }, rank: { type: 'integer' } },
+        properties: {
+          id: { description: 'Id of the record.', type: 'string' },
+          rank: { description: 'Rank of the record.', type: 'integer' },
+        },
       },
       primaryKey: ['id'],
       supportedSyncModes: ['full_refresh', 'incremental'],
@@ -1544,8 +1589,12 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { id: { type: 'string' }, name: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        name: { description: 'Name of the record.', type: 'string' },
+      },
     },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
@@ -1691,8 +1740,12 @@ test('a snapshot stream that emits no deletions keeps the rows of keys its upstr
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { id: { type: 'string' }, name: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        name: { description: 'Name of the record.', type: 'string' },
+      },
     },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
@@ -1784,8 +1837,12 @@ test('a grouped snapshot stream that emits no deletions keeps the rows of a grou
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { id: { type: 'string' }, name: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        name: { description: 'Name of the record.', type: 'string' },
+      },
     },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
@@ -1882,8 +1939,12 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { id: { type: 'string' }, name: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        name: { description: 'Name of the record.', type: 'string' },
+      },
     },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
@@ -2066,8 +2127,12 @@ test('a snapshot pass over an unchanged scan that the host stops partway ends lo
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { id: { type: 'string' }, name: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        name: { description: 'Name of the record.', type: 'string' },
+      },
     },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
@@ -2171,8 +2236,12 @@ test('a grouped pass whose groups are all unchanged, stopped by the host partway
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { id: { type: 'string' }, name: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        name: { description: 'Name of the record.', type: 'string' },
+      },
     },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
@@ -2281,11 +2350,19 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
   type Group = { key: string; fingerprint: string; rows: Row[] };
   let scan: { horizon: string; groups: Group[] } = { horizon: '', groups: [] };
   const fields = {
-    id: { type: 'string' },
-    seenAt: { type: 'string', format: 'date-time' },
+    id: { type: 'string', description: 'Event id.' },
+    seenAt: {
+      type: 'string',
+      format: 'date-time',
+      description: 'When the event was seen.',
+    },
   } as const;
   const declaration = {
-    jsonSchema: { type: 'object', properties: fields },
+    jsonSchema: {
+      description: 'One test record.',
+      type: 'object',
+      properties: fields,
+    },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
     sourceDefinedCursor: true,
@@ -2460,10 +2537,15 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
     {
       ...declaration,
       jsonSchema: {
+        description: 'One test record.',
         type: 'object',
         properties: {
           ...fields,
-          seenAt: { type: ['string', 'null'], format: 'date-time' },
+          seenAt: {
+            description: 'Seen At of the record.',
+            type: ['string', 'null'],
+            format: 'date-time',
+          },
         },
       },
     },
@@ -2492,8 +2574,12 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
   });
   const declaration = {
     jsonSchema: {
+      description: 'One test record.',
       type: 'object',
-      properties: { channel: { type: 'string' }, ts: { type: 'string' } },
+      properties: {
+        channel: { description: 'Channel of the record.', type: 'string' },
+        ts: { description: 'Ts of the record.', type: 'string' },
+      },
     },
     primaryKey: ['channel', 'ts'],
     supportedSyncModes: ['full_refresh', 'incremental'],
@@ -2652,8 +2738,12 @@ test('a diff whose next read repeats only a lookback window deletes none of the 
   const days = new Stream({
     name: 'days',
     jsonSchema: {
+      description: 'One days record.',
       type: 'object',
-      properties: { day: { type: 'string' }, item: { type: 'string' } },
+      properties: {
+        day: { description: 'Day of the record.', type: 'string' },
+        item: { description: 'Item of the record.', type: 'string' },
+      },
     },
     primaryKey: ['day', 'item'],
     supportedSyncModes: ['full_refresh', 'incremental'],
@@ -2753,12 +2843,13 @@ test('a target has one writer, even when another loads only its own partitions',
     readonly records = new Stream({
       name: 'records',
       jsonSchema: {
+        description: 'One records record.',
         type: 'object',
         properties: {
-          owner: { type: 'string' },
-          id: { type: 'string' },
-          name: { type: 'string' },
-          version: { type: 'integer' },
+          owner: { description: 'Owner of the record.', type: 'string' },
+          id: { description: 'Id of the record.', type: 'string' },
+          name: { description: 'Name of the record.', type: 'string' },
+          version: { description: 'Version of the record.', type: 'integer' },
         },
         required: ['owner', 'id', 'name', 'version'],
       },
@@ -2876,8 +2967,12 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
     readonly records = new Stream({
       name: 'records',
       jsonSchema: {
+        description: 'One records record.',
         type: 'object',
-        properties: { id: { type: 'string' }, version: { type: 'integer' } },
+        properties: {
+          id: { description: 'Id of the record.', type: 'string' },
+          version: { description: 'Version of the record.', type: 'integer' },
+        },
         required: ['id', 'version'],
       },
       primaryKey: ['id'],
@@ -2945,7 +3040,7 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
   );
   {
     using database = open(destination.path);
-    database.exec('DROP TABLE records');
+    database.exec('DROP TABLE raw_records');
   }
   await overwrite(second);
 
@@ -2969,8 +3064,12 @@ test('an explicit column naming a field the stream does not declare fails before
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { id: { type: 'string' }, 'Order Id': { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        'Order Id': { description: 'Order Id of the record.', type: 'string' },
+      },
     },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh'],
@@ -3064,12 +3163,10 @@ test('explicit int64 and local timestamp columns keep what the stream spells, wi
         steps: [
           new Copy(
             stream,
-            destination
-              .table('raw_bookings', (columns) => [
-                columns.int64('id'),
-                columns.localTimestamp('start', 7),
-              ])
-              .withReaderView('bookings'),
+            destination.table('bookings', (columns) => [
+              columns.int64('id'),
+              columns.localTimestamp('start', 7),
+            ]),
           ),
         ],
       }),
@@ -3113,7 +3210,7 @@ test('explicit int64 and local timestamp columns keep what the stream spells, wi
   );
 });
 
-test('a table refuses two columns of one field, and a reader view SQLite would take for the table', () => {
+test('a table refuses two columns of one field', () => {
   const destination = new SQLiteDestination({
     path: '/nonexistent/out.sqlite',
   });
@@ -3125,10 +3222,6 @@ test('a table refuses two columns of one field, and a reader view SQLite would t
         columns.text('a'),
       ]),
     /Two columns hold one field/,
-  );
-  assert.throws(
-    () => destination.table('Items').withReaderView('items'),
-    /A reader view needs a name of its own/,
   );
 });
 
@@ -3146,11 +3239,12 @@ class Sites extends LiveSource {
   readonly pages = new Stream({
     name: 'pages',
     jsonSchema: {
+      description: 'One pages record.',
       type: 'object',
       properties: {
-        site: { type: 'string' },
-        path: { type: 'string' },
-        views: { type: 'integer' },
+        site: { description: 'Site of the record.', type: 'string' },
+        path: { description: 'Path of the record.', type: 'string' },
+        views: { description: 'Views of the record.', type: 'integer' },
       },
       required: ['site', 'path', 'views'],
     },
@@ -3407,7 +3501,7 @@ test('clear drops a target with its checkpoint, and a target dropped by hand rel
   // Resuming from the checkpoint would load only what changed since it.
   {
     using database = open(destination.path);
-    database.exec('DROP TABLE pages');
+    database.exec('DROP TABLE raw_pages');
   }
   source.received.length = 0;
   await pipeline.run();
@@ -3480,10 +3574,14 @@ test('partition declarations are validated before extraction', async () => {
     new Stream({
       name: 'pages',
       jsonSchema: {
+        description: 'One pages record.',
         type: 'object',
         properties: {
-          site: { type: ['string', 'null'] },
-          path: { type: 'string' },
+          site: {
+            description: 'Site of the record.',
+            type: ['string', 'null'],
+          },
+          path: { description: 'Path of the record.', type: 'string' },
         },
         required: ['site', 'path'],
       },
@@ -3522,8 +3620,12 @@ test('partition declarations are validated before extraction', async () => {
   const partitioned = new Stream({
     name: 'pages',
     jsonSchema: {
+      description: 'One pages record.',
       type: 'object',
-      properties: { site: { type: 'string' }, path: { type: 'string' } },
+      properties: {
+        site: { description: 'Site of the record.', type: 'string' },
+        path: { description: 'Path of the record.', type: 'string' },
+      },
       required: ['site', 'path'],
     },
     primaryKey: ['site', 'path'],
@@ -3573,8 +3675,12 @@ class FileSource extends LiveSource {
     this.files = new Stream({
       name: 'files',
       jsonSchema: {
+        description: 'One files record.',
         type: 'object',
-        properties: { id: { type: 'string' }, version: { type: 'integer' } },
+        properties: {
+          id: { description: 'Id of the record.', type: 'string' },
+          version: { description: 'Version of the record.', type: 'integer' },
+        },
       },
       supportedSyncModes: ['full_refresh', 'incremental'],
       primaryKey: ['id'],
@@ -3616,13 +3722,13 @@ class FileSource extends LiveSource {
 
 const sha256 = (bytes: Uint8Array) => hash('sha256', bytes);
 
-// A file column's chunk table, by the documented rule: _elt_files_ and the
-// first 40 hex digits of SHA-256 over the JSON of [table, column], both in
-// ASCII lower case.
-const chunkTable = (table: string, column: string) =>
+// The chunk table of a file column of the target named view, by the
+// documented rule: _elt_files_ and the first 40 hex digits of SHA-256 over the
+// JSON of [raw table, column], both in ASCII lower case.
+const chunkTable = (view: string, column: string) =>
   `"_elt_files_${hash(
     'sha256',
-    JSON.stringify([table.toLowerCase(), column.toLowerCase()]),
+    JSON.stringify([`raw_${view}`.toLowerCase(), column.toLowerCase()]),
   ).slice(0, 40)}"`;
 
 // The ids of the stored files of a column that a row of the table or of its
@@ -3630,7 +3736,7 @@ const chunkTable = (table: string, column: string) =>
 const referenced = (path: string, table: string, column: string) => {
   const [recorded] = storedRows(
     path,
-    `SELECT history FROM _elt_histories WHERE target = '${table}'`,
+    `SELECT history FROM _elt_histories WHERE target = 'raw_${table}'`,
   );
   if (recorded === undefined) assert.fail(`${table} has no history`);
   return `SELECT ${column} FROM ${table} WHERE ${column} IS NOT NULL UNION ALL SELECT ${column} FROM "${String(recorded.history)}" WHERE ${column} IS NOT NULL`;
@@ -3714,7 +3820,7 @@ test('every table of a loaded file that no copy names is reserved: the sync hist
 
   assert.deepEqual(
     tables.filter((name) => !isReserved(name)),
-    ['files'],
+    ['raw_files'],
   );
   assert.ok(tables.includes(chunkTable('files', 'bytes').slice(1, -1)));
   assert.ok(tables.includes('_elt_sync_attempts'));
@@ -4029,8 +4135,12 @@ const scripted = (name: string, { snapshot = true } = {}) =>
   new Stream({
     name,
     jsonSchema: {
+      description: 'One test record.',
       type: 'object',
-      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        version: { description: 'Version of the record.', type: 'integer' },
+      },
       required: ['id', 'version'],
     },
     primaryKey: ['id'],
@@ -4906,8 +5016,12 @@ test('a key named last merges like its operations applied one at a time', async 
     new Stream({
       name,
       jsonSchema: {
+        description: 'One test record.',
         type: 'object',
-        properties: { last: { type: 'string' }, version: { type: 'integer' } },
+        properties: {
+          last: { description: 'Last of the record.', type: 'string' },
+          version: { description: 'Version of the record.', type: 'integer' },
+        },
         required: ['last', 'version'],
       },
       primaryKey: ['last'],
@@ -4992,10 +5106,14 @@ test('a key and cursor that sanitizing renames merge under their renamed columns
     new Stream({
       name,
       jsonSchema: {
+        description: 'One test record.',
         type: 'object',
         properties: {
-          'Line Id': { type: 'string' },
-          'Version No': { type: 'integer' },
+          'Line Id': { description: 'Line Id of the record.', type: 'string' },
+          'Version No': {
+            description: 'Version No of the record.',
+            type: 'integer',
+          },
         },
         required: ['Line Id', 'Version No'],
       },
@@ -5132,14 +5250,12 @@ test('renamed file columns keep their original bytes and stored files through la
         steps: [
           new Copy(
             docs,
-            destination
-              .table('Été docs', (c) => [
-                c.text('id'),
-                c.integer('version'),
-                c.blob('Original Bytes').from(docs.file),
-                c.text('Stored Ref').from(docs.file.store(store)),
-              ])
-              .withReaderView('Docs View'),
+            destination.table('Docs View', (c) => [
+              c.text('id'),
+              c.integer('version'),
+              c.blob('Original Bytes').from(docs.file),
+              c.text('Stored Ref').from(docs.file.store(store)),
+            ]),
             {
               id: 'docs',
               syncMode: 'incremental',
@@ -5262,11 +5378,11 @@ test('a load holds no write transaction while the source reads, and a stream tha
   using database = open(destination.path, { readOnly: true });
   const tables = database
     .prepare(
-      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('kept', 'failing') ORDER BY name`,
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('raw_kept', 'raw_failing') ORDER BY name`,
     )
     .all()
     .map(({ name }) => name);
-  assert.deepEqual(tables, ['kept']);
+  assert.deepEqual(tables, ['raw_kept']);
   assert.deepEqual(
     database
       .prepare('SELECT id FROM kept')
@@ -5284,8 +5400,12 @@ test('deduplicating a table whose history repeats a key is refused before the so
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        version: { description: 'Version of the record.', type: 'integer' },
+      },
       required: ['id', 'version'],
     },
     primaryKey: ['id'],
@@ -5384,7 +5504,7 @@ test('two file columns whose table and column names join alike keep their own ch
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
   } as const;
-  // Table a_b with column c, and table a with column b_c.
+  // Raw table raw_a_b with column c, and raw table raw_a with column b_c.
   const pipeline = new Pipeline({
     clock: globalThis,
     connections: [
@@ -5398,16 +5518,18 @@ test('two file columns whose table and column names join alike keep their own ch
         steps: [
           new Copy(
             left,
-            destination
-              .table('a_b', (c) => [c.text('id'), c.blob('c').from(left.file)])
-              .withReaderView('left_files'),
+            destination.table('a_b', (c) => [
+              c.text('id'),
+              c.blob('c').from(left.file),
+            ]),
             { id: 'left', ...selection },
           ),
           new Copy(
             right,
-            destination
-              .table('a', (c) => [c.text('id'), c.blob('b_c').from(right.file)])
-              .withReaderView('right_files'),
+            destination.table('a', (c) => [
+              c.text('id'),
+              c.blob('b_c').from(right.file),
+            ]),
             { id: 'right', ...selection },
           ),
         ],
@@ -5443,8 +5565,8 @@ test('two file columns whose table and column names join alike keep their own ch
       .map(({ bytes }) => Buffer.from(Object(bytes)).toString())
       .join('');
   };
-  assert.equal(original('left_files', 'c', 'l'), 'original');
-  assert.equal(original('right_files', 'b_c', 'r'), 'original');
+  assert.equal(original('a_b', 'c', 'l'), 'original');
+  assert.equal(original('a', 'b_c', 'r'), 'original');
 });
 
 test('a reset of a partition named by a renamed field replaces only that partition', async () => {
@@ -5454,8 +5576,15 @@ test('a reset of a partition named by a renamed field replaces only that partiti
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { 'Account Id': { type: 'string' }, id: { type: 'string' } },
+      properties: {
+        'Account Id': {
+          description: 'Account Id of the record.',
+          type: 'string',
+        },
+        id: { description: 'Id of the record.', type: 'string' },
+      },
     },
     primaryKey: ['Account Id', 'id'],
     partitionKey: ['Account Id'],
@@ -5567,7 +5696,7 @@ test('a native transaction rollback retains the original merge error and committ
   await pipeline.run();
   using database = open(destination.path);
   // Like SQLITE_FULL, RAISE(ROLLBACK) removes every savepoint itself.
-  database.exec(`CREATE TRIGGER fail_merge BEFORE INSERT ON items BEGIN
+  database.exec(`CREATE TRIGGER fail_merge BEFORE INSERT ON raw_items BEGIN
     SELECT RAISE(ROLLBACK, 'synthetic native rollback'); END`);
   source.scripts = { items: [record('items', 'new', 2)] };
   await assert.rejects(pipeline.run(), (error: unknown) => {
@@ -5594,8 +5723,12 @@ test('an overwrite_dedup whose key narrows builds its index after the old rows a
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        version: { description: 'Version of the record.', type: 'integer' },
+      },
       required: ['id', 'version'],
     },
     supportedSyncModes: ['full_refresh'],
@@ -6025,8 +6158,12 @@ test('text with a lone surrogate fails its stream instead of loading as a replac
   const notes = new Stream({
     ...scripted('notes'),
     jsonSchema: {
+      description: 'One test record.',
       type: 'object',
-      properties: { id: { type: 'string' }, body: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        body: { description: 'Body of the record.', type: 'string' },
+      },
       required: ['id', 'body'],
     },
   });
@@ -6087,7 +6224,11 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
       type: 'object',
       description: 'Ledger entries.',
       properties: {
-        id: { type: 'string', format: 'int64', ...described('Entry id.') },
+        id: {
+          type: 'string',
+          format: 'int64',
+          ...described('Entry id.'),
+        },
         version: {
           type: 'string',
           format: 'int64',
@@ -6177,16 +6318,12 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
           path: join(scratch.path, 'state.sqlite'),
         }),
         steps: [
-          new Copy(
-            ledger,
-            destination.table('raw_ledger').withReaderView('ledger'),
-            {
-              id: 'ledger',
-              syncMode: 'incremental',
-              destinationSyncMode: 'append_dedup',
-              cursorField: 'version',
-            },
-          ),
+          new Copy(ledger, destination.table('ledger'), {
+            id: 'ledger',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
         ],
       }),
     ],
@@ -6280,8 +6417,12 @@ test('a reset replaces only its partition at the next commit, and one a failure 
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { account: { type: 'string' }, id: { type: 'string' } },
+      properties: {
+        account: { description: 'Account of the record.', type: 'string' },
+        id: { description: 'Id of the record.', type: 'string' },
+      },
     },
     primaryKey: ['account', 'id'],
     partitionKey: ['account'],
@@ -6380,8 +6521,12 @@ test('a reset of a partition reloads it into a hidden target: readers keep its o
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { account: { type: 'string' }, id: { type: 'string' } },
+      properties: {
+        account: { description: 'Account of the record.', type: 'string' },
+        id: { description: 'Id of the record.', type: 'string' },
+      },
     },
     primaryKey: ['account', 'id'],
     partitionKey: ['account'],
@@ -6490,8 +6635,12 @@ test('a reset of a partition that a failure discards before a commit opens no re
   const items = new Stream({
     name: 'items',
     jsonSchema: {
+      description: 'One items record.',
       type: 'object',
-      properties: { account: { type: 'string' }, id: { type: 'string' } },
+      properties: {
+        account: { description: 'Account of the record.', type: 'string' },
+        id: { description: 'Id of the record.', type: 'string' },
+      },
     },
     primaryKey: ['account', 'id'],
     partitionKey: ['account'],
@@ -6588,7 +6737,11 @@ test('a full refresh ignores resets, so an appending copy keeps its history', as
   let messages: SourceMessage[] = [];
   const items = new Stream({
     name: 'items',
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    jsonSchema: {
+      description: 'One items record.',
+      type: 'object',
+      properties: { id: { description: 'Id of the record.', type: 'string' } },
+    },
     primaryKey: ['id'],
     supportedSyncModes: ['full_refresh', 'incremental'],
     sourceDefinedCursor: true,
@@ -6636,7 +6789,7 @@ test('a full refresh ignores resets, so an appending copy keeps its history', as
   const ids = () => {
     using database = open(destination.path, { readOnly: true });
     return database
-      .prepare('SELECT id FROM items ORDER BY rowid')
+      .prepare('SELECT id FROM raw_items ORDER BY rowid')
       .all()
       .map(({ id }) => id);
   };
@@ -6736,15 +6889,11 @@ async function shapeChanges(
           destination,
           checkpoints,
           steps: [
-            new Copy(
-              stream,
-              destination.table('raw_items').withReaderView('items'),
-              {
-                id: 'items',
-                syncMode: 'incremental',
-                destinationSyncMode: 'append_dedup',
-              },
-            ),
+            new Copy(stream, destination.table('items'), {
+              id: 'items',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
           ],
         }),
       ],
@@ -7112,7 +7261,11 @@ test('an overwrite whose stored table no longer fits reloads it rather than evol
   const run = (properties: Properties, rows: readonly object[]) => {
     const items = new Stream({
       name: 'items',
-      jsonSchema: { type: 'object', properties },
+      jsonSchema: {
+        description: 'One items record.',
+        type: 'object',
+        properties,
+      },
       supportedSyncModes: ['full_refresh'],
     });
     class Snapshot extends LiveSource {
@@ -7153,10 +7306,15 @@ test('an overwrite whose stored table no longer fits reloads it rather than evol
       ],
     }).run();
   };
-  await run({ size: { type: 'string' } }, [{ size: 'L' }]);
+  await run({ size: { type: 'string', description: 'Size.' } }, [
+    { size: 'L' },
+  ]);
 
   // An INTEGER column refuses the stored 'L', which this run replaces anyway.
-  const [reloaded] = await run({ size: { type: 'integer' } }, [{ size: 3 }]);
+  const [reloaded] = await run(
+    { size: { type: 'integer', description: 'Size.' } },
+    [{ size: 3 }],
+  );
 
   assert.equal(reloaded?.count, 1);
   using database = open(destination.path, { readOnly: true });
@@ -7173,7 +7331,11 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
   await using scratch = await new TemporaryFiles().directory('elt-reload-');
   const items = new Stream({
     name: 'items',
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    jsonSchema: {
+      description: 'One items record.',
+      type: 'object',
+      properties: { id: { description: 'Id of the record.', type: 'string' } },
+    },
     primaryKey: ['id'],
     supportedSyncModes: ['incremental'],
     sourceDefinedCursor: true,
@@ -7326,7 +7488,7 @@ test('a stored table that no longer fits evolves without a reload, keeping every
   // it back to the stream's shape with its rows and their files.
   {
     using database = open(destination.path);
-    database.exec('ALTER TABLE files ADD COLUMN extra TEXT');
+    database.exec('ALTER TABLE raw_files ADD COLUMN extra TEXT');
   }
 
   const evolved = (await pipeline.run()).map(({ count }) => count);
@@ -7336,7 +7498,7 @@ test('a stored table that no longer fits evolves without a reload, keeping every
     assert.equal(
       database
         .prepare(
-          `SELECT 1 FROM pragma_table_info('files') WHERE "name" = 'extra'`,
+          `SELECT 1 FROM pragma_table_info('raw_files') WHERE "name" = 'extra'`,
         )
         .get(),
       undefined,
@@ -7490,12 +7652,10 @@ test('a copy that declares its columns from the stream and stores its files keep
     }
     const copy = new Copy(
       stream,
-      destination
-        .table('raw_docs', (c) => [
-          ...SQLiteColumns.fromSchema(stream.jsonSchema),
-          c.text('attachmentRef').from(stream.file.store(files)),
-        ])
-        .withReaderView('docs'),
+      destination.table('docs', (c) => [
+        ...SQLiteColumns.fromSchema(stream.jsonSchema),
+        c.text('attachmentRef').from(stream.file.store(files)),
+      ]),
       {
         id: 'docs',
         syncMode: 'incremental',
@@ -7588,8 +7748,9 @@ class CheckedSource extends Source {
   readonly a = new Stream({
     name: 'a',
     jsonSchema: {
+      description: 'One a record.',
       type: 'object',
-      properties: { id: { type: 'string' } },
+      properties: { id: { description: 'Id of the record.', type: 'string' } },
       required: ['id'],
     },
     supportedSyncModes: ['full_refresh'],

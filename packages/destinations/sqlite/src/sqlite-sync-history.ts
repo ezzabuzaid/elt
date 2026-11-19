@@ -86,7 +86,7 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
         declare.run(
           id,
           copy.from.name,
-          copy.to.name,
+          copy.to.raw,
           copy.configuration.syncMode,
           copy.configuration.destinationSyncMode,
           coverage.description,

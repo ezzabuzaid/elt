@@ -757,13 +757,13 @@ const unchanged = Object.fromEntries(
   ].map((name) => [name, nothing]),
 );
 
-// A file column's chunk table, by the documented rule: _elt_files_ and the
-// first 40 hex digits of SHA-256 over the JSON of [table, column], both in
-// ASCII lower case.
-const chunkTable = (table: string, column: string) =>
+// The chunk table of a file column of the target named view, by the
+// documented rule: _elt_files_ and the first 40 hex digits of SHA-256 over the
+// JSON of [raw table, column], both in ASCII lower case.
+const chunkTable = (view: string, column: string) =>
   `"_elt_files_${hash(
     'sha256',
-    JSON.stringify([table.toLowerCase(), column.toLowerCase()]),
+    JSON.stringify([`raw_${view}`.toLowerCase(), column.toLowerCase()]),
   ).slice(0, 40)}"`;
 
 async function scratch() {

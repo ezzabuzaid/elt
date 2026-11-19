@@ -131,7 +131,7 @@ function notesPipeline(directory: string) {
   const destination = new SQLiteDestination({
     path: join(directory, 'data.sqlite'),
   });
-  const target = destination.table('raw_notes').withReaderView('notes');
+  const target = destination.table('notes');
   const pipeline = new Pipeline({
     clock: globalThis,
     history: new SQLiteSyncHistory(),
@@ -398,7 +398,7 @@ test('a dataset that fails during a watch names itself, and the sync history doe
           path: join(scratch.path, 'state.sqlite'),
         }),
         steps: [
-          new Copy(source.notes, destination.table('raw_notes'), {
+          new Copy(source.notes, destination.table('notes'), {
             id: 'notes',
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
@@ -501,9 +501,7 @@ test('a target dropped by hand does not stop a watch: its dataset waits with its
     }
   }
   const refreshes = new Refreshes();
-  const target = destination
-    .table('raw_dropped')
-    .withReaderView('dropped_rows');
+  const target = destination.table('dropped_rows');
   const connection = (source: Rows, to: ReturnType<typeof destination.table>) =>
     new Connection({
       name: source.identity,
@@ -516,7 +514,7 @@ test('a target dropped by hand does not stop a watch: its dataset waits with its
     history: new SQLiteSyncHistory(),
     connections: [
       connection(dropped, target),
-      connection(other, destination.table('raw_other')),
+      connection(other, destination.table('other')),
     ],
     derived: [
       new ComputedDataset({
@@ -557,7 +555,7 @@ test('a target dropped by hand does not stop a watch: its dataset waits with its
     {
       // A person's hand: no operation of a pipeline drops a target.
       using database = open(path);
-      database.exec('DROP TABLE raw_dropped');
+      database.exec('DROP TABLE raw_dropped_rows');
     }
     const beforeOther = refreshes.count;
     // A commit of the other connection asks for a refresh over the view of the
@@ -566,14 +564,14 @@ test('a target dropped by hand does not stop a watch: its dataset waits with its
     other.dial.turns += 1;
     await timebox(() => {
       assert.ok(refreshes.count > beforeOther);
-      assert.equal(read('SELECT id FROM raw_other').length, 2);
+      assert.equal(read('SELECT id FROM other').length, 2);
     }, untilShown);
     const during = read('SELECT id FROM shouts').map(({ id }) => id);
     const beforeReload = refreshes.count;
     dropped.dial.turns += 1;
     await timebox(() => {
       assert.ok(refreshes.count > beforeReload);
-      assert.equal(read('SELECT id FROM raw_dropped').length, 1);
+      assert.equal(read('SELECT id FROM raw_dropped_rows').length, 1);
     }, untilShown);
     await timebox(() => {
       assert.deepEqual(

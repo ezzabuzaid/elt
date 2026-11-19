@@ -145,7 +145,7 @@ async function filesImport(directory: string) {
   const destination = new SQLiteDestination({
     path: join(directory, 'data.sqlite'),
   });
-  const target = destination.table('raw_files').withReaderView('files');
+  const target = destination.table('files');
   let parser = new TextParser('text-v1');
   const pipeline = new Pipeline({
     clock: globalThis,
@@ -157,7 +157,7 @@ async function filesImport(directory: string) {
         destination,
         steps: [
           new Copy(source.files, target),
-          new Copy(source.notes, destination.table('raw_notes')),
+          new Copy(source.notes, destination.table('notes')),
         ],
       }),
     ],
@@ -253,7 +253,7 @@ test('a computed dataset reads a view declared before it: the text of each file 
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'data.sqlite'),
   });
-  const target = destination.table('raw_files').withReaderView('files');
+  const target = destination.table('files');
   const named = new View({
     into: destination,
     name: 'text_files',
@@ -723,7 +723,7 @@ function modelImport(directory: string, model: Rule<string, RuleColumns>) {
   const destination = new SQLiteDestination({
     path: join(directory, 'data.sqlite'),
   });
-  const target = destination.table('raw_files').withReaderView('files');
+  const target = destination.table('files');
   const pipeline = new Pipeline({
     clock: globalThis,
     history: new SQLiteSyncHistory(),

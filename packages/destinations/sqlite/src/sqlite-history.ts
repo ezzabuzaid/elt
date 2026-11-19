@@ -25,9 +25,9 @@ const registry = new Declaration(
 // each column of the target that it does not have, and never drops one.
 export class SQLiteHistory {
   readonly name: string;
-  readonly #table: Pick<SQLiteTable, 'name' | 'location'>;
+  readonly #table: Pick<SQLiteTable, 'raw' | 'location'>;
 
-  constructor(table: Pick<SQLiteTable, 'name' | 'location'>) {
+  constructor(table: Pick<SQLiteTable, 'raw' | 'location'>) {
     this.#table = table;
     this.name = `_elt_history_${hash('sha256', table.location)}`;
   }
@@ -60,7 +60,7 @@ export class SQLiteHistory {
     rows: string,
     params: readonly SQLInputValue[] = [],
   ): void {
-    const columns = names(database, this.#table.name);
+    const columns = names(database, this.#table.raw);
     const kept = new Set(
       names(database, this.name).map((name) => identifiers.key(name)),
     );

@@ -38,8 +38,12 @@ class Notes extends Source {
   readonly notes = new Stream({
     name: 'notes',
     jsonSchema: {
+      description: 'One notes record.',
       type: 'object',
-      properties: { id: { type: 'string' }, text: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        text: { description: 'Text of the record.', type: 'string' },
+      },
       required: ['id', 'text'],
     },
     primaryKey: ['id'],
@@ -359,7 +363,7 @@ test('a refresh that a killed process left open hides every later position, unti
     import { ComputedDataset, SQLiteDestination, SQLiteSyncHistory } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'index.ts')).href)};
     class Notes extends Source {
       identity = 'notes';
-      notes = new Stream({ name: 'notes', jsonSchema: { type: 'object', properties: { id: { type: 'string' }, text: { type: 'string' } }, required: ['id', 'text'] }, primaryKey: ['id'], supportedSyncModes: ['full_refresh'] });
+      notes = new Stream({ name: 'notes', jsonSchema: { type: 'object', description: 'A note.', properties: { id: { type: 'string', description: 'Note id.' }, text: { type: 'string', description: 'Note text.' } }, required: ['id', 'text'] }, primaryKey: ['id'], supportedSyncModes: ['full_refresh'] });
       catalog = new Catalog([this.notes]);
       coverage() { return { description: 'test', selection: {} }; }
       async currentAsOf() { return null; }

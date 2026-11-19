@@ -1,10 +1,18 @@
 # @eltjs/elt-sqlite
 
-The SQLite destination of elt. It keeps the stream of each copy as a raw table in one SQLite file, with a reader view over it and a catalog that describes each table, view and column. A reader queries the file with SQL, for example with `sqlite3 -readonly`. The SQLite destination also has two kinds of derived dataset: a `View`, which SQLite computes on each read, and a `ComputedDataset`, which a rule computes on write. A dbt model has the same two kinds: it is materialized as a view or as a table.
+The SQLite destination of elt. It keeps the stream of each copy in one SQLite file: a reader view, which the host names, over a raw table, and a catalog that describes each view and column. A reader queries the file with SQL, for example with `sqlite3 -readonly`. The SQLite destination also has two kinds of derived dataset: a `View`, which SQLite computes on each read, and a `ComputedDataset`, which a rule computes on write. A dbt model has the same two kinds: it is materialized as a view or as a table.
 
 This README tells how the SQLite destination keeps columns, commits, checkpoints and the sync history, and how it keeps derived datasets. The pipeline itself is in [elt](../../elt/README.md).
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../elt/CONTEXT.md) for the words of all of elt.
+
+## Names
+
+`sqlite.table('notes')` names the reader view `notes`. The destination keeps the rows of the target in the raw table `raw_notes`, in the same file, and makes the view in the first commit of the target. A reader queries the view, and the catalog lists it. See [ADR 0028 of elt](../../elt/docs/adr/0028-a-host-names-each-relation-that-readers-query-once.md) and [ADR 0010](./docs/adr/0010-the-raw-table-shares-the-file-with-its-reader-view.md).
+
+- The stream of each copy, and each field that a column holds, must have a JSON Schema `description`. A copy that lacks one fails at declaration, before the pipeline reads. The error names the stream and each missing description.
+- `sqlite.table(name)` refuses a name that the destination gives to a relation of its own: `catalog`, `sync_attempts`, `extraction_coverage`, `sync_status`, `stream_status` and `derived_status`. The [naming rule](../../elt/README.md#names) renames a name that starts with `_elt_`.
+- A `View` or a `ComputedDataset` that has the name of a reader view or a raw table of a copy in the same file is refused before the pipeline reads.
 
 ## Columns
 
@@ -121,7 +129,7 @@ Each commit in the SQLite file has a number. A reader that compares the file at 
 - As of a position before the newest commit, each table, its reader view and each view of the file show the rows that the commit of the position left. A column that a later commit added is `NULL`. The sync history keeps no versions, and a read of it fails. A stored view that names a table as `main.<table>` makes the reading fail, because that name shows the table as it is now.
 - At each position, also the newest, each table of a reading shows the external schema of its stream: its columns and `loaded_at`, or the columns of a computed dataset. Thus a reading shows the same columns at each position. A stored view that reads `committed_in` or `_elt_row_hash` of a table fails when it is read as of a position before the newest commit.
 
-- `asOfSelect(database, table, position, { schema })` gives the `SELECT` that reads one table as of a position: the rows of the table with `committed_in ≤ P`, and the rows of its history with `committed_in ≤ P < replaced_in`, with the columns of the external schema. A reading uses the same `SELECT` for its `TEMP` views. `schema` names the SQLite file where `database` attached it, `main` by default. Thus a reader can copy a table as of a position into a database of its own. It checks the position as `reading` does, so run the `SELECT` in the same read transaction. See [Read the file as of a position](./docs/recipes/read-the-file-as-of-a-position.md).
+- `asOfSelect(database, table, position, { schema })` gives the `SELECT` that reads one raw table, such as `raw_prices`, as of a position: the rows of the table with `committed_in ≤ P`, and the rows of its history with `committed_in ≤ P < replaced_in`, with the columns of the external schema. A reading uses the same `SELECT` for its `TEMP` views. `schema` names the SQLite file where `database` attached it, `main` by default. Thus a reader can copy a table as of a position into a database of its own. It checks the position as `reading` does, so run the `SELECT` in the same read transaction. See [Read the file as of a position](./docs/recipes/read-the-file-as-of-a-position.md).
 - `asOfDefinitions(database, { schema, position, prefix })` gives the `CREATE TEMP VIEW` statements of the [views of a position](./CONTEXT.md) of the file that `database` attached as `schema`, or `{ expired }` as `asOfSelect` does. Thus one connection reads several files as of a position each, with no copy. Each table, reader view, view and table of the sync history is the view `<prefix>_<name>`, for example `mail_messages`:
   - A table reads as `asOfSelect` reads it.
   - A stored view names the views of the position in place of its tables and views. SQLite's own `ALTER TABLE … RENAME` maps the names, in a database of its own with a table of the same columns for each name. A stored view that reads a table with no view of the position, for example `catalog`, fails when it is read.

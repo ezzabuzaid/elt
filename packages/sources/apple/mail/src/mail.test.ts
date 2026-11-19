@@ -55,21 +55,21 @@ import { VisionWorker } from '@eltjs/source-apple-macos/vision';
 
 import { AppleMailSource } from './apple-mail-source.ts';
 
-// A file column's chunk table, by the documented rule: _elt_files_ and the
-// first 40 hex digits of SHA-256 over the JSON of [table, column], both in
-// ASCII lower case.
-const chunkTable = (table: string, column: string) =>
+// The chunk table of a file column of the target named view, by the
+// documented rule: _elt_files_ and the first 40 hex digits of SHA-256 over the
+// JSON of [raw table, column], both in ASCII lower case.
+const chunkTable = (view: string, column: string) =>
   `"_elt_files_${hash(
     'sha256',
-    JSON.stringify([table.toLowerCase(), column.toLowerCase()]),
+    JSON.stringify([`raw_${view}`.toLowerCase(), column.toLowerCase()]),
   ).slice(0, 40)}"`;
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
 // One Apple source loaded as the hosts load it: every stream incrementally
-// into raw_<stream> of one SQLite file, read through its documented
-// <snake_stream> view, with files kept beside it.
+// into the documented reader view <snake_stream> of one SQLite file, with
+// files kept beside it.
 async function appleImport(source: Source, directory: string) {
   mkdirSync(directory, { recursive: true });
   const path = join(directory, 'data.sqlite');
@@ -87,19 +87,15 @@ async function appleImport(source: Source, directory: string) {
       (stream) =>
         new Copy(
           stream,
-          destination
-            .table(
-              `raw_${stream.name}`,
-              stream.supportsFileTransfer
-                ? (columns) => [
-                    ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                    columns
-                      .text('attachmentRef')
-                      .from(stream.file.store(files)),
-                  ]
-                : undefined,
-            )
-            .withReaderView(snake(stream.name)),
+          destination.table(
+            snake(stream.name),
+            stream.supportsFileTransfer
+              ? (columns) => [
+                  ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                  columns.text('attachmentRef').from(stream.file.store(files)),
+                ]
+              : undefined,
+          ),
           {
             id: stream.name,
             syncMode: 'incremental',

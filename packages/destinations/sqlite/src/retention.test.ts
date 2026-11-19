@@ -94,11 +94,12 @@ const notes = () =>
   new Stream({
     name: 'notes',
     jsonSchema: {
+      description: 'One notes record.',
       type: 'object',
       properties: {
-        id: { type: 'string' },
-        version: { type: 'integer' },
-        body: { type: 'string' },
+        id: { description: 'Id of the record.', type: 'string' },
+        version: { description: 'Version of the record.', type: 'integer' },
+        body: { description: 'Body of the record.', type: 'string' },
       },
       required: ['id', 'version'],
     },
@@ -190,7 +191,7 @@ function asOf(destination: SQLiteDestination, sql: string, position?: string) {
 function replaced(destination: SQLiteDestination, target: string) {
   const [recorded] = storedRows(
     destination.path,
-    `SELECT history FROM _elt_histories WHERE target = '${target}'`,
+    `SELECT history FROM _elt_histories WHERE target = 'raw_${target}'`,
   );
   if (recorded === undefined) assert.fail(`${target} has no history`);
   return storedRows(
@@ -464,8 +465,12 @@ const documents = () =>
   new Stream({
     name: 'documents',
     jsonSchema: {
+      description: 'One documents record.',
       type: 'object',
-      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        version: { description: 'Version of the record.', type: 'integer' },
+      },
       required: ['id', 'version'],
     },
     primaryKey: ['id'],
@@ -486,7 +491,7 @@ async function document(
 }
 
 // The chunk table of the bytes of the documents, by the documented rule.
-const chunks = `"_elt_files_${hash('sha256', JSON.stringify(['documents', 'bytes'])).slice(0, 40)}"`;
+const chunks = `"_elt_files_${hash('sha256', JSON.stringify(['raw_documents', 'bytes'])).slice(0, 40)}"`;
 
 test('a commit after the window deletes the stored files that only expired history rows refer to, and keeps the files of current rows and of newer history rows', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-retention-');
@@ -547,11 +552,12 @@ test('a stored file that an expired history row and a current row both refer to 
   const stream = new Stream({
     name: 'documents',
     jsonSchema: {
+      description: 'One documents record.',
       type: 'object',
       properties: {
-        id: { type: 'string' },
-        version: { type: 'integer' },
-        title: { type: 'string' },
+        id: { description: 'Id of the record.', type: 'string' },
+        version: { description: 'Version of the record.', type: 'integer' },
+        title: { description: 'Title of the record.', type: 'string' },
       },
       required: ['id', 'version'],
     },
@@ -625,11 +631,12 @@ test('a stored file that an expired history row and a newer history row both ref
   const stream = new Stream({
     name: 'documents',
     jsonSchema: {
+      description: 'One documents record.',
       type: 'object',
       properties: {
-        id: { type: 'string' },
-        version: { type: 'integer' },
-        title: { type: 'string' },
+        id: { description: 'Id of the record.', type: 'string' },
+        version: { description: 'Version of the record.', type: 'integer' },
+        title: { description: 'Title of the record.', type: 'string' },
       },
       required: ['id', 'version'],
     },
@@ -756,7 +763,7 @@ test('the select of a target as of a position, run on the file or on the file at
     position: string,
     schema?: string,
   ) => {
-    const sql = asOfSelect(database, 'notes', position, { schema });
+    const sql = asOfSelect(database, 'raw_notes', position, { schema });
     if (typeof sql !== 'string') assert.fail(sql.expired);
     return database
       .prepare(`SELECT * FROM (${sql}) ORDER BY id`)

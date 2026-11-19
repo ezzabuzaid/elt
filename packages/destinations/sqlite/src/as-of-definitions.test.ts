@@ -133,16 +133,12 @@ function notesImport(directory: string, retention?: Temporal.Duration) {
       sql: "SELECT group_concat(body, ',' ORDER BY id) AS bodies FROM bodies",
     }),
   ];
-  const copy = new Copy(
-    notes,
-    destination.table('raw_notes').withReaderView('notes'),
-    {
-      id: 'notes',
-      syncMode: 'incremental',
-      destinationSyncMode: 'append_dedup',
-      cursorField: 'version',
-    },
-  );
+  const copy = new Copy(notes, destination.table('notes'), {
+    id: 'notes',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    cursorField: 'version',
+  });
   const pass = (steps: readonly SourceMessage[]) =>
     new Pipeline({
       clock,

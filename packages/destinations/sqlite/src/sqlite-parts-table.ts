@@ -8,7 +8,7 @@ import {
 } from '@eltjs/elt';
 
 import { SQLiteHistory, rowHash } from './sqlite-history.ts';
-import { identifiers, quote } from './sqlite-identifiers.ts';
+import { identifiers, quote, rawTable } from './sqlite-identifiers.ts';
 import { ruleColumnTypes, ruleValue } from './sqlite-rule-columns.ts';
 import type { SQLiteView } from './sqlite-views.ts';
 
@@ -43,12 +43,12 @@ export class SQLitePartsTable {
       'key' | 'output' | 'place'
     >;
   }) {
-    this.#name = `raw_${dataset}_parts`;
     this.#view = `${dataset}_parts`;
+    this.#name = rawTable(this.#view);
     this.#description = `The parts of ${dataset}, one row for each part of an input, in order: ${description}`;
     this.#rule = rule;
     this.#history = new SQLiteHistory({
-      name: this.#name,
+      raw: this.#name,
       location: identifiers.key(this.#name),
     });
     const ruleColumns = { ...rule.output, ...rule.place };

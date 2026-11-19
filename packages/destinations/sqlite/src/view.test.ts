@@ -97,12 +97,7 @@ function recordsPipeline(path: string, source: Records, sql: string) {
         name: 'records',
         source,
         destination,
-        steps: [
-          new Copy(
-            source.records,
-            destination.table('raw_records').withReaderView('records'),
-          ),
-        ],
+        steps: [new Copy(source.records, destination.table('records'))],
       }),
     ],
     derived: [
@@ -209,12 +204,7 @@ test(
       name: 'records',
       source,
       destination,
-      steps: [
-        new Copy(
-          source.records,
-          destination.table('raw_records').withReaderView('records'),
-        ),
-      ],
+      steps: [new Copy(source.records, destination.table('records'))],
     });
     // What a reader in a sandbox reads, with the folder closed to writes.
     const read = (sql: string) => {
@@ -351,12 +341,7 @@ test('a view that reads a view still waiting for its copy waits too, and both ap
         name: 'records',
         source,
         destination,
-        steps: [
-          new Copy(
-            source.records,
-            destination.table('raw_records').withReaderView('records'),
-          ),
-        ],
+        steps: [new Copy(source.records, destination.table('records'))],
       }),
     ],
     derived: [
@@ -420,10 +405,7 @@ function judgedPipeline(
         source: sources.records,
         destination,
         steps: [
-          new Copy(
-            sources.records.records,
-            destination.table('raw_records').withReaderView('records'),
-          ),
+          new Copy(sources.records.records, destination.table('records')),
         ],
       }),
       new Connection({
@@ -431,12 +413,7 @@ function judgedPipeline(
         source: sources.inputs,
         destination,
         steps: [
-          new Copy(
-            sources.inputs.records,
-            destination
-              .table('raw_dataset_inputs')
-              .withReaderView('dataset_inputs'),
-          ),
+          new Copy(sources.inputs.records, destination.table('dataset_inputs')),
         ],
       }),
     ],
@@ -530,12 +507,7 @@ test('a view that reads a view declared after it fails the run with the error of
         name: 'records',
         source,
         destination,
-        steps: [
-          new Copy(
-            source.records,
-            destination.table('raw_records').withReaderView('records'),
-          ),
-        ],
+        steps: [new Copy(source.records, destination.table('records'))],
       }),
     ],
     derived: [
@@ -597,12 +569,7 @@ test('under a watch, a view that reads a view still waiting for its copy waits t
         name: 'records',
         source,
         destination,
-        steps: [
-          new Copy(
-            source.records,
-            destination.table('raw_records').withReaderView('records'),
-          ),
-        ],
+        steps: [new Copy(source.records, destination.table('records'))],
       }),
     ],
     derived: [

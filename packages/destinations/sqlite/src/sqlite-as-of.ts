@@ -265,16 +265,19 @@ export function storedViews(
     .map(({ name, sql }) => ({ name: String(name), sql: String(sql) }));
 }
 
-// Refuses a stored view that reads a versioned target as main."target": the
-// name skips the TEMP view of the target, so the view would show the target
-// as it is now. SQLite tells which view reads each table while it prepares a
-// statement, so each view is prepared once with an authorizer that watches.
+// Refuses a stored view that reads a versioned target as main."target",
+// itself or through a view of main such as a reader view: the name skips the
+// TEMP view, so the view would show the target as it is now. SQLite tells
+// which table a statement reads in which schema while it prepares it, so each
+// stored view is prepared once with an authorizer that watches, and the view
+// prepared is the one that names main.
 function refuseQualified(
   database: DatabaseSync,
   views: readonly string[],
   targets: ReadonlySet<string>,
 ): void {
-  let found: { readonly view: string; readonly target: string } | undefined;
+  let found: string | undefined;
+  // The TEMP view of a target reads main."target" under the target's name.
   database.setAuthorizer((action, table, _column, schema, view) => {
     if (
       action === constants.SQLITE_READ &&
@@ -283,7 +286,7 @@ function refuseQualified(
       targets.has(identifiers.key(table)) &&
       identifiers.key(view ?? '') !== identifiers.key(table)
     )
-      found ??= { view: view ?? '', target: table };
+      found ??= table;
     return constants.SQLITE_OK;
   });
   try {
@@ -295,7 +298,7 @@ function refuseQualified(
       }
       if (found !== undefined)
         throw new TypeError(
-          `View ${quote(found.view)} reads ${quote(found.target)} as main.${quote(found.target)}, which shows it as it is now, not as of a position; name the table without main.`,
+          `View ${quote(view)} reads ${quote(found)} through main, which shows it as it is now, not as of a position; name the relations without main.`,
         );
     }
   } finally {

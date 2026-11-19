@@ -61,13 +61,13 @@ import {
 import { googleCalendarAttachments } from './google-calendar-attachments.ts';
 import { storedRows } from './testing/stored-rows.ts';
 
-// A file column's chunk table, by the documented rule: _elt_files_ and the
-// first 40 hex digits of SHA-256 over the JSON of [table, column], both in
-// ASCII lower case.
-const chunkTable = (table: string, column: string) =>
+// The chunk table of a file column of the target named view, by the
+// documented rule: _elt_files_ and the first 40 hex digits of SHA-256 over the
+// JSON of [raw table, column], both in ASCII lower case.
+const chunkTable = (view: string, column: string) =>
   `"_elt_files_${hash(
     'sha256',
-    JSON.stringify([table.toLowerCase(), column.toLowerCase()]),
+    JSON.stringify([`raw_${view}`.toLowerCase(), column.toLowerCase()]),
   ).slice(0, 40)}"`;
 
 const execFile = promisify(execFileCallback);
@@ -82,8 +82,8 @@ const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
 // One Apple source loaded as the hosts load it: every stream incrementally
-// into raw_<stream> of one SQLite file, read through its documented
-// <snake_stream> view, with files kept beside it.
+// into the documented reader view <snake_stream> of one SQLite file, with
+// files kept beside it.
 async function appleImport(source: Source, directory: string) {
   mkdirSync(directory, { recursive: true });
   const path = join(directory, 'data.sqlite');
@@ -101,19 +101,15 @@ async function appleImport(source: Source, directory: string) {
       (stream) =>
         new Copy(
           stream,
-          destination
-            .table(
-              `raw_${stream.name}`,
-              stream.supportsFileTransfer
-                ? (columns) => [
-                    ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                    columns
-                      .text('attachmentRef')
-                      .from(stream.file.store(files)),
-                  ]
-                : undefined,
-            )
-            .withReaderView(snake(stream.name)),
+          destination.table(
+            snake(stream.name),
+            stream.supportsFileTransfer
+              ? (columns) => [
+                  ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                  columns.text('attachmentRef').from(stream.file.store(files)),
+                ]
+              : undefined,
+          ),
           {
             id: stream.name,
             syncMode: 'incremental',
@@ -694,7 +690,7 @@ test(
       const columns = Object.keys(Object(stream.jsonSchema.properties));
       return database
         .prepare(
-          `SELECT ${columns.map((column) => `"${column}"`).join(', ')} FROM "${stream.name}" ORDER BY rowid`,
+          `SELECT ${columns.map((column) => `"${column}"`).join(', ')} FROM "raw_${stream.name}" ORDER BY rowid`,
         )
         .all()
         .map((row) => ({ ...row }));
@@ -2204,7 +2200,7 @@ test('a Calendar pass over a large ICS export holds one record of a stream at a 
         name: 'calendar',
         source,
         destination,
-        steps: [new Copy(source.icsParameters, destination.table('raw_icsParameters'))],
+        steps: [new Copy(source.icsParameters, destination.table('icsParameters'))],
       })],
     }).run();
   `;
@@ -2238,7 +2234,7 @@ test('a Calendar pass over a large ICS export holds one record of a stream at a 
   });
   assert.deepEqual(
     {
-      ...imported.prepare('SELECT count(*) AS n FROM raw_icsParameters').get(),
+      ...imported.prepare('SELECT count(*) AS n FROM icsParameters').get(),
     },
     { n: 200_000 },
   );
@@ -2423,7 +2419,7 @@ test(
     assert.deepEqual(
       database
         .prepare(
-          `SELECT filename, formatType, inline, (SELECT c.bytes FROM ${chunkTable('attachments', 'bytes')} c WHERE c.file = a.bytes AND c.n = 0) AS bytes FROM attachments a ORDER BY a.rowid`,
+          `SELECT filename, formatType, inline, (SELECT c.bytes FROM ${chunkTable('attachments', 'bytes')} c WHERE c.file = a.bytes AND c.n = 0) AS bytes FROM raw_attachments a ORDER BY a.rowid`,
         )
         .all()
         .map(({ bytes, ...row }) => {
@@ -2514,7 +2510,9 @@ test(
 
     using database = open(sqlite.path, { readOnly: true });
     const stored = database
-      .prepare('SELECT filename, attachmentRef FROM attachments ORDER BY rowid')
+      .prepare(
+        'SELECT filename, attachmentRef FROM raw_attachments ORDER BY rowid',
+      )
       .all();
     const sha = (bytes: Buffer) => hash('sha256', bytes);
     assert.deepEqual(
@@ -2771,7 +2769,7 @@ async function googleAttachmentFiles(
   using database = open(destination.path, { readOnly: true });
   const saved: Record<string, Uint8Array | null> = {};
   for (const { uri, attachmentRef } of database
-    .prepare('SELECT uri, attachmentRef FROM attachments ORDER BY rowid')
+    .prepare('SELECT uri, attachmentRef FROM raw_attachments ORDER BY rowid')
     .all())
     saved[String(uri)] =
       attachmentRef === null

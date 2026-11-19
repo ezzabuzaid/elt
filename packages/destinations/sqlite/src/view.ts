@@ -49,7 +49,7 @@ export class View extends DerivedDataset<SQLiteTable> {
   override validate(connections: readonly Connection<SQLiteTable>[]): void {
     if (this.#made(connections).has(this.name.toLowerCase()))
       throw new TypeError(
-        `View ${this.name} has the name of a table or reader view a copy makes`,
+        `View ${this.name} has the name of a relation a copy makes`,
       );
   }
 
@@ -83,7 +83,7 @@ export class View extends DerivedDataset<SQLiteTable> {
     });
   }
 
-  // The tables and reader views the pipeline's copies make in this view's
+  // The reader views and raw tables the pipeline's copies make in this view's
   // file, in lower case, as SQLite compares names.
   #made(connections: readonly Connection<SQLiteTable>[]): Set<string> {
     return new Set(
@@ -94,8 +94,7 @@ export class View extends DerivedDataset<SQLiteTable> {
             destination.path === this.into.path,
         )
         .flatMap(({ steps }) => steps)
-        .flatMap(({ to }) => [to.name, to.readerView])
-        .filter((name) => name !== undefined)
+        .flatMap(({ to }) => [to.name, to.raw])
         .map((name) => name.toLowerCase()),
     );
   }

@@ -26,7 +26,7 @@ const passes = `
     identity = 'parameters';
     streams = Array.from({ length: Number(process.env.STREAMS) }, (_, index) => new Stream({
       name: 'parameters' + index,
-      jsonSchema: { type: 'object', properties: { id: { type: 'string' }, value: { type: 'string' } } },
+      jsonSchema: { type: 'object', description: 'A parameter.', properties: { id: { type: 'string', description: 'Parameter id.' }, value: { type: 'string', description: 'Parameter value.' } } },
       primaryKey: ['id'],
       sourceDefinedCursor: true,
       emitsDeletes: true,
@@ -70,7 +70,7 @@ const passes = `
       source,
       destination,
       checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
-      steps: source.streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), fullRefresh
+      steps: source.streams.map((stream) => new Copy(stream, destination.table(stream.name), fullRefresh
         ? { id: stream.name, syncMode: 'full_refresh', destinationSyncMode: 'overwrite' }
         : { id: stream.name, syncMode: 'incremental', destinationSyncMode: 'append_dedup' })),
     })],

@@ -54,8 +54,8 @@ const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
 // One Apple source loaded as the hosts load it: every stream incrementally
-// into raw_<stream> of one SQLite file, read through its documented
-// <snake_stream> view, with files kept beside it.
+// into the documented reader view <snake_stream> of one SQLite file, with
+// files kept beside it.
 async function appleImport(source: Source, directory: string) {
   mkdirSync(directory, { recursive: true });
   const path = join(directory, 'data.sqlite');
@@ -73,19 +73,15 @@ async function appleImport(source: Source, directory: string) {
       (stream) =>
         new Copy(
           stream,
-          destination
-            .table(
-              `raw_${stream.name}`,
-              stream.supportsFileTransfer
-                ? (columns) => [
-                    ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                    columns
-                      .text('attachmentRef')
-                      .from(stream.file.store(files)),
-                  ]
-                : undefined,
-            )
-            .withReaderView(snake(stream.name)),
+          destination.table(
+            snake(stream.name),
+            stream.supportsFileTransfer
+              ? (columns) => [
+                  ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                  columns.text('attachmentRef').from(stream.file.store(files)),
+                ]
+              : undefined,
+          ),
           {
             id: stream.name,
             syncMode: 'incremental',
@@ -3351,7 +3347,7 @@ test('a Safari pass over a large History.db holds one visit at a time, so it loa
           source,
           destination,
           checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
-          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+          steps: streams.map((stream) => new Copy(stream, destination.table(stream.name), {
             id: stream.name,
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
@@ -3393,7 +3389,7 @@ test('a Safari pass over a large History.db holds one visit at a time, so it loa
   assert.deepEqual(
     {
       ...imported
-        .prepare('SELECT count(*) AS n FROM raw_historyVisits WHERE id > 1000')
+        .prepare('SELECT count(*) AS n FROM historyVisits WHERE id > 1000')
         .get(),
     },
     { n: 60_000 },

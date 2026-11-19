@@ -47,8 +47,9 @@ class Checkpointing extends LiveSource {
   readonly records = new Stream({
     name: 'records',
     jsonSchema: {
+      description: 'One records record.',
       type: 'object',
-      properties: { id: { type: 'integer' } },
+      properties: { id: { description: 'Id of the record.', type: 'integer' } },
       required: ['id'],
     },
     primaryKey: ['id'],
@@ -126,8 +127,12 @@ test('an overwrite_dedup stage that commits again after the commit that replaced
   const stream = new Stream({
     name: 'records',
     jsonSchema: {
+      description: 'One records record.',
       type: 'object',
-      properties: { id: { type: 'integer' }, body: { type: 'string' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'integer' },
+        body: { description: 'Body of the record.', type: 'string' },
+      },
       required: ['id', 'body'],
     },
     primaryKey: ['id'],

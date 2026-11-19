@@ -100,8 +100,12 @@ const notes = (name: string) =>
   new Stream({
     name,
     jsonSchema: {
+      description: 'One test record.',
       type: 'object',
-      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+        version: { description: 'Version of the record.', type: 'integer' },
+      },
       required: ['id', 'version'],
     },
     primaryKey: ['id'],
@@ -160,11 +164,12 @@ function position(destination: SQLiteDestination, number: number): string {
   return `${positions[0].split(':')[0]}:${number}`;
 }
 
-// Each row's id with the commit that wrote it.
-const committed = (destination: SQLiteDestination, table: string) =>
+// Each row's id with the commit that wrote it, from the raw table of the
+// target named view.
+const committed = (destination: SQLiteDestination, view: string) =>
   storedRows(
     destination.path,
-    `SELECT id, committed_in FROM ${table} ORDER BY id`,
+    `SELECT id, committed_in FROM raw_${view} ORDER BY id`,
   );
 
 const run = (connection: Connection<SQLiteTable>) =>
@@ -292,7 +297,7 @@ test('a load that a killed process left open hides every later position, until t
       identity = 'scripted';
       notes = new Stream({
         name: 'notes',
-        jsonSchema: { type: 'object', properties: { id: { type: 'string' }, version: { type: 'integer' } }, required: ['id', 'version'] },
+        jsonSchema: { type: 'object', description: 'A note.', properties: { id: { type: 'string', description: 'Note id.' }, version: { type: 'integer', description: 'Note version.' } }, required: ['id', 'version'] },
         primaryKey: ['id'],
         supportedSyncModes: ['full_refresh', 'incremental'],
         emitsDeletes: true,
@@ -509,11 +514,12 @@ test('each row of an append, an overwrite, a deduplicated copy and a reset parti
   const owned = new Stream({
     name: 'owned',
     jsonSchema: {
+      description: 'One owned record.',
       type: 'object',
       properties: {
-        id: { type: 'string' },
-        owner: { type: 'string' },
-        version: { type: 'integer' },
+        id: { description: 'Id of the record.', type: 'string' },
+        owner: { description: 'Owner of the record.', type: 'string' },
+        version: { description: 'Version of the record.', type: 'integer' },
       },
       required: ['id', 'owner', 'version'],
     },
@@ -577,10 +583,10 @@ test('each row of an append, an overwrite, a deduplicated copy and a reset parti
     destination.path,
     'SELECT id FROM _elt_loads ORDER BY id',
   ).map(({ id }) => id);
-  const loads = (table: string) =>
+  const loads = (view: string) =>
     storedRows(
       destination.path,
-      `SELECT t.id, c.load FROM ${table} AS t LEFT JOIN _elt_commits AS c ON c.number = t.committed_in ORDER BY t.id`,
+      `SELECT t.id, c.load FROM raw_${view} AS t LEFT JOIN _elt_commits AS c ON c.number = t.committed_in ORDER BY t.id`,
     );
 
   assert.deepEqual(loads('appended'), [
