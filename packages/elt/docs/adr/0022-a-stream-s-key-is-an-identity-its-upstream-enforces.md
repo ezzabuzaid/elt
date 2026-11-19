@@ -45,6 +45,7 @@ This is the problem of a natural key against a surrogate key. A natural key is a
 
 ## Consequences
 
+- A scan in parts (`continues`) catches a repeated key only inside one part. Two parts can list one key, because a page of the upstream can move while the scan goes on (snapshot-differential ADR 0002), so a key that two pages of one scan repeat loads one row with no error. For a source that lists one part for each page, such as the web pages source, the key that the upstream enforces is the only guard.
 - A store that repeats a business identity loads each of its rows. A reader that wants one row for each business identity deduplicates by the business columns.
 - The key of a CoreData row does not survive a restore or a rebuild of the store, because the store gives new `Z_PK` values. After such a restore, a fresh run loads the store again.
 - The `rowid` of a table that declares no key changes when `VACUUM` gives new numbers to its rows. The next read then shows the old rows as deleted and the same rows as inserted.
