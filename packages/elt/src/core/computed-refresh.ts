@@ -1,6 +1,7 @@
 import { createHash, hash } from 'node:crypto';
 
 import { Vector } from '@zukhruf/vectors';
+import { toSql } from '@zukhruf/vectors/sqlite';
 
 import { errorMessage } from '../state/sync-history.ts';
 import type { RefreshTrigger } from './derived-dataset.ts';
@@ -342,7 +343,8 @@ function partsRow(
 // unit), as `c<n>:<name>` and then its value as `<tag><n>:<bytes>`, where
 // <n> is the count of bytes in decimal: `t` and the UTF-8 of a text, `n` and
 // the decimal digits of an integer, `b` and the bytes of a blob, `v` and the
-// float32 values of a vector, little-endian. A column with no value does not
+// float32 values of a vector, little-endian (toSql of
+// @zukhruf/vectors/sqlite). A column with no value does not
 // count, so a content column that a rule adds keeps the part hash of each
 // part that has no value for it, as the row hash of a copy does.
 function partHash(
@@ -361,12 +363,8 @@ function partHash(
     add('c', utf8.encode(name));
     if (typeof value === 'string') add('t', utf8.encode(value));
     else if (typeof value === 'number') add('n', utf8.encode(String(value)));
-    else if (value instanceof Vector) {
-      const floats = new DataView(new ArrayBuffer(value.dimensions * 4));
-      for (const [index, float] of value.values.entries())
-        floats.setFloat32(index * 4, float, true);
-      add('v', new Uint8Array(floats.buffer));
-    } else add('b', value);
+    else if (value instanceof Vector) add('v', toSql(value));
+    else add('b', value);
   }
   return digest.digest('hex');
 }
