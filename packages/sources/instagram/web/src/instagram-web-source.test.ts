@@ -2270,11 +2270,12 @@ test(
   },
 );
 
-test('a comment Instagram lists twice in one answer loads once', async () => {
+test('a comment that Instagram lists twice fails the comments stream with twice in one scan, as no source drops a repeat (ADR 0022)', async () => {
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
   // On 2026-10-15 Instagram answered one post's comments with 15 entries
-  // and 8 distinct comments.
+  // and 8 distinct comments, while the SDK paired has_more_comments with
+  // next_min_id; it now follows each direction with its own cursor.
   const repeated: Comment = { pk: '18398660635134371', text: 'See you there' };
   using _wire = instagram({
     profiles: [
@@ -2288,22 +2289,15 @@ test('a comment Instagram lists twice in one answer loads once', async () => {
     ],
     following: [],
   });
+  const run = await pipeline(
+    await InstagramWebSource.connect(
+      { home: mac.path, profileIds: ['44555906095'] },
+      globalThis,
+    ),
+    dir.path,
+  );
 
-  await (
-    await pipeline(
-      await InstagramWebSource.connect(
-        {
-          home: mac.path,
-          profileIds: ['44555906095'],
-        },
-        globalThis,
-      ),
-      dir.path,
-    )
-  ).run();
+  const failed = await failedRun(run.run());
 
-  assert.deepEqual(ids(dir.path, 'SELECT id FROM comments ORDER BY id'), [
-    '18398660635134371',
-    '311',
-  ]);
+  assert.match(String(failed.comments?.[0]?.error), /twice in one scan/);
 });

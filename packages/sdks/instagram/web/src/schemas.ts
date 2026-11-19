@@ -237,9 +237,14 @@ export const reelsMediaResponse = z.object({
   }),
 });
 
+// A page of a post's comments ends with more comments in one of two
+// directions: older ones (has_more_comments, next_max_id) and newer ones that
+// Instagram calls headload (has_more_headload_comments, next_min_id).
 export const commentsResponse = z.object({
   comments: z.array(comment.extend({ child_comment_count: z.number() })),
   has_more_comments: z.boolean(),
+  next_max_id: z.string().optional(),
+  has_more_headload_comments: z.boolean().optional(),
   next_min_id: z.string().optional(),
 });
 

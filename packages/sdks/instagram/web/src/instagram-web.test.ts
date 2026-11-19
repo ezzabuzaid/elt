@@ -291,6 +291,58 @@ test('a GraphQL query answered with a web page, as Instagram answers a signed-ou
   );
 });
 
+test('a post whose first comments page ends with more headload comments gives the rest on the page after it, as Instagram answered a post of 19 comments with 13', async () => {
+  const comment = (index: number) => ({
+    pk: `c${index}`,
+    text: `comment ${index}`,
+    created_at: 1_760_000_000 + index,
+    user: { pk: 7, username: 'reader' },
+    comment_like_count: 0,
+    child_comment_count: 0,
+  });
+  // The shape of the answer that the probe of 2026-11-15 recorded.
+  const cursor = JSON.stringify({ bifilter_token: 'KDcBDQBgAC4AKAAg' });
+  using wire = instagram(({ query }) => {
+    const minId = new URLSearchParams(query).get('min_id');
+    return minId === null
+      ? Response.json({
+          comments: Array.from({ length: 13 }, (_, index) => comment(index)),
+          comment_count: 19,
+          has_more_comments: false,
+          has_more_headload_comments: true,
+          next_min_id: cursor,
+          status: 'ok',
+        })
+      : Response.json({
+          comments: Array.from({ length: 6 }, (_, index) =>
+            comment(13 + index),
+          ),
+          comment_count: 19,
+          has_more_comments: false,
+          has_more_headload_comments: false,
+          status: 'ok',
+        });
+  });
+  const web = await InstagramWeb.open(session);
+
+  const pks: string[] = [];
+  let next: string | null = null;
+  do {
+    const page = await web.comments('4000396333676604349', next);
+    pks.push(...page.items.map(({ pk }) => pk));
+    next = page.next;
+  } while (next !== null);
+
+  assert.deepEqual(
+    pks,
+    Array.from({ length: 19 }, (_, index) => `c${index}`),
+  );
+  assert.deepEqual(
+    wire.calls.map(({ query }) => new URLSearchParams(query).get('min_id')),
+    [null, cursor],
+  );
+});
+
 test('a REST call that Instagram redirects to its login page fails as a lost login', async () => {
   using _ = instagram(
     ({ path }) =>

@@ -312,21 +312,22 @@ export class InstagramWeb {
   }
 
   // A post's comments, a page at a time, with how many replies each has.
+  // The cursor is the query parameter of the next page: min_id for newer
+  // (headload) comments, as Instagram answered a post of 19 comments with 13
+  // and has_more_headload_comments on 2026-11-15, and max_id for older ones,
+  // as instagrapi pairs has_more_comments with next_max_id.
   async comments(
     mediaId: string,
-    minId: string | null,
+    cursor: string | null,
     signal?: AbortSignal,
   ): Promise<Page<TopComment>> {
     const page = await this.#rest(
       'the comments of a post',
-      `/api/v1/media/${mediaId}/comments/?can_support_threading=true&permalink_enabled=false${minId === null ? '' : `&min_id=${encodeURIComponent(minId)}`}`,
+      `/api/v1/media/${mediaId}/comments/?can_support_threading=true&permalink_enabled=false${cursor === null ? '' : `&${cursor}`}`,
       commentsResponse,
       signal,
     );
-    return {
-      items: page.comments,
-      next: page.has_more_comments ? (page.next_min_id ?? null) : null,
-    };
+    return { items: page.comments, next: commentsCursor(page) };
   }
 
   // The replies to a comment, a page at a time.
@@ -548,4 +549,17 @@ function parsed<Schema extends z.ZodType>(
       : `${issue.path.join('.')}: ${issue.message}`,
     { cause: result.error },
   );
+}
+
+// The query parameter that reads the comments after page, or null when the
+// page is the last in both directions.
+function commentsCursor(page: z.infer<typeof commentsResponse>): string | null {
+  if (
+    page.has_more_headload_comments === true &&
+    page.next_min_id !== undefined
+  )
+    return `min_id=${encodeURIComponent(page.next_min_id)}`;
+  if (page.has_more_comments && page.next_max_id !== undefined)
+    return `max_id=${encodeURIComponent(page.next_max_id)}`;
+  return null;
 }

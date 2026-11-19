@@ -5,7 +5,6 @@ import type {
   Comment,
   InstagramWeb,
   TimelineMedia,
-  TopComment,
 } from '@eltjs/sdk-instagram-web';
 
 import { fields, instant } from '../fields.ts';
@@ -129,30 +128,34 @@ export class CommentsStream extends InstagramStream<typeof properties> {
     signal: AbortSignal | undefined,
   ) {
     if (post.comment_count === 0) return;
-    // Instagram can list one comment several times in one answer.
-    const comments = new Map<string, TopComment>();
+    // A comment that two pages list fails the scan as twice in one scan
+    // (ADR 0022): the pages follow Instagram's cursor in each direction.
     let next: string | null = null;
     do {
       const page = await web.comments(post.pk, next, signal);
-      for (const comment of page.items) comments.set(comment.pk, comment);
+      for (const comment of page.items) {
+        yield* this.validated([
+          this.#record(owner, post, comment, null, comment.child_comment_count),
+        ]);
+        if (comment.child_comment_count === 0) continue;
+        let cursor: string | null = null;
+        do {
+          const replies = await web.replies(
+            post.pk,
+            comment.pk,
+            cursor,
+            signal,
+          );
+          yield* this.validated(
+            replies.items.map((reply) =>
+              this.#record(owner, post, reply, comment.pk, null),
+            ),
+          );
+          cursor = replies.next;
+        } while (cursor !== null);
+      }
       next = page.next;
     } while (next !== null);
-    for (const comment of comments.values()) {
-      yield* this.validated([
-        this.#record(owner, post, comment, null, comment.child_comment_count),
-      ]);
-      if (comment.child_comment_count === 0) continue;
-      let cursor: string | null = null;
-      do {
-        const page = await web.replies(post.pk, comment.pk, cursor, signal);
-        yield* this.validated(
-          page.items.map((reply) =>
-            this.#record(owner, post, reply, comment.pk, null),
-          ),
-        );
-        cursor = page.next;
-      } while (cursor !== null);
-    }
   }
 
   #record(
