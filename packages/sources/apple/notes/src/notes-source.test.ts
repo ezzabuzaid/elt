@@ -985,6 +985,7 @@ test(
   { timeout: 30_000 },
   async (t) => {
     if (!(await quitNotes(t))) return;
+    console.error('#4701 phase: Notes quit');
     await using scratch = await new TemporaryFiles().directory('elt-notes-');
     const path = await noteStoreFixture(scratch.path);
     const source = new AppleNotesSource({ path });
@@ -1012,8 +1013,41 @@ test(
     try {
       const passing = watching.next();
 
+      // Temporary diagnostics for #4701: print each new state the wait sees.
+      let seen = '';
       await waitFor(
         async () => {
+          const state = JSON.stringify({
+            running: await notesRunning(),
+            info: (
+              await execFile('/usr/bin/lsappinfo', [
+                'info',
+                '-app',
+                'com.apple.Notes',
+              ])
+            ).stdout.replaceAll(/\(.*seconds ago \)/g, ''),
+            processes: (
+              await execFile('/bin/ps', ['-axo', 'pid,stat,comm'])
+            ).stdout
+              .split('\n')
+              .filter((line) => /Notes/.test(line)),
+            failures: (() => {
+              try {
+                using database = open(join(scratch.path, 'out.sqlite'), {
+                  readOnly: true,
+                });
+                return database
+                  .prepare('SELECT "status", "error" FROM "_elt_sync_attempts"')
+                  .all();
+              } catch (error) {
+                return String(error);
+              }
+            })(),
+          });
+          if (state !== seen) {
+            seen = state;
+            console.error(`#4701 observed: ${state}`);
+          }
           assert.equal(await notesRunning(), true);
           assert.match(
             await appInfo('hidden', 'com.apple.Notes'),
@@ -1023,9 +1057,12 @@ test(
         { signal: t.signal, interval: 100 },
       );
 
+      console.error('#4701 phase: Notes runs hidden');
       assert.equal(await notesInFront(), false);
       controller.abort();
+      console.error('#4701 phase: aborted, awaiting the pass');
       await passing;
+      console.error('#4701 phase: pass ended');
     } finally {
       controller.abort();
       await watching.return(undefined);
