@@ -3,8 +3,6 @@ import type { SQLOutputValue } from 'node:sqlite';
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { open } from '@zukhruf/sqlite-open';
 import { transaction } from '@zukhruf/sqlite-transaction';
-import { Vector } from '@zukhruf/vectors';
-import { toSql } from '@zukhruf/vectors/sqlite';
 
 import {
   type Connection,
@@ -14,10 +12,12 @@ import {
   type PreparedOutputs,
   type RefreshTrigger,
   type Rule,
-  type RuleColumn,
   type RuleColumns,
   type StoredOutput,
+  type TableOutputRow,
+  TableRule,
   computedColumns,
+  partColumns,
   refreshComputed,
 } from '@eltjs/elt';
 
@@ -27,18 +27,11 @@ import { SQLiteDestination } from './sqlite-destination.ts';
 import { SQLiteHistory, rowHash } from './sqlite-history.ts';
 import { identifiers, quote } from './sqlite-identifiers.ts';
 import { SQLiteLoad } from './sqlite-loads.ts';
+import { SQLitePartsTable } from './sqlite-parts-table.ts';
+import { ruleColumnTypes, ruleValue } from './sqlite-rule-columns.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { publishSQLiteViews } from './sqlite-views.ts';
 import { View } from './view.ts';
-
-// The SQLite type of each kind of rule column: a vector is the bytes of
-// @zukhruf/vectors/sqlite, float32 values little-endian, which sqlite-vec reads.
-const types: Readonly<Record<RuleColumn['type'], string>> = {
-  text: 'TEXT',
-  blob: 'BLOB',
-  vector: 'BLOB',
-  integer: 'INTEGER',
-};
 
 // Data computed on write from what the pipeline's copies load: a rule makes
 // one output row for each input, such as the text of each stored file, as
@@ -54,17 +47,30 @@ const types: Readonly<Record<RuleColumn['type'], string>> = {
 // row is a numbered commit, each row names the commit that last wrote it,
 // and the history keeps each row a commit replaced or removed, so the view
 // reads as of a position as the copies' tables do.
+// A table rule gives many parts for one input: the dataset keeps one output
+// row for each key in raw_<name>, with no rule column, and its parts in
+// raw_<name>_parts, which readers query through the view <name>_parts. The
+// commit that writes an output row writes its parts, and the two tables are
+// one declaration, so a change to either makes both again.
 export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
   readonly name: string;
   readonly #into: SQLiteDestination;
   readonly #description: string;
   readonly #from: readonly (SQLiteTable | View)[];
-  readonly #rule: Rule<Input, RuleColumns>;
+  readonly #compute:
+    | { readonly rule: Rule<Input, RuleColumns> }
+    | {
+        readonly rule: TableRule<Input, RuleColumns, RuleColumns>;
+        readonly parts: SQLitePartsTable;
+      };
   readonly #table: string;
   readonly #declaration: Declaration;
   readonly #history: SQLiteHistory;
   // Every column of an output row, in table order.
   readonly #columns: readonly string[];
+  // The rule columns of an output row: none for a table rule, whose columns
+  // are the parts'.
+  readonly #ruleColumns: RuleColumns;
 
   constructor({
     into,
@@ -77,30 +83,47 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
     name: string;
     description: string;
     from: readonly (SQLiteTable | View)[];
-    compute: Rule<Input, RuleColumns>;
+    compute:
+      Rule<Input, RuleColumns> | TableRule<Input, RuleColumns, RuleColumns>;
   }) {
     super();
     this.name = name;
     this.#into = into;
     this.#description = description;
     this.#from = Object.freeze([...from]);
-    this.#rule = compute;
+    this.#compute =
+      compute instanceof TableRule
+        ? {
+            rule: compute,
+            parts: new SQLitePartsTable({
+              dataset: name,
+              description,
+              rule: compute,
+            }),
+          }
+        : { rule: compute };
+    this.#ruleColumns = compute instanceof TableRule ? {} : compute.output;
     this.#table = `raw_${name}`;
     this.#history = new SQLiteHistory({
       name: this.#table,
       location: identifiers.key(this.#table),
     });
     // SQLite takes two names that differ only in ASCII case for one column,
-    // and would refuse the table at the first refresh.
+    // and would refuse the table at the first refresh. A part has a seq and a
+    // part hash, and the columns of both groups of a table rule.
     const taken = new Map(
       [
         compute.key.name,
         ...Object.keys(computedColumns),
         'committed_in',
         '_elt_row_hash',
+        ...(compute instanceof TableRule ? Object.keys(partColumns) : []),
       ].map((column) => [identifiers.key(column), column]),
     );
-    for (const column of Object.keys(compute.output)) {
+    for (const column of [
+      ...Object.keys(compute.output),
+      ...(compute instanceof TableRule ? Object.keys(compute.place) : []),
+    ]) {
       const other = taken.get(identifiers.key(column));
       if (other !== undefined)
         throw new TypeError(
@@ -111,10 +134,10 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
     this.#columns = Object.freeze([
       compute.key.name,
       ...Object.keys(computedColumns),
-      ...Object.keys(compute.output),
+      ...Object.keys(this.#ruleColumns),
     ]);
-    const ruleColumns = Object.entries(compute.output).map(
-      ([column, { type }]) => `${quote(column)} ${types[type]}`,
+    const ruleColumns = Object.entries(this.#ruleColumns).map(
+      ([column, { type }]) => `${quote(column)} ${ruleColumnTypes[type]}`,
     );
     this.#declaration = new Declaration(
       [
@@ -128,6 +151,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
           '"committed_in" INTEGER NOT NULL',
           '"_elt_row_hash" TEXT NOT NULL',
         ].join(', ')}) STRICT`,
+        ...('parts' in this.#compute ? [this.#compute.parts.statement] : []),
       ],
       { rows: 'replace' },
     );
@@ -149,7 +173,11 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
       .flatMap(({ to }) => [to.name, to.readerView])
       .filter((name) => name !== undefined)
       .map((name) => name.toLowerCase());
-    for (const name of [this.name, this.#table])
+    for (const name of [
+      this.name,
+      this.#table,
+      ...('parts' in this.#compute ? this.#compute.parts.names : []),
+    ])
       if (made.includes(name.toLowerCase()))
         throw new TypeError(
           `Computed dataset ${this.name} needs ${name}, which a copy of the pipeline makes`,
@@ -180,14 +208,18 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
       'computed',
       clock,
     );
-    await refreshComputed({
-      rule: this.#rule,
+    const refresh = {
       inputs: this.#inputs(connections),
-      prepare: async (keys) => this.#prepare(load, status, keys),
+      prepare: async (keys: ReadonlySet<string>) =>
+        this.#prepare(load, status, keys),
       status,
       trigger,
       signal,
-    });
+    };
+    const { rule } = this.#compute;
+    await (rule instanceof TableRule
+      ? refreshComputed({ ...refresh, rule })
+      : refreshComputed({ ...refresh, rule }));
   }
 
   // Brings the table to its declaration, in the commit that keeps each row a
@@ -199,9 +231,11 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
     load: SQLiteLoad,
     status: SQLiteDerivedStatus,
     keys: ReadonlySet<string>,
-  ): PreparedOutputs {
+  ): PreparedOutputs<OutputRow | TableOutputRow> {
     const { database } = load;
-    const key = this.#rule.key.name;
+    const { rule } = this.#compute;
+    const key = rule.key.name;
+    const parts = 'parts' in this.#compute ? this.#compute.parts : undefined;
     const table = quote(this.#table);
     const byKey = `FROM ${table} AS "_elt_old" WHERE "_elt_old".${quote(key)} = ?`;
     const commits = () => {
@@ -215,33 +249,42 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
       database,
       () => {
         const commit = commits();
-        // A new declaration replaces the table, and the history keeps the
+        // A new declaration replaces the tables, and the history keeps the
         // rows it drops.
-        if (
-          this.#declaration.drift(database) === 'stale' &&
-          database.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get() !== undefined
-        ) {
-          this.#history.create(database, written);
-          this.#history.keep(database, commit(), `FROM ${table} AS "_elt_old"`);
+        if (this.#declaration.drift(database) === 'stale') {
+          if (
+            database.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get() !==
+            undefined
+          ) {
+            this.#history.create(database, written);
+            this.#history.keep(
+              database,
+              commit(),
+              `FROM ${table} AS "_elt_old"`,
+            );
+          }
+          parts?.keepAll(database, commit);
         }
         this.#declaration.apply(database);
         this.#history.create(database, written);
+        parts?.create(database);
         publishSQLiteViews(database, {
           views: [
             {
               name: this.name,
               description: this.#description,
               columns: {
-                [key]: this.#rule.key.description,
+                [key]: rule.key.description,
                 ...computedColumns,
                 ...Object.fromEntries(
-                  Object.entries(this.#rule.output).map(
+                  Object.entries(this.#ruleColumns).map(
                     ([column, { description }]) => [column, description],
                   ),
                 ),
               },
               query: `SELECT ${this.#columns.map(quote).join(', ')} FROM ${table}`,
             },
+            ...(parts === undefined ? [] : [parts.view]),
           ],
         });
         const rows = new Map<string, StoredOutput>();
@@ -257,6 +300,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
           if (!keys.has(id)) {
             this.#history.keep(database, commit(), byKey, [id]);
             remove.run(id);
+            parts?.write(database, commit, id, []);
           } else
             rows.set(id, {
               inputHash: String(row.input_hash),
@@ -280,26 +324,35 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
     const hashed = this.#columns.map((name) => ({ name }));
     // Writes a row in the commit that commit numbers, unless the stored row
     // has the same values: then it keeps its commit. The history keeps the
-    // row it replaces.
-    const store = (commit: () => number, output: OutputRow) => {
+    // row it replaces. The row's parts are written in the same commit.
+    const store = (
+      commit: () => number,
+      output: OutputRow | TableOutputRow,
+    ) => {
       const row = [
         output.key,
         output.inputHash,
         output.rule,
         output.status,
         output.error,
-        ...Object.keys(this.#rule.output).map((column) => {
-          const value = output.values[column];
-          return value instanceof Vector ? toSql(value) : (value ?? null);
-        }),
+        ...Object.keys(this.#ruleColumns).map((column) =>
+          ruleValue('values' in output ? output.values[column] : undefined),
+        ),
       ];
       const hash = rowHash(hashed, row);
       const before = version.get(output.key)?.hash;
-      if (before === hash) return;
-      const number = commit();
-      if (before !== undefined)
-        this.#history.keep(database, number, byKey, [output.key]);
-      write.run(...row, number, hash);
+      if (before !== hash) {
+        const number = commit();
+        if (before !== undefined)
+          this.#history.keep(database, number, byKey, [output.key]);
+        write.run(...row, number, hash);
+      }
+      parts?.write(
+        database,
+        commit,
+        output.key,
+        'parts' in output ? output.parts : [],
+      );
     };
     return {
       stored,
@@ -368,7 +421,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
         throw error;
       }
       for (const row of rows) {
-        const read = this.#rule.read(row);
+        const read = this.#compute.rule.read(row);
         if (read !== null && !inputs.has(read.key))
           inputs.set(read.key, read.input);
       }

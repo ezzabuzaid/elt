@@ -4,9 +4,12 @@ export { Connection } from './core/connection.ts';
 export { Copy, type CopyOutcome, type CopyResult } from './core/copy.ts';
 export {
   type OutputRow,
+  type PartRow,
   type PreparedOutputs,
   type StoredOutput,
+  type TableOutputRow,
   computedColumns,
+  partColumns,
   refreshComputed,
 } from './core/computed-refresh.ts';
 export {
@@ -35,6 +38,7 @@ export {
   type RuleResult,
   type RuleValues,
 } from './core/rule.ts';
+export { TableRule, type TableRuleResult } from './core/table-rule.ts';
 export {
   CopyProgress,
   PassFailed,

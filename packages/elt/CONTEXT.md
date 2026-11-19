@@ -207,3 +207,23 @@ _Avoid_: Version
 **Rule failure**:
 A rule that failed on one input. The output records why, and the load continues.
 _Avoid_: Dataset failure, dead letter, error row
+
+**Table rule**:
+A rule that gives one or more parts for one input, for example the chunks of a text, as a table function of SQL gives rows. The dataset keeps one output for each key, and the parts of the output beside it.
+_Avoid_: Splitter, set-returning function (a function of Postgres), multi-output rule
+
+**Part**:
+One of the rows that a table rule gives for one input, in order. It has the values of its content columns and of its place columns. Its `seq` is its order in the input, from 0.
+_Avoid_: Chunk (a chunk of `@eltjs/chunking` is one kind of part), child row, item
+
+**Content column**:
+A column of a part that tells what the part is, for example the text of a chunk and its count of tokens. The part hash covers it.
+_Avoid_: Value column, data column
+
+**Place column**:
+A column of a part that tells where the part is in its input, for example the offsets of a chunk. The part hash does not cover it, so a part that only moved keeps its part hash.
+_Avoid_: Metadata, position (a position is a commit of a destination), offset
+
+**Part hash**:
+The SHA-256 of the content columns of a part. It does not cover the `seq` or the place columns. Two parts with the same content have the same part hash, so a dataset that reads the parts can key them by content.
+_Avoid_: Part id, row hash (a row hash covers each column of a row)

@@ -265,6 +265,26 @@ A refresh is a load in `_elt_loads`, so a [reading](#commit-numbers-and-position
 - When the rule makes a row again with the same values, for example a `failed` row that fails again with the same error, the row stays as it is, with its commit.
 - Before a commit changes or deletes an output row, it copies the row into the [history](./CONTEXT.md) of the raw table. When the declaration changes, the commit that makes the table again copies each row of the old table into the history. A column that the old table did not have is `NULL` as of a position before.
 
+### The parts table
+
+A computed dataset whose rule is a `TableRule` keeps two tables. `raw_<name>` has one output row for each key, with the key, `input_hash`, `rule`, `status` and `error`, and no rule column. `raw_<name>_parts` has one row for each part, unique on the key and `seq`. Readers query the views `<name>` and `<name>_parts`. See [Write a table rule](../../elt/README.md#write-a-table-rule) in elt and [ADR 0026 of elt](../../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md).
+
+| Column of `<name>_parts` | Holds                                                                   |
+| ------------------------ | ----------------------------------------------------------------------- |
+| the key                  | the key of the input, with the name that the rule gives                 |
+| `seq`                    | the order of the part in its input, from 0, as an `INTEGER`             |
+| `part_hash`              | the SHA-256 of the content columns of the part, which elt computes      |
+| content columns          | the columns of the rule's `output`, each of the SQLite type of its kind |
+| place columns            | the columns of the rule's `place`, each of the SQLite type of its kind  |
+
+- The transaction that writes an output row writes its parts, in the same commit. It compares the new parts with the stored parts of the key by `seq`. A part with the same `_elt_row_hash` keeps its commit. A changed part is written; the row hash covers the place columns, so a part that only moved is written with its new place and keeps its part hash. A stored part with a `seq` past the new parts is deleted.
+- An output row that is `empty` or `failed` has no parts. The deletion of an output row deletes its parts.
+- The history keeps each part that a commit changes or deletes, as it keeps each output row. Thus a reading as of a position shows each output row with its own parts.
+- The two tables are one declaration. When either table differs from its declaration, the refresh makes both again, and the history keeps the rows of both.
+- `derived_status` counts the output rows, one for each key. `pending` counts the inputs, not the parts.
+- `raw_<name>_parts` has the columns `committed_in` and `_elt_row_hash` after the place columns. Its external schema is the key, `seq`, `part_hash`, the content columns and the place columns.
+- A column of the rule, in `output` or in `place`, cannot have the name of the key, `seq`, `part_hash`, an engine column, `committed_in` or `_elt_row_hash`, and a name cannot be in both `output` and `place`, in any ASCII case. The constructor of `ComputedDataset` refuses such a rule with a `TypeError` that names the column and the dataset. A pipeline whose copy makes `<name>_parts` or `raw_<name>_parts` in the same file is refused before it reads.
+
 ## When something fails
 
 - **A rule failure** gives an output row with the status `failed` and the reason in `error`. The run continues, and the refresh after the next pass tries the input again.

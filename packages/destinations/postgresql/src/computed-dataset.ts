@@ -227,7 +227,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
     status: PostgresDerivedStatus,
     keys: ReadonlySet<string>,
     signal: AbortSignal | undefined,
-  ): Promise<PreparedOutputs> {
+  ): Promise<PreparedOutputs<OutputRow>> {
     const key = quote(this.#rule.key.name);
     const table = this.#qualified(this.#table);
     const commits = (sql: Transaction) => {
@@ -278,7 +278,8 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
         output.status,
         output.error,
         ...Object.keys(this.#rule.output).map((column) => {
-          const value = output.values[column];
+          const value =
+            output.status === 'computed' ? output.values[column] : undefined;
           return value instanceof Vector ? toSql(value) : (value ?? null);
         }),
       ];

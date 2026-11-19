@@ -100,19 +100,23 @@ new Pipeline({
 
 ```ts
 // @eltjs/elt (ADR 0026 of elt)
-export type TableRuleResult<Output> =
-  | { readonly parts: readonly [Output, ...Output[]] }
+export type TableRuleResult<Part> =
+  | { readonly parts: readonly [Part, ...Part[]] }
   | { readonly empty: true }
   | { readonly error: string }
   | { readonly gone: true };
 
-export abstract class TableRule<Input, Output> {
+export abstract class TableRule<
+  Input,
+  Columns extends RuleColumns, // the content columns of each part, in its part hash
+  Place extends RuleColumns, // the place columns of each part, not in its part hash
+> {
   abstract readonly key: {
     readonly name: string;
     readonly description: string;
   };
-  abstract readonly output: Readonly<Record<string, RuleColumn>>; // the content columns of each part, in its part hash
-  abstract readonly place: Readonly<Record<string, RuleColumn>>; // the place columns of each part, not in its part hash
+  abstract readonly output: Columns;
+  abstract readonly place: Place;
   abstract readonly batch: number;
   abstract readonly concurrency: number;
   abstract read(
@@ -122,7 +126,9 @@ export abstract class TableRule<Input, Output> {
   abstract compute(
     inputs: readonly Input[],
     signal?: AbortSignal,
-  ): Promise<readonly TableRuleResult<Readonly<Record<string, Output>>>[]>;
+  ): Promise<
+    readonly TableRuleResult<RuleValues<Columns> & RuleValues<Place>>[]
+  >;
 }
 
 // @eltjs/chunking
@@ -133,7 +139,16 @@ export type Tokenizer = {
   count(text: string): number;
 };
 
-export class Chunking extends TableRule<string, string | number> {
+const content = {
+  text: { type: 'text', description: '…' },
+  tokens: { type: 'integer', description: '…' },
+} as const;
+const place = {
+  start: { type: 'integer', description: '…' },
+  end: { type: 'integer', description: '…' },
+} as const;
+
+export class Chunking extends TableRule<string, typeof content, typeof place> {
   constructor(options: {
     tokenizer: Tokenizer;
     maxTokens: number;

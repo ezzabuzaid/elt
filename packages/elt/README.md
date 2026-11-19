@@ -1089,6 +1089,41 @@ Two rules exist:
 
 `DocumentText` asks for its parser at each refresh, so a parser that the host changed, for example a new speech model, applies from the next refresh.
 
+## Write a table rule
+
+A table rule gives one or more parts for one input, as a table function of SQL gives rows. For example, a rule cuts a long text into chunks that an embedding model can take. A table rule is a class that extends `TableRule<Input, Columns, Place>`. It has the members of a rule, and one more group of columns:
+
+| Member                    | Gives                                                                                                                      |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `output`                  | the content columns of each part: what the part is, for example its text. The part hash covers them                        |
+| `place`                   | the place columns of each part: where the part is in its input, for example its offsets. The part hash does not cover them |
+| `compute(inputs, signal)` | one result for each input, in order: `{ parts }`, `{ empty: true }`, `{ error }` or `{ gone: true }`                       |
+
+`parts` holds one or more parts in order, each with the values of both groups. A list of no parts does not compile: an input with no parts is `{ empty: true }`.
+
+```ts
+const content = {
+  text: { type: 'text', description: 'The text of the piece.' },
+} as const;
+const place = {
+  start: { type: 'integer', description: 'Where the piece starts.' },
+} as const;
+
+class Lines extends TableRule<string, typeof content, typeof place> {
+  override readonly output = content;
+  override readonly place = place;
+  // compute gives { parts: [{ text: 'one', start: 0 }, { text: 'two', start: 4 }] }
+}
+```
+
+The `ComputedDataset` of elt-sqlite takes a `Rule` or a `TableRule` in `compute`; that of elt-postgresql takes only a `Rule`. For a table rule, the dataset keeps one output row for each key, with no rule column, and one row for each part, with the key, `seq`, `part_hash`, the content columns and the place columns. See the README of each destination for its parts table, and [ADR 0026](./docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md).
+
+- `seq` is the order of the part in its input, from 0.
+- `part_hash` is the SHA-256, in lowercase hex, of the content columns of the part. It does not cover `seq` or the place columns, so a part that only moved keeps its part hash. Each content column that has a value counts, in the order of the names as JavaScript sorts them: first `c<n>:<name>`, then the value as `<tag><n>:<bytes>`, where `<n>` is the count of bytes in decimal. The tag is `t` with the UTF-8 bytes of a text, `n` with the decimal digits of an integer, `b` with the bytes of a blob, or `v` with the float32 values of a vector, little-endian. A column with no value does not count. elt computes the part hash, so each destination keeps the same part hash for the same part.
+- The output row and its parts are written in one commit. A part with the same values as the stored part of its key and `seq` keeps its commit. A changed part is written. A stored part with a `seq` past the new parts is deleted. An output row that is `empty` or `failed` has no parts, and the deletion of an output row deletes its parts.
+- A value of a part that does not fit its column fails the input, with an error that names the part and the column, for example `Part 0: The column start takes a safe integer, and the rule gave 0.5.`
+- `derived_status` counts the output rows, one for each key. `pending` counts the inputs, not the parts.
+
 ## When a derived dataset fails
 
 - **A rule failure** is the output of its input: the status `failed` and the reason. The load and the run continue, and the next refresh tries the input again. See [ADR 0004](./docs/adr/0004-a-rule-failure-stays-on-its-output.md).
@@ -1109,10 +1144,11 @@ A destination that numbers its commits gives positions, so a reader can read it 
 
 Each destination keeps its own `View` and `ComputedDataset`, and drives three rules of `@eltjs/elt` with its own storage:
 
-- `refreshComputed({ rule, inputs, prepare, status, trigger, signal })` brings the outputs of a computed dataset in step with its inputs. The destination gives `inputs`, or `null` while a relation that the dataset reads is gone, and `prepare(keys)`, which makes the table match its declaration, removes each row whose key has no input, and gives the stored rows with `store`, `settle` and `counts`. Each write is one commit. The rule decides what is due: an input whose hash or rule identity changed, or a failed row on the refresh after the passes, each input at most once for each pass. It runs `rule.concurrency` calls of `rule.batch` inputs, and each call commits on its own. It fails each output whose value does not fit its rule column, so a destination gets only values that fit: it keeps each kind in its own form.
+- `refreshComputed({ rule, inputs, prepare, status, trigger, signal })` brings the outputs of a computed dataset in step with its inputs. The destination gives `inputs`, or `null` while a relation that the dataset reads is gone, and `prepare(keys)`, which makes the table match its declaration, removes each row whose key has no input, and gives the stored rows with `store`, `settle` and `counts`. Each write is one commit. The rule decides what is due: an input whose hash or rule identity changed, or a failed row on the refresh after the passes, each input at most once for each pass. It runs `rule.concurrency` calls of `rule.batch` inputs, and each call commits on its own. It fails each output whose value does not fit its rule column, so a destination gets only values that fit: it keeps each kind in its own form. The kind of the rule sets the rows that `prepare` takes: an `OutputRow` with the values of a `Rule`, or a `TableOutputRow` of a `TableRule`, whose computed row has its parts, each a `PartRow` with its part hash. An empty or failed row has no values and no parts. The destination writes the output row and its parts in one commit.
 - `refreshView({ publish, missing, awaited, withdraw, status })` publishes a view, or lets it wait while the relation that the store's error names is one that a copy or an earlier derived dataset makes. While it waits, `withdraw` removes the view of its name that an earlier declaration made, as dbt drops a model's relation, so a view after it that reads it waits too. Any other error is the view's own failure.
 - `DerivedStatus` gives the states of a row of `derived_status`: `waiting`, `refreshing` with counts, `current` with `as_of`, and `failed`. A destination writes the values in its `write`, and takes settled inputs off `pending` inside its own commit.
 - `computedColumns` names the columns that each output row keeps beside the rule's own, with their descriptions.
+- `partColumns` names the columns that each part keeps beside the key and the columns of the table rule, `seq` and `part_hash`, with their descriptions.
 
 The `readPassStatus` of a destination reads its sync history and gives a `PassStatus` of `@eltjs/elt`, with a `StreamPassStatus` for each stream. `combinedPass` shows the latest passes of several connections as one pass: it runs while one of them runs, and it is only as current as the least current one.
 

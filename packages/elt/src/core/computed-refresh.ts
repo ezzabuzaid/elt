@@ -1,4 +1,4 @@
-import { hash } from 'node:crypto';
+import { createHash, hash } from 'node:crypto';
 
 import { Vector } from '@zukhruf/vectors';
 
@@ -6,6 +6,7 @@ import { errorMessage } from '../state/sync-history.ts';
 import type { RefreshTrigger } from './derived-dataset.ts';
 import type { DerivedStatus } from './derived-status.ts';
 import type { Rule, RuleColumns, RuleValues } from './rule.ts';
+import { TableRule } from './table-rule.ts';
 
 // The columns a computed dataset keeps on every output row beside its rule's
 // own, with what readers read of each.
@@ -18,6 +19,14 @@ export const computedColumns = {
   error: 'Why the rule failed. NULL unless status is failed.',
 };
 
+// The columns a parts table keeps beside the table rule's own, with what
+// readers read of each.
+export const partColumns = {
+  seq: 'The order of the part in its input, from 0.',
+  part_hash:
+    'SHA-256 of the content columns of the part, not of its place columns: a part that only moved keeps its part hash.',
+};
+
 // What a refresh compares of a stored output row.
 export type StoredOutput = {
   readonly inputHash: string;
@@ -25,30 +34,80 @@ export type StoredOutput = {
   readonly status: string;
 };
 
-// One output row that a refresh writes.
-export type OutputRow = {
+// The columns that each output row has, whatever the rule made.
+type OutputHead = {
   readonly key: string;
   readonly inputHash: string;
   readonly rule: string;
-  readonly status: 'computed' | 'empty' | 'failed';
-  readonly error: string | null;
+};
+
+// An output row with nothing made: empty, or a rule failure with why.
+export type UnmadeRow = OutputHead &
+  (
+    | { readonly status: 'empty'; readonly error: null }
+    | { readonly status: 'failed'; readonly error: string }
+  );
+
+// One output row of a Rule that a refresh writes: only a computed row has
+// values.
+export type OutputRow =
+  | (OutputHead & {
+      readonly status: 'computed';
+      readonly error: null;
+      readonly values: RuleValues<RuleColumns>;
+    })
+  | UnmadeRow;
+
+// One part of a computed row of a TableRule: its part hash, and the values of
+// its content and place columns. Its index in the parts of its row is its seq.
+export type PartRow = {
+  readonly partHash: string;
   readonly values: RuleValues<RuleColumns>;
 };
+
+// One output row of a TableRule that a refresh writes: only a computed row
+// has parts, one or more. The destination keeps no other part of its key.
+export type TableOutputRow =
+  | (OutputHead & {
+      readonly status: 'computed';
+      readonly error: null;
+      readonly parts: readonly [PartRow, ...PartRow[]];
+    })
+  | UnmadeRow;
 
 // The output table of a computed dataset once its refresh prepared it, as its
 // destination keeps it. Each write is one commit, and a row with the values
 // that the stored row has keeps its commit.
-export type PreparedOutputs = {
+export type PreparedOutputs<Row> = {
   // Each stored row whose key has an input.
   readonly stored: ReadonlyMap<string, StoredOutput>;
   // Writes the row of an input that the rule does not handle.
-  store(row: OutputRow): Promise<void>;
+  store(row: UnmadeRow): Promise<void>;
   // Writes the rows of one call, and takes settled inputs off the pending
   // count of the dataset's status in the same commit.
-  settle(rows: readonly OutputRow[], settled: number): Promise<void>;
+  settle(rows: readonly Row[], settled: number): Promise<void>;
   // How many output rows have each status that some row has.
   counts(): Promise<ReadonlyMap<string, number>>;
 };
+
+type Refresh<Input, Compute, Row> = {
+  readonly rule: Compute;
+  readonly inputs: ReadonlyMap<string, Input> | null;
+  readonly prepare: (
+    keys: ReadonlySet<string>,
+  ) => Promise<PreparedOutputs<Row>>;
+  readonly status: DerivedStatus;
+  readonly trigger: RefreshTrigger;
+  readonly signal: AbortSignal | undefined;
+};
+
+type RuleRefresh<Input> = Refresh<Input, Rule<Input, RuleColumns>, OutputRow>;
+
+type TableRuleRefresh<Input> = Refresh<
+  Input,
+  TableRule<Input, RuleColumns, RuleColumns>,
+  TableOutputRow
+>;
 
 // Brings the outputs of a computed dataset in step with its inputs, as pgai's
 // vectorizer keeps an embedding beside each row: prepare makes the table
@@ -59,28 +118,39 @@ export type PreparedOutputs = {
 // failure on one input is that row's; it never fails the load. inputs is
 // null while a relation that the dataset reads is gone: the dataset waits
 // with what it made, as a view waits. A value that does not fit its column,
-// such as a vector of other dimensions, fails its row.
-export async function refreshComputed<Input>({
-  rule,
-  inputs,
-  prepare,
-  status,
-  trigger,
-  signal,
-}: {
-  readonly rule: Rule<Input, RuleColumns>;
-  readonly inputs: ReadonlyMap<string, Input> | null;
-  readonly prepare: (keys: ReadonlySet<string>) => Promise<PreparedOutputs>;
-  readonly status: DerivedStatus;
-  readonly trigger: RefreshTrigger;
-  readonly signal: AbortSignal | undefined;
-}): Promise<void> {
+// such as a vector of other dimensions, fails its row. The kind of the rule
+// sets what a computed row holds: the values of a Rule, or the parts of a
+// TableRule, each with its part hash.
+export async function refreshComputed<Input>(
+  refresh: RuleRefresh<Input>,
+): Promise<void>;
+export async function refreshComputed<Input>(
+  refresh: TableRuleRefresh<Input>,
+): Promise<void>;
+export async function refreshComputed<Input>(
+  refresh: RuleRefresh<Input> | TableRuleRefresh<Input>,
+): Promise<void> {
+  const { inputs, status, signal } = refresh;
   if (inputs === null) {
     await status.waiting();
     return;
   }
   try {
-    await update(rule, inputs, prepare, status, trigger, signal);
+    if (ofTableRule(refresh)) {
+      const { rule } = refresh;
+      await update(refresh, inputs, (head, result) =>
+        'parts' in result
+          ? partsRow(rule, head, result.parts)
+          : unmade(head, result),
+      );
+    } else {
+      const { rule } = refresh;
+      await update(refresh, inputs, (head, result) =>
+        'value' in result
+          ? valuesRow(rule.output, head, result.value)
+          : unmade(head, result),
+      );
+    }
   } catch (error) {
     // A stop is not the dataset's failure.
     if (signal?.aborted !== true) await status.failed(errorMessage(error));
@@ -88,13 +158,43 @@ export async function refreshComputed<Input>({
   }
 }
 
-async function update<Input>(
-  rule: Rule<Input, RuleColumns>,
+// A TableRule is no Rule, so the kind of the rule gives the kind of the rows
+// that prepare takes.
+function ofTableRule<Input>(
+  refresh: RuleRefresh<Input> | TableRuleRefresh<Input>,
+): refresh is TableRuleRefresh<Input> {
+  return refresh.rule instanceof TableRule;
+}
+
+// What both kinds of rule have, by which a refresh asks them.
+type Computes<Input, Result> = {
+  readonly batch: number;
+  readonly concurrency: number;
+  identity(input: Input): Promise<string | null>;
+  compute(
+    inputs: readonly Input[],
+    signal?: AbortSignal,
+  ): Promise<readonly (Result | { readonly gone: true })[]>;
+};
+
+async function update<Input, Result, Row>(
+  {
+    rule,
+    prepare,
+    status,
+    trigger,
+    signal,
+  }: {
+    readonly rule: Computes<Input, Result>;
+    readonly prepare: (
+      keys: ReadonlySet<string>,
+    ) => Promise<PreparedOutputs<Row>>;
+    readonly status: DerivedStatus;
+    readonly trigger: RefreshTrigger;
+    readonly signal: AbortSignal | undefined;
+  },
   inputs: ReadonlyMap<string, Input>,
-  prepare: (keys: ReadonlySet<string>) => Promise<PreparedOutputs>,
-  status: DerivedStatus,
-  trigger: RefreshTrigger,
-  signal: AbortSignal | undefined,
+  made: (head: OutputHead, result: Result) => Row,
 ): Promise<void> {
   const outputs = await prepare(new Set(inputs.keys()));
   const due: {
@@ -119,7 +219,6 @@ async function update<Input>(
         rule: 'unsupported',
         status: 'empty',
         error: null,
-        values: {},
       });
       continue;
     }
@@ -165,30 +264,11 @@ async function update<Input>(
         }
         // Each call commits on its own, so readers see rows as they land.
         await outputs.settle(
-          batch.flatMap(
-            ({ key, inputHash, rule: identity }, index): OutputRow[] => {
-              const result = results[index];
-              if (result === undefined || 'gone' in result) return [];
-              const row = {
-                key,
-                inputHash,
-                rule: identity,
-                error: null,
-                values: {},
-              };
-              if ('value' in result) {
-                const misfit = misfits(rule.output, result.value);
-                return [
-                  misfit === undefined
-                    ? { ...row, status: 'computed', values: result.value }
-                    : { ...row, status: 'failed', error: misfit },
-                ];
-              }
-              if ('error' in result)
-                return [{ ...row, status: 'failed', error: result.error }];
-              return [{ ...row, status: 'empty' }];
-            },
-          ),
+          batch.flatMap(({ key, inputHash, rule: identity }, index) => {
+            const result = results[index];
+            if (result === undefined || isGone(result)) return [];
+            return [made({ key, inputHash, rule: identity }, result)];
+          }),
           batch.length,
         );
       }
@@ -200,6 +280,95 @@ async function update<Input>(
     ...counts(await outputs.counts(), inputs),
     pending: 0,
   });
+}
+
+// An input that was gone before the rule read it gets no row.
+function isGone<Result>(
+  result: Result | { readonly gone: true },
+): result is { readonly gone: true } {
+  return typeof result === 'object' && result !== null && 'gone' in result;
+}
+
+// The row of an input with nothing made: empty, or the rule's failure.
+function unmade(
+  head: OutputHead,
+  result: { readonly empty: true } | { readonly error: string },
+): UnmadeRow {
+  return 'error' in result
+    ? { ...head, status: 'failed', error: result.error }
+    : { ...head, status: 'empty', error: null };
+}
+
+// The row of a Rule's value, or its failure when a value does not fit.
+function valuesRow(
+  columns: RuleColumns,
+  head: OutputHead,
+  values: RuleValues<RuleColumns>,
+): OutputRow {
+  const misfit = misfits(columns, values);
+  return misfit === undefined
+    ? { ...head, status: 'computed', error: null, values }
+    : { ...head, status: 'failed', error: misfit };
+}
+
+// The row of a TableRule's parts, each with its part hash, or the failure
+// of the input when a value of a part does not fit its column.
+function partsRow(
+  rule: Pick<TableRule<unknown, RuleColumns, RuleColumns>, 'output' | 'place'>,
+  head: OutputHead,
+  parts: readonly [RuleValues<RuleColumns>, ...RuleValues<RuleColumns>[]],
+): TableOutputRow {
+  for (const [seq, values] of parts.entries()) {
+    const misfit = misfits(rule.output, values) ?? misfits(rule.place, values);
+    if (misfit !== undefined)
+      return { ...head, status: 'failed', error: `Part ${seq}: ${misfit}` };
+  }
+  const [first, ...rest] = parts;
+  const part = (values: RuleValues<RuleColumns>): PartRow => ({
+    partHash: partHash(rule.output, values),
+    values,
+  });
+  return {
+    ...head,
+    status: 'computed',
+    error: null,
+    parts: [part(first), ...rest.map(part)],
+  };
+}
+
+// The part hash: the SHA-256, in lowercase hex, of the content columns of a
+// part, never of its seq or its place columns. Each content column that has a
+// value counts, in the order of the names (JavaScript's sort, by UTF-16 code
+// unit), as `c<n>:<name>` and then its value as `<tag><n>:<bytes>`, where
+// <n> is the count of bytes in decimal: `t` and the UTF-8 of a text, `n` and
+// the decimal digits of an integer, `b` and the bytes of a blob, `v` and the
+// float32 values of a vector, little-endian. A column with no value does not
+// count, so a content column that a rule adds keeps the part hash of each
+// part that has no value for it, as the row hash of a copy does.
+function partHash(
+  columns: RuleColumns,
+  values: RuleValues<RuleColumns>,
+): string {
+  const digest = createHash('sha256');
+  const add = (tag: string, bytes: Uint8Array) => {
+    digest.update(`${tag}${bytes.byteLength}:`);
+    digest.update(bytes);
+  };
+  const utf8 = new TextEncoder();
+  for (const name of Object.keys(columns).toSorted()) {
+    const value = values[name];
+    if (value === undefined) continue;
+    add('c', utf8.encode(name));
+    if (typeof value === 'string') add('t', utf8.encode(value));
+    else if (typeof value === 'number') add('n', utf8.encode(String(value)));
+    else if (value instanceof Vector) {
+      const floats = new DataView(new ArrayBuffer(value.dimensions * 4));
+      for (const [index, float] of value.values.entries())
+        floats.setFloat32(index * 4, float, true);
+      add('v', new Uint8Array(floats.buffer));
+    } else add('b', value);
+  }
+  return digest.digest('hex');
 }
 
 // Why a value does not fit its column, for the first value that does not:
