@@ -142,3 +142,18 @@ async function describe(
     WHERE col_description(a.attrelid, a.attnum) IS DISTINCT FROM c.value`;
   for (const { statement } of comments) await sql.unsafe(statement);
 }
+
+// Removes a view, its comments and each view over it, in the schema's lock,
+// as dbt drops a model's relation (`drop view if exists ... cascade`): a view
+// of the pipeline over it waits or is made again by its own refresh, and a
+// view that someone made over it is gone.
+export async function withdrawPostgresView(
+  sql: postgres.TransactionSql,
+  schema: string,
+  name: string,
+): Promise<void> {
+  await lockSchema(sql, schema);
+  await sql.unsafe(
+    `DROP VIEW IF EXISTS ${quote(schema)}.${quote(name)} CASCADE`,
+  );
+}

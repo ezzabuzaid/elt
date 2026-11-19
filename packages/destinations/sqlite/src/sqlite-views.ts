@@ -92,3 +92,11 @@ export function publishSQLiteViews(
     { mode: 'deferred' },
   );
 }
+
+// Removes a view, so a reader finds no view of a declaration that no longer
+// holds; the catalog shows only the descriptions of relations that exist. A
+// view over it reads no such table until it is made again, as SQLite
+// resolves the names of a view when it is read.
+export function withdrawSQLiteView(database: DatabaseSync, name: string): void {
+  database.exec(`DROP VIEW IF EXISTS ${quote(name)}`);
+}

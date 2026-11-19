@@ -9,7 +9,11 @@ import { openDestination } from './open-destination.ts';
 import { SQLiteDerivedStatus } from './sqlite-derived-status.ts';
 import { SQLiteDestination } from './sqlite-destination.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
-import { type SQLiteView, publishSQLiteViews } from './sqlite-views.ts';
+import {
+  type SQLiteView,
+  publishSQLiteViews,
+  withdrawSQLiteView,
+} from './sqlite-views.ts';
 
 // A view over what the pipeline loads into one SQLite file: derived data
 // that SQLite computes on each read, as a dbt model materialized as a view
@@ -74,6 +78,7 @@ export class View extends DerivedDataset<SQLiteTable> {
         ...this.#made(connections),
         ...earlier.map(({ name }) => name.toLowerCase()),
       ]),
+      withdraw: async () => withdrawSQLiteView(database, this.name),
       status: new SQLiteDerivedStatus(database, this.name, 'view', clock),
     });
   }

@@ -28,7 +28,7 @@ const databases = new Postgres({ environment: process.env });
 // Records with ids, loaded into raw.raw_records and read through
 // marts.records; it fails every read while failing is set.
 class Records extends Source {
-  readonly identity = 'records';
+  readonly identity: string = 'records';
   failing = false;
   ids: readonly string[];
   readonly records = new Stream({
@@ -309,6 +309,126 @@ test('a view that reads a view still waiting for its copy waits too, and both ap
       rows: [...(await sql`SELECT many FROM marts.record_load`)],
     },
     { before: [], rows: [{ many: true }] },
+  );
+});
+
+// The records of a second store, which a second connection loads.
+class Inputs extends Records {
+  override readonly identity = 'inputs';
+}
+
+// A pipeline whose connection records loads raw.raw_records, read through
+// marts.records, whose connection inputs loads raw.raw_dataset_inputs, read
+// through marts.dataset_inputs, and whose views in marts are candidates and
+// judgment_inputs, which reads candidates.
+function judgedPipeline(
+  url: string,
+  sources: { records: Records; inputs: Inputs },
+  candidates: { sql: string; columns: Readonly<Record<string, string>> },
+  judged: { sql: string; columns: Readonly<Record<string, string>> },
+) {
+  const raw = new PostgresDestination({ url, schema: 'raw' });
+  const marts = new PostgresDestination({ url, schema: 'marts' });
+  return new Pipeline({
+    clock: globalThis,
+    history: new PostgresSyncHistory({ url }),
+    connections: [
+      new Connection({
+        name: 'records',
+        source: sources.records,
+        destination: raw,
+        steps: [
+          new Copy(
+            sources.records.records,
+            raw.table('raw_records').withReaderView('marts', 'records'),
+          ),
+        ],
+      }),
+      new Connection({
+        name: 'inputs',
+        source: sources.inputs,
+        destination: raw,
+        steps: [
+          new Copy(
+            sources.inputs.records,
+            raw
+              .table('raw_dataset_inputs')
+              .withReaderView('marts', 'dataset_inputs'),
+          ),
+        ],
+      }),
+    ],
+    derived: [
+      new View({
+        into: marts,
+        name: 'candidates',
+        description: 'The records to judge.',
+        ...candidates,
+      }),
+      new View({
+        into: marts,
+        name: 'judgment_inputs',
+        description: 'What each judgment reads.',
+        ...judged,
+      }),
+    ],
+  });
+}
+
+test('a view redeclared over a table its copy has not loaded yet leaves no view of its earlier declaration, so a view that reads it waits too, not fails', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  const sources = { records: new Records(['r1']), inputs: new Inputs(['r1']) };
+  sources.inputs.failing = true;
+  await judgedPipeline(
+    url,
+    sources,
+    { sql: 'SELECT id FROM records', columns: { id: 'Record id.' } },
+    { sql: 'SELECT id FROM candidates', columns: { id: 'Record id.' } },
+  )
+    .run()
+    .catch(() => undefined);
+  const ownViews = (names: readonly string[]) =>
+    names.filter((name) => name === 'candidates' || name === 'judgment_inputs');
+  const before = ownViews(await views(sql));
+
+  const error = await judgedPipeline(
+    url,
+    sources,
+    {
+      sql: 'SELECT r.id, d.id AS input FROM records r JOIN dataset_inputs d USING (id)',
+      columns: { id: 'Record id.', input: 'Its input.' },
+    },
+    { sql: 'SELECT input FROM candidates', columns: { input: 'Its input.' } },
+  )
+    .run()
+    .then(
+      () => assert.fail('the run reported no failure'),
+      (error: unknown) => error,
+    );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    {
+      before,
+      error: error.errors.map(({ message }: Error) => message),
+      after: ownViews(await views(sql)),
+      status: [
+        ...(await sql`
+          SELECT dataset, state FROM marts.derived_status ORDER BY dataset`),
+      ],
+    },
+    {
+      before: ['candidates', 'judgment_inputs'],
+      error: ['the store is gone'],
+      after: [],
+      status: [
+        { dataset: 'marts.candidates', state: 'waiting' },
+        { dataset: 'marts.judgment_inputs', state: 'waiting' },
+      ],
+    },
   );
 });
 

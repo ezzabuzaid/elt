@@ -15,6 +15,7 @@ import {
   type PostgresView,
   checkView,
   publishPostgresViews,
+  withdrawPostgresView,
 } from './postgres-views.ts';
 
 // A view over what the pipeline loads into one Postgres database: derived
@@ -85,6 +86,11 @@ export class View extends DerivedDataset<PostgresTable> {
         ...made(connections, this.into),
         ...earlier.flatMap((dataset) => derivedRelation(dataset) ?? []),
       ]),
+      withdraw: async () => {
+        await session.sql.begin((transaction) =>
+          withdrawPostgresView(transaction, this.into.schema, this.name),
+        );
+      },
       status: new PostgresDerivedStatus(
         session.sql,
         this.qualifiedName,

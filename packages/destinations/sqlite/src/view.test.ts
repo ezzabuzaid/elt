@@ -43,7 +43,7 @@ class Filled extends Gauge<number> {
 // Records with ids, loaded into raw_records and read through records; it
 // fails every read while failing is set.
 class Records extends Source {
-  readonly identity = 'records';
+  readonly identity: string = 'records';
   failing = false;
   readonly records = new Stream({
     name: 'records',
@@ -394,6 +394,127 @@ test('a view that reads a view still waiting for its copy waits too, and both ap
   assert.deepEqual(shell(path, 'SELECT many FROM record_load').rows, [
     { many: 1 },
   ]);
+});
+
+// The records of a second store, which a second connection loads.
+class Inputs extends Records {
+  override readonly identity = 'inputs';
+}
+
+// A pipeline whose connection records loads records, whose connection inputs
+// loads dataset_inputs, and whose views are candidates and judgment_inputs,
+// which reads candidates.
+function judgedPipeline(
+  path: string,
+  sources: { records: Records; inputs: Inputs },
+  candidates: { sql: string; columns: Readonly<Record<string, string>> },
+  judged: { sql: string; columns: Readonly<Record<string, string>> },
+) {
+  const destination = new SQLiteDestination({ path });
+  return new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'records',
+        source: sources.records,
+        destination,
+        steps: [
+          new Copy(
+            sources.records.records,
+            destination.table('raw_records').withReaderView('records'),
+          ),
+        ],
+      }),
+      new Connection({
+        name: 'inputs',
+        source: sources.inputs,
+        destination,
+        steps: [
+          new Copy(
+            sources.inputs.records,
+            destination
+              .table('raw_dataset_inputs')
+              .withReaderView('dataset_inputs'),
+          ),
+        ],
+      }),
+    ],
+    derived: [
+      new View({
+        into: destination,
+        name: 'candidates',
+        description: 'The records to judge.',
+        ...candidates,
+      }),
+      new View({
+        into: destination,
+        name: 'judgment_inputs',
+        description: 'What each judgment reads.',
+        ...judged,
+      }),
+    ],
+  });
+}
+
+test('a view redeclared over a table its copy has not loaded yet leaves no view of its earlier declaration, so a view that reads it waits too, not fails', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-view-');
+  const path = join(scratch.path, 'data.sqlite');
+  const sources = { records: new Records(['r1']), inputs: new Inputs(['r1']) };
+  sources.inputs.failing = true;
+  await judgedPipeline(
+    path,
+    sources,
+    { sql: 'SELECT id FROM records', columns: { id: 'Record id.' } },
+    { sql: 'SELECT id FROM candidates', columns: { id: 'Record id.' } },
+  )
+    .run()
+    .catch(() => undefined);
+  const ownViews = (names: readonly string[]) =>
+    names.filter((name) => name === 'candidates' || name === 'judgment_inputs');
+  const before = ownViews(views(path));
+
+  const error = await judgedPipeline(
+    path,
+    sources,
+    {
+      sql: 'SELECT r.id, d.id AS input FROM records r JOIN dataset_inputs d USING (id)',
+      columns: { id: 'Record id.', input: 'Its input.' },
+    },
+    { sql: 'SELECT input FROM candidates', columns: { input: 'Its input.' } },
+  )
+    .run()
+    .then(
+      () => assert.fail('the run reported no failure'),
+      (error: unknown) => error,
+    );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    {
+      before,
+      error: error.errors.map(({ message }: Error) => message),
+      after: ownViews(views(path)),
+      status: shell(
+        path,
+        `SELECT dataset, state FROM derived_status ORDER BY dataset`,
+      ).rows,
+      described: shell(
+        path,
+        `SELECT DISTINCT name FROM catalog WHERE name IN ('candidates', 'judgment_inputs')`,
+      ).rows,
+    },
+    {
+      before: ['candidates', 'judgment_inputs'],
+      error: ['the store is gone'],
+      after: [],
+      status: [
+        { dataset: 'candidates', state: 'waiting' },
+        { dataset: 'judgment_inputs', state: 'waiting' },
+      ],
+      described: [],
+    },
+  );
 });
 
 test('a view that reads a view declared after it fails the run with the error of SQLite', async () => {

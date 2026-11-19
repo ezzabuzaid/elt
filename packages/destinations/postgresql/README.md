@@ -234,6 +234,7 @@ Give the view to the pipeline in `derived`. The view is `marts.unread_count`: it
 - The view appears when its query compiles. Thus a reader never finds a view that fails.
 - While the SQL reads a raw table or a reader view that a copy of the pipeline has not made yet, the view waits. It appears at the refresh after that copy loads. Postgres tells which relation is missing (`42P01`), and the view waits only when the pipeline makes that relation.
 - While the SQL reads a view or a computed dataset that comes before it in `derived` and that still waits, the view waits too, as dbt skips a model whose upstream model was skipped.
+- While a view waits, its schema has no view of its name: the refresh drops the view that an earlier declaration made with `DROP VIEW IF EXISTS ... CASCADE`, as dbt's `postgres__drop_view` does. Each view over it goes too: a view of the pipeline waits or is made again by its own refresh, and a view that someone made over it must be made again.
 - Any other error of the query, for example a misspelled table, is a dataset failure. It fails the run with the error of Postgres.
 - The columns must be the same as the columns that the query gives. `marts.catalog` lists them with their descriptions when the view is in `marts`.
 - A refresh that changes nothing leaves the view as it was. The refresh makes the query in a savepoint and compares its definition with the stored one, so the view keeps its OID, its grants and its readers.
