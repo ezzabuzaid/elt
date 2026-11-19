@@ -234,8 +234,11 @@ function listingsImport(
 }
 
 const unit = (values: readonly number[]) => {
-  const length = Math.hypot(...values);
-  return [...Float32Array.from(values, (value) => value / length)];
+  const rounded = Float32Array.from(values);
+  const length = Math.sqrt(
+    rounded.reduce((sum, value) => sum + value * value, 0),
+  );
+  return [...Float32Array.from(rounded, (value) => value / length)];
 };
 
 test('each listing with text gets the unit vector of its title and description from the model, and a listing with no text gets none', async () => {
