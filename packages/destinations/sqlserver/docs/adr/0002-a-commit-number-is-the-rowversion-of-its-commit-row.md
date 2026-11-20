@@ -28,7 +28,7 @@ SQL Server gives the mechanism itself. Each database has one `rowversion` counte
 - A commit never waits for another commit to take its number.
 - Commit numbers are large and not dense. A position stays `<epoch>:<number>`.
 - The commit row must be the first `rowversion` write of its transaction. No other table of the destination has a `rowversion` column.
-- A database restored from a backup keeps its counter and its `_elt_epoch`, so numbers after the restore point can repeat. A probe must show whether `recovery_fork_guid` of `sys.database_recovery_status` changes on a point-in-time restore of Azure SQL; if it does, the epoch keeps it, and a mismatch starts a new epoch.
+- A database restored from a backup keeps its `_elt_epoch`, and its counter goes back, so numbers after the restore point repeat (both probes below). The epoch keeps a mark of the database copy, and when the stored mark is not equal to the mark that the destination reads now, a new epoch starts. On SQL Server the mark is `recovery_fork_guid` of `sys.database_recovery_status`, which each restore changes and a restart does not. Azure SQL Database has no such view, so there the mark is the three values `database_id`, `create_date` and `physical_database_name` of `sys.databases`, and a change of any one of them starts a new epoch. Each restore changes all three. A rename (`create_date`) and a change of service objective (`physical_database_name`) also start a new epoch, with no restore. Such a new epoch costs readers one full read and gives no wrong row, but a restore that the mark does not see gives readers wrong rows, so the mark takes each value that a restore changes (decided 2026-11-20 after the Azure probe).
 - To probe before code: a commit at or below the mark is visible to a `SNAPSHOT` transaction that begins after the mark was read.
 
 Sources: elt-postgresql README, "How a reader knows which numbers are done"; source-microsoft-sql-server README, rowversion strategy; `sql-server-session.ts` of sdk-microsoft-sql-server.
@@ -79,7 +79,7 @@ SQL Server 2025 in Docker
 
 Ezz ruled on 2026-11-19 that this probe runs in Docker only. Thus it was probed on SQL Server 2025 (the box product's `RESTORE … WITH STOPAT`), not on the point-in-time restore of Azure SQL.
 
-**On SQL Server 2025 the consequence holds**: each restore gives the database a new `recovery_fork_guid`, a restart does not, and the numbers after the restore point repeat. **On Azure SQL Database the view does not exist, which contradicts "the epoch keeps it" for Azure SQL Database: needs Ezz.**
+**On SQL Server 2025 the consequence holds**: each restore gives the database a new `recovery_fork_guid`, a restart does not, and the numbers after the restore point repeat. **On Azure SQL Database the view does not exist, so on Azure SQL Database the epoch keeps the values of `sys.databases` that the next probe found (the consequence above, decided 2026-11-20).**
 
 SQL Server 2025 in Docker (17.0.5065.9). The database `zz_elt_probe_src` is in the full recovery model. Its commit table took 2001 before a full backup and 2002 after it. Then `STOPAT` was read, a row took a number after it, 20,000 updates moved the counter to 22083, and a log backup ran:
 
@@ -181,6 +181,6 @@ a new database on the same server: db_id 7 (the id 5 of the dropped database did
 - `database_id` changes at the restore and stays at the rename and at the change of service objective. It is a small number that the server gives; this probe did not show whether the server can give the id of a dropped database again.
 - Of the values that this probe read, only `database_id` changed at the restore and at nothing else.
 
-### Decision for Ezz's review
+### What the decision takes from this probe
 
-The consequence above says that the epoch keeps `recovery_fork_guid`. Azure SQL Database has no `recovery_fork_guid`, so on Azure SQL Database (EngineEdition 5) the epoch must keep a different value. Each candidate starts a new epoch at each restore that this probe made. They differ in the false new epochs that they start: `physical_database_name` at each change of service objective, `create_date` at the rename, and `database_id` at none here, but its reuse after a drop is not known. Ezz decides which value the epoch keeps on Azure SQL Database.
+Each candidate starts a new epoch at each restore that this probe made. They differ in the new epochs that they start with no restore: `physical_database_name` at each change of service objective, `create_date` at the rename, and `database_id` at none here, but its reuse after a drop is not known. The two failures are not equal: a new epoch with no restore costs readers one full read, and a restore with no new epoch gives readers wrong rows. Thus on Azure SQL Database (EngineEdition 5) the epoch keeps all three values and starts a new epoch when any one of them changes (the consequence above), as a cache drops an entry when it is not sure that the entry is current.
