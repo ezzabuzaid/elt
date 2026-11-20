@@ -87,6 +87,12 @@ export {
   type StoredFit,
   reloadMode,
 } from './core/reload-mode.ts';
+export {
+  type Reloads,
+  SomePartitions,
+  WholeStream,
+  wholeStream,
+} from './core/reloads.ts';
 export { StreamChangeError } from './core/stream-change.ts';
 export {
   type FieldSchema,

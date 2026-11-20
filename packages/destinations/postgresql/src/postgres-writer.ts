@@ -9,6 +9,8 @@ import {
   type KeyValue,
   type Partition,
   type ReloadMode,
+  type Reloads,
+  SomePartitions,
   type Stage,
   TargetOwnedError,
   Writer,
@@ -16,6 +18,7 @@ import {
   errorMessage,
   readPartitions,
   reloadMode,
+  wholeStream,
 } from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
@@ -1087,30 +1090,6 @@ async function makeWriterTables(sql: Transaction): Promise<void> {
     );
   });
 }
-
-// What an open reload reloads: the whole stream, or some partitions of it,
-// while the others load into the target as before, as Delta Lake's
-// replaceWhere replaces only the rows that its condition selects.
-class WholeStream {}
-
-class SomePartitions {
-  readonly partitions: readonly Partition[];
-
-  constructor(partitions: readonly Partition[]) {
-    this.partitions = Object.freeze([...partitions]);
-  }
-
-  // These partitions and partition, which a later RESET reloads too.
-  with(partition: Partition): SomePartitions {
-    return this.partitions.some((other) => isDeepStrictEqual(other, partition))
-      ? this
-      : new SomePartitions([...this.partitions, partition]);
-  }
-}
-
-type Reloads = WholeStream | SomePartitions;
-
-const wholeStream = new WholeStream();
 
 // Whether a stage's commit claims its target: the first does, the later ones
 // find it claimed.

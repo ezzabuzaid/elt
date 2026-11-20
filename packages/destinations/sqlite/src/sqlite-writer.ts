@@ -1,6 +1,5 @@
 import { hash } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-import { isDeepStrictEqual } from 'node:util';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { transaction } from '@zukhruf/sqlite-transaction';
@@ -12,17 +11,20 @@ import type {
   KeyValue,
   Partition,
   ReloadMode,
+  Reloads,
   Stage,
   TargetDescription,
 } from '@eltjs/elt';
 import {
   FileContent,
+  SomePartitions,
   TargetOwnedError,
   Writer,
   describeTarget,
   errorMessage,
   readPartitions,
   reloadMode,
+  wholeStream,
 } from '@eltjs/elt';
 
 import { openDestination } from './open-destination.ts';
@@ -60,30 +62,6 @@ type Side = {
   readonly id: string;
   readonly rows?: string;
 };
-
-// What an open reload reloads: the whole stream, or some partitions of it,
-// while the others load into the target as before, as Delta Lake's
-// replaceWhere replaces only the rows that its condition selects.
-class WholeStream {}
-
-class SomePartitions {
-  readonly partitions: readonly Partition[];
-
-  constructor(partitions: readonly Partition[]) {
-    this.partitions = Object.freeze([...partitions]);
-  }
-
-  // These partitions and partition, which a later RESET reloads too.
-  with(partition: Partition): SomePartitions {
-    return this.partitions.some((other) => isDeepStrictEqual(other, partition))
-      ? this
-      : new SomePartitions([...this.partitions, partition]);
-  }
-}
-
-type Reloads = WholeStream | SomePartitions;
-
-const wholeStream = new WholeStream();
 
 // One stream's load. Operations, and the chunks of their files, wait in
 // connection-private TEMP tables, so another stream's commit never publishes

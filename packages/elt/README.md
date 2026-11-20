@@ -1236,6 +1236,7 @@ src/core/
   stream.ts             Stream: the metadata of one stream
   destination.ts        Destination and Load: the port of each destination
   reload-mode.ts        reloadMode: load, make, evolve or reload a target
+  reloads.ts            Reloads: what an open reload reloads, the whole stream or some partitions
   snapshot.ts           diffSnapshot and diffGroupedSnapshot
   partition.ts          the checkpoint of a partitioned stream
   identifiers.ts        Identifiers: the naming rule, and the name of a reader view
