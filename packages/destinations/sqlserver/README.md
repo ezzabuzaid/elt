@@ -28,7 +28,7 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 - The file columns: parsed text, references to the files of a storage, and the original bytes of a file in a file store (see "File bytes in the database" below).
 - `reading(position?)`: a session of its own that reads the database as of a position (see "Commit numbers and positions" below), and `readPassStatus(login)`.
 - `View`, and its rows of `derived_status` (see "Declare a view" and "Derived status" below).
-- `ComputedDataset` of a `Rule` or a `TableRule`, with `text`, `blob`, `integer` and `vector(n)` rule columns, the parts table of a `TableRule`, and its rows of `derived_status` (see "Declare a computed dataset" below). Not built yet: `afterCreate`.
+- `ComputedDataset` of a `Rule` or a `TableRule`, with `text`, `blob`, `integer` and `vector(n)` rule columns, the parts table of a `TableRule`, `afterCreate`, and its rows of `derived_status` (see "Declare a computed dataset" below).
 - A failure of the setup of the database is a `SqlServerSetupError`. Its [failure type](../../elt/README.md#failure-types) is `config`. A login without a permission that a statement of the destination or of `SqlServerCheckpointStore` needs is also `config`: a `SqlServerPermissionError` of sdk-microsoft-sql-server, and the SQL Server errors 229 and 230 (a permission on an object or a column) and 262 (a permission in the database, such as `CREATE TABLE`). A login that the server refuses (`SqlServerLoginError`: wrong credentials, a disabled login, a database that it may not open) is `config` too, as a wrong password is in elt-postgresql. Each other error, for example a server that cannot be reached, is `system`.
 
 ## Load a stream into SQL Server
@@ -232,7 +232,7 @@ new ComputedDataset({
 
 - The raw table `_warehouse.raw_staff_passage_vectors` has the column `vector VECTOR(1536)`. A value is the JSON text of `toSql` of `@zukhruf/vectors/sqlserver`, with 9 significant digits, which keeps each float32 value; the commit casts it with `CAST(… AS VECTOR(1536))`.
 - A rule column of more than 1,998 dimensions fails the constructor of `ComputedDataset` with a `TypeError` that names the column and the limit of a float32 `VECTOR`.
-- `afterCreate` gives T-SQL that runs in the transaction that makes the raw table, each time the dataset makes it ([ADR 0008](./docs/adr/0008-a-computed-dataset-runs-the-sql-of-the-host-each-time-it-makes-its-raw-table.md)). Thus a vector index stays when a changed declaration makes the table again. An index made on an empty table starts as an exact index, and Azure SQL builds its graph after the rows come (`@zukhruf/vectors`, "SQL Server: what the probes found").
+- `afterCreate` gets the quoted name of the raw table, `[_warehouse].[raw_staff_passage_vectors]`, and gives T-SQL that runs in the transaction that makes the raw table, each time the dataset makes it. A statement that fails fails the dataset, and the transaction leaves no table ([ADR 0008](./docs/adr/0008-a-computed-dataset-runs-the-sql-of-the-host-each-time-it-makes-its-raw-table.md)). Thus a vector index stays when a changed declaration makes the table again. An index made on an empty table starts as an exact index, and Azure SQL builds its graph after the rows come (`@zukhruf/vectors`, "SQL Server: what the probes found").
 - The search is the host's own SQL, with every feature of Azure SQL:
 
 ```sql
@@ -344,6 +344,7 @@ As in [elt-postgresql](../postgresql/README.md#declare-a-computed-dataset). A co
 - When the stored columns of the raw table differ from its declaration, for example a vector of other dimensions, the refresh makes the table again in one commit: the history keeps each old row and takes the new shape, `CREATE OR ALTER VIEW` keeps the reader view, and `sp_refreshview` refreshes each view over it ([ADR 0006](./docs/adr/0006-a-change-of-a-table-refreshes-the-views-over-it.md)). A column whose type the history cannot widen, such as `VECTOR(3)` to `VECTOR(4)`, expires each position before that commit, as a reload of a stream does.
 - The dataset reads each relation of `from` through its reader view in one statement. A table of `from` must be loaded by a copy into the same database.
 - `qualifiedName` is `marts.<name>`. A `View` declared after the dataset that reads it waits while the dataset waits.
+- `afterCreate` gives the statements that run after each make of the raw table, in the same transaction (see "Store vectors" above).
 
 A `TableRule` gives many parts for one input, as in [elt-postgresql](../postgresql/README.md) and [elt ADR 0026](../../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md). The raw table then keeps one output row for each key, with no rule column, and the parts table `_warehouse.raw_<name>_parts` keeps one row for each part. Readers query the view `marts.<name>_parts`: the key, `seq` (`INT`, from 0), `part_hash` (`NVARCHAR(MAX)`), the content columns and the place columns.
 

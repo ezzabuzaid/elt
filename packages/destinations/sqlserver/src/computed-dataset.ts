@@ -78,6 +78,8 @@ type DeclaredTable = Pick<
 // raw_<name>_parts, which readers query through marts.<name>_parts. The
 // commit that writes an output row writes its parts, and the two tables are
 // one declaration, so a change to either makes both again.
+// afterCreate gives the T-SQL of the host, such as a vector index, that runs
+// each time the dataset makes its raw table (ADR 0008).
 export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
   readonly name: string;
   // The database the dataset lives in.
@@ -93,6 +95,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
   // are the parts'.
   readonly #ruleColumns: RuleColumns;
   readonly #output: DeclaredTable;
+  readonly #afterCreate: readonly string[];
 
   constructor({
     into,
@@ -100,6 +103,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
     description,
     from,
     compute,
+    afterCreate,
   }: {
     into: SqlServerDestination;
     name: string;
@@ -107,6 +111,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
     from: readonly (SqlServerTable | View)[];
     compute:
       Rule<Input, RuleColumns> | TableRule<Input, RuleColumns, RuleColumns>;
+    afterCreate?: (table: string) => readonly string[];
   }) {
     super();
     this.name = name;
@@ -131,6 +136,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
         : { rule: compute };
     this.#ruleColumns = compute instanceof TableRule ? {} : compute.output;
     const table = inWarehouse(rawTable(name));
+    this.#afterCreate = Object.freeze([...(afterCreate?.(table) ?? [])]);
     const declared: readonly Declared[] = Object.freeze([
       { name: '_elt_row', type: 'bigint', required: true },
       { name: compute.key.name, type: 'nvarchar(max)', required: true },
@@ -450,7 +456,8 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
   // new shape, and the views over the old tables read the new ones (ADR
   // 0006). A column whose type changes in a way that a history cannot follow,
   // such as a vector of other dimensions, expires each position before the
-  // commit, which only the rows of the old history read.
+  // commit, which only the rows of the old history read. Each make of the
+  // raw table runs the statements of afterCreate after it (ADR 0008).
   async #declare(
     connection: SqlServerConnection,
     commit: () => Promise<number>,
@@ -470,6 +477,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
         await history.create(connection, table);
         await view.describe(connection);
       }
+      if (missing) await this.#afterCreated(connection);
       return;
     }
     const committedIn = await commit();
@@ -504,8 +512,16 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
           await history.create(connection, table);
           await view.replace(connection);
         }
+        await this.#afterCreated(connection);
       },
     );
+  }
+
+  // Runs the statements of afterCreate, one at a time, on the raw table that
+  // the dataset made.
+  async #afterCreated(connection: SqlServerConnection): Promise<void> {
+    for (const statement of this.#afterCreate)
+      await connection.query(statement);
   }
 
   // Each input by key, from the rows of each relation of from that exists

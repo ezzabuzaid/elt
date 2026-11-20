@@ -14,7 +14,7 @@ The leaders:
 
 ## Decision
 
-- `ComputedDataset` of this destination takes `afterCreate?: (table: string) => readonly string[]`. `table` is the quoted name of the raw table, such as `[marts].[raw_staff_passage_vectors]`. The statements run in the transaction that makes the raw table, each time the dataset makes it. A statement that fails is a dataset failure.
+- `ComputedDataset` of this destination takes `afterCreate?: (table: string) => readonly string[]`. `table` is the quoted name of the raw table, such as `[_warehouse].[raw_staff_passage_vectors]`. The statements run in the transaction that makes the raw table, after the dataset made its tables, each time the dataset makes them. A statement that fails is a dataset failure.
 - The destination writes no `CREATE VECTOR INDEX` of its own. The host writes the T-SQL, with each option of the engine.
 
 ## Considered Options
@@ -28,7 +28,7 @@ The leaders:
 
 - A vector index exists from the first make of the table, and it stays across each make.
 - An index made on an empty table starts exact, and Azure SQL builds its graph about 16 seconds after the rows come (`@zukhruf/vectors` README).
-- SQL Server 2025 in Docker has no DiskANN index, so a test of `afterCreate` uses another statement, such as a nonclustered index on `status`.
+- SQL Server 2025 in Docker has no DiskANN index, so a test of `afterCreate` uses another statement, such as a nonclustered index on `committed_in`: an `NVARCHAR(MAX)` column, such as `status`, cannot be the key of an index (error 1919).
 - `View` does not take `afterCreate`: a view has no table to index.
 
 Sources: backlog #4738; `@zukhruf/vectors` README, "SQL Server: what the probes found".

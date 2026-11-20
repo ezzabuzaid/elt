@@ -10,6 +10,7 @@ import {
   Connection,
   Copy,
   type CopyConfiguration,
+  DerivedDatasetError,
   type LoadedRow,
   Pipeline,
   PipelineError,
@@ -165,6 +166,7 @@ function measuresPipeline(
   source: Records,
   measure: Measure,
   views: (marts: SqlServerDestination) => View[] = () => [],
+  afterCreate?: (table: string) => readonly string[],
 ) {
   const destination = new SqlServerDestination({ login });
   const target = destination.table('records');
@@ -186,6 +188,7 @@ function measuresPipeline(
         description: 'The size, label and vector of each record.',
         from: [target],
         compute: measure,
+        afterCreate,
       }),
       ...views(destination),
     ],
@@ -417,6 +420,95 @@ test('a vector column of other dimensions makes the raw table again with the new
     {
       rows: [{ id: 'r1', status: 'computed', vector: [1, 2, 3, 4] }],
       dimensions: [{ dimensions: 4 }],
+    },
+  );
+});
+
+test('afterCreate gets the raw table, and its statements run when the dataset makes the table and again when a changed declaration makes it again', async () => {
+  await using database = await scratch();
+  const source = new Records(['r1']);
+  const tables: string[] = [];
+  const afterCreate = (table: string) => {
+    tables.push(table);
+    return [`CREATE INDEX [by_commit] ON ${table} ([committed_in])`];
+  };
+  const indexes = async () =>
+    plain(
+      await database.admin.query(
+        "SELECT i.[name] FROM sys.indexes AS i WHERE i.[object_id] = OBJECT_ID(N'_warehouse.raw_measures') AND i.[name] = N'by_commit'",
+      ),
+    );
+  await measuresPipeline(
+    database.login,
+    source,
+    new Measure(3),
+    () => [],
+    afterCreate,
+  ).pipeline.run();
+  const made = await indexes();
+  const four = new Measure(4);
+  four.model = 'measure-4';
+
+  await measuresPipeline(
+    database.login,
+    source,
+    four,
+    () => [],
+    afterCreate,
+  ).pipeline.run();
+
+  assert.deepEqual(
+    {
+      tables,
+      made,
+      remade: await indexes(),
+      dimensions: plain(
+        await database.admin.query(
+          "SELECT c.[vector_dimensions] AS [dimensions] FROM sys.columns AS c WHERE c.[object_id] = OBJECT_ID(N'_warehouse.raw_measures') AND c.[name] = N'vector'",
+        ),
+      ),
+    },
+    {
+      tables: ['[_warehouse].[raw_measures]', '[_warehouse].[raw_measures]'],
+      made: [{ name: 'by_commit' }],
+      remade: [{ name: 'by_commit' }],
+      dimensions: [{ dimensions: 4 }],
+    },
+  );
+});
+
+test('an afterCreate statement that fails fails the dataset, and the transaction leaves no raw table', async () => {
+  await using database = await scratch();
+  const { pipeline } = measuresPipeline(
+    database.login,
+    new Records(['r1']),
+    new Measure(),
+    () => [],
+    (table) => [`CREATE INDEX [by_nothing] ON ${table} ([nothing])`],
+  );
+
+  const failed = await rejection(pipeline.run());
+
+  assert.ok(failed instanceof DerivedDatasetError, String(failed));
+  assert.deepEqual(
+    {
+      error: failed.message,
+      tables: plain(
+        await database.admin.query(
+          "SELECT OBJECT_ID(N'_warehouse.raw_measures') AS [raw], OBJECT_ID(N'marts.measures') AS [view]",
+        ),
+      ),
+      status: plain(
+        await database.admin.query(
+          "SELECT [state] FROM marts.derived_status WHERE [dataset] = N'marts.measures'",
+        ),
+      ),
+    },
+    {
+      error:
+        "Derived dataset measures failed: Column name 'nothing' does not exist in the target table, index or view.",
+      tables: [{ raw: null, view: null }],
+      status: [{ state: 'failed' }],
     },
   );
 });
