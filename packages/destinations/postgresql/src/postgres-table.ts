@@ -1,23 +1,9 @@
-import {
-  type Stream,
-  Target,
-  readerCatalog,
-  syncHistoryRelations,
-} from '@eltjs/elt';
+import { type Stream, Target, targetFileReads } from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
 import { PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
 import { identifiers, rawTable } from './postgres-identifiers.ts';
-
-// The views that the sync history publishes in marts under a fixed name: the
-// catalog and the views of the history. The naming rule already renames a
-// name that starts with _elt_.
-const made = new Set(
-  [readerCatalog, ...Object.values(syncHistoryRelations)].map(({ name }) =>
-    identifiers.key(name),
-  ),
-);
 
 // A reusable target definition. Empty columns mean infer from the Copy's
 // stream. The host names only the reader view in marts; the destination
@@ -32,13 +18,7 @@ export class PostgresTable extends Target {
   readonly columns: readonly PostgresColumn[];
 
   constructor(name: string, columns?: readonly PostgresColumn[]) {
-    if (typeof name !== 'string')
-      throw new TypeError('A table is named by a string');
-    const view = identifiers.relation(name);
-    if (made.has(identifiers.key(view)))
-      throw new TypeError(
-        `Reader name ${view} is a relation the destination makes`,
-      );
+    const view = identifiers.reader(name);
     if (
       columns !== undefined &&
       (!Array.isArray(columns) ||
@@ -46,26 +26,7 @@ export class PostgresTable extends Target {
         !columns.every((column) => column instanceof PostgresColumn))
     )
       throw new TypeError('A table requires at least one Postgres column');
-    const fields = (columns ?? []).map((column) => column.field);
-    if (new Set(fields).size !== fields.length)
-      throw new TypeError('Two columns hold one field');
-    if ((columns ?? []).filter((column) => column.isPrimaryKey).length > 1)
-      throw new TypeError('Only one primary-key column is supported');
-    const fileReads = (columns ?? []).flatMap((column) =>
-      column.fileRead === undefined ? [] : [column.fileRead],
-    );
-    for (const column of columns ?? []) {
-      if (column.fileRead === undefined) continue;
-      if (
-        column.fileRead.outputType === 'bytes'
-          ? column.kind !== 'blob'
-          : column.kind !== 'text'
-      )
-        throw new TypeError(
-          'Original files require a BLOB column; parsed text and stored references require a TEXT column',
-        );
-    }
-    super(fileReads);
+    super(targetFileReads(columns ?? []));
     this.name = view;
     this.raw = rawTable(view);
     this.columns = Object.freeze(

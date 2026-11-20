@@ -120,7 +120,7 @@ export {
 export { type ChangeSignal, type Check, Gauge } from './core/change-signal.ts';
 export { type Upkeep } from './core/upkeep.ts';
 export { Stream, type SyncMode } from './core/stream.ts';
-export { Target } from './core/target.ts';
+export { Target, targetFileReads } from './core/target.ts';
 export {
   type DescribedColumn,
   describeTarget,

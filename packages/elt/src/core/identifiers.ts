@@ -1,5 +1,13 @@
 import { hash } from 'node:crypto';
 
+import { syncHistoryRelations } from '../state/sync-history-relations.ts';
+import { readerCatalog } from './reader-relation.ts';
+
+// The relations that a destination publishes for readers under a fixed name:
+// the catalog and the views of the sync history. The naming rule already
+// renames a name that starts with _elt_.
+const published = [readerCatalog, ...Object.values(syncHistoryRelations)];
+
 function shortHash(name: string): string {
   return hash('sha256', name).slice(0, 8);
 }
@@ -54,6 +62,22 @@ export abstract class Identifiers {
     return clean === name
       ? this.#fit(name, name)
       : this.#fit(`${clean}_${shortHash(name)}`, name);
+  }
+
+  // The name of the reader view of a target: name under the naming rule of
+  // every relation. A reader view shares the schema of the relations that the
+  // destination publishes, so it cannot take one of their names.
+  reader(name: string): string {
+    if (typeof name !== 'string')
+      throw new TypeError('A table is named by a string');
+    const view = this.relation(name);
+    if (
+      published.some((relation) => this.key(relation.name) === this.key(view))
+    )
+      throw new TypeError(
+        `Reader name ${view} is a relation the destination makes`,
+      );
+    return view;
   }
 
   // A sanitized name is ASCII, so cutting it by bytes keeps whole characters.
