@@ -40,6 +40,15 @@ export class SqlServerDerivedStatus extends DerivedStatus {
     this.#kind = kind;
   }
 
+  // Inside the transaction of a commit that settled count inputs, on the
+  // session of the status.
+  async settled(count: number): Promise<void> {
+    await this.#connection.query(
+      `UPDATE ${table} SET [pending] = GREATEST([pending] - CAST(@count AS bigint), 0) WHERE [dataset] = @dataset`,
+      { count: String(count), dataset: this.#dataset },
+    );
+  }
+
   // In a transaction of its own, which takes no commit number: the status is
   // no data of a position. The lock of _warehouse serializes the make of the
   // table, and the update and the insert of one row. Each value is text,

@@ -67,15 +67,17 @@ export class SqlServerLoad implements AsyncDisposable {
 
   // A transaction that is a commit of this load, with its number.
   commit<T>(work: (committedIn: number) => Promise<T>): Promise<T> {
-    return this.transaction(async () =>
-      work(
-        await commitNumber(
-          this.connection,
-          { load: this.#id, owner: this.#owner },
-          new Date(this.#clock.Date.now()),
-          this.#retention,
-        ),
-      ),
+    return this.transaction(async () => work(await this.number()));
+  }
+
+  // The number of a commit of this load, taken inside the commit's
+  // transaction, so a transaction that takes none is no commit.
+  number(): Promise<number> {
+    return commitNumber(
+      this.connection,
+      { load: this.#id, owner: this.#owner },
+      new Date(this.#clock.Date.now()),
+      this.#retention,
     );
   }
 

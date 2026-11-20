@@ -113,7 +113,7 @@ function missingRelation(error: unknown): string | undefined {
 // The reader views in marts and the raw tables in _warehouse that the
 // pipeline's copies make in the database of into, schema-qualified and in
 // lower case.
-function made(
+export function made(
   connections: readonly Connection<SqlServerTable>[],
   into: SqlServerDestination,
 ): Set<string> {

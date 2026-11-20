@@ -1,3 +1,4 @@
+export { ComputedDataset } from './computed-dataset.ts';
 export type { SqlServerReading } from './sql-server-as-of.ts';
 export { SqlServerCheckpointStore } from './sql-server-checkpoint-store.ts';
 export { SqlServerColumn } from './sql-server-column.ts';

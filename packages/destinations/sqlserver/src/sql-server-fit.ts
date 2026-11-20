@@ -3,12 +3,14 @@ import type { SqlServerConnection } from '@eltjs/sdk-microsoft-sql-server';
 
 import type { SqlServerTable } from './sql-server-table.ts';
 
-// A column's type as SqlServerColumn spells it, from sys.columns.
+// A column's type as SqlServerColumn and sqlType of
+// @zukhruf/vectors/sqlserver spell it, in lower case, from sys.columns.
 export const columnType = `LOWER(TYPE_NAME(c.[user_type_id])) + CASE
   WHEN TYPE_NAME(c.[user_type_id]) IN (N'nvarchar', N'nchar') THEN IIF(c.[max_length] = -1, N'(max)', CONCAT(N'(', c.[max_length] / 2, N')'))
   WHEN TYPE_NAME(c.[user_type_id]) IN (N'varchar', N'char', N'varbinary', N'binary') THEN IIF(c.[max_length] = -1, N'(max)', CONCAT(N'(', c.[max_length], N')'))
   WHEN TYPE_NAME(c.[user_type_id]) IN (N'decimal', N'numeric') THEN CONCAT(N'(', c.[precision], N',', c.[scale], N')')
   WHEN TYPE_NAME(c.[user_type_id]) IN (N'datetime2', N'datetimeoffset', N'time') THEN CONCAT(N'(', c.[scale], N')')
+  WHEN TYPE_NAME(c.[user_type_id]) = N'vector' THEN CONCAT(N'(', c.[vector_dimensions], N')')
   ELSE N'' END`;
 
 type StoredColumn = {

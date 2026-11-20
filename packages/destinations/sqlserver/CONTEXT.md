@@ -31,7 +31,7 @@ A column that only the SQL of the destination reads: `committed_in`, `_elt_row`,
 _Avoid_: Hidden column (SQL Server's `HIDDEN` is a property of a period column), system column
 
 **Row number**:
-`_elt_row`, the `BIGINT IDENTITY` column that is the clustered key of each raw table and hidden table. A difference and a reload tell a row apart by it.
+`_elt_row`, the `BIGINT IDENTITY` column that is the clustered key of each raw table and hidden table, also the raw table of a computed dataset. A difference and a reload tell a row apart by it.
 _Avoid_: Row id (SQLite's `rowid`), physical locator (`%%physloc%%`), ctid
 
 **Row hash**:
@@ -135,7 +135,7 @@ A lock of `sp_getapplock` on a name, owned by a session or by a transaction. Eac
 _Avoid_: Advisory lock (Postgres's word), mutex (`@zukhruf/mutex` is the package that holds some of them)
 
 **Vector column**:
-A `vector(n)` column of a rule: n float32 values that a model made. The destination keeps it as `VECTOR(n)`.
+A `vector(n)` column of a rule: n float32 values that a model made. The destination keeps it as `VECTOR(n)`, at most 1,998 dimensions, and sends each value as the JSON text of `@zukhruf/vectors/sqlserver`. `sys.columns` gives its dimensions in `vector_dimensions`, so a column of other dimensions does not fit its declaration.
 _Avoid_: Embedding (the model's output before it is a column), blob
 
 **Table statements**:
