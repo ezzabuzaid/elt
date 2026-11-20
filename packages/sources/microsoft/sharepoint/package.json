@@ -1,6 +1,6 @@
 {
   "name": "@eltjs/source-microsoft-sharepoint",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "An elt source for SharePoint Online sites: files, lists, list items and pages through the Microsoft Graph delta feeds.",
   "license": "Apache-2.0",
   "repository": {
@@ -36,15 +36,15 @@
     "access": "public"
   },
   "dependencies": {
-    "@eltjs/elt": "^0.6.1",
-    "@eltjs/sdk-microsoft-sharepoint": "^0.6.1",
+    "@eltjs/elt": "^0.7.0",
+    "@eltjs/sdk-microsoft-sharepoint": "^0.7.0",
     "@zukhruf/async": "^0.8.31",
     "@zukhruf/fs": "^0.8.31",
     "@zukhruf/snapshot-differential": "^0.8.31"
   },
   "devDependencies": {
-    "@eltjs/elt-sqlite": "^0.6.1",
-    "@eltjs/parser-office": "^0.6.1",
+    "@eltjs/elt-sqlite": "^0.7.0",
+    "@eltjs/parser-office": "^0.7.0",
     "@sinonjs/fake-timers": "15.4.0",
     "@zukhruf/sqlite-open": "^0.8.31",
     "@zukhruf/testing": "^0.8.31",
