@@ -50,6 +50,10 @@ _Avoid_: Deduplicated stage, batch
 The table `_elt_next_<hash>` that a reload commits into. When the stream ends with no failure, the load gives its rows to the raw table by difference if the shapes agree, and swaps it in with `sp_rename` if not.
 _Avoid_: Shadow table, temp table
 
+**Evolve**:
+The change in place of a raw table that no longer has the shape of its stream, when the copy does not overwrite: `ALTER TABLE` adds, drops and converts columns in one commit of the load, and the rows stay.
+_Avoid_: Migration, schema drift (the cause of an evolve, not the change)
+
 **Open reload**:
 A reload whose hidden table a run made and the end of no stream gave to the raw table yet. The next run continues it. For a reload of some partitions, `_warehouse._elt_reloads` keeps which ones.
 _Avoid_: Pending reload, partial reload
@@ -99,7 +103,7 @@ The table `_elt_history_<hash>` beside a raw table, which keeps each row that a 
 _Avoid_: Temporal table, history table of system versioning, audit log
 
 **Widening**:
-A change of the type of a column that maps each old value to one value of the new type exactly, such as `BIGINT` to `DECIMAL(38, 0)`, or any type to `NVARCHAR(MAX)`. The history converts its column for a widening, and each position stays readable.
+A change of the type of a column that `ALTER COLUMN` converts so that each old value maps to one value of the new type exactly, such as `BIGINT` to `DECIMAL(38, 0)` or to `NVARCHAR(MAX)`. `FLOAT` to `NVARCHAR(MAX)` is not a widening: the conversion keeps 6 digits. The history converts its column for a widening, at an evolve and at a swap, and each position stays readable.
 _Avoid_: Promotion, compatible change
 
 **Min valid**:

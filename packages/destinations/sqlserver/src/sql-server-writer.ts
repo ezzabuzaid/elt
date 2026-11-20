@@ -29,9 +29,9 @@ import {
   makeSchema,
   transaction,
 } from './sql-server-connection.ts';
-import { refreshDependents } from './sql-server-dependents.ts';
+import { numberOf, refreshDependents } from './sql-server-dependents.ts';
 import { TargetDescriptions } from './sql-server-descriptions.ts';
-import { storedFit } from './sql-server-fit.ts';
+import { storedColumns, storedFit } from './sql-server-fit.ts';
 import { TargetHistory, rowHash } from './sql-server-history.ts';
 import { quote } from './sql-server-identifiers.ts';
 import type { SqlServerLoad } from './sql-server-load.ts';
@@ -73,6 +73,18 @@ const reloadsTable = inWarehouse('_elt_reloads');
 // How long the swap of a reload waits for a reader of the target before the
 // copy fails until its next run.
 const swapTimeout = 3000;
+// The error of a statement that waited swapTimeout for a lock.
+const lockTimeout = 1222;
+
+// The columns of a raw table that the destination writes for itself, which no
+// stream declares.
+const internalColumns: ReadonlySet<string> = new Set([
+  '_elt_row',
+  'loaded_at',
+  'committed_in',
+  '_elt_row_hash',
+  '_elt_key_hash',
+]);
 
 // Loads a stream into its raw table: what each mode shares, the claim of the
 // target, the stage of each commit, and the clear. Each mode merges the stage
@@ -151,11 +163,12 @@ export abstract class SqlServerWriter extends Writer {
     return this.keys.length > 0 ? [keyHash] : [];
   }
 
-  // The unique index on the key hash, named after the table and its key, so
-  // a table whose stored hashes are of another key no longer fits.
+  // The unique index on the key hash, named after the table, its key and the
+  // types of the key, so a table whose stored hashes are of another key, or
+  // of key values of another type, no longer fits, and no evolve takes it.
   get #keyIndex(): string | null {
     return this.keys.length > 0
-      ? `_elt_key_${hash('sha256', JSON.stringify([this.table.raw, this.keys.map(({ name }) => name)])).slice(0, 40)}`
+      ? `_elt_key_${hash('sha256', JSON.stringify([this.table.raw, this.keys.map(({ name, storageType }) => [name, storageType])])).slice(0, 40)}`
       : null;
   }
 
@@ -567,6 +580,209 @@ export abstract class SqlServerWriter extends Writer {
     }
   }
 
+  // Refuses a conversion of a stored column from its type from to the type
+  // of column that would change a stored value, such as 1.5 in a float to
+  // the bigint 2, before the ALTER: each value that is not null must convert
+  // back to itself, as elt-postgresql checks. A conversion from text is the
+  // parse that the load applies to each value of the new type, so it is
+  // trusted, and a value that it cannot parse fails the ALTER. JSON has no
+  // comparison, so it compares as its text.
+  async #refuseInexactCast(
+    connection: SqlServerConnection,
+    column: SqlServerColumn,
+    from: string,
+  ): Promise<void> {
+    if (from === 'nvarchar(max)') return;
+    const { quotedName: name, storageType: to } = column;
+    const back = `TRY_CAST(TRY_CAST(${name} AS ${to}) AS ${from})`;
+    const differs =
+      from === 'json'
+        ? `CAST(${back} AS nvarchar(max)) COLLATE Latin1_General_100_BIN2 <> CAST(${name} AS nvarchar(max)) COLLATE Latin1_General_100_BIN2`
+        : `${back} <> ${name}`;
+    let changes: readonly unknown[];
+    try {
+      changes = await connection.query(
+        `SELECT TOP (1) 1 AS [changed] FROM ${this.qualifiedName} WHERE ${name} IS NOT NULL AND (${back} IS NULL OR ${differs})`,
+      );
+    } catch (cause) {
+      throw new TypeError(
+        `column ${name} does not convert to ${to}: ${Error.isError(cause) ? cause.message : String(cause)}`,
+        { cause },
+      );
+    }
+    if (changes.length > 0)
+      throw new TypeError(
+        `column ${name} holds a value that a conversion to ${to} would change`,
+      );
+  }
+
+  // Drops the CHECK constraints on a column of the target, such as the one of
+  // an array column, which stop an ALTER or a DROP of the column.
+  async #dropChecks(
+    connection: SqlServerConnection,
+    column: string,
+  ): Promise<void> {
+    const checks = await connection.query(
+      `SELECT k.[name] FROM sys.check_constraints AS k JOIN sys.columns AS c ON c.[object_id] = k.[parent_object_id] AND c.[column_id] = k.[parent_column_id]
+       WHERE k.[parent_object_id] = OBJECT_ID(@table) AND c.[name] = @column`,
+      { table: this.qualifiedName, column },
+    );
+    for (const { name } of checks)
+      await connection.query(
+        `ALTER TABLE ${this.qualifiedName} DROP CONSTRAINT ${quote(String(name))}`,
+      );
+  }
+
+  // Brings a stored table that the stream no longer fits to its shape in
+  // place, keeping every row, as elt-postgresql does: a column that the
+  // stream adds enters nullable, one that it drops goes, and a changed type
+  // converts with ALTER COLUMN, after the check that the conversion keeps
+  // each value. The change is one commit of its own, which waits for readers
+  // at most swapTimeout, as a swap does: a reader that holds the table fails
+  // the copy until the next run, and the transaction leaves the table as it
+  // was. A row with a value in a column that the change drops or converts
+  // loses or changes the value, so it is a new version: the history keeps
+  // the row as it was, and its row hash becomes NULL, which matches no
+  // record until a commit writes the row again. A column that the change
+  // adds is NULL in each row, which a row hash does not count. The history
+  // follows the new shape; a change of type that is not a widening expires
+  // each position before the commit. A commit that kept no row and expired
+  // no position takes back its commit row. The key hashes cannot be made
+  // again from the stored rows, so a table whose key index is of another key
+  // fails the copy.
+  async #evolve(load: SqlServerLoad, stage: string): Promise<void> {
+    const { connection } = load;
+    const keyIndex = this.#keyIndex;
+    const table = this.qualifiedName;
+    const [hashes] =
+      keyIndex === null
+        ? await connection.query(
+            `SELECT IIF(COL_LENGTH(@table, N'_elt_key_hash') IS NULL, 1, 0) AS [fit]`,
+            { table },
+          )
+        : await connection.query(
+            'SELECT IIF(EXISTS (SELECT 1 FROM sys.indexes WHERE [object_id] = OBJECT_ID(@table) AND [name] = @index), 1, 0) AS [fit]',
+            { table, index: keyIndex },
+          );
+    if (hashes?.fit !== 1)
+      throw new TypeError(
+        `${table} no longer has the shape of stream ${this.stream.name}, and its stored key hashes are of another key or of key values of another type; clear the copy to load it again`,
+      );
+    await connection.query(`SET LOCK_TIMEOUT ${swapTimeout}`);
+    try {
+      await load.commit(async (committedIn) => {
+        const stored = new Map(
+          (await storedColumns(connection, { table: this.qualifiedName })).map(
+            (column) => [column.name, column],
+          ),
+        );
+        const types = new Map(
+          (await storedColumns(connection, { stage })).map(({ name, type }) => [
+            name,
+            type,
+          ]),
+        );
+        const changed = [...stored.values()]
+          .filter(
+            ({ name, type }) =>
+              !internalColumns.has(name) && types.get(name) !== type,
+          )
+          .map(({ name }) => `${quote(name)} IS NOT NULL`)
+          .join(' OR ');
+        const kept =
+          changed === ''
+            ? 0
+            : await this.history.keep(
+                connection,
+                committedIn,
+                this.qualifiedName,
+                `UPDATE ${this.qualifiedName} SET [committed_in] = CAST(@committed AS bigint), [loaded_at] = CAST(@loaded AS datetimeoffset(3)), ${version} = NULL OUTPUT deleted.* WHERE ${changed}`,
+                writtenParameters({ loadedAt: load.loadedAt, committedIn }),
+              );
+        let retyped = false;
+        // refreshDependents names the schema-bound views that stop the
+        // change; any other error that is not the wait for a reader is a
+        // stored value that the new shape refuses.
+        try {
+          await refreshDependents(
+            connection,
+            {
+              roots: [
+                this.qualifiedName,
+                this.history.qualifiedName,
+                this.#view.qualifiedName,
+              ],
+              views: [this.#view.qualifiedName],
+              changed: this.qualifiedName,
+            },
+            async () => {
+              await this.#alter(connection, stored, types);
+              retyped =
+                (await this.history.follow(connection, this.qualifiedName)) ===
+                'retyped';
+              if (retyped) await expireBefore(connection, committedIn, 'type');
+              await this.history.create(connection, this.qualifiedName);
+              await this.#descriptions.write(
+                connection,
+                'TABLE',
+                warehouse,
+                this.table.raw,
+              );
+              await this.#view.replace(connection);
+            },
+          );
+        } catch (cause) {
+          if (cause instanceof TypeError || numberOf(cause) === lockTimeout)
+            throw cause;
+          throw new TypeError(
+            `The rows stored in ${table} do not fit the new shape of stream ${this.stream.name}: ${Error.isError(cause) ? cause.message : String(cause)}. Clear the copy to load it again, or change the stream so they fit.`,
+            { cause },
+          );
+        }
+        if (kept === 0 && !retyped) await forgetCommit(connection, committedIn);
+      });
+    } finally {
+      await connection.query('SET LOCK_TIMEOUT -1');
+    }
+  }
+
+  // The ALTER statements of #evolve, from the stored columns and the types
+  // that the stage spells for the stream's columns.
+  async #alter(
+    connection: SqlServerConnection,
+    stored: ReadonlyMap<
+      string,
+      { readonly type: string; readonly required: boolean }
+    >,
+    types: ReadonlyMap<string, string>,
+  ): Promise<void> {
+    const alter = (statement: string) =>
+      connection.query(`ALTER TABLE ${this.qualifiedName} ${statement}`);
+    for (const column of this.table.columns) {
+      const existing = stored.get(column.name);
+      if (existing === undefined) {
+        await alter(`ADD ${column.definition}`);
+        continue;
+      }
+      const retyped = existing.type !== types.get(column.name);
+      if (!retyped && existing.required === column.isPrimaryKey) continue;
+      if (retyped)
+        await this.#refuseInexactCast(connection, column, existing.type);
+      await this.#dropChecks(connection, column.name);
+      await alter(
+        `ALTER COLUMN ${column.quotedName} ${column.storageType} ${column.isPrimaryKey ? 'NOT NULL' : 'NULL'}`,
+      );
+      if (column.array)
+        await alter(`ADD CHECK (ISJSON(${column.quotedName}, ARRAY) = 1)`);
+    }
+    const declared = new Set(this.table.columns.map(({ name }) => name));
+    for (const name of stored.keys())
+      if (!declared.has(name) && !internalColumns.has(name)) {
+        await this.#dropChecks(connection, name);
+        await alter(`DROP COLUMN ${quote(name)}`);
+      }
+  }
+
   // A clear of a stored table is a load of one commit of its connection. It
   // empties the table, not drops it, so the views built on it keep working,
   // and it forgets the rows it removes: each position before it expires.
@@ -669,10 +885,11 @@ export abstract class SqlServerWriter extends Writer {
       if (decided === 'load' && !this.replaces) await this.inspect(connection);
       return decided;
     });
-    if (mode === 'evolve')
-      throw new TypeError(
-        `${this.qualifiedName} no longer has the shape of stream ${this.stream.name}, and the SQL Server destination does not evolve a stored table yet; clear the copy to load it again`,
-      );
+    if (mode === 'evolve') {
+      await this.#evolve(load, stage);
+      await load.transaction(() => this.inspect(connection));
+      mode = 'load';
+    }
     const fresh = mode === 'create' || mode === 'reload';
     // The reload as the last commit left it, which a discard goes back to.
     let committed: { readonly mode: ReloadMode; readonly reloads: Reloads } = {

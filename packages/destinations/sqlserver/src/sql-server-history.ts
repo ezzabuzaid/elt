@@ -38,11 +38,13 @@ export class TargetHistory {
     );
   }
 
-  // Takes the shape of table, which is to replace the target: each column
-  // that table adds enters, nullable, and a column that table drops stays.
-  // The history holds no other type of a column, so when table changes the
-  // type of one it keeps, it drops itself and gives 'retyped': the caller
-  // then expires each position before the change, which only its rows read.
+  // Takes the shape of table, the target as a change of shape leaves it or
+  // the table that is to replace it: each column that table adds enters,
+  // nullable, a column that table drops stays, and a column that a widening
+  // changes takes the new type, which keeps each value. The history holds
+  // one type for each column, so when table changes the type of one it keeps
+  // in another way, it drops itself and gives 'retyped': the caller then
+  // expires each position before the change, which only its rows read.
   async follow(
     connection: SqlServerConnection,
     table: string,
@@ -56,10 +58,20 @@ export class TargetHistory {
     const next = (await storedColumns(connection, { table })).filter(
       ({ name }) => name !== '_elt_row',
     );
-    if (next.some(({ name, type }) => (kept.get(name) ?? type) !== type)) {
+    const changed = next.filter(({ name, type }) => {
+      const had = kept.get(name);
+      return had !== undefined && had !== type;
+    });
+    if (
+      changed.some(({ name, type }) => !widens(String(kept.get(name)), type))
+    ) {
       await connection.query(`DROP TABLE ${this.qualifiedName}`);
       return 'retyped';
     }
+    for (const { name, type } of changed)
+      await connection.query(
+        `ALTER TABLE ${this.qualifiedName} ALTER COLUMN ${quote(name)} ${type} NULL`,
+      );
     const added = next.filter(({ name }) => !kept.has(name));
     if (added.length > 0)
       await connection.query(
@@ -123,6 +135,50 @@ export class TargetHistory {
       },
     );
   }
+}
+
+// Whether ALTER COLUMN from type from to type to maps each old value to one
+// value of the new type exactly, with no loss: a widening, as in
+// elt-postgresql, with the types that SQL Server declares and converts.
+// Text keeps the exact form of a number, a bit, a date, a time and a
+// decimal, but not of a float, whose conversion keeps 6 digits, nor of
+// bytes or JSON. A bigint fits a decimal with 19 digits before its point, a
+// date a datetime2, a time more digits of its fraction, and a decimal more
+// digits on each side of its point. bigint does not widen to float: past
+// 2^53 it loses digits.
+function widens(from: string, to: string): boolean {
+  const [was, now] = [typeOf(from), typeOf(to)];
+  if (to === 'nvarchar(max)')
+    return [
+      'bigint',
+      'bit',
+      'date',
+      'decimal',
+      'datetime2',
+      'datetimeoffset',
+      'time',
+    ].includes(was.name);
+  if (was.name === 'bigint' && now.name === 'decimal')
+    return now.precision - now.scale >= 19;
+  if (was.name === 'date' && now.name === 'datetime2') return true;
+  if (was.name !== now.name) return false;
+  if (was.name === 'decimal')
+    return (
+      now.scale >= was.scale &&
+      now.precision - now.scale >= was.precision - was.scale
+    );
+  return (
+    ['datetime2', 'datetimeoffset', 'time'].includes(was.name) &&
+    now.precision > was.precision
+  );
+}
+
+// A type as SQL Server spells it in sys.columns: its name, and its
+// precision and scale, or its fraction digits as its precision.
+function typeOf(type: string) {
+  const [, name = type, precision = '0', scale = '0'] =
+    /^(\w+)(?:\((\d+)(?:,(\d+))?\))?$/.exec(type) ?? [];
+  return { name, precision: Number(precision), scale: Number(scale) };
 }
 
 // The SHA-256 of the values of a staged row, which names its version, as in

@@ -9,7 +9,8 @@ const boundNumbers = new Set([15336, 3729, 4922]);
 // dropped.
 const invalidColumn = 207;
 
-const numberOf = (error: unknown) =>
+// The number of a SQL Server error, which tedious gives each one.
+export const numberOf = (error: unknown) =>
   Error.isError(error) && 'number' in error ? error.number : undefined;
 
 // Runs change, which replaces or changes the roots, and then refreshes each
