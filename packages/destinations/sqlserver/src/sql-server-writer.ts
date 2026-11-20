@@ -4,6 +4,7 @@ import {
   type Clearing,
   type CopyConfiguration,
   type FieldValues,
+  type KeyValue,
   type Stage,
   TargetOwnedError,
   Writer,
@@ -15,6 +16,7 @@ import type {
   SqlServerDatabase,
 } from '@eltjs/sdk-microsoft-sql-server';
 
+import type { EncodedValue, SqlServerColumn } from './sql-server-column.ts';
 import {
   connect,
   lockSchema,
@@ -41,22 +43,28 @@ import type { SqlServerTable } from './sql-server-table.ts';
 // first, as one parameter that OPENJSON reads (ADR 0011).
 const batchSize = 1000;
 const batchBytes = 16 * 2 ** 20;
-const seq = '[_elt_seq]';
-const version = '[_elt_row_hash]';
-const keyHash = '[_elt_key_hash]';
+export const seq = '[_elt_seq]';
+// R for a record, D for a deletion of its key.
+export const op = '[_elt_op]';
+export const version = '[_elt_row_hash]';
+export const keyHash = '[_elt_key_hash]';
 
 // The table in _warehouse where each writer keeps the owner of its target.
 const writersTable = inWarehouse('_elt_writers');
 
-// Appends each record of a stream to its raw table, in the order the source
-// gave them. Each row is told apart by _elt_row, its identity number, the
-// clustered key of the table (ADR 0003).
-export class SqlServerWriter extends Writer {
+// Loads a stream into its raw table: what each mode shares, the claim of the
+// target, the stage of each commit, and the clear. Each mode merges the stage
+// into the table in its own way. Each row is told apart by _elt_row, its
+// identity number, the clustered key of the table (ADR 0003).
+export abstract class SqlServerWriter extends Writer {
   readonly configuration: CopyConfiguration;
   readonly table: SqlServerTable;
+  // The columns whose values the key hash of a row hashes, in this order;
+  // none for a table with no key.
+  abstract readonly keys: readonly SqlServerColumn[];
+  protected readonly history: TargetHistory;
   readonly #database: SqlServerDatabase;
   readonly #retention: Temporal.Duration;
-  readonly #history: TargetHistory;
   readonly #descriptions: TargetDescriptions;
   readonly #view: TargetReaderView;
 
@@ -75,7 +83,7 @@ export class SqlServerWriter extends Writer {
     this.table = table;
     this.#database = database;
     this.#retention = retention;
-    this.#history = new TargetHistory(this.#hash);
+    this.history = new TargetHistory(this.#hash);
     // No column reads a file, so none stores one.
     const description = describeTarget(configuration, table.columns, () => '');
     const { missing } = description;
@@ -90,7 +98,7 @@ export class SqlServerWriter extends Writer {
     this.#view = new TargetReaderView(
       table.name,
       this.qualifiedName,
-      this.#history.qualifiedName,
+      this.history.qualifiedName,
       [...table.columns.map(({ name }) => name), 'loaded_at'],
       new TargetDescriptions(description.table, description.columns),
     );
@@ -104,13 +112,66 @@ export class SqlServerWriter extends Writer {
     return hash('sha256', this.qualifiedName).slice(0, 40);
   }
 
-  // The key hash of a table whose columns declare a key, as its only
-  // element: a key column of nvarchar(max) cannot be an index key, and its
-  // collation would take two keys that differ in case for one (ADR 0004).
+  // The key hash of a table with a key, as its only element: a key column of
+  // nvarchar(max) cannot be an index key, and its collation would take two
+  // keys that differ in case for one (ADR 0004).
   get #keyHashes(): readonly string[] {
-    return this.table.columns.some(({ isPrimaryKey }) => isPrimaryKey)
-      ? [keyHash]
-      : [];
+    return this.keys.length > 0 ? [keyHash] : [];
+  }
+
+  // The unique index on the key hash, named after the table and its key, so
+  // a table whose stored hashes are of another key no longer fits.
+  get #keyIndex(): string | null {
+    return this.keys.length > 0
+      ? `_elt_key_${hash('sha256', JSON.stringify([this.table.raw, this.keys.map(({ name }) => name)])).slice(0, 40)}`
+      : null;
+  }
+
+  // Refuses, before anything is read, stored rows the load cannot keep.
+  protected async inspect(_connection: SqlServerConnection): Promise<void> {}
+
+  // Moves the stage into the table as one commit, numbered in written, and
+  // gives whether it changed a row.
+  protected abstract merge(
+    connection: SqlServerConnection,
+    stage: string,
+    written: Written,
+  ): Promise<boolean>;
+
+  protected encode(record: unknown): EncodedValue[] {
+    return this.table.columns.map((column) => column.encode(record));
+  }
+
+  // Only a load that identifies rows by key can remove one: the key's values,
+  // at their columns, and null elsewhere.
+  protected deletionRow(
+    _key: Readonly<Record<string, KeyValue>>,
+  ): EncodedValue[] {
+    throw new TypeError('Only deduplicating loads can apply deletions');
+  }
+
+  // What a commit writes into each row: its values, when its load began, its
+  // number, and its hashes.
+  protected get written(): string[] {
+    return [
+      ...this.table.columns.map((column) => column.quotedName),
+      '[loaded_at]',
+      '[committed_in]',
+      version,
+      ...this.#keyHashes,
+    ];
+  }
+
+  // The value of each column of written, from the row of the stage that alias
+  // names.
+  protected staged(alias: string): string[] {
+    return [
+      ...this.table.columns.map((column) => `${alias}.${column.quotedName}`),
+      'CAST(@loaded AS datetimeoffset(3))',
+      'CAST(@committed AS bigint)',
+      `${alias}.${version}`,
+      ...this.#keyHashes.map((column) => `${alias}.${column}`),
+    ];
   }
 
   // A table named name with the target's columns, clustered on its row
@@ -163,11 +224,11 @@ export class SqlServerWriter extends Writer {
       `IF OBJECT_ID(@table, N'U') IS NULL
        BEGIN
          CREATE TABLE ${this.#tableSQL(this.qualifiedName)};
-         ${this.#keyHashes.map((column) => `CREATE UNIQUE INDEX ${quote(`_elt_key_${this.#hash}`)} ON ${this.qualifiedName} (${column});`).join('')}
+         ${this.#keyIndex === null ? '' : `CREATE UNIQUE INDEX ${quote(this.#keyIndex)} ON ${this.qualifiedName} (${keyHash});`}
        END`,
       { table: this.qualifiedName },
     );
-    await this.#history.create(connection, this.qualifiedName);
+    await this.history.create(connection, this.qualifiedName);
     await this.#descriptions.write(
       connection,
       'TABLE',
@@ -207,7 +268,7 @@ export class SqlServerWriter extends Writer {
         );
         await connection.query(`DELETE FROM ${this.qualifiedName}`);
         await expireBefore(connection, committedIn, 'clear');
-        await this.#history.expire(connection);
+        await this.history.expire(connection);
       }
       await connection.query(
         `DELETE FROM ${writersTable} WHERE [target] = @target`,
@@ -220,8 +281,8 @@ export class SqlServerWriter extends Writer {
   // One stream's load. Operations wait in a #temp table of the load's
   // connection, so no other session sees them and a crash leaves nothing
   // behind. prepare only refuses and stages, so a run that fails before a
-  // commit leaves no rows behind. Each commit is one transaction that appends
-  // the stage to the table; the first commit also makes the table.
+  // commit leaves no rows behind. Each commit is one transaction that merges
+  // the stage into the table; the first commit also makes the table.
   async prepare(
     load: SqlServerLoad,
     { writer, reloading }: { writer: string; reloading: boolean },
@@ -235,6 +296,7 @@ export class SqlServerWriter extends Writer {
     await connection.query(
       `DROP TABLE IF EXISTS ${stage}; CREATE TABLE ${stage} (${[
         `${seq} bigint NOT NULL PRIMARY KEY`,
+        `${op} char(1) NOT NULL`,
         ...columns.map(
           (column) => `${column.quotedName} ${column.storageType} NULL`,
         ),
@@ -245,43 +307,43 @@ export class SqlServerWriter extends Writer {
     );
     const mode = await load.transaction(async () => {
       await this.#refuse(connection, writer);
-      const target = await storedFit(
-        connection,
-        this.table,
-        this.qualifiedName,
+      const target = await storedFit(connection, this.table, {
+        table: this.qualifiedName,
         stage,
-      );
+        keyIndex: this.#keyIndex,
+      });
       await this.#view.refuse(connection, target === 'stale');
-      return reloadMode({
+      const decided = reloadMode({
         reloading,
         destinationSyncMode: this.configuration.destinationSyncMode,
         target,
         hidden: 'missing',
       });
+      if (decided === 'load') await this.inspect(connection);
+      return decided;
     });
     if (mode !== 'create' && mode !== 'load')
       throw new TypeError(
         `${this.qualifiedName} no longer has the shape of stream ${this.stream.name}, and the SQL Server destination does not evolve or reload a stored table yet; clear the copy to load it again`,
       );
-    // Each staged row as JSON: its place in the stream, its values, and the
-    // hashes, as hex, which the stage keeps as binary(32).
+    // Each staged row as JSON: its place in the stream, its operation, its
+    // values, and the hashes, as hex, which the stage keeps as binary(32).
     const hashes = [version, ...this.#keyHashes];
-    const insert = `INSERT INTO ${stage} (${[seq, ...columns.map((column) => column.quotedName), ...hashes].join(', ')})
-      SELECT ${['j.[s]', ...columns.map((column, index) => column.stored(`j.[v${index}]`)), ...hashes.map((_, index) => `CONVERT(binary(32), j.[h${index}], 2)`)].join(', ')}
+    const insert = `INSERT INTO ${stage} (${[seq, op, ...columns.map((column) => column.quotedName), ...hashes].join(', ')})
+      SELECT ${['j.[s]', 'j.[o]', ...columns.map((column, index) => column.stored(`j.[v${index}]`)), ...hashes.map((_, index) => `CONVERT(binary(32), j.[h${index}], 2)`)].join(', ')}
       FROM OPENJSON(@batch) WITH (${[
         `[s] bigint '$[0]'`,
+        `[o] char(1) '$[1]'`,
         ...columns.map(
           (column, index) =>
-            `[v${index}] ${column.batchType} '$[${index + 1}]'${column.array ? ' AS JSON' : ''}`,
+            `[v${index}] ${column.batchType} '$[${index + 2}]'${column.array ? ' AS JSON' : ''}`,
         ),
         ...hashes.map(
           (_, index) =>
-            `[h${index}] char(64) '$[${columns.length + 1 + index}]'`,
+            `[h${index}] char(64) '$[${columns.length + 2 + index}]'`,
         ),
       ].join(', ')}) AS j`;
-    const keyed = columns.flatMap((column, index) =>
-      column.isPrimaryKey ? [index] : [],
-    );
+    const keyed = this.keys.map((key) => columns.indexOf(key));
     let pending: string[] = [];
     let pendingBytes = 0;
     let next = 0;
@@ -295,16 +357,16 @@ export class SqlServerWriter extends Writer {
     // The first commit claims the target: before its transaction it makes
     // marts for the reader view, and in it the table, which is a change even
     // with no row. Later commits find it claimed, and a commit of a claimed
-    // target that appends no row takes back its commit row.
+    // target that changes no row takes back its commit row.
     const unclaimed: Claim = {
       before: () => makeSchema(connection, marts),
       claim: () => this.#create(connection, writer),
-      appendedNone: async () => {},
+      changedNone: async () => {},
     };
     const claimed: Claim = {
       before: async () => {},
       claim: async () => {},
-      appendedNone: (committedIn) => forgetCommit(connection, committedIn),
+      changedNone: (committedIn) => forgetCommit(connection, committedIn),
     };
     let claiming = mode === 'load' ? claimed : unclaimed;
     return {
@@ -312,17 +374,19 @@ export class SqlServerWriter extends Writer {
       reloading: false,
       values: noFiles,
       apply: async (operation) => {
-        if (operation.type === 'DELETE')
-          throw new TypeError('Only deduplicating loads can apply deletions');
         if (operation.type === 'RESET')
           throw new TypeError(
             'The SQL Server destination does not reload a stream yet',
           );
-        const row = columns.map((column) => column.encode(operation.data));
+        const row =
+          operation.type === 'RECORD'
+            ? this.encode(operation.data)
+            : this.deletionRow(operation.key);
         const text = JSON.stringify([
           next++,
+          operation.type === 'RECORD' ? 'R' : 'D',
           ...row,
-          rowHash(columns, row),
+          operation.type === 'RECORD' ? rowHash(columns, row) : null,
           ...this.#keyHashes.map(() =>
             hash('sha256', JSON.stringify(keyed.map((index) => row[index]))),
           ),
@@ -339,15 +403,13 @@ export class SqlServerWriter extends Writer {
         await claiming.before();
         await load.commit(async (committedIn) => {
           await claiming.claim();
-          const [appended] = await connection.query(
-            `INSERT INTO ${this.qualifiedName} (${[...columns.map((column) => column.quotedName), '[loaded_at]', '[committed_in]', ...hashes].join(', ')})
-             SELECT ${[...columns.map((column) => column.quotedName), 'CAST(@loaded AS datetimeoffset(3))', 'CAST(@committed AS bigint)', ...hashes].join(', ')} FROM ${stage} ORDER BY ${seq};
-             SELECT @@ROWCOUNT AS [rows];
-             TRUNCATE TABLE ${stage};`,
-            { loaded: load.loadedAt, committed: String(committedIn) },
-          );
-          if (appended?.rows === 0) await claiming.appendedNone(committedIn);
-          await this.#history.expire(connection);
+          const changed = await this.merge(connection, stage, {
+            loadedAt: load.loadedAt,
+            committedIn,
+          });
+          await connection.query(`TRUNCATE TABLE ${stage}`);
+          if (!changed) await claiming.changedNone(committedIn);
+          await this.history.expire(connection);
         });
         claiming = claimed;
       },
@@ -368,11 +430,24 @@ export class SqlServerWriter extends Writer {
 type Claim = {
   // Runs before the commit's transaction.
   readonly before: () => Promise<void>;
-  // Runs in it, before it appends.
+  // Runs in it, before it merges.
   readonly claim: () => Promise<void>;
-  // Runs in it when it appended no row.
-  readonly appendedNone: (committedIn: number) => Promise<void>;
+  // Runs in it when the merge changed no row.
+  readonly changedNone: (committedIn: number) => Promise<void>;
 };
+
+// What each row a commit writes keeps: when its load began, and the number of
+// the commit.
+export type Written = {
+  readonly loadedAt: string;
+  readonly committedIn: number;
+};
+
+// written as the parameters @loaded and @committed of staged.
+export const writtenParameters = ({ loadedAt, committedIn }: Written) => ({
+  loaded: loadedAt,
+  committed: String(committedIn),
+});
 
 // No target of the destination reads files yet, so none keeps a value that
 // names one.

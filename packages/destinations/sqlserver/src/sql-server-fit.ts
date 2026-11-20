@@ -41,13 +41,17 @@ export async function storedColumns(
 }
 
 // Whether a stored table has the columns, types and NOT NULL the stream
-// needs. The stage is built from the same column declarations, so SQL Server
-// spells both alike.
+// needs, and the index of its key hash, which names the key that the stored
+// hashes are of. The stage is built from the same column declarations, so
+// SQL Server spells both alike.
 export async function storedFit(
   connection: SqlServerConnection,
   target: SqlServerTable,
-  table: string,
-  stage: string,
+  {
+    table,
+    stage,
+    keyIndex,
+  }: { table: string; stage: string; keyIndex: string | null },
 ): Promise<StoredFit> {
   const stored = await storedColumns(connection, { table });
   if (stored.length === 0) return 'missing';
@@ -66,12 +70,16 @@ export async function storedFit(
     'loaded_at datetimeoffset(3) true',
     'committed_in bigint true',
     '_elt_row_hash binary(32) false',
-    ...(target.columns.some(({ isPrimaryKey }) => isPrimaryKey)
-      ? ['_elt_key_hash binary(32) true']
-      : []),
+    ...(keyIndex === null ? [] : ['_elt_key_hash binary(32) true']),
   ];
   const has = stored.map(
     ({ name, type, required }) => `${name} ${type} ${required}`,
   );
-  return needed.sort().join('\0') === has.sort().join('\0') ? 'fits' : 'stale';
+  if (needed.sort().join('\0') !== has.sort().join('\0')) return 'stale';
+  if (keyIndex === null) return 'fits';
+  const [index] = await connection.query(
+    'SELECT 1 AS [made] FROM sys.indexes WHERE [object_id] = OBJECT_ID(@table) AND [name] = @index',
+    { table, index: keyIndex },
+  );
+  return index === undefined ? 'stale' : 'fits';
 }

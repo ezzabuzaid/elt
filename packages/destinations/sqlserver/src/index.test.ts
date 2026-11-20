@@ -650,14 +650,12 @@ test('the destination refuses, with no connection, a declaration that it cannot 
   assert.throws(
     () =>
       check(
-        new Copy(notes.stream, warehouse.table('notes'), {
-          id: 'notes',
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          primaryKey: ['n'],
+        new Copy(declared('A note.'), warehouse.table('notes'), {
+          syncMode: 'full_refresh',
+          destinationSyncMode: 'overwrite',
         }),
       ),
-    /Destination does not support append_dedup/,
+    /Destination does not support overwrite/,
   );
   assert.throws(
     () =>

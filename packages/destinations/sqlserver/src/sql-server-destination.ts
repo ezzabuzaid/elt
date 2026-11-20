@@ -9,22 +9,27 @@ import {
 } from '@eltjs/elt';
 import { SqlServerDatabase } from '@eltjs/sdk-microsoft-sql-server';
 
+import { SqlServerAppendWriter } from './sql-server-append-writer.ts';
 import type { SqlServerColumn } from './sql-server-column.ts';
 import { SqlServerColumns } from './sql-server-columns.ts';
 import { type SqlServerLogin, connect } from './sql-server-connection.ts';
+import { SqlServerDeduplicatingWriter } from './sql-server-deduplicating-writer.ts';
 import { identifiers } from './sql-server-identifiers.ts';
 import { SqlServerLoad } from './sql-server-load.ts';
 import { readNumbering, sqlServerDatabase } from './sql-server-numbering.ts';
 import { SqlServerSetupError } from './sql-server-setup-error.ts';
 import { SqlServerTable } from './sql-server-table.ts';
-import { SqlServerWriter } from './sql-server-writer.ts';
+import type { SqlServerWriter } from './sql-server-writer.ts';
 
 // Loads into the database of a login: each target is a reader view in marts
 // over a raw table in _warehouse, as in elt-postgresql (ADR 0001). The login
 // carries credentials, so it stays private and out of location(), which is
 // persisted with checkpoints.
 export class SqlServerDestination extends Destination<SqlServerTable> {
-  readonly supportedDestinationSyncModes = Object.freeze(['append'] as const);
+  readonly supportedDestinationSyncModes = Object.freeze([
+    'append',
+    'append_dedup',
+  ] as const);
   // How long the history keeps a position readable: 30 days unless set. The
   // destinations of one database share one numbering, so the shortest
   // retention among them decides.
@@ -107,11 +112,26 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
     this.validateConfiguration(configuration, target);
     if (!(target instanceof SqlServerTable))
       throw new TypeError('SQL Server requires SQL Server table targets');
-    return new SqlServerWriter(
-      configuration,
-      this.#database,
-      target.resolve(configuration.stream),
-      this.retention,
-    );
+    const table = target.resolve(configuration.stream);
+    switch (configuration.destinationSyncMode) {
+      case 'append':
+        return new SqlServerAppendWriter(
+          configuration,
+          this.#database,
+          table,
+          this.retention,
+        );
+      case 'append_dedup':
+        return new SqlServerDeduplicatingWriter(
+          configuration,
+          this.#database,
+          table,
+          this.retention,
+        );
+      default:
+        throw new TypeError(
+          `Destination does not support ${configuration.destinationSyncMode}`,
+        );
+    }
   }
 }

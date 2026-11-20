@@ -35,12 +35,16 @@ _Avoid_: Row id (SQLite's `rowid`), physical locator (`%%physloc%%`), ctid
 _Avoid_: Checksum, `CHECKSUM()` (a 32-bit hash of SQL Server), version
 
 **Key hash**:
-`_elt_key_hash`: the SHA-256 of the key values of a row, computed when the row is staged. The unique index of a deduplicating table and of a computed dataset is on it, because a key column of `NVARCHAR(MAX)` cannot be an index key.
+`_elt_key_hash`: the SHA-256 of the key values of a row, computed when the row or a deletion of its key is staged. The unique index of a deduplicating table and of a computed dataset is on it, because a key column of `NVARCHAR(MAX)` cannot be an index key. The index is named after the table and its key, so a table whose hashes are of another key does not fit.
 _Avoid_: Surrogate key (the key hash is derived from the key, not made by the store), `HASHBYTES`
 
 **Stage**:
-The `#` table of the connection of a load, where one stream keeps its operations until its next commit. Only that connection sees it.
+The `#` table of the connection of a load, where one stream keeps its operations until its next commit, in the order of the source: each record, and each deletion of a key (`_elt_op`). Only that connection sees it.
 _Avoid_: Buffer, staging table, table variable
+
+**Reduced stage**:
+The stage of a deduplicating commit as one operation for each key hash: the result of its operations applied one at a time. It is the source of the `MERGE` of the commit.
+_Avoid_: Deduplicated stage, batch
 
 **Hidden table**:
 The table `_elt_next_<hash>` that a reload commits into. When the stream ends with no failure, the load gives its rows to the raw table by difference if the shapes agree, and swaps it in with `sp_rename` if not.

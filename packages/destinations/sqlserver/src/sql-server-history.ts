@@ -38,6 +38,31 @@ export class TargetHistory {
     );
   }
 
+  // Runs changes, a statement that changes or removes rows of target and
+  // outputs deleted.*, and keeps each row it output that target stored, as
+  // replaced in commit replacedIn, in the same statement (ADR 0005). An
+  // insert outputs a deleted row of nulls, which it does not keep. Gives how
+  // many rows it kept.
+  async keep(
+    connection: SqlServerConnection,
+    replacedIn: number,
+    target: string,
+    changes: string,
+    params: Readonly<Record<string, string>>,
+  ): Promise<number> {
+    const columns = (await storedColumns(connection, { table: target }))
+      .filter(({ name }) => name !== '_elt_row')
+      .map(({ name }) => quote(name));
+    const [kept] = await connection.query(
+      `INSERT INTO ${this.qualifiedName} (${[...columns, '[replaced_in]'].join(', ')})
+       SELECT ${[...columns.map((column) => `[_elt_old].${column}`), 'CAST(@replacedIn AS bigint)'].join(', ')}
+       FROM (${changes}) AS [_elt_old] WHERE [_elt_old].[committed_in] IS NOT NULL;
+       SELECT @@ROWCOUNT AS [kept];`,
+      { ...params, replacedIn: String(replacedIn) },
+    );
+    return Number(kept?.kept);
+  }
+
   // Deletes the rows that only a reading before min_valid reads, which the
   // retention left, once the history exists.
   async expire(connection: SqlServerConnection): Promise<void> {
