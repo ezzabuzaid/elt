@@ -746,6 +746,10 @@ class DrainingDestination extends Destination<NamedTarget> {
       [Symbol.asyncDispose]: async () => {},
     };
   }
+
+  override failureType(): FailureType {
+    return 'system';
+  }
 }
 
 const contextPipeline = (
@@ -1263,6 +1267,94 @@ test('a connection that copies one stream twice is refused before anything is pr
 
   assert.deepEqual(source.opened, []);
   assert.deepEqual(destination.log, []);
+});
+
+test('the destination names the failure type of what it raised, and the source names the failure type of what it raised', async () => {
+  // Every error is config to the destination and system to the source, so
+  // each failure type shows which of the two the pipeline asked.
+  class Strict extends DrainingDestination {
+    override failureType(): FailureType {
+      return 'config';
+    }
+  }
+  const refusal = new Error('left target denies the login');
+  const broken = new Error('right store broke');
+  const source = new ContextSource({ right: [broken] });
+  const destination = new Strict();
+  destination.refusing.set('left', refusal);
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new MemoryHistory(),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(source.left, new NamedTarget('left')),
+          new Copy(source.right, new NamedTarget('right')),
+        ],
+      }),
+    ],
+  });
+
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report both failures'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.results.map(({ copy, failures }) => [copy.from.name, failures]),
+    [
+      ['left', [{ partition: null, error: refusal, failureType: 'config' }]],
+      ['right', [{ partition: null, error: broken, failureType: 'system' }]],
+    ],
+  );
+});
+
+test('a load that the destination cannot open fails every copy with the failure type that the destination names', async () => {
+  const refusal = new Error('the warehouse needs row versions');
+  class Unready extends DrainingDestination {
+    override failureType(): FailureType {
+      return 'config';
+    }
+
+    override async load(): Promise<Load<NamedTarget>> {
+      throw refusal;
+    }
+  }
+  const source = new ContextSource();
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new MemoryHistory(),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: new Unready(),
+        steps: [
+          new Copy(source.left, new NamedTarget('left')),
+          new Copy(source.right, new NamedTarget('right')),
+        ],
+      }),
+    ],
+  });
+
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report the unopened load'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.results.map(({ copy, failures }) => [copy.from.name, failures]),
+    [
+      ['left', [{ partition: null, error: refusal, failureType: 'config' }]],
+      ['right', [{ partition: null, error: refusal, failureType: 'config' }]],
+    ],
+  );
+  assert.deepEqual(source.readers, []);
 });
 
 const incrementalPipeline = (
@@ -2413,6 +2505,7 @@ class Discarding extends Destination {
       [Symbol.asyncDispose]: async () => {},
     };
   }
+  failureType() { return 'system'; }
 }
 class Forgetful extends SyncHistory {
   async install() {}

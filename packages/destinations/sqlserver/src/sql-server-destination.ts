@@ -1,6 +1,7 @@
 import {
   type CopyConfiguration,
   Destination,
+  type FailureType,
   type Load,
   type PipelineClock,
   parsePosition,
@@ -14,6 +15,7 @@ import { type SqlServerLogin, connect } from './sql-server-connection.ts';
 import { identifiers } from './sql-server-identifiers.ts';
 import { SqlServerLoad } from './sql-server-load.ts';
 import { readNumbering, sqlServerDatabase } from './sql-server-numbering.ts';
+import { SqlServerSetupError } from './sql-server-setup-error.ts';
 import { SqlServerTable } from './sql-server-table.ts';
 import { SqlServerWriter } from './sql-server-writer.ts';
 
@@ -66,6 +68,12 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
         this.createWriter(configuration, target).prepare(load, binding),
       [Symbol.asyncDispose]: () => load[Symbol.asyncDispose](),
     };
+  }
+
+  // A database that is not set up as the destination needs it is config,
+  // because a person must change it; every other error is system.
+  override failureType(error: unknown): FailureType {
+    return error instanceof SqlServerSetupError ? 'config' : 'system';
   }
 
   // The positions of the database after a position, ascending, or all of

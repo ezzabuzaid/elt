@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { statSync } from 'node:fs';
+import { chmodSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -20,14 +20,18 @@ import {
   PassFailed,
   PassFinished,
   Pipeline,
+  PipelineError,
+  type RecordedPass,
   Source,
   Stream,
+  SyncHistory,
   passChannels,
 } from '@eltjs/elt';
 
 import {
   SQLiteDestination,
   SQLiteSyncHistory,
+  type SQLiteTable,
   readPassStatus,
 } from './index.ts';
 import { storedRows } from './testing/stored-rows.ts';
@@ -980,4 +984,138 @@ test('a connection that copies one stream twice is recorded as a failed pass and
     [{ stream: 'notes', target_table: 'notes', status: 'failed' }],
   );
   assert.deepEqual(failed, [new TypeError(why)]);
+});
+
+// One record of the stream records, from a source of its own identity.
+class Recording extends LiveSource {
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
+  readonly identity: string;
+  readonly records = stream('records');
+  protected readonly catalog = new Catalog([this.records]);
+
+  constructor(identity: string) {
+    super();
+    this.identity = identity;
+  }
+
+  protected override async open() {
+    return new AsyncDisposableStack();
+  }
+
+  override changeSignals(streams: readonly Stream[]) {
+    return filled(streams);
+  }
+
+  protected override async *extract() {
+    yield { stream: 'records', data: { id: this.identity } };
+  }
+}
+
+// The failure type of each copy of a run that loads records into the SQLite
+// file at path, with a history kept in a different store. The SQLite history
+// writes the file of the destination, so a file that the destination cannot
+// open or write is one that the history cannot record in either.
+async function loadFailures(path: string) {
+  const source = new Recording('records');
+  const destination = new SQLiteDestination({ path });
+  const failure = await new Pipeline({
+    clock: globalThis,
+    connections: [
+      new Connection({
+        name: 'records',
+        source,
+        destination,
+        steps: [new Copy(source.records, destination.table('records'))],
+      }),
+    ],
+    history: new ElsewhereHistory(),
+  })
+    .run()
+    .then(
+      () => assert.fail(`the load into ${path} succeeded`),
+      (error: unknown) => error,
+    );
+  assert.ok(failure instanceof PipelineError, String(failure));
+  return failure.results.flatMap(({ failures }) =>
+    failures.map(({ failureType }) => failureType),
+  );
+}
+
+class ElsewhereHistory extends SyncHistory<SQLiteTable> {
+  protected override async recordChecks(): Promise<void> {}
+
+  override async install(): Promise<void> {}
+
+  override async begin(): Promise<RecordedPass<SQLiteTable>> {
+    return {
+      finish: async () => {},
+      fail: async () => {},
+      [Symbol.asyncDispose]: async () => {},
+    };
+  }
+}
+
+test(
+  'a load into a file that a person must set up, in a folder that is not there, a file that this process may not write or a file that is not a database, has the failure type config',
+  {
+    skip:
+      process.platform === 'win32' || process.getuid?.() === 0
+        ? 'the file mode must deny writes to this process'
+        : false,
+  },
+  async () => {
+    await using scratch = await new TemporaryFiles().directory('elt-passes-');
+    // An empty file is an empty database to SQLite.
+    const readOnly = join(scratch.path, 'read-only.sqlite');
+    writeFileSync(readOnly, '');
+    chmodSync(readOnly, 0o444);
+    const text = join(scratch.path, 'text.sqlite');
+    writeFileSync(text, 'not a database');
+
+    assert.deepEqual(
+      [
+        await loadFailures(join(scratch.path, 'missing', 'data.sqlite')),
+        await loadFailures(readOnly),
+        await loadFailures(text),
+      ],
+      [['config'], ['config'], ['config']],
+    );
+  },
+);
+
+test('a load that a SQLite file refuses for another reason, such as a table that another source writes, has the failure type system in the sync history of the file', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-passes-');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  const run = (source: Recording) =>
+    new Pipeline({
+      clock: globalThis,
+      connections: [
+        new Connection({
+          name: source.identity,
+          source,
+          destination,
+          steps: [new Copy(source.records, destination.table('records'))],
+        }),
+      ],
+      history: new SQLiteSyncHistory(),
+    }).run();
+  await run(new Recording('first'));
+
+  await assert.rejects(run(new Recording('second')), PipelineError);
+
+  assert.deepEqual(
+    shell(
+      destination.path,
+      'SELECT connector, status, failure_type FROM sync_attempts ORDER BY attempt_id',
+    ).rows,
+    [
+      { connector: 'first', status: 'succeeded', failure_type: null },
+      { connector: 'second', status: 'failed', failure_type: 'system' },
+    ],
+  );
 });

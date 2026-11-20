@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 
 import { Postgres } from '@zukhruf/testing/postgres';
@@ -323,4 +324,72 @@ test('int64 and localTimestamp columns keep the int64 and date-time-local format
       { column_name: 'start', data_type: 'timestamp without time zone' },
     ],
   );
+});
+
+// The failure type that readPassStatus reads after a pass that loads into
+// the database of destinationUrl, while the history is in the database of url.
+async function failureTypeOf(url: string, destinationUrl: string) {
+  await assert.rejects(
+    run(url, connection(destinationUrl, 'notes', { notes: [] })),
+    PipelineError,
+  );
+  return (await readPassStatus(url)).pass?.failureType;
+}
+
+test('a load whose role may not make the schemas of the destination records the pass with the failure type config', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  // Roles belong to the whole server, which other tests share.
+  const role = `loader_${randomUUID().replaceAll('-', '')}`;
+  const password = randomUUID();
+  await sql.unsafe(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
+  clients.defer(async () => {
+    await sql.unsafe(`DROP OWNED BY ${role}; DROP ROLE ${role}`);
+  });
+  const loader = new URL(url);
+  loader.username = role;
+  loader.password = password;
+
+  assert.equal(await failureTypeOf(url, loader.href), 'config');
+});
+
+test('a load that the server refuses for its login, a wrong password, a role that may not log in or a database that is not there, records the pass with the failure type config', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  const role = `nologin_${randomUUID().replaceAll('-', '')}`;
+  const password = randomUUID();
+  await sql.unsafe(`CREATE ROLE ${role} NOLOGIN PASSWORD '${password}'`);
+  clients.defer(async () => {
+    await sql.unsafe(`DROP ROLE ${role}`);
+  });
+  const wrongPassword = new URL(url);
+  wrongPassword.password = 'not the password';
+  const noLogin = new URL(url);
+  noLogin.username = role;
+  noLogin.password = password;
+  const missingDatabase = new URL(url);
+  missingDatabase.pathname = `/missing_${randomUUID().replaceAll('-', '')}`;
+
+  assert.deepEqual(
+    [
+      await failureTypeOf(url, wrongPassword.href),
+      await failureTypeOf(url, noLogin.href),
+      await failureTypeOf(url, missingDatabase.href),
+    ],
+    ['config', 'config', 'config'],
+  );
+});
+
+test('a load that cannot reach the server records the pass with the failure type system, since a retry can reach it', async () => {
+  await using database = await databases.database();
+  const url = database.connectionString;
+  const unreachable = new URL(url);
+  unreachable.hostname = '127.0.0.1';
+  unreachable.port = '1';
+
+  assert.equal(await failureTypeOf(url, unreachable.href), 'system');
 });

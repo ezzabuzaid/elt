@@ -52,10 +52,10 @@ export type ExtractionCoverage = {
 };
 
 // Whose a failure is to fix, as Airbyte's failure_type: config when the
-// upstream refused what the user set up or granted, so only they can fix it,
-// such as an app's store macOS keeps behind an access the user has not given;
-// system for every other failure. Airbyte's transient_error has no reader
-// here yet.
+// upstream or the destination refused what the user set up or granted, so
+// only they can fix it, such as an app's store macOS keeps behind an access
+// the user has not given; system for every other failure. Airbyte's
+// transient_error has no reader here yet.
 export type FailureType = 'config' | 'system';
 
 export type JsonValue =
@@ -194,9 +194,9 @@ export abstract class Source<
   ) => Error)[] = [];
 
   // What kind of failure an error from this source is: config for an instance
-  // of a class in configErrors, and system for any other error, a
-  // destination's included. A source whose decision needs more than the
-  // class, such as an HTTP status, overrides it.
+  // of a class in configErrors, and system for any other error. The
+  // destination names the kind of what it raised. A source whose decision
+  // needs more than the class, such as an HTTP status, overrides it.
   failureType(error: unknown): FailureType {
     return this.configErrors.some((type) => error instanceof type)
       ? 'config'

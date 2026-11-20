@@ -299,6 +299,7 @@ A computed dataset whose rule is a `TableRule` keeps two tables. `raw_<name>` ha
 - **A dataset failure**, for example a query that SQLite refuses, rejects the run, or it stops the watch, with a `DerivedDatasetError` that names the dataset.
 - **A table that is gone**, for example one that a person dropped by hand, is no failure. A computed dataset that reads it waits and keeps its output rows. When the copy loads the table again, the dataset asks the rule only for inputs that changed.
 - **A copy that failed** keeps its last committed rows. The derived datasets read those rows.
+- **The [failure type](../../elt/README.md#failure-types)** of an error of the destination is `config` when the file must change: a file that the destination cannot open, which `@zukhruf/sqlite-open` gives as an `UnavailableError` (a folder on the path is not there, or the system denies access), a file that the process cannot write (SQLite `READONLY`, 8), and a file that is not a database (SQLite `NOTADB`, 26). Each other error, for example a table that a different copy writes, is `system`. The sync history is in the same file, so it records a failure only when the file opens and takes writes.
 
 ## Recipes
 

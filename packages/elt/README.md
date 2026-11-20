@@ -833,6 +833,7 @@ The destination contract:
 - `Destination.createWriter(configuration, target)` selects a strategy of the storage with no I/O.
 - `Destination.load({ clock, connection })` opens the one hold of the pass on the storage. `connection` is the name of the connection whose pass opens it, so a destination that records its loads can name each one.
 - `load.prepare(configuration, target, { writer, reloading })` gives each stream its `Stage`. A `Stage` has `apply`, `commit` and `discard`. It also has `fresh`, which is true when the target holds none of the earlier rows of the copy, so the copy reads from no checkpoint; `reloading`, which is true while commits go to a hidden target; and `complete`, which puts that hidden target in the place of the target after the stream ends with no failure.
+- `Destination.failureType(error)` gives the [failure type](#failure-types) of each error that the destination raised. Each destination must implement it.
 - Each destination uses `reloadMode` to decide what to do with the target: load into it, make it, evolve a stored target that the stream does not fit now ([shape changes](#shape-changes)), open a reload for an overwrite whose stored target does not fit now, or continue the reload that the last run of the copy left open. A `RESET` of the full stream also opens a reload.
 - Destinations own connections, files and publication. `Copy` and `Pipeline` have no SQL or file system code of a load.
 - `Source.identity` and `Destination.location(target)` give stable checkpoint bindings. The scope of a stored file is the location of the target, the writer of the copy and the file field.
@@ -933,10 +934,12 @@ await scope.run('mail', () => pipeline.run());
 
 ### Failure types
 
-Each failure tells whose it is to fix, as the `failure_type` of Airbyte does (`AirbyteTracedException`, `airbyte-python-cdk` `utils/traced_exception.py`). See [ADR 0012](./docs/adr/0012-every-failure-says-whose-it-is-to-fix.md).
+Each failure tells whose it is to fix, as the `failure_type` of Airbyte does (`AirbyteTracedException`, `airbyte-python-cdk` `utils/traced_exception.py`). See [ADR 0012](./docs/adr/0012-every-failure-says-whose-it-is-to-fix.md) and [ADR 0029](./docs/adr/0029-the-side-that-raised-a-failure-names-its-type.md).
 
-- Each `LoadFailure` has a `failureType`. The source decides it with `failureType(error): FailureType`.
-- `config` means that the upstream refused what the user set up or granted, so only the user can fix it. `system` is for each other error, also the errors of a destination.
+- Each `LoadFailure` has a `failureType`. The side that raised the error decides it with `failureType(error): FailureType`.
+- The destination decides for each error that a call into it throws: its `load`, the `prepare` and the dispose of its `Load`, and each call of a `Stage`. The source decides for each other error: its read, a message that breaks the contract, a checkpoint store, a file storage, and a failure that ends a connection before a pass, such as a declaration that is not valid or a change signal that failed.
+- `config` means that the upstream or the destination refused what the user set up or granted, so only the user can fix it. `system` is for each other error.
+- `Destination.failureType` is abstract, so each destination decides for its own errors. The destinations of this repository say which errors are `config` in their READMEs.
 - A source lists in `configErrors` the error classes that mean `config`. The default `failureType` returns `config` for an instance of a listed class and `system` for each other error. Thus a source that lists nothing calls each failure `system`.
 - The Apple sources list the `*UnavailableError` of their SDKs (the macOS access that the store of the app needs). SQL Server lists its permission and connection errors.
 - A source that decides from more than the class overrides `failureType`. Search Console maps a `401` or `403` from Google.
@@ -1202,6 +1205,7 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0026](./docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md): a rule can give many parts for one input.
 - [ADR 0027](./docs/adr/0027-a-dataset-reads-the-parts-of-a-computed-dataset-through-a-view.md): a dataset reads the parts of a computed dataset through a view.
 - [ADR 0028](./docs/adr/0028-a-host-names-each-relation-that-readers-query-once.md): a host names each relation that readers query once.
+- [ADR 0029](./docs/adr/0029-the-side-that-raised-a-failure-names-its-type.md): the side that raised a failure names its type.
 
 ## Development
 

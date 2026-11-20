@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import type { PipelineClock } from './clock.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
+import type { FailureType } from './source.ts';
 import type { Target as DestinationTarget } from './target.ts';
 import type { Clearing, FieldValues, Stage, Writer } from './writer.ts';
 
@@ -74,6 +75,12 @@ export abstract class Destination<Target extends DestinationTarget> {
     clock: PipelineClock;
     connection: string;
   }): Promise<Load<Target>>;
+
+  // What kind of failure an error that this destination raised is: what its
+  // load, its Load or a Stage threw. Only the destination knows which of its
+  // store's errors mean that a person must change the setup, as Airbyte's
+  // destination raises its own config_error.
+  abstract failureType(error: unknown): FailureType;
 
   async clear(
     configuration: CopyConfiguration,

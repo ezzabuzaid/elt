@@ -13,6 +13,7 @@ import {
   type CopyConfiguration,
   Gauge,
   Pipeline,
+  PipelineError,
   Source,
   type SourceMessage,
   Stream,
@@ -315,6 +316,64 @@ test('a database that keeps no row versions for readers fails the first load wit
       `SELECT IIF(SCHEMA_ID(N'_warehouse') IS NULL, 0, 1) AS made`,
     ),
     [{ made: 0 }],
+  );
+});
+
+test('a pipeline into a database that keeps no row versions for readers records the pass as failed with the failure type config', async () => {
+  await using database = await scratch({ rowVersions: false });
+  const source = new Notes();
+  source.upstream = [{ n: 1, text: 'first' }];
+
+  await assert.rejects(
+    pipeline(database.login, source).pipeline.run(),
+    PipelineError,
+  );
+
+  assert.deepEqual(
+    await database.admin.query(
+      'SELECT status, failure_type FROM marts.sync_attempts',
+    ),
+    [{ status: 'failed', failure_type: 'config' }],
+  );
+  assert.deepEqual(source.states, []);
+});
+
+test('a load that the server refuses for another reason, such as a login with a wrong password, records the pass with the failure type system', async () => {
+  await using database = await scratch();
+  const source = new Notes();
+  source.upstream = [{ n: 1, text: 'first' }];
+  const warehouse = new SqlServerDestination({
+    login: { ...database.login, password: 'not the password' },
+  });
+
+  await assert.rejects(
+    new Pipeline({
+      clock: globalThis,
+      history: new SqlServerSyncHistory({ login: database.login }),
+      connections: [
+        new Connection({
+          name: 'notes',
+          source,
+          destination: warehouse,
+          checkpoints: new SqlServerCheckpointStore({ login: database.login }),
+          steps: [
+            new Copy(source.stream, warehouse.table('notes'), {
+              id: 'notes:notes',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append',
+            }),
+          ],
+        }),
+      ],
+    }).run(),
+    PipelineError,
+  );
+
+  assert.deepEqual(
+    await database.admin.query(
+      'SELECT status, failure_type FROM marts.sync_attempts',
+    ),
+    [{ status: 'failed', failure_type: 'system' }],
   );
 });
 

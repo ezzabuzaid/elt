@@ -3,11 +3,12 @@ import type {
   CheckpointRun,
   CheckpointStore,
 } from '../state/checkpoint-store.ts';
+import { errorMessage } from '../state/sync-history.ts';
 import type { PipelineClock } from './clock.ts';
 import type { Connection } from './connection.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { Copy, CopyOutcome } from './copy.ts';
-import type { Destination } from './destination.ts';
+import type { Destination, Load } from './destination.ts';
 import { FileTransfer } from './file-transfer.ts';
 import type { Partition } from './partition.ts';
 import { CopyProgress, passChannels } from './pass-channels.ts';
@@ -60,6 +61,7 @@ class Replicated<Target extends DestinationTarget> {
   readonly published: () => void;
   readonly files: FileTransfer;
   readonly #source: Source;
+  readonly #destination: Destination<Target>;
 
   constructor(
     copy: Copy<Target>,
@@ -72,6 +74,7 @@ class Replicated<Target extends DestinationTarget> {
     this.connection = connection;
     this.published = published;
     this.#source = source;
+    this.#destination = destination;
     this.files = new FileTransfer(
       copy.configuration.fileReads,
       destination.location(copy.to),
@@ -83,13 +86,19 @@ class Replicated<Target extends DestinationTarget> {
     return this.copy.from;
   }
 
-  // What did not load, of the kind the source says the error is.
+  // What did not load, of the kind that the side that raised the error says
+  // it is: the destination for what its load threw, the source for every
+  // other error.
   recordFailure(partition: Partition | null, error: unknown): void {
-    this.failures.push({
-      partition,
-      error,
-      failureType: this.#source.failureType(error),
-    });
+    this.failures.push(
+      error instanceof DestinationFailure
+        ? {
+            partition,
+            error: error.error,
+            failureType: this.#destination.failureType(error.error),
+          }
+        : { partition, error, failureType: this.#source.failureType(error) },
+    );
   }
 
   outcome(): CopyOutcome<Target> {
@@ -241,7 +250,7 @@ async function transfer<Target extends DestinationTarget>(
   }
   if (reading.length === 0) return;
   signal?.throwIfAborted();
-  await using load = await destination.load({
+  await using load = await raisedBy(destination, {
     clock,
     connection: connection.name,
   });
@@ -372,6 +381,62 @@ async function transfer<Target extends DestinationTarget>(
         await breakStage(replication, error);
       }
   }
+}
+
+// What a call into the destination threw, which the destination classifies.
+class DestinationFailure extends Error {
+  override name = 'DestinationFailure';
+  readonly error: unknown;
+
+  constructor(error: unknown) {
+    super(errorMessage(error), { cause: error });
+    this.error = error;
+  }
+}
+
+async function raised<T>(call: () => PromiseLike<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    throw new DestinationFailure(error);
+  }
+}
+
+// The destination's load, whose calls and whose stages' calls throw what
+// fails as a DestinationFailure.
+async function raisedBy<Target extends DestinationTarget>(
+  destination: Destination<Target>,
+  options: { clock: PipelineClock; connection: string },
+): Promise<Load<Target>> {
+  const load = await raised(() => destination.load(options));
+  return {
+    prepare: async (configuration, target, binding) => {
+      const stage = await raised(() =>
+        load.prepare(configuration, target, binding),
+      );
+      return {
+        get fresh() {
+          return stage.fresh;
+        },
+        get reloading() {
+          return stage.reloading;
+        },
+        values: async function* (field) {
+          try {
+            yield* stage.values(field);
+          } catch (error) {
+            throw new DestinationFailure(error);
+          }
+        },
+        complete: () => raised(() => stage.complete()),
+        apply: (operation) => raised(() => stage.apply(operation)),
+        commit: () => raised(() => stage.commit()),
+        discard: () => raised(() => stage.discard()),
+        [Symbol.asyncDispose]: () => raised(() => stage[Symbol.asyncDispose]()),
+      };
+    },
+    [Symbol.asyncDispose]: () => raised(() => load[Symbol.asyncDispose]()),
+  };
 }
 
 // Whether error is the abort of the run's signal, not a failure.

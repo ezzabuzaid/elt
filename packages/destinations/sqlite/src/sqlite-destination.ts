@@ -1,8 +1,14 @@
 import { resolve } from 'node:path';
 
+import { UnavailableError } from '@zukhruf/sqlite-open';
 import { transaction } from '@zukhruf/sqlite-transaction';
 
-import type { CopyConfiguration, Load, PipelineClock } from '@eltjs/elt';
+import type {
+  CopyConfiguration,
+  FailureType,
+  Load,
+  PipelineClock,
+} from '@eltjs/elt';
 import { Destination, parsePosition, positionsAfter } from '@eltjs/elt';
 
 import { SQLiteAppendWriter } from './sqlite-append-writer.ts';
@@ -14,6 +20,11 @@ import { SQLiteLoad, readNumbering, sqliteFile } from './sqlite-loads.ts';
 import { SQLiteOverwriteWriter } from './sqlite-overwrite-writer.ts';
 import { SQLiteTable } from './sqlite-table.ts';
 import type { SQLiteWriter } from './sqlite-writer.ts';
+
+// SQLite's READONLY (8), a file that this process may not write, and NOTADB
+// (26), a file at the path that is not a database: a person must change the
+// file or the path. A destination always opens the file to write it.
+const configCodes = new Set([8, 26]);
 
 export class SQLiteDestination extends Destination<SQLiteTable> {
   readonly supportedDestinationSyncModes = Object.freeze([
@@ -66,6 +77,19 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
         this.createWriter(configuration, target).prepare(load, binding),
       [Symbol.asyncDispose]: async () => load[Symbol.dispose](),
     };
+  }
+
+  // A file that the destination cannot open, which @zukhruf/sqlite-open
+  // gives as an UnavailableError, or an error of SQLite with one of
+  // configCodes, is config; every other error is system.
+  override failureType(error: unknown): FailureType {
+    return error instanceof UnavailableError ||
+      (Error.isError(error) &&
+        'errcode' in error &&
+        typeof error.errcode === 'number' &&
+        configCodes.has(error.errcode))
+      ? 'config'
+      : 'system';
   }
 
   // The positions of the file after a position, ascending, or all of them;
