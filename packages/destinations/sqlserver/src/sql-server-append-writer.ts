@@ -1,6 +1,7 @@
 import type { SqlServerConnection } from '@eltjs/sdk-microsoft-sql-server';
 
 import type { SqlServerColumn } from './sql-server-column.ts';
+import type { TargetHistory } from './sql-server-history.ts';
 import {
   SqlServerWriter,
   type Written,
@@ -20,9 +21,11 @@ export class SqlServerAppendWriter extends SqlServerWriter {
     connection: SqlServerConnection,
     stage: string,
     written: Written,
+    into: string,
+    _history: TargetHistory | null,
   ): Promise<boolean> {
     const [appended] = await connection.query(
-      `INSERT INTO ${this.qualifiedName} (${this.written.join(', ')})
+      `INSERT INTO ${into} (${this.written.join(', ')})
        SELECT ${this.staged('[_elt_new]').join(', ')} FROM ${stage} AS [_elt_new] ORDER BY [_elt_new].${seq};
        SELECT @@ROWCOUNT AS [rows];`,
       writtenParameters(written),

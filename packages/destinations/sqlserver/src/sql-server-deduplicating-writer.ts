@@ -11,6 +11,7 @@ import type {
 
 import type { EncodedValue, SqlServerColumn } from './sql-server-column.ts';
 import { SqlServerColumns } from './sql-server-columns.ts';
+import type { TargetHistory } from './sql-server-history.ts';
 import type { SqlServerTable } from './sql-server-table.ts';
 import {
   SqlServerWriter,
@@ -105,11 +106,14 @@ export class SqlServerDeduplicatingWriter extends SqlServerWriter {
   // before it, or when its values differ and the guard, if any, lets it in,
   // which rejects out-of-order replay; and a record of a new key enters. A
   // record with the stored row's values leaves the row, its commit and its
-  // loaded_at as they are.
+  // loaded_at as they are. A hidden target has no history: no reader saw its
+  // rows.
   protected override async merge(
     connection: SqlServerConnection,
     stage: string,
     written: Written,
+    into: string,
+    history: TargetHistory | null,
   ): Promise<boolean> {
     const guard = this.#guard;
     const guarded =
@@ -118,24 +122,33 @@ export class SqlServerDeduplicatingWriter extends SqlServerWriter {
         : ` AND ${this.#ordered(guard, '[_elt_new]')} > ${this.#ordered(guard, '[_elt_target]')}`;
     const staged = this.staged('[_elt_new]');
     const parameters = writtenParameters(written);
-    const kept = await this.history.keep(
-      connection,
-      written.committedIn,
-      this.qualifiedName,
-      `MERGE ${this.qualifiedName} AS [_elt_target]
+    const merge = `MERGE ${into} AS [_elt_target]
        USING (${this.#reduced(stage)}) AS [_elt_new] ON [_elt_target].${keyHash} = [_elt_new].${keyHash}
        WHEN MATCHED AND [_elt_new].${op} = 'D' THEN DELETE
        WHEN MATCHED AND ([_elt_new].[_elt_last] IS NOT NULL OR ([_elt_new].${version} IS DISTINCT FROM [_elt_target].${version}${guarded})) THEN
          UPDATE SET ${this.written.flatMap((column, index) => (column === keyHash ? [] : [`${column} = ${staged[index]}`])).join(', ')}
        WHEN NOT MATCHED BY TARGET AND [_elt_new].${op} = 'R' THEN
-         INSERT (${this.written.join(', ')}) VALUES (${staged.join(', ')})
+         INSERT (${this.written.join(', ')}) VALUES (${staged.join(', ')})`;
+    if (history === null) {
+      const [merged] = await connection.query(
+        `${merge};
+         SELECT @@ROWCOUNT AS [rows];`,
+        parameters,
+      );
+      return merged?.rows !== 0;
+    }
+    const kept = await history.keep(
+      connection,
+      written.committedIn,
+      into,
+      `${merge}
        OUTPUT deleted.*`,
       parameters,
     );
     if (kept > 0) return true;
     // A commit that kept no row changed one only if it inserted a key.
     const [inserted] = await connection.query(
-      `SELECT IIF(EXISTS (SELECT 1 FROM ${stage} AS [_elt_staged] JOIN ${this.qualifiedName} AS [_elt_target] ON [_elt_target].${keyHash} = [_elt_staged].${keyHash} WHERE [_elt_target].[committed_in] = CAST(@committed AS bigint)), 1, 0) AS [inserted]`,
+      `SELECT IIF(EXISTS (SELECT 1 FROM ${stage} AS [_elt_staged] JOIN ${into} AS [_elt_target] ON [_elt_target].${keyHash} = [_elt_staged].${keyHash} WHERE [_elt_target].[committed_in] = CAST(@committed AS bigint)), 1, 0) AS [inserted]`,
       parameters,
     );
     return inserted?.inserted === 1;

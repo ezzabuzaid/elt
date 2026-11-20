@@ -68,21 +68,32 @@ export class TargetReaderView {
   }
 
   // Made only when absent and never replaced by a commit: prepare refused any
-  // view not this load's own. CREATE VIEW must be the only statement of its
-  // batch.
+  // view not this load's own.
   async describe(connection: SqlServerConnection): Promise<void> {
-    const view = this.qualifiedName;
     const [existing] = await connection.query(
       `SELECT IIF(OBJECT_ID(@view, N'V') IS NULL, 0, 1) AS [made]`,
-      { view },
+      { view: this.qualifiedName },
     );
-    if (existing?.made !== 1) {
-      const columns = this.#columns.map(quote).join(', ');
-      const kept = this.#columns.map((column) => `o.${quote(column)}`);
-      await connection.query(
-        `CREATE VIEW ${view} AS SELECT ${columns} FROM ${this.#target} WHERE [committed_in] <= ${position} UNION ALL SELECT ${kept.join(', ')} FROM ${this.#history} AS o WHERE o.[committed_in] <= ${position} AND o.[replaced_in] > ${position}`,
-      );
-    }
+    if (existing?.made !== 1) await this.#define(connection, 'CREATE');
     await this.#descriptions.write(connection, 'VIEW', marts, this.#name);
+  }
+
+  // Defined again over a target that took the place of another, whose
+  // columns it then shows, with its grants and the views over it kept.
+  async replace(connection: SqlServerConnection): Promise<void> {
+    await this.#define(connection, 'CREATE OR ALTER');
+    await this.#descriptions.write(connection, 'VIEW', marts, this.#name);
+  }
+
+  // CREATE VIEW must be the only statement of its batch.
+  async #define(
+    connection: SqlServerConnection,
+    verb: 'CREATE' | 'CREATE OR ALTER',
+  ): Promise<void> {
+    const columns = this.#columns.map(quote).join(', ');
+    const kept = this.#columns.map((column) => `o.${quote(column)}`);
+    await connection.query(
+      `${verb} VIEW ${this.qualifiedName} AS SELECT ${columns} FROM ${this.#target} WHERE [committed_in] <= ${position} UNION ALL SELECT ${kept.join(', ')} FROM ${this.#history} AS o WHERE o.[committed_in] <= ${position} AND o.[replaced_in] > ${position}`,
+    );
   }
 }

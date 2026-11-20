@@ -38,6 +38,36 @@ export class TargetHistory {
     );
   }
 
+  // Takes the shape of table, which is to replace the target: each column
+  // that table adds enters, nullable, and a column that table drops stays.
+  // The history holds no other type of a column, so when table changes the
+  // type of one it keeps, it drops itself and gives 'retyped': the caller
+  // then expires each position before the change, which only its rows read.
+  async follow(
+    connection: SqlServerConnection,
+    table: string,
+  ): Promise<'follows' | 'retyped'> {
+    const kept = new Map(
+      (await storedColumns(connection, { table: this.qualifiedName })).map(
+        ({ name, type }) => [name, type],
+      ),
+    );
+    if (kept.size === 0) return 'follows';
+    const next = (await storedColumns(connection, { table })).filter(
+      ({ name }) => name !== '_elt_row',
+    );
+    if (next.some(({ name, type }) => (kept.get(name) ?? type) !== type)) {
+      await connection.query(`DROP TABLE ${this.qualifiedName}`);
+      return 'retyped';
+    }
+    const added = next.filter(({ name }) => !kept.has(name));
+    if (added.length > 0)
+      await connection.query(
+        `ALTER TABLE ${this.qualifiedName} ADD ${added.map(({ name, type }) => `${quote(name)} ${type} NULL`).join(', ')}`,
+      );
+    return 'follows';
+  }
+
   // Runs changes, a statement that changes or removes rows of target and
   // outputs deleted.*, and keeps each row it output that target stored, as
   // replaced in commit replacedIn, in the same statement (ADR 0005). An

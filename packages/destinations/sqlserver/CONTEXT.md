@@ -50,6 +50,10 @@ _Avoid_: Deduplicated stage, batch
 The table `_elt_next_<hash>` that a reload commits into. When the stream ends with no failure, the load gives its rows to the raw table by difference if the shapes agree, and swaps it in with `sp_rename` if not.
 _Avoid_: Shadow table, temp table
 
+**Open reload**:
+A reload whose hidden table a run made and the end of no stream gave to the raw table yet. The next run continues it. For a reload of some partitions, `_warehouse._elt_reloads` keeps which ones.
+_Avoid_: Pending reload, partial reload
+
 **Dependent view**:
 A view that reads a raw table, its history or its reader view, directly or through other views. SQL Server finds the tables of a view by name, so a change of the table refreshes the view with `sp_refreshview`. A view `WITH SCHEMABINDING` stops the change.
 _Avoid_: Downstream object, dependency
@@ -91,7 +95,7 @@ _Avoid_: Database id, fingerprint, version
 _Avoid_: Offset, cursor (eca keeps a cursor), checkpoint, LSN (the log sequence number of SQL Server)
 
 **History**:
-The table `_elt_history_<hash>` beside a raw table, which keeps each row that a commit replaced or removed, with `replaced_in`. The `OUTPUT` of the statement that replaced or removed the row writes it.
+The table `_elt_history_<hash>` beside a raw table, which keeps each row that a commit replaced or removed, with `replaced_in`. The `OUTPUT` of the statement that replaced or removed the row writes it; a swap writes each row of the table that it replaces.
 _Avoid_: Temporal table, history table of system versioning, audit log
 
 **Widening**:
