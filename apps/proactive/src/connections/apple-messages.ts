@@ -17,19 +17,13 @@ const source = new AppleMessagesSource({
   path: chatDatabasePath(homedir()),
   home: homedir(),
 });
-const destination = new PostgresDestination({
-  url: warehouseUrl,
-  schema: 'apple_messages',
-});
+const destination = new PostgresDestination({ url: warehouseUrl });
 const { streams } = await source.discover();
 
 export default new Connection({
   name: 'apple-messages',
   source,
   destination,
-  checkpoints: new PostgresCheckpointStore({
-    url: warehouseUrl,
-    schema: 'apple_messages',
-  }),
+  checkpoints: new PostgresCheckpointStore({ url: warehouseUrl }),
   steps: streams.map(martsCopy(destination, 'messages')),
 });

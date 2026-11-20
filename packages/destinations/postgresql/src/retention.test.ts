@@ -120,9 +120,9 @@ const checkpoint = (stream: string, read: number) => ({
   state: { read },
 });
 
-// A schema raw of the database, with the retention a test sets, and a pass of
-// one copy that keeps the newest version of each note, or of the copy a test
-// gives.
+// A destination of the database, with the retention a test sets, and a pass
+// of one copy that keeps the newest version of each note, or of the copy a
+// test gives.
 function warehouse(
   url: string,
   retention?: Temporal.Duration,
@@ -130,17 +130,14 @@ function warehouse(
 ) {
   const destination = new PostgresDestination({
     url,
-    schema: 'raw',
     ...(retention === undefined ? {} : { retention }),
   });
-  const checkpoints = new PostgresCheckpointStore({ url, schema: 'raw' });
+  const checkpoints = new PostgresCheckpointStore({ url });
   const pass = (
     steps: Readonly<Record<string, readonly Step[]>>,
     copy: Copy<PostgresTable> = new Copy(
       stream,
-      destination
-        .table(stream.name)
-        .withReaderView('marts', `raw_${stream.name}`),
+      destination.table(stream.name),
       {
         id: stream.name,
         syncMode: 'incremental',
@@ -209,20 +206,20 @@ async function expiredReading(
   return reading.expired;
 }
 
-// The bodies that the history of raw.notes keeps, oldest replaced first.
+// The bodies that the history of _warehouse.raw_notes keeps, oldest replaced first.
 async function kept(sql: postgres.Sql, column = 'body') {
   const [history] = await sql<{ name: string }[]>`
     SELECT relname AS name FROM pg_class
-    WHERE relnamespace = 'raw'::regnamespace AND relkind = 'r' AND relname LIKE '\_elt\_history\_%'`;
-  if (history === undefined) assert.fail('raw has no history');
+    WHERE relnamespace = '_warehouse'::regnamespace AND relkind = 'r' AND relname LIKE '\_elt\_history\_%'`;
+  if (history === undefined) assert.fail('_warehouse has no history');
   return (
     await sql.unsafe(
-      `SELECT "${column}" AS value FROM raw."${history.name}" ORDER BY replaced_in, 1`,
+      `SELECT "${column}" AS value FROM _warehouse."${history.name}" ORDER BY replaced_in, 1`,
     )
   ).map(({ value }) => value);
 }
 
-const body = 'SELECT body FROM marts.raw_notes';
+const body = 'SELECT body FROM marts.notes';
 const retentionReason = /retention/;
 
 test('a commit after the window deletes the history that only positions older than the window read, and the oldest position left reads exactly', async () => {
@@ -298,19 +295,14 @@ test('the retention keeps an open load that has no commit yet, and that load com
   const stream = notes();
   const drafts = new PostgresDestination({
     url,
-    schema: 'drafts',
     retention: Temporal.Duration.from({ seconds: 1 }),
   });
-  const copy = new Copy(
-    stream,
-    drafts.table('notes').withReaderView('marts', 'drafts_notes'),
-    {
-      id: 'notes',
-      syncMode: 'incremental',
-      destinationSyncMode: 'append_dedup',
-      cursorField: 'version',
-    },
-  );
+  const copy = new Copy(stream, drafts.table('drafts_notes'), {
+    id: 'drafts_notes',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    cursorField: 'version',
+  });
   const draftPass = new Pipeline({
     clock,
     history: new PostgresSyncHistory({ url }),
@@ -328,7 +320,7 @@ test('the retention keeps an open load that has no commit yet, and that load com
           ],
         }),
         destination: drafts,
-        checkpoints: new PostgresCheckpointStore({ url, schema: 'drafts' }),
+        checkpoints: new PostgresCheckpointStore({ url }),
         steps: [copy],
       }),
     ],
@@ -507,13 +499,11 @@ test('a commit after the window deletes the stored files that only expired histo
   );
   const copy = new Copy(
     documents,
-    destination
-      .table('documents', (c) => [
-        c.text('id'),
-        c.integer('version'),
-        c.blob('bytes').from(documents.file),
-      ])
-      .withReaderView('marts', 'raw_documents'),
+    destination.table('documents', (c) => [
+      c.text('id'),
+      c.integer('version'),
+      c.blob('bytes').from(documents.file),
+    ]),
     {
       id: 'documents',
       syncMode: 'incremental',
@@ -550,12 +540,12 @@ test('a commit after the window deletes the stored files that only expired histo
 
   const [chunks] = await sql<{ name: string }[]>`
     SELECT relname AS name FROM pg_class
-    WHERE relnamespace = 'raw'::regnamespace AND relkind = 'r' AND relname LIKE '\_elt\_files\_%'`;
-  if (chunks === undefined) assert.fail('raw has no chunk table');
+    WHERE relnamespace = '_warehouse'::regnamespace AND relkind = 'r' AND relname LIKE '\_elt\_files\_%'`;
+  if (chunks === undefined) assert.fail('_warehouse has no chunk table');
   assert.deepEqual(
     (
       await sql.unsafe(
-        `SELECT convert_from(string_agg(bytes, ''::bytea ORDER BY n), 'UTF8') AS text FROM raw."${chunks.name}" GROUP BY file ORDER BY 1`,
+        `SELECT convert_from(string_agg(bytes, ''::bytea ORDER BY n), 'UTF8') AS text FROM _warehouse."${chunks.name}" GROUP BY file ORDER BY 1`,
       )
     ).map(({ text }) => text),
     ['a2', 'b', 'b2'],
@@ -564,7 +554,7 @@ test('a commit after the window deletes the stored files that only expired histo
     await asOf(
       destination,
       `SELECT d.id, convert_from(string_agg(f.bytes, ''::bytea ORDER BY f.n), 'UTF8') AS text
-       FROM marts.raw_documents d JOIN raw."${chunks.name}" f ON f.file = d.bytes
+       FROM marts.documents d JOIN marts."${chunks.name}" f ON f.file = d.bytes
        GROUP BY d.id ORDER BY d.id`,
       second,
     ),

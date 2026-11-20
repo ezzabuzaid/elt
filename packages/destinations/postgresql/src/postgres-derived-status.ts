@@ -2,13 +2,16 @@ import type postgres from 'postgres';
 
 import { DerivedStatus, type PipelineClock } from '@eltjs/elt';
 
+import { warehouse } from './postgres-schemas.ts';
 import { type Queries, lockSchema } from './postgres-session.ts';
+
+const table = `${warehouse}.derived_status`;
 
 // One row for each derived dataset of the database: what its refreshes left,
 // which readers see through marts.derived_status. The sync history makes it
 // with its tables, and a dataset makes it too, so it never depends on the
 // order of the two.
-export const derivedStatusTable = `CREATE TABLE IF NOT EXISTS _warehouse.derived_status (
+export const derivedStatusTable = `CREATE TABLE IF NOT EXISTS ${table} (
     dataset text PRIMARY KEY,
     kind text NOT NULL CHECK (kind IN ('view', 'computed')),
     state text NOT NULL CHECK (state IN ('waiting', 'refreshing', 'current', 'failed')),
@@ -16,8 +19,8 @@ export const derivedStatusTable = `CREATE TABLE IF NOT EXISTS _warehouse.derived
     inputs bigint, computed bigint, empty bigint, failed bigint, pending bigint
   )`;
 
-// The derived_status of the database, where dataset is the name with its
-// schema.
+// The derived_status of the database, where dataset is the view of the
+// dataset in marts, such as marts.lengths.
 export class PostgresDerivedStatus extends DerivedStatus {
   readonly #sql: postgres.Sql;
   readonly #dataset: string;
@@ -39,7 +42,7 @@ export class PostgresDerivedStatus extends DerivedStatus {
   // Inside the transaction of a commit that settled count inputs.
   async settled(sql: Queries, count: number): Promise<void> {
     await sql.unsafe(
-      'UPDATE _warehouse.derived_status SET pending = GREATEST(pending - $1, 0) WHERE dataset = $2',
+      `UPDATE ${table} SET pending = GREATEST(pending - $1, 0) WHERE dataset = $2`,
       [count, this.#dataset],
     );
   }
@@ -55,10 +58,10 @@ export class PostgresDerivedStatus extends DerivedStatus {
       .slice(1)
       .map((column) => `${column} = excluded.${column}`);
     await this.#sql.begin(async (sql) => {
-      await lockSchema(sql, '_warehouse');
+      await lockSchema(sql, warehouse);
       await sql.unsafe(derivedStatusTable);
       await sql.unsafe(
-        `INSERT INTO _warehouse.derived_status (${columns.join(', ')}) VALUES (${placeholders.join(', ')}) ON CONFLICT (dataset) DO UPDATE SET ${assignments.join(', ')}`,
+        `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders.join(', ')}) ON CONFLICT (dataset) DO UPDATE SET ${assignments.join(', ')}`,
         [this.#dataset, this.#kind, ...Object.values(values)],
       );
     });

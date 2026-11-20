@@ -16,19 +16,13 @@ const source = new AppleMailSource({
   path: mailDirectory(homedir()),
   accounts: new AccountsStore(accountsStorePath(homedir())),
 });
-const destination = new PostgresDestination({
-  url: warehouseUrl,
-  schema: 'apple_mail',
-});
+const destination = new PostgresDestination({ url: warehouseUrl });
 
 export default new Connection({
   name: 'apple-mail',
   source,
   destination,
-  checkpoints: new PostgresCheckpointStore({
-    url: warehouseUrl,
-    schema: 'apple_mail',
-  }),
+  checkpoints: new PostgresCheckpointStore({ url: warehouseUrl }),
   steps: [
     source.messages,
     source.addresses,

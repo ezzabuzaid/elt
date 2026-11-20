@@ -37,7 +37,11 @@ class Notes extends Source {
     name: 'notes',
     jsonSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, text: { type: 'string' } },
+      description: 'A note.',
+      properties: {
+        id: { type: 'string', description: 'Note id.' },
+        text: { type: 'string', description: 'The text of the note.' },
+      },
       required: ['id', 'text'],
     },
     primaryKey: ['id'],
@@ -137,17 +141,17 @@ class Pieces extends TableRule<Note, RuleColumns, RuleColumns> {
   }
 }
 
-// A pipeline that copies notes into raw.raw_notes and keeps the dataset
-// pieces in marts, with a session to read the database.
+// A pipeline that copies notes into _warehouse.raw_notes, read through
+// marts.notes, and keeps the dataset pieces in marts, with a session to read
+// the database.
 function pieces(
   url: string,
   clients: AsyncDisposableStack,
   rule = new Pieces(),
 ) {
   const source = new Notes();
-  const raw = new PostgresDestination({ url, schema: 'raw' });
-  const marts = new PostgresDestination({ url, schema: 'marts' });
-  const target = raw.table('raw_notes');
+  const marts = new PostgresDestination({ url });
+  const target = marts.table('notes');
   const pipeline = new Pipeline({
     clock: globalThis,
     history: new PostgresSyncHistory({ url }),
@@ -155,7 +159,7 @@ function pieces(
       new Connection({
         name: 'notes',
         source,
-        destination: raw,
+        destination: marts,
         steps: [new Copy(source.notes, target)],
       }),
     ],
@@ -241,9 +245,9 @@ test('a table rule keeps one output row for each key in the view of the dataset,
         'SELECT id, seq, part_hash, text, tokens, start, "end" FROM marts.pieces_parts ORDER BY id, seq',
       ),
       view: (await declared('marts.pieces_parts')).map(({ name }) => name),
-      table: await declared('marts.raw_pieces_parts'),
+      table: await declared('_warehouse.raw_pieces_parts'),
       primaryKey: await rows(
-        "SELECT a.attname AS name FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey) WHERE i.indrelid = 'marts.raw_pieces_parts'::regclass AND i.indisprimary ORDER BY array_position(i.indkey, a.attnum)",
+        "SELECT a.attname AS name FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey) WHERE i.indrelid = '_warehouse.raw_pieces_parts'::regclass AND i.indisprimary ORDER BY array_position(i.indkey, a.attnum)",
       ),
     },
     {
@@ -318,7 +322,9 @@ test('an input that changes at its end keeps the commit of each part that did no
   await pipeline.run();
   const before = await newest(marts);
   const committed = () =>
-    rows('SELECT seq, committed_in FROM marts.raw_pieces_parts ORDER BY seq');
+    rows(
+      'SELECT seq, committed_in FROM _warehouse.raw_pieces_parts ORDER BY seq',
+    );
   const [kept] = await committed();
   const [made] = await rows('SELECT input_hash FROM marts.pieces');
   source.rows = [{ id: 'a', text: 'one|tw' }];
@@ -360,7 +366,7 @@ test('a part that only moved keeps its part hash and is written with its new pla
   source.rows = [{ id: 'a', text: 'xx|one' }];
   await pipeline.run();
   const moved =
-    'SELECT seq, part_hash, start, "end", committed_in FROM marts.raw_pieces_parts WHERE seq = 1';
+    'SELECT seq, part_hash, start, "end", committed_in FROM _warehouse.raw_pieces_parts WHERE seq = 1';
   const [before] = await rows(moved);
   source.rows = [{ id: 'a', text: 'x|one' }];
 
@@ -581,7 +587,7 @@ test('a changed declaration of the parts makes both tables again, a view over <n
   );
   const before = await newest(first.marts);
   const [output] = await first.rows(
-    'SELECT committed_in FROM marts.raw_pieces',
+    'SELECT committed_in FROM _warehouse.raw_pieces',
   );
   const second = pieces(
     url,
@@ -598,7 +604,7 @@ test('a changed declaration of the parts makes both tables again, a view over <n
   await second.pipeline.run();
 
   const [remade] = await second.rows(
-    'SELECT committed_in FROM marts.raw_pieces',
+    'SELECT committed_in FROM _warehouse.raw_pieces',
   );
   assert.deepEqual(
     {
@@ -672,7 +678,6 @@ for (const [output, place, column] of [
         new ComputedDataset({
           into: new PostgresDestination({
             url: 'postgres://localhost/none',
-            schema: 'marts',
           }),
           name: 'pieces',
           description: 'The pieces of each note.',
@@ -694,7 +699,6 @@ test('a table rule column that differs from a column of the dataset only in case
       new ComputedDataset({
         into: new PostgresDestination({
           url: 'postgres://localhost/none',
-          schema: 'marts',
         }),
         name: 'pieces',
         description: 'The pieces of each note.',
@@ -707,50 +711,49 @@ test('a table rule column that differs from a column of the dataset only in case
   );
 });
 
-for (const name of ['pieces_parts', 'raw_pieces_parts'])
-  test(`a computed dataset with a table rule refuses a pipeline whose copy makes ${name} in its schema, before anything is made`, async () => {
-    await using database = await databases.database();
-    await using clients = new AsyncDisposableStack();
-    const url = database.connectionString;
-    const sql = clients.adopt(
-      postgres(url, { max: 1, onnotice: () => {} }),
-      (session) => session.end(),
-    );
-    const source = new Notes();
-    const marts = new PostgresDestination({ url, schema: 'marts' });
-    const target = marts.table(name);
-    const pipeline = new Pipeline({
-      clock: globalThis,
-      history: new PostgresSyncHistory({ url }),
-      connections: [
-        new Connection({
-          name: 'notes',
-          source,
-          destination: marts,
-          steps: [new Copy(source.notes, target)],
-        }),
-      ],
-      derived: [
-        new ComputedDataset({
-          into: marts,
-          name: 'pieces',
-          description: 'The pieces of each note.',
-          from: [target],
-          compute: new Pieces(),
-        }),
-      ],
-    });
-
-    await assert.rejects(
-      pipeline.run(),
-      new TypeError(
-        `Computed dataset pieces needs marts.${name}, which a copy of the pipeline makes`,
-      ),
-    );
-    assert.deepEqual(
-      [
-        ...(await sql`SELECT to_regclass('marts.raw_pieces') AS dataset, to_regclass(${`marts.${name}`}) AS copied`),
-      ],
-      [{ dataset: null, copied: null }],
-    );
+test('a computed dataset with a table rule refuses a pipeline whose copy makes pieces_parts, before anything is made', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = clients.adopt(
+    postgres(url, { max: 1, onnotice: () => {} }),
+    (session) => session.end(),
+  );
+  const source = new Notes();
+  const marts = new PostgresDestination({ url });
+  const target = marts.table('pieces_parts');
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new PostgresSyncHistory({ url }),
+    connections: [
+      new Connection({
+        name: 'notes',
+        source,
+        destination: marts,
+        steps: [new Copy(source.notes, target)],
+      }),
+    ],
+    derived: [
+      new ComputedDataset({
+        into: marts,
+        name: 'pieces',
+        description: 'The pieces of each note.',
+        from: [target],
+        compute: new Pieces(),
+      }),
+    ],
   });
+
+  await assert.rejects(
+    pipeline.run(),
+    new TypeError(
+      'Computed dataset pieces needs marts.pieces_parts, which a copy of the pipeline makes',
+    ),
+  );
+  assert.deepEqual(
+    [
+      ...(await sql`SELECT to_regclass('_warehouse.raw_pieces') AS dataset, to_regclass('marts.pieces_parts') AS copied`),
+    ],
+    [{ dataset: null, copied: null }],
+  );
+});

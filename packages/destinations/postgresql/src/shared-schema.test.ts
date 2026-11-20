@@ -52,7 +52,11 @@ class Rows extends Source {
     this.#barrier = barrier;
     this.stream = new Stream({
       name: 'rows',
-      jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+      jsonSchema: {
+        type: 'object',
+        description: 'Rows.',
+        properties: { id: { type: 'string', description: 'Row id.' } },
+      },
       supportedSyncModes: ['full_refresh', 'incremental'],
       sourceDefinedCursor: true,
     });
@@ -84,7 +88,7 @@ class Rows extends Source {
   }
 }
 
-test('connections whose first loads make one new schema at the same moment all commit', async () => {
+test('connections whose first loads make the shared _warehouse and marts at the same moment all commit', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const sql = clients.adopt(
@@ -93,7 +97,6 @@ test('connections whose first loads make one new schema at the same moment all c
   );
   const destination = new PostgresDestination({
     url: database.connectionString,
-    schema: 'raw',
   });
   const names = ['billing', 'central', 'impact', 'payroll', 'staffing'];
   const barrier = new Barrier(names.length);
@@ -114,13 +117,14 @@ test('connections whose first loads make one new schema at the same moment all c
 
   const loaded = await Promise.all(
     names.map(
-      async (name) => (await sql.unsafe(`SELECT id FROM raw."${name}"`))[0]?.id,
+      async (name) =>
+        (await sql.unsafe(`SELECT id FROM marts."${name}"`))[0]?.id,
     ),
   );
   assert.deepEqual(loaded, names);
 });
 
-test('incremental connections that keep their checkpoints in one new schema all start and commit at the same moment', async () => {
+test('incremental connections that keep their checkpoints in the shared _warehouse all start and commit at the same moment', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const sql = clients.adopt(
@@ -128,7 +132,7 @@ test('incremental connections that keep their checkpoints in one new schema all 
     (client) => client.end(),
   );
   const url = database.connectionString;
-  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   const names = ['billing', 'central', 'impact', 'payroll', 'staffing'];
   const barrier = new Barrier(names.length);
 
@@ -141,7 +145,7 @@ test('incremental connections that keep their checkpoints in one new schema all 
         name,
         source,
         destination,
-        checkpoints: new PostgresCheckpointStore({ url, schema: 'raw' }),
+        checkpoints: new PostgresCheckpointStore({ url }),
         steps: [
           new Copy(source.stream, destination.table(name), {
             id: name,
@@ -154,7 +158,7 @@ test('incremental connections that keep their checkpoints in one new schema all 
   }).run();
 
   const checkpoints = await sql.unsafe(
-    'SELECT id FROM raw._elt_checkpoints ORDER BY id',
+    'SELECT id FROM _warehouse._elt_checkpoints ORDER BY id',
   );
   assert.deepEqual(
     checkpoints.map(({ id }) => id),

@@ -763,7 +763,7 @@ test('the select of a target as of a position, run on the file or on the file at
     position: string,
     schema?: string,
   ) => {
-    const sql = asOfSelect(database, 'raw_notes', position, { schema });
+    const sql = asOfSelect(database, 'notes', position, { schema });
     if (typeof sql !== 'string') assert.fail(sql.expired);
     return database
       .prepare(`SELECT * FROM (${sql}) ORDER BY id`)

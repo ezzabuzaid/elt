@@ -29,7 +29,7 @@ export const syncHistoryRelations = {
   extraction_coverage: {
     name: 'extraction_coverage',
     description:
-      'One row per selected stream per attempt, declared before extraction even when there are no records. Description and selection describe the requested export scope, not observed record dates or proof of upstream completeness. Only succeeded confirms that this copy completed that declared pass; partial/failed/running never establish complete coverage. Earlier successful declarations remain available. Raw target names identify storage, not reader grants; discover readable content in catalog.',
+      'One row per selected stream per attempt, declared before extraction even when there are no records. Description and selection describe the requested export scope, not observed record dates or proof of upstream completeness. Only succeeded confirms that this copy completed that declared pass; partial/failed/running never establish complete coverage. Earlier successful declarations remain available. target_table names the reader view of the stream, which catalog describes.',
     columns: {
       attempt_id: attempt.attempt_id,
       connector: attempt.connector,
@@ -38,11 +38,10 @@ export const syncHistoryRelations = {
       completed_at:
         'Time the whole attempt was recorded as complete; NULL while unfinished. The copy may have finished earlier. Not record modification time or loaded_at.',
       stream: 'Source stream name, unique within one attempt.',
-      target_schema:
-        'Schema of the raw destination table (main in SQLite); this metadata does not grant access to it.',
-      target_table: 'Raw destination table name within target_schema.',
+      target_table:
+        'Name of the reader view that readers query for the rows of this stream.',
       target_exists:
-        'Whether the raw relation exists now, independent of this historical attempt. Existence does not prove successful extraction, current contents, or reader access.',
+        'Whether that reader view exists now, independent of this historical attempt. Existence does not prove successful extraction or current contents.',
       sync_mode:
         'Requested source mode: incremental or full_refresh. Incremental copies can resume saved state; the selection describes their configured scope, not every request made on this pass.',
       destination_sync_mode:
@@ -89,9 +88,8 @@ export const syncHistoryRelations = {
     columns: {
       connector: attempt.connector,
       stream: 'Source stream name.',
-      target_schema:
-        'Schema of the raw destination table in the latest declaration (main in SQLite); this metadata does not grant access to it.',
-      target_table: 'Raw destination table name within target_schema.',
+      target_table:
+        'Name of the reader view of this stream in the latest declaration.',
       latest_attempt_id:
         'Most recently started attempt that declared this stream; join extraction_coverage by attempt_id and stream.',
       started_at: attempt.started_at,

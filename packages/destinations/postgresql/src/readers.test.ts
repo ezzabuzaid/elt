@@ -78,12 +78,9 @@ test('a role that a sync history names as a reader reads the positions of the da
   const reader = new URL(url);
   reader.username = role;
   reader.password = password;
-  const readings = new PostgresDestination({
-    url: reader.href,
-    schema: 'marts',
-  });
+  const readings = new PostgresDestination({ url: reader.href });
   const source = new Notes();
-  const raw = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   const pipeline = (readers: readonly string[]) =>
     new Pipeline({
       clock: globalThis,
@@ -92,13 +89,8 @@ test('a role that a sync history names as a reader reads the positions of the da
         new Connection({
           name: 'notes',
           source,
-          destination: raw,
-          steps: [
-            new Copy(
-              source.notes,
-              raw.table('raw_notes').withReaderView('marts', 'notes'),
-            ),
-          ],
+          destination,
+          steps: [new Copy(source.notes, destination.table('notes'))],
         }),
       ],
     });

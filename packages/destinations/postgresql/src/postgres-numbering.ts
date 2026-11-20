@@ -3,18 +3,18 @@ import type postgres from 'postgres';
 import { type NumberedStore, type Numbering, numbering } from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
+import { warehouse } from './postgres-schemas.ts';
 import { lockSchema } from './postgres-session.ts';
 
 // A session, or a transaction of one.
 type Queries = postgres.Sql | postgres.TransactionSql;
 
-// The schema that every destination of the database shares, beside the sync
-// history, so one numbering orders the commits of all its schemas.
-const shared = '_warehouse';
-const epochs = `${shared}."_elt_epoch"`;
-const loads = `${shared}."_elt_loads"`;
-const commits = `${shared}."_elt_commits"`;
-const numbers = `${shared}."_elt_commit_numbers"`;
+// In _warehouse, beside the sync history, so one numbering orders the commits
+// of every load of the database.
+const epochs = `${warehouse}."_elt_epoch"`;
+const loads = `${warehouse}."_elt_loads"`;
+const commits = `${warehouse}."_elt_commits"`;
+const numbers = `${warehouse}."_elt_commit_numbers"`;
 
 // How the database numbers its commits. The epoch names the numbering: it is
 // made with the tables, so a database made again starts a numbering of its
@@ -23,7 +23,7 @@ const numbers = `${shared}."_elt_commit_numbers"`;
 // position before its commit. A number is an integer, so the sequence fails
 // at its end rather than wrap to a number that names another commit.
 const tables = [
-  `CREATE SCHEMA IF NOT EXISTS ${shared}`,
+  `CREATE SCHEMA IF NOT EXISTS ${warehouse}`,
   `CREATE TABLE IF NOT EXISTS ${epochs} ("id" integer PRIMARY KEY CHECK ("id" = 1), "epoch" text NOT NULL, "min_valid" integer NOT NULL DEFAULT 0, "expired_by" text CHECK ("expired_by" IN ('retention', 'type', 'clear')))`,
   `CREATE TABLE IF NOT EXISTS ${loads} ("id" bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, "connector" text, "dataset" text, "opened_at" timestamptz NOT NULL, "closed_at" timestamptz, CHECK (("connector" IS NULL) <> ("dataset" IS NULL)))`,
   `CREATE INDEX IF NOT EXISTS "_elt_loads_open" ON ${loads} ("connector", "dataset") WHERE "closed_at" IS NULL`,
@@ -47,8 +47,8 @@ const numberLock = `hashtext('elt:commit')`;
 // two steps, so no commit waits for another.
 const gate = `hashtextextended('elt:commit-gate', 0)`;
 
-// Makes the numbering if the database has none, under the lock of the shared
-// schema: Postgres refuses to make one schema in two sessions at once (ADR
+// Makes the numbering if the database has none, under the lock of
+// _warehouse: Postgres refuses to make one schema in two sessions at once (ADR
 // 0003). One transaction makes all of it, so its epoch tells that it is
 // there, and the DDL runs only while it is not: CREATE INDEX IF NOT EXISTS
 // takes a share lock on its table even when the index exists, which would
@@ -59,7 +59,7 @@ export async function installNumbering(sql: postgres.Sql): Promise<void> {
     await sql`SELECT to_regclass(${epochs}) IS NOT NULL AS "made"`;
   if (numbering?.made === true) return;
   await sql.begin(async (transaction) => {
-    await lockSchema(transaction, shared);
+    await lockSchema(transaction, warehouse);
     for (const statement of tables) await transaction.unsafe(statement);
   });
 }
@@ -86,7 +86,7 @@ function owned(owner: LoadOwner): readonly ['connector' | 'dataset', string] {
 // session, as a reader that did not load does: the numbering, and nothing
 // else of _warehouse. Its object names stay this module's own.
 export async function grantReading(sql: Queries, role: string): Promise<void> {
-  await sql.unsafe(`GRANT USAGE ON SCHEMA ${shared} TO ${quote(role)}`);
+  await sql.unsafe(`GRANT USAGE ON SCHEMA ${warehouse} TO ${quote(role)}`);
   await sql.unsafe(
     `GRANT SELECT ON ${epochs}, ${commits}, ${loads}, ${numbers} TO ${quote(role)}`,
   );

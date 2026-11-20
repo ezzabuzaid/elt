@@ -8,6 +8,7 @@ import {
   combinedPass,
 } from '@eltjs/elt';
 
+import { inMarts } from './postgres-schemas.ts';
 import { PostgresSession } from './postgres-session.ts';
 
 type Row = Record<string, unknown>;
@@ -31,7 +32,7 @@ export async function readPassStatus(url: string): Promise<{
           await sql<Row[]>`
             SELECT status, started_at, completed_at, error, failure_type,
               last_successful_sync_at, current_as_of
-            FROM marts.sync_status`
+            FROM ${sql.unsafe(inMarts('sync_status'))}`
         ).map((row) => recorded(row, passState(row.status)));
         const streams = await streamOutcomes(sql);
         return {
@@ -52,10 +53,10 @@ async function streamOutcomes(
   const rows = await sql<Row[]>`
     SELECT s.stream, s.status, s.last_successful_sync_at, s.current_as_of,
       (SELECT string_agg(f.value->>'error', E'\n' ORDER BY f.ordinality)
-        FROM marts.extraction_coverage c,
+        FROM ${sql.unsafe(inMarts('extraction_coverage'))} c,
           jsonb_array_elements(c.failures) WITH ORDINALITY f
         WHERE c.attempt_id = s.latest_attempt_id AND c.stream = s.stream) AS error
-    FROM marts.stream_status s ORDER BY s.stream COLLATE "C"`;
+    FROM ${sql.unsafe(inMarts('stream_status'))} s ORDER BY s.stream COLLATE "C"`;
   return rows.map((row) => streamRecorded(row, passState(row.status)));
 }
 

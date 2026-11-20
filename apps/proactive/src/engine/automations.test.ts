@@ -92,24 +92,19 @@ const things = new Stream({
   supportedSyncModes: ['full_refresh'],
 });
 
-// A warehouse of things that a pass loads, as the loading role, into raw and
+// A warehouse of things that a pass loads, as the loading role, into
 // marts.things, and its positions and readings as Automations reads them.
 function warehouse(url: string, retention?: Temporal.Duration) {
   const destination = new PostgresDestination({
     url,
-    schema: 'raw',
     ...(retention === undefined ? {} : { retention }),
   });
-  const checkpoints = new PostgresCheckpointStore({ url, schema: 'raw' });
-  const copy = new Copy(
-    things,
-    destination.table('things').withReaderView('marts', 'things'),
-    {
-      id: 'things',
-      syncMode: 'full_refresh',
-      destinationSyncMode: 'overwrite',
-    },
-  );
+  const checkpoints = new PostgresCheckpointStore({ url });
+  const copy = new Copy(things, destination.table('things'), {
+    id: 'things',
+    syncMode: 'full_refresh',
+    destinationSyncMode: 'overwrite',
+  });
   const load = (...listed: readonly Thing[]) =>
     new Pipeline({
       clock: globalThis,

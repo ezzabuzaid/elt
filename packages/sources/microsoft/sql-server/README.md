@@ -16,13 +16,12 @@ import { sqlServerCopies } from '@eltjs/source-microsoft-sql-server/sql-server-c
 import { SqlServerSource } from '@eltjs/source-microsoft-sql-server/sql-server-source';
 
 const url = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
-const schema = 'shop';
 
 const database = new SqlServerDatabase(
   'Server=sql.example.com,1433;Database=shop;User Id=reader;Password=...;Encrypt=true',
 );
 const source = await SqlServerSource.discover(database, { schemas: ['dbo'] });
-const destination = new PostgresDestination({ url, schema });
+const destination = new PostgresDestination({ url });
 
 await new Pipeline({
   history: new PostgresSyncHistory({ url }),
@@ -31,8 +30,10 @@ await new Pipeline({
       name: 'sql-server',
       source,
       destination,
-      checkpoints: new PostgresCheckpointStore({ url, schema }),
-      steps: sqlServerCopies(source, (stream) => destination.table(stream)),
+      checkpoints: new PostgresCheckpointStore({ url }),
+      steps: sqlServerCopies(source, (stream) =>
+        destination.table(`shop_${stream}`),
+      ),
     }),
   ],
 }).run();
@@ -43,7 +44,7 @@ await new Pipeline({
 1. Make a `SqlServerDatabase` from the parts of a login (`server`, `port`, `database`, `user`, `password`) or from an ADO.NET connection string, which [mssql](https://github.com/tediousjs/node-mssql) parses. It does not read an `mssql://` URL. Both must name a database. A password that holds `;` or braces gets to the server only through the parts (see the [SDK](../../../sdks/microsoft/sql-server/README.md)).
 2. Call `SqlServerSource.discover(database, { schemas })`. The streams are the tables of the database, so the source is discovered. A host discovers it again on each run.
 3. Call `sqlServerCopies` to make one copy for each discovered table, with the sync strategy that discovery selected.
-4. Connect the copies to a destination and a checkpoint store through `Connection` and `Pipeline`.
+4. Connect the copies to a destination and a checkpoint store through `Connection` and `Pipeline`. The function that you give to `sqlServerCopies` names the target of each stream. For Postgres, that name is the reader view in `marts`, so a prefix such as `shop_` keeps the tables of two databases apart. The [naming rule](../../../elt/README.md#names) turns `shop_dbo.orders` into a name that Postgres can hold.
 
 `@eltjs/sdk-microsoft-sql-server` owns the database: the login, discovery, exact reads, Change Tracking and the values that a watch reads. The source owns the streams, their schemas and the sync strategy. The SDK and the source hold no configuration from environment variables or for a standalone app.
 

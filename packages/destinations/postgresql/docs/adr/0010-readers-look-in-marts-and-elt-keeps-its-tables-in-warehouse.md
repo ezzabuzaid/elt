@@ -23,7 +23,7 @@ Thus a warehouse has two schemas, and elt-postgresql fixes both. Each relation t
 - `PostgresDestination` and `PostgresCheckpointStore` take no schema.
 - Names cannot collide in `_warehouse`. The name of each raw table comes from a reader name, and each reader name is unique in `marts`. History tables and file tables keep their hash names. A target still has one writer (ADR 0008 of elt).
 - A reader name cannot be the name of a view that elt publishes in `marts`, such as `catalog` or `sync_status`.
-- `stream_status` and `extraction_coverage` show the reader view: `target_schema` is `marts`, `target_table` is the reader name, and `target_exists` tells whether that view exists.
+- `stream_status` and `extraction_coverage` have no `target_schema`. `target_table` is the reader name, and `target_exists` tells whether that view exists in `marts` (Ezz, 2026-11-19, #4886 item 6).
 - The file table of a stored-file column gets a view in `marts` under its hash name. The description of the column names that view, so `agent_reader` can read the bytes. No Postgres host stores files yet.
 - A connector cannot be reset by dropping its schema. A clear forgets the rows that it removes (ADR 0023 of elt), and `nx run infra:reset` resets the warehouse.
 - ADR 0006 still applies: a change of a table in `_warehouse` makes the views over it in `marts` again.

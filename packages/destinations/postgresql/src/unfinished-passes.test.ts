@@ -39,7 +39,11 @@ class Scripted extends Source {
   readonly identity = 'scripted';
   readonly notes = new Stream({
     name: 'notes',
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    jsonSchema: {
+      type: 'object',
+      description: 'Notes.',
+      properties: { id: { type: 'string', description: 'Note id.' } },
+    },
     supportedSyncModes: ['full_refresh'],
   });
   protected readonly catalog = new Catalog([this.notes]);
@@ -75,7 +79,7 @@ class Scripted extends Source {
 
 function notes(url: string, steps: readonly Step[]) {
   const source = new Scripted(steps);
-  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   return new Connection({
     name: 'notes',
     source,
@@ -138,7 +142,11 @@ test('a pass that a killed process left running stays running until the next att
       identity = 'hanging';
       notes = new Stream({
         name: 'notes',
-        jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+        jsonSchema: {
+      type: 'object',
+      description: 'Notes.',
+      properties: { id: { type: 'string', description: 'Note id.' } },
+    },
         supportedSyncModes: ['full_refresh'],
       });
       catalog = new Catalog([this.notes]);
@@ -153,7 +161,7 @@ test('a pass that a killed process left running stays running until the next att
     }
     const url = process.env.DATABASE;
     const source = new Hanging();
-    const destination = new PostgresDestination({ url, schema: 'raw' });
+    const destination = new PostgresDestination({ url });
     await new Pipeline({ clock: globalThis,
       connections: [new Connection({ name: 'notes', source, destination, steps: [new Copy(source.notes, destination.table('notes'))] })],
       history: new PostgresSyncHistory({ url }),

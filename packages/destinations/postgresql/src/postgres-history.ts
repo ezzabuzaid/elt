@@ -4,6 +4,7 @@ import { quote } from './identifier.ts';
 import type { EncodedValue } from './postgres-column.ts';
 import { storedColumns } from './postgres-fit.ts';
 import { expireBefore, minValid } from './postgres-numbering.ts';
+import { inWarehouse } from './postgres-schemas.ts';
 import type { Queries } from './postgres-session.ts';
 
 export const version = '"_elt_row_hash"';
@@ -14,16 +15,14 @@ export const version = '"_elt_row_hash"';
 // of the same name, and changes its type when the target's does; a column
 // that the target drops stays, with its last type.
 export class TargetHistory {
-  readonly schema: string;
   readonly name: string;
 
-  constructor(schema: string, key: string) {
-    this.schema = schema;
+  constructor(key: string) {
     this.name = `_elt_history_${key}`;
   }
 
   get qualifiedName(): string {
-    return `${quote(this.schema)}.${quote(this.name)}`;
+    return inWarehouse(this.name);
   }
 
   // Made with the target, with the target's columns, none NOT NULL: a

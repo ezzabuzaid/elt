@@ -4,7 +4,8 @@ import type { ReaderRelation } from '@eltjs/elt';
 
 import { identifier, quote } from './identifier.ts';
 import { rebindDependents } from './postgres-dependents.ts';
-import { lockSchema, schemaName } from './postgres-session.ts';
+import { inMarts, marts } from './postgres-schemas.ts';
+import { lockSchema } from './postgres-session.ts';
 
 export type PostgresView = ReaderRelation & { readonly query: string };
 
@@ -30,16 +31,15 @@ export function checkView(view: PostgresView): void {
 }
 
 // Publishes ordinary views and their descriptions in a caller-owned
-// transaction, in schema, where the bare names of their queries are found
+// transaction, in marts, where the bare names of their queries are found
 // too. Supply trusted SQL, and list dependencies before dependents. A view
 // whose stored definition is the one its query makes stays as it is, with
 // its OID, so a publication that changes nothing changes no view; the others
 // are made again, and the views that read them read the new ones (ADR 0006).
 export async function publishPostgresViews(
   sql: postgres.TransactionSql,
-  { schema, views }: { schema: string; views: readonly PostgresView[] },
+  views: readonly PostgresView[],
 ): Promise<void> {
-  schemaName(schema);
   const names = new Set<string>();
   for (const view of views) {
     checkView(view);
@@ -51,25 +51,25 @@ export async function publishPostgresViews(
   // A failed definition restores every replaced view, even if the caller
   // catches the error and continues its transaction.
   await sql.savepoint(async (transaction) => {
-    await lockSchema(transaction, schema);
-    await transaction.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quote(schema)}`);
+    await lockSchema(transaction, marts);
+    await transaction.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quote(marts)}`);
     const [{ path } = { path: '' }] = await transaction<{ path: string }[]>`
       SELECT current_setting('search_path') AS path`;
-    await transaction`SELECT set_config('search_path', ${quote(schema)}, true)`;
+    await transaction`SELECT set_config('search_path', ${quote(marts)}, true)`;
     const changed: PostgresView[] = [];
     for (const view of views)
-      if (!(await stored(transaction, schema, view))) changed.push(view);
+      if (!(await stored(transaction, view))) changed.push(view);
     if (changed.length > 0)
       await rebindDependents(
         transaction,
-        changed.map(({ name }) => `${quote(schema)}.${quote(name)}`),
+        changed.map(({ name }) => inMarts(name)),
         async () => {
           for (const view of changed.toReversed())
             await transaction.unsafe(
-              `DROP VIEW IF EXISTS ${quote(schema)}.${quote(view.name)}`,
+              `DROP VIEW IF EXISTS ${inMarts(view.name)}`,
             );
           for (const view of changed) {
-            const relation = `${quote(schema)}.${quote(view.name)}`;
+            const relation = inMarts(view.name);
             // Extended protocol accepts one statement, so a query cannot
             // append DDL.
             await transaction`CREATE VIEW ${transaction.unsafe(relation)} AS ${transaction.unsafe(view.query)}`;
@@ -87,22 +87,21 @@ export async function publishPostgresViews(
           }
         },
       );
-    for (const view of views) await describe(transaction, schema, view);
+    for (const view of views) await describe(transaction, view);
     await transaction`SELECT set_config('search_path', ${path}, true)`;
   });
 }
 
-// Whether the view in schema has the definition that its query makes now. The
+// Whether the view in marts has the definition that its query makes now. The
 // query is made as a TEMP view, which the savepoint takes back, because
 // Postgres keeps a view's definition as it normalizes it, not as its text. A
 // query that Postgres refuses counts as changed, so the publication fails with
 // its error.
 async function stored(
   sql: postgres.TransactionSql,
-  schema: string,
   view: PostgresView,
 ): Promise<boolean> {
-  const relation = `${quote(schema)}.${quote(view.name)}`;
+  const relation = inMarts(view.name);
   const [existing] = await sql<{ definition: string | null }[]>`
     SELECT CASE WHEN c.relkind = 'v' THEN pg_get_viewdef(c.oid) END AS definition
     FROM pg_class c WHERE c.oid = to_regclass(${relation})`;
@@ -125,35 +124,31 @@ async function stored(
 // COMMENT cannot bind values; Postgres quotes names and text itself.
 async function describe(
   sql: postgres.TransactionSql,
-  schema: string,
   view: PostgresView,
 ): Promise<void> {
   const comments = await sql<{ statement: string }[]>`
-    SELECT format('COMMENT ON VIEW %I.%I IS %L', ${schema}::text,
+    SELECT format('COMMENT ON VIEW %I.%I IS %L', ${marts}::text,
       ${view.name}::text, ${view.description}::text) AS statement
-    WHERE obj_description(to_regclass(format('%I.%I', ${schema}::text, ${view.name}::text)), 'pg_class')
+    WHERE obj_description(to_regclass(format('%I.%I', ${marts}::text, ${view.name}::text)), 'pg_class')
       IS DISTINCT FROM ${view.description}::text
     UNION ALL
-    SELECT format('COMMENT ON COLUMN %I.%I.%I IS %L', ${schema}::text,
+    SELECT format('COMMENT ON COLUMN %I.%I.%I IS %L', ${marts}::text,
       ${view.name}::text, c.key, c.value)
     FROM jsonb_each_text(${sql.json(view.columns)}::jsonb) AS c
-    JOIN pg_attribute a ON a.attrelid = to_regclass(format('%I.%I', ${schema}::text, ${view.name}::text))
+    JOIN pg_attribute a ON a.attrelid = to_regclass(format('%I.%I', ${marts}::text, ${view.name}::text))
       AND a.attname = c.key
     WHERE col_description(a.attrelid, a.attnum) IS DISTINCT FROM c.value`;
   for (const { statement } of comments) await sql.unsafe(statement);
 }
 
-// Removes a view, its comments and each view over it, in the schema's lock,
+// Removes a view, its comments and each view over it, in the lock of marts,
 // as dbt drops a model's relation (`drop view if exists ... cascade`): a view
 // of the pipeline over it waits or is made again by its own refresh, and a
 // view that someone made over it is gone.
 export async function withdrawPostgresView(
   sql: postgres.TransactionSql,
-  schema: string,
   name: string,
 ): Promise<void> {
-  await lockSchema(sql, schema);
-  await sql.unsafe(
-    `DROP VIEW IF EXISTS ${quote(schema)}.${quote(name)} CASCADE`,
-  );
+  await lockSchema(sql, marts);
+  await sql.unsafe(`DROP VIEW IF EXISTS ${inMarts(name)} CASCADE`);
 }

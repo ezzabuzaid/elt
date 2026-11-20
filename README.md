@@ -102,7 +102,7 @@ A copy like this replaces the `notes` table's contents with the current snapshot
 
 Each Apple source is its own package under [`packages/sources/apple`](packages/sources/apple) (`@eltjs/source-apple-<name>`), written as if published to npm. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) registers a connector for each source and loads it into its own SQLite import.
 
-The [Google app](apps/google/src/main.ts) is one inline entry, like `apps/proactive`. It reads `sc-domain:ezz.sh` through one `SearchConsoleSource` and builds one `google-search-console` connection with a copy of every stream the source discovers. Each stream loads into `google_search_console.raw_<stream>`, and readers see it as the view `marts.search_console_<snake_stream>`. Each copy has the id `search-console:<stream>`. The app runs one pass and then stops. An error stops the app: Node prints the error and exits with status 1.
+The [Google app](apps/google/src/main.ts) is one inline entry, like `apps/proactive`. It reads `sc-domain:ezz.sh` through one `SearchConsoleSource` and builds one `google-search-console` connection with a copy of every stream the source discovers. Each stream loads into `_warehouse.raw_search_console_<snake_stream>`, and readers see it as the view `marts.search_console_<snake_stream>`. Each copy has the id `search-console:<stream>`. The app runs one pass and then stops. An error stops the app: Node prints the error and exits with status 1.
 
 ### Clock
 

@@ -93,7 +93,7 @@ test('a reload that swaps a table in keeps the views of others over it, their ow
     postgres(url, { max: 1, onnotice: () => {} }),
     (client) => client.end(),
   );
-  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   const source = new Notes(
     described({ id: { type: 'string' }, title: { type: 'string' } }),
   );
@@ -106,12 +106,7 @@ test('a reload that swaps a table in keeps the views of others over it, their ow
           name: 'notes',
           source,
           destination,
-          steps: [
-            new Copy(
-              source.stream,
-              destination.table('notes').withReaderView('marts', 'notes'),
-            ),
-          ],
+          steps: [new Copy(source.stream, destination.table('notes'))],
         }),
       ],
     }).run();
@@ -129,8 +124,8 @@ test('a reload that swaps a table in keeps the views of others over it, their ow
   await sql.unsafe(`
     CREATE ROLE ${analyst} NOLOGIN;
     CREATE ROLE ${curator} NOLOGIN;
-    GRANT USAGE ON SCHEMA raw, marts TO ${analyst}, ${curator};
-    GRANT SELECT ON raw.notes TO ${analyst};
+    GRANT USAGE ON SCHEMA _warehouse, marts TO ${analyst}, ${curator};
+    GRANT SELECT ON _warehouse.raw_notes TO ${analyst};
     GRANT SELECT ON marts.notes TO ${curator};
     ALTER DEFAULT PRIVILEGES IN SCHEMA marts GRANT SELECT ON TABLES TO ${analyst};
     CREATE SCHEMA reports;
@@ -141,7 +136,7 @@ test('a reload that swaps a table in keeps the views of others over it, their ow
     ALTER VIEW reports.titles OWNER TO ${curator};
     GRANT SELECT ON reports.titles TO ${analyst};
     CREATE VIEW reports.loud AS SELECT upper(title) AS title FROM reports.titles;
-    CREATE MATERIALIZED VIEW reports.counts AS SELECT count(*)::int AS n FROM raw.notes;
+    CREATE MATERIALIZED VIEW reports.counts AS SELECT count(*)::int AS n FROM _warehouse.raw_notes;
     CREATE INDEX counts_n ON reports.counts (n);
   `);
 
@@ -169,7 +164,7 @@ test('a reload that swaps a table in keeps the views of others over it, their ow
             obj_description(c.oid, 'pg_class') AS description,
             col_description(c.oid, 2) AS title,
             to_regclass('reports.counts_n') IS NOT NULL AS indexed,
-            has_table_privilege(${analyst}, 'raw.notes', 'SELECT') AS raw,
+            has_table_privilege(${analyst}, '_warehouse.raw_notes', 'SELECT') AS raw,
             has_table_privilege(${curator}, 'marts.notes', 'SELECT') AS reader,
             has_table_privilege(${analyst}, 'reports.titles', 'SELECT') AS titles,
             has_table_privilege(${analyst}, 'marts.notes', 'SELECT') AS extra
@@ -204,7 +199,7 @@ test('a shape change in place keeps the views of others that still fit it, and f
     postgres(url, { max: 1, onnotice: () => {} }),
     (client) => client.end(),
   );
-  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   const source = new Notes(
     described({
       id: { type: 'string' },
@@ -222,11 +217,10 @@ test('a shape change in place keeps the views of others that still fit it, and f
           source,
           destination,
           steps: [
-            new Copy(
-              source.stream,
-              destination.table('notes').withReaderView('marts', 'notes'),
-              { syncMode: 'full_refresh', destinationSyncMode: 'append' },
-            ),
+            new Copy(source.stream, destination.table('notes'), {
+              syncMode: 'full_refresh',
+              destinationSyncMode: 'append',
+            }),
           ],
         }),
       ],
@@ -235,7 +229,7 @@ test('a shape change in place keeps the views of others that still fit it, and f
   await run();
   await sql.unsafe(`
     CREATE SCHEMA reports;
-    CREATE VIEW reports.scores AS SELECT id, score FROM raw.notes;
+    CREATE VIEW reports.scores AS SELECT id, score FROM _warehouse.raw_notes;
     CREATE VIEW reports.titles AS SELECT title FROM marts.notes;
   `);
 
@@ -259,7 +253,7 @@ test('a shape change in place keeps the views of others that still fit it, and f
   source.rows = [{ id: '3', score: 1 }];
   await assert.rejects(
     run(),
-    /reports\.titles reads "raw"\."notes" and does not fit its change: column "?title"? does not exist/,
+    /reports\.titles reads "_warehouse"\."raw_notes" and does not fit its change: column "?title"? does not exist/,
   );
 
   assert.deepEqual(

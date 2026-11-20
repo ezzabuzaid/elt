@@ -10,15 +10,17 @@ import {
 import { identifier, quote } from './identifier.ts';
 import { TargetComments } from './postgres-comments.ts';
 import { TargetHistory, rowHash } from './postgres-history.ts';
+import { rawTable } from './postgres-identifiers.ts';
 import type { Transaction } from './postgres-load.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
 import { ruleColumnTypes, ruleValue } from './postgres-rule-columns.ts';
+import { inWarehouse, marts, warehouse } from './postgres-schemas.ts';
 
 // The parts of a computed dataset whose rule is a table rule, in the table
-// raw_<name>_parts beside the output rows of raw_<name>, in the schema of
-// into: one row for each part, unique on the key and seq, with the content
-// columns and the place columns of the rule. Readers query the view
-// <name>_parts. Each row names the commit that last wrote it, and the history
+// raw_<name>_parts of _warehouse beside the output rows of raw_<name>: one row
+// for each part, unique on the key and seq, with the content columns and the
+// place columns of the rule. Readers query the view <name>_parts of marts.
+// Each row names the commit that last wrote it, and the history
 // keeps each row a commit replaced or removed, as for the output rows.
 export class PostgresPartsTable {
   readonly table: string;
@@ -31,19 +33,17 @@ export class PostgresPartsTable {
     constraint: string;
   }[];
   readonly statement: string;
-  // The relations that a copy of the pipeline must not make.
+  // The relations that a copy of the pipeline must not make, qualified.
   readonly names: readonly string[];
   readonly #key: string;
   // Every column of a part that readers see, in table order.
   readonly #columns: readonly string[];
 
   constructor({
-    schema,
     dataset,
     description,
     rule,
   }: {
-    schema: string;
     dataset: string;
     description: string;
     rule: Pick<
@@ -51,10 +51,10 @@ export class PostgresPartsTable {
       'key' | 'output' | 'place'
     >;
   }) {
-    const name = identifier(`raw_${dataset}_parts`, 'parts table name');
     const view = identifier(`${dataset}_parts`, 'parts view name');
-    this.names = Object.freeze([view, name]);
-    this.table = `${quote(schema)}.${quote(name)}`;
+    const name = rawTable(view);
+    this.names = Object.freeze([`${marts}.${view}`, `${warehouse}.${name}`]);
+    this.table = inWarehouse(name);
     this.#key = quote(rule.key.name);
     const ruleColumns = { ...rule.output, ...rule.place };
     this.declared = Object.freeze([
@@ -78,12 +78,9 @@ export class PostgresPartsTable {
       ),
       `PRIMARY KEY (${this.#key}, "seq")`,
     ].join(', ')})`;
-    this.history = new TargetHistory(
-      schema,
-      hash('sha256', JSON.stringify([schema, name])).slice(0, 40),
-    );
+    this.history = new TargetHistory(hash('sha256', this.table).slice(0, 40));
     this.view = new TargetReaderView(
-      { schema, name: view },
+      view,
       this.table,
       this.history.qualifiedName,
       this.#columns,

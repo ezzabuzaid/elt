@@ -29,7 +29,11 @@ const items = new Stream({
   name: 'items',
   jsonSchema: {
     type: 'object',
-    properties: { account: { type: 'string' }, id: { type: 'string' } },
+    description: 'Items of accounts.',
+    properties: {
+      account: { type: 'string', description: 'Account of the item.' },
+      id: { type: 'string', description: 'Item id.' },
+    },
   },
   primaryKey: ['account', 'id'],
   partitionKey: ['account'],
@@ -92,7 +96,7 @@ test('a reset of a partition reloads it into a hidden target: readers keep its o
     postgres(url, { max: 1, onnotice: () => {} }),
     (client) => client.end(),
   );
-  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   const source = new Accounts();
   const pipeline = new Pipeline({
     clock: globalThis,
@@ -102,7 +106,7 @@ test('a reset of a partition reloads it into a hidden target: readers keep its o
         name: 'accounts',
         source,
         destination,
-        checkpoints: new PostgresCheckpointStore({ url, schema: 'raw' }),
+        checkpoints: new PostgresCheckpointStore({ url }),
         steps: [
           new Copy(items, destination.table('items'), {
             id: 'items',
@@ -114,7 +118,7 @@ test('a reset of a partition reloads it into a hidden target: readers keep its o
     ],
   });
   const loaded = async () =>
-    (await sql`SELECT account, id FROM raw.items ORDER BY account, id`).map(
+    (await sql`SELECT account, id FROM marts.items ORDER BY account, id`).map(
       ({ account, id }) => `${account}${id}`,
     );
   source.script = {
@@ -143,7 +147,7 @@ test('a reset of a partition reloads it into a hidden target: readers keep its o
     {
       whileReloading,
       reloaded: await loaded(),
-      open: [...(await sql`SELECT target FROM raw._elt_reloads`)],
+      open: [...(await sql`SELECT target FROM _warehouse._elt_reloads`)],
     },
     {
       whileReloading: ['a1', 'a2', 'b1', 'b2'],
@@ -161,7 +165,7 @@ test('a reset of a partition that a failure discards before a commit opens no re
     postgres(url, { max: 1, onnotice: () => {} }),
     (client) => client.end(),
   );
-  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   const source = new Accounts();
   const pipeline = new Pipeline({
     clock: globalThis,
@@ -171,7 +175,7 @@ test('a reset of a partition that a failure discards before a commit opens no re
         name: 'accounts',
         source,
         destination,
-        checkpoints: new PostgresCheckpointStore({ url, schema: 'raw' }),
+        checkpoints: new PostgresCheckpointStore({ url }),
         steps: [
           new Copy(items, destination.table('items'), {
             id: 'items',
@@ -197,7 +201,7 @@ test('a reset of a partition that a failure discards before a commit opens no re
   await pipeline.run();
 
   assert.deepEqual(
-    (await sql`SELECT account, id FROM raw.items ORDER BY account, id`).map(
+    (await sql`SELECT account, id FROM marts.items ORDER BY account, id`).map(
       ({ account, id }) => `${account}${id}`,
     ),
     ['a1', 'a2', 'a4', 'b1', 'b2'],

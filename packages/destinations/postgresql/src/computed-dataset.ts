@@ -27,10 +27,12 @@ import { PostgresDerivedStatus } from './postgres-derived-status.ts';
 import { PostgresDestination } from './postgres-destination.ts';
 import { storedColumns } from './postgres-fit.ts';
 import { TargetHistory, rowHash } from './postgres-history.ts';
+import { rawTable } from './postgres-identifiers.ts';
 import { PostgresLoad, type Transaction } from './postgres-load.ts';
 import { PostgresPartsTable } from './postgres-parts-table.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
 import { ruleColumnTypes, ruleValue } from './postgres-rule-columns.ts';
+import { inMarts, inWarehouse, marts, warehouse } from './postgres-schemas.ts';
 import { makeSchema } from './postgres-session.ts';
 import type { PostgresTable } from './postgres-table.ts';
 import { View, made } from './view.ts';
@@ -59,8 +61,8 @@ type DeclaredTable = Pick<
 // again; the passes try each input at most once, so a failing rule is asked
 // once a pass.
 // A rule's failure on one input is that row's; it never fails the load.
-// Readers query the view name, in the schema of into, over the table
-// raw_<name>, which a refresh makes again when its declaration changes,
+// Readers query the view name in marts, over the table raw_<name> in
+// _warehouse, which a refresh makes again when its declaration changes,
 // since it is rebuilt from the inputs.
 // A refresh is a load of the database: each of its transactions that changes
 // a row is a numbered commit, each row names the commit that last wrote it,
@@ -73,7 +75,7 @@ type DeclaredTable = Pick<
 // one declaration, so a change to either makes both again.
 export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
   readonly name: string;
-  // The database and schema the dataset lives in.
+  // The database the dataset lives in.
   readonly into: PostgresDestination;
   readonly #from: readonly (PostgresTable | View)[];
   readonly #compute:
@@ -111,7 +113,6 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
         ? {
             rule: compute,
             parts: new PostgresPartsTable({
-              schema: into.schema,
               dataset: name,
               description,
               rule: compute,
@@ -119,7 +120,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
           }
         : { rule: compute };
     this.#ruleColumns = compute instanceof TableRule ? {} : compute.output;
-    this.#table = identifier(`raw_${name}`, 'computed dataset table name');
+    this.#table = rawTable(this.name);
     // A part has a seq and a part hash, and the columns of both groups of a
     // table rule.
     const taken = new Set([
@@ -157,11 +158,8 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
       { name: 'committed_in', type: 'integer', constraint: ' NOT NULL' },
       { name: '_elt_row_hash', type: 'text', constraint: ' NOT NULL' },
     ]);
-    const table = this.#qualified(this.#table);
-    const history = new TargetHistory(
-      into.schema,
-      hash('sha256', JSON.stringify([into.schema, this.#table])).slice(0, 40),
-    );
+    const table = inWarehouse(this.#table);
+    const history = new TargetHistory(hash('sha256', table).slice(0, 40));
     this.#output = Object.freeze({
       table,
       declared,
@@ -172,7 +170,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
         .join(', ')}, CHECK ("status" IN ('computed', 'empty', 'failed')))`,
       history,
       view: new TargetReaderView(
-        { schema: into.schema, name },
+        this.name,
         table,
         history.qualifiedName,
         this.#columns,
@@ -192,7 +190,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
 
   // The view readers query.
   get qualifiedName(): string {
-    return `${this.into.schema}.${this.name}`;
+    return `${marts}.${this.name}`;
   }
 
   // The key, the engine columns and the rule's, which readers see.
@@ -221,14 +219,14 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
           `Computed dataset ${this.name} reads ${target.name}, which no copy of the pipeline loads`,
         );
     const relations = made(connections, this.into);
-    for (const name of [
-      this.name,
-      this.#table,
+    for (const relation of [
+      this.qualifiedName,
+      `${warehouse}.${this.#table}`,
       ...('parts' in this.#compute ? this.#compute.parts.names : []),
     ])
-      if (relations.has(`${this.into.schema}.${name}`))
+      if (relations.has(relation))
         throw new TypeError(
-          `Computed dataset ${this.name} needs ${this.into.schema}.${name}, which a copy of the pipeline makes`,
+          `Computed dataset ${this.name} needs ${relation}, which a copy of the pipeline makes`,
         );
   }
 
@@ -270,7 +268,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
       : refreshComputed({ ...refresh, rule }));
   }
 
-  // Makes the schema, brings the tables to their declaration, removes the
+  // Makes marts, brings the tables to their declaration, removes the
   // rows whose key has no input, and gives the output table to write. Each
   // transaction takes the number of its commit at its first change, so one
   // that changes no row takes none. The load has one session, so the commits
@@ -288,7 +286,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
       let number: Promise<number> | undefined;
       return () => (number ??= load.number(sql));
     };
-    await makeSchema(load.sql, this.into.schema);
+    await makeSchema(load.sql, marts);
     const stored = await load.transaction(async (sql) => {
       const commit = commits(sql);
       await this.#declare(sql, commit);
@@ -453,8 +451,8 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
   }
 
   // Each input by key, from the rows of each relation of from that exists
-  // yet: what the copies loaded, through its reader view if it has one, or
-  // what a view before this dataset gives. A key read twice keeps its first
+  // yet: what the copies loaded, through its reader view, or what a view
+  // before this dataset gives. A key read twice keeps its first
   // input.
   // null while a relation reads a table that is gone, such as one a person
   // dropped by hand: its copy loads it again, and the dataset waits with what
@@ -468,7 +466,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
     for (const target of this.#from) {
       const relation =
         target instanceof View
-          ? this.#qualified(target.name, target.into.schema)
+          ? inMarts(target.name)
           : this.#loaded(connections, target);
       if (relation === undefined) continue;
       const [exists] = await sql.unsafe(
@@ -491,18 +489,15 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
     return inputs;
   }
 
-  // The relation that readers read of a target a copy of the pipeline loads:
-  // its reader view, or else its table. undefined until it is first made,
-  // since a table that a copy never made yet has no rows to read.
+  // The reader view of a target a copy of the pipeline loads; undefined
+  // while no copy of the pipeline loads it into a Postgres database.
   #loaded(
     connections: readonly Connection<PostgresTable>[],
     target: PostgresTable,
   ): string | undefined {
-    const destination = this.#source(connections, target);
-    if (destination === undefined) return undefined;
-    return target.readerView === undefined
-      ? this.#qualified(target.name, destination.schema)
-      : this.#qualified(target.readerView.name, target.readerView.schema);
+    return this.#source(connections, target) === undefined
+      ? undefined
+      : inMarts(target.name);
   }
 
   // The destination of the copy of the pipeline that loads target.
@@ -516,9 +511,5 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
     return connection?.destination instanceof PostgresDestination
       ? connection.destination
       : undefined;
-  }
-
-  #qualified(name: string, schema = this.into.schema): string {
-    return `${quote(schema)}.${quote(name)}`;
   }
 }

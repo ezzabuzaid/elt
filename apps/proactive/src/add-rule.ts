@@ -19,10 +19,7 @@ if (file === undefined) {
   process.exit(2);
 }
 
-const reading = await new PostgresDestination({
-  url: readerUrl,
-  schema: 'marts',
-}).reading();
+const reading = await new PostgresDestination({ url: readerUrl }).reading();
 if ('expired' in reading) {
   throw new Error(`The warehouse cannot be read: ${reading.expired}`);
 }

@@ -1,6 +1,6 @@
 # A change of a table makes the views over it again
 
-Postgres binds a view to the relations that it read when it was made, by their OID. Thus `DROP TABLE`, `ALTER COLUMN … TYPE`, `DROP COLUMN` and `DROP VIEW` fail with `2BP01` while a view reads the relation. The swap of a reload, a change of shape and the replace of a view are such changes. Before this decision, one view that a person or an agent made over a loaded table or its reader view stopped each such change of that table (backlog #3185). SQLite has no such failure, because its views find their tables by name at each read.
+Postgres binds a view to the relations that it read when it was made, by their OID. Thus `DROP TABLE`, `ALTER COLUMN … TYPE`, `DROP COLUMN` and `DROP VIEW` fail with `2BP01` while a view reads the relation. The swap of a reload, a change of shape and the replace of a view are such changes. Each loaded table is in `_warehouse`, and its reader view and the views over it are in `marts` (ADR 0010). Before this decision, one view that a person or an agent made over a loaded table or its reader view stopped each such change of that table (backlog #3185). SQLite has no such failure, because its views find their tables by name at each read.
 
 elt makes and changes only what it declared. It must not delete what it did not make, and it must not stop on it.
 
@@ -17,7 +17,7 @@ The leading tools, from their source:
 
 ## Consequences
 
-- A view over a loaded table, its history or its reader view, by elt or by another role, reads the new table after a reload or a change of shape, with the same owner, options, comments and privileges. A materialized view is made again `WITH DATA`, with its indexes.
+- A view in `marts` over a loaded table in `_warehouse`, its history or its reader view, by elt or by another role, reads the new table after a reload or a change of shape, with the same owner, options, comments and privileges. A materialized view is made again `WITH DATA`, with its indexes.
 - A view that does not fit the change, such as a view that reads a column that the change drops, fails the change. The error names the view. The table, the views and the checkpoint stay as they were, and the copy fails until the view changes or someone drops it.
 - An object of another kind that depends on such a view, such as a function with a SQL-standard body, fails the change. The error names the view.
 - Readers of these views wait for the change, as they wait for the swap, at most 3 seconds.

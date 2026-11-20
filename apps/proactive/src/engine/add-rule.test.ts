@@ -93,7 +93,7 @@ async function setup(
   folder: string,
   ...texts: readonly [handle: string, text: string][]
 ) {
-  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   await new Pipeline({
     clock: globalThis,
     history: new PostgresSyncHistory({ url }),
@@ -104,19 +104,13 @@ async function setup(
           texts.map(([handle, text]) => ({ guid: randomUUID(), handle, text })),
         ),
         destination,
-        checkpoints: new PostgresCheckpointStore({ url, schema: 'raw' }),
+        checkpoints: new PostgresCheckpointStore({ url }),
         steps: [
-          new Copy(
-            messages,
-            destination
-              .table('messages_messages')
-              .withReaderView('marts', 'messages_messages'),
-            {
-              id: 'messages',
-              syncMode: 'full_refresh',
-              destinationSyncMode: 'overwrite',
-            },
-          ),
+          new Copy(messages, destination.table('messages_messages'), {
+            id: 'messages',
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'overwrite',
+          }),
         ],
       }),
     ],

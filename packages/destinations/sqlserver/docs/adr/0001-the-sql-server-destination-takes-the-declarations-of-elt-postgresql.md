@@ -8,7 +8,7 @@ A host must change its destination and nothing else of its pipeline. elt-postgre
 
 ## Decision
 
-- The SQL Server destination takes the declarations of elt-postgresql: one schema for each `SqlServerDestination`, `table(name, columns)`, `withReaderView(schema, name)`, `View`, `ComputedDataset`, a checkpoint store and a sync history in the same database, `_warehouse` for the numbering and the history, and `marts` for the views of the history and the catalog.
+- The SQL Server destination takes the declarations of elt-postgresql: a `SqlServerDestination` that takes no schema, `table(name, columns)`, whose name is the reader view in `marts` over the raw table `raw_<name>` in `_warehouse`, `View`, `ComputedDataset`, a checkpoint store and a sync history in the same database, `_warehouse` for each table of elt, and `marts` for each relation that readers query (elt-postgresql ADR 0010).
 - Readers see the same columns: the external schema of each stream, and the key, engine columns and rule columns of a computed dataset.
 - Where SQL Server is different, the destination meets the difference inside, and an ADR of this package records it:
 

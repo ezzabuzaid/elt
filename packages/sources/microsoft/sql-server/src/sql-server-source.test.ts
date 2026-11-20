@@ -87,9 +87,9 @@ async function readOnlyLogin(
 }
 
 /**
- * Loads the SQL Server database into the warehouse's raw schema as a host
- * does: the source is discovered again on every run, each stream lands in a
- * table named after it, and checkpoints stay beside the data.
+ * Loads the SQL Server database into the warehouse as a host does: the
+ * source is discovered again on every run, each stream lands in a reader
+ * view named after it, and checkpoints stay beside the data.
  */
 function syncer(
   connectionString: string,
@@ -97,14 +97,8 @@ function syncer(
   history: PostgresSyncHistory,
 ) {
   const database = new SqlServerDatabase(connectionString);
-  const destination = new PostgresDestination({
-    url,
-    schema: 'raw',
-  });
-  const checkpoints = new PostgresCheckpointStore({
-    url,
-    schema: 'raw',
-  });
+  const destination = new PostgresDestination({ url });
+  const checkpoints = new PostgresCheckpointStore({ url });
   return async () => {
     const source = await SqlServerSource.discover(database);
     const pipeline = new Pipeline({
@@ -126,14 +120,14 @@ function syncer(
   };
 }
 
-// Watches the database into the warehouse's raw schema, as a host does.
+// Watches the database into the warehouse, as a host does.
 function watchSqlServer(
   source: SqlServerSource,
   url: string,
   clock: PipelineClock,
   signal: AbortSignal,
 ) {
-  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   return new Pipeline({
     clock,
     history: new PostgresSyncHistory({ url }),
@@ -142,7 +136,7 @@ function watchSqlServer(
         name: 'sql-server',
         source,
         destination,
-        checkpoints: new PostgresCheckpointStore({ url, schema: 'raw' }),
+        checkpoints: new PostgresCheckpointStore({ url }),
         steps: sqlServerCopies(source, (stream) =>
           destination.table(stream.replace('.', '_')),
         ),
@@ -368,7 +362,7 @@ for (const snapshot of [false, true])
     );
     const loaded = async () =>
       (
-        await warehouseSql`SELECT id::int AS id, total::text FROM raw.dbo_orders ORDER BY id`
+        await warehouseSql`SELECT id::int AS id, total::text FROM marts.dbo_orders ORDER BY id`
       ).map(({ id, total }) => [id, total]);
 
     const first = await sync();
@@ -448,7 +442,7 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
     warehouse.connectionString,
     history,
   );
-  // The syncer names each raw table <schema>_<table>; the destination then
+  // The syncer names each reader view <schema>_<table>; the destination then
   // keeps a hash of a name sanitizing changed, and fits a long one.
   const items = `dbo_Line_Items_${sha8('dbo_Line Items')}`;
   const loaded = async () =>
@@ -456,7 +450,7 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
       await warehouseSql.unsafe(
         `SELECT "last"::int AS last, loaded_at_1, "Unit_Price"::text AS price,
           "${fitted(`${placed}_offset`)}"::int AS offset, xmin_1
-          FROM raw."${items}" ORDER BY 1`,
+          FROM marts."${items}" ORDER BY 1`,
       )
     ).map((row) => ({ ...row }));
 
@@ -469,14 +463,14 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
   assert.deepEqual(
     [
       ...(await warehouseSql.unsafe(
-        `SELECT id::int AS id FROM raw."${fitted(`dbo_${longTable}`)}"`,
+        `SELECT id::int AS id FROM marts."${fitted(`dbo_${longTable}`)}"`,
       )),
     ].map(({ id }) => id),
     [7],
   );
   const [comment] =
-    await warehouseSql`SELECT col_description(${`raw."${items}"`}::regclass, attnum) AS text
-    FROM pg_attribute WHERE attrelid = ${`raw."${items}"`}::regclass AND attname = 'loaded_at_1'`;
+    await warehouseSql`SELECT col_description(${`marts."${items}"`}::regclass, attnum) AS text
+    FROM pg_attribute WHERE attrelid = ${`marts."${items}"`}::regclass AND attname = 'loaded_at_1'`;
   assert.match(String(comment?.text), /Source field: "loaded_at"\.$/);
   assert.equal(
     first.results.find(({ copy }) => copy.from.name === 'dbo.Line Items')
@@ -540,7 +534,7 @@ test('a truncated Change Tracking table, whose history no longer reaches the las
 
   assert.deepEqual(
     [
-      ...(await warehouseSql`SELECT id::int AS id, name FROM raw.dbo_items ORDER BY id`),
+      ...(await warehouseSql`SELECT id::int AS id, name FROM marts.dbo_items ORDER BY id`),
     ],
     [{ id: 3, name: 'three' }],
   );
@@ -587,7 +581,7 @@ test('a Change Tracking table truncated after a sync that read the version its t
 
   assert.deepEqual(
     [
-      ...(await warehouseSql`SELECT id::int AS id, name FROM raw.dbo_items ORDER BY id`),
+      ...(await warehouseSql`SELECT id::int AS id, name FROM marts.dbo_items ORDER BY id`),
     ],
     [{ id: 3, name: 'three' }],
   );
@@ -634,7 +628,7 @@ test('a column added to a Change Tracking table reaches every row: the table loa
   assert.equal(results[0]?.count, 2);
   assert.deepEqual(
     [
-      ...(await warehouseSql`SELECT id::int AS id, name, size FROM raw.dbo_items ORDER BY id`),
+      ...(await warehouseSql`SELECT id::int AS id, name, size FROM marts.dbo_items ORDER BY id`),
     ],
     [
       { id: 1, name: 'one', size: 'L' },
@@ -680,7 +674,7 @@ test('a column added to a rowversion table reaches every stored row, and a row d
   assert.equal(results[0]?.count, 1);
   assert.deepEqual(
     [
-      ...(await warehouseSql`SELECT id::int AS id, kind, size FROM raw.dbo_events ORDER BY id`),
+      ...(await warehouseSql`SELECT id::int AS id, kind, size FROM marts.dbo_events ORDER BY id`),
     ],
     [
       { id: 1, kind: 'open', size: 'M' },
@@ -729,7 +723,7 @@ test('a rowversion table loads inserts and updates, a row still being written ar
     history,
   );
   const loaded = async () =>
-    (await warehouseSql`SELECT id, kind FROM raw.dbo_events ORDER BY id`).map(
+    (await warehouseSql`SELECT id, kind FROM marts.dbo_events ORDER BY id`).map(
       ({ id, kind }) => `${id}:${kind}`,
     );
   await sync();
@@ -792,10 +786,10 @@ test('a keyed table with no change feed writes only the rows that are new or cha
   );
   const loaded = async () => ({
     log: (
-      await warehouseSql`SELECT message FROM raw.dbo_log ORDER BY message`
+      await warehouseSql`SELECT message FROM marts.dbo_log ORDER BY message`
     ).map(({ message }) => message),
     codes: (
-      await warehouseSql`SELECT code, label FROM raw.dbo_codes ORDER BY code`
+      await warehouseSql`SELECT code, label FROM marts.dbo_codes ORDER BY code`
     ).map(({ code, label }) => `${code} ${label}`),
   });
   const written = ({ results }: Awaited<ReturnType<typeof sync>>) =>
@@ -877,7 +871,7 @@ test(
     assert.equal(error.results[0]?.copy.from.name, 'dbo.items');
     const count = async () =>
       (
-        await warehouseSql`SELECT count(*)::int AS rows, count(DISTINCT id)::int AS ids FROM raw.dbo_items`
+        await warehouseSql`SELECT count(*)::int AS rows, count(DISTINCT id)::int AS ids FROM marts.dbo_items`
       )[0];
     assert.deepEqual({ ...(await count()) }, { rows: 10000, ids: 10000 });
     await admin
@@ -910,7 +904,6 @@ test('a login the server refuses after discovery fails the copy as config, for t
   await admin.request().batch(`ALTER LOGIN ${reader.user} DISABLE;`);
   const destination = new PostgresDestination({
     url: warehouse.connectionString,
-    schema: 'raw',
   });
 
   const error = await failing(() =>
@@ -924,7 +917,6 @@ test('a login the server refuses after discovery fails the copy as config, for t
           destination,
           checkpoints: new PostgresCheckpointStore({
             url: warehouse.connectionString,
-            schema: 'raw',
           }),
           steps: sqlServerCopies(source, (stream) =>
             destination.table(stream.replace('.', '_')),
@@ -986,10 +978,10 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
   assert.equal(stamped?.sourceDefinedCursor, true);
   assert.equal(stamped?.emitsDeletes, undefined);
   const names = async () => ({
-    plain: (await warehouseSql`SELECT name FROM raw.dbo_plain`).map(
+    plain: (await warehouseSql`SELECT name FROM marts.dbo_plain`).map(
       ({ name }) => name,
     ),
-    stamped: (await warehouseSql`SELECT name FROM raw.dbo_stamped`).map(
+    stamped: (await warehouseSql`SELECT name FROM marts.dbo_stamped`).map(
       ({ name }) => name,
     ),
   });
@@ -1015,7 +1007,6 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
   await admin.request().batch(`DENY SELECT ON dbo.plain TO ${reader.user};`);
   const destination = new PostgresDestination({
     url: warehouse.connectionString,
-    schema: 'raw',
   });
   const error = await failing(() =>
     new Pipeline({
@@ -1028,7 +1019,6 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
           destination,
           checkpoints: new PostgresCheckpointStore({
             url: warehouse.connectionString,
-            schema: 'raw',
           }),
           steps: sqlServerCopies(discovered, (stream) =>
             destination.table(stream.replace('.', '_')),
@@ -1104,7 +1094,7 @@ test('every type arrives in Postgres exactly, beside the offset and base type it
     SELECT id::text, amount::text, cash::text, wide, stamp7, stamp3::text, legacy::text, coarse::text,
       moment, moment_offset, moment3, moment3_offset, clock, clock0::text, day::text,
       encode(bytes, 'hex') AS bytes, node, place, anything, anything_type, version::text ~ '^[0-9]+$' AS version, note, email
-    FROM raw.dbo_everything WHERE id <> 1`;
+    FROM marts.dbo_everything WHERE id <> 1`;
   assert.deepEqual(
     { ...row },
     {
@@ -1135,7 +1125,7 @@ test('every type arrives in Postgres exactly, beside the offset and base type it
   );
   // A null column leaves its sibling null too.
   const [empty] = await warehouseSql`
-    SELECT moment, moment_offset, anything, anything_type, node, place FROM raw.dbo_everything WHERE id = 1`;
+    SELECT moment, moment_offset, anything, anything_type, node, place FROM marts.dbo_everything WHERE id = 1`;
   assert.deepEqual(
     { ...empty },
     {
@@ -1151,7 +1141,7 @@ test('every type arrives in Postgres exactly, beside the offset and base type it
     (
       await warehouseSql`
         SELECT attname AS name, col_description(attrelid, attnum) AS comment
-        FROM pg_attribute WHERE attrelid = 'raw.dbo_everything'::regclass AND attname IN ('note', 'email', 'moment_offset', 'anything_type', 'version')`
+        FROM pg_attribute WHERE attrelid = 'marts.dbo_everything'::regclass AND attname IN ('note', 'email', 'moment_offset', 'anything_type', 'version')`
     ).map(({ name, comment }) => [name, comment]),
   );
   assert.equal(comments.note, 'What someone wrote.');
@@ -1166,7 +1156,7 @@ test('every type arrives in Postgres exactly, beside the offset and base type it
   );
   assert.match(String(comments.version), /rowversion/);
   const [table] =
-    await warehouseSql`SELECT obj_description('raw.dbo_everything'::regclass) AS comment`;
+    await warehouseSql`SELECT obj_description('marts.dbo_everything'::regclass) AS comment`;
   assert.match(
     String(table?.comment),
     /Source record meaning: Every type, once\. Read by its rowversion column version: inserts and updates apply; deletions are not seen\./,
@@ -1229,25 +1219,23 @@ test('two databases that each hold a table of one name load side by side in one 
         `CREATE TABLE dbo.files (id int PRIMARY KEY, name nvarchar(10) NOT NULL); INSERT dbo.files VALUES (1, ${name});`,
       );
   }
-  // One schema per connection, as the Postgres destination is used.
-  const connection = async (schema: string, server: Database) => {
+  // Each connection names its reader views after its database.
+  const connection = async (name: string, server: Database) => {
     const source = await SqlServerSource.discover(
       new SqlServerDatabase(server.connectionString),
     );
     const destination = new PostgresDestination({
       url: warehouse.connectionString,
-      schema,
     });
     return new Connection({
-      name: schema,
+      name,
       source,
       destination,
       checkpoints: new PostgresCheckpointStore({
         url: warehouse.connectionString,
-        schema,
       }),
       steps: sqlServerCopies(source, (stream) =>
-        destination.table(stream.replace('.', '_')),
+        destination.table(`${name}_${stream.replace('.', '_')}`),
       ),
     });
   };
@@ -1263,10 +1251,10 @@ test('two databases that each hold a table of one name load side by side in one 
 
   assert.deepEqual(
     {
-      billing: (await warehouseSql`SELECT name FROM billing.dbo_files`).map(
-        ({ name }) => name,
-      ),
-      impact: (await warehouseSql`SELECT name FROM impact.dbo_files`).map(
+      billing: (
+        await warehouseSql`SELECT name FROM marts.billing_dbo_files`
+      ).map(({ name }) => name),
+      impact: (await warehouseSql`SELECT name FROM marts.impact_dbo_files`).map(
         ({ name }) => name,
       ),
     },
@@ -1315,7 +1303,7 @@ test('a column already named as a datetimeoffset or sql_variant sibling would be
     (
       await warehouseSql`SELECT anything, anything_type::int, anything_type_1,
         placed_offset::int, placed_offset_1::int, "PLACED_OFFSET_2"::int AS upper, placed_offset_3::int
-        FROM raw.dbo_clashing ORDER BY anything`
+        FROM marts.dbo_clashing ORDER BY anything`
     ).map((row) => ({ ...row }));
 
   await sync();
@@ -1341,8 +1329,8 @@ test('a column already named as a datetimeoffset or sql_variant sibling would be
     },
   ]);
   const [placed] =
-    await warehouseSql`SELECT col_description('raw.dbo_clashing'::regclass, attnum) AS text
-    FROM pg_attribute WHERE attrelid = 'raw.dbo_clashing'::regclass AND attname = 'placed'`;
+    await warehouseSql`SELECT col_description('marts.dbo_clashing'::regclass, attnum) AS text
+    FROM pg_attribute WHERE attrelid = 'marts.dbo_clashing'::regclass AND attname = 'placed'`;
   assert.match(String(placed?.text), /placed_offset_3 holds the offset/);
 
   await admin
@@ -1824,7 +1812,7 @@ test(
     await admin.request().batch('TRUNCATE TABLE dbo.items;');
     assert.deepEqual(await watch.woken(), ['dbo.items']);
     assert.deepEqual(
-      [...(await warehouseSql`SELECT id FROM raw.dbo_items`)],
+      [...(await warehouseSql`SELECT id FROM marts.dbo_items`)],
       [],
     );
   },
@@ -1855,7 +1843,6 @@ async function largeTableRead(
   );
   const destination = new PostgresDestination({
     url: warehouse.connectionString,
-    schema: 'raw',
   });
   return new Pipeline({
     clock,
@@ -1867,7 +1854,6 @@ async function largeTableRead(
         destination,
         checkpoints: new PostgresCheckpointStore({
           url: warehouse.connectionString,
-          schema: 'raw',
         }),
         steps: sqlServerCopies(source, (stream) =>
           destination.table(stream.replace('.', '_')),

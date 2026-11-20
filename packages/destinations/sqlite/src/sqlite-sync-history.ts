@@ -80,13 +80,13 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
         throw new Error('Sync attempt was not recorded');
       const id = Number(attempt.id);
       const declare = database.prepare(
-        `INSERT INTO ${coverage} ("attempt_id", "stream", "target_schema", "target_table", "sync_mode", "destination_sync_mode", "description", "selection") VALUES (?, ?, 'main', ?, ?, ?, ?, ?)`,
+        `INSERT INTO ${coverage} ("attempt_id", "stream", "target_table", "sync_mode", "destination_sync_mode", "description", "selection") VALUES (?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const { copy, coverage } of copies)
         declare.run(
           id,
           copy.from.name,
-          copy.to.raw,
+          copy.to.name,
           copy.configuration.syncMode,
           copy.configuration.destinationSyncMode,
           coverage.description,

@@ -7,6 +7,7 @@ import type { EncodedValue, PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
 import { type TargetHistory, version } from './postgres-history.ts';
 import type { Transaction } from './postgres-load.ts';
+import { inWarehouse } from './postgres-schemas.ts';
 import type { PostgresTable } from './postgres-table.ts';
 import { PostgresWriter, type Written, op, seq } from './postgres-writer.ts';
 
@@ -18,11 +19,10 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
   constructor(
     configuration: CopyConfiguration,
     url: string,
-    schema: string,
     table: PostgresTable,
     retention: Temporal.Duration,
   ) {
-    super(configuration, url, schema, table, retention);
+    super(configuration, url, table, retention);
     this.deduplication = configuration.deduplication();
     const inferred = PostgresColumns.fromSchema(
       configuration.stream.jsonSchema,
@@ -53,11 +53,7 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
   get dedupIndex(): string {
     return `_elt_dedup_${hash(
       'sha256',
-      JSON.stringify([
-        this.schema,
-        this.table.name,
-        this.keys.map((key) => key.name),
-      ]),
+      JSON.stringify([this.table.raw, this.keys.map((key) => key.name)]),
     ).slice(0, 40)}`;
   }
 
@@ -91,9 +87,7 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
   private async dropOtherIndexes(transaction: Transaction): Promise<void> {
     for (const index of await this.dedupIndexes(transaction))
       if (index !== this.dedupIndex)
-        await transaction.unsafe(
-          `DROP INDEX ${quote(this.schema)}.${quote(index)}`,
-        );
+        await transaction.unsafe(`DROP INDEX ${inWarehouse(index)}`);
   }
 
   private async index(transaction: Transaction): Promise<void> {
@@ -120,7 +114,7 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
 
   protected override async adopt(sql: Transaction): Promise<void> {
     await sql.unsafe(
-      `ALTER INDEX ${quote(this.schema)}.${quote(this.#provisionalIndex)} RENAME TO ${quote(this.dedupIndex)}`,
+      `ALTER INDEX ${inWarehouse(this.#provisionalIndex)} RENAME TO ${quote(this.dedupIndex)}`,
     );
   }
 

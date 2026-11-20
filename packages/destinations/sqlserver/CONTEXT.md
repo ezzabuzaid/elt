@@ -2,24 +2,24 @@
 
 > **Design on paper, accepted by Ezz on 2026-11-19.** See the banner of the [README](./README.md).
 
-A host wants the data that elt copies in a SQL Server or Azure SQL database, with typed columns, which readers query while the loads run, and the vectors of its computed datasets in a column that Azure SQL can search. The SQL Server destination loads the tables of each connection into one schema, keeps a reader view of each table in a different schema, and keeps the views and computed datasets that the pipeline derives from them. Its checkpoint store and its sync history keep their data in the same database. The words that all of elt uses, for example pass, commit, writer and checkpoint, are in the glossary of [elt](../../elt/CONTEXT.md). The words that this context shares with [elt-postgresql](../postgresql/CONTEXT.md) have the same meaning; this glossary gives each one again only where SQL Server makes it different.
+A host wants the data that elt copies in a SQL Server or Azure SQL database, with typed columns, which readers query while the loads run, and the vectors of its computed datasets in a column that Azure SQL can search. The SQL Server destination loads each stream into a raw table in `_warehouse`, keeps a reader view of each raw table in `marts`, and keeps the views and computed datasets that the pipeline derives from them. Its checkpoint store and its sync history keep their data in the same database. The words that all of elt uses, for example pass, commit, writer and checkpoint, are in the glossary of [elt](../../elt/CONTEXT.md). The words that this context shares with [elt-postgresql](../postgresql/CONTEXT.md) have the same meaning; this glossary gives each one again only where SQL Server makes it different.
 
 ## Language
 
 **Schema**:
-The SQL Server schema that one `SqlServerDestination` loads, for example `sharepoint`. It also holds the checkpoints and the writers of its tables.
-_Avoid_: Database (a database holds many schemas), owner
+One of the two SQL Server schemas of a database, which the destination fixes, as in elt-postgresql. `marts` holds each relation that readers query, and each one is a view. `_warehouse` holds each table of elt: the raw tables, their histories and file chunks, the writers, the checkpoints, the numbering and the sync history. A host names no schema.
+_Avoid_: Database (a database holds the two schemas), owner
 
 **Login**:
 What the destination connects with: the parts of a SQL Server login, or an ADO.NET connection string. It holds credentials, so no location names it.
 _Avoid_: URL (SQL Server has no URL form that `mssql` reads), connection (a connection is one session of the login)
 
 **Raw table**:
-The table that a copy loads, for example `sharepoint.raw_drive_items`. Readers do not query it.
+The table that a copy loads, `_warehouse.raw_<name>` for the reader name `<name>`, for example `_warehouse.raw_drive_items`. Readers do not query it.
 _Avoid_: Staging table, source table
 
 **Reader view**:
-The view that a load keeps of a raw table in a different schema, with `withReaderView`, for example `marts.drive_items`. It shows the external schema of the stream: its columns and `loaded_at`. The internal columns are for the SQL of the destination only.
+The view `marts.<name>` that a load keeps of its raw table, for example `marts.drive_items`. The host gives its name, the reader name, to `table`. Each copy has one. It shows the external schema of the stream: its columns and `loaded_at`. The internal columns are for the SQL of the destination only.
 _Avoid_: Mart (a mart is the schema `marts`), view (a view is a derived dataset)
 
 **Internal column**:
@@ -79,7 +79,7 @@ The id that names the numbering of a database. A new database, or one whose `_wa
 _Avoid_: Generation, version, database GUID
 
 **Position**:
-`<epoch>:<number>`: the last commit of a closed load, when no other load of any schema has commits before and after it. A reader at a position sees no part of a pass.
+`<epoch>:<number>`: the last commit of a closed load, when no other load of the database has commits before and after it. A reader at a position sees no part of a pass.
 _Avoid_: Offset, cursor (eca keeps a cursor), checkpoint, LSN (the log sequence number of SQL Server)
 
 **History**:

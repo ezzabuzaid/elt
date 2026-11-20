@@ -23,15 +23,13 @@ if (!clientId || !clientSecret)
   );
 
 const warehouseUrl = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
-const schema = 'google_search_console';
-const healthSchema = 'google_health';
 const directory = join(
   process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'),
   'elt',
 );
 
-// Search Console, every stream, loaded into its raw schema; readers see each
-// stream as marts.search_console_<stream>.
+// Search Console, every stream; readers see each stream as
+// marts.search_console_<stream>.
 const requester = await googleSession({
   clientId,
   clientSecret,
@@ -43,10 +41,10 @@ const source = new SearchConsoleSource({
   requester,
   siteUrls: ['sc-domain:ezz.sh'],
 });
-const destination = new PostgresDestination({ url: warehouseUrl, schema });
+const destination = new PostgresDestination({ url: warehouseUrl });
 
-// Google Health, every stream reloaded whole each pass into its raw schema;
-// readers see each stream as marts.health_<stream>.
+// Google Health, every stream reloaded whole each pass; readers see each
+// stream as marts.health_<stream>.
 const health = new GoogleHealthSource({
   requester: await googleSession({
     clientId,
@@ -55,10 +53,6 @@ const health = new GoogleHealthSource({
     directory,
     clock: globalThis,
   }),
-});
-const healthDestination = new PostgresDestination({
-  url: warehouseUrl,
-  schema: healthSchema,
 });
 
 const { streams } = await source.discover();
@@ -72,17 +66,14 @@ await new Pipeline({
       name: 'google-search-console',
       source,
       destination,
-      checkpoints: new PostgresCheckpointStore({ url: warehouseUrl, schema }),
+      checkpoints: new PostgresCheckpointStore({ url: warehouseUrl }),
       steps: streams.map(
         (stream) =>
           new Copy(
             stream,
-            destination
-              .table(`raw_${stream.name}`)
-              .withReaderView(
-                'marts',
-                `search_console_${stream.name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`,
-              ),
+            destination.table(
+              `search_console_${stream.name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`,
+            ),
             {
               id: `search-console:${stream.name}`,
               syncMode: 'incremental',
@@ -94,21 +85,15 @@ await new Pipeline({
     new Connection({
       name: 'google-health',
       source: health,
-      destination: healthDestination,
-      checkpoints: new PostgresCheckpointStore({
-        url: warehouseUrl,
-        schema: healthSchema,
-      }),
+      destination,
+      checkpoints: new PostgresCheckpointStore({ url: warehouseUrl }),
       steps: healthStreams.map(
         (stream) =>
           new Copy(
             stream,
-            healthDestination
-              .table(`raw_${stream.name}`)
-              .withReaderView(
-                'marts',
-                `health_${stream.name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`,
-              ),
+            destination.table(
+              `health_${stream.name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`,
+            ),
             {
               id: `health:${stream.name}`,
               syncMode: 'full_refresh',

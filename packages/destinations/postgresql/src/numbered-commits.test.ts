@@ -102,7 +102,11 @@ const notes = (name: string) =>
     name,
     jsonSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      description: 'Notes.',
+      properties: {
+        id: { type: 'string', description: 'Note id.' },
+        version: { type: 'integer', description: 'Note version.' },
+      },
       required: ['id', 'version'],
     },
     primaryKey: ['id'],
@@ -116,7 +120,11 @@ const entries = (name: string) =>
     name,
     jsonSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      description: 'Notes.',
+      properties: {
+        id: { type: 'string', description: 'Note id.' },
+        version: { type: 'integer', description: 'Note version.' },
+      },
       required: ['id', 'version'],
     },
     primaryKey: ['id'],
@@ -203,10 +211,10 @@ const run = (url: string, connection: Connection<PostgresTable>) =>
     history: new PostgresSyncHistory({ url }),
   }).run();
 
-// One connection of a schema, named as the schema, that copies its steps.
+// One connection of the name that copies its steps.
 function connector(
   url: string,
-  schema: string,
+  name: string,
   streams: readonly Stream[],
   steps: Readonly<Record<string, readonly Step[]>>,
   copy: (
@@ -214,36 +222,36 @@ function connector(
     destination: PostgresDestination,
   ) => Copy<PostgresTable> = incremental,
 ) {
-  const destination = new PostgresDestination({ url, schema });
+  const destination = new PostgresDestination({ url });
   return {
     destination,
     connection: new Connection({
-      name: schema,
+      name,
       source: new Scripted(streams, steps),
       destination,
-      checkpoints: new PostgresCheckpointStore({ url, schema }),
+      checkpoints: new PostgresCheckpointStore({ url }),
       steps: streams.map((stream) => copy(stream, destination)),
     }),
   };
 }
 
-test('commit numbers rise in the order of the commits across two connections that load two schemas of one database', async () => {
+test('commit numbers rise in the order of the commits across two connections that load two tables of one database', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const url = database.connectionString;
   const sql = client(url, clients);
   const wait = latch();
-  const a = connector(url, 'a', [notes('notes')], {
-    notes: [
-      note('notes', 'a1'),
-      checkpoint('notes', 1),
+  const a = connector(url, 'a', [notes('a_notes')], {
+    a_notes: [
+      note('a_notes', 'a1'),
+      checkpoint('a_notes', 1),
       wait.step,
-      note('notes', 'a2'),
-      checkpoint('notes', 2),
+      note('a_notes', 'a2'),
+      checkpoint('a_notes', 2),
     ],
   });
-  const b = connector(url, 'b', [notes('notes')], {
-    notes: [note('notes', 'b1'), checkpoint('notes', 1)],
+  const b = connector(url, 'b', [notes('b_notes')], {
+    b_notes: [note('b_notes', 'b1'), checkpoint('b_notes', 1)],
   });
   const first = run(url, a.connection);
   await wait.reached;
@@ -252,8 +260,9 @@ test('commit numbers rise in the order of the commits across two connections tha
   wait.release();
   await first;
 
-  const [a1, a2] = await sql`SELECT committed_in FROM a.notes ORDER BY id`;
-  const [b1] = await sql`SELECT committed_in FROM b.notes`;
+  const [a1, a2] =
+    await sql`SELECT committed_in FROM _warehouse.raw_a_notes ORDER BY id`;
+  const [b1] = await sql`SELECT committed_in FROM _warehouse.raw_b_notes`;
 
   assert.ok(
     Number(a1?.committed_in) < Number(b1?.committed_in) &&
@@ -288,7 +297,8 @@ test('a pass that waits after its first commit shows no position of its load unt
   );
   wait.release();
   await second;
-  const [, n2] = await sql`SELECT committed_in FROM raw.notes ORDER BY id`;
+  const [, n2] =
+    await sql`SELECT committed_in FROM _warehouse.raw_notes ORDER BY id`;
 
   assert.deepEqual(during, [ended]);
   assert.deepEqual(duringPastItsCommit, []);
@@ -316,7 +326,7 @@ test('a load that a killed process left open hides every later position, until t
       identity = 'scripted';
       notes = new Stream({
         name: 'notes',
-        jsonSchema: { type: 'object', properties: { id: { type: 'string' }, version: { type: 'integer' } }, required: ['id', 'version'] },
+        jsonSchema: { type: 'object', description: 'Notes.', properties: { id: { type: 'string', description: 'Note id.' }, version: { type: 'integer', description: 'Note version.' } }, required: ['id', 'version'] },
         primaryKey: ['id'],
         supportedSyncModes: ['full_refresh', 'incremental'],
         emitsDeletes: true,
@@ -335,10 +345,10 @@ test('a load that a killed process left open hides every later position, until t
     }
     const url = process.env.DATABASE;
     const source = new Hanging();
-    const destination = new PostgresDestination({ url, schema: 'raw' });
+    const destination = new PostgresDestination({ url });
     await new Pipeline({ clock: globalThis,
       connections: [new Connection({ name: 'raw', source, destination,
-        checkpoints: new PostgresCheckpointStore({ url, schema: 'raw' }),
+        checkpoints: new PostgresCheckpointStore({ url }),
         steps: [new Copy(source.notes, destination.table('notes'), { id: 'notes', syncMode: 'incremental', destinationSyncMode: 'append_dedup', cursorField: 'version' })] })],
       history: new PostgresSyncHistory({ url }),
     }).run();
@@ -362,7 +372,8 @@ test('a load that a killed process left open hides every later position, until t
 
   const left = await walkable(next.destination);
   await run(url, next.connection);
-  const [n1, n2] = await sql`SELECT committed_in FROM raw.notes ORDER BY id`;
+  const [n1, n2] =
+    await sql`SELECT committed_in FROM _warehouse.raw_notes ORDER BY id`;
 
   assert.deepEqual(left, []);
   assert.deepEqual(await walkable(next.destination), [
@@ -379,7 +390,7 @@ test('a load that a later load of its connection closed cannot commit, so the po
   const early = notes('early');
   const late = notes('late');
   const wait = latch();
-  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   const connection = (lateSteps: readonly Step[]) =>
     new Connection({
       name: 'notes',
@@ -412,7 +423,7 @@ test('a load that a later load of its connection closed cannot commit, so the po
   assert.equal(listed.length, 2);
   assert.deepEqual(await walkable(destination), listed);
   assert.deepEqual(
-    (await sql`SELECT id FROM raw.late`).map(({ id }) => id),
+    (await sql`SELECT id FROM marts.late`).map(({ id }) => id),
     ['l2'],
   );
 });
@@ -427,12 +438,12 @@ test('a commit still in flight keeps every later commit of the database from bei
     connector(
       url,
       'a',
-      [entries('notes')],
-      { notes: [note('notes', id), checkpoint('notes', 1)] },
+      [entries('a_notes')],
+      { a_notes: [note('a_notes', id), checkpoint('a_notes', 1)] },
       appending,
     );
-  const b = connector(url, 'b', [notes('notes')], {
-    notes: [note('notes', 'b1'), checkpoint('notes', 1)],
+  const b = connector(url, 'b', [notes('b_notes')], {
+    b_notes: [note('b_notes', 'b1'), checkpoint('b_notes', 1)],
   });
   await run(url, a('a1').connection);
   const before = await walkable(b.destination);
@@ -441,7 +452,7 @@ test('a commit still in flight keeps every later commit of the database from bei
   const stalled = await locker.reserve();
   clients.defer(() => stalled.release());
   await stalled`BEGIN`;
-  await stalled`LOCK TABLE a.notes IN ACCESS EXCLUSIVE MODE`;
+  await stalled`LOCK TABLE _warehouse.raw_a_notes IN ACCESS EXCLUSIVE MODE`;
   const second = run(url, a('a2').connection).then(
     () => 'committed',
     () => 'failed',
@@ -449,8 +460,8 @@ test('a commit still in flight keeps every later commit of the database from bei
   const pid = await waitFor(
     async () => {
       const [blocked] = await watcher<{ pid: number }[]>`
-        SELECT pid FROM pg_locks WHERE NOT granted AND relation = to_regclass('a.notes')`;
-      assert.ok(blocked, 'no commit waits for a.notes yet');
+        SELECT pid FROM pg_locks WHERE NOT granted AND relation = to_regclass('_warehouse.raw_a_notes')`;
+      assert.ok(blocked, 'no commit waits for _warehouse.raw_a_notes yet');
       return blocked.pid;
     },
     { signal: t.signal, interval: 10 },
@@ -461,7 +472,7 @@ test('a commit still in flight keeps every later commit of the database from bei
   await watcher`SELECT pg_terminate_backend(${pid})`;
   const outcome = await second;
   await stalled`ROLLBACK`;
-  const [b1] = await watcher`SELECT committed_in FROM b.notes`;
+  const [b1] = await watcher`SELECT committed_in FROM _warehouse.raw_b_notes`;
   const after = await walkable(b.destination);
 
   assert.deepEqual(during, before);
@@ -475,18 +486,19 @@ test('two connections that commit many times at once lose no commit: each listed
   const url = database.connectionString;
   const sql = client(url, clients);
   const passes = 15;
-  const loader = async (schema: string) => {
+  const loader = async (name: string) => {
+    const stream = `${name}_notes`;
     for (let pass = 0; pass < passes; pass++)
       await run(
         url,
         connector(
           url,
-          schema,
-          [entries('notes')],
+          name,
+          [entries(stream)],
           {
-            notes: [1, 2, 3].flatMap((step) => [
-              note('notes', `${schema}${pass}.${step}`),
-              checkpoint('notes', step),
+            [stream]: [1, 2, 3].flatMap((step) => [
+              note(stream, `${name}${pass}.${step}`),
+              checkpoint(stream, step),
             ]),
           },
           appending,
@@ -527,19 +539,19 @@ test('two connections that commit many times at once lose no commit: each listed
   assert.equal((await commitsUpTo(2 ** 31 - 1)).length, passes * 2 * 3);
 });
 
-test('first loads into many schemas of a new database can all open at once', async () => {
+test('first loads of many connections into a new database can all open at once', async () => {
   await using database = await databases.database();
   const url = database.connectionString;
-  const schemas = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'];
+  const connections = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'];
   await using loads = new AsyncDisposableStack();
 
   // No sync history makes _warehouse first: each load makes the numbering.
   const outcomes = await Promise.allSettled(
-    schemas.map(async (schema) =>
+    connections.map(async (connection) =>
       loads.use(
-        await new PostgresDestination({ url, schema }).load({
+        await new PostgresDestination({ url }).load({
           clock: globalThis,
-          connection: schema,
+          connection,
         }),
       ),
     ),
@@ -549,7 +561,7 @@ test('first loads into many schemas of a new database can all open at once', asy
     outcomes.map((outcome) =>
       outcome.status === 'rejected' ? String(outcome.reason) : 'opened',
     ),
-    schemas.map(() => 'opened'),
+    connections.map(() => 'opened'),
   );
 });
 
@@ -581,7 +593,6 @@ test('a database that no load numbered has no positions, and a position of it is
   await using database = await databases.database();
   const destination = new PostgresDestination({
     url: database.connectionString,
-    schema: 'raw',
   });
 
   const positions = await destination.positions();
@@ -623,8 +634,8 @@ test('each row of an append, an overwrite, a deduplicated copy and a reset parti
   await using clients = new AsyncDisposableStack();
   const url = database.connectionString;
   const sql = client(url, clients);
-  const destination = new PostgresDestination({ url, schema: 'raw' });
-  const checkpoints = new PostgresCheckpointStore({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
+  const checkpoints = new PostgresCheckpointStore({ url });
   const appended = notes('appended');
   const replaced = notes('replaced');
   const deduplicated = notes('deduplicated');
@@ -632,10 +643,11 @@ test('each row of an append, an overwrite, a deduplicated copy and a reset parti
     name: 'owned',
     jsonSchema: {
       type: 'object',
+      description: 'Owned notes.',
       properties: {
-        id: { type: 'string' },
-        owner: { type: 'string' },
-        version: { type: 'integer' },
+        id: { type: 'string', description: 'Note id.' },
+        owner: { type: 'string', description: 'Note owner.' },
+        version: { type: 'integer', description: 'Note version.' },
       },
       required: ['id', 'owner', 'version'],
     },
@@ -702,7 +714,7 @@ test('each row of an append, an overwrite, a deduplicated copy and a reset parti
   const loads = async (table: string) =>
     (
       await sql.unsafe(
-        `SELECT t.id, c.load FROM raw.${table} AS t LEFT JOIN _warehouse._elt_commits AS c ON c.number = t.committed_in ORDER BY t.id`,
+        `SELECT t.id, c.load FROM _warehouse.raw_${table} AS t LEFT JOIN _warehouse._elt_commits AS c ON c.number = t.committed_in ORDER BY t.id`,
       )
     ).map(({ id, load }) => ({ id, load: Number(load) }));
 
@@ -744,7 +756,9 @@ test('a deduplicated update moves the row to the commit that made it, and a row 
   ).map(({ number }) => number);
 
   assert.deepEqual(
-    [...(await sql`SELECT id, committed_in FROM raw.notes ORDER BY id`)],
+    [
+      ...(await sql`SELECT id, committed_in FROM _warehouse.raw_notes ORDER BY id`),
+    ],
     [
       { id: 'newer', committed_in: commits[1] },
       { id: 'older', committed_in: commits[0] },
@@ -777,7 +791,9 @@ test("a reload's rows name the commit that swapped them in, not the commits that
 
   assert.equal(reload.length, 3);
   assert.deepEqual(
-    [...(await sql`SELECT id, committed_in FROM raw.notes ORDER BY id`)],
+    [
+      ...(await sql`SELECT id, committed_in FROM _warehouse.raw_notes ORDER BY id`),
+    ],
     [
       { id: 'n1', committed_in: reload[2] },
       { id: 'n2', committed_in: reload[2] },

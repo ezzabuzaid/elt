@@ -27,3 +27,7 @@ class PostgresIdentifiers extends Identifiers {
 }
 
 export const identifiers = Object.freeze(new PostgresIdentifiers());
+
+// The table in _warehouse that keeps the rows of the reader relation name:
+// raw_<name>, under the naming rule of every relation (ADR 0010).
+export const rawTable = (name: string) => identifiers.relation(`raw_${name}`);

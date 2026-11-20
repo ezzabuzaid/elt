@@ -14,19 +14,13 @@ import { martsCopy } from './marts-copy.ts';
 const source = new WhatsAppDesktopSource({
   container: whatsappContainer(homedir()),
 });
-const destination = new PostgresDestination({
-  url: warehouseUrl,
-  schema: 'whatsapp',
-});
+const destination = new PostgresDestination({ url: warehouseUrl });
 
 export default new Connection({
   name: 'whatsapp',
   source,
   destination,
-  checkpoints: new PostgresCheckpointStore({
-    url: warehouseUrl,
-    schema: 'whatsapp',
-  }),
+  checkpoints: new PostgresCheckpointStore({ url: warehouseUrl }),
   // The personal chats, with who the people in them are.
   steps: [
     source.chats,

@@ -35,7 +35,7 @@ await pipeline.run({ signal: shutdown.signal });
 
 // The positions and readings of the database, as agent_reader. No load goes
 // through this destination.
-const reader = new PostgresDestination({ url: readerUrl, schema: 'marts' });
+const reader = new PostgresDestination({ url: readerUrl });
 const warehouse: Warehouse<postgres.Sql> = {
   stable: (after) => reader.positions(after),
   read: (position) => reader.reading(position),

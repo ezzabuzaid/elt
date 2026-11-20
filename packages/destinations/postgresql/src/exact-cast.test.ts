@@ -38,7 +38,11 @@ const measures = (amount: 'number' | 'integer') =>
     name: 'measures',
     jsonSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, amount: { type: amount } },
+      description: 'Measures.',
+      properties: {
+        id: { type: 'string', description: 'Measure id.' },
+        amount: { type: amount, description: 'Measured amount.' },
+      },
       required: ['id', 'amount'],
     },
     primaryKey: ['id'],
@@ -96,7 +100,7 @@ class Measured extends Source {
   }
 }
 
-// One run of the measures copy into schema raw of url, with amount typed as
+// One run of the measures copy into url, with amount typed as
 // the run declares.
 const run = (
   url: string,
@@ -106,7 +110,7 @@ const run = (
   states: unknown[],
 ) => {
   const stream = measures(amount);
-  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   return new Pipeline({
     clock: globalThis,
     history: new PostgresSyncHistory({ url }),
@@ -115,7 +119,7 @@ const run = (
         name: 'raw',
         source: new Measured(stream, records, number, states),
         destination,
-        checkpoints: new PostgresCheckpointStore({ url, schema: 'raw' }),
+        checkpoints: new PostgresCheckpointStore({ url }),
         steps: [
           new Copy(stream, destination.table('measures'), {
             id: 'measures',
@@ -131,7 +135,7 @@ const run = (
 // The id, amount and the type of the amount column of each stored row.
 const stored = async (sql: postgres.Sql) =>
   (
-    await sql`SELECT id, amount::text AS amount, pg_typeof(amount)::text AS type FROM raw.measures ORDER BY id`
+    await sql`SELECT id, amount::text AS amount, pg_typeof(amount)::text AS type FROM marts.measures ORDER BY id`
   ).map((row) => ({ ...row }));
 
 test('a number field that becomes an integer fails its copy, naming the column, while a stored value has a fraction, and the row and checkpoint stay as they were', async () => {

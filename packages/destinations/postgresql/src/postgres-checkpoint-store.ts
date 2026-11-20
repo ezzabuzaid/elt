@@ -3,30 +3,26 @@ import type postgres from 'postgres';
 import { type CheckpointSession, CheckpointStore } from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
+import { inWarehouse, warehouse } from './postgres-schemas.ts';
 import {
   PostgresSession,
   connectionUrl,
   lockSchema,
-  schemaName,
 } from './postgres-session.ts';
 
-// Checkpoints kept beside the data they describe, in `_elt_checkpoints`
-// of one schema, so dropping the schema resets both. Each acknowledged
-// checkpoint is saved as soon as the load commits it; a crash in between
-// replays that unit, which deduplication absorbs.
+// The checkpoints of every copy into the database, beside the data they
+// describe, in `_warehouse._elt_checkpoints`, by the id of the copy. Each
+// acknowledged checkpoint is saved as soon as the load commits it; a crash in
+// between replays that unit, which deduplication absorbs.
+const table = inWarehouse('_elt_checkpoints');
+
 export class PostgresCheckpointStore extends CheckpointStore {
-  readonly schema: string;
   readonly #url: string;
 
-  constructor({ url, schema }: { url: string; schema: string }) {
+  constructor({ url }: { url: string }) {
     super();
     this.#url = connectionUrl(url);
-    this.schema = schemaName(schema);
     Object.freeze(this);
-  }
-
-  get #table(): string {
-    return `${quote(this.schema)}."_elt_checkpoints"`;
   }
 
   // Each replication's lock is a session lock on the run's own connection, so
@@ -41,7 +37,7 @@ export class PostgresCheckpointStore extends CheckpointStore {
     // Two-key locks never collide with the one-key schema lock of DDL. A
     // replication already running fails the run fast; others run in parallel.
     // Taken in sorted order, so two runs never wait on each other.
-    const namespace = `elt-checkpoints:${this.schema}`;
+    const namespace = 'elt-checkpoints';
     const held: string[] = [];
     try {
       for (const id of ids) {
@@ -56,7 +52,7 @@ export class PostgresCheckpointStore extends CheckpointStore {
       return await work({
         read: async (id) => {
           const [saved] = await sql.unsafe(
-            `SELECT "binding"::text AS "binding", "reloading" FROM ${this.#table} WHERE "id" = $1`,
+            `SELECT "binding"::text AS "binding", "reloading" FROM ${table} WHERE "id" = $1`,
             [id],
           );
           return saved === undefined
@@ -68,25 +64,25 @@ export class PostgresCheckpointStore extends CheckpointStore {
         },
         state: async (id) => {
           const [saved] = await sql.unsafe(
-            `SELECT "state"::text AS "state" FROM ${this.#table} WHERE "id" = $1`,
+            `SELECT "state"::text AS "state" FROM ${table} WHERE "id" = $1`,
             [id],
           );
           return saved === undefined ? undefined : String(saved.state);
         },
         save: async (id, { binding, reloading, state }) => {
           await sql.unsafe(
-            `INSERT INTO ${this.#table} ("id", "binding", "reloading", "state") VALUES ($1, $2::text::json, $3, $4::text::json) ON CONFLICT ("id") DO UPDATE SET "binding" = excluded."binding", "reloading" = excluded."reloading", "state" = excluded."state"`,
+            `INSERT INTO ${table} ("id", "binding", "reloading", "state") VALUES ($1, $2::text::json, $3, $4::text::json) ON CONFLICT ("id") DO UPDATE SET "binding" = excluded."binding", "reloading" = excluded."reloading", "state" = excluded."state"`,
             [id, binding, reloading, state],
           );
         },
         reloaded: async (id) => {
           await sql.unsafe(
-            `UPDATE ${this.#table} SET "reloading" = false WHERE "id" = $1`,
+            `UPDATE ${table} SET "reloading" = false WHERE "id" = $1`,
             [id],
           );
         },
         remove: async (id) => {
-          await sql.unsafe(`DELETE FROM ${this.#table} WHERE "id" = $1`, [id]);
+          await sql.unsafe(`DELETE FROM ${table} WHERE "id" = $1`, [id]);
         },
       });
     } finally {
@@ -98,24 +94,23 @@ export class PostgresCheckpointStore extends CheckpointStore {
     }
   }
 
-  // Two runs of one connection create the schema at once, and Postgres
-  // refuses the second CREATE SCHEMA with a duplicate key; the schema's lock
-  // makes them take turns.
+  // Two runs create the table at once, and Postgres refuses the second CREATE
+  // with a duplicate key; the lock of _warehouse makes them take turns.
   async #create(sql: postgres.Sql): Promise<void> {
     const [found] = await sql.unsafe(
       'SELECT to_regclass($1) IS NOT NULL AS "exists"',
-      [this.#table],
+      [table],
     );
     if (found?.exists === true) return;
     await sql.begin(async (transaction) => {
-      await lockSchema(transaction, this.schema);
+      await lockSchema(transaction, warehouse);
       await transaction.unsafe(
-        `CREATE SCHEMA IF NOT EXISTS ${quote(this.schema)}`,
+        `CREATE SCHEMA IF NOT EXISTS ${quote(warehouse)}`,
       );
       // JSON keeps the exact text: JSONB refuses \u0000 and lone surrogates,
       // which checkpoint state may carry.
       await transaction.unsafe(
-        `CREATE TABLE IF NOT EXISTS ${this.#table} ("id" TEXT PRIMARY KEY, "binding" JSON NOT NULL, "reloading" BOOLEAN NOT NULL, "state" JSON NOT NULL)`,
+        `CREATE TABLE IF NOT EXISTS ${table} ("id" TEXT PRIMARY KEY, "binding" JSON NOT NULL, "reloading" BOOLEAN NOT NULL, "state" JSON NOT NULL)`,
       );
     });
   }

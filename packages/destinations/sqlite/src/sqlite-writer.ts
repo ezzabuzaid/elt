@@ -97,7 +97,7 @@ export abstract class SQLiteWriter extends Writer {
   readonly table: SQLiteTable;
   // Where the target keeps the rows that its commits replace or remove.
   readonly history: SQLiteHistory;
-  readonly #readerView: SQLiteReaderView;
+  readonly #view: SQLiteReaderView;
   readonly #description: TargetDescription;
 
   constructor(
@@ -110,7 +110,7 @@ export abstract class SQLiteWriter extends Writer {
     this.destination = destination;
     this.table = table;
     this.history = new SQLiteHistory(table);
-    this.#readerView = new SQLiteReaderView(table, this.shown);
+    this.#view = new SQLiteReaderView(table, this.shown);
     this.#description = describeTarget(
       configuration,
       table.columns,
@@ -428,11 +428,7 @@ export abstract class SQLiteWriter extends Writer {
           'Number of the commit that last wrote this row: the row of _elt_commits with this number tells when, and in which load.',
       }),
     );
-    this.#readerView.describe(
-      database,
-      this.#description.table,
-      described(shown),
-    );
+    this.#view.describe(database, this.#description.table, described(shown));
   }
 
   // The target as its first commit makes it: its owner, the table, its
@@ -442,7 +438,7 @@ export abstract class SQLiteWriter extends Writer {
     database.exec(this.table.createTableSQL);
     this.history.create(database, this.written);
     this.initialize(database, replacing);
-    this.#readerView.install(database);
+    this.#view.install(database);
     this.describe(database);
   }
 
@@ -638,7 +634,7 @@ export abstract class SQLiteWriter extends Writer {
   // it was. The reader view selects the stored columns, and the mode index
   // can cover a dropped key, so both are made again for the new shape.
   #evolve(database: DatabaseSync, load: SQLiteLoad): void {
-    this.#readerView.drop(database);
+    this.#view.drop(database);
     this.dropDedupIndexes(database, null);
     const changedIn = this.#keepChanged(database, load);
     this.#dropRetiredChunks(database);
@@ -657,7 +653,7 @@ export abstract class SQLiteWriter extends Writer {
         )
         .run(changedIn);
     this.initialize(database, false);
-    this.#readerView.install(database);
+    this.#view.install(database);
     this.describe(database);
   }
 
@@ -712,7 +708,7 @@ export abstract class SQLiteWriter extends Writer {
     database
       .prepare(`UPDATE ${hidden} SET "committed_in" = ?`)
       .run(committedIn);
-    this.#readerView.drop(database);
+    this.#view.drop(database);
     if (this.exists(database, this.table.location))
       this.#keepRows(database, committedIn);
     database.exec(`DROP TABLE IF EXISTS ${this.table.quotedRaw}`);
@@ -782,7 +778,7 @@ export abstract class SQLiteWriter extends Writer {
           database.exec(`DROP TABLE IF EXISTS ${hidden}`);
           this.#reloaded(database);
         }
-        if (!open(next)) this.#readerView.refuse(database, target === 'stale');
+        if (!open(next)) this.#view.refuse(database, target === 'stale');
         if (next === 'evolve') {
           this.#evolve(database, load);
           next = 'load';
@@ -990,7 +986,7 @@ export abstract class SQLiteWriter extends Writer {
             else if (fits) this.#reloadInPlace(database, hidden, committedIn);
             else this.#swap(database, hidden, committedIn);
             this.#reloaded(database);
-            this.#readerView.install(database);
+            this.#view.install(database);
             this.describe(database);
             mode = 'load';
             reloads = wholeStream;

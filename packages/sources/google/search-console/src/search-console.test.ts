@@ -23,7 +23,8 @@ const databases = new Postgres({
 });
 
 const SITE = 'sc-domain:example.com';
-const RAW = 'google_search_console';
+// Readers find each copy by its name in marts.
+const MARTS = 'marts';
 
 type Warehouse = {
   sql: postgres.Sql;
@@ -335,15 +336,12 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
   };
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
@@ -426,18 +424,14 @@ test('a restated day replaces the loaded row, and the next read starts at the la
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const { destination, checkpoints, sql } = warehouse;
@@ -533,18 +527,14 @@ test('a re-read deletes the query rows and days Google stopped reporting, and ke
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const { destination, checkpoints, sql } = warehouse;
@@ -632,18 +622,14 @@ test('a re-read day keeps its unchanged query and page rows beside the ones that
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const { destination, checkpoints, sql } = warehouse;
@@ -726,18 +712,14 @@ test('a search type whose re-read day reports nothing loses that day’s total, 
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const { destination, checkpoints, sql } = warehouse;
@@ -792,10 +774,7 @@ test('a fractional click count is refused rather than stored', async () => {
   await using database = await databases.database();
   const warehouse = {
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
   };
   const { destination } = warehouse;
   const source = new SearchConsoleSource({
@@ -834,7 +813,6 @@ test('an analytics row whose keys do not match the requested dimensions fails th
   await using database = await databases.database();
   const destination = new PostgresDestination({
     url: database.connectionString,
-    schema: RAW,
   });
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -886,15 +864,12 @@ test('analytics pagination follows startRow until a short page', async () => {
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
   };
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
@@ -951,15 +926,12 @@ test('sitemaps convert int64 text and second-precision times', async () => {
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
   };
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
@@ -1033,13 +1005,12 @@ test('a sitemap that reports one content type twice loads both entries, keyed by
     postgres(database.connectionString, {
       max: 1,
       onnotice: () => {},
-      connection: { search_path: RAW },
+      connection: { search_path: MARTS },
     }),
     (sql) => sql.end(),
   );
   const destination = new PostgresDestination({
     url: database.connectionString,
-    schema: RAW,
   });
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -1056,7 +1027,6 @@ test('a sitemap that reports one content type twice loads both entries, keyed by
         destination,
         checkpoints: new PostgresCheckpointStore({
           url: database.connectionString,
-          schema: RAW,
         }),
         steps: [
           new Copy(source.sitemapContents, destination.table('contents'), {
@@ -1109,13 +1079,12 @@ test('a sitemaps list Google failed for one stream is asked for again by the nex
     postgres(database.connectionString, {
       max: 1,
       onnotice: () => {},
-      connection: { search_path: RAW },
+      connection: { search_path: MARTS },
     }),
     (client) => client.end(),
   );
   const destination = new PostgresDestination({
     url: database.connectionString,
-    schema: RAW,
   });
   // One stream at a time: the contents stream starts after the sitemaps
   // stream failed.
@@ -1227,18 +1196,14 @@ test('inspection covers every sitemap and search URL once, shared by all three s
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const { sql } = warehouse;
@@ -1310,15 +1275,12 @@ test(
         postgres(database.connectionString, {
           max: 1,
           onnotice: () => {},
-          connection: { search_path: RAW },
+          connection: { search_path: MARTS },
         }),
         (sql) => sql.end(),
       ),
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
     };
     const { destination, sql } = warehouse;
     const source = new SearchConsoleSource({
@@ -1392,15 +1354,12 @@ test('a feed report keeps an absent position as unknown, not as rank one', async
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
   };
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
@@ -1461,18 +1420,14 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const { destination, checkpoints, sql } = warehouse;
@@ -1602,18 +1557,14 @@ test('two properties share tables through one source without deleting each other
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const { destination, checkpoints, sql } = warehouse;
@@ -1698,15 +1649,12 @@ test('an unverified property is not offered as a readable site', async () => {
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
   };
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
@@ -1769,10 +1717,7 @@ test(
     await using database = await databases.database();
     const warehouse = {
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
     };
     const { destination } = warehouse;
     const source = new SearchConsoleSource({
@@ -1877,15 +1822,12 @@ test(
         postgres(database.connectionString, {
           max: 1,
           onnotice: () => {},
-          connection: { search_path: RAW },
+          connection: { search_path: MARTS },
         }),
         (sql) => sql.end(),
       ),
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
     };
     const { destination, sql } = warehouse;
     const source = new SearchConsoleSource({
@@ -1955,10 +1897,7 @@ test(
     await using database = await databases.database();
     const warehouse = {
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
     };
     const { destination } = warehouse;
     const source = new SearchConsoleSource({
@@ -2012,10 +1951,7 @@ test(
     await using database = await databases.database();
     const warehouse = {
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
     };
     const { destination } = warehouse;
     const source = new SearchConsoleSource({
@@ -2067,18 +2003,14 @@ test('an incremental sites copy deletes a property that is no longer listed', as
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const { destination, checkpoints, sql } = warehouse;
@@ -2160,18 +2092,14 @@ test('one source loads every property; a newly listed one backfills while the ot
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const { destination, checkpoints, sql } = warehouse;
@@ -2267,18 +2195,14 @@ test('a property without permission is reported by name while the others load an
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const { destination, checkpoints, sql } = warehouse;
@@ -2367,13 +2291,9 @@ test('a property Google refuses to the user is a config failure, and a quota ref
   await using database = await databases.database();
   const warehouse = {
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const { destination, checkpoints } = warehouse;
@@ -2459,13 +2379,9 @@ test('a grant Google no longer refreshes is a config failure, asked once', async
     await using database = await databases.database();
     const warehouse = {
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
       checkpoints: new PostgresCheckpointStore({
         url: database.connectionString,
-        schema: RAW,
       }),
     };
     const { destination, checkpoints } = warehouse;
@@ -2542,15 +2458,12 @@ test(
         postgres(database.connectionString, {
           max: 1,
           onnotice: () => {},
-          connection: { search_path: RAW },
+          connection: { search_path: MARTS },
         }),
         (sql) => sql.end(),
       ),
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
     };
     const { destination, sql } = warehouse;
     const source = new SearchConsoleSource({
@@ -2647,18 +2560,14 @@ test(
         postgres(database.connectionString, {
           max: 1,
           onnotice: () => {},
-          connection: { search_path: RAW },
+          connection: { search_path: MARTS },
         }),
         (sql) => sql.end(),
       ),
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
       checkpoints: new PostgresCheckpointStore({
         url: database.connectionString,
-        schema: RAW,
       }),
     };
     const { destination, checkpoints, sql } = warehouse;
@@ -2772,13 +2681,9 @@ test('sitemaps in every format feed the inspection universe', async () => {
   await using database = await databases.database();
   const warehouse = {
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
 
@@ -2867,18 +2772,14 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
         postgres(database.connectionString, {
           max: 1,
           onnotice: () => {},
-          connection: { search_path: RAW },
+          connection: { search_path: MARTS },
         }),
         (sql) => sql.end(),
       ),
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
       checkpoints: new PostgresCheckpointStore({
         url: database.connectionString,
-        schema: RAW,
       }),
     };
     const { destination, sql } = warehouse;
@@ -2942,10 +2843,7 @@ test(
     await using database = await databases.database();
     const warehouse = {
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
     };
     const { destination } = warehouse;
     const source = new SearchConsoleSource({
@@ -3002,15 +2900,12 @@ test('an RSS item without a link lists no page', async () => {
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
   };
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
@@ -3049,18 +2944,14 @@ test('a pass that cannot read a sitemap deletes no URL it may list, and the next
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   // The host builds a source for every run.
@@ -3110,13 +3001,9 @@ test('rolling refresh inspects new URLs first, then the stalest, and skips fresh
   await using database = await databases.database();
   const warehouse = {
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const refreshMs = 2000;
@@ -3172,18 +3059,14 @@ test('the daily quota stops inspection cleanly, and no inspection stream makes a
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const source = new SearchConsoleSource({
@@ -3227,18 +3110,14 @@ test('with inspections in flight the daily quota keeps what loaded, and a source
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   // The host builds a client and a source for every run.
@@ -3320,18 +3199,14 @@ test(
         postgres(database.connectionString, {
           max: 1,
           onnotice: () => {},
-          connection: { search_path: RAW },
+          connection: { search_path: MARTS },
         }),
         (sql) => sql.end(),
       ),
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
       checkpoints: new PostgresCheckpointStore({
         url: database.connectionString,
-        schema: RAW,
       }),
     };
 
@@ -3399,18 +3274,14 @@ test('the three inspection streams read together inspect each URL once', async (
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
 
@@ -3460,18 +3331,14 @@ test('inspections run concurrently, and a URL Google rejects becomes a row', asy
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
 
@@ -3513,13 +3380,9 @@ test('a server error during inspection fails the run and keeps none of its inspe
   await using database = await databases.database();
   const warehouse = {
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const run = () =>
@@ -3596,13 +3459,9 @@ test(
     await using database = await databases.database();
     const warehouse = {
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
       checkpoints: new PostgresCheckpointStore({
         url: database.connectionString,
-        schema: RAW,
       }),
     };
     const { destination, checkpoints } = warehouse;
@@ -3710,10 +3569,7 @@ test(
     await using database = await databases.database();
     const warehouse = {
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
     };
     const { destination } = warehouse;
     const source = new SearchConsoleSource({
@@ -3811,13 +3667,9 @@ test(
     await using database = await databases.database();
     const warehouse = {
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
       checkpoints: new PostgresCheckpointStore({
         url: database.connectionString,
-        schema: RAW,
       }),
     };
     const { destination, checkpoints } = warehouse;
@@ -3896,13 +3748,9 @@ test(
     await using database = await databases.database();
     const warehouse = {
       history: new PostgresSyncHistory({ url: database.connectionString }),
-      destination: new PostgresDestination({
-        url: database.connectionString,
-        schema: RAW,
-      }),
+      destination: new PostgresDestination({ url: database.connectionString }),
       checkpoints: new PostgresCheckpointStore({
         url: database.connectionString,
-        schema: RAW,
       }),
     };
     const { destination, checkpoints } = warehouse;

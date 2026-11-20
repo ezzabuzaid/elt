@@ -23,7 +23,7 @@ const tables = [
   `CREATE INDEX "_elt_sync_attempts_connector" ON ${attempts} ("connector", "id" DESC)`,
   `CREATE TABLE ${coverage} (
     "attempt_id" INTEGER NOT NULL REFERENCES ${attempts}("id"),
-    "stream" TEXT NOT NULL, "target_schema" TEXT NOT NULL, "target_table" TEXT NOT NULL,
+    "stream" TEXT NOT NULL, "target_table" TEXT NOT NULL,
     "sync_mode" TEXT NOT NULL, "destination_sync_mode" TEXT NOT NULL,
     "description" TEXT NOT NULL CHECK (trim("description") <> ''),
     "selection" TEXT NOT NULL CHECK (json_valid("selection")), ${status},
@@ -64,8 +64,8 @@ const currency = `"stream_success" AS (
 const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
   sync_attempts: `SELECT "id" AS "attempt_id", "connector", "source", "started_at", "completed_at", "status", "error", "failure_type" FROM ${attempts}`,
   extraction_coverage: `SELECT c."attempt_id", a."connector", a."source", a."started_at", a."completed_at",
-      c."stream", c."target_schema", c."target_table",
-      EXISTS (SELECT 1 FROM sqlite_schema t WHERE t."type" = 'table' AND lower(t."name") = lower(c."target_table")) AS "target_exists",
+      c."stream", c."target_table",
+      EXISTS (SELECT 1 FROM sqlite_schema t WHERE t."type" = 'view' AND lower(t."name") = lower(c."target_table")) AS "target_exists",
       c."sync_mode", c."destination_sync_mode", c."description", c."selection",
       c."status", c."written_count", c."deleted_count", c."failures"
       FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id"`,
@@ -81,7 +81,7 @@ const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
       FROM "latest" a LEFT JOIN "success" s ON s."connector" = a."connector" AND s."rank" = 1
       WHERE a."rank" = 1 ORDER BY a."connector"`,
   stream_status: `WITH ${currency}, "declared" AS (
-        SELECT a."connector", c."stream", c."target_schema", c."target_table", a."id", a."started_at", a."completed_at", c."status",
+        SELECT a."connector", c."stream", c."target_table", a."id", a."started_at", a."completed_at", c."status",
           row_number() OVER (PARTITION BY a."connector", c."stream" ORDER BY a."id" DESC) AS "rank"
         FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id"
       ), "success" AS (
@@ -89,7 +89,7 @@ const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
           row_number() OVER (PARTITION BY a."connector", c."stream" ORDER BY a."completed_at" DESC, a."id" DESC) AS "rank"
         FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id" WHERE c."status" = 'succeeded'
       )
-      SELECT d."connector", d."stream", d."target_schema", d."target_table",
+      SELECT d."connector", d."stream", d."target_table",
         d."id" AS "latest_attempt_id", d."started_at", d."completed_at", d."status",
         s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at", c."current_as_of"
       FROM "declared" d LEFT JOIN "success" s ON s."connector" = d."connector" AND s."stream" = d."stream" AND s."rank" = 1

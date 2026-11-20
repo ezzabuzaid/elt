@@ -7,7 +7,6 @@ import {
   positionsAfter,
 } from '@eltjs/elt';
 
-import { quote } from './identifier.ts';
 import { PostgresAppendWriter } from './postgres-append-writer.ts';
 import { type PostgresReading, readAsOf } from './postgres-as-of.ts';
 import type { PostgresColumn } from './postgres-column.ts';
@@ -16,16 +15,13 @@ import { PostgresDeduplicatingWriter } from './postgres-deduplicating-writer.ts'
 import { PostgresLoad } from './postgres-load.ts';
 import { postgresDatabase, readNumbering } from './postgres-numbering.ts';
 import { PostgresOverwriteWriter } from './postgres-overwrite-writer.ts';
-import {
-  PostgresSession,
-  connectionUrl,
-  schemaName,
-} from './postgres-session.ts';
+import { PostgresSession, connectionUrl } from './postgres-session.ts';
 import { PostgresTable } from './postgres-table.ts';
 import type { PostgresWriter } from './postgres-writer.ts';
 
-// Loads into one schema of one database. The URL carries credentials, so it
-// stays private and out of location(), which is persisted with checkpoints.
+// Loads into one database: each target is a reader view in marts over a raw
+// table in _warehouse (ADR 0010). The URL carries credentials, so it stays
+// private and out of location(), which is persisted with checkpoints.
 export class PostgresDestination extends Destination<PostgresTable> {
   readonly supportedDestinationSyncModes = Object.freeze([
     'overwrite',
@@ -33,7 +29,6 @@ export class PostgresDestination extends Destination<PostgresTable> {
     'append_dedup',
     'overwrite_dedup',
   ] as const);
-  readonly schema: string;
   // How long the history keeps a position readable: 30 days unless set, as
   // Delta Lake keeps its log. The destinations of one database share one
   // numbering, so the shortest retention among them decides.
@@ -42,18 +37,15 @@ export class PostgresDestination extends Destination<PostgresTable> {
 
   constructor({
     url,
-    schema,
     retention = Temporal.Duration.from({ days: 30 }),
   }: {
     url: string;
-    schema: string;
     retention?: Temporal.Duration;
   }) {
     super();
     if (retention.sign < 0)
       throw new RangeError(`Retention ${retention} must not be negative`);
     this.#url = connectionUrl(url);
-    this.schema = schemaName(schema);
     this.retention = retention;
     Object.freeze(this);
   }
@@ -65,7 +57,7 @@ export class PostgresDestination extends Destination<PostgresTable> {
   }
 
   override location(target: PostgresTable): string {
-    return `${quote(this.schema)}.${target.quotedName}`;
+    return target.raw;
   }
 
   // One connection for the whole run; each commit is its own transaction,
@@ -87,9 +79,9 @@ export class PostgresDestination extends Destination<PostgresTable> {
   }
 
   // The positions of the database after a position, ascending, or all of
-  // them; each one, `${epoch}:${number}`, names a commit where no pass of any
-  // schema of the database is half read. A position of another epoch, or past
-  // the newest commit, is expired.
+  // them; each one, `${epoch}:${number}`, names a commit where no pass of the
+  // database is half read. A position of another epoch, or past the newest
+  // commit, is expired.
   async positions(
     after?: string,
   ): Promise<readonly string[] | { readonly expired: string }> {
@@ -133,7 +125,6 @@ export class PostgresDestination extends Destination<PostgresTable> {
         return new PostgresDeduplicatingWriter(
           configuration,
           this.#url,
-          this.schema,
           table,
           this.retention,
         );
@@ -141,7 +132,6 @@ export class PostgresDestination extends Destination<PostgresTable> {
         return new PostgresAppendWriter(
           configuration,
           this.#url,
-          this.schema,
           table,
           this.retention,
         );
@@ -149,7 +139,6 @@ export class PostgresDestination extends Destination<PostgresTable> {
         return new PostgresOverwriteWriter(
           configuration,
           this.#url,
-          this.schema,
           table,
           this.retention,
         );

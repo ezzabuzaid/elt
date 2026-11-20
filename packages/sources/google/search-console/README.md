@@ -18,7 +18,6 @@ import { GOOGLE_SEARCH_CONSOLE_SCOPE, googleSession } from '@eltjs/google-auth';
 import { SearchConsoleSource } from '@eltjs/source-google-search-console/search-console-source';
 
 const url = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
-const schema = 'google_search_console';
 
 const source = new SearchConsoleSource({
   requester: await googleSession({
@@ -33,7 +32,7 @@ const source = new SearchConsoleSource({
   }),
   siteUrls: ['sc-domain:example.com', 'sc-domain:example.org'],
 });
-const destination = new PostgresDestination({ url, schema });
+const destination = new PostgresDestination({ url });
 const { streams } = await source.discover();
 
 await new Pipeline({
@@ -43,17 +42,14 @@ await new Pipeline({
       name: 'google-search-console',
       source,
       destination,
-      checkpoints: new PostgresCheckpointStore({ url, schema }),
+      checkpoints: new PostgresCheckpointStore({ url }),
       steps: streams.map(
         (stream) =>
           new Copy(
             stream,
-            destination
-              .table(`raw_${stream.name}`)
-              .withReaderView(
-                'marts',
-                `search_console_${stream.name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`,
-              ),
+            destination.table(
+              `search_console_${stream.name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`,
+            ),
             {
               id: `search-console:${stream.name}`,
               syncMode: 'incremental',
@@ -66,7 +62,7 @@ await new Pipeline({
 }).run();
 ```
 
-The Google app (`apps/google/src/main.ts`) runs this program for `sc-domain:ezz.sh`. Each copy loads `google_search_console.raw_<stream>`, and readers query the reader view `marts.search_console_<snake_stream>`. See [Reader views](#reader-views).
+The Google app (`apps/google/src/main.ts`) runs this program for `sc-domain:ezz.sh`. Each copy loads the raw table `_warehouse.raw_search_console_<snake_stream>`, and readers query the reader view `marts.search_console_<snake_stream>`. See [Reader views](#reader-views).
 
 ## Options
 
@@ -226,7 +222,7 @@ When the watch signal aborts, the probe request and each `Retry-After` wait stop
 
 The Google app loads into the Postgres warehouse database. The layout of that database, its roles and privileges, the sync history and the catalog are in [elt-postgresql](../../../destinations/postgresql/README.md).
 
-Each copy keeps a reader view of its raw table in `marts`, with the name of the source and the stream. The name of each Search Console reader view is `search_console_<snake_stream>`, for example `marts.search_console_search_analytics_daily`. The view has the columns of `google_search_console.raw_<stream>` and `loaded_at`. The comment of each column is the description of the field. The host makes the copies and the reader views. The source has no Postgres code. See [ADR 0005](./docs/adr/0005-the-host-makes-the-copies-and-the-reader-views.md).
+Each copy keeps a reader view in `marts` over its raw table in `_warehouse`, with the name of the source and the stream. The name of each Search Console reader view is `search_console_<snake_stream>`, for example `marts.search_console_search_analytics_daily`. The view has the columns of the stream, from `_warehouse.raw_search_console_<snake_stream>`, and `loaded_at`. The comment of each column is the description of the field. The host makes the copies and the reader views. The source has no Postgres code. See [ADR 0005](./docs/adr/0005-the-host-makes-the-copies-and-the-reader-views.md).
 
 The reader views show the rows as Google reports them, with `ctr` and `position` for each row. Do not average these values over rows. Use the formulas in [Each grain is its own stream](#each-grain-is-its-own-stream). The dates are calendar days in Pacific Time. `settled` is false for a day that Google can still restate.
 

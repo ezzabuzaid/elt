@@ -12,7 +12,12 @@ import {
 import { busyTimeout } from './open-destination.ts';
 import { derivedStatus } from './sqlite-derived-status.ts';
 import { histories } from './sqlite-history.ts';
-import { identifiers, internalColumns, quote } from './sqlite-identifiers.ts';
+import {
+  identifiers,
+  internalColumns,
+  quote,
+  rawTable,
+} from './sqlite-identifiers.ts';
 import { committedAt, readNumbering, sqliteFile } from './sqlite-loads.ts';
 import { attempts, checks, coverage } from './sqlite-sync-history-schema.ts';
 
@@ -142,10 +147,11 @@ function shadow(database: DatabaseSync, number: number, past: boolean): void {
 }
 
 /**
- * The SELECT that reads one target of the file as of a position, for a reader
- * that copies the target, such as into a database of its own: the current
- * rows that the commit of the position had made, and the history rows that it
- * had made and a later commit replaced, with the columns of the stream and
+ * The SELECT that reads one target of the file as of a position, by the name
+ * of its reader view, such as `prices`, for a reader that copies the target,
+ * such as into a database of its own: the current rows of its raw table that
+ * the commit of the position had made, and the history rows that it had made
+ * and a later commit replaced, with the columns of the stream and
  * `loaded_at`, or of a computed dataset, and none of the internal columns
  * that only the destination reads. `schema` names the file where
  * `database` attached it, main by default. Run the SELECT in the read
@@ -155,17 +161,18 @@ function shadow(database: DatabaseSync, number: number, past: boolean): void {
  */
 export function asOfSelect(
   database: DatabaseSync,
-  target: string,
+  name: string,
   position: string,
   { schema = 'main' }: { readonly schema?: string } = {},
 ): string | { readonly expired: string } {
   const asked = readable(database, position, schema);
   if ('expired' in asked) return asked;
+  const raw = identifiers.key(rawTable(name));
   const version = versioned(database, schema).find(
-    (version) => identifiers.key(version.target) === identifiers.key(target),
+    (version) => identifiers.key(version.target) === raw,
   );
   if (version === undefined)
-    throw new TypeError(`${quote(target)} is not a target of ${schema}`);
+    throw new TypeError(`${quote(name)} is not a target of ${schema}`);
   return selectAsOf(database, version, asked.number, schema);
 }
 

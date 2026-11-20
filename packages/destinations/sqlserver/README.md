@@ -2,7 +2,7 @@
 
 > **Design on paper, accepted by Ezz on 2026-11-19.** No code, `package.json` or `tsconfig` exists yet. This destination is built last, after the extraction of the shared rules, the open defects and the gaps ([ADR 0012](./docs/adr/0012-the-rules-that-the-destinations-share-move-into-elt-before-the-third-destination.md)). Backlog #4736.
 
-The SQL Server destination of elt. It loads each table of a connection into one schema of a SQL Server or Azure SQL database, with typed columns, and it does not block readers while it loads. It keeps a reader view of each table in a different schema, such as `marts`, and it keeps the views and computed datasets that the pipeline derives. A computed dataset can keep a vector column as a native `VECTOR(n)`, so Azure SQL searches it with `VECTOR_DISTANCE` or a DiskANN index. The checkpoint store and the sync history keep their data in the same database.
+The SQL Server destination of elt. It loads each stream of a connection into a SQL Server or Azure SQL database, with typed columns, and it does not block readers while it loads. Each target is a reader view in `marts`, which the host names, over a raw table in `_warehouse`. It also keeps the views and computed datasets that the pipeline derives. A computed dataset can keep a vector column as a native `VECTOR(n)`, so Azure SQL searches it with `VECTOR_DISTANCE` or a DiskANN index. The checkpoint store and the sync history keep their data in the same database.
 
 The destination gives the contract of [elt-postgresql](../postgresql/README.md): the same declarations, the same columns for readers, the same positions, history, retention and sync history. A host changes its destination and nothing else. Where SQL Server is different, this README says how and why ([ADR 0001](./docs/adr/0001-the-sql-server-destination-takes-the-declarations-of-elt-postgresql.md)).
 
@@ -34,7 +34,7 @@ const login = {
   user: 'elt_writer',
   password: '…',
 };
-const warehouse = new SqlServerDestination({ login, schema: 'sharepoint' });
+const warehouse = new SqlServerDestination({ login });
 
 await new Pipeline({
   history: new SqlServerSyncHistory({ login }),
@@ -43,33 +43,25 @@ await new Pipeline({
       name: 'sharepoint',
       source: sharepoint,
       destination: warehouse,
-      checkpoints: new SqlServerCheckpointStore({
-        login,
-        schema: 'sharepoint',
-      }),
+      checkpoints: new SqlServerCheckpointStore({ login }),
       steps: [
-        new Copy(
-          sharepoint.driveItems,
-          warehouse
-            .table('raw_drive_items')
-            .withReaderView('marts', 'drive_items'),
-          {
-            id: 'sharepoint:drive-items',
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-          },
-        ),
+        new Copy(sharepoint.driveItems, warehouse.table('drive_items'), {
+          id: 'sharepoint:drive-items',
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+        }),
       ],
     }),
   ],
 }).run();
 ```
 
-- `SqlServerDestination({ login, schema })` loads each table of a connection into one schema. The first load makes the schema.
+- `SqlServerDestination({ login })` loads into the database of the login. Each relation that readers query is a view in `marts`, and each table of elt is in `_warehouse`, as in Postgres ([elt-postgresql ADR 0010](../postgresql/docs/adr/0010-readers-look-in-marts-and-elt-keeps-its-tables-in-warehouse.md)). The first load makes the two schemas.
+- `warehouse.table('drive_items')` names the reader view `marts.drive_items`, the reader name. The destination keeps the rows of the target in the raw table `_warehouse.raw_drive_items`.
 - `login` is the parts of a login (`server`, `port`, `database`, `user`, `password`, `trustServerCertificate`) or an ADO.NET connection string, the two forms of `@eltjs/sdk-microsoft-sql-server`. The destination opens its sessions through the `SqlServerDatabase` of the SDK, which gets write sessions for it.
-- The login holds credentials, so `location()`, which checkpoints keep, names only the schema and the table: `[schema].[table]`. A getter gives the login to the views and computed datasets of the destination, so JSON and `util.inspect` do not show it.
+- The login holds credentials, so `location()`, which checkpoints keep, names only the raw table. A getter gives the login to the views and computed datasets of the destination, so JSON and `util.inspect` do not show it.
 - The destination checks the declarations with no connection to the database.
-- A schema name has at most 128 characters, and it must not be `sys`, `INFORMATION_SCHEMA` or `_warehouse`.
+- A reader name follows the [naming rule](../../elt/README.md#names), with the 128 characters of a SQL Server name. `table(name)` refuses a reader name that the sync history publishes in `marts`, such as `catalog`.
 - The database must be SQL Server 2025 (17.x), Azure SQL Database or Azure SQL Managed Instance with the always-up-to-date policy, because the destination uses the `VECTOR` and `JSON` types. It must keep row versions for readers: `READ_COMMITTED_SNAPSHOT` and `ALLOW_SNAPSHOT_ISOLATION` on ([ADR 0010](./docs/adr/0010-a-reading-sets-its-position-in-the-session-context-and-reads-row-versions.md)). The first load checks both, and fails with the failure type `config` and the `ALTER DATABASE` statement that turns them on.
 - The destination holds one connection of its own for each load, because a `#stage` table belongs to one connection. It does not take connections from a shared pool.
 
@@ -91,22 +83,21 @@ type SqlServerLogin =
 class SqlServerDestination extends Destination<SqlServerTable> {
   constructor(options: {
     login: SqlServerLogin;
-    schema: string;
     retention?: Temporal.Duration; // 30 days unless set
   });
-  readonly schema: string;
   readonly retention: Temporal.Duration;
   table(
-    name: string,
+    name: string, // the reader name: marts.<name> over _warehouse.raw_<name>
     columns?: (c: SqlServerColumns) => SqlServerColumn[],
   ): SqlServerTable;
-  location(target: SqlServerTable): string; // '[schema].[table]'
+  location(target: SqlServerTable): string; // 'raw_<name>'
   positions(after?: string): Promise<readonly string[] | { expired: string }>;
   reading(position?: string): Promise<SqlServerReading | { expired: string }>;
 }
 
 class SqlServerTable {
-  withReaderView(schema: string, name: string): SqlServerTable;
+  readonly name: string; // the reader name
+  readonly raw: string; // raw_<name>
 }
 
 class View {
@@ -132,7 +123,7 @@ class ComputedDataset<Input, Output> {
 }
 
 class SqlServerCheckpointStore {
-  constructor(options: { login: SqlServerLogin; schema: string });
+  constructor(options: { login: SqlServerLogin });
 }
 
 class SqlServerSyncHistory {
@@ -152,7 +143,7 @@ function readPassStatus(login: SqlServerLogin): Promise<PassStatus>;
 
 | Call                                      | What happens                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `new SqlServerDestination(…)`             | Checks the schema name and the retention. No I/O                                                                                                                                                                                                                                                                                                                                                                  |
+| `new SqlServerDestination(…)`             | Checks the retention. No I/O                                                                                                                                                                                                                                                                                                                                                                                      |
 | `pipeline.run()` → `load()`               | Opens one connection. Checks the engine and the row versioning of the database. Opens a load in `_warehouse._elt_loads`                                                                                                                                                                                                                                                                                           |
 | `prepare(…)`                              | Checks `_elt_writers` and the stored table. Makes a `#stage` table on the connection of the load. Publishes nothing                                                                                                                                                                                                                                                                                               |
 | each operation                            | Goes to the stage in batches of at most 1,000 rows or 16 MiB, as one `NVARCHAR(MAX)` JSON parameter that `OPENJSON … WITH (…)` reads and casts for each column ([ADR 0011](./docs/adr/0011-a-batch-travels-as-one-json-parameter-that-openjson-reads.md))                                                                                                                                                         |
@@ -221,7 +212,7 @@ new ComputedDataset({
 });
 ```
 
-- The raw table `marts.raw_staff_passage_vectors` has the column `vector VECTOR(1536)`. A value is the JSON text of `toSql` of `@zukhruf/vectors/sqlserver`, with 9 significant digits, which keeps each float32 value; the commit casts it with `CAST(… AS VECTOR(1536))`.
+- The raw table `_warehouse.raw_staff_passage_vectors` has the column `vector VECTOR(1536)`. A value is the JSON text of `toSql` of `@zukhruf/vectors/sqlserver`, with 9 significant digits, which keeps each float32 value; the commit casts it with `CAST(… AS VECTOR(1536))`.
 - A rule column of more than 1,998 dimensions fails the constructor of `ComputedDataset` with a `TypeError` that names the column and the limit of a float32 `VECTOR`.
 - `afterCreate` gives T-SQL that runs in the transaction that makes the raw table, each time the dataset makes it ([ADR 0008](./docs/adr/0008-a-computed-dataset-runs-the-sql-of-the-host-each-time-it-makes-its-raw-table.md)). Thus a vector index stays when a changed declaration makes the table again. An index made on an empty table starts as an exact index, and Azure SQL builds its graph after the rows come (`@zukhruf/vectors`, "SQL Server: what the probes found").
 - The search is the host's own SQL, with every feature of Azure SQL:
@@ -236,7 +227,7 @@ ORDER BY r.distance;
 
 ## File bytes in the database
 
-As in Postgres: parsed content is `NVARCHAR(MAX)`. The column of an original file holds a `UNIQUEIDENTIFIER`. Its bytes are in a table `_elt_files_<hash>` for each column, as `(file UNIQUEIDENTIFIER, n BIGINT, bytes VARBINARY(MAX))` chunks of up to 4 MiB. The chunks of a load wait in a `#` table of the connection until the commit of their rows moves them. The rules of removal, history and clear are those of [elt-postgresql](../postgresql/README.md#file-bytes-in-the-database).
+As in Postgres: parsed content is `NVARCHAR(MAX)`. The column of an original file holds a `UNIQUEIDENTIFIER`. Its bytes are in a table `_warehouse._elt_files_<hash>` for each column, which readers read through the view `marts._elt_files_<hash>`, as `(file UNIQUEIDENTIFIER, n BIGINT, bytes VARBINARY(MAX))` chunks of up to 4 MiB. The chunks of a load wait in a `#` table of the connection until the commit of their rows moves them. The rules of removal, history and clear are those of [elt-postgresql](../postgresql/README.md#file-bytes-in-the-database).
 
 ## Descriptions
 
@@ -246,11 +237,11 @@ The descriptions of the source become `MS_Description` extended properties of ea
 
 - As in Postgres, a load takes no schema lock, and no transaction stays open between commits. Each commit is one short transaction.
 - Readers never wait for a load: with `READ_COMMITTED_SNAPSHOT` on, a reader reads the last committed version of each row. A `DELETE` or a `MERGE` that escalates to a table lock does not block them.
-- The first commits of the tables of one schema take turns for the DDL that they share, with a transaction lock of `sp_getapplock` on the schema ([ADR 0009](./docs/adr/0009-each-lock-is-an-application-lock-of-sql-server.md)).
+- Before the commits of a load, the writer makes the tables that the targets of one database share in `_warehouse`, when they are not there, in a transaction of its own that holds a transaction lock of `sp_getapplock` on `_warehouse`, as in Postgres. No commit holds that lock. The publication and the withdrawal of a view take the lock of `marts` ([ADR 0009](./docs/adr/0009-each-lock-is-an-application-lock-of-sql-server.md)).
 - A commit merges the stage of one stream into its table with one `MERGE` on `_elt_key_hash`. The result is the same as when the operations apply one at a time, as in Postgres. The `OUTPUT` of the `MERGE` gives each row that it updated or deleted, and the same statement inserts them into the history ([ADR 0005](./docs/adr/0005-a-commit-is-one-merge-whose-output-keeps-the-replaced-rows-in-the-history.md)).
 - An overwrite replaces the rows by difference with `DELETE`, not `TRUNCATE`: `TRUNCATE` takes a schema modification lock, and readers wait for it. A reset deletes its scope in the same way.
 - A row is told apart by `_elt_row`, its identity number, where Postgres uses `ctid` and SQLite uses `_rowid_` ([ADR 0003](./docs/adr/0003-a-raw-table-numbers-its-rows-with-an-identity-column.md)).
-- The writer of each table is in `<schema>._elt_writers`, by the [target ownership](../../elt/README.md#target-ownership) rule.
+- The writer of each table is in `_warehouse._elt_writers`, by the [target ownership](../../elt/README.md#target-ownership) rule.
 
 Shape changes:
 
@@ -261,7 +252,7 @@ Shape changes:
 
 ## Commit numbers and positions
 
-One numbering orders the commits of every schema of the database, in the schema `_warehouse`, as in Postgres. The tables and the rules are those of [elt-postgresql](../postgresql/README.md#commit-numbers-and-positions): `_elt_commits`, `_elt_loads`, `_elt_epoch` with `min_valid` and `expired_by`, positions `<epoch>:<number>`, the history of each table, the widening rule, retention, and the clear that forgets.
+One numbering orders the commits of the whole database, in the schema `_warehouse`, as in Postgres. The tables and the rules are those of [elt-postgresql](../postgresql/README.md#commit-numbers-and-positions): `_elt_commits`, `_elt_loads`, `_elt_epoch` with `min_valid` and `expired_by`, positions `<epoch>:<number>`, the history of each table, the widening rule, retention, and the clear that forgets.
 
 How SQL Server is different:
 
@@ -277,19 +268,19 @@ A reading as of a position:
 
 ## Checkpoints
 
-`SqlServerCheckpointStore({ login, schema })` keeps the checkpoints in `<schema>._elt_checkpoints`, beside the data, as in Postgres. `binding` and `state` are `NVARCHAR(MAX)`, which keeps each UTF-16 code unit, also `\u0000` and lone surrogates; the `JSON` type would refuse such text. `DROP SCHEMA` after its tables resets the data and the checkpoints together. The store holds one session lock for each copy `id` through `SqlServerStore` of `@zukhruf/mutex/sqlserver`, as `SQLiteCheckpointStore` holds one through `SqliteStore` of `@zukhruf/mutex/sqlite`. A run that finds one ID in use fails with `Checkpoint <id> is in use by another run`. The server releases a session lock when the session ends.
+`SqlServerCheckpointStore({ login })` keeps the checkpoints of every connection in `_warehouse._elt_checkpoints`, beside the data, as in Postgres. The key is the id of the copy, so the copy ids of every connection of the database must be different. `binding` and `state` are `NVARCHAR(MAX)`, which keeps each UTF-16 code unit, also `\u0000` and lone surrogates; the `JSON` type would refuse such text. The store holds one session lock for each copy `id` through `SqlServerStore` of `@zukhruf/mutex/sqlserver`, as `SQLiteCheckpointStore` holds one through `SqliteStore` of `@zukhruf/mutex/sqlite`. A run that finds one ID in use fails with `Checkpoint <id> is in use by another run`. The server releases a session lock when the session ends.
 
 ## Reader views
 
-As in [elt-postgresql](../postgresql/README.md#reader-views). `committed_in`, `_elt_row`, `_elt_row_hash`, `_elt_key_hash` and `replaced_in` are internal, and the reader view does not show them.
+As in [elt-postgresql](../postgresql/README.md#reader-views): `table(name)` names the view `marts.<name>` over `_warehouse.raw_<name>`. `committed_in`, `_elt_row`, `_elt_row_hash`, `_elt_key_hash` and `replaced_in` are internal, and the reader view does not show them.
 
 ## Declare a view
 
-As in [elt-postgresql](../postgresql/README.md#declare-a-view). The view lives in the schema of `into`, and the bare names of its SQL must be found in that schema, as in Postgres. SQL Server resolves a bare name inside a view through the schema of the view and then `dbo`, for each user; the default schema of the user takes no part ([probe of 2026-11-20](./docs/adr/0006-a-change-of-a-table-refreshes-the-views-over-it.md#probe-2026-11-20-a-bare-table-name-inside-a-view)). Name a relation of another schema with its schema, such as `sharepoint.raw_drive_items`. A missing relation is error 208 (`Invalid object name`), and the view waits only when the pipeline makes that relation. A refresh that changes nothing compares the stored definition (`OBJECT_DEFINITION`) with the new text, and leaves the view as it was.
+As in [elt-postgresql](../postgresql/README.md#declare-a-view). The view lives in `marts`, and the bare names of its SQL are found in `marts`, as in Postgres. Thus the SQL reads the reader views. SQL Server resolves a bare name inside a view through the schema of the view and then `dbo`, for each user; the default schema of the user takes no part ([probe of 2026-11-20](./docs/adr/0006-a-change-of-a-table-refreshes-the-views-over-it.md#probe-2026-11-20-a-bare-table-name-inside-a-view)). Name a relation of another schema with its schema, such as `_warehouse.raw_drive_items`. A missing relation is error 208 (`Invalid object name`), and the view waits only when the pipeline makes that relation. A refresh that changes nothing compares the stored definition (`OBJECT_DEFINITION`) with the new text, and leaves the view as it was.
 
 ## Declare a computed dataset
 
-As in [elt-postgresql](../postgresql/README.md#declare-a-computed-dataset). A computed dataset keeps one output row for each key, in the table `raw_<name>` in the schema of `into`, beside its history. Readers query the view `<name>`. The columns are the key, `input_hash`, `rule`, `status`, `error`, and the columns of the rule. A `text` column of a rule is `NVARCHAR(MAX)`, an `integer` column is `BIGINT`, a `blob` column is `VARBINARY(MAX)`, and a `vector(n)` column is `VECTOR(n)`. The key is `NVARCHAR(MAX)`, and the table is unique on the hash of the key ([ADR 0004](./docs/adr/0004-a-key-is-indexed-by-its-hash.md)). The refresh, its commits, its positions and its status follow elt-postgresql.
+As in [elt-postgresql](../postgresql/README.md#declare-a-computed-dataset). A computed dataset keeps one output row for each key, in the table `_warehouse.raw_<name>`, beside its history. Readers query the view `marts.<name>`. The columns are the key, `input_hash`, `rule`, `status`, `error`, and the columns of the rule. A `text` column of a rule is `NVARCHAR(MAX)`, an `integer` column is `BIGINT`, a `blob` column is `VARBINARY(MAX)`, and a `vector(n)` column is `VECTOR(n)`. The key is `NVARCHAR(MAX)`, and the table is unique on the hash of the key ([ADR 0004](./docs/adr/0004-a-key-is-indexed-by-its-hash.md)). The refresh, its commits, its positions and its status follow elt-postgresql.
 
 ## When something fails
 
@@ -309,13 +300,13 @@ As in [elt-postgresql](../postgresql/README.md#derived-status), from elt ADR 002
 
 ## Errors
 
-| Error                            | When                                                                                                                                      | The caller's next step                                    |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `TypeError`                      | A declaration that the destination cannot hold, such as a schema name of more than 128 characters, or a `vector(n)` column with n > 1,998 | Change the declaration                                    |
-| `RangeError`                     | A negative retention                                                                                                                      | Give a retention of zero or more                          |
-| `TargetOwnedError` of elt        | A second writer of a table                                                                                                                | Clear the target with the copy that owns it               |
-| `DerivedDatasetError` of elt     | A dataset failure, such as SQL that SQL Server refuses                                                                                    | Fix the SQL of the view                                   |
-| a failure with the type `config` | No row versioning for readers, an engine older than SQL Server 2025, a login that the server refuses                                      | Run the `ALTER DATABASE` of the message, or fix the login |
+| Error                            | When                                                                                                                                                        | The caller's next step                                    |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `TypeError`                      | A declaration that the destination cannot hold, such as a reader name of a relation that the sync history publishes, or a `vector(n)` column with n > 1,998 | Change the declaration                                    |
+| `RangeError`                     | A negative retention                                                                                                                                        | Give a retention of zero or more                          |
+| `TargetOwnedError` of elt        | A second writer of a table                                                                                                                                  | Clear the target with the copy that owns it               |
+| `DerivedDatasetError` of elt     | A dataset failure, such as SQL that SQL Server refuses                                                                                                      | Fix the SQL of the view                                   |
+| a failure with the type `config` | No row versioning for readers, an engine older than SQL Server 2025, a login that the server refuses                                                        | Run the `ALTER DATABASE` of the message, or fix the login |
 
 ## The same concepts in other systems
 

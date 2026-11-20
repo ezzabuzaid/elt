@@ -21,7 +21,8 @@ const databases = new Postgres({
   environment: process.env,
 });
 
-const RAW = 'google_health';
+// Readers find each stream by its name in marts.
+const MARTS = 'marts';
 
 type Warehouse = {
   sql: postgres.Sql;
@@ -299,18 +300,14 @@ test('every stream loads into a table of its own, and a type the account has no 
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   using _google = google({ profile });
@@ -321,9 +318,9 @@ test('every stream loads into a table of its own, and a type the account has no 
 
   const tables = await warehouse.sql`
     SELECT table_name FROM information_schema.tables
-    WHERE table_schema = ${RAW} AND table_name NOT LIKE '\\_elt%'`;
+    WHERE table_schema = '_warehouse' AND table_name LIKE 'raw\\_%'`;
   assert.deepEqual(
-    tables.map(({ table_name }) => table_name).sort(),
+    tables.map(({ table_name }) => table_name.slice('raw_'.length)).sort(),
     streams.map(({ name }) => name).sort(),
   );
   // Every data type Google lets a user read has a stream, as do the child
@@ -349,18 +346,14 @@ test('a point deleted or changed upstream is gone or changed after the next run,
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const account: Account = {
@@ -438,18 +431,14 @@ test('an Apple Watch point relayed from Apple Health and a Fitbit point at the s
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const sampleTime = {
@@ -503,18 +492,14 @@ test('a daily type and the rollups start on the day the user joined, and the rol
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   using _google = google({
@@ -562,18 +547,14 @@ test('a day that lists one heart rate zone twice loads both entries, each at its
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   // The Health API documents caloriesInHeartRateZones only as a list of the
@@ -615,13 +596,9 @@ test('an account with no Google Health profile fails the run as a config failure
   await using database = await databases.database();
   const warehouse = {
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   using _google = google({
@@ -662,13 +639,9 @@ test('a rate limit that outlasts the retries fails the run as a system failure, 
   await using database = await databases.database();
   const warehouse = {
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   using _google = google({
@@ -716,18 +689,14 @@ test('a measured instant to the microsecond, a session instant to the nanosecond
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const workout = exercise('e1', 'Morning walk');
@@ -792,18 +761,14 @@ test('a stream whose read fails keeps the rows its last run loaded, while the ot
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const account: Account = {
@@ -899,18 +864,14 @@ test("each exercise's TCX export loads beside it, and an exercise Google keeps n
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   const tcx = '<?xml version="1.0"?><TrainingCenterDatabase/>';
@@ -948,7 +909,7 @@ test(
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (client) => client.end(),
     );
@@ -988,7 +949,6 @@ test(
     const { streams } = await source.discover();
     const destination = new PostgresDestination({
       url: database.connectionString,
-      schema: RAW,
     });
     const controller = new AbortController();
     const probes = () =>
@@ -1022,7 +982,6 @@ test(
           destination,
           checkpoints: new PostgresCheckpointStore({
             url: database.connectionString,
-            schema: RAW,
           }),
           steps: streams.map(
             (stream) =>
@@ -1066,18 +1025,14 @@ test('a value Google could not compute, which it sends as the string NaN, loads 
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   // As live on 2026-10-15: a night before the baseline exists.
@@ -1119,18 +1074,14 @@ test('a read Google failed for one stream is asked for again by the next stream 
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   // The first read of sleep, which sleep and its stages share, fails. So do
@@ -1202,18 +1153,14 @@ test('a child list comes from the same read as its parent, though Google answers
       postgres(database.connectionString, {
         max: 1,
         onnotice: () => {},
-        connection: { search_path: RAW },
+        connection: { search_path: MARTS },
       }),
       (sql) => sql.end(),
     ),
     history: new PostgresSyncHistory({ url: database.connectionString }),
-    destination: new PostgresDestination({
-      url: database.connectionString,
-      schema: RAW,
-    }),
+    destination: new PostgresDestination({ url: database.connectionString }),
     checkpoints: new PostgresCheckpointStore({
       url: database.connectionString,
-      schema: RAW,
     }),
   };
   // Each read of sleep gets a different night: a child stream that read on

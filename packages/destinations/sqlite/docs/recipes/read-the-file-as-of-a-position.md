@@ -9,7 +9,7 @@
 1. Run a pass. Keep a position from `destination.positions()`.
 2. Run a later pass that changes a row.
 3. Read the file as of the position with `destination.reading(position)`, and as it is now with `destination.reading()`.
-4. To copy a target as of the position into a different database, attach the SQLite file there and run the `SELECT` that `asOfSelect(database, table, position, { schema })` gives for its raw table, `raw_prices` for the reader view `prices`, in one read transaction.
+4. To copy a target as of the position into a different database, attach the SQLite file there and run the `SELECT` that `asOfSelect(database, name, position, { schema })` gives for its reader view, such as `prices`, in one read transaction.
 5. After the retention, a commit deletes the history that only positions before the window read. A reading of such a position gives `{ expired }`.
 
 ## The program
@@ -151,7 +151,7 @@ console.log(
 using copy = open(':memory:');
 copy.prepare('ATTACH DATABASE ? AS "shop"').run(destination.path);
 copy.exec('BEGIN');
-const select = asOfSelect(copy, 'raw_prices', monday, { schema: 'shop' });
+const select = asOfSelect(copy, 'prices', monday, { schema: 'shop' });
 if (typeof select !== 'string') throw new Error(select.expired);
 copy.exec(`CREATE TEMP TABLE "monday" AS ${select}`);
 copy.exec('COMMIT');
@@ -178,11 +178,11 @@ node read-as-of-a-position.ts
 The output (the epoch is a new UUID in each run):
 
 ```
-as of ed8749d5-04bf-443c-9e97-8456af01c7ea:1 [
+as of c66ef71a-32e8-4ade-bbbe-c2220e937705:1 [
   [Object: null prototype] { sku: 'milk', price: 120 },
   [Object: null prototype] { sku: 'tea', price: 300 }
 ]
-now ed8749d5-04bf-443c-9e97-8456af01c7ea:2 [
+now c66ef71a-32e8-4ade-bbbe-c2220e937705:2 [
   [Object: null prototype] { sku: 'milk', price: 120 },
   [Object: null prototype] { sku: 'tea', price: 350 }
 ]
@@ -191,11 +191,11 @@ copied [
   [Object: null prototype] { sku: 'tea', price: 300 }
 ]
 positions [
-  'ed8749d5-04bf-443c-9e97-8456af01c7ea:2',
-  'ed8749d5-04bf-443c-9e97-8456af01c7ea:3'
+  'c66ef71a-32e8-4ade-bbbe-c2220e937705:2',
+  'c66ef71a-32e8-4ade-bbbe-c2220e937705:3'
 ]
 {
-  expired: 'Position ed8749d5-04bf-443c-9e97-8456af01c7ea:1 is older than the retention of this file: its history keeps no row that only a reading before commit 2 reads'
+  expired: 'Position c66ef71a-32e8-4ade-bbbe-c2220e937705:1 is older than the retention of this file: its history keeps no row that only a reading before commit 2 reads'
 }
 ```
 

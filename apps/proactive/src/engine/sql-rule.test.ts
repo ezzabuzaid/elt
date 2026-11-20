@@ -88,20 +88,14 @@ class Received extends Source {
 // The Messages import in a warehouse: each load gives marts.messages_messages
 // every message so far, and a rule reads it as of two loads.
 function inbox(url: string) {
-  const destination = new PostgresDestination({ url, schema: 'raw' });
-  const checkpoints = new PostgresCheckpointStore({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
+  const checkpoints = new PostgresCheckpointStore({ url });
   const history = new PostgresSyncHistory({ url });
-  const copy = new Copy(
-    messages,
-    destination
-      .table('messages_messages')
-      .withReaderView('marts', 'messages_messages'),
-    {
-      id: 'messages',
-      syncMode: 'full_refresh',
-      destinationSyncMode: 'overwrite',
-    },
-  );
+  const copy = new Copy(messages, destination.table('messages_messages'), {
+    id: 'messages',
+    syncMode: 'full_refresh',
+    destinationSyncMode: 'overwrite',
+  });
   const received: Text[] = [];
   return {
     // Loads every message so far, plus these. Resolves to the position of

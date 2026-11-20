@@ -313,10 +313,10 @@ The state belongs to the orchestration, not to the destination, as in Airbyte. T
 - A store gives a session that holds the lock of each copy for the full pass. A `save` of the session is durable when it resolves.
 - With each checkpoint, the store saves whether a reload is open ([resets](#resets)).
 
-| Store                                      | Package                                                            |
-| ------------------------------------------ | ------------------------------------------------------------------ |
-| `SQLiteCheckpointStore({ path })`          | [elt-sqlite](../destinations/sqlite/README.md#checkpoints)         |
-| `PostgresCheckpointStore({ url, schema })` | [elt-postgresql](../destinations/postgresql/README.md#checkpoints) |
+| Store                              | Package                                                            |
+| ---------------------------------- | ------------------------------------------------------------------ |
+| `SQLiteCheckpointStore({ path })`  | [elt-sqlite](../destinations/sqlite/README.md#checkpoints)         |
+| `PostgresCheckpointStore({ url })` | [elt-postgresql](../destinations/postgresql/README.md#checkpoints) |
 
 ## Snapshot streams
 
@@ -873,7 +873,7 @@ import {
 } from '@eltjs/elt-postgresql';
 
 const url = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
-const warehouse = new PostgresDestination({ url, schema: 'apple_notes' });
+const warehouse = new PostgresDestination({ url });
 
 const history = new PostgresSyncHistory({ url });
 
@@ -885,9 +885,9 @@ const recorded = new Pipeline({
       name: 'apple-notes',
       source: notes,
       destination: warehouse,
-      checkpoints: new PostgresCheckpointStore({ url, schema: 'apple_notes' }),
+      checkpoints: new PostgresCheckpointStore({ url }),
       steps: [
-        new Copy(notes.notes, warehouse.table('raw_notes'), {
+        new Copy(notes.notes, warehouse.table('notes'), {
           id: 'apple-notes:notes',
           syncMode: 'incremental',
           destinationSyncMode: 'append_dedup',

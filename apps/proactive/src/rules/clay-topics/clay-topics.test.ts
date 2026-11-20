@@ -129,20 +129,16 @@ type Row = readonly [
 // marts.slack_thread_replies every message posted so far, and a rule reads
 // them as of two loads.
 function workspace(url: string) {
-  const destination = new PostgresDestination({ url, schema: 'raw' });
-  const checkpoints = new PostgresCheckpointStore({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
+  const checkpoints = new PostgresCheckpointStore({ url });
   const history = new PostgresSyncHistory({ url });
   const copies = [messages, replies].map(
     (stream) =>
-      new Copy(
-        stream,
-        destination.table(stream.name).withReaderView('marts', stream.name),
-        {
-          id: stream.name,
-          syncMode: 'full_refresh',
-          destinationSyncMode: 'overwrite',
-        },
-      ),
+      new Copy(stream, destination.table(stream.name), {
+        id: stream.name,
+        syncMode: 'full_refresh',
+        destinationSyncMode: 'overwrite',
+      }),
   );
   const postedMessages: SlackMessage[] = [];
   const postedReplies: SlackMessage[] = [];

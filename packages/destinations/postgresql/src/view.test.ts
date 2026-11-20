@@ -25,7 +25,7 @@ import {
 
 const databases = new Postgres({ environment: process.env });
 
-// Records with ids, loaded into raw.raw_records and read through
+// Records with ids, loaded into _warehouse.raw_records and read through
 // marts.records; it fails every read while failing is set.
 class Records extends Source {
   readonly identity: string = 'records';
@@ -74,13 +74,13 @@ class Records extends Source {
 }
 
 // The pipeline of one copy of the records, and the derived datasets that
-// derive gives over the destination of marts.
+// derive gives over its destination.
 function recordsPipeline(
   url: string,
   source: Records,
   derive: (marts: PostgresDestination) => DerivedDataset<PostgresTable>[],
 ) {
-  const raw = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   return new Pipeline({
     clock: globalThis,
     history: new PostgresSyncHistory({ url }),
@@ -88,16 +88,11 @@ function recordsPipeline(
       new Connection({
         name: 'records',
         source,
-        destination: raw,
-        steps: [
-          new Copy(
-            source.records,
-            raw.table('raw_records').withReaderView('marts', 'records'),
-          ),
-        ],
+        destination,
+        steps: [new Copy(source.records, destination.table('records'))],
       }),
     ],
-    derived: derive(new PostgresDestination({ url, schema: 'marts' })),
+    derived: derive(destination),
   });
 }
 
@@ -197,7 +192,7 @@ test('a view whose input has not loaded yet stays absent, and appears with the r
   const sql = client(url, clients);
   const source = new Records(['r1']);
   const pipeline = recordsPipeline(url, source, (marts) => [
-    count(marts, 'SELECT count(*)::int AS n FROM raw.raw_records'),
+    count(marts, 'SELECT count(*)::int AS n FROM _warehouse.raw_records'),
   ]);
   source.failing = true;
 
@@ -233,12 +228,12 @@ test('marts.derived_status says that a view waits while its input has not loaded
   const counting = (query: string) =>
     recordsPipeline(url, source, (marts) => [count(marts, query)]);
   source.failing = true;
-  await counting('SELECT count(*)::int AS n FROM raw.raw_records')
+  await counting('SELECT count(*)::int AS n FROM _warehouse.raw_records')
     .run()
     .catch(() => undefined);
   const waiting = await status();
   source.failing = false;
-  await counting('SELECT count(*)::int AS n FROM raw.raw_records').run();
+  await counting('SELECT count(*)::int AS n FROM _warehouse.raw_records').run();
   const current = await status();
 
   await counting('SELECT count(*)::int AS n FROM recordz')
@@ -317,8 +312,8 @@ class Inputs extends Records {
   override readonly identity = 'inputs';
 }
 
-// A pipeline whose connection records loads raw.raw_records, read through
-// marts.records, whose connection inputs loads raw.raw_dataset_inputs, read
+// A pipeline whose connection records loads _warehouse.raw_records, read through
+// marts.records, whose connection inputs loads _warehouse.raw_dataset_inputs, read
 // through marts.dataset_inputs, and whose views in marts are candidates and
 // judgment_inputs, which reads candidates.
 function judgedPipeline(
@@ -327,8 +322,7 @@ function judgedPipeline(
   candidates: { sql: string; columns: Readonly<Record<string, string>> },
   judged: { sql: string; columns: Readonly<Record<string, string>> },
 ) {
-  const raw = new PostgresDestination({ url, schema: 'raw' });
-  const marts = new PostgresDestination({ url, schema: 'marts' });
+  const marts = new PostgresDestination({ url });
   return new Pipeline({
     clock: globalThis,
     history: new PostgresSyncHistory({ url }),
@@ -336,25 +330,15 @@ function judgedPipeline(
       new Connection({
         name: 'records',
         source: sources.records,
-        destination: raw,
-        steps: [
-          new Copy(
-            sources.records.records,
-            raw.table('raw_records').withReaderView('marts', 'records'),
-          ),
-        ],
+        destination: marts,
+        steps: [new Copy(sources.records.records, marts.table('records'))],
       }),
       new Connection({
         name: 'inputs',
         source: sources.inputs,
-        destination: raw,
+        destination: marts,
         steps: [
-          new Copy(
-            sources.inputs.records,
-            raw
-              .table('raw_dataset_inputs')
-              .withReaderView('marts', 'dataset_inputs'),
-          ),
+          new Copy(sources.inputs.records, marts.table('dataset_inputs')),
         ],
       }),
     ],

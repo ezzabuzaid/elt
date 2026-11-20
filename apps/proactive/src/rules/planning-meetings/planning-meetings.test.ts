@@ -235,20 +235,16 @@ class Imports extends Source {
 // gives each marts table every row given so far, and a rule reads it as of
 // two loads.
 function imports(url: string) {
-  const destination = new PostgresDestination({ url, schema: 'raw' });
-  const checkpoints = new PostgresCheckpointStore({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
+  const checkpoints = new PostgresCheckpointStore({ url });
   const history = new PostgresSyncHistory({ url });
   const copies = tables.map((stream) => ({
     stream,
-    copy: new Copy(
-      stream,
-      destination.table(stream.name).withReaderView('marts', stream.name),
-      {
-        id: stream.name,
-        syncMode: 'full_refresh',
-        destinationSyncMode: 'overwrite',
-      },
-    ),
+    copy: new Copy(stream, destination.table(stream.name), {
+      id: stream.name,
+      syncMode: 'full_refresh',
+      destinationSyncMode: 'overwrite',
+    }),
   }));
   const rows: (readonly [Stream, object])[] = [];
   return {

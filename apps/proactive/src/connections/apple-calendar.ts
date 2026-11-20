@@ -23,19 +23,13 @@ const source = new AppleCalendarSource({
   startAt: new Date().toISOString(),
   endAt: endAt.toISOString(),
 });
-const destination = new PostgresDestination({
-  url: warehouseUrl,
-  schema: 'apple_calendar',
-});
+const destination = new PostgresDestination({ url: warehouseUrl });
 
 export default new Connection({
   name: 'apple-calendar',
   source,
   destination,
-  checkpoints: new PostgresCheckpointStore({
-    url: warehouseUrl,
-    schema: 'apple_calendar',
-  }),
+  checkpoints: new PostgresCheckpointStore({ url: warehouseUrl }),
   steps: [source.calendars, source.events, source.attendees].map(
     martsCopy(destination, 'calendar'),
   ),

@@ -167,6 +167,47 @@ test('a table named notes makes the reader view notes over the raw table raw_not
   );
 });
 
+test('stream_status and extraction_coverage name the reader view of each copy, tell that it exists, and have no target_schema', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-names-');
+  const source = new Notes({ type: 'string', description: 'Note title.' });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'notes.sqlite'),
+  });
+
+  await new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'notes',
+        source,
+        destination,
+        steps: [new Copy(source.notes, destination.table('notes'))],
+      }),
+    ],
+  }).run();
+
+  using database = open(destination.path, { readOnly: true });
+  const rows = (query: string) =>
+    database
+      .prepare(query)
+      .all()
+      .map((row) => ({ ...row }));
+  assert.deepEqual(rows('SELECT stream, target_table FROM stream_status'), [
+    { stream: 'notes', target_table: 'notes' },
+  ]);
+  assert.deepEqual(
+    rows('SELECT stream, target_table, target_exists FROM extraction_coverage'),
+    [{ stream: 'notes', target_table: 'notes', target_exists: 1 }],
+  );
+  assert.deepEqual(
+    rows(
+      `SELECT m."name" FROM sqlite_schema m, pragma_table_info(m."name") p WHERE m."type" IN ('table', 'view') AND p."name" = 'target_schema'`,
+    ),
+    [],
+  );
+});
+
 // The names of the tables and views of a file that name notes or lengths.
 function namedRelations(path: string) {
   using database = open(path, { readOnly: true });

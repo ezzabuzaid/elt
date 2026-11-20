@@ -146,11 +146,9 @@ const sample = (id: string, value: number) => ({
   data: { id, value },
 });
 
-// The target of a stream in schema raw, which readers read as marts.<name>.
+// The target of a stream, which readers read as marts.<name>.
 const target = (destination: PostgresDestination, name: string) =>
-  destination
-    .table(name)
-    .withReaderView('marts', `${destination.schema}_${name}`);
+  destination.table(name);
 
 // An incremental copy that keeps the newest version of each note.
 const incremental = (stream: Stream, destination: PostgresDestination) =>
@@ -182,11 +180,11 @@ function client(url: string, stack: AsyncDisposableStack): postgres.Sql {
   );
 }
 
-// A schema of the database, its checkpoints, and a pass of one copy of the
-// stream with the steps a test scripts for it.
-function warehouse(url: string, stream = notes(), schema = 'raw') {
-  const destination = new PostgresDestination({ url, schema });
-  const checkpoints = new PostgresCheckpointStore({ url, schema });
+// A destination of the database, its checkpoints, and a pass of one copy of
+// the stream with the steps a test scripts for it.
+function warehouse(url: string, stream = notes()) {
+  const destination = new PostgresDestination({ url });
+  const checkpoints = new PostgresCheckpointStore({ url });
   const connection = (
     steps: Readonly<Record<string, readonly Step[]>>,
     copy: Copy<PostgresTable> = incremental(stream, destination),
@@ -197,7 +195,7 @@ function warehouse(url: string, stream = notes(), schema = 'raw') {
       history: new PostgresSyncHistory({ url }),
       connections: [
         new Connection({
-          name: schema,
+          name: stream.name,
           source: new Scripted([copy.from], steps, partitions),
           destination,
           checkpoints,
@@ -226,17 +224,23 @@ async function lastCommit(sql: postgres.Sql) {
   return last;
 }
 
-// The rows that commits replaced or removed from the one target of schema,
-// as its history keeps them.
-async function replaced(sql: postgres.Sql, schema = 'raw') {
-  const histories = await sql<{ name: string }[]>`
-    SELECT relname AS name FROM pg_class
-    WHERE relnamespace = to_regnamespace(${schema}) AND relkind = 'r' AND relname LIKE '\_elt\_history\_%'`;
-  assert.equal(histories.length, 1, `${schema} has one history`);
+// The names of the histories of the targets of the database.
+async function histories(sql: postgres.Sql) {
   return (
-    await sql.unsafe(
-      `SELECT * FROM "${schema}"."${histories[0]?.name}" ORDER BY 1`,
-    )
+    await sql<{ name: string }[]>`
+      SELECT relname AS name FROM pg_class
+      WHERE relnamespace = '_warehouse'::regnamespace AND relkind = 'r' AND relname LIKE '\_elt\_history\_%'
+      ORDER BY 1`
+  ).map(({ name }) => name);
+}
+
+// The rows that a history keeps, or the history of the one target of the
+// database.
+async function replaced(sql: postgres.Sql, history?: string) {
+  const names = history === undefined ? await histories(sql) : [history];
+  assert.equal(names.length, 1, 'the database has one history');
+  return (
+    await sql.unsafe(`SELECT * FROM _warehouse."${names[0]}" ORDER BY 1`)
   ).map((row) => ({ ...row }));
 }
 
@@ -272,14 +276,14 @@ test('a reading of a commit inside a pass is refused, as it would show half of t
   const end = await newest(destination);
   // The commit is internal, so only the raw table shows it; this test proves it.
   const [written] =
-    await sql`SELECT committed_in FROM raw.notes WHERE id = 'n2'`;
+    await sql`SELECT committed_in FROM _warehouse.raw_notes WHERE id = 'n2'`;
   const inside = `${before.split(':')[0]}:${written?.committed_in}`;
 
   assert.notEqual(inside, end);
   await assert.rejects(destination.reading(inside), TypeError);
   await assert.rejects(destination.reading('not a position'), TypeError);
   assert.deepEqual(
-    await asOf(destination, 'SELECT id FROM marts.raw_notes ORDER BY id', end),
+    await asOf(destination, 'SELECT id FROM marts.notes ORDER BY id', end),
     [{ id: 'n1' }, { id: 'n2' }, { id: 'n3' }],
   );
 });
@@ -293,7 +297,7 @@ test('a reading with no position while a pass waits after its first commit reads
     notes: [note('notes', 'n1', 1), checkpoint('notes', 1)],
   }).run();
   const before = await newest(destination);
-  const rows = await asOf(destination, 'SELECT * FROM marts.raw_notes');
+  const rows = await asOf(destination, 'SELECT * FROM marts.notes');
   const wait = latch();
   const second = connection({
     notes: [
@@ -305,12 +309,12 @@ test('a reading with no position while a pass waits after its first commit reads
   }).run();
   await wait.reached;
   try {
-    const half = await sql`SELECT id, body FROM marts.raw_notes ORDER BY id`;
+    const half = await sql`SELECT id, body FROM marts.notes ORDER BY id`;
     const reading = await destination.reading();
     if ('expired' in reading) assert.fail(reading.expired);
     await using _reading = reading;
 
-    const during = await reading.sql`SELECT * FROM marts.raw_notes ORDER BY id`;
+    const during = await reading.sql`SELECT * FROM marts.notes ORDER BY id`;
 
     assert.deepEqual(
       half.map((row) => ({ ...row })),
@@ -349,7 +353,7 @@ test('a reading sees none of the commits made after it opened, and disposing it 
     await connection({
       notes: [note('notes', 'n1', 2, 'changed'), note('notes', 'n2', 1)],
     }).run();
-    read = await reading.sql`SELECT id, body FROM marts.raw_notes`;
+    read = await reading.sql`SELECT id, body FROM marts.notes`;
     assert.equal((await sessions()).length, 1);
   } finally {
     await reading[Symbol.asyncDispose]();
@@ -383,7 +387,7 @@ test('a session that sets no position reads the reader view as it is now, with n
     ],
   }).run();
 
-  const plain = await sql`SELECT id, body FROM marts.raw_notes ORDER BY id`;
+  const plain = await sql`SELECT id, body FROM marts.notes ORDER BY id`;
 
   assert.equal((await replaced(sql)).length, 2);
   assert.deepEqual(
@@ -391,7 +395,7 @@ test('a session that sets no position reads the reader view as it is now, with n
     [{ id: 'n1', body: 'changed' }],
   );
   assert.deepEqual(
-    await asOf(destination, 'SELECT id, body FROM marts.raw_notes'),
+    await asOf(destination, 'SELECT id, body FROM marts.notes'),
     [{ id: 'n1', body: 'changed' }],
   );
 });
@@ -412,7 +416,7 @@ test("a reader view shows the stream's fields and loaded_at, now and in a readin
   if ('expired' in reading) assert.fail(reading.expired);
   await using _reading = reading;
   const columns = async (read: postgres.Sql) =>
-    (await read`SELECT * FROM marts.raw_notes`).columns.map(({ name }) => name);
+    (await read`SELECT * FROM marts.notes`).columns.map(({ name }) => name);
 
   assert.deepEqual(
     { now: await columns(sql), before: await columns(reading.sql) },
@@ -439,7 +443,7 @@ test('a reading of a position of an earlier numbering, or past the newest commit
   const old = await newest(destination);
   const [epoch, number] = old.split(':');
   const past = await destination.reading(`${epoch}:${Number(number) + 1}`);
-  await sql`DROP SCHEMA raw, marts, _warehouse CASCADE`;
+  await sql`DROP SCHEMA marts, _warehouse CASCADE`;
   await run();
 
   const remade = await destination.reading(old);
@@ -493,10 +497,7 @@ test('a deduplicated row whose values changed reads as it was at the position, f
   }).run();
   const before = await newest(destination);
   const first = await lastCommit(sql);
-  const rows = await asOf(
-    destination,
-    'SELECT * FROM marts.raw_notes ORDER BY id',
-  );
+  const rows = await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id');
   await delay(5);
   await connection({
     notes: [note('notes', 'n1', 2, 'second'), checkpoint('notes', 2)],
@@ -506,7 +507,7 @@ test('a deduplicated row whose values changed reads as it was at the position, f
   if ('expired' in reading) assert.fail(reading.expired);
   await using _reading = reading;
 
-  const read = await reading.sql`SELECT * FROM marts.raw_notes ORDER BY id`;
+  const read = await reading.sql`SELECT * FROM marts.notes ORDER BY id`;
 
   assert.equal(reading.position, before);
   assert.ok(
@@ -522,7 +523,7 @@ test('a deduplicated row whose values changed reads as it was at the position, f
   // The commit is internal, so only the raw table shows it; this test proves it.
   assert.deepEqual(
     [
-      ...(await sql`SELECT body, committed_in, loaded_at FROM raw.notes WHERE id = 'n1'`),
+      ...(await sql`SELECT body, committed_in, loaded_at FROM _warehouse.raw_notes WHERE id = 'n1'`),
     ],
     [
       {
@@ -561,10 +562,7 @@ test('a deduplicated row that a later pass loads with the same values keeps its 
     replacing,
   ).run();
   const before = await newest(destination);
-  const rows = await asOf(
-    destination,
-    'SELECT * FROM marts.raw_notes ORDER BY id',
-  );
+  const rows = await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id');
   await delay(5);
 
   await connection(
@@ -579,7 +577,7 @@ test('a deduplicated row that a later pass loads with the same values keeps its 
   ).run();
 
   assert.deepEqual(
-    await asOf(destination, "SELECT * FROM marts.raw_notes WHERE id = 'n1'"),
+    await asOf(destination, "SELECT * FROM marts.notes WHERE id = 'n1'"),
     rows.filter(({ id }) => id === 'n1'),
   );
   assert.deepEqual(
@@ -587,11 +585,7 @@ test('a deduplicated row that a later pass loads with the same values keeps its 
     [{ id: 'n2', body: 'n2' }],
   );
   assert.deepEqual(
-    await asOf(
-      destination,
-      'SELECT * FROM marts.raw_notes ORDER BY id',
-      before,
-    ),
+    await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id', before),
     rows,
   );
 });
@@ -605,10 +599,7 @@ test('a record that the cursor guard refuses leaves no history and changes nothi
     notes: [note('notes', 'n1', 2, 'newer'), checkpoint('notes', 1)],
   }).run();
   const before = await newest(destination);
-  const rows = await asOf(
-    destination,
-    'SELECT * FROM marts.raw_notes ORDER BY id',
-  );
+  const rows = await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id');
 
   await connection({
     notes: [
@@ -620,15 +611,11 @@ test('a record that the cursor guard refuses leaves no history and changes nothi
 
   assert.deepEqual(await replaced(sql), []);
   assert.deepEqual(
-    await asOf(
-      destination,
-      'SELECT * FROM marts.raw_notes ORDER BY id',
-      before,
-    ),
+    await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id', before),
     rows,
   );
   assert.deepEqual(
-    await asOf(destination, "SELECT * FROM marts.raw_notes WHERE id = 'n1'"),
+    await asOf(destination, "SELECT * FROM marts.notes WHERE id = 'n1'"),
     rows,
   );
 });
@@ -644,10 +631,7 @@ test('a row that a later pass deletes reads as of the position before it', async
     ],
   }).run();
   const before = await newest(destination);
-  const rows = await asOf(
-    destination,
-    'SELECT * FROM marts.raw_notes ORDER BY id',
-  );
+  const rows = await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id');
 
   await connection({
     notes: [
@@ -656,15 +640,11 @@ test('a row that a later pass deletes reads as of the position before it', async
     ],
   }).run();
 
-  assert.deepEqual(await asOf(destination, 'SELECT id FROM marts.raw_notes'), [
+  assert.deepEqual(await asOf(destination, 'SELECT id FROM marts.notes'), [
     { id: 'n2' },
   ]);
   assert.deepEqual(
-    await asOf(
-      destination,
-      'SELECT * FROM marts.raw_notes ORDER BY id',
-      before,
-    ),
+    await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id', before),
     rows,
   );
 });
@@ -706,10 +686,7 @@ test('the rows of a partition that a later pass resets read as of the position b
     'owned:bob': [row('b1', 'bob'), checkpoint('owned', 1)],
   });
   const before = await newest(destination);
-  const rows = await asOf(
-    destination,
-    'SELECT * FROM marts.raw_owned ORDER BY id',
-  );
+  const rows = await asOf(destination, 'SELECT * FROM marts.owned ORDER BY id');
 
   await pass({
     'owned:ann': [
@@ -721,15 +698,11 @@ test('the rows of a partition that a later pass resets read as of the position b
   });
 
   assert.deepEqual(
-    await asOf(destination, 'SELECT id FROM marts.raw_owned ORDER BY id'),
+    await asOf(destination, 'SELECT id FROM marts.owned ORDER BY id'),
     [{ id: 'a2' }, { id: 'b1' }],
   );
   assert.deepEqual(
-    await asOf(
-      destination,
-      'SELECT * FROM marts.raw_owned ORDER BY id',
-      before,
-    ),
+    await asOf(destination, 'SELECT * FROM marts.owned ORDER BY id', before),
     rows,
   );
 });
@@ -767,7 +740,7 @@ test('a clear empties the target at a position of its own and forgets the rows i
     WHERE c.relname LIKE '\_elt\_history\_%'`;
 
   assert.notEqual(cleared.position, before);
-  assert.deepEqual([...(await cleared.sql`SELECT * FROM marts.raw_notes`)], []);
+  assert.deepEqual([...(await cleared.sql`SELECT * FROM marts.notes`)], []);
   assert.match(earlier.expired, /a clear that forgot the rows of its table/);
   assert.deepEqual(
     [...(await sql.unsafe(`SELECT count(*)::int AS n FROM ${history?.name}`))],
@@ -786,22 +759,15 @@ test('the rows that a later overwrite replaced read as of the position before it
     overwrite,
   ).run();
   const before = await newest(destination);
-  const rows = await asOf(
-    destination,
-    'SELECT * FROM marts.raw_notes ORDER BY id',
-  );
+  const rows = await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id');
 
   await connection({ notes: [note('notes', 'n3', 1)] }, overwrite).run();
 
-  assert.deepEqual(await asOf(destination, 'SELECT id FROM marts.raw_notes'), [
+  assert.deepEqual(await asOf(destination, 'SELECT id FROM marts.notes'), [
     { id: 'n3' },
   ]);
   assert.deepEqual(
-    await asOf(
-      destination,
-      'SELECT * FROM marts.raw_notes ORDER BY id',
-      before,
-    ),
+    await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id', before),
     rows,
   );
 });
@@ -821,10 +787,7 @@ test('an overwrite that brings the same rows again keeps no history and leaves e
     ).run();
   await pass();
   const before = await newest(destination);
-  const rows = await asOf(
-    destination,
-    'SELECT * FROM marts.raw_notes ORDER BY id',
-  );
+  const rows = await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id');
   await delay(5);
 
   await pass();
@@ -832,7 +795,7 @@ test('an overwrite that brings the same rows again keeps no history and leaves e
   assert.notEqual(await newest(destination), before);
   assert.deepEqual(await replaced(sql), []);
   assert.deepEqual(
-    await asOf(destination, 'SELECT * FROM marts.raw_notes ORDER BY id'),
+    await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id'),
     rows,
   );
 });
@@ -853,7 +816,7 @@ test('a keyless overwrite that sends one of two identical rows again keeps only 
   const before = await newest(destination);
   const rows = await asOf(
     destination,
-    'SELECT * FROM marts.raw_readings ORDER BY id',
+    'SELECT * FROM marts.readings ORDER BY id',
   );
   await delay(5);
 
@@ -867,15 +830,11 @@ test('a keyless overwrite that sends one of two identical rows again keeps only 
     [{ id: 'r1', value: '1' }],
   );
   assert.deepEqual(
-    await asOf(destination, 'SELECT * FROM marts.raw_readings ORDER BY id'),
+    await asOf(destination, 'SELECT * FROM marts.readings ORDER BY id'),
     rows.slice(1),
   );
   assert.deepEqual(
-    await asOf(
-      destination,
-      'SELECT * FROM marts.raw_readings ORDER BY id',
-      before,
-    ),
+    await asOf(destination, 'SELECT * FROM marts.readings ORDER BY id', before),
     rows,
   );
 });
@@ -897,10 +856,7 @@ test('an overwrite_dedup that changes one row of two keeps only its old values i
     overwrite,
   ).run();
   const before = await newest(destination);
-  const rows = await asOf(
-    destination,
-    'SELECT * FROM marts.raw_notes ORDER BY id',
-  );
+  const rows = await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id');
   await delay(5);
 
   await connection(
@@ -913,15 +869,11 @@ test('an overwrite_dedup that changes one row of two keeps only its old values i
     [{ id: 'n2', body: 'n2' }],
   );
   assert.deepEqual(
-    await asOf(destination, "SELECT * FROM marts.raw_notes WHERE id = 'n1'"),
+    await asOf(destination, "SELECT * FROM marts.notes WHERE id = 'n1'"),
     rows.slice(0, 1),
   );
   assert.deepEqual(
-    await asOf(
-      destination,
-      'SELECT * FROM marts.raw_notes ORDER BY id',
-      before,
-    ),
+    await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id', before),
     rows,
   );
 });
@@ -939,10 +891,7 @@ test('the rows that a later reload swapped out read as of the position before it
     ],
   }).run();
   const before = await newest(destination);
-  const rows = await asOf(
-    destination,
-    'SELECT * FROM marts.raw_notes ORDER BY id',
-  );
+  const rows = await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id');
 
   await connection({
     notes: [
@@ -956,7 +905,7 @@ test('the rows that a later reload swapped out read as of the position before it
     ],
   }).run();
 
-  assert.deepEqual(await asOf(destination, 'SELECT id FROM marts.raw_notes'), [
+  assert.deepEqual(await asOf(destination, 'SELECT id FROM marts.notes'), [
     { id: 'n4' },
   ]);
   assert.deepEqual(
@@ -964,11 +913,7 @@ test('the rows that a later reload swapped out read as of the position before it
     ['n1', 'n2'],
   );
   assert.deepEqual(
-    await asOf(
-      destination,
-      'SELECT * FROM marts.raw_notes ORDER BY id',
-      before,
-    ),
+    await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id', before),
     rows,
   );
 });
@@ -986,12 +931,9 @@ test('a reload that sends a row again with the same values leaves it in the targ
     ],
   }).run();
   const before = await newest(destination);
-  const rows = await asOf(
-    destination,
-    'SELECT * FROM marts.raw_notes ORDER BY id',
-  );
+  const rows = await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id');
   const [first] = await sql<{ committed_in: number; loaded_at: Date }[]>`
-    SELECT committed_in, loaded_at FROM raw.notes WHERE id = 'n1'`;
+    SELECT committed_in, loaded_at FROM _warehouse.raw_notes WHERE id = 'n1'`;
 
   await connection({
     notes: [
@@ -1005,7 +947,7 @@ test('a reload that sends a row again with the same values leaves it in the targ
   const reload = await lastCommit(sql);
   assert.deepEqual(
     (
-      await sql`SELECT id, committed_in, loaded_at FROM raw.notes ORDER BY id`
+      await sql`SELECT id, committed_in, loaded_at FROM _warehouse.raw_notes ORDER BY id`
     ).map((row) => ({ ...row })),
     [
       { id: 'n1', ...first },
@@ -1017,11 +959,7 @@ test('a reload that sends a row again with the same values leaves it in the targ
     ['n2'],
   );
   assert.deepEqual(
-    await asOf(
-      destination,
-      'SELECT * FROM marts.raw_notes ORDER BY id',
-      before,
-    ),
+    await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id', before),
     rows,
   );
 });
@@ -1038,9 +976,9 @@ test('a reload of a table that keeps its shape changes it in place, so an index 
       checkpoint('notes', 1),
     ],
   }).run();
-  await sql`CREATE INDEX notes_by_body ON raw.notes (body)`;
+  await sql`CREATE INDEX notes_by_body ON _warehouse.raw_notes (body)`;
   await sql`CREATE SCHEMA mine`;
-  await sql`CREATE VIEW mine.bodies AS SELECT id, body FROM raw.notes`;
+  await sql`CREATE VIEW mine.bodies AS SELECT id, body FROM _warehouse.raw_notes`;
 
   await connection({
     notes: [
@@ -1053,7 +991,7 @@ test('a reload of a table that keeps its shape changes it in place, so an index 
 
   assert.deepEqual(
     (
-      await sql`SELECT indexname FROM pg_indexes WHERE schemaname = 'raw' AND indexname = 'notes_by_body'`
+      await sql`SELECT indexname FROM pg_indexes WHERE schemaname = '_warehouse' AND indexname = 'notes_by_body'`
     ).map((row) => ({ ...row })),
     [{ indexname: 'notes_by_body' }],
   );
@@ -1067,7 +1005,7 @@ test('a reload of a table that keeps its shape changes it in place, so an index 
     ],
   );
   assert.deepEqual(
-    await asOf(destination, 'SELECT id FROM marts.raw_notes ORDER BY id'),
+    await asOf(destination, 'SELECT id FROM marts.notes ORDER BY id'),
     [{ id: 'n1' }, { id: 'n3' }],
   );
 });
@@ -1086,10 +1024,7 @@ test('a stream whose field changes type, or that drops a field, evolves the tabl
     ],
   }).run();
   const before = await newest(destination);
-  const rows = await asOf(
-    destination,
-    'SELECT * FROM marts.raw_notes ORDER BY id',
-  );
+  const rows = await asOf(destination, 'SELECT * FROM marts.notes ORDER BY id');
   // The version is now text, and the body is gone.
   const evolved = new Stream({
     name: 'notes',
@@ -1117,7 +1052,7 @@ test('a stream whose field changes type, or that drops a field, evolves the tabl
     })
     .run();
   const changed = await sql`
-    SELECT id, committed_in FROM raw.notes ORDER BY id`;
+    SELECT id, committed_in FROM _warehouse.raw_notes ORDER BY id`;
 
   assert.equal(
     changed[0]?.committed_in,
@@ -1136,10 +1071,7 @@ test('a stream whose field changes type, or that drops a field, evolves the tabl
     ],
   );
   assert.deepEqual(
-    await asOf(
-      destination,
-      'SELECT id, version FROM marts.raw_notes ORDER BY id',
-    ),
+    await asOf(destination, 'SELECT id, version FROM marts.notes ORDER BY id'),
     [
       { id: 'n1', version: '1' },
       { id: 'n2', version: '1' },
@@ -1149,7 +1081,7 @@ test('a stream whose field changes type, or that drops a field, evolves the tabl
   assert.deepEqual(
     await asOf(
       destination,
-      'SELECT id, version, loaded_at FROM marts.raw_notes ORDER BY id',
+      'SELECT id, version, loaded_at FROM marts.notes ORDER BY id',
       before,
     ),
     rows.map(({ id, version, loaded_at }) => ({
@@ -1168,7 +1100,7 @@ test('views over the reader view, in marts and in another schema, read as of the
   await connection({
     notes: [note('notes', 'n1', 1), checkpoint('notes', 1)],
   }).run();
-  await sql`CREATE VIEW marts.note_bodies AS SELECT id, body FROM marts.raw_notes`;
+  await sql`CREATE VIEW marts.note_bodies AS SELECT id, body FROM marts.notes`;
   await sql`CREATE SCHEMA reports`;
   await sql`CREATE VIEW reports.long_notes AS SELECT id FROM marts.note_bodies WHERE length(body) > 1`;
   const before = await newest(destination);
@@ -1203,39 +1135,50 @@ test('views over the reader view, in marts and in another schema, read as of the
   );
 });
 
-test('one table name in two schemas keeps a history of its own in each, and each reads as of the position', async () => {
+test('two targets keep a history of their own each, and each reads as of the position', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const sql = client(database.connectionString, clients);
   const url = database.connectionString;
-  const a = warehouse(url, notes(), 'a');
-  const b = warehouse(url, notes(), 'b');
+  const a = warehouse(url, notes('a_notes'));
+  const b = warehouse(url, notes('b_notes'));
   await a
-    .connection({ notes: [note('notes', 'a1', 1), checkpoint('notes', 1)] })
+    .connection({
+      a_notes: [note('a_notes', 'a1', 1), checkpoint('a_notes', 1)],
+    })
     .run();
   await b
-    .connection({ notes: [note('notes', 'b1', 1), checkpoint('notes', 1)] })
+    .connection({
+      b_notes: [note('b_notes', 'b1', 1), checkpoint('b_notes', 1)],
+    })
     .run();
   const before = await newest(a.destination);
 
   await a
     .connection({
-      notes: [note('notes', 'a1', 2, 'changed a'), checkpoint('notes', 2)],
+      a_notes: [
+        note('a_notes', 'a1', 2, 'changed a'),
+        checkpoint('a_notes', 2),
+      ],
     })
     .run();
   await b
     .connection({
-      notes: [note('notes', 'b1', 2, 'changed b'), checkpoint('notes', 2)],
+      b_notes: [
+        note('b_notes', 'b1', 2, 'changed b'),
+        checkpoint('b_notes', 2),
+      ],
     })
     .run();
 
-  assert.deepEqual(
-    (await replaced(sql, 'a')).map(({ id }) => id),
-    ['a1'],
+  const kept = await Promise.all(
+    (await histories(sql)).map(async (history) =>
+      (await replaced(sql, history)).map(({ id }) => id),
+    ),
   );
   assert.deepEqual(
-    (await replaced(sql, 'b')).map(({ id }) => id),
-    ['b1'],
+    kept.sort((x, y) => String(x[0]).localeCompare(String(y[0]))),
+    [['a1'], ['b1']],
   );
   assert.deepEqual(
     await asOf(
@@ -1272,14 +1215,12 @@ test('the file of a document that a later pass deletes reads with its own bytes 
     supportsFileTransfer: true,
     emitsDeletes: true,
   });
-  const destination = new PostgresDestination({ url, schema: 'raw' });
-  const table = destination
-    .table('documents', (c) => [
-      c.text('id'),
-      c.integer('version'),
-      c.blob('bytes').from(documents.file),
-    ])
-    .withReaderView('marts', 'raw_documents');
+  const destination = new PostgresDestination({ url });
+  const table = destination.table('documents', (c) => [
+    c.text('id'),
+    c.integer('version'),
+    c.blob('bytes').from(documents.file),
+  ]);
   const { connection } = warehouse(url, documents);
   const copy = new Copy(documents, table, {
     id: 'documents',
@@ -1306,7 +1247,7 @@ test('the file of a document that a later pass deletes reads with its own bytes 
   const before = await newest(destination);
   // The commit is internal, so only the raw table shows it; this test proves it.
   const stored = [
-    ...(await sql`SELECT id, committed_in, bytes FROM raw.documents ORDER BY id`),
+    ...(await sql`SELECT id, committed_in, bytes FROM _warehouse.raw_documents ORDER BY id`),
   ];
 
   await connection(
@@ -1322,14 +1263,14 @@ test('the file of a document that a later pass deletes reads with its own bytes 
   ).run();
   const chunks = await asOf(
     destination,
-    `SELECT c.relname AS name FROM pg_class c WHERE c.relnamespace = 'raw'::regnamespace AND c.relname LIKE '\\_elt\\_files\\_%' AND c.relkind = 'r'`,
+    `SELECT c.relname AS name FROM pg_class c WHERE c.relnamespace = '_warehouse'::regnamespace AND c.relname LIKE '\\_elt\\_files\\_%' AND c.relkind = 'r'`,
   );
   assert.equal(chunks.length, 1);
   const bytes = (position?: string) =>
     asOf(
       destination,
       `SELECT d.id, convert_from(string_agg(f.bytes, ''::bytea ORDER BY f.n), 'UTF8') AS text
-       FROM marts.raw_documents d JOIN raw."${chunks[0]?.name}" f ON f.file = d.bytes
+       FROM marts.documents d JOIN marts."${chunks[0]?.name}" f ON f.file = d.bytes
        GROUP BY d.id ORDER BY d.id`,
       position,
     );
@@ -1345,7 +1286,7 @@ test('the file of a document that a later pass deletes reads with its own bytes 
   // The commit is internal, so only the raw table shows it; this test proves it.
   assert.deepEqual(
     [
-      ...(await sql`SELECT id, committed_in, bytes FROM raw.documents WHERE id = 'd2'`),
+      ...(await sql`SELECT id, committed_in, bytes FROM _warehouse.raw_documents WHERE id = 'd2'`),
     ],
     stored.filter(({ id }) => id === 'd2'),
   );
@@ -1395,7 +1336,7 @@ test('a field that a change of shape drops, and a later one adds back, takes its
   await pass(notes(), [note('notes', 'n1', 1, 'kept'), checkpoint('notes', 3)]);
 
   assert.deepEqual(
-    [...(await sql`SELECT id, body FROM marts.raw_notes ORDER BY id`)],
+    [...(await sql`SELECT id, body FROM marts.notes ORDER BY id`)],
     [
       { id: 'n1', body: 'kept' },
       { id: 'n2', body: null },
@@ -1423,14 +1364,12 @@ test('the file of a row that a later reload swapped out reads with its own bytes
     supportsFileTransfer: true,
     emitsDeletes: true,
   });
-  const destination = new PostgresDestination({ url, schema: 'raw' });
-  const table = destination
-    .table('documents', (c) => [
-      c.text('id'),
-      c.integer('version'),
-      c.blob('bytes').from(documents.file),
-    ])
-    .withReaderView('marts', 'raw_documents');
+  const destination = new PostgresDestination({ url });
+  const table = destination.table('documents', (c) => [
+    c.text('id'),
+    c.integer('version'),
+    c.blob('bytes').from(documents.file),
+  ]);
   const { connection } = warehouse(url, documents);
   const copy = new Copy(documents, table, {
     id: 'documents',
@@ -1467,13 +1406,13 @@ test('the file of a row that a later reload swapped out reads with its own bytes
   ).run();
   const [chunks] = await asOf(
     destination,
-    `SELECT c.relname AS name FROM pg_class c WHERE c.relnamespace = 'raw'::regnamespace AND c.relname LIKE '\\_elt\\_files\\_%' AND c.relkind = 'r'`,
+    `SELECT c.relname AS name FROM pg_class c WHERE c.relnamespace = '_warehouse'::regnamespace AND c.relname LIKE '\\_elt\\_files\\_%' AND c.relkind = 'r'`,
   );
   const bytes = (position?: string) =>
     asOf(
       destination,
       `SELECT d.id, convert_from(string_agg(f.bytes, ''::bytea ORDER BY f.n), 'UTF8') AS text
-       FROM marts.raw_documents d JOIN raw."${chunks?.name}" f ON f.file = d.bytes
+       FROM marts.documents d JOIN marts."${chunks?.name}" f ON f.file = d.bytes
        GROUP BY d.id ORDER BY d.id`,
       position,
     );
@@ -1584,7 +1523,7 @@ test('a field that moves from string to integer, which does not keep each old va
   assert.deepEqual(
     await asOf(
       destination,
-      'SELECT id, size FROM marts.raw_notes ORDER BY id',
+      'SELECT id, size FROM marts.notes ORDER BY id',
       changed,
     ),
     [
@@ -1593,7 +1532,7 @@ test('a field that moves from string to integer, which does not keep each old va
     ],
   );
   assert.deepEqual(
-    await asOf(destination, 'SELECT id, size FROM marts.raw_notes ORDER BY id'),
+    await asOf(destination, 'SELECT id, size FROM marts.notes ORDER BY id'),
     [
       { id: 'n2', size: '5' },
       { id: 'n3', size: '4' },
@@ -1624,18 +1563,16 @@ test('a change of type that expires the positions before it drops the stored fil
     supportsFileTransfer: true,
     emitsDeletes: true,
   });
-  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
   const copy = (size: 'integer' | 'real') =>
     new Copy(
       documents,
-      destination
-        .table('documents', (c) => [
-          c.text('id'),
-          c.integer('version'),
-          c[size]('size'),
-          c.blob('bytes').from(documents.file),
-        ])
-        .withReaderView('marts', 'raw_documents'),
+      destination.table('documents', (c) => [
+        c.text('id'),
+        c.integer('version'),
+        c[size]('size'),
+        c.blob('bytes').from(documents.file),
+      ]),
       {
         id: 'documents',
         syncMode: 'incremental',
@@ -1674,11 +1611,11 @@ test('a change of type that expires the positions before it drops the stored fil
   ).run();
   const [chunks] = await sql<{ name: string }[]>`
     SELECT relname AS name FROM pg_class
-    WHERE relnamespace = 'raw'::regnamespace AND relkind = 'r' AND relname LIKE '\_elt\_files\_%'`;
+    WHERE relnamespace = '_warehouse'::regnamespace AND relkind = 'r' AND relname LIKE '\_elt\_files\_%'`;
   const files = async () =>
     [
       ...(await sql.unsafe(
-        `SELECT convert_from(string_agg(bytes, ''::bytea ORDER BY n), 'UTF8') AS text FROM raw."${chunks?.name}" GROUP BY file ORDER BY 1`,
+        `SELECT convert_from(string_agg(bytes, ''::bytea ORDER BY n), 'UTF8') AS text FROM _warehouse."${chunks?.name}" GROUP BY file ORDER BY 1`,
       )),
     ].map(({ text }) => text);
   assert.deepEqual(await files(), ['gone', 'kept']);
@@ -1718,7 +1655,7 @@ test('a field that moves from number to integer, which does not keep each old va
 
   assert.match(await expiredReading(destination, before), typeChange);
   assert.deepEqual(
-    await asOf(destination, 'SELECT id, size FROM marts.raw_notes ORDER BY id'),
+    await asOf(destination, 'SELECT id, size FROM marts.notes ORDER BY id'),
     [
       { id: 'n1', size: '2' },
       { id: 'n2', size: '3' },
@@ -1765,7 +1702,7 @@ test('a field that a change of shape drops, and a later one adds back with a typ
   assert.match(await expiredReading(destination, before), typeChange);
   assert.match(await expiredReading(destination, dropped), typeChange);
   assert.deepEqual(
-    await asOf(destination, 'SELECT id, size FROM marts.raw_notes ORDER BY id'),
+    await asOf(destination, 'SELECT id, size FROM marts.notes ORDER BY id'),
     [
       { id: 'n1', size: null },
       { id: 'n2', size: null },
@@ -1812,7 +1749,7 @@ test('a field that a change of shape drops, and a later one adds back as a strin
   assert.deepEqual(
     await asOf(
       destination,
-      'SELECT id, size FROM marts.raw_notes ORDER BY id',
+      'SELECT id, size FROM marts.notes ORDER BY id',
       before,
     ),
     [{ id: 'n1', size: '1.5' }],
@@ -1853,7 +1790,7 @@ test('an overwrite whose field moves from string to integer reloads the table, a
   assert.match(await expiredReading(destination, first), typeChange);
   assert.match(await expiredReading(destination, second), typeChange);
   assert.deepEqual(
-    await asOf(destination, 'SELECT id, size FROM marts.raw_notes'),
+    await asOf(destination, 'SELECT id, size FROM marts.notes'),
     [{ id: 'n3', size: '4' }],
   );
 });
@@ -1901,7 +1838,7 @@ test('a timestamp that the history keeps reads as of the position as the same in
   assert.deepEqual(
     [
       ...(await reading.sql.unsafe(
-        'SELECT id, extract(epoch FROM size)::text AS size FROM marts.raw_notes',
+        'SELECT id, extract(epoch FROM size)::text AS size FROM marts.notes',
       )),
     ],
     [

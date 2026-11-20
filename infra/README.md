@@ -28,13 +28,11 @@ Microsoft publishes the SQL Server image only for amd64, so on Apple silicon it 
 
 ## The warehouse
 
-The Google app loads into the `warehouse` database. Its pipeline installs the sync history views and `catalog` in `marts`. Each copy keeps a reader view of its raw table in `marts`, named after the source and the stream.
+The Google app loads into the `warehouse` database. Its pipeline installs the sync history views and `catalog` in `marts`. Each copy names its reader view in `marts` after the source and the stream; elt-postgresql keeps the raw table of the view in `_warehouse`.
 
 ```text
 warehouse database
-├── google_search_console   raw tables and _elt_checkpoints, loaded by elt-postgresql; readers have no access
-├── google_health           raw tables and _elt_checkpoints of Google Health; readers have no access
-├── _warehouse              private sync attempts, coverage declarations and stream checks
+├── _warehouse              raw tables, their histories, _elt_checkpoints, the numbering and the sync history, loaded by elt-postgresql; readers read only the numbering
 ├── marts                   documented reader views, one prefix per source
 └── public                  revoked from PUBLIC
 roles: warehouse (loads, owns the database) · agent_reader (reads marts only)

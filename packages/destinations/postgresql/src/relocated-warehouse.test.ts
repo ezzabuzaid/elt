@@ -42,7 +42,11 @@ class Notes extends Source {
     name: 'notes',
     jsonSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, title: { type: 'string' } },
+      description: 'Notes.',
+      properties: {
+        id: { type: 'string', description: 'Note id.' },
+        title: { type: 'string', description: 'Note title.' },
+      },
       required: ['id', 'title'],
     },
     primaryKey: ['id'],
@@ -88,7 +92,7 @@ class Notes extends Source {
 // One pass into the warehouse at url, its checkpoints beside the rows.
 async function passInto(url: string, source: Notes) {
   const history = new PostgresSyncHistory({ url });
-  const destination = new PostgresDestination({ url, schema: 'notes' });
+  const destination = new PostgresDestination({ url });
   return new Pipeline({
     clock: globalThis,
     history,
@@ -97,7 +101,7 @@ async function passInto(url: string, source: Notes) {
         name: 'notes',
         source,
         destination,
-        checkpoints: new PostgresCheckpointStore({ url, schema: 'notes' }),
+        checkpoints: new PostgresCheckpointStore({ url }),
         steps: [
           new Copy(source.notes, destination.table('notes'), {
             id: 'notes',

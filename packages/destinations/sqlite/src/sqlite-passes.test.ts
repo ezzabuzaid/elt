@@ -977,7 +977,7 @@ test('a connection that copies one stream twice is recorded as a failed pass and
       destination.path,
       'SELECT stream, target_table, status FROM extraction_coverage WHERE attempt_id = (SELECT latest_attempt_id FROM sync_status)',
     ).rows,
-    [{ stream: 'notes', target_table: 'raw_notes', status: 'failed' }],
+    [{ stream: 'notes', target_table: 'notes', status: 'failed' }],
   );
   assert.deepEqual(failed, [new TypeError(why)]);
 });

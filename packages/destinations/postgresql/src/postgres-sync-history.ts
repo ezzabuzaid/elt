@@ -20,8 +20,12 @@ import {
 import { identifier } from './identifier.ts';
 import { PostgresDestination } from './postgres-destination.ts';
 import { grantReading, installNumbering } from './postgres-numbering.ts';
+import { marts, warehouse } from './postgres-schemas.ts';
 import { PostgresSession, lockSchema } from './postgres-session.ts';
 import {
+  attempts,
+  checks,
+  coverage as coverageTable,
   syncHistoryTables,
   syncHistoryViews,
 } from './postgres-sync-history-schema.ts';
@@ -29,20 +33,20 @@ import type { PostgresTable } from './postgres-table.ts';
 import { type PostgresView, publishPostgresViews } from './postgres-views.ts';
 
 // Lists what readers of marts query, its views, from the comments every load
-// and publication writes there. A table in marts, such as the raw table of a
-// computed dataset, is not for readers, as in the catalog of elt-sqlite.
+// and publication writes there. A table that a person makes in marts is not
+// for readers, as in the catalog of elt-sqlite.
 const catalog: PostgresView = {
   ...readerCatalog,
   query: `SELECT 'view' AS kind, c.relname::text AS name, NULL::text AS data_type,
       obj_description(c.oid, 'pg_class') AS description
     FROM pg_class c
-    WHERE c.relnamespace = 'marts'::regnamespace AND c.relkind = 'v'
+    WHERE c.relnamespace = '${marts}'::regnamespace AND c.relkind = 'v'
     UNION ALL
     SELECT 'column', c.relname || '.' || a.attname,
       format_type(a.atttypid, a.atttypmod), col_description(c.oid, a.attnum)
     FROM pg_class c
     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-    WHERE c.relnamespace = 'marts'::regnamespace AND c.relkind = 'v'
+    WHERE c.relnamespace = '${marts}'::regnamespace AND c.relkind = 'v'
     ORDER BY 2`,
 };
 
@@ -72,8 +76,11 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
     Object.freeze(this);
   }
 
-  override validate(connection: Connection<PostgresTable>): void {
-    this.#schema(connection);
+  override validate({ name, destination }: Connection<PostgresTable>): void {
+    if (!(destination instanceof PostgresDestination))
+      throw new TypeError(
+        `Connection ${name}: Postgres sync history records Postgres destinations only`,
+      );
   }
 
   protected override async recordChecks(
@@ -83,7 +90,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
     await this.#write(async (transaction) => {
       for (const { stream, at } of streamChecks)
         await transaction`
-          INSERT INTO _warehouse.stream_checks (connector, stream, checked_at)
+          INSERT INTO ${transaction.unsafe(checks)} (connector, stream, checked_at)
           VALUES (${connection.name}, ${stream}, ${at})
           ON CONFLICT (connector, stream) DO UPDATE SET checked_at = excluded.checked_at`;
     });
@@ -101,13 +108,12 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
     copies: readonly DeclaredCopy<PostgresTable>[],
     at: Date,
   ): Promise<RecordedPass<PostgresTable>> {
-    const schema = this.#schema(connection);
     const session = new PostgresSession(this.#url, 'elt-sync-history');
     try {
       const id = await session.sql.begin(async (transaction) => {
         await failEnded(transaction, connection.name, at);
         const [attempt] = await transaction<{ id: string }[]>`
-          INSERT INTO _warehouse.sync_attempts (connector, source, started_at)
+          INSERT INTO ${transaction.unsafe(attempts)} (connector, source, started_at)
           VALUES (${connection.name}, ${connection.source.identity}, ${at}) RETURNING id`;
         if (attempt === undefined)
           throw new Error('Sync attempt was not recorded');
@@ -118,10 +124,10 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
           SELECT pg_try_advisory_lock(${transaction.unsafe(attemptLock)}, hashtext(${attempt.id}))`;
         for (const { copy, coverage } of copies)
           await transaction`
-            INSERT INTO _warehouse.extraction_coverage
-              (attempt_id, stream, target_schema, target_table, sync_mode,
+            INSERT INTO ${transaction.unsafe(coverageTable)}
+              (attempt_id, stream, target_table, sync_mode,
                destination_sync_mode, description, selection)
-            VALUES (${attempt.id}, ${copy.from.name}, ${schema},
+            VALUES (${attempt.id}, ${copy.from.name},
               ${copy.to.name}, ${copy.configuration.syncMode},
               ${copy.configuration.destinationSyncMode}, ${coverage.description},
               ${transaction.json(coverage.selection)})`;
@@ -154,24 +160,13 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
       await sql.begin(async (transaction) => {
         // The numbering of the destinations makes _warehouse too, under the
         // same lock.
-        await lockSchema(transaction, '_warehouse');
+        await lockSchema(transaction, warehouse);
         for (const statement of syncHistoryTables)
           await transaction.unsafe(statement);
-        await publishPostgresViews(transaction, {
-          schema: 'marts',
-          views: [...syncHistoryViews, catalog],
-        });
+        await publishPostgresViews(transaction, [...syncHistoryViews, catalog]);
         for (const role of this.#readers) await grantReading(transaction, role);
       });
     });
-  }
-
-  #schema({ name, destination }: Connection<PostgresTable>): string {
-    if (!(destination instanceof PostgresDestination))
-      throw new TypeError(
-        `Connection ${name}: Postgres sync history records Postgres destinations only`,
-      );
-    return destination.schema;
   }
 
   #write<T>(work: (transaction: postgres.TransactionSql) => Promise<T>) {
@@ -207,7 +202,7 @@ async function failEnded(
 ): Promise<void> {
   const ended = await transaction<{ id: string }[]>`
     WITH running AS MATERIALIZED (
-      SELECT id FROM _warehouse.sync_attempts
+      SELECT id FROM ${transaction.unsafe(attempts)}
       WHERE connector = ${connector} AND status = 'running'
     )
     SELECT id FROM running
@@ -233,11 +228,11 @@ async function fail(
   at: Date,
 ): Promise<void> {
   await transaction`
-    UPDATE _warehouse.extraction_coverage SET status = 'failed',
+    UPDATE ${transaction.unsafe(coverageTable)} SET status = 'failed',
       failures = ${transaction.json([recordedFailure({ partition: null, error, failureType })])}
     WHERE attempt_id IN ${transaction(ids)}`;
   await transaction`
-    UPDATE _warehouse.sync_attempts SET status = 'failed',
+    UPDATE ${transaction.unsafe(attempts)} SET status = 'failed',
       completed_at = ${at}, error = ${errorMessage(error)},
       failure_type = ${failureType}
     WHERE id IN ${transaction(ids)}`;
@@ -252,17 +247,17 @@ async function finish(
 ): Promise<void> {
   for (const outcome of outcomes)
     await transaction`
-      UPDATE _warehouse.extraction_coverage SET
+      UPDATE ${transaction.unsafe(coverageTable)} SET
         status = ${copyStatus(outcome)},
         written_count = ${outcome.count}, deleted_count = ${outcome.deleted},
         failures = ${transaction.json(outcome.failures.map(recordedFailure))}
       WHERE attempt_id = ${id} AND stream = ${outcome.copy.from.name}`;
   for (const [stream, at] of upstream)
     await transaction`
-      UPDATE _warehouse.extraction_coverage SET upstream_current_as_of = ${at}
+      UPDATE ${transaction.unsafe(coverageTable)} SET upstream_current_as_of = ${at}
       WHERE attempt_id = ${id} AND stream = ${stream}`;
   await transaction`
-    UPDATE _warehouse.sync_attempts SET completed_at = ${ended},
+    UPDATE ${transaction.unsafe(attempts)} SET completed_at = ${ended},
       status = ${passStatus(outcomes)}, error = ${passError(outcomes)},
       failure_type = ${passFailureType(outcomes)}
     WHERE id = ${id}`;

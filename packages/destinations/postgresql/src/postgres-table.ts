@@ -1,36 +1,44 @@
-import { type Stream, Target } from '@eltjs/elt';
+import {
+  type Stream,
+  Target,
+  readerCatalog,
+  syncHistoryRelations,
+} from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
 import { PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
-import { identifiers } from './postgres-identifiers.ts';
-import { schemaName } from './postgres-session.ts';
+import { identifiers, rawTable } from './postgres-identifiers.ts';
 
-// Where readers see the table: a documented view of exactly its columns.
-export type PostgresReaderView = {
-  readonly schema: string;
-  readonly name: string;
-};
+// The views that the sync history publishes in marts under a fixed name: the
+// catalog and the views of the history. The naming rule already renames a
+// name that starts with _elt_.
+const made = new Set(
+  [readerCatalog, ...Object.values(syncHistoryRelations)].map(({ name }) =>
+    identifiers.key(name),
+  ),
+);
 
 // A reusable target definition. Empty columns mean infer from the Copy's
-// stream. Its own name, its view's and its columns' follow the destination's
-// naming rule, so a field Postgres cannot hold as it is still loads.
+// stream. The host names only the reader view in marts; the destination
+// keeps the rows in the raw table in _warehouse. Both names and the columns'
+// follow the destination's naming rule, so a field Postgres cannot hold as it
+// is still loads.
 export class PostgresTable extends Target {
+  // The name readers query: the view in marts over the raw table.
   readonly name: string;
+  // The table in _warehouse that the commits of the target write.
+  readonly raw: string;
   readonly columns: readonly PostgresColumn[];
-  readonly readerView: PostgresReaderView | undefined;
 
-  constructor(
-    name: string,
-    columns?: readonly PostgresColumn[],
-    readerView?: PostgresReaderView,
-  ) {
-    if (
-      typeof name !== 'string' ||
-      (readerView !== undefined && typeof readerView.name !== 'string')
-    )
-      throw new TypeError('A table and its view are named by strings');
-    if (readerView !== undefined) schemaName(readerView.schema);
+  constructor(name: string, columns?: readonly PostgresColumn[]) {
+    if (typeof name !== 'string')
+      throw new TypeError('A table is named by a string');
+    const view = identifiers.relation(name);
+    if (made.has(identifiers.key(view)))
+      throw new TypeError(
+        `Reader name ${view} is a relation the destination makes`,
+      );
     if (
       columns !== undefined &&
       (!Array.isArray(columns) ||
@@ -58,29 +66,14 @@ export class PostgresTable extends Target {
         );
     }
     super(fileReads);
-    this.name = identifiers.relation(name);
+    this.name = view;
+    this.raw = rawTable(view);
     this.columns = Object.freeze(
       identifiers
         .columns(columns ?? [])
         .map(([column, stored]) => column.named(stored)),
     );
-    this.readerView =
-      readerView &&
-      Object.freeze({
-        schema: readerView.schema,
-        name: identifiers.relation(readerView.name),
-      });
     Object.freeze(this);
-  }
-
-  // Loads also keep a view of this table in another schema, created with the
-  // table and described by the same comments, which every column then needs.
-  withReaderView(schema: string, name: string): PostgresTable {
-    return new PostgresTable(
-      this.name,
-      this.columns.length === 0 ? undefined : this.columns,
-      { schema, name },
-    );
   }
 
   resolve(stream: Stream): PostgresTable {
@@ -88,7 +81,6 @@ export class PostgresTable extends Target {
       return new PostgresTable(
         this.name,
         PostgresColumns.fromSchema(stream.jsonSchema),
-        this.readerView,
       );
     const { properties } = stream.jsonSchema;
     // Explicit columns of a stream that declares no properties stand alone.
@@ -104,7 +96,7 @@ export class PostgresTable extends Target {
     return this;
   }
 
-  get quotedName(): string {
-    return quote(this.name);
+  get quotedRaw(): string {
+    return quote(this.raw);
   }
 }

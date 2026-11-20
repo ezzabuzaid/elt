@@ -216,9 +216,9 @@ test("a table and its reader view show the stream's fields and loaded_at as of a
   using database = open(destination.path, { readOnly: true });
   database.exec('BEGIN');
   const last = newest(destination);
-  const selected = asOfSelect(database, 'raw_notes', first);
+  const selected = asOfSelect(database, 'notes', first);
   if (typeof selected !== 'string') assert.fail(selected.expired);
-  const selectedNewest = asOfSelect(database, 'raw_notes', last);
+  const selectedNewest = asOfSelect(database, 'notes', last);
   if (typeof selectedNewest !== 'string') assert.fail(selectedNewest.expired);
 
   assert.deepEqual(

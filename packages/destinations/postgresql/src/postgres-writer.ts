@@ -32,6 +32,7 @@ import {
   installNumbering,
 } from './postgres-numbering.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
+import { inWarehouse, marts, warehouse } from './postgres-schemas.ts';
 import {
   PostgresSession,
   type Queries,
@@ -65,55 +66,48 @@ type Side = {
 export abstract class PostgresWriter extends Writer {
   readonly configuration: CopyConfiguration;
   protected readonly url: string;
-  readonly schema: string;
   readonly table: PostgresTable;
   // Where the target keeps the rows that its commits replace or remove, and
   // how long it keeps a position readable.
   readonly #history: TargetHistory;
   readonly #retention: Temporal.Duration;
   readonly #comments: TargetComments;
-  readonly #view: TargetReaderView | undefined;
+  readonly #view: TargetReaderView;
 
   constructor(
     configuration: CopyConfiguration,
     url: string,
-    schema: string,
     table: PostgresTable,
     retention: Temporal.Duration,
   ) {
     super(configuration.stream);
     this.configuration = configuration;
     this.url = url;
-    this.schema = schema;
     this.table = table;
     this.#retention = retention;
-    this.#history = new TargetHistory(schema, this.#hash);
+    this.#history = new TargetHistory(this.#hash);
     const description = describeTarget(
       configuration,
       table.columns,
       (column) =>
-        `UUID reference to the source file's original bytes. Join ${new PostgresFileStore(schema, table, column).qualifiedName} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
+        `UUID reference to the source file's original bytes. Join ${new PostgresFileStore(table, column).view} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
     );
-    this.#comments = new TargetComments(description.table, {
-      ...description.columns,
-      committed_in:
-        'Number of the commit that last wrote this row: the row of _warehouse._elt_commits with this number tells when, and in which load.',
-    });
-    this.#view =
-      table.readerView &&
-      new TargetReaderView(
-        table.readerView,
-        this.qualifiedName,
-        this.#history.qualifiedName,
-        [...table.columns.map(({ name }) => name), 'loaded_at'],
-        new TargetComments(description.table, description.columns),
-      );
-    if (table.readerView === undefined) return;
     const { missing } = description;
     if (missing.length > 0)
       throw new TypeError(
-        `Reader view ${table.readerView.schema}.${table.readerView.name} needs JSON Schema descriptions for ${missing.join(', ')} of stream ${this.stream.name}`,
+        `Reader view ${marts}.${table.name} needs JSON Schema descriptions for ${missing.join(', ')} of stream ${this.stream.name}`,
       );
+    this.#comments = new TargetComments(description.table, {
+      ...description.columns,
+      committed_in: `Number of the commit that last wrote this row: the row of ${warehouse}._elt_commits with this number tells when, and in which load.`,
+    });
+    this.#view = new TargetReaderView(
+      table.name,
+      this.qualifiedName,
+      this.#history.qualifiedName,
+      [...table.columns.map(({ name }) => name), 'loaded_at'],
+      new TargetComments(description.table, description.columns),
+    );
   }
 
   // Creates the target, or adopts the stored one, at the first commit.
@@ -127,7 +121,7 @@ export abstract class PostgresWriter extends Writer {
   protected async inspect(_sql: Transaction): Promise<void> {}
 
   get qualifiedName(): string {
-    return `${quote(this.schema)}.${this.table.quotedName}`;
+    return inWarehouse(this.table.raw);
   }
 
   protected get createTableSQL(): string {
@@ -242,26 +236,17 @@ export abstract class PostgresWriter extends Writer {
   protected async dedupIndexes(transaction: Transaction): Promise<string[]> {
     const rows = await transaction.unsafe(
       String.raw`SELECT indexname FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 AND indexname LIKE '\_elt\_dedup\_%'`,
-      [this.schema, this.table.name],
+      [warehouse, this.table.raw],
     );
     return rows.map((row) => String(row.indexname));
-  }
-
-  get #writers(): string {
-    return `${quote(this.schema)}."_elt_writers"`;
   }
 
   // The owner lives beside the table it guards. A dropped table releases it,
   // since nothing it held remains.
   async #refuse(sql: Transaction, writer: string): Promise<void> {
-    const [writers] = await sql.unsafe(
-      'SELECT to_regclass($1) IS NOT NULL AS "exists"',
-      [this.#writers],
-    );
-    if (writers?.exists !== true) return;
     const [row] = await sql.unsafe(
-      `SELECT "writer" FROM ${this.#writers} WHERE "target" = $1 AND to_regclass(format('%I.%I', $2::text, "target")) IS NOT NULL`,
-      [this.table.name, this.schema],
+      `SELECT "writer" FROM ${writersTable} WHERE "target" = $1 AND to_regclass(format('%I.%I', $2::text, "target")) IS NOT NULL`,
+      [this.table.raw, warehouse],
     );
     if (row !== undefined && row.writer !== writer)
       throw new TargetOwnedError(this.table.name, String(row.writer), writer);
@@ -271,29 +256,23 @@ export abstract class PostgresWriter extends Writer {
   // other.
   async #own(sql: Transaction, writer: string): Promise<void> {
     await sql.unsafe(
-      `CREATE TABLE IF NOT EXISTS ${this.#writers} ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL)`,
+      `DELETE FROM ${writersTable} WHERE to_regclass(format('%I.%I', $1::text, "target")) IS NULL`,
+      [warehouse],
     );
     await sql.unsafe(
-      `DELETE FROM ${this.#writers} WHERE to_regclass(format('%I.%I', $1::text, "target")) IS NULL`,
-      [this.schema],
-    );
-    await sql.unsafe(
-      `INSERT INTO ${this.#writers} ("target", "writer") VALUES ($1, $2) ON CONFLICT ("target") DO NOTHING`,
-      [this.table.name, writer],
+      `INSERT INTO ${writersTable} ("target", "writer") VALUES ($1, $2) ON CONFLICT ("target") DO NOTHING`,
+      [this.table.raw, writer],
     );
   }
 
   // The target as its first commit, numbered committedIn, makes it: its
-  // owner, the table, its history and its comments, and the reader view. The
-  // first commits of other copies into the schema make its writers table
-  // too, so they take turns.
+  // owner, the table, its history and its comments, and the reader view.
   async #create(
     sql: Transaction,
     writer: string,
     replacing: boolean,
     committedIn: number,
   ): Promise<void> {
-    await lockSchema(sql, this.schema);
     await this.#own(sql, writer);
     await this.initialize(sql, replacing);
     await this.#describe(sql, async () => committedIn);
@@ -307,8 +286,7 @@ export abstract class PostgresWriter extends Writer {
     change: () => Promise<number>,
   ): Promise<void> {
     await this.#history.create(sql, this.qualifiedName, change);
-    await this.#comments.write(sql, 'TABLE', this.schema, this.table.name);
-    if (this.#view === undefined) return;
+    await this.#comments.write(sql, 'TABLE', warehouse, this.table.raw);
     await this.#view.describe(sql);
   }
 
@@ -320,7 +298,7 @@ export abstract class PostgresWriter extends Writer {
     sql: Transaction,
     tables: () => readonly string[],
   ): FieldValues {
-    const { table, schema } = this;
+    const { table } = this;
     return async function* (field) {
       const column = table.columns.find((column) => column.field === field);
       if (column === undefined)
@@ -328,12 +306,12 @@ export abstract class PostgresWriter extends Writer {
       for (const name of tables()) {
         const present = await sql.unsafe(
           'SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND column_name = $3',
-          [schema, name, column.name],
+          [warehouse, name, column.name],
         );
         if (present.length === 0) continue;
         for await (const rows of sql
           .unsafe(
-            `SELECT ${column.quotedName} AS value FROM ${quote(schema)}.${quote(name)}`,
+            `SELECT ${column.quotedName} AS value FROM ${inWarehouse(name)}`,
           )
           .cursor(batchSize))
           for (const row of rows) yield row.value;
@@ -348,24 +326,16 @@ export abstract class PostgresWriter extends Writer {
   ): Promise<void> {
     await using connection = new PostgresSession(this.url, 'elt');
     await installNumbering(connection.sql);
+    await makeWriterTables(connection.sql);
     await connection.sql.begin(async (transaction) => {
-      const [schema] = await transaction.unsafe(
-        'SELECT to_regnamespace($1) IS NOT NULL AS "exists"',
-        [quote(this.schema)],
-      );
-      if (schema?.exists !== true) return;
-      const writers = this.#writers;
-      await transaction.unsafe(
-        `CREATE TABLE IF NOT EXISTS ${writers} ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL)`,
-      );
       const [row] = await transaction.unsafe(
-        `SELECT "writer" FROM ${writers} WHERE "target" = $1`,
-        [this.table.name],
+        `SELECT "writer" FROM ${writersTable} WHERE "target" = $1`,
+        [this.table.raw],
       );
       if (row !== undefined && row.writer !== writer)
         throw new TargetOwnedError(this.table.name, String(row.writer), writer);
-      // Emptied, not dropped: views built on the table, such as marts, keep
-      // working. The rows it removes are forgotten: each position before the
+      // Emptied, not dropped: the views built on the table keep working.
+      // The rows it removes are forgotten: each position before the
       // clear expires, so the history keeps none of them, nor their files.
       const [table] = await transaction.unsafe(
         'SELECT to_regclass($1) IS NOT NULL AS "exists"',
@@ -388,7 +358,7 @@ export abstract class PostgresWriter extends Writer {
       for (const column of this.table.columns.filter(
         (column) => column.storesFile,
       )) {
-        const store = new PostgresFileStore(this.schema, this.table, column);
+        const store = new PostgresFileStore(this.table, column);
         const [chunks] = await transaction.unsafe(
           'SELECT to_regclass($1) IS NOT NULL AS "exists"',
           [store.qualifiedName],
@@ -398,12 +368,13 @@ export abstract class PostgresWriter extends Writer {
         if (chunks?.exists === true)
           await store.prune(transaction, [this.#history.qualifiedName]);
       }
-      await transaction.unsafe(`DELETE FROM ${writers} WHERE "target" = $1`, [
-        this.table.name,
-      ]);
+      await transaction.unsafe(
+        `DELETE FROM ${writersTable} WHERE "target" = $1`,
+        [this.table.raw],
+      );
     });
     await committed?.(
-      this.values(connection.sql, () => [this.table.name, this.#history.name]),
+      this.values(connection.sql, () => [this.table.raw, this.#history.name]),
     );
   }
 
@@ -446,7 +417,7 @@ export abstract class PostgresWriter extends Writer {
   }
 
   get #hidden(): string {
-    return `${quote(this.schema)}.${quote(this.#hiddenName)}`;
+    return inWarehouse(this.#hiddenName);
   }
 
   // Drops the chunks of every stored column that is no longer one of the
@@ -459,10 +430,7 @@ export abstract class PostgresWriter extends Writer {
         .map(({ name }) => name),
     );
     for (const { name } of await storedColumns(sql, this.qualifiedName))
-      if (!files.has(name))
-        await sql.unsafe(
-          `DROP TABLE IF EXISTS ${PostgresFileStore.qualifiedName(this.schema, this.table, name)}`,
-        );
+      if (!files.has(name)) await PostgresFileStore.drop(sql, this.table, name);
   }
 
   // Swaps a completed reload's hidden target in last, when the target no
@@ -479,7 +447,7 @@ export abstract class PostgresWriter extends Writer {
       committedIn,
     ]);
     await rebindDependents(sql, this.#readable, async () => {
-      await this.#view?.drop(sql);
+      await this.#view.drop(sql);
       await this.#dropRetiredChunks(sql);
       const [target] = await sql.unsafe(
         'SELECT to_regclass($1) IS NOT NULL AS "exists"',
@@ -494,7 +462,7 @@ export abstract class PostgresWriter extends Writer {
         );
       await sql.unsafe(`DROP TABLE IF EXISTS ${this.qualifiedName}`);
       await sql.unsafe(
-        `ALTER TABLE ${this.#hidden} RENAME TO ${this.table.quotedName}`,
+        `ALTER TABLE ${this.#hidden} RENAME TO ${this.table.quotedRaw}`,
       );
       await this.adopt(sql);
       await this.#describe(sql, async () => committedIn);
@@ -506,7 +474,7 @@ export abstract class PostgresWriter extends Writer {
     return [
       this.qualifiedName,
       this.#history.qualifiedName,
-      ...(this.#view === undefined ? [] : [this.#view.qualifiedName]),
+      this.#view.qualifiedName,
     ];
   }
 
@@ -648,7 +616,7 @@ export abstract class PostgresWriter extends Writer {
       .map(({ name }) => `${quote(name)} IS NOT NULL`)
       .join(' OR ');
     await rebindDependents(sql, this.#readable, async () => {
-      await this.#view?.drop(sql);
+      await this.#view.drop(sql);
       if (changed !== '') {
         const committedIn = await change();
         await this.#history.keep(
@@ -755,23 +723,14 @@ export abstract class PostgresWriter extends Writer {
     ];
   }
 
-  get #reloads(): string {
-    return `${quote(this.schema)}."_elt_reloads"`;
-  }
-
   // The partitions that an open reload of the target reloads, in the
   // writer's own table beside it, written in the commit that opens or
   // continues the reload, so a run that resumes the reload continues it. A
   // reload of the whole stream has no row.
   async #reloading(sql: Queries): Promise<Reloads> {
-    const [made] = await sql.unsafe(
-      'SELECT to_regclass($1) IS NOT NULL AS "exists"',
-      [this.#reloads],
-    );
-    if (made?.exists !== true) return wholeStream;
     const [row] = await sql.unsafe<{ partitions: string }[]>(
-      `SELECT "partitions" FROM ${this.#reloads} WHERE "target" = $1`,
-      [this.table.name],
+      `SELECT "partitions" FROM ${reloadsTable} WHERE "target" = $1`,
+      [this.table.raw],
     );
     return row === undefined
       ? wholeStream
@@ -785,26 +744,16 @@ export abstract class PostgresWriter extends Writer {
       await this.#reloaded(sql);
       return;
     }
-    // The first reloads of the schema's tables make the table together.
-    await lockSchema(sql, this.schema);
     await sql.unsafe(
-      `CREATE TABLE IF NOT EXISTS ${this.#reloads} ("target" TEXT PRIMARY KEY, "partitions" TEXT NOT NULL)`,
-    );
-    await sql.unsafe(
-      `INSERT INTO ${this.#reloads} ("target", "partitions") VALUES ($1, $2) ON CONFLICT ("target") DO UPDATE SET "partitions" = excluded."partitions"`,
-      [this.table.name, JSON.stringify(reloads.partitions)],
+      `INSERT INTO ${reloadsTable} ("target", "partitions") VALUES ($1, $2) ON CONFLICT ("target") DO UPDATE SET "partitions" = excluded."partitions"`,
+      [this.table.raw, JSON.stringify(reloads.partitions)],
     );
   }
 
   async #reloaded(sql: Queries): Promise<void> {
-    const [made] = await sql.unsafe(
-      'SELECT to_regclass($1) IS NOT NULL AS "exists"',
-      [this.#reloads],
-    );
-    if (made?.exists === true)
-      await sql.unsafe(`DELETE FROM ${this.#reloads} WHERE "target" = $1`, [
-        this.table.name,
-      ]);
+    await sql.unsafe(`DELETE FROM ${reloadsTable} WHERE "target" = $1`, [
+      this.table.raw,
+    ]);
   }
 
   // One stream's load. Operations wait in a session-private TEMP stage, so no
@@ -832,7 +781,8 @@ export abstract class PostgresWriter extends Writer {
     let reloads: Reloads = wholeStream;
     const stores = this.table.columns
       .filter((column) => column.storesFile)
-      .map((column) => new PostgresFileStore(this.schema, this.table, column));
+      .map((column) => new PostgresFileStore(this.table, column));
+    await makeWriterTables(sql);
     let mode: ReloadMode = await load.transaction(async (sql) => {
       await this.#refuse(sql, writer);
       await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${stage}`);
@@ -859,7 +809,7 @@ export abstract class PostgresWriter extends Writer {
         await sql.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
         await this.#reloaded(sql);
       }
-      await this.#view?.refuse(sql, target === 'stale');
+      await this.#view.refuse(sql, target === 'stale');
       if (decided === 'evolve') {
         await this.#evolve(sql, stage, load);
         decided = 'load';
@@ -906,12 +856,13 @@ export abstract class PostgresWriter extends Writer {
     };
     // The first commit claims the target: it owns the hidden target of a
     // reload, or creates or adopts the table, and before its transaction it
-    // makes the schema of a new target. Later commits find it claimed. claim
+    // makes marts for the reader view of a new target; the load made
+    // _warehouse with its numbering. Later commits find it claimed. claim
     // gives whether the commit replaces the rows of the target with the
     // stage's.
     const unclaimed: Claim = {
       before: async () => {
-        if (mode === 'create') await makeSchema(load.sql, this.schema);
+        if (mode === 'create') await makeSchema(load.sql, marts);
       },
       claim: async (sql, committedIn) => {
         if (open()) {
@@ -933,7 +884,7 @@ export abstract class PostgresWriter extends Writer {
         return open();
       },
       values: this.values(sql, () => [
-        ...(open() ? [this.table.name, this.#hiddenName] : [this.table.name]),
+        ...(open() ? [this.table.raw, this.#hiddenName] : [this.table.raw]),
         this.#history.name,
       ]),
       apply: async (operation) => {
@@ -1108,6 +1059,33 @@ export abstract class PostgresWriter extends Writer {
       },
     };
   }
+}
+
+// The tables in _warehouse where each writer keeps the owner of its target
+// and the partitions of its open reload.
+const writersTable = inWarehouse('_elt_writers');
+const reloadsTable = inWarehouse('_elt_reloads');
+
+// Makes the tables of the writers in a transaction of their own, before the
+// commits of a load: Postgres refuses a second session's CREATE TABLE of one
+// name with 23505, so the lock of _warehouse makes two sessions take turns,
+// and no commit holds that lock while it waits for its own target. sql is a
+// session outside any transaction.
+async function makeWriterTables(sql: Transaction): Promise<void> {
+  const [made] = await sql.unsafe(
+    'SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL AS "made"',
+    [writersTable, reloadsTable],
+  );
+  if (made?.made === true) return;
+  await sql.begin(async (transaction) => {
+    await lockSchema(transaction, warehouse);
+    await transaction.unsafe(
+      `CREATE TABLE IF NOT EXISTS ${writersTable} ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL)`,
+    );
+    await transaction.unsafe(
+      `CREATE TABLE IF NOT EXISTS ${reloadsTable} ("target" TEXT PRIMARY KEY, "partitions" TEXT NOT NULL)`,
+    );
+  });
 }
 
 // What an open reload reloads: the whole stream, or some partitions of it,

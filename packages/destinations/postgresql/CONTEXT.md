@@ -1,19 +1,23 @@
 # elt-postgresql
 
-A host wants the data that elt copies in a Postgres database, with typed columns, which readers query while the loads run. The Postgres destination loads the tables of each connection into one schema, keeps a reader view of each table in a different schema, and keeps the views and computed datasets that the pipeline derives from them. Its checkpoint store and its sync history keep their data in the same database. The words that all of elt uses, for example pass, commit, writer and checkpoint, are in the glossary of [elt](../../elt/CONTEXT.md).
+A host wants the data that elt copies in a Postgres database, with typed columns, which readers query while the loads run. The Postgres destination loads each stream into a raw table in `_warehouse`, keeps a reader view of each raw table in `marts`, and keeps the views and computed datasets that the pipeline derives from them. Its checkpoint store and its sync history keep their data in the same database. The words that all of elt uses, for example pass, commit, writer and checkpoint, are in the glossary of [elt](../../elt/CONTEXT.md).
 
 ## Language
 
 **Schema**:
-The Postgres schema that one `PostgresDestination` loads, for example `google_search_console`. It also holds the checkpoints and the writers of its tables.
-_Avoid_: Database (a database holds many schemas), namespace
+One of the two Postgres schemas of a database, which the destination fixes. `marts` holds each relation that readers query, and each one is a view. `_warehouse` holds each table of elt: the raw tables, their histories and file chunks, the writers, the checkpoints, the numbering and the sync history. A host names no schema.
+_Avoid_: Database (a database holds the two schemas), namespace
+
+**Reader name**:
+The name that a host gives to `table`, for example `search_console_sitemaps`. It names the reader view in `marts`, and the destination derives the name of the raw table from it. It follows the naming rule of elt.
+_Avoid_: Target name, table name
 
 **Raw table**:
-The table that a copy loads, for example `google_search_console.raw_sitemaps`. Readers do not query it.
+The table that a copy loads, `_warehouse.raw_<name>` for the reader name `<name>`, for example `_warehouse.raw_search_console_sitemaps`. Readers do not query it.
 _Avoid_: Staging table, source table
 
 **Reader view**:
-The view that a load keeps of a raw table in a different schema, with `withReaderView`, for example `marts.search_console_sitemaps`. It shows the external schema of the stream, its columns and `loaded_at`, with their comments. The internal columns `committed_in`, `_elt_row_hash` and `replaced_in` are for the SQL of the destination only.
+The view `marts.<name>` that a load keeps of its raw table, for example `marts.search_console_sitemaps`. Each copy has one. It shows the external schema of the stream, its columns and `loaded_at`, with their comments. The internal columns `committed_in`, `_elt_row_hash` and `replaced_in` are for the SQL of the destination only.
 _Avoid_: Mart (a mart is the schema `marts`), view (a view is a derived dataset)
 
 **View**:
@@ -53,7 +57,7 @@ The id that names the numbering of a database. A new database, or one whose `_wa
 _Avoid_: Generation, version
 
 **Position**:
-`<epoch>:<number>`: the last commit of a closed load, when no other load of any schema has commits before and after it. A reader at a position sees no part of a pass.
+`<epoch>:<number>`: the last commit of a closed load, when no other load of the database has commits before and after it. A reader at a position sees no part of a pass.
 _Avoid_: Offset, cursor (eca keeps a cursor), checkpoint
 
 **High-water mark**:

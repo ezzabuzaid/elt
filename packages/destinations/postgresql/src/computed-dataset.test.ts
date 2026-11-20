@@ -37,7 +37,7 @@ import {
 
 const databases = new Postgres({ environment: process.env });
 
-// Rows that name stored files by ref, loaded into raw.raw_files and read
+// Rows that name stored files by ref, loaded into _warehouse.raw_files and read
 // through marts.files; rows can change between runs. Its notes fail every
 // read while notesGone is set, as an app's missing store does.
 class Files extends Source {
@@ -129,8 +129,8 @@ async function filesImport(url: string, directory: string) {
   const store = join(directory, 'files');
   await mkdir(store);
   const source = new Files();
-  const raw = new PostgresDestination({ url, schema: 'raw' });
-  const target = raw.table('raw_files').withReaderView('marts', 'files');
+  const destination = new PostgresDestination({ url });
+  const target = destination.table('files');
   let parser = new TextParser('text-v1');
   const pipeline = new Pipeline({
     clock: globalThis,
@@ -139,16 +139,16 @@ async function filesImport(url: string, directory: string) {
       new Connection({
         name: 'files',
         source,
-        destination: raw,
+        destination,
         steps: [
           new Copy(source.files, target),
-          new Copy(source.notes, raw.table('raw_notes')),
+          new Copy(source.notes, destination.table('notes')),
         ],
       }),
     ],
     derived: [
       new ComputedDataset({
-        into: new PostgresDestination({ url, schema: 'marts' }),
+        into: destination,
         name: 'file_text',
         description: 'The text of each file a row names.',
         from: [target],
@@ -243,11 +243,10 @@ test('a computed dataset reads a view declared before it: the text of each file 
   await writeFile(join(store, 'b.txt'), 'receipt');
   await writeFile(join(store, 'scan.pdf'), 'not text');
   const source = new Files();
-  const raw = new PostgresDestination({ url, schema: 'raw' });
-  const marts = new PostgresDestination({ url, schema: 'marts' });
-  const target = raw.table('raw_files').withReaderView('marts', 'files');
+  const destination = new PostgresDestination({ url });
+  const target = destination.table('files');
   const named = new View({
-    into: marts,
+    into: destination,
     name: 'text_files',
     description: 'The rows that name a text file.',
     columns: { id: 'Row id.', ref: 'The stored file.' },
@@ -261,14 +260,14 @@ test('a computed dataset reads a view declared before it: the text of each file 
       new Connection({
         name: 'files',
         source,
-        destination: raw,
+        destination,
         steps: [new Copy(source.files, target)],
       }),
     ],
     derived: [
       named,
       new ComputedDataset({
-        into: marts,
+        into: destination,
         name: 'file_text',
         description: 'The text of each file a text row names.',
         from: [named],
@@ -644,7 +643,7 @@ test('the view of a computed dataset, read as of a position, shows the rows it h
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const url = database.connectionString;
   const files = await filesImport(url, scratch.path);
-  const marts = new PostgresDestination({ url, schema: 'marts' });
+  const marts = new PostgresDestination({ url });
   await files.file('a.txt', 'first draft');
   files.source.rows = [{ id: '1', ref: 'a.txt' }];
   await files.pipeline.run();
@@ -713,8 +712,8 @@ test('an integer column keeps each value as a bigint, and a vector column keeps 
   const url = database.connectionString;
   const sql = client(url, clients);
   const source = new Files();
-  const raw = new PostgresDestination({ url, schema: 'raw' });
-  const target = raw.table('raw_files').withReaderView('marts', 'files');
+  const destination = new PostgresDestination({ url });
+  const target = destination.table('files');
   const measure = new Measure();
   const pipeline = new Pipeline({
     clock: globalThis,
@@ -723,13 +722,13 @@ test('an integer column keeps each value as a bigint, and a vector column keeps 
       new Connection({
         name: 'files',
         source,
-        destination: raw,
+        destination,
         steps: [new Copy(source.files, target)],
       }),
     ],
     derived: [
       new ComputedDataset({
-        into: new PostgresDestination({ url, schema: 'marts' }),
+        into: destination,
         name: 'measures',
         description: 'The size and vector of each file a row names.',
         from: [target],
@@ -767,7 +766,7 @@ test('an integer column keeps each value as a bigint, and a vector column keeps 
         ...(await sql`
           SELECT attname AS name, format_type(atttypid, atttypmod) AS type
           FROM pg_attribute
-          WHERE attrelid = 'marts.raw_measures'::regclass
+          WHERE attrelid = '_warehouse.raw_measures'::regclass
             AND attname IN ('size', 'vector')
           ORDER BY attname`),
       ],

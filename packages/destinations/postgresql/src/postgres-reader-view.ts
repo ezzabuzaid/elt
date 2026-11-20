@@ -1,20 +1,20 @@
 import { quote } from './identifier.ts';
 import type { TargetComments } from './postgres-comments.ts';
 import type { Transaction } from './postgres-load.ts';
-import type { PostgresReaderView } from './postgres-table.ts';
+import { inMarts, marts } from './postgres-schemas.ts';
 
 // The position a reader reads at: the one a reading set for its
 // transaction, or, for a session that set none, past every commit, so the
 // view shows the target as it is now and no row of its history.
 const position = `coalesce(nullif(current_setting('elt.position', true), '')::integer, 2147483647)`;
 
-// The view readers see a target through: exactly the stream's columns and
-// loaded_at, none of the internal ones, created with the target and
-// described by the comments of those columns. It reads the target as of the
+// The view in marts that readers see a target through: exactly the stream's
+// columns and loaded_at, none of the internal ones, created with the target
+// and described by the comments of those columns. It reads the target as of the
 // position its reader set: the rows that the target had then, and that it
 // still has or its history kept.
 export class TargetReaderView {
-  readonly #view: PostgresReaderView;
+  readonly #name: string;
   // The target's and its history's qualified names, and the columns the
   // view lists, with their comments.
   readonly #target: string;
@@ -23,13 +23,13 @@ export class TargetReaderView {
   readonly #comments: TargetComments;
 
   constructor(
-    view: PostgresReaderView,
+    name: string,
     target: string,
     history: string,
     columns: readonly string[],
     comments: TargetComments,
   ) {
-    this.#view = view;
+    this.#name = name;
     this.#target = target;
     this.#history = history;
     this.#columns = columns;
@@ -38,7 +38,7 @@ export class TargetReaderView {
   }
 
   get qualifiedName(): string {
-    return `${quote(this.#view.schema)}.${quote(this.#view.name)}`;
+    return inMarts(this.#name);
   }
 
   // Refuses, before anything is read, a reader view this load did not make:
@@ -84,7 +84,7 @@ export class TargetReaderView {
         `CREATE VIEW ${view} AS SELECT ${columns.join(', ')} FROM ${this.#target} WHERE "committed_in" <= ${position} UNION ALL SELECT ${columns.join(', ')} FROM ${this.#history} AS "_elt_old" WHERE "_elt_old"."committed_in" <= ${position} AND "_elt_old"."replaced_in" > ${position}`,
       );
     }
-    await this.#comments.write(sql, 'VIEW', this.#view.schema, this.#view.name);
+    await this.#comments.write(sql, 'VIEW', marts, this.#name);
   }
 
   async drop(sql: Transaction): Promise<void> {

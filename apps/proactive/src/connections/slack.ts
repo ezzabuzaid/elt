@@ -14,19 +14,13 @@ import { martsCopy } from './marts-copy.ts';
 const source = new SlackDesktopSource({
   directory: slackDesktopDirectory(homedir()),
 });
-const destination = new PostgresDestination({
-  url: warehouseUrl,
-  schema: 'slack',
-});
+const destination = new PostgresDestination({ url: warehouseUrl });
 
 export default new Connection({
   name: 'slack',
   source,
   destination,
-  checkpoints: new PostgresCheckpointStore({
-    url: warehouseUrl,
-    schema: 'slack',
-  }),
+  checkpoints: new PostgresCheckpointStore({ url: warehouseUrl }),
   steps: [source.messages, source.threadReplies].map(
     martsCopy(destination, 'slack'),
   ),

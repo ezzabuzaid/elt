@@ -1,6 +1,6 @@
 import postgres from 'postgres';
 
-import { identifier, quote } from './identifier.ts';
+import { quote } from './identifier.ts';
 
 // A session, or a transaction of one, for work that runs only statements.
 export type Queries = Pick<postgres.Sql, 'unsafe'>;
@@ -33,13 +33,6 @@ export function connectionUrl(url: string): string {
   )
     throw new TypeError('Postgres requires a postgres:// connection URL');
   return url;
-}
-
-export function schemaName(schema: string): string {
-  identifier(schema, 'schema name');
-  if (/^pg_/i.test(schema))
-    throw new TypeError('Schema names starting with pg_ are reserved');
-  return schema;
 }
 
 // The advisory lock of a schema's DDL, as hashtextextended keys it.

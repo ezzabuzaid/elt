@@ -77,20 +77,24 @@ class Scripted extends Source {
 const records = (name: string) =>
   new Stream({
     name,
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    jsonSchema: {
+      type: 'object',
+      description: 'Records.',
+      properties: { id: { type: 'string', description: 'Record id.' } },
+    },
     supportedSyncModes: ['full_refresh'],
   });
 
 const record = (stream: string, id: string) => ({ stream, data: { id } });
 
-// One connection, named as its schema, that copies each stream into a table.
+// One connection that copies each stream into a table of its name.
 function connection(
   url: string,
   name: string,
   steps: Readonly<Record<string, readonly Step[]>>,
 ) {
   const streams = Object.keys(steps).map(records);
-  const destination = new PostgresDestination({ url, schema: name });
+  const destination = new PostgresDestination({ url });
   return new Connection({
     name,
     source: new Scripted(streams, steps),
@@ -240,15 +244,19 @@ test('int64 and localTimestamp columns keep the int64 and date-time-local format
     name: 'bookings',
     jsonSchema: {
       type: 'object',
+      description: 'Bookings.',
       properties: {
-        id: { type: 'string' },
-        start: { type: ['string', 'null'] },
-        exact: { type: ['string', 'null'] },
+        id: { type: 'string', description: 'Booking id.' },
+        start: { type: ['string', 'null'], description: 'Booking start.' },
+        exact: {
+          type: ['string', 'null'],
+          description: 'Booking start to the 100 nanoseconds.',
+        },
       },
     },
     supportedSyncModes: ['full_refresh'],
   });
-  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const destination = new PostgresDestination({ url });
 
   await new Pipeline({
     clock: globalThis,
@@ -291,7 +299,7 @@ test('int64 and localTimestamp columns keep the int64 and date-time-local format
     [
       ...(await sql`
         SELECT id::text AS id, to_char(start, 'YYYY-MM-DD"T"HH24:MI:SS.MS') AS start, exact::text AS exact
-        FROM raw.bookings ORDER BY id`),
+        FROM marts.bookings ORDER BY id`),
     ],
     [
       { id: '-9223372036854775808', start: null, exact: null },
@@ -306,7 +314,7 @@ test('int64 and localTimestamp columns keep the int64 and date-time-local format
     [
       ...(await sql`
         SELECT column_name, data_type FROM information_schema.columns
-        WHERE table_schema = 'raw' AND table_name = 'bookings'
+        WHERE table_schema = '_warehouse' AND table_name = 'raw_bookings'
           AND column_name IN ('id', 'start', 'exact') ORDER BY column_name`),
     ],
     [
