@@ -4,6 +4,7 @@ import {
   type Clearing,
   type CopyConfiguration,
   type FieldValues,
+  FileContent,
   type KeyValue,
   type Partition,
   type ReloadMode,
@@ -31,6 +32,7 @@ import {
 } from './sql-server-connection.ts';
 import { numberOf, refreshDependents } from './sql-server-dependents.ts';
 import { TargetDescriptions } from './sql-server-descriptions.ts';
+import { SqlServerFileStore } from './sql-server-file-store.ts';
 import { storedColumns, storedFit } from './sql-server-fit.ts';
 import { TargetHistory, rowHash } from './sql-server-history.ts';
 import { quote } from './sql-server-identifiers.ts';
@@ -109,17 +111,17 @@ export abstract class SqlServerWriter extends Writer {
     retention: Temporal.Duration,
   ) {
     super(configuration.stream);
-    if (table.columns.some(({ fileRead }) => fileRead !== undefined))
-      throw new TypeError(
-        `Reader view ${marts}.${table.name} reads files, which the SQL Server destination does not load yet`,
-      );
     this.configuration = configuration;
     this.table = table;
     this.#database = database;
     this.#retention = retention;
     this.history = new TargetHistory(this.#hash);
-    // No column reads a file, so none stores one.
-    const description = describeTarget(configuration, table.columns, () => '');
+    const description = describeTarget(
+      configuration,
+      table.columns,
+      (column) =>
+        `UNIQUEIDENTIFIER reference to the source file's original bytes. Join ${new SqlServerFileStore(table, column).view} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
+    );
     const { missing } = description;
     if (missing.length > 0)
       throw new TypeError(
@@ -154,6 +156,13 @@ export abstract class SqlServerWriter extends Writer {
   // The name that the target takes in the swap of a reload, before it goes.
   get #replacedName(): string {
     return `_elt_replaced_${this.#hash}`;
+  }
+
+  // The stores of the original bytes of the target's file columns.
+  get #stores(): SqlServerFileStore[] {
+    return this.table.columns
+      .filter((column) => column.storesFile)
+      .map((column) => new SqlServerFileStore(this.table, column));
   }
 
   // The key hash of a table with a key, as its only element: a key column of
@@ -531,6 +540,7 @@ export abstract class SqlServerWriter extends Writer {
           changed: this.qualifiedName,
         },
         async () => {
+          await this.#dropRetiredChunks(connection);
           const [target] = await connection.query(
             `SELECT IIF(OBJECT_ID(@table, N'U') IS NULL, 0, 1) AS [made]`,
             { table: this.qualifiedName },
@@ -716,6 +726,7 @@ export abstract class SqlServerWriter extends Writer {
               changed: this.qualifiedName,
             },
             async () => {
+              await this.#dropRetiredChunks(connection);
               await this.#alter(connection, stored, types);
               retyped =
                 (await this.history.follow(connection, this.qualifiedName)) ===
@@ -783,6 +794,46 @@ export abstract class SqlServerWriter extends Writer {
       }
   }
 
+  // The field's values in each of the tables, a qualified name each: while
+  // a reload is open, the rows of the target and of its hidden target both
+  // still name files, and a row of the history keeps its file for a reading
+  // as of a position before the commit that replaced it.
+  #values(
+    connection: SqlServerConnection,
+    tables: () => readonly string[],
+  ): FieldValues {
+    const { table } = this;
+    return async function* (field) {
+      const column = table.columns.find((column) => column.field === field);
+      if (column === undefined)
+        throw new TypeError(`Unknown target field: ${field}`);
+      for (const name of tables()) {
+        const stored = await storedColumns(connection, { table: name });
+        if (!stored.some((stored) => stored.name === column.name)) continue;
+        for (const row of await connection.query(
+          `SELECT ${column.quotedName} AS [value] FROM ${name}`,
+        ))
+          yield row.value;
+      }
+    };
+  }
+
+  // Drops the chunks of each stored column that is no longer one of the
+  // target's file columns, before the table changes: no row of the table
+  // that the change leaves names them.
+  async #dropRetiredChunks(connection: SqlServerConnection): Promise<void> {
+    const files = new Set(
+      this.table.columns
+        .filter(({ storesFile }) => storesFile)
+        .map(({ name }) => name),
+    );
+    for (const { name } of await storedColumns(connection, {
+      table: this.qualifiedName,
+    }))
+      if (!files.has(name) && !internalColumns.has(name))
+        await SqlServerFileStore.drop(connection, this.table, name);
+  }
+
   // A clear of a stored table is a load of one commit of its connection. It
   // empties the table, not drops it, so the views built on it keep working,
   // and it forgets the rows it removes: each position before it expires.
@@ -822,8 +873,16 @@ export abstract class SqlServerWriter extends Writer {
       // Clearing a copy also abandons the reload it left open.
       await connection.query(`DROP TABLE IF EXISTS ${this.#hidden}`);
       await this.#reloaded(connection);
+      // No row is left in the table or its history, so no stored file stays.
+      for (const store of this.#stores)
+        await store.prune(connection, [this.history.qualifiedName]);
     });
-    await committed?.(noFiles);
+    await committed?.(
+      this.#values(connection, () => [
+        this.qualifiedName,
+        this.history.qualifiedName,
+      ]),
+    );
   }
 
   // One stream's load. Operations wait in a #temp table of the load's
@@ -857,6 +916,8 @@ export abstract class SqlServerWriter extends Writer {
     // A #temp table that a batch with parameters makes is dropped at the end
     // of that batch, so the stages are made by a batch with none.
     await connection.query(`${staging(stage)} ${staging(reloadStage)}`);
+    const stores = this.#stores;
+    for (const store of stores) await store.stage(connection);
     // What an open reload reloads; the whole stream until a RESET of a
     // partition opens one.
     let reloads: Reloads = wholeStream;
@@ -898,6 +959,12 @@ export abstract class SqlServerWriter extends Writer {
     };
     const open = () => mode === 'reload' || mode === 'continue';
     const into = () => (open() ? this.#hidden : this.qualifiedName);
+    // The tables whose rows name files: the target, its history, and the
+    // hidden target of an open reload.
+    const tables = () => [
+      ...(open() ? [this.qualifiedName, this.#hidden] : [this.qualifiedName]),
+      this.history.qualifiedName,
+    ];
     // Each staged row as JSON: its place in the stream, its operation, its
     // values, and the hashes, as hex, which the stage keeps as binary(32).
     const hashes = [version, ...this.#keyHashes];
@@ -934,6 +1001,7 @@ export abstract class SqlServerWriter extends Writer {
       pendingBytes = 0;
       resets = [];
       await connection.query(`TRUNCATE TABLE ${stage}`);
+      for (const store of stores) await store.discard(connection);
     };
     // Moves the stage into the target, or the hidden target of an open
     // reload, and gives whether a reader sees a row change. The first commit
@@ -1007,7 +1075,7 @@ export abstract class SqlServerWriter extends Writer {
       get reloading() {
         return open();
       },
-      values: noFiles,
+      values: this.#values(connection, tables),
       apply: async (operation) => {
         if (operation.type === 'RESET') {
           await flush();
@@ -1036,15 +1104,37 @@ export abstract class SqlServerWriter extends Writer {
             reloads = reloads.with(partition);
           return;
         }
+        // Each file is read here, before the source advances past it. The
+        // row keeps its id, and the row hash its content.
+        let data = operation.type === 'RECORD' ? operation.data : undefined;
+        const contents = new Map<SqlServerColumn, Uint8Array>();
+        for (const store of stores) {
+          const content: unknown = Reflect.get(
+            Object(data),
+            store.column.field,
+          );
+          if (content instanceof FileContent) {
+            const { file, sha256 } = await store.save(connection, content);
+            data = { ...Object(data), [store.column.field]: file };
+            contents.set(store.column, sha256);
+          }
+        }
         const row =
           operation.type === 'RECORD'
-            ? this.encode(operation.data)
+            ? this.encode(data)
             : this.deletionRow(operation.key);
         const text = JSON.stringify([
           next++,
           operation.type === 'RECORD' ? 'R' : 'D',
           ...row,
-          operation.type === 'RECORD' ? rowHash(columns, row) : null,
+          operation.type === 'RECORD'
+            ? rowHash(
+                columns,
+                columns.map(
+                  (column, index) => contents.get(column) ?? row[index] ?? null,
+                ),
+              )
+            : null,
           ...this.#keyHashes.map(() =>
             hash('sha256', JSON.stringify(keyed.map((index) => row[index]))),
           ),
@@ -1084,6 +1174,7 @@ export abstract class SqlServerWriter extends Writer {
                   parameters,
                 )) > 0 || changed;
           }
+          for (const store of stores) await store.publish(connection);
           changed =
             (await merge(
               { loadedAt: load.loadedAt, committedIn },
@@ -1092,6 +1183,7 @@ export abstract class SqlServerWriter extends Writer {
           await connection.query(`TRUNCATE TABLE ${stage}`);
           if (!changed) await claim.changedNone(committedIn);
           await this.history.expire(connection);
+          for (const store of stores) await store.prune(connection, tables());
         });
         claiming = () => claimed;
         // Its first commit made the hidden target, so the reload continues.
@@ -1123,6 +1215,11 @@ export abstract class SqlServerWriter extends Writer {
           await this.#reloaded(connection);
           if (!changed) await forgetCommit(connection, committedIn);
           await this.history.expire(connection);
+          for (const store of stores)
+            await store.prune(connection, [
+              this.qualifiedName,
+              this.history.qualifiedName,
+            ]);
         });
         mode = 'load';
         reloads = wholeStream;
@@ -1138,6 +1235,7 @@ export abstract class SqlServerWriter extends Writer {
         await connection.query(
           `DROP TABLE IF EXISTS ${stage}; DROP TABLE IF EXISTS ${reloadStage}`,
         );
+        for (const store of stores) await store.unstage(connection);
       },
     };
   }
@@ -1175,12 +1273,6 @@ export const writtenParameters = ({ loadedAt, committedIn }: Written) => ({
   loaded: loadedAt,
   committed: String(committedIn),
 });
-
-// No target of the destination reads files yet, so none keeps a value that
-// names one.
-const noFiles: FieldValues = (field) => {
-  throw new TypeError(`Target field ${field} holds no file`);
-};
 
 // Makes the tables of the writers in a transaction of their own, before the
 // commits of a load: SQL Server refuses a second session's CREATE TABLE of

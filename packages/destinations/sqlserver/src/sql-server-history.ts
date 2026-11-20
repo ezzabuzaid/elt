@@ -184,14 +184,15 @@ function typeOf(type: string) {
 // The SHA-256 of the values of a staged row, which names its version, as in
 // elt-postgresql: each value that is not null counts with its column's name,
 // so a column the stream adds, null in each stored row, makes no new
-// version. A string counts as its text, and every other value as the JSON
-// that the stage carries.
+// version. A stored file counts as the SHA-256 of its bytes, not as its id,
+// a string as its text, and every other value as the JSON that the stage
+// carries.
 export function rowHash(
   columns: readonly { readonly name: string }[],
-  values: readonly EncodedValue[],
+  values: readonly (EncodedValue | Uint8Array)[],
 ): string {
   const digest = createHash('sha256');
-  const add = (tag: string, data: string) => {
+  const add = (tag: string, data: string | Uint8Array) => {
     digest.update(`${tag}${Buffer.byteLength(data)}:`);
     digest.update(data);
   };
@@ -199,7 +200,8 @@ export function rowHash(
     const value = values[index];
     if (value === null || value === undefined) return;
     add('c', column.name);
-    if (typeof value === 'string') add('t', value);
+    if (value instanceof Uint8Array) add('b', value);
+    else if (typeof value === 'string') add('t', value);
     else add('j', JSON.stringify(value));
   });
   return digest.digest('hex');

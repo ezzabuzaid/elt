@@ -25,7 +25,8 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 - The reset and the reload: a `RESET` of the stream or of a partition, and an overwrite whose stored table no longer has the shape of its stream, load into a hidden table, which the end of the stream gives to the table by difference or swaps in (see "Shape changes" below).
 - `SqlServerCheckpointStore` and `SqlServerSyncHistory`, with the application locks of ADR 0009.
 - The evolve: a load that is not an overwrite, whose stored table no longer has the shape of its stream, changes the table in place with `ALTER TABLE`, in one commit of its own, and the history follows each widening (see "Shape changes" below).
-- Not built yet: file columns, `reading()`, `readPassStatus`, the writes of `derived_status`, `View` and `ComputedDataset`. A copy that needs one of them fails with a `TypeError`, and the package does not export the others yet.
+- The file columns: parsed text, references to the files of a storage, and the original bytes of a file in a file store (see "File bytes in the database" below).
+- Not built yet: `reading()`, `readPassStatus`, the writes of `derived_status`, `View` and `ComputedDataset`. A copy that needs one of them fails with a `TypeError`, and the package does not export the others yet.
 - A failure of the setup of the database is a `SqlServerSetupError`. Its [failure type](../../elt/README.md#failure-types) is `config`. A login without a permission that a statement of the destination or of `SqlServerCheckpointStore` needs is also `config`: a `SqlServerPermissionError` of sdk-microsoft-sql-server, and the SQL Server errors 229 and 230 (a permission on an object or a column) and 262 (a permission in the database, such as `CREATE TABLE`). A login that the server refuses (`SqlServerLoginError`: wrong credentials, a disabled login, a database that it may not open) is `config` too, as a wrong password is in elt-postgresql. Each other error, for example a server that cannot be reached, is `system`.
 
 ## Load a stream into SQL Server
@@ -237,7 +238,20 @@ ORDER BY r.distance;
 
 ## File bytes in the database
 
-As in Postgres: parsed content is `NVARCHAR(MAX)`. The column of an original file holds a `UNIQUEIDENTIFIER`. Its bytes are in a table `_warehouse._elt_files_<hash>` for each column, which readers read through the view `marts._elt_files_<hash>`, as `(file UNIQUEIDENTIFIER, n BIGINT, bytes VARBINARY(MAX))` chunks of up to 4 MiB. The chunks of a load wait in a `#` table of the connection until the commit of their rows moves them. The rules of removal, history and clear are those of [elt-postgresql](../postgresql/README.md#file-bytes-in-the-database).
+SQL Server takes the same `text().from(file).parse(parser)`, `text().from(file.store(storage))` and `blob().from(file)` declarations as SQLite and Postgres. See [stored files](../../elt/README.md#stored-files-and-document-parsing) in elt.
+
+- Parsed content is `NVARCHAR(MAX)`. A reference to a file of a storage is `NVARCHAR(MAX)` too.
+- The column of an original file holds a `UNIQUEIDENTIFIER`. Its bytes are in a table `_warehouse._elt_files_<hash>` for each column, as `(file UNIQUEIDENTIFIER, n BIGINT, bytes VARBINARY(MAX))` chunks of at most 4 MiB (`storedChunkSize` of elt). Readers read them through the view `marts._elt_files_<hash>`. The `MS_Description` of the column names that view, and the view has its own.
+- The hash is the first 40 hex characters of the SHA-256 of `JSON.stringify([rawTableName, columnName])`.
+- To read the original, join the view on `file` and concatenate `bytes` in the order of `n`.
+- An empty file has one empty chunk. A file that is not available gives a null value.
+- Each chunk goes to the server as base64 text in one JSON parameter, which `OPENJSON` reads as `varchar(max)`: `BASE64_DECODE` does not take `nvarchar` (error 8116, [ADR 0011](./docs/adr/0011-a-batch-travels-as-one-json-parameter-that-openjson-reads.md)).
+- The chunks of a load wait in a `#` table of the connection until the commit of their rows moves them. A discard empties that table.
+- The row hash counts the SHA-256 of the bytes in place of the id. Each load gives a file a new id, so a row whose file is the same stays as it is, and the commit removes the new chunks.
+- After each merge, the commit removes the chunks that no row of the table, of its history, or of its hidden table while a reload is open, names. A row of the history keeps its file.
+- A file column that the stream no longer has loses its file store and its view when its table evolves or a reload swaps it.
+- A clear of a copy also removes its files.
+- A plain `blob()` column with no `.from(file)` stores an inline `VARBINARY(MAX)` value.
 
 ## Descriptions
 
