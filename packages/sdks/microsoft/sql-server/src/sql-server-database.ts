@@ -2,6 +2,7 @@ import sql from 'mssql';
 
 import { cellNumber } from './cells.ts';
 import { SqlServerVersionError } from './errors.ts';
+import { SqlServerConnection } from './sql-server-connection.ts';
 import { connectionFailure, query } from './sql-server-request.ts';
 import { SqlServerSession } from './sql-server-session.ts';
 
@@ -60,6 +61,13 @@ export class SqlServerDatabase {
       beforeConnect: markBusyLogin,
     };
     Object.freeze(this);
+  }
+
+  // One session of the database, for work that keeps state from one
+  // statement to the next, such as a load that stages its rows in a #temp
+  // table, or a lock of the session.
+  connect(): Promise<SqlServerConnection> {
+    return SqlServerConnection.open(this.#config, this.location);
   }
 
   async open(): Promise<SqlServerSession> {

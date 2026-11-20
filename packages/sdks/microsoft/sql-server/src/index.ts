@@ -7,6 +7,7 @@ export {
   SqlServerVersionError,
 } from './errors.ts';
 export { SqlServerColumn } from './sql-server-column.ts';
+export { SqlServerConnection } from './sql-server-connection.ts';
 export { SqlServerDatabase } from './sql-server-database.ts';
 export { type SqlServerRead } from './sql-server-request.ts';
 export { SqlServerRow } from './sql-server-row.ts';

@@ -59,7 +59,7 @@ function refused(error: unknown): boolean {
 // the session: SQL Server ends the connection at severity 20 and above, as
 // error 596 does for a session that was killed. A refused read names the grant
 // it needs (errors 229 and 230).
-function readError(error: unknown, location: string): unknown {
+export function readError(error: unknown, location: string): unknown {
   if (
     error instanceof sql.ConnectionError ||
     (error instanceof sql.RequestError &&
