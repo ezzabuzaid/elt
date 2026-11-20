@@ -21,7 +21,7 @@ const source = new GoogleHealthSource({
 });
 ```
 
-Copy each stream with `syncMode: 'full_refresh'` and `destinationSyncMode: 'overwrite'`. See [Sync](#sync). The Google app (`apps/google/src/main.ts`) loads each stream into `google_health.raw_<stream>`, and readers query the reader view `marts.health_<snake_stream>`.
+Copy each stream with `syncMode: 'full_refresh'` and `destinationSyncMode: 'overwrite'`. See [Sync](#sync). The Google app (`apps/google/src/main.ts`) names the reader view of each stream `health_<snake_stream>`: readers query `marts.health_<snake_stream>`, and elt keeps the raw table in `_warehouse`.
 
 | Option              | Default    | What it does                                               |
 | ------------------- | ---------- | ---------------------------------------------------------- |

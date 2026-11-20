@@ -42,8 +42,8 @@ roles: warehouse (loads, owns the database) · agent_reader (reads marts only)
 
 The privileges are the barrier.
 
-- `warehouse` logs in, owns the `warehouse` database, loads the raw schemas and publishes `marts`.
-- `agent_reader` has `CONNECT` on the database, `USAGE` on `marts` and `SELECT` on its relations, and, once a pipeline names it as a reader, `SELECT` on the commit numbering in `_warehouse`. It has nothing else. It has no `TEMP`, no `CREATE`, and no access to the raw schemas. Views run with the rights of their owner.
+- `warehouse` logs in, owns the `warehouse` database, keeps elt's tables in `_warehouse` and publishes its views in `marts`.
+- `agent_reader` has `CONNECT` on the database, `USAGE` on `marts` and `SELECT` on its relations, and, once a pipeline names it as a reader, `SELECT` on the commit numbering in `_warehouse`. It has nothing else. It has no `TEMP`, no `CREATE`, and no access to the other tables of `_warehouse`. Views run with the rights of their owner.
 - `agent_reader` is `NOINHERIT`, with a limit of 5 connections.
 - The settings of `agent_reader` are only defaults, because a session can change them: `default_transaction_read_only = on`, `statement_timeout = 30s`, `idle_in_transaction_session_timeout = 60s` and `search_path = marts`.
 

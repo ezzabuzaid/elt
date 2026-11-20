@@ -9,7 +9,7 @@ messages.
 ## Layout
 
 - `src/main.ts` adds the rules that run. `src/pipeline.ts` lists the connections that the warehouse imports.
-- `src/connections/` holds one file for each connection. Each copy loads a stream into `raw_<stream>`, and readers see it as `marts.<prefix>_<stream>` (`marts-copy.ts`). `src/warehouse.ts` holds the addresses of the loading role and of `agent_reader`, and `src/rules-file.ts` the place of the stored rules.
+- `src/connections/` holds one file for each connection. Each copy names the reader view of its stream `<prefix>_<stream>` (`marts-copy.ts`): readers query it in `marts`, and elt keeps the raw table in `_warehouse`. `src/warehouse.ts` holds the addresses of the loading role and of `agent_reader`, and `src/rules-file.ts` the place of the stored rules.
 - `src/engine/` runs the rules: the `Automation` base, the `NotifyAutomation` and `AgentAutomation` actions, the `Automations` runner, and the stored rules: `SqlNotifyRule` and `SqlAgentRule` (`sql-rule.ts`) and `RuleStore` (`rule-store.ts`).
 - `src/rules/` holds the rules that are classes, one folder each with its test: `clay-topics/` (two rules that share a base class) and `planning-meetings/`. A rule that one SQL query can express is a stored rule instead (below).
 
