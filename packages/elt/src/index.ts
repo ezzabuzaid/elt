@@ -173,7 +173,11 @@ export {
   type PassState,
   type PassStatus,
   type StreamPassStatus,
+  type StreamStatusRow,
+  type SyncStatusRow,
   combinedPass,
+  recordedPassStatus,
+  recordedStreamStatus,
 } from './state/pass-status.ts';
 export { syncHistoryRelations } from './state/sync-history-relations.ts';
 export { LocalFiles } from './storage/local-files.ts';

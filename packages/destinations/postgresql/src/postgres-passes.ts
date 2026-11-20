@@ -1,11 +1,11 @@
 import type postgres from 'postgres';
 
 import {
-  type FailureType,
-  type PassState,
   type PassStatus,
   type StreamPassStatus,
   combinedPass,
+  recordedPassStatus,
+  recordedStreamStatus,
 } from '@eltjs/elt';
 
 import { inMarts } from './postgres-schemas.ts';
@@ -33,7 +33,17 @@ export async function readPassStatus(url: string): Promise<{
             SELECT status, started_at, completed_at, error, failure_type,
               last_successful_sync_at, current_as_of
             FROM ${sql.unsafe(inMarts('sync_status'))}`
-        ).map((row) => recorded(row, passState(row.status)));
+        ).map((row) =>
+          recordedPassStatus({
+            status: row.status,
+            startedAt: instant(row.started_at),
+            completedAt: optionalInstant(row.completed_at),
+            error: row.error,
+            failureType: row.failure_type,
+            lastSucceededAt: optionalInstant(row.last_successful_sync_at),
+            currentAsOf: optionalInstant(row.current_as_of),
+          }),
+        );
         const streams = await streamOutcomes(sql);
         return {
           pass: first === undefined ? null : combinedPass([first, ...others]),
@@ -57,68 +67,15 @@ async function streamOutcomes(
           jsonb_array_elements(c.failures) WITH ORDINALITY f
         WHERE c.attempt_id = s.latest_attempt_id AND c.stream = s.stream) AS error
     FROM ${sql.unsafe(inMarts('stream_status'))} s ORDER BY s.stream COLLATE "C"`;
-  return rows.map((row) => streamRecorded(row, passState(row.status)));
-}
-
-// A stream_status row as the stream's latest outcome: only a copy that
-// failed has an error.
-function streamRecorded(row: Row, state: PassState): StreamPassStatus {
-  const outcome = {
-    stream: String(row.stream),
-    lastSucceededAt: optionalInstant(row.last_successful_sync_at),
-    currentAsOf: optionalInstant(row.current_as_of),
-  };
-  switch (state) {
-    case 'partial':
-    case 'failed':
-      return { ...outcome, state, error: String(row.error) };
-    default:
-      return { ...outcome, state, error: null };
-  }
-}
-
-// A sync_status row as the pass it records: the history completes every pass
-// that ended, and gives an error to each that did not load completely.
-function recorded(row: Row, state: PassState): PassStatus {
-  const started = {
-    startedAt: instant(row.started_at),
-    lastSucceededAt: optionalInstant(row.last_successful_sync_at),
-    currentAsOf: optionalInstant(row.current_as_of),
-  };
-  switch (state) {
-    case 'running':
-      return {
-        ...started,
-        state,
-        completedAt: null,
-        error: null,
-        failureType: null,
-      };
-    case 'succeeded':
-      return {
-        ...started,
-        state,
-        completedAt: instant(row.completed_at),
-        error: null,
-        failureType: null,
-      };
-    case 'cancelled':
-      return {
-        ...started,
-        state,
-        completedAt: instant(row.completed_at),
-        error: String(row.error),
-        failureType: null,
-      };
-    default:
-      return {
-        ...started,
-        state,
-        completedAt: instant(row.completed_at),
-        error: String(row.error),
-        failureType: failureType(row.failure_type),
-      };
-  }
+  return rows.map((row) =>
+    recordedStreamStatus({
+      stream: row.stream,
+      status: row.status,
+      error: row.error,
+      lastSucceededAt: optionalInstant(row.last_successful_sync_at),
+      currentAsOf: optionalInstant(row.current_as_of),
+    }),
+  );
 }
 
 // A timestamptz as the ISO text that elt-sqlite stores and gives.
@@ -129,27 +86,4 @@ function instant(value: unknown): string {
 
 function optionalInstant(value: unknown): string | null {
   return value === null ? null : instant(value);
-}
-
-function failureType(value: unknown): FailureType {
-  switch (value) {
-    case 'config':
-    case 'system':
-      return value;
-    default:
-      throw new TypeError(`Unknown failure type ${String(value)}`);
-  }
-}
-
-function passState(value: unknown): PassState {
-  switch (value) {
-    case 'running':
-    case 'succeeded':
-    case 'partial':
-    case 'failed':
-    case 'cancelled':
-      return value;
-    default:
-      throw new TypeError(`Unknown pass status ${String(value)}`);
-  }
 }

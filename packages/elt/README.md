@@ -1160,7 +1160,7 @@ Each destination keeps its own `View` and `ComputedDataset`, and drives three ru
 - `partColumns` names the columns that each part keeps beside the key and the columns of the table rule, `seq` and `part_hash`, with their descriptions.
 - `reservedColumns(rule)` names the columns that no column of the rule may take, because the tables and the histories of the dataset keep them: the key, the computed columns, the part columns of a table rule, `committed_in`, `_elt_row_hash` and `replaced_in`. The constructor of each `ComputedDataset` refuses a rule column with one of these names, and compares the names as its store compares two names.
 
-The `readPassStatus` of a destination reads its sync history and gives a `PassStatus` of `@eltjs/elt`, with a `StreamPassStatus` for each stream. `combinedPass` shows the latest passes of several connections as one pass: it runs while one of them runs, and it is only as current as the least current one.
+The `readPassStatus` of a destination reads its sync history and gives a `PassStatus` of `@eltjs/elt`, with a `StreamPassStatus` for each stream. `combinedPass` shows the latest passes of several connections as one pass: it runs while one of them runs, and it is only as current as the least current one. `recordedPassStatus` gives the `PassStatus` of a row of the `sync_status` view, and `recordedStreamStatus` the `StreamPassStatus` of a row of `stream_status`; the destination gives each time as ISO text, and an unknown status or failure type is a `TypeError`.
 
 ## The same concepts in other systems
 
@@ -1256,7 +1256,7 @@ src/state/
   checkpoint-store.ts   CheckpointStore: the checkpoint protocol
   sync-history.ts       SyncHistory and its helpers
   sync-history-relations.ts  the descriptions of the history views
-  pass-status.ts        PassStatus and combinedPass: the latest pass that a history records
+  pass-status.ts        PassStatus, combinedPass and the rows that give them: the latest pass that a history records
 ```
 
 The files of derived data:

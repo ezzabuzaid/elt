@@ -3,11 +3,11 @@ import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import { UnavailableError, open } from '@zukhruf/sqlite-open';
 
 import {
-  type FailureType,
-  type PassState,
   type PassStatus,
   type StreamPassStatus,
   combinedPass,
+  recordedPassStatus,
+  recordedStreamStatus,
 } from '@eltjs/elt';
 
 import { busyTimeout } from './open-destination.ts';
@@ -32,7 +32,17 @@ export function readPassStatus(path: string): {
       'SELECT status, started_at, completed_at, error, failure_type, last_successful_sync_at, current_as_of FROM sync_status',
     )
     .all()
-    .map((row) => recorded(row, passState(row.status)));
+    .map((row) =>
+      recordedPassStatus({
+        status: row.status,
+        startedAt: String(row.started_at),
+        completedAt: text(row.completed_at),
+        error: row.error,
+        failureType: row.failure_type,
+        lastSucceededAt: text(row.last_successful_sync_at),
+        currentAsOf: text(row.current_as_of),
+      }),
+    );
   return {
     pass: first === undefined ? null : combinedPass([first, ...others]),
     streams: data
@@ -44,28 +54,16 @@ export function readPassStatus(path: string): {
         FROM stream_status s ORDER BY s.stream`,
       )
       .all()
-      .map((row) => streamRecorded(row, passState(row.status))),
+      .map((row) =>
+        recordedStreamStatus({
+          stream: row.stream,
+          status: row.status,
+          error: row.error,
+          lastSucceededAt: text(row.last_successful_sync_at),
+          currentAsOf: text(row.current_as_of),
+        }),
+      ),
   };
-}
-
-// A stream_status row as the stream's latest outcome: only a copy that
-// failed has an error.
-function streamRecorded(
-  row: Record<string, SQLOutputValue>,
-  state: PassState,
-): StreamPassStatus {
-  const outcome = {
-    stream: String(row.stream),
-    lastSucceededAt: text(row.last_successful_sync_at),
-    currentAsOf: text(row.current_as_of),
-  };
-  switch (state) {
-    case 'partial':
-    case 'failed':
-      return { ...outcome, state, error: String(row.error) };
-    default:
-      return { ...outcome, state, error: null };
-  }
 }
 
 // A reader of the file, or null while no file is at the path.
@@ -75,76 +73,6 @@ function reader(path: string): DatabaseSync | null {
   } catch (error) {
     if (error instanceof UnavailableError) return null;
     throw error;
-  }
-}
-
-// A sync_status row as the pass it records: the history completes every pass
-// that ended, and gives an error to each that did not load completely.
-function recorded(
-  row: Record<string, SQLOutputValue>,
-  state: PassState,
-): PassStatus {
-  const started = {
-    startedAt: String(row.started_at),
-    lastSucceededAt: text(row.last_successful_sync_at),
-    currentAsOf: text(row.current_as_of),
-  };
-  switch (state) {
-    case 'running':
-      return {
-        ...started,
-        state,
-        completedAt: null,
-        error: null,
-        failureType: null,
-      };
-    case 'succeeded':
-      return {
-        ...started,
-        state,
-        completedAt: String(row.completed_at),
-        error: null,
-        failureType: null,
-      };
-    case 'cancelled':
-      return {
-        ...started,
-        state,
-        completedAt: String(row.completed_at),
-        error: String(row.error),
-        failureType: null,
-      };
-    default:
-      return {
-        ...started,
-        state,
-        completedAt: String(row.completed_at),
-        error: String(row.error),
-        failureType: failureType(row.failure_type),
-      };
-  }
-}
-
-function failureType(value: SQLOutputValue | undefined): FailureType {
-  switch (value) {
-    case 'config':
-    case 'system':
-      return value;
-    default:
-      throw new TypeError(`Unknown failure type ${String(value)}`);
-  }
-}
-
-function passState(status: SQLOutputValue | undefined): PassState {
-  switch (status) {
-    case 'running':
-    case 'succeeded':
-    case 'partial':
-    case 'failed':
-    case 'cancelled':
-      return status;
-    default:
-      throw new TypeError(`Unknown pass status ${String(status)}`);
   }
 }
 

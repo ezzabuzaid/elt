@@ -134,3 +134,101 @@ function earliestOfAll(instants: readonly (string | null)[]): string | null {
   const known = instants.filter((instant) => instant !== null);
   return known.length < instants.length ? null : earliest(known);
 }
+
+// A row of the sync_status view of a destination, with each time as ISO
+// text.
+export type SyncStatusRow = {
+  readonly status: unknown;
+  readonly startedAt: string;
+  readonly completedAt: string | null;
+  readonly error: unknown;
+  readonly failureType: unknown;
+  readonly lastSucceededAt: string | null;
+  readonly currentAsOf: string | null;
+};
+
+// A row of the stream_status view, with each time as ISO text, and the
+// errors of the stream's failures in its latest attempt.
+export type StreamStatusRow = {
+  readonly stream: unknown;
+  readonly status: unknown;
+  readonly error: unknown;
+  readonly lastSucceededAt: string | null;
+  readonly currentAsOf: string | null;
+};
+
+// A sync_status row as the pass it records: the history completes every pass
+// that ended, and gives an error to each that did not load completely.
+export function recordedPassStatus(row: SyncStatusRow): PassStatus {
+  const started = {
+    startedAt: row.startedAt,
+    lastSucceededAt: row.lastSucceededAt,
+    currentAsOf: row.currentAsOf,
+  };
+  const state = passState(row.status);
+  if (state === 'running')
+    return {
+      ...started,
+      state,
+      completedAt: null,
+      error: null,
+      failureType: null,
+    };
+  if (row.completedAt === null)
+    throw new TypeError(`A sync history view gave a ${state} pass no end`);
+  const ended = { ...started, completedAt: row.completedAt };
+  switch (state) {
+    case 'succeeded':
+      return { ...ended, state, error: null, failureType: null };
+    case 'cancelled':
+      return { ...ended, state, error: String(row.error), failureType: null };
+    default:
+      return {
+        ...ended,
+        state,
+        error: String(row.error),
+        failureType: failureType(row.failureType),
+      };
+  }
+}
+
+// A stream_status row as the stream's latest outcome: only a copy that
+// failed has an error.
+export function recordedStreamStatus(row: StreamStatusRow): StreamPassStatus {
+  const outcome = {
+    stream: String(row.stream),
+    lastSucceededAt: row.lastSucceededAt,
+    currentAsOf: row.currentAsOf,
+  };
+  const state = passState(row.status);
+  switch (state) {
+    case 'partial':
+    case 'failed':
+      return { ...outcome, state, error: String(row.error) };
+    default:
+      return { ...outcome, state, error: null };
+  }
+}
+
+function failureType(value: unknown): FailureType {
+  switch (value) {
+    case 'config':
+    case 'system':
+      return value;
+    default:
+      throw new TypeError(`Unknown failure type ${String(value)}`);
+  }
+}
+
+function passState(value: unknown): PassState {
+  switch (value) {
+    case 'running':
+    case 'succeeded':
+    case 'partial':
+    case 'failed':
+    case 'cancelled':
+      return value;
+    default:
+      throw new TypeError(`Unknown pass status ${String(value)}`);
+  }
+}
