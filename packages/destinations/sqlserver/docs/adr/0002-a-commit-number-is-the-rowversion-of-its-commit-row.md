@@ -131,3 +131,56 @@ SQL> SELECT c.name AS column_name, TYPE_NAME(c.user_type_id) AS type FROM sys.al
 ```
 
 - Azure SQL Database has no `sys.database_recovery_status`, so the epoch cannot keep `recovery_fork_guid` there. `sys.databases` gives `create_date` and `physical_database_name`; this probe did not show whether a point-in-time restore of Azure SQL changes them.
+
+## Probe (2026-11-20): an Azure SQL Database point-in-time restore
+
+Ezz ruled on 2026-11-20 that this probe runs in his own subscription. Server: Azure SQL Database (a scratch server in Ezz's own subscription), region Sweden Central (West Europe and North Europe accepted no new servers), tier Basic. The scratch resource group was deleted at the end, and `az group show` then gave `ResourceGroupNotFound`.
+
+**After a point-in-time restore, `database_id`, `create_date` and `physical_database_name` change, and the counter gives numbers again that the original database gave. After the original is dropped and the restored database takes its name, `database_id` and `physical_database_name` stay, but `create_date` changes by 8 seconds. A change of service objective (Basic to S0) also changes `physical_database_name`.**
+
+Each candidate was read twice: as the server admin, and as `zzreader`, a contained database user with only `SELECT` and `INSERT` on the probe table. Both users read the same values from `sys.databases` and `sys.database_files`. Only `sys.dm_db_log_stats` needs `VIEW DATABASE STATE` (error 297 for `zzreader`).
+
+```sql
+CREATE TABLE dbo.zz_elt_probe_commits (id int IDENTITY PRIMARY KEY, number rowversion NOT NULL, note nvarchar(80));
+SELECT CAST(@@DBTS AS bigint) AS dbts, CAST(MIN_ACTIVE_ROWVERSION() AS bigint) - 1 AS high_water_mark;
+SELECT DB_ID() AS db_id, d.create_date, d.physical_database_name, d.service_broker_guid FROM sys.databases d WHERE d.database_id = DB_ID();
+SELECT * FROM sys.database_service_objectives;
+SELECT file_id, file_guid, type_desc, name, physical_name FROM sys.database_files;
+SELECT * FROM sys.databases WHERE database_id = DB_ID();   -- compared column by column
+SELECT * FROM sys.database_recovery_status WHERE database_id = DB_ID();
+```
+
+The database was made at 10:06:12 UTC. Its first backup was at 10:42:46 (`log_backup_time` of `sys.dm_db_log_stats`, and `earliestRestoreDate` of `az sql db show`). A restore to a time before that failed with `NoRestorePointAvailable`, so the restore point T is 10:45:39, after the first backup. The rows 2001 to 20682 were written before T. After T, a row took 20683, 20,000 updates moved it to 40762, and one more row took 40763. Then `az sql db restore --time 2026-11-20T10:45:39Z --dest-name zzprobe_pit` ran (1 minute 41 seconds):
+
+```text
+original at T          db_id 5  create_date 2026-11-20T10:06:12.560Z  physical_database_name 801a7c3b-…  @@DBTS 20682
+original after T       db_id 5  create_date 2026-11-20T10:06:12.560Z  physical_database_name 801a7c3b-…  @@DBTS 40763
+restored (zzprobe_pit) db_id 6  create_date 2026-11-20T10:48:57.563Z  physical_database_name fe7bb9fd-…  @@DBTS 22000
+  service_broker_guid D795F0FE-… in both; file_guid of each file the same in both (data EB9652B2-…, log 5043DAB8-…)
+  other columns of sys.databases that changed: is_broker_enabled 1 -> 0, is_temporal_history_retention_enabled 1 -> 0
+  sys.database_recovery_status in both: ERROR 208 (state 1): Invalid object name 'sys.database_recovery_status'.
+SQL> SELECT CAST(number AS bigint) AS number, note FROM dbo.zz_elt_probe_commits ORDER BY number   -- in zzprobe_pit
+  the rows 2001 … 20682; the rows 20683, 40762 and 40763 are not there
+SQL> INSERT INTO dbo.zz_elt_probe_commits (note) OUTPUT CAST(inserted.number AS bigint) AS number VALUES (N'first write after the restore')
+  {"number":"22001"}
+```
+
+Then `az sql db delete -n zzprobe` and `az sql db rename -n zzprobe_pit --new-name zzprobe`, the common recovery flow, so that a reader sees the same database name again. After that, one more step: `az sql db update --service-objective S0`, which is not a restore:
+
+```text
+after the rename (zzprobe)  db_id 6  create_date 2026-11-20T10:49:05.400Z  physical_database_name fe7bb9fd-…  @@DBTS 22001, next number 22002
+after Basic -> S0           db_id 6  create_date 2026-11-20T10:49:05.400Z  physical_database_name 7396fc83-…  @@DBTS 24000
+a new database on the same server: db_id 7 (the id 5 of the dropped database did not come back)
+```
+
+- The restored database gives 22001, below 40763 that the original gave. The numbers 22001 to 40763 can name two different commits, as on SQL Server 2025.
+- The counter of the restored database starts at 22000, above 20682, its value at T. A change of service objective moves it forward from 22002 to 24000. In this probe, the counter went back only at the restore.
+- `_elt_epoch` is in the database, so the restored database keeps the value from before the restore. The destination sees the restore when that stored value is not equal to the value that it reads now.
+- `physical_database_name` changes at each restore and stays at the rename. It also changes at a change of service objective: an epoch that keeps it starts a new epoch with no restore. A new epoch costs readers a full read, but it gives no wrong row.
+- `create_date` changes at the restore and stays at the change of service objective, but it changed by 8 seconds at the rename. An epoch that keeps it starts one more new epoch after the rename.
+- `database_id` changes at the restore and stays at the rename and at the change of service objective. It is a small number that the server gives; this probe did not show whether the server can give the id of a dropped database again.
+- Of the values that this probe read, only `database_id` changed at the restore and at nothing else.
+
+### Decision for Ezz's review
+
+The consequence above says that the epoch keeps `recovery_fork_guid`. Azure SQL Database has no `recovery_fork_guid`, so on Azure SQL Database (EngineEdition 5) the epoch must keep a different value. Each candidate starts a new epoch at each restore that this probe made. They differ in the false new epochs that they start: `physical_database_name` at each change of service objective, `create_date` at the rename, and `database_id` at none here, but its reuse after a drop is not known. Ezz decides which value the epoch keeps on Azure SQL Database.
