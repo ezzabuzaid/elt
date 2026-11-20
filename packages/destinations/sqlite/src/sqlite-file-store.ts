@@ -1,9 +1,9 @@
-import { createHash, hash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
 
-import type { FileContent } from '@eltjs/elt';
+import { type FileContent, writeChunks } from '@eltjs/elt';
 
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { identifiers, quote } from './sqlite-identifiers.ts';
@@ -29,7 +29,6 @@ const ids = new Declaration(
 // publishes them inside a commit, so a load holds no transaction while it
 // reads files.
 export class SQLiteFileStore {
-  static readonly chunkSize = 4 * 1024 * 1024;
   readonly name: string;
   readonly #database: DatabaseSync;
   readonly #staged: string;
@@ -106,14 +105,10 @@ export class SQLiteFileStore {
     const insert = this.#database.prepare(
       `INSERT INTO temp.${this.#staged} ("file", "n", "bytes") VALUES (?, ?, ?)`,
     );
-    const sha256 = createHash('sha256');
-    let n = 0;
-    for await (const chunk of content.chunks(SQLiteFileStore.chunkSize)) {
-      sha256.update(chunk);
-      insert.run(id, n++, chunk);
-    }
-    if (n === 0) insert.run(id, 0, new Uint8Array());
-    return { id, sha256: sha256.digest() };
+    const sha256 = await writeChunks(content, (n, bytes) => {
+      insert.run(id, n, bytes);
+    });
+    return { id, sha256 };
   }
 
   // Moves the staged chunks into the store, and records the highest id they

@@ -1246,6 +1246,7 @@ src/core/
   file-read.ts          FileRead and FileReference: the file declarations of a copy
   file-transfer.ts      the save, flush and retain of stored files around each commit
   file-storage.ts       FileStorage: the port of each file storage
+  stored-file.ts        storedChunkSize and writeChunks: the chunks of a file that a destination keeps in its database
   document-parser.ts    DocumentParser: the port of each parser
   position.ts           Position, Numbering and the rules of positions that each destination applies
   formats/              the string formats

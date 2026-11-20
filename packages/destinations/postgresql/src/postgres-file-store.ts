@@ -1,8 +1,8 @@
-import { createHash, hash, randomUUID } from 'node:crypto';
+import { hash, randomUUID } from 'node:crypto';
 
 import type postgres from 'postgres';
 
-import type { FileContent } from '@eltjs/elt';
+import { type FileContent, storedChunkSize, writeChunks } from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
 import type { PostgresColumn } from './postgres-column.ts';
@@ -18,7 +18,6 @@ const chunks =
 // chunks are a table in _warehouse, and readers read them through a view of
 // the same name in marts (ADR 0010).
 export class PostgresFileStore {
-  static readonly chunkSize = 4 * 1024 * 1024;
   readonly column: PostgresColumn;
   readonly qualifiedName: string;
   // The view in marts that readers join on file.
@@ -39,7 +38,7 @@ export class PostgresFileStore {
       {
         file: `The UUID that column ${column.name} of ${marts}.${table.name} holds.`,
         n: 'The place of the chunk in its file, from 0.',
-        bytes: `The bytes of the chunk, at most ${PostgresFileStore.chunkSize} bytes.`,
+        bytes: `The bytes of the chunk, at most ${storedChunkSize} bytes.`,
       },
     );
     this.#staged = quote(
@@ -79,19 +78,13 @@ export class PostgresFileStore {
     content: FileContent,
   ): Promise<{ readonly file: string; readonly sha256: Uint8Array }> {
     const file = randomUUID();
-    const sha256 = createHash('sha256');
-    let n = 0;
-    const insert = (bytes: Uint8Array) =>
-      sql.unsafe(
+    const sha256 = await writeChunks(content, async (n, bytes) => {
+      await sql.unsafe(
         `INSERT INTO pg_temp.${this.#staged} ("file", "n", "bytes") VALUES ($1, $2, $3)`,
-        [file, n++, Buffer.from(bytes)],
+        [file, n, Buffer.from(bytes)],
       );
-    for await (const chunk of content.chunks(PostgresFileStore.chunkSize)) {
-      sha256.update(chunk);
-      await insert(chunk);
-    }
-    if (n === 0) await insert(new Uint8Array());
-    return { file, sha256: sha256.digest() };
+    });
+    return { file, sha256 };
   }
 
   // Moves the staged chunks into the store, inside a commit, and makes the

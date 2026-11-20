@@ -31,6 +31,7 @@ import {
   Stream,
   type StreamSchema,
   diffSnapshot,
+  storedChunkSize,
 } from '@eltjs/elt';
 
 import {
@@ -653,7 +654,7 @@ test('file text and bounded original bytes survive replay, replacement and delet
   );
   const file = join(scratch.path, 'note.txt');
   const empty = join(scratch.path, 'empty.txt');
-  const bytes = Buffer.alloc(PostgresFileStore.chunkSize + 3, 'a');
+  const bytes = Buffer.alloc(storedChunkSize + 3, 'a');
   await writeFile(file, bytes);
   await writeFile(empty, '');
   class TextParser extends DocumentParser {
@@ -749,7 +750,7 @@ test('file text and bounded original bytes survive replay, replacement and delet
   );
   assert.deepEqual(
     chunks.map((chunk) => chunk.bytes.length),
-    [PostgresFileStore.chunkSize, 3],
+    [storedChunkSize, 3],
   );
   assert.deepEqual(Buffer.concat(chunks.map((chunk) => chunk.bytes)), bytes);
   // Chunks that no row of the table or of its history refers to.
