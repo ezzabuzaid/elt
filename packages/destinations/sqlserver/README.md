@@ -1,6 +1,6 @@
 # @eltjs/elt-sqlserver
 
-> **Partly built, private.** Ezz accepted the design on 2026-11-19. The first steps of backlog #4736 are built: the append, overwrite and deduplicating writers, the numbering, the checkpoint store and the sync history (see "Built now" below). The rest of the "Now" column is design on paper until its step is built. The package is private until its tests pass for the whole design.
+> **Partly built, private.** Ezz accepted the design on 2026-11-19. The first steps of backlog #4736 are built: the append, overwrite and deduplicating writers, the numbering, the readings, the checkpoint store, the sync history and `readPassStatus` (see "Built now" below). The rest of the "Now" column is design on paper until its step is built. The package is private until its tests pass for the whole design.
 
 The SQL Server destination of elt. It loads each stream of a connection into a SQL Server or Azure SQL database, with typed columns, and it does not block readers while it loads. Each target is a reader view in `marts`, which the host names, over a raw table in `_warehouse`. It also keeps the views and computed datasets that the pipeline derives. A computed dataset can keep a vector column as a native `VECTOR(n)`, so Azure SQL searches it with `VECTOR_DISTANCE` or a DiskANN index. The checkpoint store and the sync history keep their data in the same database.
 
@@ -26,7 +26,8 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 - `SqlServerCheckpointStore` and `SqlServerSyncHistory`, with the application locks of ADR 0009.
 - The evolve: a load that is not an overwrite, whose stored table no longer has the shape of its stream, changes the table in place with `ALTER TABLE`, in one commit of its own, and the history follows each widening (see "Shape changes" below).
 - The file columns: parsed text, references to the files of a storage, and the original bytes of a file in a file store (see "File bytes in the database" below).
-- Not built yet: `reading()`, `readPassStatus`, the writes of `derived_status`, `View` and `ComputedDataset`. A copy that needs one of them fails with a `TypeError`, and the package does not export the others yet.
+- `reading(position?)`: a session of its own that reads the database as of a position (see "Commit numbers and positions" below), and `readPassStatus(login)`.
+- Not built yet: `View` and `ComputedDataset`, and with them the writes of `derived_status`. The package does not export them yet.
 - A failure of the setup of the database is a `SqlServerSetupError`. Its [failure type](../../elt/README.md#failure-types) is `config`. A login without a permission that a statement of the destination or of `SqlServerCheckpointStore` needs is also `config`: a `SqlServerPermissionError` of sdk-microsoft-sql-server, and the SQL Server errors 229 and 230 (a permission on an object or a column) and 262 (a permission in the database, such as `CREATE TABLE`). A login that the server refuses (`SqlServerLoginError`: wrong credentials, a disabled login, a database that it may not open) is `config` too, as a wrong password is in elt-postgresql. Each other error, for example a server that cannot be reached, is `system`.
 
 ## Load a stream into SQL Server
@@ -142,12 +143,15 @@ class SqlServerSyncHistory {
 }
 
 type SqlServerReading = AsyncDisposable & {
-  readonly sql: mssql.Transaction; // SNAPSHOT, read-only, its own connection
+  readonly sql: SqlServerConnection; // of @eltjs/sdk-microsoft-sql-server: its own session, in a SNAPSHOT transaction
   readonly position: string;
-  readonly at: Date;
+  readonly at: Temporal.Instant; // when the commit of the position was made
 };
 
-function readPassStatus(login: SqlServerLogin): Promise<PassStatus>;
+function readPassStatus(login: SqlServerLogin): Promise<{
+  readonly pass: PassStatus | null;
+  readonly streams: readonly StreamPassStatus[];
+}>;
 ```
 
 ## What each call does underneath
@@ -162,7 +166,7 @@ function readPassStatus(login: SqlServerLogin): Promise<PassStatus>;
 | the first commit of a stream              | Also makes the table, its clustered `_elt_row` key ([ADR 0003](./docs/adr/0003-a-raw-table-numbers-its-rows-with-an-identity-column.md)), the unique index on `_elt_key_hash` ([ADR 0004](./docs/adr/0004-a-key-is-indexed-by-its-hash.md)), the extended properties, the reader view and the writer                                                                                                                                                                                                                                                                                                                                   |
 | a change of shape or the swap of a reload | `SET LOCK_TIMEOUT 3000`, `ALTER TABLE` or two `sp_rename` calls, then `sp_refreshview` for each view over the table ([ADR 0006](./docs/adr/0006-a-change-of-a-table-refreshes-the-views-over-it.md))                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `positions(after)`                        | Reads `MIN_ACTIVE_ROWVERSION()`, then `_elt_commits` and `_elt_loads` in one `SNAPSHOT` transaction                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `reading(position)`                       | Opens a connection, reads the high-water mark, begins a `SNAPSHOT` transaction, and sets `elt.position` with `sp_set_session_context … @read_only = 1`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `reading(position)`                       | Opens a connection, checks the engine and the row versioning, reads the high-water mark, begins a `SNAPSHOT` transaction, and sets `elt.position` with `sp_set_session_context … @read_only = 1`                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | a refresh of a `ComputedDataset`          | Compares the inputs with the output rows, calls the rule, and commits each settled call. A `vector(n)` value goes as the JSON text of `@zukhruf/vectors/sqlserver` and lands through `CAST(… AS VECTOR(n))`                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `SqlServerCheckpointStore` acquire        | One session lock of `sp_getapplock` for each copy `id`, through `SqlServerStore` of `@zukhruf/mutex/sqlserver` ([ADR 0009](./docs/adr/0009-each-lock-is-an-application-lock-of-sql-server.md))                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
@@ -306,7 +310,10 @@ How SQL Server is different:
 A reading as of a position:
 
 - Each reader view reads its table as of the position in `SESSION_CONTEXT(N'elt.position')`: the rows of the table with `committed_in <= P`, and the rows of the history with `committed_in <= P < replaced_in`. A session that sets nothing reads the table as it is now. A view built on a reader view reads as of the same position ([ADR 0010](./docs/adr/0010-a-reading-sets-its-position-in-the-session-context-and-reads-row-versions.md)).
-- `await destination.reading(position?)` gives `{ sql, position, at }` or `{ expired }`, as in Postgres. `sql` is a `SNAPSHOT` transaction of its own connection, and the position is a read-only key of its session context, so the reader cannot change it.
+- `await destination.reading(position?)` gives `{ sql, position, at }` or `{ expired }`, as in Postgres. With no position, it reads the newest position. `sql` is a `SqlServerConnection` of its own session, in a `SNAPSHOT` transaction, so a commit after the reading begins shows in no read. Dispose the reading to end the session.
+- The position is a read-only key of the session context, so the reader cannot change it: a change fails with error 15664. Below the newest commit that the snapshot sees, the key holds the number of the position. At the newest commit, it holds the largest `bigint`, which reads each table as it is now, because a key with no value cannot be read-only ([ADR 0010](./docs/adr/0010-a-reading-sets-its-position-in-the-session-context-and-reads-row-versions.md)).
+- A position of another epoch, past the newest commit, or before `min_valid` gives `{ expired }` with the reason, such as a clear that forgot the rows. A commit inside a pass, or a text that is not a position, is a `TypeError`.
+- A file of a row that the history kept reads through `marts._elt_files_<hash>` as of the position, because the chunks of a file stay while a row of the table or of its history names it.
 
 ## Checkpoints
 
@@ -334,11 +341,11 @@ As in [elt-postgresql](../postgresql/README.md#when-something-fails). Also:
 
 ## Sync history
 
-`SqlServerSyncHistory({ login, readers })` is the sync history of a pipeline that loads into SQL Server, with the tables, views and rules of [elt-postgresql](../postgresql/README.md#sync-history): `_warehouse.sync_attempts`, `extraction_coverage`, `stream_checks` and `derived_status`, and the views `sync_attempts`, `extraction_coverage`, `sync_status`, `stream_status`, `derived_status` and `catalog` in `marts`. `install()` makes them in one transaction. `readers` are database users or roles; each install grants them `SELECT` on the numbering and nothing else of `_warehouse`. Each attempt has a session of its own that holds a session lock of `sp_getapplock` on the attempt, so the next attempt of its connection finds a pass whose process stopped and records it as `failed` (elt-postgresql ADR 0009). The `catalog` reads the `MS_Description` extended properties. `readPassStatus(login)` gives the latest pass of the database, as it does for Postgres.
+`SqlServerSyncHistory({ login, readers })` is the sync history of a pipeline that loads into SQL Server, with the tables, views and rules of [elt-postgresql](../postgresql/README.md#sync-history): `_warehouse.sync_attempts`, `extraction_coverage`, `stream_checks` and `derived_status`, and the views `sync_attempts`, `extraction_coverage`, `sync_status`, `stream_status`, `derived_status` and `catalog` in `marts`. `install()` makes them in one transaction. `readers` are database users or roles; each install grants them `SELECT` on the numbering and nothing else of `_warehouse`. Each attempt has a session of its own that holds a session lock of `sp_getapplock` on the attempt, so the next attempt of its connection finds a pass whose process stopped and records it as `failed` (elt-postgresql ADR 0009). The `catalog` reads the `MS_Description` extended properties. The sync history keeps no row versions, so a session that reads as of a position before the newest commit fails each of its views with error 245 and the message `The sync history cannot be read as of a position: it keeps no row versions`; a reading at the newest commit reads them. `readPassStatus(login)` gives the latest pass of the database and the latest outcome of each stream, as it does for Postgres. It reads them in one statement, so it needs no `SNAPSHOT` transaction, and it reads the failed passes of a database that keeps no row versions.
 
 ## Derived status
 
-As in [elt-postgresql](../postgresql/README.md#derived-status), from elt ADR 0025: one row of `_warehouse.derived_status` for each view and computed dataset, named with its schema, which readers see as `marts.derived_status`.
+As in [elt-postgresql](../postgresql/README.md#derived-status), from elt ADR 0025: one row of `_warehouse.derived_status` for each view and computed dataset, named with its schema, which readers see as `marts.derived_status`. The sync history makes the table and the view now. Its rows come with `View` and `ComputedDataset`, which write them through `DerivedStatus` of elt.
 
 ## Errors
 

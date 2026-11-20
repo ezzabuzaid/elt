@@ -49,15 +49,14 @@ function owned(owner: LoadOwner): readonly ['connector' | 'dataset', string] {
     : ['dataset', owner.dataset];
 }
 
-// Refuses a database that the destination cannot load as ADR 0010 says: an
-// engine older than SQL Server 2025 has no VECTOR and no JSON type, and a
-// database that keeps no row versions makes readers wait for a load. Gives
-// the mark of the copy of the database: the recovery fork of SQL Server,
-// which each restore changes and a restart does not; Azure SQL Database has
-// no such view, so there each value of sys.databases that a restore changes.
-export async function databaseCopy(
+// Refuses a database that the destination cannot load or read as ADR 0010
+// says: an engine older than SQL Server 2025 has no VECTOR and no JSON type,
+// and a database that keeps no row versions makes readers wait for a load
+// and refuses a SNAPSHOT transaction. Any user of the database can read its
+// row of sys.databases. Gives whether the database is an Azure SQL Database.
+export async function requireRowVersions(
   connection: SqlServerConnection,
-): Promise<string> {
+): Promise<{ readonly name: string; readonly azure: boolean }> {
   const [setup] = await connection.query(
     `SELECT CAST(SERVERPROPERTY('EngineEdition') AS int) AS [edition], CAST(SERVERPROPERTY('ProductMajorVersion') AS int) AS [major],
        CAST([is_read_committed_snapshot_on] AS int) AS [committed_snapshot], CAST([snapshot_isolation_state] AS int) AS [snapshot], DB_NAME() AS [name]
@@ -85,6 +84,17 @@ export async function databaseCopy(
     throw new SqlServerSetupError(
       `Database ${name} keeps no row versions for readers, so they would wait for each load; run ${statements.join('; ')}`,
     );
+  return { name, azure };
+}
+
+// Refuses a database that the destination cannot load, and gives the mark of
+// the copy of the database: the recovery fork of SQL Server, which each
+// restore changes and a restart does not; Azure SQL Database has no such
+// view, so there each value of sys.databases that a restore changes.
+export async function databaseCopy(
+  connection: SqlServerConnection,
+): Promise<string> {
+  const { name, azure } = await requireRowVersions(connection);
   const [copy] = await connection.query(
     azure
       ? `SELECT CONCAT([database_id], N' ', CONVERT(nvarchar(30), [create_date], 126), N' ', [physical_database_name]) AS [mark] FROM sys.databases WHERE [database_id] = DB_ID()`
@@ -294,7 +304,7 @@ export async function expireBefore(
 
 // The numbering as the transaction that connection runs in sees it, with
 // settled taken before its snapshot.
-async function numberingIn(
+export async function numberingIn(
   connection: SqlServerConnection,
   settled: number,
 ): Promise<Numbering | null> {
@@ -324,24 +334,49 @@ async function numberingIn(
   });
 }
 
-// The numbering in a SNAPSHOT transaction of its own, with the high-water
-// mark read before it: MIN_ACTIVE_ROWVERSION() is the lowest number that a
-// transaction still holds, so each number below it is settled, and the
-// snapshot sees each commit at or below the mark (ADR 0002). Null when the
-// database has no numbering. connection is a session of its own, which
-// keeps the SNAPSHOT isolation level after.
-export async function readNumbering(
+// The high-water mark: MIN_ACTIVE_ROWVERSION() is the lowest number that a
+// transaction still holds, so each number below it is settled, and a
+// snapshot that begins after the read sees each commit at or below the mark
+// (ADR 0002). Null when the database has no numbering.
+export async function settledMark(
   connection: SqlServerConnection,
-): Promise<Numbering | null> {
+): Promise<number | null> {
   const [mark] = await connection.query(
     `SELECT CONVERT(nvarchar(20), CAST(MIN_ACTIVE_ROWVERSION() AS bigint) - 1) AS [settled], CASE WHEN OBJECT_ID(N'${epochs}', N'U') IS NULL THEN 0 ELSE 1 END AS [made]`,
   );
-  if (mark?.made !== 1) return null;
+  return mark?.made === 1 ? Number(mark.settled) : null;
+}
+
+// When the commit number was made, and the newest commit, as the transaction
+// that connection runs in sees them; undefined for a number of no commit.
+export async function committedAt(
+  connection: SqlServerConnection,
+  number: number,
+): Promise<{ readonly at: Date; readonly newest: number } | undefined> {
+  const [row] = await connection.query(
+    `SELECT [committed_at] AS [at], (SELECT CONVERT(nvarchar(20), MAX(CAST([number] AS bigint))) FROM ${commits}) AS [newest]
+     FROM ${commits} WHERE [number] = CAST(CAST(@number AS bigint) AS binary(8))`,
+    { number: String(number) },
+  );
+  if (row === undefined) return undefined;
+  if (!(row.at instanceof Date))
+    throw new TypeError(`Commit ${number} gave no time`);
+  return { at: row.at, newest: Number(row.newest) };
+}
+
+// The numbering in a SNAPSHOT transaction of its own, with the high-water
+// mark read before it. connection is a session of its own, which keeps the
+// SNAPSHOT isolation level after.
+export async function readNumbering(
+  connection: SqlServerConnection,
+): Promise<Numbering | null> {
+  const settled = await settledMark(connection);
+  if (settled === null) return null;
   await connection.query(
     'SET TRANSACTION ISOLATION LEVEL SNAPSHOT; BEGIN TRANSACTION',
   );
   try {
-    return await numberingIn(connection, Number(mark.settled));
+    return await numberingIn(connection, settled);
   } finally {
     await connection.query('COMMIT');
   }

@@ -12,7 +12,7 @@ SQL Server gives both parts:
 ## Decision
 
 - Each reader view reads `TRY_CAST(SESSION_CONTEXT(N'elt.position') AS bigint)`. Null reads the table as it is now, and no row of the history.
-- `reading(position?)` opens its own connection, reads the high-water mark (ADR 0002), begins a `SNAPSHOT` transaction, and below the newest commit that its snapshot sees, sets `elt.position` with `@read_only = 1`.
+- `reading(position?)` opens its own connection, reads the high-water mark (ADR 0002), begins a `SNAPSHOT` transaction, and sets `elt.position` with `@read_only = 1`: below the newest commit that its snapshot sees, to the number of the position, and else to the largest `bigint`, which reads each table as it is now. A key with the value `NULL` is not kept, so it cannot be read-only; thus a reading at the newest position also sets a number, and the reader cannot set a position of its own (probe of 2026-11-20 below).
 - The first load and each reading check `is_read_committed_snapshot_on` and `snapshot_isolation_state` of the database. When one is off, they fail with the failure type `config`, and the error gives the `ALTER DATABASE … SET …` statement that turns it on.
 
 ## Considered Options
@@ -57,3 +57,25 @@ SQL> SELECT SESSION_CONTEXT(N'elt.position') AS position_after_attempt
 - Before the `SNAPSHOT` probe of ADR 0002, the probe ran `ALTER DATABASE probe SET ALLOW_SNAPSHOT_ISOLATION ON` and `ALTER DATABASE probe SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE` in Docker. No setting of BILLING was changed.
 - The key stays across the requests of one connection of `mssql`, which does not reset the session between them.
 - The probe of a restore and `recovery_fork_guid` is in [ADR 0002](./0002-a-commit-number-is-the-rowversion-of-its-commit-row.md#probe-2026-11-20-recovery_fork_guid-after-a-restore), where the epoch is decided.
+
+## Probe (2026-11-20): a read-only key with no value
+
+SQL Server 2025 in Docker. A key that is set to `NULL` with `@read_only = 1` is not kept, and a later call sets it. A `bigint` from a parameter goes through a variable, because a `sql_variant` holds no `nvarchar(max)`.
+
+```text
+SQL> EXEC sp_set_session_context @key = N'elt.position', @value = NULL, @read_only = 1
+SQL> EXEC sp_set_session_context @key = N'elt.position', @value = N'5'
+SQL> SELECT SESSION_CONTEXT(N'elt.position') AS p
+  {"p":"5"}
+SQL> DECLARE @p bigint = CAST(@n AS bigint); EXEC sp_set_session_context @key = N'elt.other', @value = @p, @read_only = 1   -- @n = N'42'
+SQL> SELECT TRY_CAST(SESSION_CONTEXT(N'elt.other') AS bigint) AS p, SQL_VARIANT_PROPERTY(SESSION_CONTEXT(N'elt.other'), 'BaseType') AS t
+  {"p":"42","t":"bigint"}
+```
+
+A view cannot raise an error. A condition that converts a text to `int` fails with error 245, and the message holds the text, also when the view has no rows to read. The views of the sync history use it to refuse a reading below the newest commit:
+
+```text
+SQL> CREATE VIEW dbo.ve AS SELECT h.a FROM dbo.e AS h WHERE 1 = IIF(SESSION_CONTEXT(N'elt.other') IS NULL, 1, CAST(N'The sync history cannot be read as of a position: it keeps no row versions' AS int))
+SQL> SELECT COUNT(*) AS n FROM dbo.ve   -- dbo.e has no rows
+  ERROR 245: Conversion failed when converting the nvarchar value 'The sync history cannot be read as of a position: it keeps no row versions' to data type int.
+```

@@ -10,6 +10,7 @@ import {
 import { SqlServerDatabase } from '@eltjs/sdk-microsoft-sql-server';
 
 import { SqlServerAppendWriter } from './sql-server-append-writer.ts';
+import { type SqlServerReading, readAsOf } from './sql-server-as-of.ts';
 import type { SqlServerColumn } from './sql-server-column.ts';
 import { SqlServerColumns } from './sql-server-columns.ts';
 import { type SqlServerLogin, connect } from './sql-server-connection.ts';
@@ -98,6 +99,16 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
       since,
       sqlServerDatabase,
     );
+  }
+
+  // The database as of a position, or as of its newest one, read through the
+  // reader views: { expired } for a position of another epoch, past the
+  // newest commit or before min_valid, and a TypeError for one inside a pass
+  // or not a position.
+  reading(
+    position?: string,
+  ): Promise<SqlServerReading | { readonly expired: string }> {
+    return readAsOf(this.#database, position);
   }
 
   table(

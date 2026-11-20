@@ -1,6 +1,7 @@
 import { readerCatalog, syncHistoryRelations } from '@eltjs/elt';
 
 import { columnType } from './sql-server-fit.ts';
+import { now, position } from './sql-server-reader-view.ts';
 import { inWarehouse, marts, warehouse } from './sql-server-schemas.ts';
 import type { SqlServerView } from './sql-server-views.ts';
 
@@ -109,9 +110,16 @@ const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
 };
 
 // How readers see the sync history: what each pass declared and loaded.
+// The sync history keeps no row versions, so a session that reads as of a
+// position before now fails each of its views. A view cannot raise an
+// error, so the condition converts the reason to int, which fails with
+// error 245 and the reason in its message, also over no rows.
 export const syncHistoryViews: readonly SqlServerView[] = Object.values(
   syncHistoryRelations,
-).map((relation) => ({ ...relation, query: queries[relation.name] }));
+).map((relation) => ({
+  ...relation,
+  query: `SELECT * FROM (${queries[relation.name]}) AS [history] WHERE 1 = IIF(${position} = ${now}, 1, CAST(N'The sync history cannot be read as of a position: it keeps no row versions' AS int))`,
+}));
 
 // Lists what readers of marts query, its views, from the descriptions every
 // load and publication writes there.

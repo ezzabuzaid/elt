@@ -4,10 +4,13 @@ import type { TargetDescriptions } from './sql-server-descriptions.ts';
 import { quote } from './sql-server-identifiers.ts';
 import { inMarts, marts } from './sql-server-schemas.ts';
 
+// The position past every commit, which reads each target as it is now and
+// no row of its history.
+export const now = '9223372036854775807';
+
 // The position a reader reads at: the one a reading set in its session
-// context, or, for a session that set none, past every commit, so the view
-// shows the target as it is now and no row of its history (ADR 0010).
-const position = `ISNULL(TRY_CAST(SESSION_CONTEXT(N'elt.position') AS bigint), 9223372036854775807)`;
+// context, or now for a session that set none (ADR 0010).
+export const position = `ISNULL(TRY_CAST(SESSION_CONTEXT(N'elt.position') AS bigint), ${now})`;
 
 // The view in marts that readers see a target through: exactly the stream's
 // columns and loaded_at, none of the internal ones, made with the target and

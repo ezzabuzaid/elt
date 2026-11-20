@@ -123,7 +123,7 @@ _Avoid_: TTL, `HISTORY_RETENTION_PERIOD` (a setting of a temporal table)
 _Avoid_: MVCC (the general term), `NOLOCK` (a dirty read)
 
 **Reading**:
-A read-only `SNAPSHOT` transaction, of its own connection, that sees the database as of one position: its session context holds `elt.position`, which each reader view reads.
+A `SNAPSHOT` transaction, of its own connection, that sees the database as of one position: its session context holds `elt.position` as a read-only key, which each reader view reads and the reader cannot change. At the newest position, the key holds the largest `bigint`, which reads each table as it is now.
 _Avoid_: Snapshot (a reading has one, but a snapshot alone shows commits inside a pass), time travel, `FOR SYSTEM_TIME AS OF`
 
 **Application lock**:

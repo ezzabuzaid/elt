@@ -381,6 +381,75 @@ test('a load that brings the same file again keeps the row it stored and stores 
   );
 });
 
+test('the file of a row that a later pass replaces, and of one that it deletes, reads with its own bytes as of the position before it, through the view of its chunks', async () => {
+  await using database = await scratch();
+  await using files = await new TemporaryFiles().directory('elt-sqlserver-');
+  const first = join(files.path, 'first.txt');
+  const gone = join(files.path, 'gone.txt');
+  const second = join(files.path, 'second.txt');
+  await writeFile(first, 'the first bytes');
+  await writeFile(gone, 'bytes of a deleted row');
+  await writeFile(second, 'the second bytes');
+  const stream = attachments('documents');
+  const source = new Messages(stream);
+  const destination = new SqlServerDestination({ login: database.login });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SqlServerSyncHistory({ login: database.login }),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SqlServerCheckpointStore({ login: database.login }),
+        steps: [
+          new Copy(
+            stream,
+            destination.table('documents', (c) => [
+              c.text('id'),
+              c.integer('version'),
+              c.blob('bytes').from(stream.file),
+            ]),
+            {
+              id: 'documents',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+              cursorField: 'version',
+            },
+          ),
+        ],
+      }),
+    ],
+  });
+  source.messages = [
+    { stream: stream.name, data: { id: 'kept', version: 1 }, file: first },
+    { stream: stream.name, data: { id: 'gone', version: 1 }, file: gone },
+  ];
+  await pipeline.run();
+  const positions = await destination.positions();
+  assert.ok(Array.isArray(positions));
+  const before = positions.at(-1);
+  source.messages = [
+    { stream: stream.name, data: { id: 'kept', version: 2 }, file: second },
+    { type: 'DELETE', stream: stream.name, key: { id: 'gone' } },
+  ];
+  await pipeline.run();
+  const chunks = await filesView(database.admin, 'marts.documents', 'bytes');
+  const texts = `SELECT d.[id], CAST(c.[bytes] AS varchar(max)) AS [text] FROM marts.documents AS d JOIN ${chunks} AS c ON c.[file] = d.[bytes] ORDER BY d.[id], c.[n]`;
+  const read = async (position?: string) => {
+    const reading = await destination.reading(position);
+    if ('expired' in reading) assert.fail(reading.expired);
+    await using _reading = reading;
+    return (await reading.sql.query(texts)).map((row) => ({ ...row }));
+  };
+
+  assert.deepEqual(await read(before), [
+    { id: 'gone', text: 'bytes of a deleted row' },
+    { id: 'kept', text: 'the first bytes' },
+  ]);
+  assert.deepEqual(await read(), [{ id: 'kept', text: 'the second bytes' }]);
+});
+
 test('a target that stores references to files in a storage reconciles only the files that its rows and the rows of their history keep, and a clear forgets them', async () => {
   await using database = await scratch();
   const { admin } = database;
