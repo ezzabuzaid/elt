@@ -1,5 +1,7 @@
 # The host makes the copies and the reader views
 
+Superseded in part on 2026-11-20 (#4886) by [ADR 0028 of elt](../../../../../elt/docs/adr/0028-a-host-names-each-relation-that-readers-query-once.md) and [ADR 0010 of elt-postgresql](../../../../../destinations/postgresql/docs/adr/0010-readers-look-in-marts-and-elt-keeps-its-tables-in-warehouse.md): the host names only the reader view, `marts.search_console_<snake_stream>`, and elt keeps the raw table in `_warehouse`.
+
 At first, the source package had `search-console-marts.ts`. It imported `@eltjs/elt-postgresql` and held 17 hand-written views, and the Google app installed them after `pipeline.run()`. On 2026-10-05, Ezz said that this place was wrong: views over the data of a connector belong to the connector level, not to the source. The same decision applied to Apple (#2216). The views stay stored Postgres views, because `agent_reader` has no `TEMP` privilege and cannot read the raw schema. Thus the views are also the access limit of the reader (#2229).
 
 000da177 resolved #2229 in a different way. The Google host makes its copies itself, as `apps/proactive` does. Each stream loads into `google_search_console.raw_<stream>`, with the reader view `marts.search_console_<snake_stream>` and the copy id `search-console:<stream>`. The source has no hand-written marts or copies, and it has no Postgres dependency at run time. The field descriptions hold the aggregation formulas (000da177).

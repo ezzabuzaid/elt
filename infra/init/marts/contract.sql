@@ -1,6 +1,7 @@
 -- What agent_reader may see in the current database: the marts schema only.
--- The warehouse role loads raw schemas and publishes marts; every table and
--- view it creates in marts is readable, so no loader grants anything itself.
+-- The warehouse role keeps elt's tables in _warehouse and publishes its views
+-- in marts; every view it creates in marts is readable, so no loader grants
+-- anything itself.
 DO $$
 BEGIN
   EXECUTE format('REVOKE ALL ON DATABASE %I FROM PUBLIC', current_database());
