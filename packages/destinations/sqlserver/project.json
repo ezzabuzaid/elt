@@ -1,0 +1,6 @@
+{
+  "name": "elt-sqlserver",
+  "sourceRoot": "packages/destinations/sqlserver/src",
+  "projectType": "library",
+  "tags": ["layer:island", "test:docker"]
+}

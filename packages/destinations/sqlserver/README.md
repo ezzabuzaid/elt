@@ -1,6 +1,6 @@
 # @eltjs/elt-sqlserver
 
-> **Design on paper, accepted by Ezz on 2026-11-19.** No code, `package.json` or `tsconfig` exists yet. This destination is built last, after the extraction of the shared rules, the open defects and the gaps ([ADR 0012](./docs/adr/0012-the-rules-that-the-destinations-share-move-into-elt-before-the-third-destination.md)). Backlog #4736.
+> **Partly built, private.** Ezz accepted the design on 2026-11-19. The first step of backlog #4736 is built: the append writer, the numbering, the checkpoint store and the sync history (see "Built now" below). The rest of the "Now" column is design on paper until its step is built. The package is private until its tests pass for the whole design.
 
 The SQL Server destination of elt. It loads each stream of a connection into a SQL Server or Azure SQL database, with typed columns, and it does not block readers while it loads. Each target is a reader view in `marts`, which the host names, over a raw table in `_warehouse`. It also keeps the views and computed datasets that the pipeline derives. A computed dataset can keep a vector column as a native `VECTOR(n)`, so Azure SQL searches it with `VECTOR_DISTANCE` or a DiskANN index. The checkpoint store and the sync history keep their data in the same database.
 
@@ -17,6 +17,14 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 | `View` and `ComputedDataset`, with `vector(n)` rule columns as `VECTOR(n)` and the statements of the host after each make of a raw table                                                                                                                                         | A bulk load through Azure Blob Storage and `BULK INSERT`, as the bulk mode of Airbyte, when a load is too slow through JSON batches | An ORM, or a query builder over the reader's SQL                                                                                                     |
 | `SqlServerCheckpointStore`, `SqlServerSyncHistory` (with `derived_status`, `catalog` and named readers), `readPassStatus`                                                                                                                                                        | Microsoft Entra ID logins (managed identity), which `mssql` supports through `authentication`                                       | An `mssql://` URL                                                                                                                                    |
 | The prerequisites in other packages: the `vector` rule column of elt, `dimensions` on `Embedding`, and the extraction of the rules that the destinations share ([ADR 0012](./docs/adr/0012-the-rules-that-the-destinations-share-move-into-elt-before-the-third-destination.md)) | SQL Server 2022 and older, which have no `VECTOR` and no `JSON` type                                                                | A migration of stored data between versions (elt AGENTS.md: stored data is disposable)                                                               |
+
+### Built now
+
+- `SqlServerDestination` with the `append` mode only: the raw table with its `_elt_row` identity key (ADR 0003), the unique index on `_elt_key_hash` when the columns declare a key (ADR 0004), the history table, the `MS_Description` extended properties, the reader view, and `positions()`.
+- The JSON batches through `OPENJSON` (ADR 0011), the check of the engine and the row versioning at each load (ADR 0010), the numbering with the rowversion of the commit row and the mark of the database copy (ADR 0002), and the clear that forgets.
+- `SqlServerCheckpointStore` and `SqlServerSyncHistory`, with the application locks of ADR 0009.
+- Not built yet: the other destination sync modes, evolve and reload, file columns, `reading()`, `readPassStatus`, the writes of `derived_status`, `View` and `ComputedDataset`. A copy that needs one of them fails with a `TypeError`, and the package does not export the others yet.
+- A failure of the setup of the database is a `SqlServerSetupError`. The sync history records it with the failure type `system`, because elt asks only the source for the failure type of an error.
 
 ## Load a stream into SQL Server
 

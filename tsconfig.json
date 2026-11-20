@@ -12,6 +12,9 @@
       "path": "./packages/destinations/sqlite"
     },
     {
+      "path": "./packages/destinations/sqlserver"
+    },
+    {
       "path": "./packages/google-auth"
     },
     {

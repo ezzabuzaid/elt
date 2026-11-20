@@ -1,6 +1,6 @@
 # elt-sqlserver
 
-> **Design on paper, accepted by Ezz on 2026-11-19.** See the banner of the [README](./README.md).
+> **Partly built.** See the banner of the [README](./README.md).
 
 A host wants the data that elt copies in a SQL Server or Azure SQL database, with typed columns, which readers query while the loads run, and the vectors of its computed datasets in a column that Azure SQL can search. The SQL Server destination loads each stream into a raw table in `_warehouse`, keeps a reader view of each raw table in `marts`, and keeps the views and computed datasets that the pipeline derives from them. Its checkpoint store and its sync history keep their data in the same database. The words that all of elt uses, for example pass, commit, writer and checkpoint, are in the glossary of [elt](../../elt/CONTEXT.md). The words that this context shares with [elt-postgresql](../postgresql/CONTEXT.md) have the same meaning; this glossary gives each one again only where SQL Server makes it different.
 
@@ -75,8 +75,12 @@ The commit numbers of a database, in `_warehouse`: `_elt_commits`, `_elt_loads` 
 _Avoid_: Version, log
 
 **Epoch**:
-The id that names the numbering of a database. A new database, or one whose `_warehouse` was dropped, has a new epoch.
+The id that names the numbering of a database. A new database, one whose `_warehouse` was dropped, or another copy of a database, such as one restored from a backup, has a new epoch.
 _Avoid_: Generation, version, database GUID
+
+**Copy mark**:
+The value that names the copy of a database that numbered its commits, which `_elt_epoch` keeps as `mark`: `recovery_fork_guid` on SQL Server, and `database_id`, `create_date` and `physical_database_name` of `sys.databases` on Azure SQL Database. A load that reads another mark starts a new epoch, because a restored copy gives numbers again that the original gave.
+_Avoid_: Database id, fingerprint, version
 
 **Position**:
 `<epoch>:<number>`: the last commit of a closed load, when no other load of the database has commits before and after it. A reader at a position sees no part of a pass.
