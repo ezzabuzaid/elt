@@ -5,6 +5,7 @@ import type { Connection } from './connection.ts';
 import { CopyConfiguration } from './copy-configuration.ts';
 import type { Destination } from './destination.ts';
 import { FileTransfer } from './file-transfer.ts';
+import { RaisedFailure } from './raised-failure.ts';
 import type { Source } from './source.ts';
 import type { Stream } from './stream.ts';
 import { Target as DestinationTarget } from './target.ts';
@@ -110,6 +111,7 @@ export class Copy<Target extends DestinationTarget> {
     this.validate(source, destination, checkpoints);
     const writer = this.writer(source);
     const files = new FileTransfer(
+      source,
       this.configuration.fileReads,
       destination.location(this.to),
       writer,
@@ -121,8 +123,14 @@ export class Copy<Target extends DestinationTarget> {
         { writer, clock, connection: name },
         (values) => files.reconcile(values),
       );
-    if (this.id !== undefined && checkpoints !== undefined)
-      await checkpoints.clear(this.id, drop);
-    else await drop();
+    // A clear records no failure, so it throws what a file storage raised as
+    // the storage threw it.
+    try {
+      if (this.id !== undefined && checkpoints !== undefined)
+        await checkpoints.clear(this.id, drop);
+      else await drop();
+    } catch (error) {
+      throw error instanceof RaisedFailure ? error.error : error;
+    }
   }
 }

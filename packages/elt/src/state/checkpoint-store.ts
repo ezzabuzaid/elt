@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 
+import type { FailureType } from '../core/source.ts';
 import {
   StreamChangeError,
   changedDeclarations,
@@ -101,16 +102,6 @@ export abstract class CheckpointStore {
         if (found.refused !== undefined) throw found.refused;
         return found;
       };
-      const durably = async (id: string, save: () => Promise<void>) => {
-        try {
-          await save();
-        } catch (cause) {
-          throw new Error(
-            `Checkpoint ${id} was not saved after the destination committed; the next run replays from the last saved checkpoint`,
-            { cause },
-          );
-        }
-      };
       return work({
         state: async (id) => {
           checkpoint(id);
@@ -118,15 +109,13 @@ export abstract class CheckpointStore {
           return state === undefined ? null : JSON.parse(state);
         },
         reloading: (id) => checkpoint(id).reloading,
-        save: (id, state, reloading) => {
+        save: async (id, state, reloading) => {
           const { binding } = checkpoint(id);
-          return durably(id, () =>
-            session.save(id, { binding, reloading, state }),
-          );
+          await session.save(id, { binding, reloading, state });
         },
-        reloaded: (id) => {
+        reloaded: async (id) => {
           checkpoint(id);
-          return durably(id, () => session.reloaded(id));
+          await session.reloaded(id);
         },
       });
     });
@@ -148,6 +137,12 @@ export abstract class CheckpointStore {
       await session.remove(id);
     });
   }
+
+  // What kind of failure an error that this store raised is: what opening
+  // the checkpoints of a run, or a read or save of them, threw. Only the store
+  // knows which of its errors mean that a person must change the setup, such
+  // as a login that may not create the table of the checkpoints.
+  abstract failureType(error: unknown): FailureType;
 
   // Holds the replications' locks for the whole call, so one replication runs
   // at a time; each save is durable when it resolves.

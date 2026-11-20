@@ -24,7 +24,7 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 - The JSON batches through `OPENJSON` (ADR 0011), the check of the engine and the row versioning at each load (ADR 0010), the numbering with the rowversion of the commit row and the mark of the database copy (ADR 0002), and the clear that forgets.
 - `SqlServerCheckpointStore` and `SqlServerSyncHistory`, with the application locks of ADR 0009.
 - Not built yet: `overwrite` and `overwrite_dedup`, evolve and reload, file columns, `reading()`, `readPassStatus`, the writes of `derived_status`, `View` and `ComputedDataset`. A copy that needs one of them fails with a `TypeError`, and the package does not export the others yet.
-- A failure of the setup of the database is a `SqlServerSetupError`. Its [failure type](../../elt/README.md#failure-types) is `config`. Each other error of the destination is `system`.
+- A failure of the setup of the database is a `SqlServerSetupError`. Its [failure type](../../elt/README.md#failure-types) is `config`. A login without a permission that a statement of the destination or of `SqlServerCheckpointStore` needs is also `config`: a `SqlServerPermissionError` of sdk-microsoft-sql-server, and the SQL Server errors 229 and 230 (a permission on an object or a column) and 262 (a permission in the database, such as `CREATE TABLE`). Each other error, for example a server that cannot be reached or a login that the server refuses, is `system`.
 
 ## Load a stream into SQL Server
 
@@ -321,13 +321,14 @@ As in [elt-postgresql](../postgresql/README.md#derived-status), from elt ADR 002
 
 ## Errors
 
-| Error                                                 | When                                                                                                                                                        | The caller's next step                                          |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `TypeError`                                           | A declaration that the destination cannot hold, such as a reader name of a relation that the sync history publishes, or a `vector(n)` column with n > 1,998 | Change the declaration                                          |
-| `RangeError`                                          | A negative retention                                                                                                                                        | Give a retention of zero or more                                |
-| `TargetOwnedError` of elt                             | A second writer of a table                                                                                                                                  | Clear the target with the copy that owns it                     |
-| `DerivedDatasetError` of elt                          | A dataset failure, such as SQL that SQL Server refuses                                                                                                      | Fix the SQL of the view                                         |
-| `SqlServerSetupError`, with the failure type `config` | No row versioning for readers, an engine older than SQL Server 2025                                                                                         | Run the `ALTER DATABASE` of the message, or use SQL Server 2025 |
+| Error                                                                  | When                                                                                                                                                        | The caller's next step                                          |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `TypeError`                                                            | A declaration that the destination cannot hold, such as a reader name of a relation that the sync history publishes, or a `vector(n)` column with n > 1,998 | Change the declaration                                          |
+| `RangeError`                                                           | A negative retention                                                                                                                                        | Give a retention of zero or more                                |
+| `TargetOwnedError` of elt                                              | A second writer of a table                                                                                                                                  | Clear the target with the copy that owns it                     |
+| `DerivedDatasetError` of elt                                           | A dataset failure, such as SQL that SQL Server refuses                                                                                                      | Fix the SQL of the view                                         |
+| `SqlServerSetupError`, with the failure type `config`                  | No row versioning for readers, an engine older than SQL Server 2025                                                                                         | Run the `ALTER DATABASE` of the message, or use SQL Server 2025 |
+| An error 229, 230 or 262 of SQL Server, with the failure type `config` | A login that may not do what a statement needs, such as `CREATE TABLE` for the checkpoints                                                                  | Grant the login the permission that the message names           |
 
 ## The same concepts in other systems
 

@@ -1,7 +1,11 @@
 import { Modes, Mutex } from '@zukhruf/mutex';
 import { SqlServerStore } from '@zukhruf/mutex/sqlserver';
 
-import { type CheckpointSession, CheckpointStore } from '@eltjs/elt';
+import {
+  type CheckpointSession,
+  CheckpointStore,
+  type FailureType,
+} from '@eltjs/elt';
 import {
   type SqlServerConnection,
   SqlServerDatabase,
@@ -13,6 +17,7 @@ import {
   lockSchema,
   transaction,
 } from './sql-server-connection.ts';
+import { failureType } from './sql-server-failure-type.ts';
 import { quote } from './sql-server-identifiers.ts';
 import { inWarehouse, warehouse } from './sql-server-schemas.ts';
 
@@ -46,6 +51,10 @@ export class SqlServerCheckpointStore extends CheckpointStore {
       }),
     );
     Object.freeze(this);
+  }
+
+  override failureType(error: unknown): FailureType {
+    return failureType(error);
   }
 
   protected override async session<T>(

@@ -20,6 +20,7 @@ import {
 } from '@eltjs/elt';
 
 import {
+  PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
   type PostgresTable,
@@ -392,4 +393,65 @@ test('a load that cannot reach the server records the pass with the failure type
   unreachable.port = '1';
 
   assert.equal(await failureTypeOf(url, unreachable.href), 'system');
+});
+
+test('a load whose checkpoint store has a role that may not make the schemas of the checkpoints fails its copy with the failure type config', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  // Roles belong to the whole server, which other tests share.
+  const role = `checkpoints_${randomUUID().replaceAll('-', '')}`;
+  const password = randomUUID();
+  await sql.unsafe(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
+  clients.defer(async () => {
+    await sql.unsafe(`DROP OWNED BY ${role}; DROP ROLE ${role}`);
+  });
+  const checkpointer = new URL(url);
+  checkpointer.username = role;
+  checkpointer.password = password;
+  const stream = new Stream({
+    name: 'notes',
+    jsonSchema: {
+      type: 'object',
+      description: 'Records.',
+      properties: { id: { type: 'string', description: 'Record id.' } },
+    },
+    sourceDefinedCursor: true,
+    supportedSyncModes: ['incremental'],
+  });
+  const destination = new PostgresDestination({ url });
+
+  const failure = await new Pipeline({
+    clock: globalThis,
+    history: new PostgresSyncHistory({ url }),
+    connections: [
+      new Connection({
+        name: 'notes',
+        source: new Scripted([stream], { notes: [record('notes', 'a')] }),
+        destination,
+        checkpoints: new PostgresCheckpointStore({ url: checkpointer.href }),
+        steps: [
+          new Copy(stream, destination.table('notes'), {
+            id: 'notes',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append',
+          }),
+        ],
+      }),
+    ],
+  })
+    .run()
+    .then(
+      () => assert.fail('the run succeeded'),
+      (error: unknown) => error,
+    );
+
+  assert.ok(failure instanceof PipelineError, String(failure));
+  assert.deepEqual(
+    failure.results.flatMap(({ failures }) =>
+      failures.map(({ failureType }) => failureType),
+    ),
+    ['config'],
+  );
 });

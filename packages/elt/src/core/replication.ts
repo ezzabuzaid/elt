@@ -3,7 +3,6 @@ import type {
   CheckpointRun,
   CheckpointStore,
 } from '../state/checkpoint-store.ts';
-import { errorMessage } from '../state/sync-history.ts';
 import type { PipelineClock } from './clock.ts';
 import type { Connection } from './connection.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
@@ -12,6 +11,7 @@ import type { Destination, Load } from './destination.ts';
 import { FileTransfer } from './file-transfer.ts';
 import type { Partition } from './partition.ts';
 import { CopyProgress, passChannels } from './pass-channels.ts';
+import { RaisedFailure, raised, raisedFrom } from './raised-failure.ts';
 import type { FieldSchema, ItemSchema } from './record-validation.ts';
 import {
   type KeyValue,
@@ -61,7 +61,6 @@ class Replicated<Target extends DestinationTarget> {
   readonly published: () => void;
   readonly files: FileTransfer;
   readonly #source: Source;
-  readonly #destination: Destination<Target>;
 
   constructor(
     copy: Copy<Target>,
@@ -74,8 +73,8 @@ class Replicated<Target extends DestinationTarget> {
     this.connection = connection;
     this.published = published;
     this.#source = source;
-    this.#destination = destination;
     this.files = new FileTransfer(
+      source,
       copy.configuration.fileReads,
       destination.location(copy.to),
       copy.writer(source),
@@ -87,16 +86,12 @@ class Replicated<Target extends DestinationTarget> {
   }
 
   // What did not load, of the kind that the side that raised the error says
-  // it is: the destination for what its load threw, the source for every
-  // other error.
+  // it is: the destination, the checkpoint store or a file storage for what a
+  // call into it threw, the source for every other error.
   recordFailure(partition: Partition | null, error: unknown): void {
     this.failures.push(
-      error instanceof DestinationFailure
-        ? {
-            partition,
-            error: error.error,
-            failureType: this.#destination.failureType(error.error),
-          }
+      error instanceof RaisedFailure
+        ? { partition, error: error.error, failureType: error.failureType }
         : { partition, error, failureType: this.#source.failureType(error) },
     );
   }
@@ -176,7 +171,7 @@ export async function replicate<Target extends DestinationTarget>(
         clock,
       );
     else
-      await checkpoints.run(bindings, (run) =>
+      await checkpointed(checkpoints, bindings, (run) =>
         transfer(
           source,
           destination,
@@ -250,7 +245,7 @@ async function transfer<Target extends DestinationTarget>(
   }
   if (reading.length === 0) return;
   signal?.throwIfAborted();
-  await using load = await raisedBy(destination, {
+  await using load = await raisingLoad(destination, {
     clock,
     connection: connection.name,
   });
@@ -383,35 +378,60 @@ async function transfer<Target extends DestinationTarget>(
   }
 }
 
-// What a call into the destination threw, which the destination classifies.
-class DestinationFailure extends Error {
-  override name = 'DestinationFailure';
-  readonly error: unknown;
-
-  constructor(error: unknown) {
-    super(errorMessage(error), { cause: error });
-    this.error = error;
-  }
-}
-
-async function raised<T>(call: () => PromiseLike<T>): Promise<T> {
+// The checkpoints of the run in store, whose opening and whose calls throw
+// what fails as a RaisedFailure of the store. What work throws passes through.
+async function checkpointed<T>(
+  store: CheckpointStore,
+  bindings: ReadonlyMap<string, CheckpointBinding>,
+  work: (run: CheckpointRun) => Promise<T>,
+): Promise<T> {
+  let worked: { error: unknown } | undefined;
+  // A save that failed after the destination committed says so; the store
+  // names the type of its own error.
+  const durably = async (id: string, save: () => Promise<void>) => {
+    try {
+      await save();
+    } catch (error) {
+      throw new RaisedFailure(
+        new Error(
+          `Checkpoint ${id} was not saved after the destination committed; the next run replays from the last saved checkpoint`,
+          { cause: error },
+        ),
+        store.failureType(error),
+      );
+    }
+  };
   try {
-    return await call();
+    return await store.run(bindings, async (run) => {
+      try {
+        return await work({
+          state: (id) => raised(store, () => run.state(id)),
+          reloading: (id) => run.reloading(id),
+          save: (id, state, reloading) =>
+            durably(id, () => run.save(id, state, reloading)),
+          reloaded: (id) => durably(id, () => run.reloaded(id)),
+        });
+      } catch (error) {
+        worked = { error };
+        throw error;
+      }
+    });
   } catch (error) {
-    throw new DestinationFailure(error);
+    if (worked !== undefined && worked.error === error) throw error;
+    throw raisedFrom(store, error);
   }
 }
 
 // The destination's load, whose calls and whose stages' calls throw what
-// fails as a DestinationFailure.
-async function raisedBy<Target extends DestinationTarget>(
+// fails as a RaisedFailure of the destination.
+async function raisingLoad<Target extends DestinationTarget>(
   destination: Destination<Target>,
   options: { clock: PipelineClock; connection: string },
 ): Promise<Load<Target>> {
-  const load = await raised(() => destination.load(options));
+  const load = await raised(destination, () => destination.load(options));
   return {
     prepare: async (configuration, target, binding) => {
-      const stage = await raised(() =>
+      const stage = await raised(destination, () =>
         load.prepare(configuration, target, binding),
       );
       return {
@@ -425,17 +445,19 @@ async function raisedBy<Target extends DestinationTarget>(
           try {
             yield* stage.values(field);
           } catch (error) {
-            throw new DestinationFailure(error);
+            throw raisedFrom(destination, error);
           }
         },
-        complete: () => raised(() => stage.complete()),
-        apply: (operation) => raised(() => stage.apply(operation)),
-        commit: () => raised(() => stage.commit()),
-        discard: () => raised(() => stage.discard()),
-        [Symbol.asyncDispose]: () => raised(() => stage[Symbol.asyncDispose]()),
+        complete: () => raised(destination, () => stage.complete()),
+        apply: (operation) => raised(destination, () => stage.apply(operation)),
+        commit: () => raised(destination, () => stage.commit()),
+        discard: () => raised(destination, () => stage.discard()),
+        [Symbol.asyncDispose]: () =>
+          raised(destination, () => stage[Symbol.asyncDispose]()),
       };
     },
-    [Symbol.asyncDispose]: () => raised(() => load[Symbol.asyncDispose]()),
+    [Symbol.asyncDispose]: () =>
+      raised(destination, () => load[Symbol.asyncDispose]()),
   };
 }
 

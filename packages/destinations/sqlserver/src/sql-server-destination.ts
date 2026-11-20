@@ -14,10 +14,10 @@ import type { SqlServerColumn } from './sql-server-column.ts';
 import { SqlServerColumns } from './sql-server-columns.ts';
 import { type SqlServerLogin, connect } from './sql-server-connection.ts';
 import { SqlServerDeduplicatingWriter } from './sql-server-deduplicating-writer.ts';
+import { failureType } from './sql-server-failure-type.ts';
 import { identifiers } from './sql-server-identifiers.ts';
 import { SqlServerLoad } from './sql-server-load.ts';
 import { readNumbering, sqlServerDatabase } from './sql-server-numbering.ts';
-import { SqlServerSetupError } from './sql-server-setup-error.ts';
 import { SqlServerTable } from './sql-server-table.ts';
 import type { SqlServerWriter } from './sql-server-writer.ts';
 
@@ -75,10 +75,8 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
     };
   }
 
-  // A database that is not set up as the destination needs it is config,
-  // because a person must change it; every other error is system.
   override failureType(error: unknown): FailureType {
-    return error instanceof SqlServerSetupError ? 'config' : 'system';
+    return failureType(error);
   }
 
   // The positions of the database after a position, ascending, or all of

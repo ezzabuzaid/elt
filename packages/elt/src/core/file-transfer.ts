@@ -1,15 +1,26 @@
 import { FileContent } from './file-content.ts';
 import type { FileRead } from './file-read.ts';
+import { raised, raisedFrom } from './raised-failure.ts';
+import type { Source } from './source.ts';
 import type { FieldValues } from './writer.ts';
 
 // The shared transfer owns coordination. Stores own bytes; destinations only
 // expose the scalar values their rows actually retain after deduplication.
+// What a call into a storage throws fails as a RaisedFailure of the storage;
+// what a read of the source's file content throws, as one of the source.
 export class FileTransfer {
+  readonly #source: Source;
   readonly reads: readonly FileRead[];
   readonly location: string;
   readonly writer: string;
 
-  constructor(reads: readonly FileRead[], location: string, writer: string) {
+  constructor(
+    source: Source,
+    reads: readonly FileRead[],
+    location: string,
+    writer: string,
+  ) {
+    this.#source = source;
     this.reads = reads;
     this.location = location;
     this.writer = writer;
@@ -32,7 +43,19 @@ export class FileTransfer {
       if (content === null) continue;
       if (!(content instanceof FileContent))
         throw new TypeError('Stored files require source file content');
-      const reference = await storage.save(this.scope(read), content);
+      const source = this.#source;
+      const reference = await raised(storage, () =>
+        storage.save(this.scope(read), {
+          path: content.path,
+          chunks: async function* (size) {
+            try {
+              yield* content.chunks(size);
+            } catch (error) {
+              throw raisedFrom(source, error);
+            }
+          },
+        }),
+      );
       if (
         typeof reference !== 'string' ||
         !reference ||
@@ -51,7 +74,7 @@ export class FileTransfer {
     for (const read of this.reads) {
       const storage = read.file.storage;
       if (storage === undefined) continue;
-      await storage.flush(this.scope(read));
+      await raised(storage, () => storage.flush(this.scope(read)));
     }
   }
 
@@ -66,7 +89,7 @@ export class FileTransfer {
           throw new TypeError('Stored file references must be text or null');
         references.add(value);
       }
-      await storage.retain(this.scope(read), references);
+      await raised(storage, () => storage.retain(this.scope(read), references));
     }
   }
 }

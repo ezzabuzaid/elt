@@ -312,6 +312,7 @@ The state belongs to the orchestration, not to the destination, as in Airbyte. T
 - `CheckpointStore.run(bindings, work)` does that protocol for all incremental copies of a pass together. It checks the binding of each copy, clones the input state, and moves forward only on a commit. `reset` and `clear` are also part of it.
 - A store gives a session that holds the lock of each copy for the full pass. A `save` of the session is durable when it resolves.
 - With each checkpoint, the store saves whether a reload is open ([resets](#resets)).
+- `CheckpointStore.failureType(error)` gives the [failure type](#failure-types) of each error that the store raised. Each store must implement it.
 
 | Store                              | Package                                                            |
 | ---------------------------------- | ------------------------------------------------------------------ |
@@ -640,9 +641,11 @@ For a different storage, extend the exported `FileStorage`:
 | `save(scope, content)`      | Saves a `FileContent`, and returns a complete, immutable ref. A save again of the same content returns the same ref. |
 | `flush(scope)`              | Makes the completed saves durable before their rows commit. It is safe to repeat, also for a scope with no saves.    |
 | `retain(scope, references)` | Removes only the objects of this scope that no committed ref names.                                                  |
+| `failureType(error)`        | The [failure type](#failure-types) of each error that `save`, `flush` or `retain` raised.                            |
 
 - The transfer reads refs as text that it does not interpret. Thus an S3 storage can return its own form of ref, with no change to the destinations.
 - Only `LocalFiles` exists now. Its reconcile scans the kept refs and the folder of the scope at each commit. It keeps no separate index of objects.
+- `LocalFiles` calls an error of the file system `config` when a person must change the folder: `EACCES` and `EPERM` (this process may not write it) and `EROFS` (a read-only file system). Each other error is `system`.
 
 ### Write a document parser
 
@@ -937,9 +940,12 @@ await scope.run('mail', () => pipeline.run());
 Each failure tells whose it is to fix, as the `failure_type` of Airbyte does (`AirbyteTracedException`, `airbyte-python-cdk` `utils/traced_exception.py`). See [ADR 0012](./docs/adr/0012-every-failure-says-whose-it-is-to-fix.md) and [ADR 0029](./docs/adr/0029-the-side-that-raised-a-failure-names-its-type.md).
 
 - Each `LoadFailure` has a `failureType`. The side that raised the error decides it with `failureType(error): FailureType`.
-- The destination decides for each error that a call into it throws: its `load`, the `prepare` and the dispose of its `Load`, and each call of a `Stage`. The source decides for each other error: its read, a message that breaks the contract, a checkpoint store, a file storage, and a failure that ends a connection before a pass, such as a declaration that is not valid or a change signal that failed.
+- The destination decides for each error that a call into it throws: its `load`, the `prepare` and the dispose of its `Load`, and each call of a `Stage`.
+- The checkpoint store decides for each error that it throws while it opens the checkpoints of a run, and while it reads or saves one of them.
+- A file storage decides for each error that its `save`, `flush` or `retain` throws. A read of the file content of the source inside a `save` stays the source's.
+- The source decides for each other error: its read, a message that breaks the contract, and a failure that ends a connection before a pass, such as a declaration that is not valid or a change signal that failed.
 - `config` means that the upstream or the destination refused what the user set up or granted, so only the user can fix it. `system` is for each other error.
-- `Destination.failureType` is abstract, so each destination decides for its own errors. The destinations of this repository say which errors are `config` in their READMEs.
+- `Destination.failureType`, `CheckpointStore.failureType` and `FileStorage.failureType` are abstract, so each side decides for its own errors. The destinations of this repository say which errors of the destination and of its checkpoint store are `config` in their READMEs.
 - A source lists in `configErrors` the error classes that mean `config`. The default `failureType` returns `config` for an instance of a listed class and `system` for each other error. Thus a source that lists nothing calls each failure `system`.
 - The Apple sources list the `*UnavailableError` of their SDKs (the macOS access that the store of the app needs). SQL Server lists its permission and connection errors.
 - A source that decides from more than the class overrides `failureType`. Search Console maps a `401` or `403` from Google.

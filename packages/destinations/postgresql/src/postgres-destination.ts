@@ -1,5 +1,3 @@
-import postgres from 'postgres';
-
 import {
   type CopyConfiguration,
   Destination,
@@ -15,18 +13,13 @@ import { type PostgresReading, readAsOf } from './postgres-as-of.ts';
 import type { PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
 import { PostgresDeduplicatingWriter } from './postgres-deduplicating-writer.ts';
+import { failureType } from './postgres-failure-type.ts';
 import { PostgresLoad } from './postgres-load.ts';
 import { postgresDatabase, readNumbering } from './postgres-numbering.ts';
 import { PostgresOverwriteWriter } from './postgres-overwrite-writer.ts';
 import { PostgresSession, connectionUrl } from './postgres-session.ts';
 import { PostgresTable } from './postgres-table.ts';
 import type { PostgresWriter } from './postgres-writer.ts';
-
-// The SQLSTATE codes of a setup that a person must change: a role without
-// the privilege the load needs (42501), a password the server refuses
-// (28P01), a role that may not log in (28000), and a database that is not
-// there (3D000).
-const configCodes = new Set(['42501', '28P01', '28000', '3D000']);
 
 // Loads into one database: each target is a reader view in marts over a raw
 // table in _warehouse (ADR 0010). The URL carries credentials, so it stays
@@ -87,13 +80,8 @@ export class PostgresDestination extends Destination<PostgresTable> {
     };
   }
 
-  // An error of the server with one of configCodes is config; every other
-  // error, such as a server that the load cannot reach, is system.
   override failureType(error: unknown): FailureType {
-    return error instanceof postgres.PostgresError &&
-      configCodes.has(error.code)
-      ? 'config'
-      : 'system';
+    return failureType(error);
   }
 
   // The positions of the database after a position, ascending, or all of

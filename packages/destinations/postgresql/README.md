@@ -307,7 +307,7 @@ A computed dataset whose rule is a `TableRule` keeps two tables in `_warehouse`.
 - **A dataset failure**, for example a query that Postgres refuses, rejects the run, or it stops the watch, with a `DerivedDatasetError` that names the dataset.
 - **A table that is gone**, for example one that a person dropped by hand, is no failure. A computed dataset that reads it waits and keeps its output rows. When the copy loads the table again, the dataset asks the rule only for inputs that changed.
 - **A copy that failed** keeps its last committed rows. The derived datasets read those rows.
-- **The [failure type](../../elt/README.md#failure-types)** of an error of the destination is `config` when Postgres refuses the setup with one of these SQLSTATE codes: `42501` (the role does not have a privilege that the load needs, for example to make the schemas `_warehouse` and `marts`), `28P01` (a wrong password), `28000` (a role that cannot log in) and `3D000` (a database that is not there). Each other error, for example a server that the load cannot reach, is `system`.
+- **The [failure type](../../elt/README.md#failure-types)** of an error of the destination or of `PostgresCheckpointStore` is `config` when Postgres refuses the setup with one of these SQLSTATE codes: `42501` (the role does not have a privilege that a statement needs, for example to make the schemas `_warehouse` and `marts`, or the table `_warehouse._elt_checkpoints`), `28P01` (a wrong password), `28000` (a role that cannot log in) and `3D000` (a database that is not there). Each other error, for example a server that the load cannot reach, is `system`.
 
 ## Sync history
 

@@ -5,6 +5,12 @@ import { dirname, join, resolve } from 'node:path';
 import type { FileContent } from '../core/file-content.ts';
 import { fileExtension } from '../core/file-extension.ts';
 import { FileStorage } from '../core/file-storage.ts';
+import type { FailureType } from '../core/source.ts';
+
+// The codes of a folder that a person must change: one that this process may
+// not write (EACCES, EPERM), or one on a file system that is read-only
+// (EROFS).
+const configCodes = new Set(['EACCES', 'EPERM', 'EROFS']);
 
 async function syncDirectory(path: string): Promise<void> {
   await using directory = await open(path, 'r');
@@ -92,6 +98,17 @@ export class LocalFiles extends FileStorage {
     } finally {
       await rm(temporary, { force: true });
     }
+  }
+
+  // An error of the file system with one of configCodes is config; every
+  // other error, such as a full disk, is system.
+  override failureType(error: unknown): FailureType {
+    return Error.isError(error) &&
+      'code' in error &&
+      typeof error.code === 'string' &&
+      configCodes.has(error.code)
+      ? 'config'
+      : 'system';
   }
 
   override async flush(scope: string): Promise<void> {

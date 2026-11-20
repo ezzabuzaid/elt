@@ -1,4 +1,5 @@
 import type { FileContent } from './file-content.ts';
+import type { FailureType } from './source.ts';
 
 // Owns attachment bytes, independently of the destination that holds references.
 // Each scope belongs to one target field. Never remove another scope's objects.
@@ -23,4 +24,10 @@ export abstract class FileStorage {
     scope: string,
     references: ReadonlySet<string>,
   ): Promise<void>;
+
+  // What kind of failure an error that this storage raised is: what its save,
+  // flush or retain threw. Only the storage knows which of its errors mean
+  // that a person must change the setup, such as a folder that this process
+  // may not write.
+  abstract failureType(error: unknown): FailureType;
 }

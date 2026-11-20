@@ -85,6 +85,9 @@ test('file storage declarations validate identities and keep parsing separate wi
     override async retain(): Promise<void> {
       throw new Error('unexpected cleanup');
     }
+    override failureType(): FailureType {
+      throw new Error('unexpected failure');
+    }
   })();
   const parser = new (class extends DocumentParser {
     override async parse(): Promise<string> {
@@ -141,6 +144,9 @@ test('a file field accepts a file name only when its parser does, and a field of
     }
     override async retain(): Promise<void> {
       throw new Error('unexpected cleanup');
+    }
+    override failureType(): FailureType {
+      throw new Error('unexpected failure');
     }
   })();
 
@@ -979,6 +985,10 @@ class MemoryCheckpoints extends CheckpointStore {
       },
     });
   }
+
+  override failureType(): FailureType {
+    return 'system';
+  }
 }
 
 // Reads one record per site, then a checkpoint naming the run; sites listed
@@ -1472,6 +1482,85 @@ test('a checkpoint that fails to save fails only its stream, which keeps what it
     'close',
   ]);
   assert.deepEqual([...checkpoints.saved.keys()], ['right']);
+});
+
+test('the checkpoint store names the failure type of a save that it refused, and the source names the failure type of what it raised', async () => {
+  // Every error is config to the store and system to the source, so each
+  // failure type shows which of the two the pipeline asked.
+  class Strict extends MemoryCheckpoints {
+    override failureType(): FailureType {
+      return 'config';
+    }
+  }
+  const refusal = new Error('the login may not write the checkpoints');
+  const broken = new Error('right store broke');
+  const source = new ContextSource({
+    left: [record('left', 'left-1'), checkpoint('left', 1)],
+    right: [broken],
+  });
+  const destination = new DrainingDestination();
+  const checkpoints = new Strict(destination.log);
+  checkpoints.refusing.set('left', refusal);
+
+  const error = await incrementalPipeline(source, destination, checkpoints)
+    .run()
+    .then(
+      () => assert.fail('run should report both failures'),
+      (error: unknown) => error,
+    );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.results.map(({ copy, failures }) => [
+      copy.id,
+      failures.map(({ failureType }) => failureType),
+    ]),
+    [
+      ['left', ['config']],
+      ['right', ['system']],
+    ],
+  );
+  const unsaved = error.results[0]?.failures[0]?.error;
+  assert.ok(Error.isError(unsaved), String(unsaved));
+  assert.match(unsaved.message, /Checkpoint left was not saved/);
+  assert.equal(unsaved.cause, refusal);
+  assert.equal(error.results[1]?.failures[0]?.error, broken);
+});
+
+test('a checkpoint store that cannot open the checkpoints of a run fails every copy with the failure type that the store names, before the source reads', async () => {
+  const refusal = new Error('the login may not create the checkpoint table');
+  class Unready extends MemoryCheckpoints {
+    override failureType(): FailureType {
+      return 'config';
+    }
+
+    protected override async session<T>(): Promise<T> {
+      throw refusal;
+    }
+  }
+  const source = new ContextSource();
+  const destination = new DrainingDestination();
+
+  const error = await incrementalPipeline(
+    source,
+    destination,
+    new Unready(destination.log),
+  )
+    .run()
+    .then(
+      () => assert.fail('run should report the unopened checkpoints'),
+      (error: unknown) => error,
+    );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.results.map(({ copy, failures }) => [copy.id, failures]),
+    [
+      ['left', [{ partition: null, error: refusal, failureType: 'config' }]],
+      ['right', [{ partition: null, error: refusal, failureType: 'config' }]],
+    ],
+  );
+  assert.deepEqual(source.readers, []);
 });
 
 test('a checkpoint whose state has a lone surrogate fails its stream before anything since the last one commits', async () => {

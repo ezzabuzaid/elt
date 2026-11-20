@@ -1,8 +1,13 @@
 import type postgres from 'postgres';
 
-import { type CheckpointSession, CheckpointStore } from '@eltjs/elt';
+import {
+  type CheckpointSession,
+  CheckpointStore,
+  type FailureType,
+} from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
+import { failureType } from './postgres-failure-type.ts';
 import { inWarehouse, warehouse } from './postgres-schemas.ts';
 import {
   PostgresSession,
@@ -23,6 +28,10 @@ export class PostgresCheckpointStore extends CheckpointStore {
     super();
     this.#url = connectionUrl(url);
     Object.freeze(this);
+  }
+
+  override failureType(error: unknown): FailureType {
+    return failureType(error);
   }
 
   // Each replication's lock is a session lock on the run's own connection, so

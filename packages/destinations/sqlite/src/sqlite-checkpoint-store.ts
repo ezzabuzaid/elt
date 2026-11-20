@@ -6,9 +6,14 @@ import { SqliteStore } from '@zukhruf/mutex/sqlite';
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { open } from '@zukhruf/sqlite-open';
 
-import { type CheckpointSession, CheckpointStore } from '@eltjs/elt';
+import {
+  type CheckpointSession,
+  CheckpointStore,
+  type FailureType,
+} from '@eltjs/elt';
 
 import { busyTimeout } from './open-destination.ts';
+import { failureType } from './sqlite-failure-type.ts';
 
 const checkpoints = new Declaration(
   [
@@ -35,6 +40,11 @@ export class SQLiteCheckpointStore extends CheckpointStore {
       new SqliteStore(`${this.path}.locks`, { clock: globalThis }),
     );
     Object.freeze(this);
+  }
+
+  // The store writes the file, and makes the folder of the locks beside it.
+  override failureType(error: unknown): FailureType {
+    return failureType(error);
   }
 
   // Holds each replication's key in turn, then works. A replication already

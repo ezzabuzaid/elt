@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 import { inspect } from 'node:util';
@@ -336,6 +337,58 @@ test('a pipeline into a database that keeps no row versions for readers records 
     [{ status: 'failed', failure_type: 'config' }],
   );
   assert.deepEqual(source.states, []);
+});
+
+test('a load whose checkpoint store has a login that may not create the table of the checkpoints fails its copy with the failure type config', async () => {
+  await using database = await scratch();
+  const source = new Notes();
+  source.upstream = [{ n: 1, text: 'first' }];
+  // Logins belong to the whole server, which other tests share.
+  const name = `checkpoints_${randomUUID().replaceAll('-', '')}`;
+  const password = `${randomUUID()}A!`;
+  await database.admin.query(
+    `CREATE LOGIN [${name}] WITH PASSWORD = '${password}', CHECK_POLICY = OFF; CREATE USER [${name}] FOR LOGIN [${name}]`,
+  );
+  try {
+    const warehouse = new SqlServerDestination({ login: database.login });
+
+    const failure = await new Pipeline({
+      clock: globalThis,
+      history: new SqlServerSyncHistory({ login: database.login }),
+      connections: [
+        new Connection({
+          name: 'notes',
+          source,
+          destination: warehouse,
+          checkpoints: new SqlServerCheckpointStore({
+            login: { ...database.login, user: name, password },
+          }),
+          steps: [
+            new Copy(source.stream, warehouse.table('notes'), {
+              id: 'notes:notes',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append',
+            }),
+          ],
+        }),
+      ],
+    })
+      .run()
+      .then(
+        () => assert.fail('the run succeeded'),
+        (error: unknown) => error,
+      );
+
+    assert.ok(failure instanceof PipelineError, String(failure));
+    assert.deepEqual(
+      failure.results.flatMap(({ failures }) =>
+        failures.map(({ failureType }) => failureType),
+      ),
+      ['config'],
+    );
+  } finally {
+    await database.admin.query(`DROP USER [${name}]; DROP LOGIN [${name}]`);
+  }
 });
 
 test('a load that the server refuses for another reason, such as a login with a wrong password, records the pass with the failure type system', async () => {

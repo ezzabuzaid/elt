@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { chmodSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -29,6 +29,7 @@ import {
 } from '@eltjs/elt';
 
 import {
+  SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
   type SQLiteTable,
@@ -1085,6 +1086,153 @@ test(
     );
   },
 );
+
+// One record of the incremental stream records, then a checkpoint, once its
+// wait resolves.
+class Checkpointed extends LiveSource {
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
+  readonly identity = 'checkpointed';
+  readonly records = new Stream({
+    name: 'records',
+    jsonSchema: {
+      description: 'One test record.',
+      type: 'object',
+      properties: { id: { description: 'Id of the record.', type: 'string' } },
+      required: ['id'],
+    },
+    primaryKey: ['id'],
+    sourceDefinedCursor: true,
+    supportedSyncModes: ['incremental'],
+  });
+  protected readonly catalog = new Catalog([this.records]);
+  readonly #wait: () => Promise<void>;
+
+  constructor(wait = async () => {}) {
+    super();
+    this.#wait = wait;
+  }
+
+  protected override async open() {
+    return new AsyncDisposableStack();
+  }
+
+  override changeSignals(streams: readonly Stream[]) {
+    return filled(streams);
+  }
+
+  protected override async *extract() {
+    await this.#wait();
+    yield { stream: 'records', data: { id: 'a' } };
+    yield { type: 'STATE' as const, stream: 'records', state: { at: 1 } };
+  }
+}
+
+// A run that loads source into a SQLite file in folder, with its checkpoints
+// in the SQLite file at checkpoints.
+function checkpointedRun(
+  source: Checkpointed,
+  folder: string,
+  checkpoints: string,
+) {
+  const destination = new SQLiteDestination({
+    path: join(folder, 'data.sqlite'),
+  });
+  return new Pipeline({
+    clock: globalThis,
+    connections: [
+      new Connection({
+        name: 'records',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({ path: checkpoints }),
+        steps: [
+          new Copy(source.records, destination.table('records'), {
+            id: 'records',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append',
+          }),
+        ],
+      }),
+    ],
+    history: new ElsewhereHistory(),
+  }).run();
+}
+
+// The failure type of each copy of a failed run.
+async function failureTypes(run: Promise<unknown>) {
+  const failure = await run.then(
+    () => assert.fail('the run succeeded'),
+    (error: unknown) => error,
+  );
+  assert.ok(failure instanceof PipelineError, String(failure));
+  return failure.results.flatMap(({ failures }) =>
+    failures.map(({ failureType }) => failureType),
+  );
+}
+
+test(
+  'a load whose checkpoint file a person must set up, a file that this process may not write, a file in a folder that this process may not write or a file that is not a database, has the failure type config',
+  {
+    skip:
+      process.platform === 'win32' || process.getuid?.() === 0
+        ? 'the file mode must deny writes to this process'
+        : false,
+  },
+  async () => {
+    await using scratch = await new TemporaryFiles().directory('elt-passes-');
+    const readOnly = join(scratch.path, 'read-only.sqlite');
+    await checkpointedRun(new Checkpointed(), scratch.path, readOnly);
+    chmodSync(readOnly, 0o444);
+    const locked = join(scratch.path, 'locked');
+    mkdirSync(locked, { mode: 0o500 });
+    const text = join(scratch.path, 'text.sqlite');
+    writeFileSync(text, 'not a database');
+    const types = async (checkpoints: string) =>
+      failureTypes(
+        checkpointedRun(new Checkpointed(), scratch.path, checkpoints),
+      );
+
+    assert.deepEqual(
+      [
+        await types(readOnly),
+        await types(join(locked, 'state.sqlite')),
+        await types(text),
+      ],
+      [['config'], ['config'], ['config']],
+    );
+  },
+);
+
+test('a load whose checkpoints fail for another reason, such as a copy that another run holds, has the failure type system', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-passes-');
+  const checkpoints = join(scratch.path, 'state.sqlite');
+  const reading = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const held = checkpointedRun(
+    new Checkpointed(async () => {
+      reading.resolve();
+      await release.promise;
+    }),
+    scratch.path,
+    checkpoints,
+  );
+  try {
+    await reading.promise;
+
+    assert.deepEqual(
+      await failureTypes(
+        checkpointedRun(new Checkpointed(), scratch.path, checkpoints),
+      ),
+      ['system'],
+    );
+  } finally {
+    release.resolve();
+    await held;
+  }
+});
 
 test('a load that a SQLite file refuses for another reason, such as a table that another source writes, has the failure type system in the sync history of the file', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-passes-');
