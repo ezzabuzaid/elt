@@ -1,6 +1,6 @@
 {
   "name": "@eltjs/chunking",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "A rule of an elt computed dataset: it cuts the text of each loaded row into chunks that each count at most a number of tokens of the embedding model's tokenizer, so each chunk can get its own vector.",
   "license": "Apache-2.0",
   "repository": {
@@ -38,10 +38,10 @@
     "access": "public"
   },
   "dependencies": {
-    "@eltjs/elt": "^0.6.0"
+    "@eltjs/elt": "^0.6.1"
   },
   "devDependencies": {
-    "@eltjs/elt-sqlite": "^0.6.0",
+    "@eltjs/elt-sqlite": "^0.6.1",
     "@zukhruf/fs": "^0.8.31",
     "@zukhruf/sqlite-open": "^0.8.31",
     "gpt-tokenizer": "^4.1.2"
