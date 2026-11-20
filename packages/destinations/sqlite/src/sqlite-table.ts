@@ -1,5 +1,5 @@
 import type { Stream } from '@eltjs/elt';
-import { Target, targetFileReads } from '@eltjs/elt';
+import { Target, requireDescribed, targetFileReads } from '@eltjs/elt';
 
 import { SQLiteColumn, canonical } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
@@ -43,17 +43,7 @@ export class SQLiteTable extends Target {
         this.name,
         SQLiteColumns.fromSchema(stream.jsonSchema),
       );
-    const { properties } = stream.jsonSchema;
-    // Explicit columns of a stream that declares no properties stand alone.
-    if (properties === undefined) return this;
-    for (const column of this.columns)
-      if (
-        column.fileRead === undefined &&
-        !Object.hasOwn(properties, column.field)
-      )
-        throw new TypeError(
-          `Stream ${stream.name} does not describe field ${column.field}`,
-        );
+    requireDescribed(stream, this.columns);
     return this;
   }
 

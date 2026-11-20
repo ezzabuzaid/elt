@@ -1228,7 +1228,9 @@ src/core/
   reload-mode.ts        reloadMode: load, make, evolve or reload a target
   snapshot.ts           diffSnapshot and diffGroupedSnapshot
   partition.ts          the checkpoint of a partitioned stream
-  identifiers.ts        Identifiers: the naming rule
+  identifiers.ts        Identifiers: the naming rule, and the name of a reader view
+  target.ts             Target, and targetFileReads: the checks of the columns a host declares
+  schema-columns.ts     schemaColumns and requireDescribed: the columns of a stream's JSON Schema
   file-read.ts          FileRead and FileReference: the file declarations of a copy
   file-transfer.ts      the save, flush and retain of stored files around each commit
   file-storage.ts       FileStorage: the port of each file storage

@@ -1,4 +1,9 @@
-import { type Stream, Target, targetFileReads } from '@eltjs/elt';
+import {
+  type Stream,
+  Target,
+  requireDescribed,
+  targetFileReads,
+} from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
 import { PostgresColumn } from './postgres-column.ts';
@@ -43,17 +48,7 @@ export class PostgresTable extends Target {
         this.name,
         PostgresColumns.fromSchema(stream.jsonSchema),
       );
-    const { properties } = stream.jsonSchema;
-    // Explicit columns of a stream that declares no properties stand alone.
-    if (properties === undefined) return this;
-    for (const column of this.columns)
-      if (
-        column.fileRead === undefined &&
-        !Object.hasOwn(properties, column.field)
-      )
-        throw new TypeError(
-          `Stream ${stream.name} does not describe field ${column.field}`,
-        );
+    requireDescribed(stream, this.columns);
     return this;
   }
 
