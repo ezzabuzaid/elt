@@ -12,6 +12,8 @@ import {
   type Rule,
   type RuleColumns,
   type StoredOutput,
+  type TableOutputRow,
+  TableRule,
   computedColumns,
   refreshComputed,
   refuseTakenColumns,
@@ -29,9 +31,12 @@ import { TargetHistory, rowHash } from './sql-server-history.ts';
 import { identifiers, quote, rawTable } from './sql-server-identifiers.ts';
 import { SqlServerLoad } from './sql-server-load.ts';
 import { expireBefore } from './sql-server-numbering.ts';
+import { SqlServerPartsTable } from './sql-server-parts-table.ts';
 import { TargetReaderView } from './sql-server-reader-view.ts';
 import {
+  type Declared,
   batchValue,
+  keyHash,
   ruleBatchType,
   ruleColumnType,
   ruleStored,
@@ -46,17 +51,17 @@ import {
 import type { SqlServerTable } from './sql-server-table.ts';
 import { View, made } from './view.ts';
 
-// The columns of the raw table that the destination writes for itself
-// beside the rule's: the row number, its clustered key (ADR 0003), and the
-// key hash, which is unique (ADR 0004).
+// The columns of each table of the dataset that the destination writes for
+// itself beside the rule's: the row number, its clustered key (ADR 0003),
+// and the key hash, which is unique (ADR 0004).
 const ownColumns = ['_elt_row', '_elt_key_hash'];
 
-// A column of the raw table as sys.columns gives it.
-type Declared = {
-  readonly name: string;
-  readonly type: string;
-  readonly required: boolean;
-};
+// A table of the dataset as its declaration makes it, with its history and
+// the view readers query.
+type DeclaredTable = Pick<
+  SqlServerPartsTable,
+  'table' | 'declared' | 'statement' | 'history' | 'view'
+>;
 
 // Data computed on write from what the pipeline's copies load into one SQL
 // Server database, as in elt-postgresql: a rule makes one output row for each
@@ -68,17 +73,26 @@ type Declared = {
 // commit, each row names the commit that last wrote it, and the history
 // keeps each row that a commit replaced or removed, so the view reads as of a
 // position as the copies' reader views do.
+// A table rule gives many parts for one input: the dataset keeps one output
+// row for each key in raw_<name>, with no rule column, and its parts in
+// raw_<name>_parts, which readers query through marts.<name>_parts. The
+// commit that writes an output row writes its parts, and the two tables are
+// one declaration, so a change to either makes both again.
 export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
   readonly name: string;
   // The database the dataset lives in.
   readonly into: SqlServerDestination;
   readonly #from: readonly (SqlServerTable | View)[];
-  readonly #rule: Rule<Input, RuleColumns>;
-  readonly #table: string;
-  readonly #declared: readonly Declared[];
-  readonly #statement: string;
-  readonly #history: TargetHistory;
-  readonly #view: TargetReaderView;
+  readonly #compute:
+    | { readonly rule: Rule<Input, RuleColumns> }
+    | {
+        readonly rule: TableRule<Input, RuleColumns, RuleColumns>;
+        readonly parts: SqlServerPartsTable;
+      };
+  // The rule columns of an output row: none for a table rule, whose columns
+  // are the parts'.
+  readonly #ruleColumns: RuleColumns;
+  readonly #output: DeclaredTable;
 
   constructor({
     into,
@@ -91,22 +105,33 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
     name: string;
     description: string;
     from: readonly (SqlServerTable | View)[];
-    compute: Rule<Input, RuleColumns>;
+    compute:
+      Rule<Input, RuleColumns> | TableRule<Input, RuleColumns, RuleColumns>;
   }) {
     super();
     this.name = name;
     this.into = into;
     this.#from = Object.freeze([...from]);
-    this.#rule = compute;
     refuseTakenColumns({
       dataset: name,
       rule: compute,
       reserved: [...reservedColumns(compute), ...ownColumns],
       key: (column) => identifiers.key(column),
     });
+    this.#compute =
+      compute instanceof TableRule
+        ? {
+            rule: compute,
+            parts: new SqlServerPartsTable({
+              dataset: name,
+              description,
+              rule: compute,
+            }),
+          }
+        : { rule: compute };
+    this.#ruleColumns = compute instanceof TableRule ? {} : compute.output;
     const table = inWarehouse(rawTable(name));
-    this.#table = table;
-    this.#declared = Object.freeze([
+    const declared: readonly Declared[] = Object.freeze([
       { name: '_elt_row', type: 'bigint', required: true },
       { name: compute.key.name, type: 'nvarchar(max)', required: true },
       ...Object.keys(computedColumns).map((column) => ({
@@ -114,7 +139,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
         type: 'nvarchar(max)',
         required: column !== 'error',
       })),
-      ...Object.entries(compute.output).map(([column, rule]) => ({
+      ...Object.entries(this.#ruleColumns).map(([column, rule]) => ({
         name: column,
         type: ruleColumnType(column, rule),
         required: false,
@@ -123,31 +148,35 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
       { name: '_elt_row_hash', type: 'binary(32)', required: true },
       { name: '_elt_key_hash', type: 'binary(32)', required: true },
     ]);
-    const columns = this.#declared
+    const columns = declared
       .slice(1)
       .map(
         ({ name, type, required }) =>
           `${quote(name)} ${type} ${required ? 'NOT NULL' : 'NULL'}`,
       );
-    this.#statement = `CREATE TABLE ${table} ([_elt_row] bigint IDENTITY(1, 1) NOT NULL PRIMARY KEY CLUSTERED, ${columns.join(', ')}, CHECK ([status] IN (N'computed', N'empty', N'failed')));
-      CREATE UNIQUE INDEX [key_hash] ON ${table} ([_elt_key_hash]);`;
-    this.#history = new TargetHistory(hash('sha256', table).slice(0, 40));
-    this.#view = new TargetReaderView(
-      name,
+    const history = new TargetHistory(hash('sha256', table).slice(0, 40));
+    this.#output = Object.freeze({
       table,
-      this.#history.qualifiedName,
-      this.#columns,
-      new TargetDescriptions(description, {
-        [compute.key.name]: compute.key.description,
-        ...computedColumns,
-        ...Object.fromEntries(
-          Object.entries(compute.output).map(([column, { description }]) => [
-            column,
-            description,
-          ]),
-        ),
-      }),
-    );
+      declared,
+      statement: `CREATE TABLE ${table} ([_elt_row] bigint IDENTITY(1, 1) NOT NULL PRIMARY KEY CLUSTERED, ${columns.join(', ')}, CHECK ([status] IN (N'computed', N'empty', N'failed')));
+      CREATE UNIQUE INDEX [key_hash] ON ${table} ([_elt_key_hash]);`,
+      history,
+      view: new TargetReaderView(
+        name,
+        table,
+        history.qualifiedName,
+        this.#columns,
+        new TargetDescriptions(description, {
+          [compute.key.name]: compute.key.description,
+          ...computedColumns,
+          ...Object.fromEntries(
+            Object.entries(this.#ruleColumns).map(
+              ([column, { description }]) => [column, description],
+            ),
+          ),
+        }),
+      ),
+    });
     Object.freeze(this);
   }
 
@@ -160,10 +189,17 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
   // row hash counts.
   get #columns(): string[] {
     return [
-      this.#rule.key.name,
+      this.#compute.rule.key.name,
       ...Object.keys(computedColumns),
-      ...Object.keys(this.#rule.output),
+      ...Object.keys(this.#ruleColumns),
     ];
+  }
+
+  // The tables of the dataset, which one declaration makes.
+  get #tables(): readonly DeclaredTable[] {
+    return 'parts' in this.#compute
+      ? [this.#output, this.#compute.parts]
+      : [this.#output];
   }
 
   override validate(connections: readonly Connection<SqlServerTable>[]): void {
@@ -176,6 +212,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
     for (const relation of [
       this.qualifiedName,
       `${warehouse}.${rawTable(this.name)}`,
+      ...('parts' in this.#compute ? this.#compute.parts.names : []),
     ])
       if (relations.has(identifiers.key(relation)))
         throw new TypeError(
@@ -207,30 +244,34 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
       'computed',
       clock,
     );
-    await refreshComputed({
-      rule: this.#rule,
+    const refresh = {
       inputs: await this.#inputs(load.connection),
-      prepare: (keys) => this.#prepare(load, status, keys, signal),
+      prepare: (keys: ReadonlySet<string>) =>
+        this.#prepare(load, status, keys, signal),
       status,
       trigger,
       signal,
-    });
+    };
+    const { rule } = this.#compute;
+    await (rule instanceof TableRule
+      ? refreshComputed({ ...refresh, rule })
+      : refreshComputed({ ...refresh, rule }));
   }
 
-  // Makes marts, brings the table to its declaration, removes the rows whose
-  // key has no input, and gives the output table to write. Each transaction
-  // takes the number of its commit at its first change, so one that changes
-  // no row takes none. The load has one session, so the transactions of the
-  // calls take turns.
+  // Makes marts, brings the tables to their declaration, removes the rows
+  // whose key has no input, with their parts, and gives the output table to
+  // write. Each transaction takes the number of its commit at its first
+  // change, so one that changes no row takes none. The load has one session,
+  // so the transactions of the calls take turns.
   async #prepare(
     load: SqlServerLoad,
     status: SqlServerDerivedStatus,
     keys: ReadonlySet<string>,
     signal: AbortSignal | undefined,
-  ): Promise<PreparedOutputs<OutputRow>> {
+  ): Promise<PreparedOutputs<OutputRow | TableOutputRow>> {
     const { connection } = load;
-    const table = this.#table;
-    const history = this.#history;
+    const { table, history } = this.#output;
+    const parts = 'parts' in this.#compute ? this.#compute.parts : undefined;
     const commits = () => {
       let number: Promise<number> | undefined;
       return () => (number ??= load.number());
@@ -242,7 +283,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
       const rows = new Map<string, StoredOutput>();
       const gone: string[] = [];
       for (const row of await connection.query(
-        `SELECT ${quote(this.#rule.key.name)} AS [key], [input_hash], [rule], [status] FROM ${table}`,
+        `SELECT ${quote(this.#compute.rule.key.name)} AS [key], [input_hash], [rule], [status] FROM ${table}`,
       )) {
         const key = String(row.key);
         if (keys.has(key))
@@ -253,7 +294,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
           });
         else gone.push(keyHash(key));
       }
-      if (gone.length > 0)
+      if (gone.length > 0) {
         await history.remove(
           connection,
           await commit(),
@@ -261,7 +302,10 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
           '[_elt_key_hash] IN (SELECT CONVERT(binary(32), [value], 2) FROM OPENJSON(@gone))',
           { gone: JSON.stringify(gone) },
         );
-      await history.expire(connection);
+        await parts?.remove(connection, await commit(), gone);
+      }
+      for (const declared of this.#tables)
+        await declared.history.expire(connection);
       return rows;
     });
     const session = new Lock();
@@ -289,13 +333,26 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
 
   // Writes each output row whose values differ from its stored row in the
   // commit that commit numbers, in one MERGE whose output the history keeps
-  // (ADR 0005). A row with the values of its stored row keeps its commit.
+  // (ADR 0005), and the parts of each row in the same commit. A row with the
+  // values of its stored row keeps its commit.
   async #write(
     connection: SqlServerConnection,
     commit: () => Promise<number>,
-    outputs: readonly OutputRow[],
+    outputs: readonly (OutputRow | TableOutputRow)[],
   ): Promise<void> {
-    const ruleColumns = Object.entries(this.#rule.output);
+    await this.#merge(connection, commit, outputs);
+    if ('parts' in this.#compute)
+      await this.#compute.parts.write(connection, commit, outputs);
+  }
+
+  // The MERGE of the output rows whose row hash changed.
+  async #merge(
+    connection: SqlServerConnection,
+    commit: () => Promise<number>,
+    outputs: readonly (OutputRow | TableOutputRow)[],
+  ): Promise<void> {
+    const { table, history } = this.#output;
+    const ruleColumns = Object.entries(this.#ruleColumns);
     const rows = outputs.map((output) => {
       const values = [
         output.key,
@@ -320,7 +377,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
       (
         await connection.query(
           `SELECT LOWER(CONVERT(char(64), [_elt_key_hash], 2)) AS [key], LOWER(CONVERT(char(64), [_elt_row_hash], 2)) AS [version]
-           FROM ${this.#table} WHERE [_elt_key_hash] IN (SELECT CONVERT(binary(32), [value], 2) FROM OPENJSON(@keys))`,
+           FROM ${table} WHERE [_elt_key_hash] IN (SELECT CONVERT(binary(32), [value], 2) FROM OPENJSON(@keys))`,
           { keys: JSON.stringify(rows.map((row) => row.keyHash)) },
         )
       ).map(({ key, version }) => [String(key), String(version)]),
@@ -331,11 +388,13 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
     if (changed.length === 0) return;
     // Each column as OPENJSON reads it and as the table stores it.
     const fields = [
-      ...[this.#rule.key.name, ...Object.keys(computedColumns)].map((name) => ({
-        name,
-        type: 'nvarchar(max)',
-        stored: (at: string) => at,
-      })),
+      ...[this.#compute.rule.key.name, ...Object.keys(computedColumns)].map(
+        (name) => ({
+          name,
+          type: 'nvarchar(max)',
+          stored: (at: string) => at,
+        }),
+      ),
       ...ruleColumns.map(([name, column]) => ({
         name,
         type: ruleBatchType(column),
@@ -364,11 +423,11 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
       ),
     ].join(', ')}) AS j`;
     const committed = await commit();
-    await this.#history.keep(
+    await history.keep(
       connection,
       committed,
-      this.#table,
-      `MERGE ${this.#table} AS t USING (${source}) AS s ON t.[_elt_key_hash] = s.[_elt_key_hash]
+      table,
+      `MERGE ${table} AS t USING (${source}) AS s ON t.[_elt_key_hash] = s.[_elt_key_hash]
        WHEN MATCHED THEN UPDATE SET ${written.map((column) => `t.${column} = s.${column}`).join(', ')}
        WHEN NOT MATCHED THEN INSERT (${written.join(', ')}) VALUES (${written.map((column) => `s.${column}`).join(', ')})
        OUTPUT deleted.*`,
@@ -385,34 +444,49 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
     );
   }
 
-  // Makes the table, its history and its view, or makes the table again
-  // when its stored columns differ from its declaration, in a commit: the
-  // history keeps each row of the old table and takes the new shape, and
-  // the views over the old table read the new one (ADR 0006). A column whose
-  // type changes in a way that the history cannot follow, such as a vector
-  // of other dimensions, expires each position before the commit, which only
-  // the rows of the old history read.
+  // Makes the tables, their histories and their views, or makes every table
+  // again when the stored columns of one differ from its declaration, in a
+  // commit: the history of each keeps each row of its old table and takes the
+  // new shape, and the views over the old tables read the new ones (ADR
+  // 0006). A column whose type changes in a way that a history cannot follow,
+  // such as a vector of other dimensions, expires each position before the
+  // commit, which only the rows of the old history read.
   async #declare(
     connection: SqlServerConnection,
     commit: () => Promise<number>,
   ): Promise<void> {
-    const table = this.#table;
-    const history = this.#history;
-    const view = this.#view;
-    const stored = await storedColumns(connection, { table });
-    if (stored.length === 0) await connection.query(this.#statement);
-    else if (
-      stored.map(shape).join('\0') !== this.#declared.map(shape).join('\0')
-    ) {
-      const committedIn = await commit();
-      await refreshDependents(
-        connection,
-        {
-          roots: [table, history.qualifiedName, view.qualifiedName],
-          views: [view.qualifiedName],
-          changed: table,
-        },
-        async () => {
+    const tables = this.#tables;
+    const stored: (readonly Declared[])[] = [];
+    for (const { table } of tables)
+      stored.push(await storedColumns(connection, { table }));
+    const missing = stored.every((columns) => columns.length === 0);
+    const fits = tables.every(
+      ({ declared }, index) =>
+        stored[index]?.map(shape).join('\0') === declared.map(shape).join('\0'),
+    );
+    if (missing || fits) {
+      for (const { table, statement, history, view } of tables) {
+        if (missing) await connection.query(statement);
+        await history.create(connection, table);
+        await view.describe(connection);
+      }
+      return;
+    }
+    const committedIn = await commit();
+    await refreshDependents(
+      connection,
+      {
+        roots: tables.flatMap(({ table, history, view }) => [
+          table,
+          history.qualifiedName,
+          view.qualifiedName,
+        ]),
+        views: tables.map(({ view }) => view.qualifiedName),
+        changed: tables.map(({ table }) => table).join(' and '),
+      },
+      async () => {
+        for (const [index, { table, history }] of tables.entries()) {
+          if (stored[index]?.length === 0) continue;
           await history.create(connection, table);
           await history.keep(
             connection,
@@ -422,17 +496,16 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
             {},
           );
           await connection.query(`DROP TABLE ${table}`);
-          await connection.query(this.#statement);
+        }
+        for (const { table, statement, history, view } of tables) {
+          await connection.query(statement);
           if ((await history.follow(connection, table)) === 'retyped')
             await expireBefore(connection, committedIn, 'type');
           await history.create(connection, table);
           await view.replace(connection);
-        },
-      );
-      return;
-    }
-    await history.create(connection, table);
-    await view.describe(connection);
+        }
+      },
+    );
   }
 
   // Each input by key, from the rows of each relation of from that exists
@@ -457,7 +530,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
         return null;
       }
       for (const row of await connection.query(`SELECT * FROM ${relation}`)) {
-        const read = this.#rule.read(row);
+        const read = this.#compute.rule.read(row);
         if (read !== null && !inputs.has(read.key))
           inputs.set(read.key, read.input);
       }
@@ -479,12 +552,6 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
         steps.some(({ to }) => to === target),
     );
   }
-}
-
-// The key hash of an output row: the SHA-256, in lower-case hex, of the JSON
-// array of its key, as a load hashes the key of a staged row (ADR 0004).
-function keyHash(key: string): string {
-  return hash('sha256', JSON.stringify([key]));
 }
 
 const shape = ({ name, type, required }: Declared) =>

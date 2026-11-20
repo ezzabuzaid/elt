@@ -1,6 +1,6 @@
 # @eltjs/elt-sqlserver
 
-> **Partly built, private.** Ezz accepted the design on 2026-11-19. The first steps of backlog #4736 are built: the append, overwrite and deduplicating writers, the numbering, the readings, the checkpoint store, the sync history, `readPassStatus`, `View`, and `ComputedDataset` of a `Rule` (see "Built now" below). The rest of the "Now" column is design on paper until its step is built. The package is private until its tests pass for the whole design.
+> **Partly built, private.** Ezz accepted the design on 2026-11-19. The first steps of backlog #4736 are built: the append, overwrite and deduplicating writers, the numbering, the readings, the checkpoint store, the sync history, `readPassStatus`, `View`, and `ComputedDataset` (see "Built now" below). The rest of the "Now" column is design on paper until its step is built. The package is private until its tests pass for the whole design.
 
 The SQL Server destination of elt. It loads each stream of a connection into a SQL Server or Azure SQL database, with typed columns, and it does not block readers while it loads. Each target is a reader view in `marts`, which the host names, over a raw table in `_warehouse`. It also keeps the views and computed datasets that the pipeline derives. A computed dataset can keep a vector column as a native `VECTOR(n)`, so Azure SQL searches it with `VECTOR_DISTANCE` or a DiskANN index. The checkpoint store and the sync history keep their data in the same database.
 
@@ -28,7 +28,7 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 - The file columns: parsed text, references to the files of a storage, and the original bytes of a file in a file store (see "File bytes in the database" below).
 - `reading(position?)`: a session of its own that reads the database as of a position (see "Commit numbers and positions" below), and `readPassStatus(login)`.
 - `View`, and its rows of `derived_status` (see "Declare a view" and "Derived status" below).
-- `ComputedDataset` of a `Rule`, with `text`, `blob`, `integer` and `vector(n)` rule columns, and its rows of `derived_status` (see "Declare a computed dataset" below). Not built yet: a `TableRule` and its parts table, and `afterCreate`.
+- `ComputedDataset` of a `Rule` or a `TableRule`, with `text`, `blob`, `integer` and `vector(n)` rule columns, the parts table of a `TableRule`, and its rows of `derived_status` (see "Declare a computed dataset" below). Not built yet: `afterCreate`.
 - A failure of the setup of the database is a `SqlServerSetupError`. Its [failure type](../../elt/README.md#failure-types) is `config`. A login without a permission that a statement of the destination or of `SqlServerCheckpointStore` needs is also `config`: a `SqlServerPermissionError` of sdk-microsoft-sql-server, and the SQL Server errors 229 and 230 (a permission on an object or a column) and 262 (a permission in the database, such as `CREATE TABLE`). A login that the server refuses (`SqlServerLoginError`: wrong credentials, a disabled login, a database that it may not open) is `config` too, as a wrong password is in elt-postgresql. Each other error, for example a server that cannot be reached, is `system`.
 
 ## Load a stream into SQL Server
@@ -123,13 +123,14 @@ class View {
   });
 }
 
-class ComputedDataset<Input, Output> {
+class ComputedDataset<Input> {
   constructor(options: {
     into: SqlServerDestination;
     name: string;
     description: string;
     from: readonly (SqlServerTable | View)[];
-    compute: Rule<Input, Output>;
+    compute:
+      Rule<Input, RuleColumns> | TableRule<Input, RuleColumns, RuleColumns>;
     // T-SQL that runs each time the dataset makes its raw table, such as a vector index.
     afterCreate?: (table: string) => readonly string[];
   });
@@ -343,6 +344,14 @@ As in [elt-postgresql](../postgresql/README.md#declare-a-computed-dataset). A co
 - When the stored columns of the raw table differ from its declaration, for example a vector of other dimensions, the refresh makes the table again in one commit: the history keeps each old row and takes the new shape, `CREATE OR ALTER VIEW` keeps the reader view, and `sp_refreshview` refreshes each view over it ([ADR 0006](./docs/adr/0006-a-change-of-a-table-refreshes-the-views-over-it.md)). A column whose type the history cannot widen, such as `VECTOR(3)` to `VECTOR(4)`, expires each position before that commit, as a reload of a stream does.
 - The dataset reads each relation of `from` through its reader view in one statement. A table of `from` must be loaded by a copy into the same database.
 - `qualifiedName` is `marts.<name>`. A `View` declared after the dataset that reads it waits while the dataset waits.
+
+A `TableRule` gives many parts for one input, as in [elt-postgresql](../postgresql/README.md) and [elt ADR 0026](../../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md). The raw table then keeps one output row for each key, with no rule column, and the parts table `_warehouse.raw_<name>_parts` keeps one row for each part. Readers query the view `marts.<name>_parts`: the key, `seq` (`INT`, from 0), `part_hash` (`NVARCHAR(MAX)`), the content columns and the place columns.
+
+- The parts table also has `_elt_row`, its clustered key, `committed_in`, `_elt_row_hash` and `_elt_key_hash`. It is unique on `_elt_key_hash` and `seq`, because the key is `NVARCHAR(MAX)` (ADR 0004). The key hash of a part is the key hash of its output row.
+- The commit of a settled call writes the output rows and their parts. A part whose row hash did not change keeps its commit. The changed parts are one `MERGE` on `_elt_key_hash` and `seq`, and the parts beyond the new count of their row are one `DELETE`; the history keeps each part that they replace or remove. A row that is `empty` or `failed` has no parts, and a removed input removes its parts in the commit that removes its output row.
+- The two tables are one declaration: when either one differs from its declaration, the refresh makes both again in one commit, and `sp_refreshview` refreshes the views over each.
+- The constructor refuses a column of the rule named `seq` or `part_hash` as well, in any case. `validate` refuses a copy that makes `<name>_parts` or `raw_<name>_parts`.
+- `derived_status` counts the output rows, one for each key, not the parts.
 
 ## When something fails
 

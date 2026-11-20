@@ -1,3 +1,5 @@
+import { hash } from 'node:crypto';
+
 import { Vector } from '@zukhruf/vectors';
 import { sqlType, toSql } from '@zukhruf/vectors/sqlserver';
 
@@ -76,4 +78,18 @@ export function batchValue(
   return value instanceof Uint8Array
     ? Buffer.from(value).toString('base64')
     : value;
+}
+
+// A column of a table of a computed dataset as sys.columns gives it.
+export type Declared = {
+  readonly name: string;
+  readonly type: string;
+  readonly required: boolean;
+};
+
+// The key hash of an output row and of each of its parts: the SHA-256, in
+// lower-case hex, of the JSON array of its key, as a load hashes the key of a
+// staged row (ADR 0004).
+export function keyHash(key: string): string {
+  return hash('sha256', JSON.stringify([key]));
 }
