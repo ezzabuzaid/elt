@@ -4,13 +4,13 @@ Status: accepted by Ezz (2026-11-19).
 
 elt-postgresql ADR 0006 saves, drops and makes again each view over a table that a change replaces, because Postgres binds a view to the OID of its tables and refuses `DROP TABLE` while a view reads it. SQLite finds the tables of a view by name at each read, so it needs nothing.
 
-SQL Server is close to SQLite. A view without `SCHEMABINDING` finds its tables by name when SQL Server compiles a query on it, so a table can be dropped, renamed or changed under it. But SQL Server keeps the column list of the view as it was made, so a view that selects `*` shows the old columns until `sp_refreshview` reads its definition again ([sp_refreshview](https://learn.microsoft.com/sql/relational-databases/system-stored-procedures/sp-refreshview-transact-sql)). A view `WITH SCHEMABINDING` refuses each change of the tables that it reads.
+SQL Server is close to SQLite. A view without `SCHEMABINDING` finds its tables by name when SQL Server compiles a query on it, so a table can be dropped, renamed or changed under it. But SQL Server keeps the column list of the view as it was made, so a view that selects `*` shows the old columns until `sp_refreshview` reads its definition again ([sp_refreshview](https://learn.microsoft.com/sql/relational-databases/system-stored-procedures/sp-refreshview-transact-sql)). A view `WITH SCHEMABINDING` refuses a rename or a drop of a table that it reads, and a change or a drop of a column that it reads. An added column, or a change of a column that it does not read, goes through (probe below).
 
 ## Decision
 
 - In the transaction of a change of shape or of the swap of a reload, the destination finds each view that reads the table, its history or its reader view, directly or through other views (`sys.sql_expression_dependencies`), and runs `sp_refreshview` on each one, the shallowest first.
 - A view that does not fit the change, such as one that reads a column that the change drops, fails `sp_refreshview`. The change then fails, the error names the view, and the table and the checkpoint stay as they were, as in Postgres.
-- A view `WITH SCHEMABINDING` stops the change. The error names the view.
+- A change that a view `WITH SCHEMABINDING` stops (error 15336, 3729 or 4922) fails, and the table and the checkpoint stay as they were. The server's error names the table or the column, so the destination catches it and names in its own error each schema-bound view of the table (`is_schema_bound_reference` of `sys.sql_expression_dependencies`). It does not look for such views before the change: the change itself is the test, and a change that such a view allows, such as an added column, goes through.
 - The views keep their owners, grants and extended properties, because nothing drops them. A swapped-in table takes the grants of the old table.
 
 ## Considered Options
@@ -28,7 +28,7 @@ Sources: elt-postgresql ADR 0006; backlog #3185.
 
 ## Probe (2026-11-20): `sp_rename`, `sp_refreshview` and `SCHEMABINDING`
 
-**The refresh holds as written. The `SCHEMABINDING` part contradicts the decision for some changes: needs Ezz.** A view `WITH SCHEMABINDING` stops a swap, a drop, and a change or drop of a column that it reads. It does not stop `ADD` of a column, or `ALTER COLUMN` of a column that it does not read. Two of the three errors do not name the view.
+**The refresh holds as written. The `SCHEMABINDING` part corrected the decision (2026-11-20): the server stops only some changes, and the destination names the schema-bound views in its own error.** A view `WITH SCHEMABINDING` stops a swap, a drop, and a change or drop of a column that it reads. It does not stop `ADD` of a column, or `ALTER COLUMN` of a column that it does not read. Two of the three errors do not name the view.
 
 Servers: Azure SQL Database (datahub BILLING), `Microsoft SQL Azure (RTM) - 12.0.2000.8`, EngineEdition 5; SQL Server 2025 in Docker, `17.0.5065.9`, EngineEdition 3. Both gave the same output, except object ids. The objects were `dbo.zz_elt_probe_*` tables and views, dropped at the end.
 
@@ -85,7 +85,7 @@ SQL> SELECT OBJECT_NAME(d.referencing_id) AS view_name, OBJECTPROPERTY(d.referen
 - After the swap, a view over `*` shows the old columns until `sp_refreshview`. A view over that view needs its own refresh after it, so the order shallowest first is necessary.
 - `sys.sql_expression_dependencies` gives the new table's id after the swap, because SQL Server keeps the dependency by name. Thus the destination finds the dependent views of the swapped-in table.
 - A view that reads a dropped column fails `sp_refreshview` with error 207, which names the column and not the view. The error ends the transaction (`@@TRANCOUNT` is 0), so the change does not stay. The destination must name the view in its own error.
-- Contradiction (needs Ezz): the decision says that a view `WITH SCHEMABINDING` stops the change, and the context says that it "refuses each change of the tables that it reads". The server refuses the swap (15336, names the table), a drop (3729, names the view) and a change of a column that the view reads (4922, names the column). It lets `ADD c` and `ALTER COLUMN b` go through. `is_schema_bound_reference` of `sys.sql_expression_dependencies` tells which views are schema-bound, so the destination can name them.
+- The decision first said that a view `WITH SCHEMABINDING` stops each change. The server refuses the swap (15336, names the table), a drop (3729, names the view) and a change of a column that the view reads (4922, names the column). It lets `ADD c` and `ALTER COLUMN b` go through. `is_schema_bound_reference` of `sys.sql_expression_dependencies` tells which views are schema-bound, so the destination names them; the decision now says so (2026-11-20).
 
 ## Probe (2026-11-20): a bare table name inside a view
 
