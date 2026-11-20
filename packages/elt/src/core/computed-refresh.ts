@@ -28,6 +28,25 @@ export const partColumns = {
     'SHA-256 of the content columns of the part, not of its place columns: a part that only moved keeps its part hash.',
 };
 
+// The names that no column of the rule may take, since the tables and the
+// histories of the dataset keep them: the key, the computed columns, the part
+// columns of a table rule, the commit that last wrote a row and the hash of
+// its values in each table, and the commit that replaced a row in each
+// history. A destination compares a rule column with each name as its store
+// compares two names.
+export function reservedColumns<Input>(
+  rule: Rule<Input, RuleColumns> | TableRule<Input, RuleColumns, RuleColumns>,
+): readonly string[] {
+  return [
+    rule.key.name,
+    ...Object.keys(computedColumns),
+    ...(rule instanceof TableRule ? Object.keys(partColumns) : []),
+    'committed_in',
+    '_elt_row_hash',
+    'replaced_in',
+  ];
+}
+
 // What a refresh compares of a stored output row.
 export type StoredOutput = {
   readonly inputHash: string;

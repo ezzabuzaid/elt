@@ -11,6 +11,7 @@ export {
   computedColumns,
   partColumns,
   refreshComputed,
+  reservedColumns,
 } from './core/computed-refresh.ts';
 export {
   CopyConfiguration,

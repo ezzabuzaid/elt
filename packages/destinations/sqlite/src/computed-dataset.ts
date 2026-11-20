@@ -17,8 +17,8 @@ import {
   type TableOutputRow,
   TableRule,
   computedColumns,
-  partColumns,
   refreshComputed,
+  reservedColumns,
 } from '@eltjs/elt';
 
 import { busyTimeout } from './open-destination.ts';
@@ -109,16 +109,13 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
       location: identifiers.key(this.#table),
     });
     // SQLite takes two names that differ only in ASCII case for one column,
-    // and would refuse the table at the first refresh. A part has a seq and a
-    // part hash, and the columns of both groups of a table rule.
+    // and would refuse the table at the first refresh. A part has the columns
+    // of both groups of a table rule.
     const taken = new Map(
-      [
-        compute.key.name,
-        ...Object.keys(computedColumns),
-        'committed_in',
-        '_elt_row_hash',
-        ...(compute instanceof TableRule ? Object.keys(partColumns) : []),
-      ].map((column) => [identifiers.key(column), column]),
+      reservedColumns(compute).map((column) => [
+        identifiers.key(column),
+        column,
+      ]),
     );
     for (const column of [
       ...Object.keys(compute.output),

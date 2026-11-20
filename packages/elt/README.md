@@ -1149,6 +1149,7 @@ Each destination keeps its own `View` and `ComputedDataset`, and drives three ru
 - `DerivedStatus` gives the states of a row of `derived_status`: `waiting`, `refreshing` with counts, `current` with `as_of`, and `failed`. A destination writes the values in its `write`, and takes settled inputs off `pending` inside its own commit.
 - `computedColumns` names the columns that each output row keeps beside the rule's own, with their descriptions.
 - `partColumns` names the columns that each part keeps beside the key and the columns of the table rule, `seq` and `part_hash`, with their descriptions.
+- `reservedColumns(rule)` names the columns that no column of the rule may take, because the tables and the histories of the dataset keep them: the key, the computed columns, the part columns of a table rule, `committed_in`, `_elt_row_hash` and `replaced_in`. The constructor of each `ComputedDataset` refuses a rule column with one of these names, and compares the names as its store compares two names.
 
 The `readPassStatus` of a destination reads its sync history and gives a `PassStatus` of `@eltjs/elt`, with a `StreamPassStatus` for each stream. `combinedPass` shows the latest passes of several connections as one pass: it runs while one of them runs, and it is only as current as the least current one.
 

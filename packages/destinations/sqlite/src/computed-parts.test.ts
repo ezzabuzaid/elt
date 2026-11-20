@@ -609,6 +609,7 @@ for (const [output, place, column, other] of [
   [['text'], ['ID'], 'ID', 'id'],
   [['status'], ['start'], 'status', 'status'],
   [['text'], ['Committed_In'], 'Committed_In', 'committed_in'],
+  [['text'], ['REPLACED_IN'], 'REPLACED_IN', 'replaced_in'],
   [['text'], ['TEXT'], 'TEXT', 'text'],
 ] as const)
   test(`a table rule column named ${column} is refused when the dataset is constructed, as the dataset already has ${other}`, () => {

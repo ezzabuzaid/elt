@@ -882,6 +882,8 @@ class NamedColumns extends Rule<string, RuleColumns> {
 for (const [column, owner] of [
   ['status', 'an engine column'],
   ['Committed_In', 'a column the dataset writes itself, in another case'],
+  ['REPLACED_IN', 'the column its history adds, in another case'],
+  ['_ELT_ROW_HASH', 'the hash of the values of a row, in another case'],
   ['ref', 'the key column'],
 ] as const)
   test(`a rule output column named ${column}, ${owner}, is refused when the dataset is constructed, by name`, () => {

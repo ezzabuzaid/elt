@@ -16,8 +16,8 @@ import {
   type TableOutputRow,
   TableRule,
   computedColumns,
-  partColumns,
   refreshComputed,
+  reservedColumns,
 } from '@eltjs/elt';
 
 import { identifier, quote } from './identifier.ts';
@@ -27,7 +27,7 @@ import { PostgresDerivedStatus } from './postgres-derived-status.ts';
 import { PostgresDestination } from './postgres-destination.ts';
 import { storedColumns } from './postgres-fit.ts';
 import { TargetHistory, rowHash } from './postgres-history.ts';
-import { rawTable } from './postgres-identifiers.ts';
+import { identifiers, rawTable } from './postgres-identifiers.ts';
 import { PostgresLoad, type Transaction } from './postgres-load.ts';
 import { PostgresPartsTable } from './postgres-parts-table.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
@@ -36,14 +36,6 @@ import { inMarts, inWarehouse, marts, warehouse } from './postgres-schemas.ts';
 import { makeSchema } from './postgres-session.ts';
 import type { PostgresTable } from './postgres-table.ts';
 import { View, made } from './view.ts';
-
-// The names a rule column cannot take: the dataset's own, and the history's.
-const ownColumns = [
-  ...Object.keys(computedColumns),
-  'committed_in',
-  '_elt_row_hash',
-  'replaced_in',
-];
 
 // A table of the dataset as its declaration makes it, with its history and
 // the view readers query.
@@ -121,23 +113,24 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
         : { rule: compute };
     this.#ruleColumns = compute instanceof TableRule ? {} : compute.output;
     this.#table = rawTable(this.name);
-    // A part has a seq and a part hash, and the columns of both groups of a
-    // table rule.
-    const taken = new Set([
-      compute.key.name,
-      ...ownColumns,
-      ...(compute instanceof TableRule ? Object.keys(partColumns) : []),
-    ]);
+    // A part has the columns of both groups of a table rule.
+    const taken = new Map(
+      reservedColumns(compute).map((column) => [
+        identifiers.key(column),
+        column,
+      ]),
+    );
     for (const column of [
       ...Object.keys(compute.output),
       ...(compute instanceof TableRule ? Object.keys(compute.place) : []),
     ]) {
       identifier(column, 'rule column name');
-      if (taken.has(column))
+      const other = taken.get(identifiers.key(column));
+      if (other !== undefined)
         throw new TypeError(
-          `Computed dataset ${name} cannot have the column ${column}: the dataset already has the column ${column}`,
+          `Computed dataset ${name} cannot have the column ${column}: the dataset already has the column ${other}`,
         );
-      taken.add(column);
+      taken.set(identifiers.key(column), column);
     }
     const declared = Object.freeze([
       {

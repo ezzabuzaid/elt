@@ -22,6 +22,7 @@ import {
   Pipeline,
   PipelineError,
   Rule,
+  type RuleColumns,
   type RuleResult,
   type RuleValues,
   Source,
@@ -786,5 +787,68 @@ test('an integer column keeps each value as a bigint, and a vector column keeps 
         { name: 'vector', type: 'bytea' },
       ],
     },
+  );
+});
+
+// A rule that only names its columns: the dataset checks them when it is
+// constructed, before any input reaches compute.
+class NamedColumns extends Rule<string, RuleColumns> {
+  override readonly key = { name: 'ref', description: 'The input.' };
+  override readonly output: RuleColumns;
+  override readonly batch = 1;
+  override readonly concurrency = 1;
+
+  constructor(output: readonly string[]) {
+    super();
+    this.output = Object.fromEntries(
+      output.map((name) => [name, { type: 'text', description: name }]),
+    );
+  }
+
+  override read() {
+    return null;
+  }
+
+  override async identity() {
+    return null;
+  }
+
+  override async compute() {
+    return [];
+  }
+}
+
+for (const [column, owner] of [
+  ['replaced_in', 'the column its history adds'],
+  ['committed_in', 'a column the dataset writes itself'],
+  ['status', 'an engine column'],
+  ['ref', 'the key column'],
+] as const)
+  test(`a rule output column named ${column}, ${owner}, is refused when the dataset is constructed`, () => {
+    assert.throws(
+      () =>
+        new ComputedDataset({
+          into: new PostgresDestination({ url: 'postgres://localhost/none' }),
+          name: 'file_text',
+          description: 'The text of each file a row names.',
+          from: [],
+          compute: new NamedColumns(['content', column]),
+        }),
+      new TypeError(
+        `Computed dataset file_text cannot have the column ${column}: the dataset already has the column ${column}`,
+      ),
+    );
+  });
+
+test('a rule output column that differs from the column of the history only in case is its own column, as Postgres keeps the case of a quoted name', () => {
+  assert.doesNotThrow(
+    () =>
+      new ComputedDataset({
+        into: new PostgresDestination({ url: 'postgres://localhost/none' }),
+        name: 'file_text',
+        description: 'The text of each file a row names.',
+        from: [],
+        compute: new NamedColumns(['REPLACED_IN', 'Committed_In']),
+      }),
   );
 });
