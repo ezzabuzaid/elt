@@ -17,6 +17,7 @@ import {
   TableRule,
   computedColumns,
   refreshComputed,
+  refuseTakenColumns,
   reservedColumns,
 } from '@eltjs/elt';
 
@@ -113,28 +114,17 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
         : { rule: compute };
     this.#ruleColumns = compute instanceof TableRule ? {} : compute.output;
     this.#table = rawTable(this.name);
-    // A part has the columns of both groups of a table rule.
-    const taken = new Map(
-      reservedColumns(compute).map((column) => [
-        identifiers.key(column),
-        column,
-      ]),
-    );
-    for (const column of [
-      ...Object.keys(compute.output),
-      ...(compute instanceof TableRule ? Object.keys(compute.place) : []),
-    ]) {
-      identifier(column, 'rule column name');
-      const other = taken.get(identifiers.key(column));
-      if (other !== undefined)
-        throw new TypeError(
-          `Computed dataset ${name} cannot have the column ${column}: the dataset already has the column ${other}`,
-        );
-      taken.set(identifiers.key(column), column);
-    }
+    const keyName = identifier(compute.key.name, 'rule key name');
+    // A name Postgres cannot hold is refused before it is compared.
+    refuseTakenColumns({
+      dataset: name,
+      rule: compute,
+      reserved: reservedColumns(compute),
+      key: (column) => identifiers.key(identifier(column, 'rule column name')),
+    });
     const declared = Object.freeze([
       {
-        name: identifier(compute.key.name, 'rule key name'),
+        name: keyName,
         type: 'text',
         constraint: ' PRIMARY KEY',
       },

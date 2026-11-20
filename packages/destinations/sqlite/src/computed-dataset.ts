@@ -18,6 +18,7 @@ import {
   TableRule,
   computedColumns,
   refreshComputed,
+  refuseTakenColumns,
   reservedColumns,
 } from '@eltjs/elt';
 
@@ -109,25 +110,13 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
       location: identifiers.key(this.#table),
     });
     // SQLite takes two names that differ only in ASCII case for one column,
-    // and would refuse the table at the first refresh. A part has the columns
-    // of both groups of a table rule.
-    const taken = new Map(
-      reservedColumns(compute).map((column) => [
-        identifiers.key(column),
-        column,
-      ]),
-    );
-    for (const column of [
-      ...Object.keys(compute.output),
-      ...(compute instanceof TableRule ? Object.keys(compute.place) : []),
-    ]) {
-      const other = taken.get(identifiers.key(column));
-      if (other !== undefined)
-        throw new TypeError(
-          `Computed dataset ${name} cannot have the column ${column}: the dataset already has the column ${other}`,
-        );
-      taken.set(identifiers.key(column), column);
-    }
+    // and would refuse the table at the first refresh.
+    refuseTakenColumns({
+      dataset: name,
+      rule: compute,
+      reserved: reservedColumns(compute),
+      key: (column) => identifiers.key(column),
+    });
     this.#columns = Object.freeze([
       compute.key.name,
       ...Object.keys(computedColumns),

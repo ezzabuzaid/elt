@@ -47,6 +47,37 @@ export function reservedColumns<Input>(
   ];
 }
 
+// Refuses a column of the rule, of either group of a table rule, whose name
+// is one of reserved or the name of another column of the rule, as key
+// gives the form two names share when the store takes them for one.
+// reserved holds reservedColumns(rule) and each other column that the
+// destination keeps in the tables of the dataset.
+export function refuseTakenColumns<Input>({
+  dataset,
+  rule,
+  reserved,
+  key,
+}: {
+  readonly dataset: string;
+  readonly rule:
+    Rule<Input, RuleColumns> | TableRule<Input, RuleColumns, RuleColumns>;
+  readonly reserved: readonly string[];
+  readonly key: (name: string) => string;
+}): void {
+  const taken = new Map(reserved.map((column) => [key(column), column]));
+  for (const column of [
+    ...Object.keys(rule.output),
+    ...(rule instanceof TableRule ? Object.keys(rule.place) : []),
+  ]) {
+    const other = taken.get(key(column));
+    if (other !== undefined)
+      throw new TypeError(
+        `Computed dataset ${dataset} cannot have the column ${column}: the dataset already has the column ${other}`,
+      );
+    taken.set(key(column), column);
+  }
+}
+
 // What a refresh compares of a stored output row.
 export type StoredOutput = {
   readonly inputHash: string;

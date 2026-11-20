@@ -11,6 +11,7 @@ export {
   computedColumns,
   partColumns,
   refreshComputed,
+  refuseTakenColumns,
   reservedColumns,
 } from './core/computed-refresh.ts';
 export {
