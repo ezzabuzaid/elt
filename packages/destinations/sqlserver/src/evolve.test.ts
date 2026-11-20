@@ -287,7 +287,7 @@ test('a number field that becomes an integer evolves in place when each stored v
   );
 });
 
-test('an integer field that becomes a string widens in place and its history widens with it, so the values that the change converts, in rows that also lose a dropped field, read as they were as of each position before it', async () => {
+test('an integer field that becomes a string widens in place and its history widens with it and keeps the rows that the change converts, so a dropped field that a later change adds back reads as it was as of each position before the drop', async () => {
   await using database = await scratch();
   await run(database.login, {
     properties: { amount: { type: 'integer' }, note: { type: 'string' } },
@@ -307,33 +307,36 @@ test('an integer field that becomes a string widens in place and its history wid
     records: [{ id: 'b', amount: 'x' }],
     number: 3,
   });
+  await run(database.login, {
+    properties: { amount: { type: 'string' }, note: { type: 'string' } },
+    records: [],
+    number: 4,
+  });
 
   const read = (position: string) =>
     asOf(
       database.login,
       position,
-      'SELECT id, amount FROM marts.measures ORDER BY id',
+      'SELECT id, amount, note FROM marts.measures ORDER BY id',
     );
   assert.deepEqual(
     {
       type: await typeOf(database.admin, 'amount'),
-      note: await typeOf(database.admin, 'note'),
       listed: (await positionsOf(database.login)).includes(first),
       first: await read(first),
       second: await read(second),
       now: await database.admin.query(
-        'SELECT id, amount FROM marts.measures ORDER BY id',
+        'SELECT id, amount, note FROM marts.measures ORDER BY id',
       ),
     },
     {
       type: 'nvarchar',
-      note: undefined,
       listed: true,
-      first: [{ id: 'a', amount: '7' }],
-      second: [{ id: 'a', amount: '8' }],
+      first: [{ id: 'a', amount: '7', note: 'first' }],
+      second: [{ id: 'a', amount: '8', note: 'second' }],
       now: [
-        { id: 'a', amount: '8' },
-        { id: 'b', amount: 'x' },
+        { id: 'a', amount: '8', note: null },
+        { id: 'b', amount: 'x', note: null },
       ],
     },
   );
