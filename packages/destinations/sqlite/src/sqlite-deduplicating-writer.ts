@@ -1,7 +1,12 @@
 import { hash } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 
-import type { CopyConfiguration, Deduplication, KeyValue } from '@eltjs/elt';
+import {
+  type CopyConfiguration,
+  type Deduplication,
+  type KeyValue,
+  deduplicationColumns,
+} from '@eltjs/elt';
 
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
@@ -14,6 +19,7 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
   readonly deduplication: Deduplication;
   readonly keys: readonly SQLiteColumn[];
   readonly cursor?: SQLiteColumn;
+  readonly #guard?: SQLiteColumn;
 
   constructor(
     configuration: CopyConfiguration,
@@ -21,26 +27,17 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     table: SQLiteTable,
   ) {
     super(configuration, destination, table);
-    this.deduplication = configuration.deduplication();
-    const inferred = SQLiteColumns.fromSchema(configuration.stream.jsonSchema);
-    const column = (field: string): SQLiteColumn => {
-      const selected = table.columns.find((column) => column.field === field);
-      if (selected === undefined)
-        throw new TypeError(
-          `Deduplication requires destination column ${field}`,
-        );
-      if (
-        selected.dataType !==
-        inferred.find((column) => column.field === field)?.dataType
-      )
-        throw new TypeError(
-          `Deduplication column ${field} must preserve the source scalar type`,
-        );
-      return selected;
-    };
-    this.keys = Object.freeze(this.deduplication.primaryKey.map(column));
-    const { cursorField } = this.deduplication;
-    this.cursor = cursorField === undefined ? undefined : column(cursorField);
+    ({
+      deduplication: this.deduplication,
+      keys: this.keys,
+      cursor: this.cursor,
+      guard: this.#guard,
+    } = deduplicationColumns(
+      configuration,
+      table.columns,
+      SQLiteColumns.fromSchema(configuration.stream.jsonSchema),
+      (column) => column.dataType,
+    ));
     Object.freeze(this);
   }
 
@@ -136,14 +133,6 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
   protected override adopt(database: DatabaseSync): void {
     database.exec(`DROP INDEX IF EXISTS ${this.#provisionalIndex}`);
     this.#index(database);
-  }
-
-  // The cursor of the guard that rejects out-of-order replay: cursor_newer's,
-  // when the copy has a cursor.
-  get #guard(): SQLiteColumn | undefined {
-    return this.configuration.dedupPolicy === 'replace'
-      ? undefined
-      : this.cursor;
   }
 
   #same(left: string, right: string): string {

@@ -1,6 +1,11 @@
 import { hash } from 'node:crypto';
 
-import type { CopyConfiguration, Deduplication, KeyValue } from '@eltjs/elt';
+import {
+  type CopyConfiguration,
+  type Deduplication,
+  type KeyValue,
+  deduplicationColumns,
+} from '@eltjs/elt';
 
 import { quote } from './identifier.ts';
 import type { EncodedValue, PostgresColumn } from './postgres-column.ts';
@@ -15,6 +20,7 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
   readonly deduplication: Deduplication;
   readonly keys: readonly PostgresColumn[];
   readonly cursor?: PostgresColumn;
+  readonly #guard?: PostgresColumn;
 
   constructor(
     configuration: CopyConfiguration,
@@ -23,28 +29,17 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     retention: Temporal.Duration,
   ) {
     super(configuration, url, table, retention);
-    this.deduplication = configuration.deduplication();
-    const inferred = PostgresColumns.fromSchema(
-      configuration.stream.jsonSchema,
-    );
-    const column = (field: string): PostgresColumn => {
-      const selected = table.columns.find((column) => column.field === field);
-      if (selected === undefined)
-        throw new TypeError(
-          `Deduplication requires destination column ${field}`,
-        );
-      if (
-        selected.storageType !==
-        inferred.find((column) => column.field === field)?.storageType
-      )
-        throw new TypeError(
-          `Deduplication column ${field} must preserve the source scalar type`,
-        );
-      return selected;
-    };
-    this.keys = Object.freeze(this.deduplication.primaryKey.map(column));
-    const { cursorField } = this.deduplication;
-    this.cursor = cursorField === undefined ? undefined : column(cursorField);
+    ({
+      deduplication: this.deduplication,
+      keys: this.keys,
+      cursor: this.cursor,
+      guard: this.#guard,
+    } = deduplicationColumns(
+      configuration,
+      table.columns,
+      PostgresColumns.fromSchema(configuration.stream.jsonSchema),
+      (column) => column.storageType,
+    ));
     Object.freeze(this);
   }
 
@@ -118,12 +113,6 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     );
   }
 
-  get #guarded(): PostgresColumn | undefined {
-    return this.configuration.dedupPolicy === 'replace'
-      ? undefined
-      : this.cursor;
-  }
-
   // A text cursor compares by bytes, as SQLite's BINARY does.
   get #collate(): string {
     return this.cursor?.dataType === 'text' ? ' COLLATE "C"' : '';
@@ -142,7 +131,7 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
   // cursor_newer keeps the greatest cursor, the first on ties.
   #accepted(stage: string): string {
     const keys = this.keys.map((column) => column.quotedName);
-    const guard = this.#guarded;
+    const guard = this.#guard;
     const order =
       guard === undefined
         ? `"staged".${seq} DESC`
@@ -157,7 +146,7 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
   // Whether a staged record replaces the stored row: its values differ, and
   // the cursor guard, if any, lets it in, which rejects out-of-order replay.
   #replaces(record: string, row: string): string {
-    const guard = this.#guarded;
+    const guard = this.#guard;
     return `${record}.${version} IS DISTINCT FROM ${row}.${version}${guard === undefined ? '' : ` AND ${record}.${guard.quotedName}${this.#collate} > ${row}.${guard.quotedName}${this.#collate}`}`;
   }
 

@@ -123,6 +123,10 @@ export { Stream, type SyncMode } from './core/stream.ts';
 export { Target, targetFileReads } from './core/target.ts';
 export { requireDescribed, schemaColumns } from './core/schema-columns.ts';
 export {
+  type DeduplicationColumns,
+  deduplicationColumns,
+} from './core/deduplication-columns.ts';
+export {
   type DescribedColumn,
   describeTarget,
   type TargetDescription,
