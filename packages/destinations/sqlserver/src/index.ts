@@ -8,3 +8,4 @@ export { readPassStatus } from './sql-server-passes.ts';
 export { SqlServerSetupError } from './sql-server-setup-error.ts';
 export { SqlServerSyncHistory } from './sql-server-sync-history.ts';
 export { SqlServerTable } from './sql-server-table.ts';
+export { View } from './view.ts';

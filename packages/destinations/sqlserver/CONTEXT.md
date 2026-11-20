@@ -22,6 +22,10 @@ _Avoid_: Staging table, source table
 The view `marts.<name>` that a load keeps of its raw table, for example `marts.drive_items`. The host gives its name, the reader name, to `table`. Each copy has one. It shows the external schema of the stream: its columns and `loaded_at`. The internal columns are for the SQL of the destination only.
 _Avoid_: Mart (a mart is the schema `marts`), view (a view is a derived dataset)
 
+**View**:
+A derived dataset that SQL Server computes on each read, such as `marts.unread_count`: a `View` that a pipeline declares in `derived`. It appears when its query compiles. It waits while a relation that the pipeline makes is missing (error 208), and then no view of its name stays in `marts`, nor a view over it. A refresh that finds the same definition (`OBJECT_DEFINITION`) leaves the view as it was. See the glossary of [elt](../../elt/CONTEXT.md).
+_Avoid_: Reader view (a reader view is the view of one raw table)
+
 **Internal column**:
 A column that only the SQL of the destination reads: `committed_in`, `_elt_row`, `_elt_row_hash`, `_elt_key_hash`, and `replaced_in` of a history.
 _Avoid_: Hidden column (SQL Server's `HIDDEN` is a property of a period column), system column
@@ -63,7 +67,7 @@ A reload whose hidden table a run made and the end of no stream gave to the raw 
 _Avoid_: Pending reload, partial reload
 
 **Dependent view**:
-A view that reads a raw table, its history or its reader view, directly or through other views. SQL Server finds the tables of a view by name, so a change of the table refreshes the view with `sp_refreshview`. A view `WITH SCHEMABINDING` stops the change.
+A view that reads a raw table, its history, its reader view or a view, directly or through other views. SQL Server finds the tables of a view by name, so a change of the table, or a new definition of the view, refreshes the dependent view with `sp_refreshview`. A view `WITH SCHEMABINDING` stops the change.
 _Avoid_: Downstream object, dependency
 
 **Swap wait**:

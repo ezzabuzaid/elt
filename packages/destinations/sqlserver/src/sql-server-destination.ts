@@ -24,6 +24,11 @@ import { SqlServerOverwriteWriter } from './sql-server-overwrite-writer.ts';
 import { SqlServerTable } from './sql-server-table.ts';
 import type { SqlServerWriter } from './sql-server-writer.ts';
 
+// The key of a destination's database, for the views and computed datasets
+// of this package, which live in it. The index does not export it, so only
+// this package connects through a destination.
+export const database = Symbol('database');
+
 // Loads into the database of a login: each target is a reader view in marts
 // over a raw table in _warehouse, as in elt-postgresql (ADR 0001). The login
 // carries credentials, so it stays private and out of location(), which is
@@ -39,7 +44,7 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
   // destinations of one database share one numbering, so the shortest
   // retention among them decides.
   readonly retention: Temporal.Duration;
-  readonly #database: SqlServerDatabase;
+  readonly [database]: SqlServerDatabase;
 
   constructor({
     login,
@@ -51,7 +56,7 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
     super();
     if (retention.sign < 0)
       throw new RangeError(`Retention ${retention} must not be negative`);
-    this.#database = new SqlServerDatabase(login);
+    this[database] = new SqlServerDatabase(login);
     this.retention = retention;
     Object.freeze(this);
   }
@@ -69,7 +74,7 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
     connection: string;
   }): Promise<Load<SqlServerTable>> {
     const load = await SqlServerLoad.open(
-      this.#database,
+      this[database],
       { connector: owner.connection },
       { clock: owner.clock, retention: this.retention },
     );
@@ -93,7 +98,7 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
   ): Promise<readonly string[] | { readonly expired: string }> {
     const since =
       after === undefined ? undefined : parsePosition(after, sqlServerDatabase);
-    await using connection = await connect(this.#database);
+    await using connection = await connect(this[database]);
     return positionsAfter(
       await readNumbering(connection),
       since,
@@ -108,7 +113,7 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
   reading(
     position?: string,
   ): Promise<SqlServerReading | { readonly expired: string }> {
-    return readAsOf(this.#database, position);
+    return readAsOf(this[database], position);
   }
 
   table(
@@ -130,28 +135,28 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
       case 'append':
         return new SqlServerAppendWriter(
           configuration,
-          this.#database,
+          this[database],
           table,
           this.retention,
         );
       case 'overwrite':
         return new SqlServerOverwriteWriter(
           configuration,
-          this.#database,
+          this[database],
           table,
           this.retention,
         );
       case 'append_dedup':
         return new SqlServerDeduplicatingWriter(
           configuration,
-          this.#database,
+          this[database],
           table,
           this.retention,
         );
       case 'overwrite_dedup':
         return new SqlServerOverwriteDeduplicatingWriter(
           configuration,
-          this.#database,
+          this[database],
           table,
           this.retention,
         );

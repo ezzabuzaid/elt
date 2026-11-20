@@ -1,5 +1,6 @@
 import { readerCatalog, syncHistoryRelations } from '@eltjs/elt';
 
+import { derivedStatusTable } from './sql-server-derived-status.ts';
 import { columnType } from './sql-server-fit.ts';
 import { now, position } from './sql-server-reader-view.ts';
 import { inWarehouse, marts, warehouse } from './sql-server-schemas.ts';
@@ -46,13 +47,7 @@ export const syncHistoryTables = `
       [stream] ${name} NOT NULL, [stream_key] AS ${keyOf('stream')},
       [checked_at] datetimeoffset(3) NOT NULL,
       PRIMARY KEY ([connector_key], [stream_key]));
-  IF OBJECT_ID(N'${derivedStatus}', N'U') IS NULL
-    CREATE TABLE ${derivedStatus} (
-      [dataset] nvarchar(300) NOT NULL PRIMARY KEY,
-      [kind] nvarchar(20) NOT NULL CHECK ([kind] IN (N'view', N'computed')),
-      [state] nvarchar(20) NOT NULL CHECK ([state] IN (N'waiting', N'refreshing', N'current', N'failed')),
-      [as_of] datetimeoffset(3) NULL, [refreshed_at] datetimeoffset(3) NULL, [refreshing_since] datetimeoffset(3) NULL, [error] nvarchar(max) NULL,
-      [inputs] bigint NULL, [computed] bigint NULL, [empty] bigint NULL, [failed] bigint NULL, [pending] bigint NULL);`;
+  ${derivedStatusTable}`;
 
 // When connector's stream last matched its upstream: the start of its last
 // successful pass, or a later check that found it unchanged, each no later
