@@ -18,6 +18,8 @@ import { failureType } from './sql-server-failure-type.ts';
 import { identifiers } from './sql-server-identifiers.ts';
 import { SqlServerLoad } from './sql-server-load.ts';
 import { readNumbering, sqlServerDatabase } from './sql-server-numbering.ts';
+import { SqlServerOverwriteDeduplicatingWriter } from './sql-server-overwrite-deduplicating-writer.ts';
+import { SqlServerOverwriteWriter } from './sql-server-overwrite-writer.ts';
 import { SqlServerTable } from './sql-server-table.ts';
 import type { SqlServerWriter } from './sql-server-writer.ts';
 
@@ -28,7 +30,9 @@ import type { SqlServerWriter } from './sql-server-writer.ts';
 export class SqlServerDestination extends Destination<SqlServerTable> {
   readonly supportedDestinationSyncModes = Object.freeze([
     'append',
+    'overwrite',
     'append_dedup',
+    'overwrite_dedup',
   ] as const);
   // How long the history keeps a position readable: 30 days unless set. The
   // destinations of one database share one numbering, so the shortest
@@ -119,6 +123,13 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
           table,
           this.retention,
         );
+      case 'overwrite':
+        return new SqlServerOverwriteWriter(
+          configuration,
+          this.#database,
+          table,
+          this.retention,
+        );
       case 'append_dedup':
         return new SqlServerDeduplicatingWriter(
           configuration,
@@ -126,9 +137,12 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
           table,
           this.retention,
         );
-      default:
-        throw new TypeError(
-          `Destination does not support ${configuration.destinationSyncMode}`,
+      case 'overwrite_dedup':
+        return new SqlServerOverwriteDeduplicatingWriter(
+          configuration,
+          this.#database,
+          table,
+          this.retention,
         );
     }
   }

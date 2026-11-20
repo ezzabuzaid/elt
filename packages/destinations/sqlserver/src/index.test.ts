@@ -703,16 +703,6 @@ test('the destination refuses, with no connection, a declaration that it cannot 
   assert.throws(
     () =>
       check(
-        new Copy(declared('A note.'), warehouse.table('notes'), {
-          syncMode: 'full_refresh',
-          destinationSyncMode: 'overwrite',
-        }),
-      ),
-    /Destination does not support overwrite/,
-  );
-  assert.throws(
-    () =>
-      check(
         new Copy(declared('x'.repeat(3751)), warehouse.table('notes'), append),
       ),
     /a SQL Server extended property holds at most 7500/,

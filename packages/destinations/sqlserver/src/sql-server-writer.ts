@@ -48,6 +48,15 @@ export const seq = '[_elt_seq]';
 export const op = '[_elt_op]';
 export const version = '[_elt_row_hash]';
 export const keyHash = '[_elt_key_hash]';
+const rowNumber = '[_elt_row]';
+
+// One side of a difference: a table, what tells its rows apart, and which
+// of its rows count, all of them when rows is undefined.
+type Side = {
+  readonly table: string;
+  readonly id: string;
+  readonly rows?: string;
+};
 
 // The table in _warehouse where each writer keeps the owner of its target.
 const writersTable = inWarehouse('_elt_writers');
@@ -138,6 +147,57 @@ export abstract class SqlServerWriter extends Writer {
     written: Written,
   ): Promise<boolean>;
 
+  // An overwrite replaces the rows of the target at the first commit of its
+  // run.
+  protected get replaces(): boolean {
+    return false;
+  }
+
+  // Which rows of the stage a commit that replaces the target keeps, as a
+  // condition on them.
+  protected kept(_stage: string): string {
+    return `${op} = 'R'`;
+  }
+
+  // The ids of the rows of left that no row of right matches, as multisets:
+  // the k-th copy of some values on one side matches the k-th copy of the
+  // same values on the other, so no key is needed.
+  #unmatched(left: Side, right: Side): string {
+    const numbered = ({ table, id, rows }: Side) =>
+      `SELECT ${id} AS [_elt_id], ${version} AS [_elt_hash], ROW_NUMBER() OVER (PARTITION BY ${version} ORDER BY ${id}) AS [_elt_copy] FROM ${table}${rows === undefined ? '' : ` WHERE ${rows}`}`;
+    return `SELECT [_elt_mine].[_elt_id] FROM (${numbered(left)}) AS [_elt_mine] LEFT JOIN (${numbered(right)}) AS [_elt_theirs] ON [_elt_theirs].[_elt_hash] = [_elt_mine].[_elt_hash] AND [_elt_theirs].[_elt_copy] = [_elt_mine].[_elt_copy] WHERE [_elt_theirs].[_elt_id] IS NULL`;
+  }
+
+  // Replaces the rows of the target with the records that the stage keeps,
+  // by difference: the history keeps each row of the target that no record
+  // matches, and the row goes; a row with a match stays as it is, with its
+  // commit and its loaded_at; and each record that no row matches enters
+  // with this commit. What stays matches records, so it fits the index of
+  // the key hash, which the records that enter then fit too. Gives whether it
+  // changed a row.
+  async #replace(
+    connection: SqlServerConnection,
+    stage: string,
+    written: Written,
+  ): Promise<boolean> {
+    const target = { table: this.qualifiedName, id: rowNumber };
+    const staged = { table: stage, id: seq, rows: this.kept(stage) };
+    const removed = await this.history.remove(
+      connection,
+      written.committedIn,
+      this.qualifiedName,
+      `${rowNumber} IN (${this.#unmatched(target, staged)})`,
+      {},
+    );
+    const [entered] = await connection.query(
+      `INSERT INTO ${this.qualifiedName} (${this.written.join(', ')})
+       SELECT ${this.staged('[_elt_new]').join(', ')} FROM ${stage} AS [_elt_new] WHERE [_elt_new].${seq} IN (${this.#unmatched(staged, target)}) ORDER BY [_elt_new].${seq};
+       SELECT @@ROWCOUNT AS [rows];`,
+      writtenParameters(written),
+    );
+    return removed > 0 || entered?.rows !== 0;
+  }
+
   protected encode(record: unknown): EncodedValue[] {
     return this.table.columns.map((column) => column.encode(record));
   }
@@ -179,7 +239,7 @@ export abstract class SqlServerWriter extends Writer {
   #tableSQL(name: string): string {
     if (this.table.columns.length === 0)
       throw new TypeError('Resolve inferred columns before creating a table');
-    return `${name} ([_elt_row] bigint IDENTITY(1, 1) NOT NULL PRIMARY KEY CLUSTERED, ${[
+    return `${name} (${rowNumber} bigint IDENTITY(1, 1) NOT NULL PRIMARY KEY CLUSTERED, ${[
       ...this.table.columns.map((column) => column.definition),
       '[loaded_at] datetimeoffset(3) NOT NULL',
       '[committed_in] bigint NOT NULL',
@@ -319,7 +379,7 @@ export abstract class SqlServerWriter extends Writer {
         target,
         hidden: 'missing',
       });
-      if (decided === 'load') await this.inspect(connection);
+      if (decided === 'load' && !this.replaces) await this.inspect(connection);
       return decided;
     });
     if (mode !== 'create' && mode !== 'load')
@@ -357,18 +417,28 @@ export abstract class SqlServerWriter extends Writer {
     // The first commit claims the target: before its transaction it makes
     // marts for the reader view, and in it the table, which is a change even
     // with no row. Later commits find it claimed, and a commit of a claimed
-    // target that changes no row takes back its commit row.
-    const unclaimed: Claim = {
-      before: () => makeSchema(connection, marts),
-      claim: () => this.#create(connection, writer),
-      changedNone: async () => {},
-    };
+    // target that changes no row takes back its commit row. The first commit
+    // of an overwrite replaces the rows of the target; the others merge.
+    const merge = (written: Written) => this.merge(connection, stage, written);
+    const first = (written: Written) =>
+      this.replaces
+        ? this.#replace(connection, stage, written)
+        : merge(written);
     const claimed: Claim = {
       before: async () => {},
       claim: async () => {},
       changedNone: (committedIn) => forgetCommit(connection, committedIn),
+      merge,
     };
-    let claiming = mode === 'load' ? claimed : unclaimed;
+    let claiming: Claim =
+      mode === 'load'
+        ? { ...claimed, merge: first }
+        : {
+            before: () => makeSchema(connection, marts),
+            claim: () => this.#create(connection, writer),
+            changedNone: async () => {},
+            merge: first,
+          };
     return {
       fresh: mode === 'create',
       reloading: false,
@@ -403,7 +473,7 @@ export abstract class SqlServerWriter extends Writer {
         await claiming.before();
         await load.commit(async (committedIn) => {
           await claiming.claim();
-          const changed = await this.merge(connection, stage, {
+          const changed = await claiming.merge({
             loadedAt: load.loadedAt,
             committedIn,
           });
@@ -426,7 +496,8 @@ export abstract class SqlServerWriter extends Writer {
   }
 }
 
-// Whether a stage's commit claims its target.
+// What the next commit of a stage does: whether it claims its target, and how
+// it moves the stage into it.
 type Claim = {
   // Runs before the commit's transaction.
   readonly before: () => Promise<void>;
@@ -434,6 +505,8 @@ type Claim = {
   readonly claim: () => Promise<void>;
   // Runs in it when the merge changed no row.
   readonly changedNone: (committedIn: number) => Promise<void>;
+  // Moves the stage into the target, and gives whether it changed a row.
+  readonly merge: (written: Written) => Promise<boolean>;
 };
 
 // What each row a commit writes keeps: when its load began, and the number of

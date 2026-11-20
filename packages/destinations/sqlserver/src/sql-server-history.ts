@@ -63,6 +63,25 @@ export class TargetHistory {
     return Number(kept?.kept);
   }
 
+  // Deletes the rows of target that where selects, in commit replacedIn, and
+  // keeps them in the same statement. where is a condition over the columns
+  // of target. Gives how many rows it kept.
+  remove(
+    connection: SqlServerConnection,
+    replacedIn: number,
+    target: string,
+    where: string,
+    params: Readonly<Record<string, string>>,
+  ): Promise<number> {
+    return this.keep(
+      connection,
+      replacedIn,
+      target,
+      `DELETE FROM ${target} OUTPUT deleted.* WHERE ${where}`,
+      params,
+    );
+  }
+
   // Deletes the rows that only a reading before min_valid reads, which the
   // retention left, once the history exists.
   async expire(connection: SqlServerConnection): Promise<void> {

@@ -94,6 +94,12 @@ export class SqlServerDeduplicatingWriter extends SqlServerWriter {
     ) AS [_elt_ranked] WHERE [_elt_ranked].[_elt_rank] = 1`;
   }
 
+  // The records that the reduced stage keeps, when a commit replaces the
+  // target.
+  protected override kept(stage: string): string {
+    return `${seq} IN (SELECT [_elt_reduced].${seq} FROM (${this.#reduced(stage)}) AS [_elt_reduced] WHERE [_elt_reduced].${op} = 'R')`;
+  }
+
   // One MERGE on the key hash, whose output the history keeps (ADR 0005): a
   // deletion removes its row; a record replaces the row when a deletion came
   // before it, or when its values differ and the guard, if any, lets it in,
