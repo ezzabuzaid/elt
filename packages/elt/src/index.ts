@@ -9,7 +9,7 @@ export {
   type StoredOutput,
   type TableOutputRow,
   computedColumns,
-  partColumns,
+  partsView,
   refreshComputed,
   refuseTakenColumns,
   reservedColumns,

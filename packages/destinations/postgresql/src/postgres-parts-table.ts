@@ -4,7 +4,7 @@ import {
   type PartRow,
   type RuleColumns,
   type TableRule,
-  partColumns,
+  partsView,
 } from '@eltjs/elt';
 
 import { identifier, quote } from './identifier.ts';
@@ -51,7 +51,8 @@ export class PostgresPartsTable {
       'key' | 'output' | 'place'
     >;
   }) {
-    const view = identifier(`${dataset}_parts`, 'parts view name');
+    const parts = partsView({ dataset, description, rule });
+    const view = identifier(parts.name, 'parts view name');
     const name = rawTable(view);
     this.names = Object.freeze([`${marts}.${view}`, `${warehouse}.${name}`]);
     this.table = inWarehouse(name);
@@ -85,17 +86,10 @@ export class PostgresPartsTable {
       this.history.qualifiedName,
       this.#columns,
       new TargetComments(
-        `The parts of ${dataset}, one row for each part of an input, in order: ${description}`,
-        {
-          [rule.key.name]: rule.key.description,
-          ...partColumns,
-          ...Object.fromEntries(
-            Object.entries(ruleColumns).map(([column, { description }]) => [
-              column,
-              description,
-            ]),
-          ),
-        },
+        parts.description,
+        Object.fromEntries(
+          parts.columns.map((column) => [column.name, column.description]),
+        ),
       ),
     );
     Object.freeze(this);

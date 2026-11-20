@@ -4,7 +4,7 @@ import {
   type PartRow,
   type RuleColumns,
   type TableRule,
-  partColumns,
+  partsView,
 } from '@eltjs/elt';
 
 import { SQLiteHistory, rowHash } from './sqlite-history.ts';
@@ -20,12 +20,8 @@ import type { SQLiteView } from './sqlite-views.ts';
 // replaced or removed, as for the output rows.
 export class SQLitePartsTable {
   readonly #name: string;
-  readonly #view: string;
-  readonly #description: string;
-  readonly #rule: Pick<
-    TableRule<unknown, RuleColumns, RuleColumns>,
-    'key' | 'output' | 'place'
-  >;
+  readonly #view: ReturnType<typeof partsView>;
+  readonly #key: string;
   readonly #history: SQLiteHistory;
   // Every column of a part that readers see, in table order.
   readonly #columns: readonly string[];
@@ -43,20 +39,15 @@ export class SQLitePartsTable {
       'key' | 'output' | 'place'
     >;
   }) {
-    this.#view = `${dataset}_parts`;
-    this.#name = rawTable(this.#view);
-    this.#description = `The parts of ${dataset}, one row for each part of an input, in order: ${description}`;
-    this.#rule = rule;
+    this.#view = partsView({ dataset, description, rule });
+    this.#name = rawTable(this.#view.name);
+    this.#key = rule.key.name;
     this.#history = new SQLiteHistory({
       raw: this.#name,
       location: identifiers.key(this.#name),
     });
     const ruleColumns = { ...rule.output, ...rule.place };
-    this.#columns = Object.freeze([
-      rule.key.name,
-      ...Object.keys(partColumns),
-      ...Object.keys(ruleColumns),
-    ]);
+    this.#columns = Object.freeze(this.#view.columns.map(({ name }) => name));
     this.statement = `CREATE TABLE ${quote(this.#name)} (${[
       `${quote(rule.key.name)} TEXT NOT NULL`,
       '"seq" INTEGER NOT NULL',
@@ -72,23 +63,16 @@ export class SQLitePartsTable {
 
   // The relations that a copy of the pipeline must not make.
   get names(): readonly string[] {
-    return [this.#view, this.#name];
+    return [this.#view.name, this.#name];
   }
 
   get view(): SQLiteView {
-    const { key, output, place } = this.#rule;
     return {
-      name: this.#view,
-      description: this.#description,
-      columns: {
-        [key.name]: key.description,
-        ...partColumns,
-        ...Object.fromEntries(
-          Object.entries({ ...output, ...place }).map(
-            ([column, { description }]) => [column, description],
-          ),
-        ),
-      },
+      name: this.#view.name,
+      description: this.#view.description,
+      columns: Object.fromEntries(
+        this.#view.columns.map(({ name, description }) => [name, description]),
+      ),
       query: `SELECT ${this.#columns.map(quote).join(', ')} FROM ${quote(this.#name)}`,
     };
   }
@@ -126,7 +110,7 @@ export class SQLitePartsTable {
     parts: readonly PartRow[],
   ): void {
     const table = quote(this.#name);
-    const keyColumn = quote(this.#rule.key.name);
+    const keyColumn = quote(this.#key);
     const stored = new Map(
       database
         .prepare(

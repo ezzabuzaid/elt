@@ -28,6 +28,48 @@ export const partColumns = {
     'SHA-256 of the content columns of the part, not of its place columns: a part that only moved keeps its part hash.',
 };
 
+// The view that readers query the parts of a computed dataset through,
+// <dataset>_parts: what it holds, and each column in table order with what
+// readers read of it: the key, the part columns, the content columns and the
+// place columns of the rule.
+export function partsView({
+  dataset,
+  description,
+  rule,
+}: {
+  readonly dataset: string;
+  readonly description: string;
+  readonly rule: Pick<
+    TableRule<unknown, RuleColumns, RuleColumns>,
+    'key' | 'output' | 'place'
+  >;
+}): {
+  readonly name: string;
+  readonly description: string;
+  readonly columns: readonly {
+    readonly name: string;
+    readonly description: string;
+  }[];
+} {
+  return {
+    name: `${dataset}_parts`,
+    description: `The parts of ${dataset}, one row for each part of an input, in order: ${description}`,
+    columns: [
+      rule.key,
+      ...Object.entries(partColumns).map(([name, about]) => ({
+        name,
+        description: about,
+      })),
+      ...[rule.output, rule.place].flatMap((group) =>
+        Object.entries(group).map(([name, column]) => ({
+          name,
+          description: column.description,
+        })),
+      ),
+    ],
+  };
+}
+
 // The names that no column of the rule may take, since the tables and the
 // histories of the dataset keep them: the key, the computed columns, the part
 // columns of a table rule, the commit that last wrote a row and the hash of
