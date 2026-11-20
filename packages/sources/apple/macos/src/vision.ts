@@ -1,9 +1,9 @@
-import { resolve } from 'node:path';
-
 import type { Clock } from '@zukhruf/async';
 import { Coprocess } from '@zukhruf/coprocess';
 import type { Worker } from '@zukhruf/pool';
 import { z } from 'zod';
+
+import type { VisionRead, VisionText } from './vision-kind.ts';
 
 const response = z.union([
   z.object({ text: z.string().nullable() }),
@@ -16,7 +16,7 @@ const response = z.union([
 // that cache and the others read it.
 export class VisionWorker
   extends Coprocess
-  implements Worker<string, string | null>
+  implements Worker<VisionRead, VisionText>
 {
   // The memory a host sizes its pool by: a worker's own and the allocations
   // Vision makes for it outside the process, with headroom for the imports.
@@ -46,14 +46,12 @@ export class VisionWorker
 
   // A pool lends only a ready worker, so the deadline times recognition, not
   // model compilation, which can take longer.
-  async run(path: string): Promise<string | null> {
+  async run({ path }: VisionRead): Promise<VisionText> {
     const deadline = this.#clock.setTimeout(() => this.kill(), 120_000);
     try {
-      const result = response.parse(
-        await this.request({ path: resolve(path) }),
-      );
+      const result = response.parse(await this.request({ path }));
       if ('error' in result) throw new Error(result.error);
-      return result.text;
+      return { text: result.text };
     } finally {
       this.#clock.clearTimeout(deadline);
     }

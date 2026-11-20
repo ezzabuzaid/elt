@@ -12,7 +12,7 @@ import { TemporaryFiles } from '@zukhruf/fs';
 import type { Pool } from '@zukhruf/pool';
 import { z } from 'zod';
 
-import type { TranscriptionWorker } from './transcription-worker.ts';
+import type { Transcript, TranscriptionRead } from './transcription-kind.ts';
 
 const execute = promisify(execFile);
 // A model is its name and the language it is told the speech is in, if any;
@@ -26,19 +26,20 @@ const configuration = z.strictObject({
 export type LocalTranscriptionConfiguration = z.infer<typeof configuration>;
 
 // A native model implements the same AI SDK contract as a hosted provider.
-// It borrows engine workers from a pool its host owns and disposes; a worker
-// keeps the weights loaded across calls and transcribes one file at a time.
+// It sends each file to the pool of its model's kind, which its host builds
+// and disposes; a worker keeps the weights loaded across calls and
+// transcribes one file at a time.
 export class LocalTranscriptionModel implements TranscriptionModelV4 {
   readonly specificationVersion = 'v4';
   readonly provider = 'transcribe-cpp';
   readonly modelId: string;
-  readonly #engines: Pool<TranscriptionWorker>;
+  readonly #engines: Pool<TranscriptionRead, Transcript>;
   // The clock that times each response.
   readonly #clock: { readonly Date: { now(): number } };
 
   constructor(
     options: LocalTranscriptionConfiguration,
-    engines: Pool<TranscriptionWorker>,
+    engines: Pool<TranscriptionRead, Transcript>,
     clock: { readonly Date: { now(): number } },
   ) {
     const { name, language } = LocalTranscriptionModel.parse(options);
@@ -82,10 +83,7 @@ export class LocalTranscriptionModel implements TranscriptionModelV4 {
       ],
       { signal },
     );
-    const { text } = await this.#engines.use(
-      (engine) => engine.run(wav),
-      signal,
-    );
+    const { text } = await this.#engines.run({ path: wav }, { signal });
     // Cohere marks no timings, so the transcript has no segments.
     return {
       text,

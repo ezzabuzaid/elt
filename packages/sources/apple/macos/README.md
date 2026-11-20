@@ -6,13 +6,25 @@ The shared macOS kit of the Apple sources. It is not the source of one app. It g
 import { availableParallelism } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { HillClimbing, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
+import {
+  HillClimbing,
+  LeaderFirst,
+  NoEviction,
+  Pool,
+  PoolWorkers,
+  computerStore,
+} from '@zukhruf/pool';
 
 import { ImageFormat } from '@eltjs/source-apple-macos/image-format';
 import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
 import { VisionWorker } from '@eltjs/source-apple-macos/vision';
+import { visionKind } from '@eltjs/source-apple-macos/vision-kind';
 
-await using ocr = new Pool({
+const store = computerStore(process.env);
+await using _workers = new PoolWorkers({
+  kind: visionKind,
+  store,
+  clock: globalThis,
   size: new HillClimbing({
     memoryPerWorker: VisionWorker.memory,
     computer: {
@@ -22,7 +34,6 @@ await using ocr = new Pool({
   }),
   startup: new LeaderFirst(),
   eviction: new NoEviction(),
-  clock: globalThis,
   create: () =>
     new VisionWorker(
       fileURLToPath(
@@ -31,6 +42,7 @@ await using ocr = new Pool({
       globalThis,
     ),
 });
+await using ocr = new Pool({ kind: visionKind, store, clock: globalThis });
 const parser = new MacOSDocumentParser([new ImageFormat(ocr)]);
 
 const text = await parser.parse('./receipt.png'); // string, or null
@@ -43,7 +55,8 @@ Give the parser to a `DocumentText` rule to read the text of the files that a pi
 | Subpath                        | Export                                   | Use                                                                                                                                          |
 | ------------------------------ | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `./macos-document-parser`      | `MacOSDocumentParser`                    | A `DocumentParser`. It reads PDFs with PDFKit, text documents with `textutil` (TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, WordML) and vCards. |
-| `./image-format`               | `ImageFormat`                            | A format that reads text in images through a `Pool` of `VisionWorker`s.                                                                      |
+| `./image-format`               | `ImageFormat`                            | A format that reads text in images through a `Pool` of `visionKind`.                                                                         |
+| `./vision-kind`                | `visionKind`, `VisionRead`, `VisionText` | The kind of a Vision read for `@zukhruf/pool`: an absolute path goes in, and its text comes out.                                             |
 | `./audio-format`               | `AudioFormat`                            | A format that transcribes audio with an AI SDK transcription model that the caller gives.                                                    |
 | `./document-format`            | `DocumentFormat`                         | The base class of a format. Extend it to add a format to `MacOSDocumentParser`.                                                              |
 | `./file-head`                  | `FileHead`                               | The first bytes of a file, which a format uses to identify the file.                                                                         |
@@ -87,13 +100,17 @@ import {
   NoEviction,
   Parallel,
   Pool,
+  PoolWorkers,
+  computerStore,
 } from '@zukhruf/pool';
 
 import { AudioFormat } from '@eltjs/source-apple-macos/audio-format';
 import { ImageFormat } from '@eltjs/source-apple-macos/image-format';
 import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
 import { VisionWorker } from '@eltjs/source-apple-macos/vision';
+import { visionKind } from '@eltjs/source-apple-macos/vision-kind';
 import { LocalTranscriptionModel } from '@eltjs/transcription-local';
+import { transcriptionKind } from '@eltjs/transcription-local/transcription-kind';
 import { TranscriptionWorker } from '@eltjs/transcription-local/transcription-worker';
 
 const configuration = {
@@ -101,7 +118,11 @@ const configuration = {
   path: '/path/to/cohere-transcribe-arabic-07-2026-Q8_0.gguf',
   language: 'ar',
 };
-await using ocr = new Pool({
+const store = computerStore(process.env);
+await using _ocrWorkers = new PoolWorkers({
+  kind: visionKind,
+  store,
+  clock: globalThis,
   size: new HillClimbing({
     memoryPerWorker: VisionWorker.memory,
     computer: {
@@ -111,17 +132,21 @@ await using ocr = new Pool({
   }),
   startup: new LeaderFirst(),
   eviction: new NoEviction(),
-  clock: globalThis,
   create: () => new VisionWorker('/path/to/vision-worker', globalThis),
 });
-await using engines = new Pool({
+await using ocr = new Pool({ kind: visionKind, store, clock: globalThis });
+const speech = transcriptionKind(configuration);
+await using _engines = new PoolWorkers({
+  kind: speech,
+  store,
+  clock: globalThis,
   size: new Fixed(1),
   startup: new Parallel(),
   eviction: new NoEviction(),
-  clock: globalThis,
   create: () =>
     new TranscriptionWorker('/path/to/transcribe-local', configuration),
 });
+await using engines = new Pool({ kind: speech, store, clock: globalThis });
 const parser = new MacOSDocumentParser([
   new ImageFormat(ocr),
   new AudioFormat(
@@ -135,16 +160,17 @@ const text = await parser.parse('/path/to/voice-message.opus');
 
 ## Worker pools
 
-The host owns the native workers. It builds a `Pool` of `@zukhruf/pool` for each kind of worker, and it disposes the pool, which stops each worker.
+The host offers the native workers through `@zukhruf/pool`. For each kind of worker it builds a `PoolWorkers`, which offers the host's workers, and a `Pool`, which sends the reads. Every program on the Mac sends its reads to one store, `computerStore(process.env)`, and the owner that the election picks runs them on its workers. The host disposes both, which stops its workers.
 
-- A pool lends one worker to one read at a time, and replaces a worker that stopped.
+- `visionKind` is the kind of a Vision read: an absolute path goes in, and `{ text }` comes out. Identical reads at the same time share one job. A cancel of a read is a leave: the job runs on for the other callers. A read that fails runs one more time.
+- The owner gives each worker one read at a time, and replaces a worker that stopped.
 - The startup decides when the workers start. `LeaderFirst` starts the first Vision worker alone, because Vision compiles its models one time for each helper binary and caches them, and the other workers read that cache. `Parallel`, `OrderedReady` and `OnDemand` are the other startups.
 - The sizing decides how many workers run:
   - `Fixed(n)` runs n workers.
   - `Resources({ memoryPerWorker })` runs one worker for each CPU while each finds its memory free.
   - `HillClimbing` starts with two, and adds one while the last one added gave at least a tenth more jobs each second, as the thread pool of .NET does.
   - `Gradient` starts with two, and adds one while a job takes at most half again the best time, as `concurrency-limits` of Netflix does.
-- The two sizings that learn measure only while jobs wait and each worker is ready, in windows of at least 20 jobs and 2 seconds. Each step measures the size until then, one more, and the size until then again, and compares one more with the mean of the two. Thus work that changes while it is measured, for example files that come grouped by kind, does not decide. The worker that a step tries stays alive between the measures. They learn one time for each pool, and never go past the capacity of the Mac.
+- The two sizings that learn measure only while jobs wait and each worker is ready, in windows of at least 20 jobs and 2 seconds. Each step measures the size until then, one more, and the size until then again, and compares one more with the mean of the two. Thus work that changes while it is measured, for example files that come grouped by kind, does not decide. The worker that a step tries stays alive between the measures. They learn one time for each owner, and never go past the capacity of the Mac.
 - `VisionWorker.memory` is the memory by which to size a Vision pool.
 
 ## Coverage

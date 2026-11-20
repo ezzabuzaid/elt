@@ -1,6 +1,8 @@
+import { resolve } from 'node:path';
+
 import type { Pool } from '@zukhruf/pool';
 
-import type { VisionWorker } from '../vision.ts';
+import type { VisionRead, VisionText } from '../vision-kind.ts';
 import { DocumentFormat } from './document-format.ts';
 import type { FileHead } from './file-head.ts';
 
@@ -45,14 +47,20 @@ export class ImageFormat extends DocumentFormat {
     );
   }
 
-  readonly #ocr: Pool<VisionWorker>;
+  readonly #ocr: Pool<VisionRead, VisionText>;
 
-  constructor(ocr: Pool<VisionWorker>) {
+  constructor(ocr: Pool<VisionRead, VisionText>) {
     super();
     this.#ocr = ocr;
   }
 
-  override text(path: string, signal?: AbortSignal): Promise<string | null> {
-    return this.#ocr.use((worker) => worker.run(path), signal);
+  // The owner of the pool may run in another program, so the path it reads
+  // is absolute.
+  override async text(
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    const { text } = await this.#ocr.run({ path: resolve(path) }, { signal });
+    return text;
   }
 }

@@ -8,6 +8,10 @@
       "types": "./dist/local-transcription-model.d.ts",
       "default": "./dist/local-transcription-model.js"
     },
+    "./transcription-kind": {
+      "types": "./dist/transcription-kind.d.ts",
+      "default": "./dist/transcription-kind.js"
+    },
     "./transcription-worker": {
       "types": "./dist/transcription-worker.d.ts",
       "default": "./dist/transcription-worker.js"
@@ -18,7 +22,7 @@
     "@ai-sdk/provider": "^4.0.37",
     "@zukhruf/coprocess": "^0.8.31",
     "@zukhruf/fs": "^0.8.31",
-    "@zukhruf/pool": "^0.8.31",
+    "@zukhruf/pool": "^0.8.45",
     "zod": "^4.3.6"
   },
   "devDependencies": {

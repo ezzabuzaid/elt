@@ -5,10 +5,18 @@ A local transcription model for the AI SDK. `LocalTranscriptionModel` implements
 ```ts
 import { readFile } from 'node:fs/promises';
 
-import { Fixed, NoEviction, Parallel, Pool } from '@zukhruf/pool';
+import {
+  Fixed,
+  NoEviction,
+  Parallel,
+  Pool,
+  PoolWorkers,
+  computerStore,
+} from '@zukhruf/pool';
 import { transcribe } from 'ai';
 
 import { LocalTranscriptionModel } from '@eltjs/transcription-local';
+import { transcriptionKind } from '@eltjs/transcription-local/transcription-kind';
 import { TranscriptionWorker } from '@eltjs/transcription-local/transcription-worker';
 
 const configuration = {
@@ -16,14 +24,19 @@ const configuration = {
   path: '/path/to/cohere-transcribe-arabic-07-2026-Q8_0.gguf',
   language: 'ar',
 };
-await using engines = new Pool({
+const kind = transcriptionKind(configuration);
+const store = computerStore(process.env);
+await using _workers = new PoolWorkers({
+  kind,
+  store,
+  clock: globalThis,
   size: new Fixed(1),
   startup: new Parallel(),
   eviction: new NoEviction(),
-  clock: globalThis,
   create: () =>
     new TranscriptionWorker('/path/to/transcribe-local', configuration),
 });
+await using engines = new Pool({ kind, store, clock: globalThis });
 const { text } = await transcribe({
   model: new LocalTranscriptionModel(configuration, engines, globalThis),
   audio: await readFile('/path/to/voice-message.opus'),
@@ -33,7 +46,7 @@ const { text } = await transcribe({
 ## How it transcribes
 
 - The model converts the input with `afconvert` of macOS to 16 kHz mono 32-bit float samples. Thus a Mac needs nothing installed.
-- It then borrows an engine from its pool. An engine keeps the weights loaded across calls, and transcribes one file at a time. The host owns the pool and disposes it.
+- It then sends the file to the pool of its model's kind. An engine keeps the weights loaded across calls, and transcribes one file at a time. Each model is a kind of its own, `transcriptionKind(configuration)`, so the programs on the Mac that chose the same model share its engine. The host builds the pool and its workers, and disposes them.
 - `TranscriptionWorker.check(helper)` checks that the engine runs on this Mac, and loads no weights.
 - Cohere decodes at most 512 tokens in one run. Thus audio longer than 40 s is cut at pauses that Silero VAD finds, into pieces of about 30 s, and the engine decodes each piece by itself. The Silero model is part of the worker.
 - The transcript has no segments, because Cohere marks no timings.

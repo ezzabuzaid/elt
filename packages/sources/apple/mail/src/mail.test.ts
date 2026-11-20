@@ -21,7 +21,13 @@ import { crc32, deflateSync } from 'node:zlib';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
-import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
+import {
+  Fixed,
+  LeaderFirst,
+  NoEviction,
+  Pool,
+  PoolWorkers,
+} from '@zukhruf/pool';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { timebox, waitFor } from '@zukhruf/testing/async';
 
@@ -52,6 +58,7 @@ import {
 import { ImageFormat } from '@eltjs/source-apple-macos/image-format';
 import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
 import { VisionWorker } from '@eltjs/source-apple-macos/vision';
+import { visionKind } from '@eltjs/source-apple-macos/vision-kind';
 
 import { AppleMailSource } from './apple-mail-source.ts';
 
@@ -2686,7 +2693,15 @@ test(
   'Mail tracking pixels keep exact local files and database bytes with null OCR text',
   textRecognition,
   async () => {
-    await using ocr = new Pool({
+    // The Vision pool on a store of the test's own: a Pool sends the reads and
+    // a PoolWorkers offers the workers.
+    await using vision = await new TemporaryFiles().directory(
+      'elt-mail-vision-',
+    );
+    const visionStore = join(vision.path, 'store.sqlite');
+    await using _workers = new PoolWorkers({
+      kind: visionKind,
+      store: visionStore,
       clock: globalThis,
       size: new Fixed(2),
       startup: new LeaderFirst(),
@@ -2698,6 +2713,11 @@ test(
           ),
           globalThis,
         ),
+    });
+    await using ocr = new Pool({
+      kind: visionKind,
+      store: visionStore,
+      clock: globalThis,
     });
     await using dir = await new TemporaryFiles().directory('elt-mail-pixels-');
     const store = await fixture(join(dir.path, 'Mail'));

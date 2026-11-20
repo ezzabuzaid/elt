@@ -36,6 +36,10 @@
       "types": "./dist/document-formats/audio-format.d.ts",
       "default": "./dist/document-formats/audio-format.js"
     },
+    "./vision-kind": {
+      "types": "./dist/vision-kind.d.ts",
+      "default": "./dist/vision-kind.js"
+    },
     "./vision": {
       "types": "./dist/vision.d.ts",
       "default": "./dist/vision.js"
@@ -50,12 +54,13 @@
     "@eltjs/elt": "*",
     "@zukhruf/async": "^0.8.31",
     "@zukhruf/coprocess": "^0.8.31",
-    "@zukhruf/pool": "^0.8.31",
+    "@zukhruf/pool": "^0.8.45",
     "ai": "^7.0.165",
     "file-type": "22.2.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@sinonjs/fake-timers": "15.4.0",
     "@zukhruf/fs": "^0.8.31",
     "@zukhruf/testing": "^0.8.31"
   }

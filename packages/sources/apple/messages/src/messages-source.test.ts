@@ -10,7 +10,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
-import { Fixed, LeaderFirst, NoEviction, Pool } from '@zukhruf/pool';
+import {
+  Fixed,
+  LeaderFirst,
+  NoEviction,
+  Pool,
+  PoolWorkers,
+} from '@zukhruf/pool';
 import { open } from '@zukhruf/sqlite-open';
 import { timebox, waitFor } from '@zukhruf/testing/async';
 
@@ -36,6 +42,7 @@ import {
 import { ImageFormat } from '@eltjs/source-apple-macos/image-format';
 import { MacOSDocumentParser } from '@eltjs/source-apple-macos/macos-document-parser';
 import { VisionWorker } from '@eltjs/source-apple-macos/vision';
+import { visionKind } from '@eltjs/source-apple-macos/vision-kind';
 
 import { AppleMessagesSource } from './apple-messages-source.ts';
 
@@ -421,7 +428,15 @@ test(
   'the document parser reads every attachment kind and throws only on unreadable files',
   textRecognition,
   async () => {
-    await using ocr = new Pool({
+    // The Vision pool on a store of the test's own: a Pool sends the reads and
+    // a PoolWorkers offers the workers.
+    await using vision = await new TemporaryFiles().directory(
+      'elt-parse-vision-',
+    );
+    const visionStore = join(vision.path, 'store.sqlite');
+    await using _workers = new PoolWorkers({
+      kind: visionKind,
+      store: visionStore,
       clock: globalThis,
       size: new Fixed(2),
       startup: new LeaderFirst(),
@@ -433,6 +448,11 @@ test(
           ),
           globalThis,
         ),
+    });
+    await using ocr = new Pool({
+      kind: visionKind,
+      store: visionStore,
+      clock: globalThis,
     });
     await using scratch = await new TemporaryFiles().directory('elt-parse-');
     const path = await chatFixture(scratch.path);
@@ -646,7 +666,15 @@ test('Messages scope filters chat and native dates before decoding attachments a
 });
 
 test('Messages exports every stream by guid, decodes archived text and streams local attachments', async () => {
-  await using ocr = new Pool({
+  // The Vision pool on a store of the test's own: a Pool sends the reads and
+  // a PoolWorkers offers the workers.
+  await using vision = await new TemporaryFiles().directory(
+    'elt-messages-vision-',
+  );
+  const visionStore = join(vision.path, 'store.sqlite');
+  await using _workers = new PoolWorkers({
+    kind: visionKind,
+    store: visionStore,
     clock: globalThis,
     size: new Fixed(2),
     startup: new LeaderFirst(),
@@ -658,6 +686,11 @@ test('Messages exports every stream by guid, decodes archived text and streams l
         ),
         globalThis,
       ),
+  });
+  await using ocr = new Pool({
+    kind: visionKind,
+    store: visionStore,
+    clock: globalThis,
   });
   await using scratch = await new TemporaryFiles().directory('elt-messages-');
   const source = new AppleMessagesSource({

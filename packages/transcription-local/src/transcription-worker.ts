@@ -7,6 +7,7 @@ import type { Worker } from '@zukhruf/pool';
 import { z } from 'zod';
 
 import type { LocalTranscriptionConfiguration } from './local-transcription-model.ts';
+import type { Transcript, TranscriptionRead } from './transcription-kind.ts';
 
 const transcript = z.union([
   z.object({ text: z.string() }),
@@ -20,7 +21,7 @@ const execute = promisify(execFile);
 // opening a server port. Each request receives exactly one response.
 export class TranscriptionWorker
   extends Coprocess
-  implements Worker<string, { text: string }>
+  implements Worker<TranscriptionRead, Transcript>
 {
   constructor(
     helper: string,
@@ -43,9 +44,9 @@ export class TranscriptionWorker
     await execute(helper, ['--help']);
   }
 
-  async run(path: string): Promise<{ text: string }> {
+  async run({ path }: TranscriptionRead): Promise<Transcript> {
     const result = transcript.parse(await this.request({ path }));
     if ('error' in result) throw new Error(result.error);
-    return result;
+    return { text: result.text };
   }
 }

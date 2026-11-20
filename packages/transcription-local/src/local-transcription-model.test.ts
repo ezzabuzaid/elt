@@ -7,9 +7,18 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { TemporaryFiles } from '@zukhruf/fs';
-import { Fixed, NoEviction, OnDemand, Parallel, Pool } from '@zukhruf/pool';
+import {
+  DisposedError,
+  Fixed,
+  NoEviction,
+  OnDemand,
+  Parallel,
+  Pool,
+  PoolWorkers,
+} from '@zukhruf/pool';
 
 import { LocalTranscriptionModel } from './local-transcription-model.ts';
+import { transcriptionKind } from './transcription-kind.ts';
 import { TranscriptionWorker } from './transcription-worker.ts';
 
 const helper = fileURLToPath(
@@ -25,13 +34,18 @@ test('real decoding and native model failures reject, and disposing the engines 
     path: join(directory.path, 'missing.gguf'),
     language: 'ar',
   };
-  await using engines = new Pool({
+  const kind = transcriptionKind(configuration);
+  const store = join(directory.path, 'store.sqlite');
+  await using _workers = new PoolWorkers({
+    kind,
+    store,
     clock: globalThis,
     size: new Fixed(1),
     startup: new Parallel(),
     eviction: new NoEviction(),
     create: () => new TranscriptionWorker(helper, configuration),
   });
+  await using engines = new Pool({ kind, store, clock: globalThis });
   const model = new LocalTranscriptionModel(configuration, engines, globalThis);
   const audio = await readFile(path);
   await assert.rejects(
@@ -54,19 +68,25 @@ test('real decoding and native model failures reject, and disposing the engines 
     /afconvert/,
   );
   await engines[Symbol.asyncDispose]();
-  await assert.rejects(model.doGenerate({ audio, mediaType: 'audio/aiff' }), {
-    name: 'AbortError',
-  });
+  await assert.rejects(
+    model.doGenerate({ audio, mediaType: 'audio/aiff' }),
+    DisposedError,
+  );
 });
 
 test('a cancelled call never borrows an engine and invalid configuration is refused', async () => {
+  await using directory = await new TemporaryFiles().directory('local-model-');
   const configuration = {
     name: 'cohere-transcribe-arabic-07-2026',
     path: '/nonexistent.gguf',
     language: 'ar',
   };
+  const kind = transcriptionKind(configuration);
+  const store = join(directory.path, 'store.sqlite');
   let engines = 0;
-  await using pool = new Pool({
+  await using _workers = new PoolWorkers({
+    kind,
+    store,
     clock: globalThis,
     size: new Fixed(1),
     startup: new OnDemand(),
@@ -76,6 +96,7 @@ test('a cancelled call never borrows an engine and invalid configuration is refu
       return new TranscriptionWorker(helper, configuration);
     },
   });
+  await using pool = new Pool({ kind, store, clock: globalThis });
   const model = new LocalTranscriptionModel(configuration, pool, globalThis);
   await assert.rejects(
     model.doGenerate({
@@ -103,14 +124,16 @@ test('a cancelled call never borrows an engine and invalid configuration is refu
 });
 
 test('a model is named by its name and language, not by where its file is, so a store moved to another Mac keeps its transcripts', async () => {
+  await using directory = await new TemporaryFiles().directory('local-model-');
+  // Naming a model sends no job, so no host offers workers.
   await using engines = new Pool({
+    kind: transcriptionKind({
+      name: 'cohere-transcribe-arabic-07-2026',
+      path: '/Users/ada/.cache/huggingface/hub/cohere.gguf',
+      language: 'ar',
+    }),
+    store: join(directory.path, 'store.sqlite'),
     clock: globalThis,
-    size: new Fixed(1),
-    startup: new OnDemand(),
-    eviction: new NoEviction(),
-    create: (): TranscriptionWorker => {
-      throw new Error('Naming a model starts no engine');
-    },
   });
   const at = (
     path: string,

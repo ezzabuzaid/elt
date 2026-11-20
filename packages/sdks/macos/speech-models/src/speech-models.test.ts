@@ -8,9 +8,10 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { TemporaryFiles } from '@zukhruf/fs';
-import { Fixed, NoEviction, Parallel, Pool } from '@zukhruf/pool';
+import { Fixed, NoEviction, Parallel, Pool, PoolWorkers } from '@zukhruf/pool';
 
 import { LocalTranscriptionModel } from '@eltjs/transcription-local';
+import { transcriptionKind } from '@eltjs/transcription-local/transcription-kind';
 import { TranscriptionWorker } from '@eltjs/transcription-local/transcription-worker';
 
 import type { SpeechModel } from './speech-model.ts';
@@ -201,7 +202,11 @@ async function transcribe(
   await using directory = await new TemporaryFiles().directory('speech-say-');
   const path = join(directory.path, 'note.aiff');
   await promisify(execFile)('say', ['-v', voice, '-o', path, text]);
-  await using engines = new Pool({
+  const kind = transcriptionKind(model.configuration);
+  const store = join(directory.path, 'store.sqlite');
+  await using _workers = new PoolWorkers({
+    kind,
+    store,
     clock: globalThis,
     size: new Fixed(1),
     startup: new Parallel(),
@@ -214,6 +219,7 @@ async function transcribe(
         model.configuration,
       ),
   });
+  await using engines = new Pool({ kind, store, clock: globalThis });
   const local = new LocalTranscriptionModel(
     model.configuration,
     engines,
