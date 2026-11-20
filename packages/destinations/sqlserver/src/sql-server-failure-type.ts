@@ -1,5 +1,8 @@
 import type { FailureType } from '@eltjs/elt';
-import { SqlServerPermissionError } from '@eltjs/sdk-microsoft-sql-server';
+import {
+  SqlServerLoginError,
+  SqlServerPermissionError,
+} from '@eltjs/sdk-microsoft-sql-server';
 
 import { SqlServerSetupError } from './sql-server-setup-error.ts';
 
@@ -10,12 +13,15 @@ const permissionNumbers = new Set([229, 230, 262]);
 
 // What kind of failure an error of the database that the destination or the
 // checkpoint store writes is: config for a database that is not set up as the
-// destination needs it (SqlServerSetupError) and for a login without a
-// permission (SqlServerPermissionError, or an error with one of
-// permissionNumbers); system for every other error, such as a server that
-// cannot be reached or a login that the server refuses.
+// destination needs it (SqlServerSetupError), for a login that the server
+// refuses (SqlServerLoginError: wrong credentials, a disabled login, a
+// database it may not open) and for a login without a permission
+// (SqlServerPermissionError, or an error with one of permissionNumbers), as
+// elt-postgresql calls a wrong password config; system for every other error,
+// such as a server that cannot be reached.
 export function failureType(error: unknown): FailureType {
   return error instanceof SqlServerSetupError ||
+    error instanceof SqlServerLoginError ||
     error instanceof SqlServerPermissionError ||
     (Error.isError(error) &&
       'number' in error &&

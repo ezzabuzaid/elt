@@ -391,7 +391,7 @@ test('a load whose checkpoint store has a login that may not create the table of
   }
 });
 
-test('a load that the server refuses for another reason, such as a login with a wrong password, records the pass with the failure type system', async () => {
+test('a load whose login the server refuses, such as a wrong password, records the pass with the failure type config', async () => {
   await using database = await scratch();
   const source = new Notes();
   source.upstream = [{ n: 1, text: 'first' }];
@@ -426,7 +426,7 @@ test('a load that the server refuses for another reason, such as a login with a 
     await database.admin.query(
       'SELECT status, failure_type FROM marts.sync_attempts',
     ),
-    [{ status: 'failed', failure_type: 'system' }],
+    [{ status: 'failed', failure_type: 'config' }],
   );
 });
 
