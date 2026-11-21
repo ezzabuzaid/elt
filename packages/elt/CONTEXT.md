@@ -149,12 +149,12 @@ Whose a failure is to fix: `config` when only the user can fix it, and `system` 
 _Avoid_: Error class, severity
 
 **Stored file**:
-A copy of a source's file that a copy kept in a file storage, for example `LocalFiles`. A row names it by its ref.
+A copy of a source's file that a copy kept in a file storage, for example `LocalFiles`. A row names it by its ref, and a reader opens it through that storage.
 _Avoid_: Attachment (an app's word; a stored file can be any file), blob
 
 **Ref**:
-The path of a stored file, relative to the folder of its file storage. The SHA-256 of the bytes names the file.
-_Avoid_: Path (a path can be absolute), id
+The text that names a stored file in its file storage. Only that storage resolves it: `open(ref)` gives a path, and `head(ref, length)` gives the first bytes. For `LocalFiles`, it is the path of the file relative to its folder, and the SHA-256 of the bytes names the file.
+_Avoid_: Path (a ref is not a path that a reader can open itself), id
 
 **Derived dataset**:
 Data that the pipeline keeps in step with what its copies load, and that it can always make again from that data (Kleppmann's derived data; Estuary calls it a derivation).

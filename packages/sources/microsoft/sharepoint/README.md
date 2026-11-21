@@ -89,7 +89,7 @@ await new Pipeline({
       from: [driveItems],
       compute: new DocumentText({
         parser: () => parser,
-        files: files.directory,
+        files,
         column: 'documentRef',
       }),
     }),

@@ -88,6 +88,12 @@ test('file storage declarations validate identities and keep parsing separate wi
     override async retain(): Promise<void> {
       throw new Error('unexpected cleanup');
     }
+    override async open(): Promise<{ path: string } & AsyncDisposable> {
+      throw new Error('unexpected open');
+    }
+    override async head(): Promise<Uint8Array> {
+      throw new Error('unexpected head');
+    }
     override failureType(): FailureType {
       throw new Error('unexpected failure');
     }
@@ -145,6 +151,12 @@ test('a file field accepts a file name only when its parser does, and a field of
     }
     override async retain(): Promise<void> {
       throw new Error('unexpected cleanup');
+    }
+    override async open(): Promise<{ path: string } & AsyncDisposable> {
+      throw new Error('unexpected open');
+    }
+    override async head(): Promise<Uint8Array> {
+      throw new Error('unexpected head');
     }
     override failureType(): FailureType {
       throw new Error('unexpected failure');

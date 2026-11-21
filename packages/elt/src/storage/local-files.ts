@@ -100,6 +100,37 @@ export class LocalFiles extends FileStorage {
     }
   }
 
+  // A file of ref, opened as a trial: a ref that names no file of the folder,
+  // such as one on the disk of a new host, says how to store it again.
+  async #file(ref: string) {
+    return open(join(this.directory, ref)).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+        throw new Error(
+          `The files folder ${this.directory} has no file ${ref}. Reload the copy that stored it to store the file again.`,
+        );
+      },
+    );
+  }
+
+  // The stored file itself, so its dispose does nothing.
+  override async open(
+    ref: string,
+  ): Promise<{ readonly path: string } & AsyncDisposable> {
+    await (await this.#file(ref)).close();
+    return {
+      path: join(this.directory, ref),
+      [Symbol.asyncDispose]: async () => {},
+    };
+  }
+
+  override async head(ref: string, length: number): Promise<Uint8Array> {
+    await using file = await this.#file(ref);
+    const bytes = new Uint8Array(length);
+    const { bytesRead } = await file.read(bytes, 0, length, 0);
+    return bytes.subarray(0, bytesRead);
+  }
+
   // An error of the file system with one of configCodes is config; every
   // other error, such as a full disk, is system.
   override failureType(error: unknown): FailureType {

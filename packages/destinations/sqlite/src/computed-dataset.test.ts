@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { Latch } from '@zukhruf/async';
+import { Latch, untilAborted } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 import { timebox, waitFor } from '@zukhruf/testing/async';
@@ -18,10 +25,14 @@ import {
   Copy,
   type CopyConfiguration,
   DerivedDatasetError,
+  type DocumentFile,
   DocumentParser,
   DocumentText,
+  type FailureType,
+  FileStorage,
   Gauge,
   type LoadedRow,
+  LocalFiles,
   Pipeline,
   PipelineError,
   Rule,
@@ -119,20 +130,22 @@ class Files extends Source {
 class TextParser extends DocumentParser {
   readonly parsed: string[] = [];
   readonly failing = new Set<string>();
-  // Files whose read waits until their latch opens.
+  // Files whose read waits until their latch opens, or until the read stops,
+  // as a parser that honors its signal does.
   readonly holding = new Map<string, Latch>();
   handles = true;
 
-  async parse(path: string): Promise<string | null> {
+  async parse(path: string, signal?: AbortSignal): Promise<string | null> {
     this.parsed.push(basename(path));
-    await this.holding.get(basename(path))?.wait();
+    const held = this.holding.get(basename(path));
+    if (held !== undefined) await untilAborted(held.wait(), signal);
     if (this.failing.has(basename(path)))
       throw new Error(`${basename(path)} is damaged`);
     const text = await readFile(path, 'utf8');
     return text.trim() === '' ? null : text;
   }
 
-  override async identityFor(): Promise<string | null> {
+  override async identityFor(_file: DocumentFile): Promise<string | null> {
     return this.handles ? this.identity : null;
   }
 }
@@ -169,7 +182,7 @@ async function filesImport(directory: string) {
         from: [target],
         compute: new DocumentText({
           parser: () => parser,
-          files: store,
+          files: new LocalFiles({ directory: store }),
           column: 'ref',
         }),
       }),
@@ -282,7 +295,7 @@ test('a computed dataset reads a view declared before it: the text of each file 
         from: [named],
         compute: new DocumentText({
           parser: () => parser,
-          files: store,
+          files: new LocalFiles({ directory: store }),
           column: 'ref',
         }),
       }),
@@ -518,6 +531,209 @@ test('a format the parser stops handling keeps the text read before, and a file 
     ],
   );
   assert.deepEqual(files.parser().parsed, ['a.txt']);
+});
+
+// A parser that identifies each file by its name and its first bytes, as a
+// parser of formats that name themselves does, and records what it saw.
+class HeadParser extends TextParser {
+  readonly identified: {
+    readonly name: string;
+    readonly heads: readonly string[];
+  }[] = [];
+
+  override async identityFor(file: DocumentFile): Promise<string | null> {
+    const heads = [];
+    for (const length of [3, 7])
+      heads.push(new TextDecoder().decode(await file.head(length)));
+    this.identified.push({ name: file.name, heads });
+    return this.identity;
+  }
+}
+
+test('a parser identifies a stored file by its file name, with its extension, and by the first bytes that it asks the storage for', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await filesImport(scratch.path);
+  await mkdir(join(scratch.path, 'files', 'scans'));
+  await files.file('scans/a.txt', 'invoice 123');
+  await files.file('scans/b.md', 'note');
+  files.source.rows = [
+    { id: '1', ref: 'scans/a.txt' },
+    { id: '2', ref: 'scans/b.md' },
+  ];
+  const parser = new HeadParser('text-v1');
+  files.replaceParser(parser);
+
+  await files.pipeline.run();
+
+  assert.deepEqual(
+    // Each refresh of the run asks again, with the same file.
+    Object.fromEntries(
+      parser.identified.map(({ name, heads }) => [name, heads]),
+    ),
+    { 'a.txt': ['inv', 'invoice'], 'b.md': ['not', 'note'] },
+  );
+  assert.deepEqual(files.read(text), [
+    {
+      ref: 'scans/a.txt',
+      status: 'computed',
+      content: 'invoice 123',
+      error: null,
+    },
+    { ref: 'scans/b.md', status: 'computed', content: 'note', error: null },
+  ]);
+});
+
+// A storage that keeps its files in a folder the rule may not read, as a
+// database keeps them in its tables: open gives a temporary copy of the file
+// that its dispose removes, and head counts its reads. No storage of elt
+// gives temporary copies until the database storage of #5170 step E3. It stores nothing
+// itself, because the rows of the test name files that it already holds.
+class CopyingFiles extends FileStorage {
+  override readonly identity = 'copying-files';
+  override readonly reference = 'A file of the held folder.';
+  heads = 0;
+  readonly #held: string;
+  readonly #copies: string;
+
+  constructor(held: string, copies: string) {
+    super();
+    this.#held = held;
+    this.#copies = copies;
+  }
+
+  override async open(ref: string) {
+    const path = join(this.#copies, `${crypto.randomUUID()}-${basename(ref)}`);
+    await copyFile(join(this.#held, ref), path);
+    return { path, [Symbol.asyncDispose]: () => rm(path) };
+  }
+
+  override async head(ref: string, length: number) {
+    this.heads += 1;
+    return (await readFile(join(this.#held, ref))).subarray(0, length);
+  }
+
+  override async save(): Promise<string> {
+    throw new Error('unexpected save');
+  }
+
+  override async flush(): Promise<void> {
+    throw new Error('unexpected flush');
+  }
+
+  override async retain(): Promise<void> {
+    throw new Error('unexpected retain');
+  }
+
+  override failureType(): FailureType {
+    throw new Error('unexpected failure');
+  }
+}
+
+test('the rule reads each file through its storage: the parser gets a path that the storage opened, the storage removes it after the parse, and a parser that identifies by name reads no bytes', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const held = join(scratch.path, 'held');
+  const copies = join(scratch.path, 'copies');
+  await mkdir(held);
+  await mkdir(copies);
+  await writeFile(join(held, 'a.txt'), 'invoice 123');
+  await writeFile(join(held, 'b.txt'), 'receipt');
+  const storage = new CopyingFiles(held, copies);
+  const source = new Files();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  const target = destination.table('files');
+  const parser = new TextParser('text-v1');
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'files',
+        source,
+        destination,
+        steps: [new Copy(source.files, target)],
+      }),
+    ],
+    derived: [
+      new ComputedDataset({
+        into: destination,
+        name: 'file_text',
+        description: 'The text of each file a row names.',
+        from: [target],
+        compute: new DocumentText({
+          parser: () => parser,
+          files: storage,
+          column: 'ref',
+        }),
+      }),
+    ],
+  });
+  source.rows = [
+    { id: '1', ref: 'a.txt' },
+    { id: '2', ref: 'b.txt' },
+  ];
+
+  await pipeline.run();
+
+  assert.deepEqual(shell(destination.path, text).rows, [
+    { ref: 'a.txt', status: 'computed', content: 'invoice 123', error: null },
+    { ref: 'b.txt', status: 'computed', content: 'receipt', error: null },
+  ]);
+  assert.deepEqual(
+    // Each copy is named by a UUID, a hyphen and the file name.
+    parser.parsed.map((name) => name.slice(37)).toSorted(),
+    ['a.txt', 'b.txt'],
+  );
+  assert.deepEqual(await readdir(copies), []);
+  assert.equal(storage.heads, 0);
+});
+
+test('a refresh that its watch stops while a file is parsed stores no row for that file and stays refreshing with no error, as a stop is not the file’s failure', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await filesImport(scratch.path);
+  await files.file('a.txt', 'invoice 123');
+  files.source.rows = [{ id: '1', ref: 'a.txt' }];
+  const released = new Latch();
+  files.parser().holding.set('a.txt', released);
+  const status = `SELECT state, error, pending FROM derived_status WHERE dataset = 'file_text'`;
+  const controller = new AbortController();
+  const watching = files.pipeline.watch({ signal: controller.signal });
+
+  let held;
+  try {
+    await watching.next();
+    held = await timebox(
+      () => {
+        assert.deepEqual(files.parser().parsed, ['a.txt']);
+        return files.read(status);
+      },
+      {
+        minTimeout: 10,
+        maxRetryTime: 10_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+    released.open();
+  }
+
+  assert.deepEqual(
+    {
+      held,
+      stopped: files.read(
+        `SELECT state, error FROM derived_status WHERE dataset = 'file_text'`,
+      ),
+      rows: files.read(text),
+    },
+    {
+      held: [{ state: 'refreshing', error: null, pending: 1 }],
+      stopped: [{ state: 'refreshing', error: null }],
+      rows: [],
+    },
+  );
 });
 
 test('a file that is slow to read holds only its own place: the text of the files read after it lands while it is still being read', async () => {

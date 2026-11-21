@@ -7,7 +7,7 @@
 ## The steps
 
 1. Declare a column that stores the file: `c.text('documentRef').from(source.documents.file.store(files))`. The column holds the ref of the stored file.
-2. Declare a `ComputedDataset` with the rule `DocumentText`. Give it the table of the copy in `from`, the folder of the stored files in `files`, and the column of the refs in `column`.
+2. Declare a `ComputedDataset` with the rule `DocumentText`. Give it the table of the copy in `from`, the file storage that keeps the stored files in `files`, and the column of the refs in `column`.
 3. Run the pipeline. After the passes, the pipeline refreshes the computed dataset: the rule reads the text of each stored file.
 4. Join the reader view of the copy to the view of the computed dataset, on `ref`.
 
@@ -139,7 +139,7 @@ const pipeline = new Pipeline({
       from: [documents],
       compute: new DocumentText({
         parser: () => new MacOSDocumentParser(),
-        files: files.directory,
+        files,
         column: 'documentRef',
       }),
     }),
@@ -202,7 +202,7 @@ Output:
 
 ## Why it works
 
-The copy only stores each file, so the pass does not wait for a parser. `LocalFiles` names each stored file by the SHA-256 of its bytes, and the column `documentRef` holds that ref. After the passes, the pipeline refreshes `document_text`. The rule `DocumentText` reads the ref of each loaded row, and the parser reads the text of the stored file. The computed dataset keeps one output row for each ref. See [ADR 0002](../adr/0002-a-computed-dataset-keeps-one-output-row-for-each-key.md).
+The copy only stores each file, so the pass does not wait for a parser. `LocalFiles` names each stored file by the SHA-256 of its bytes, and the column `documentRef` holds that ref. After the passes, the pipeline refreshes `document_text`. The rule `DocumentText` reads the ref of each loaded row, opens the stored file through `files`, and the parser reads its text. The computed dataset keeps one output row for each ref. See [ADR 0002](../adr/0002-a-computed-dataset-keeps-one-output-row-for-each-key.md).
 
 The parser cannot read `scan.pdf`. That is a rule failure: its output row has the status `failed` and the reason, and the run resolves. See [ADR 0004 of elt](../../../../elt/docs/adr/0004-a-rule-failure-stays-on-its-output.md).
 

@@ -19,6 +19,7 @@ import {
   DocumentParser,
   DocumentText,
   type LoadedRow,
+  LocalFiles,
   Pipeline,
   PipelineError,
   Rule,
@@ -155,7 +156,7 @@ async function filesImport(url: string, directory: string) {
         from: [target],
         compute: new DocumentText({
           parser: () => parser,
-          files: store,
+          files: new LocalFiles({ directory: store }),
           column: 'ref',
         }),
       }),
@@ -274,7 +275,7 @@ test('a computed dataset reads a view declared before it: the text of each file 
         from: [named],
         compute: new DocumentText({
           parser: () => parser,
-          files: store,
+          files: new LocalFiles({ directory: store }),
           column: 'ref',
         }),
       }),

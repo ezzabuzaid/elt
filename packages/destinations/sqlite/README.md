@@ -205,7 +205,7 @@ const text = new ComputedDataset({
   from: [documents],
   compute: new DocumentText({
     parser: () => parser,
-    files: files.directory,
+    files,
     column: 'documentRef',
   }),
 });

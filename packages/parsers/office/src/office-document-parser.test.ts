@@ -274,6 +274,17 @@ test('the parser accepts the names of the formats it reads, in any case, and no 
   );
 });
 
+test('the identity of a stored file is the identity of the parser, with no read of its bytes', async () => {
+  const parser = new OfficeDocumentParser();
+
+  const identity = await parser.identityFor({
+    name: 'Proposal.docx',
+    head: () => assert.fail('identityFor read the bytes of the file'),
+  });
+
+  assert.equal(identity, parser.identity);
+});
+
 test('an already-aborted parse rejects with an AbortError', async () => {
   await using directory = await new TemporaryFiles().directory('office-');
   const path = join(directory.path, 'Proposal.docx');

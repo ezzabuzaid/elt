@@ -625,17 +625,21 @@ new Copy(
 
 For a different storage, extend the exported `FileStorage`:
 
-| Member                      | Gives                                                                                                                |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `identity`                  | A stable identity. It is part of the checkpoint binding of the copy.                                                 |
-| `reference`                 | A sentence that tells readers what a ref is. Postgres writes it as the comment of the ref column.                    |
-| `save(scope, content)`      | Saves a `FileContent`, and returns a complete, immutable ref. A save again of the same content returns the same ref. |
-| `flush(scope)`              | Makes the completed saves durable before their rows commit. It is safe to repeat, also for a scope with no saves.    |
-| `retain(scope, references)` | Removes only the objects of this scope that no committed ref names.                                                  |
-| `failureType(error)`        | The [failure type](#failure-types) of each error that `save`, `flush` or `retain` raised.                            |
+| Member                       | Gives                                                                                                                |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `identity`                   | A stable identity. It is part of the checkpoint binding of the copy.                                                 |
+| `reference`                  | A sentence that tells readers what a ref is. Postgres writes it as the comment of the ref column.                    |
+| `save(scope, content)`       | Saves a `FileContent`, and returns a complete, immutable ref. A save again of the same content returns the same ref. |
+| `flush(scope)`               | Makes the completed saves durable before their rows commit. It is safe to repeat, also for a scope with no saves.    |
+| `retain(scope, references)`  | Removes only the objects of this scope that no committed ref names.                                                  |
+| `open(ref, signal?)`         | A `{ path }` that stays readable until it is disposed. A ref that the storage does not hold throws.                  |
+| `head(ref, length, signal?)` | The first `length` bytes of the stored file, or all of them when the file is shorter, with no copy of the file.      |
+| `failureType(error)`         | The [failure type](#failure-types) of each error that `save`, `flush` or `retain` raised.                            |
 
 - The transfer reads refs as text that it does not interpret. Thus an S3 storage can return its own form of ref, with no change to the destinations.
 - Only `LocalFiles` exists now. Its reconcile scans the kept refs and the folder of the scope at each commit. It keeps no separate index of objects.
+- A rule reads a stored file only through its storage: `DocumentText` disposes each opened file after its parse. `LocalFiles` gives its own path, and its dispose does nothing. A storage that keeps no files on the disk gives a temporary copy, and its dispose removes it. See [ADR 0030](./docs/adr/0030-a-rule-reads-a-stored-file-through-its-storage.md).
+- A ref that `LocalFiles` does not hold throws an error that names the folder and the ref, and tells you to reload the copy that stored the file.
 - `LocalFiles` calls an error of the file system `config` when a person must change the folder: `EACCES` and `EPERM` (this process may not write it) and `EROFS` (a read-only file system). Each other error is `system`.
 
 ### Write a document parser
@@ -644,7 +648,7 @@ Extend `DocumentParser` with `parse(path, signal?): Promise<string | null>`.
 
 - Return `null` when the file has no text that the parser can show. Throw only when the read failed.
 - Give it a stable identity that includes its version and the configuration that matters. Keep the parser and its configuration immutable, and do not change the file.
-- `identityFor(path)` gives the identity of the format that reads one file, or `null` when the parser does not handle it. A composite parser uses it, so that a new audio model does not invalidate the text of other formats.
+- `identityFor({ name, head })` gives the identity of the format that reads one stored file, or `null` when the parser does not handle it. A composite parser uses it, so that a new audio model does not invalidate the text of other formats. `name` is the file name of the ref, with its extension. `head(length)` reads the first bytes of the file through its storage, and only when the parser calls it. The default gives the identity of the parser and reads no bytes, so `OfficeDocumentParser` reads nothing at a refresh. The type of the argument is `DocumentFile`.
 - `accepts(fileName)` tells a source, before it downloads a file, whether the parser can read a file of that name. It returns `true` by default: the parser then decides from the content, as `MacOSDocumentParser` does for a file with no extension.
 - A parser does not depend on a source or a destination.
 - The identity of the parser is part of the checkpoint binding of the copy. A new identity needs a new copy ID or a reset of the checkpoint.
@@ -655,7 +659,7 @@ Airbyte has the same two concepts on the source side: its [file parser Strategy]
 
 ### Attachment text
 
-A copy can store files with no parse: an `attachmentRef` column and no `content` column. The import then never waits for a parse, and a file that the parser cannot read fails no copy. The text of the stored files is derived data, not a source, because its input is what the pipeline wrote. Declare it as a [computed dataset](../destinations/sqlite/README.md#declare-a-computed-dataset) with the `DocumentText` rule. The pipeline reads the files as the copies commit them. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) keeps an `attachment_text` view in this way, which SQL joins on `attachmentRef = ref`:
+A copy can store files with no parse: an `attachmentRef` column and no `content` column. The import then never waits for a parse, and a file that the parser cannot read fails no copy. The text of the stored files is derived data, not a source, because its input is what the pipeline wrote. Declare it as a [computed dataset](../destinations/sqlite/README.md#declare-a-computed-dataset) with the `DocumentText` rule, and give the rule the file storage that keeps the files. The pipeline reads the files through that storage as the copies commit them. [Context Compiler](https://github.com/ezzabuzaid/context-compiler/blob/main/docs/connectors-and-hosts.md) keeps an `attachment_text` view in this way, which SQL joins on `attachmentRef = ref`:
 
 ```sql
 SELECT a.id, t.content
@@ -1011,7 +1015,7 @@ const pipeline = new Pipeline({
       from: [documents],
       compute: new DocumentText({
         parser: () => new MacOSDocumentParser(),
-        files: files.directory,
+        files,
         column: 'documentRef',
       }),
     }),
@@ -1027,7 +1031,7 @@ const pipeline = new Pipeline({
 });
 ```
 
-`connection` copies a stream into the table `documents`, and `files` is the `LocalFiles` that keeps its stored files. Each kind of derived dataset is a class of a destination package. The SQLite destination has `View` and `ComputedDataset`; see [elt-sqlite](../destinations/sqlite/README.md). The Postgres destination has no kinds yet. See [ADR 0001](./docs/adr/0001-derived-data-is-declared-on-the-pipeline.md).
+`connection` copies a stream into the table `documents`, and `files` is the `LocalFiles` that keeps its stored files, which `DocumentText` reads through it. Each kind of derived dataset is a class of a destination package. The SQLite destination has `View` and `ComputedDataset`; see [elt-sqlite](../destinations/sqlite/README.md). The Postgres destination has no kinds yet. See [ADR 0001](./docs/adr/0001-derived-data-is-declared-on-the-pipeline.md).
 
 ## When the pipeline refreshes
 
@@ -1082,14 +1086,14 @@ A column with no value is `NULL`. SQLite and Postgres keep a vector as the bytes
 
 Two rules exist:
 
-| Rule                                            | Package            | Input                                                | Output                                                                                                                                               |
-| ----------------------------------------------- | ------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DocumentText({ parser, files, column })`       | `@eltjs/elt`       | the ref in `column`, relative to the folder `files`  | `content`, the text that a `DocumentParser` reads. The rule identity is the parser of the format of the file                                         |
-| `Embedding({ model, dimensions, key, fields })` | `@eltjs/embedding` | the text of `fields`, with a line break between them | `vector`, a vector column of `dimensions`, from an AI SDK embedding model. The rule identity is the provider, the id of the model and the dimensions |
+| Rule                                            | Package            | Input                                                      | Output                                                                                                                                               |
+| ----------------------------------------------- | ------------------ | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DocumentText({ parser, files, column })`       | `@eltjs/elt`       | the ref in `column`, which the `FileStorage` `files` opens | `content`, the text that a `DocumentParser` reads. The rule identity is the parser of the format of the file                                         |
+| `Embedding({ model, dimensions, key, fields })` | `@eltjs/embedding` | the text of `fields`, with a line break between them       | `vector`, a vector column of `dimensions`, from an AI SDK embedding model. The rule identity is the provider, the id of the model and the dimensions |
 
 `DocumentText` asks for its parser at each refresh, so a parser that the host changed, for example a new speech model, applies from the next refresh.
 
-A file that rows name and that the folder `files` does not have is a failure of its row. The error names the folder and the ref, and tells you to reload the copy that stored the file. For example, a host that moves to a new disk keeps its rows, but the folder on that disk has no files, so each file that the dataset reads again fails. A file that a commit removed with its rows while the refresh read it also fails its row, and the refresh that the commit asks for then removes that row.
+`DocumentText` opens each file with `files.open(ref)`, gives the path to the parser, and disposes the file after the parse. A file that rows name and that `files` does not hold is a failure of its row, with the error of the storage. The error of `LocalFiles` names the folder and the ref, and tells you to reload the copy that stored the file. For example, a host that moves to a new disk keeps its rows, but the folder on that disk has no files, so each file that the dataset reads again fails. A file that a commit removed with its rows while the refresh read it also fails its row, and the refresh that the commit asks for then removes that row.
 
 ## Write a table rule
 
@@ -1191,7 +1195,7 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0012](./docs/adr/0012-every-failure-says-whose-it-is-to-fix.md): every failure says whose it is to fix.
 - [ADR 0013](./docs/adr/0013-the-pipeline-installs-its-sync-history-before-each-run-and-watch.md): the pipeline installs its sync history before each run and watch.
 - [ADR 0014](./docs/adr/0014-a-source-says-how-current-each-stream-s-upstream-is.md): a source says how current the upstream of each stream is.
-- [ADR 0015](./docs/adr/0015-a-stored-file-s-ref-is-relative-to-its-folder.md): a stored file's ref is relative to its folder.
+- [ADR 0015](./docs/adr/0015-a-stored-file-s-ref-is-relative-to-its-folder.md): a stored file's ref is relative to its folder. [ADR 0030](./docs/adr/0030-a-rule-reads-a-stored-file-through-its-storage.md) supersedes it in part.
 - [ADR 0016](./docs/adr/0016-a-watch-watches-again-after-its-watcher-fails-for-a-system-reason.md): a watch watches again after its watcher fails for a system reason. [ADR 0020](./docs/adr/0020-a-source-gives-its-change-signals-and-a-failed-signal-fails-only-its-streams.md) supersedes it in part.
 - [ADR 0017](./docs/adr/0017-each-commit-asks-for-a-refresh.md): each commit asks for a refresh.
 - [ADR 0018](./docs/adr/0018-the-streams-of-a-read-are-one-task-group.md): the streams of a read are one task group.
@@ -1206,6 +1210,7 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0027](./docs/adr/0027-a-dataset-reads-the-parts-of-a-computed-dataset-through-a-view.md): a dataset reads the parts of a computed dataset through a view.
 - [ADR 0028](./docs/adr/0028-a-host-names-each-relation-that-readers-query-once.md): a host names each relation that readers query once.
 - [ADR 0029](./docs/adr/0029-the-side-that-raised-a-failure-names-its-type.md): the side that raised a failure names its type.
+- [ADR 0030](./docs/adr/0030-a-rule-reads-a-stored-file-through-its-storage.md): a rule reads a stored file through its storage.
 
 ## Development
 

@@ -1,3 +1,11 @@
+// A stored file as a parser identifies it: its file name, whose extension can
+// name its format, and its first bytes, which head reads from the storage
+// only when the parser asks.
+export type DocumentFile = {
+  readonly name: string;
+  head(length: number): Promise<Uint8Array>;
+};
+
 // A source-side Strategy: one staged document becomes one content value.
 export abstract class DocumentParser {
   readonly identity: string;
@@ -22,7 +30,7 @@ export abstract class DocumentParser {
   // A composite parser can identify the selected format independently, so
   // changing an audio model does not invalidate unrelated document text.
   // null means this parser does not handle the file; existing text can stay.
-  identityFor(_path: string): Promise<string | null> {
+  identityFor(_file: DocumentFile): Promise<string | null> {
     return Promise.resolve(this.identity);
   }
 }

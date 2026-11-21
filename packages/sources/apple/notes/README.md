@@ -74,7 +74,7 @@ await new Pipeline({
       from: [attachments],
       compute: new DocumentText({
         parser: () => parser,
-        files: files.directory,
+        files,
         column: 'attachmentRef',
       }),
     }),

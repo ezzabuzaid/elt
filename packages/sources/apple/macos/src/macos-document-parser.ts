@@ -1,6 +1,6 @@
 import { extname } from 'node:path';
 
-import { DocumentParser } from '@eltjs/elt';
+import { type DocumentFile, DocumentParser } from '@eltjs/elt';
 
 import type { DocumentFormat } from './document-formats/document-format.ts';
 import { FileHead } from './document-formats/file-head.ts';
@@ -36,18 +36,21 @@ export class MacOSDocumentParser extends DocumentParser {
     signal?: AbortSignal,
   ): Promise<string | null> {
     signal?.throwIfAborted();
-    const format = await this.#format(path);
+    const format = await this.#format(path, await FileHead.read(path));
     signal?.throwIfAborted();
     return format === undefined ? null : format.text(path, signal);
   }
 
-  override async identityFor(path: string): Promise<string | null> {
-    return (await this.#format(path))?.identity ?? null;
+  override async identityFor(file: DocumentFile): Promise<string | null> {
+    const head = new FileHead(await file.head(FileHead.length));
+    return (await this.#format(file.name, head))?.identity ?? null;
   }
 
-  async #format(path: string): Promise<DocumentFormat | undefined> {
-    const extension = extname(path).slice(1).toLowerCase();
-    const head = await FileHead.read(path);
+  async #format(
+    name: string,
+    head: FileHead,
+  ): Promise<DocumentFormat | undefined> {
+    const extension = extname(name).slice(1).toLowerCase();
     for (const format of this.#formats)
       if (await format.supports(extension, head)) return format;
     return undefined;

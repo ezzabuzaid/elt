@@ -1,15 +1,23 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 
 import { TemporaryFiles } from '@zukhruf/fs';
 import { MockTranscriptionModelV4 } from 'ai/test';
 
+import type { DocumentFile } from '@eltjs/elt';
+
 import { AudioFormat } from './document-formats/audio-format.ts';
 import { MacOSDocumentParser } from './macos-document-parser.ts';
+
+// A file on disk as a storage gives it to identityFor.
+const stored = (path: string): DocumentFile => ({
+  name: basename(path),
+  head: async (length) => (await readFile(path)).subarray(0, length),
+});
 
 // A remote provider cannot deterministically return silence, errors and exact
 // text offline. AI SDK's own stand-in replaces that boundary; transcribe and
@@ -46,8 +54,8 @@ test('an injected model transcribes audio, leaves native text parsing intact and
   assert.equal(await parser.parse(text), 'An unchanged document');
   assert.equal(await parser.parse(unknown), null);
   assert.equal(
-    await parser.identityFor(text),
-    await new MacOSDocumentParser().identityFor(text),
+    await parser.identityFor(stored(text)),
+    await new MacOSDocumentParser().identityFor(stored(text)),
   );
   assert.equal(await new MacOSDocumentParser().parse(audio), null);
   abort.abort();

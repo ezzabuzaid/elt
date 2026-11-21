@@ -658,7 +658,7 @@ async function warehouse(
             from: [driveItems],
             compute: new DocumentText({
               parser: () => parser,
-              files: files.directory,
+              files,
               column: 'documentRef',
             }),
           }),

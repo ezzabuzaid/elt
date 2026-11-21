@@ -30,7 +30,7 @@ export {
   type RefreshTrigger,
 } from './core/derived-dataset.ts';
 export { type DerivedCounts, DerivedStatus } from './core/derived-status.ts';
-export { DocumentParser } from './core/document-parser.ts';
+export { type DocumentFile, DocumentParser } from './core/document-parser.ts';
 export { DocumentText } from './core/document-text.ts';
 export {
   type LoadedRow,
