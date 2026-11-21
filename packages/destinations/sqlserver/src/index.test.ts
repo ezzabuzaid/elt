@@ -548,6 +548,100 @@ test('a commit that applies the retention while another connection opens its loa
   );
 });
 
+test('a commit after the window deletes the commits before the oldest position it keeps and the closed loads left with none, keeps an open load, and a reading before that position is expired while that position reads', async () => {
+  await using database = await scratch();
+  const { login, admin } = database;
+  // The wall time of each pass, which the test moves, as the retention tests
+  // of elt-postgresql do: a slow machine cannot make a commit older than the
+  // test says (ADR 0019 of elt).
+  let now = Date.now();
+  const clock = {
+    Date: { now: () => now },
+    performance,
+    setTimeout: globalThis.setTimeout,
+    clearTimeout,
+  };
+  const warehouse = new SqlServerDestination({
+    login,
+    retention: Temporal.Duration.from({ seconds: 1 }),
+  });
+  const history = new SqlServerSyncHistory({ login });
+  const [retainer, opener] = ['notes_0', 'notes_1'].map((name) =>
+    notesConnection(name, warehouse, login),
+  );
+  assert.ok(retainer !== undefined && opener !== undefined);
+  const run = (copy: typeof retainer) =>
+    new Pipeline({ clock, history, connections: [copy.connection] }).run();
+  await run(retainer);
+  const [first] = await positionsOf(warehouse);
+  retainer.source.upstream.push({ n: 2, text: 'the second note of notes_0' });
+  await run(retainer);
+  const [, second] = await positionsOf(warehouse);
+  assert.ok(first !== undefined && second !== undefined);
+  const opened = Promise.withResolvers<void>();
+  const read = Promise.withResolvers<void>();
+  opener.source.waits = async () => {
+    opened.resolve();
+    await read.promise;
+  };
+  const opening = run(opener);
+  try {
+    await Promise.race([opened.promise, opening]);
+    now += 1500;
+    retainer.source.upstream.push({ n: 3, text: 'the third note of notes_0' });
+
+    await run(retainer);
+
+    const positions = await positionsOf(warehouse);
+    const third = positions.at(-1);
+    assert.ok(third !== undefined);
+    assert.deepEqual(positions, [second, third]);
+    assert.deepEqual(
+      (
+        await admin.query(
+          'SELECT CONVERT(nvarchar(20), CAST(number AS bigint)) AS number FROM _warehouse._elt_commits ORDER BY number',
+        )
+      ).map(({ number }) => number),
+      [second, third].map((position) => position.split(':')[1]),
+    );
+    assert.deepEqual(
+      await admin.query(
+        'SELECT CONVERT(nvarchar(20), min_valid) AS min_valid, expired_by FROM _warehouse._elt_epoch',
+      ),
+      [{ min_valid: second.split(':')[1], expired_by: 'retention' }],
+    );
+    assert.deepEqual(
+      await admin.query(
+        'SELECT connector, CASE WHEN closed_at IS NULL THEN 1 ELSE 0 END AS [open] FROM _warehouse._elt_loads ORDER BY id',
+      ),
+      [
+        { connector: 'notes_0', open: 0 },
+        { connector: 'notes_1', open: 1 },
+        { connector: 'notes_0', open: 0 },
+      ],
+    );
+    const expired = await warehouse.reading(first);
+    if (!('expired' in expired)) {
+      await expired[Symbol.asyncDispose]();
+      assert.fail(`${first} reads`);
+    }
+    assert.match(expired.expired, /retention/);
+    const reading = await warehouse.reading(second);
+    if ('expired' in reading) assert.fail(reading.expired);
+    await using _reading = reading;
+    assert.deepEqual(
+      await reading.sql.query('SELECT text FROM marts.notes_0 ORDER BY n'),
+      [{ text: 'the note of notes_0' }, { text: 'the second note of notes_0' }],
+    );
+  } finally {
+    read.resolve();
+    await opening;
+  }
+  assert.deepEqual(await admin.query('SELECT text FROM marts.notes_1'), [
+    { text: 'the note of notes_1' },
+  ]);
+});
+
 test('a database that keeps no row versions for readers fails the first load with the statements that turn them on, and nothing is made', async () => {
   await using database = await scratch({ rowVersions: false });
   const warehouse = new SqlServerDestination({ login: database.login });
