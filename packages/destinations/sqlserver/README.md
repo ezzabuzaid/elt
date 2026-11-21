@@ -263,6 +263,28 @@ SQL Server takes the same `text().from(file).parse(parser)` and `text().from(fil
 - Parsed content is `NVARCHAR(MAX)`. A reference to a file of a storage is `NVARCHAR(MAX)` too.
 - A plain `blob()` column stores an inline `VARBINARY(MAX)` value. Its bytes go to the server as base64 text in the JSON batch, which `OPENJSON` reads as `varchar(max)`: `BASE64_DECODE` does not take `nvarchar` (error 8116, [ADR 0011](./docs/adr/0011-a-batch-travels-as-one-json-parameter-that-openjson-reads.md)).
 
+`destination.files()` gives a [database file storage](../../elt/README.md#files-in-the-database): the copy stores each file in the database, and a `DocumentText` reads it from there, so a writer whose container gets a fresh disk keeps its files.
+
+```ts
+const documents = destination.table('documents', (c) => [
+  c.text('id'),
+  c.text('documentRef').from(source.driveItems.file.store(destination.files())),
+]);
+new DocumentText({
+  parser: () => parser,
+  files: destination.files(),
+  column: 'documentRef',
+});
+```
+
+- The table is `_warehouse._elt_files`, which readers of `marts` do not see: `[scope] char(64)`, the SHA-256 of the scope; `[name] varchar(128)`, the SHA-256 of the bytes and the short source extension; `[n] bigint`, the place of the chunk from 0; and `[bytes] varbinary(max)`, at most 4 MiB. The key is `([scope], [name], [n])`. The first call of the storage makes the schema and the table.
+- `[scope]` and `[name]` compare by their bytes (`COLLATE Latin1_General_BIN2`), so `a.PDF` and `a.pdf` of the same bytes stay two files in a database whose collation ignores case ([ADR 0015](./docs/adr/0015-the-file-storage-compares-the-names-of-its-files-by-their-bytes.md)).
+- Each chunk goes as base64 in one JSON parameter, as a plain `blob()` does.
+- The ref is `<scope hash>/<name>`. The `MS_Description` of the ref column begins with the `reference` of the storage: "Name of a copy of the source file bytes in table _warehouse._elt_files of this database: the SHA-256 of its scope, a slash, and the SHA-256 of the bytes with a short source extension. Kept only while a row references it. Not the source file name, a URL or extracted text."
+- Each call opens a session of its own with the login of the destination. A save commits each chunk on its own, before the rows that name the file commit. The reconcile keeps each file that a row of the target, of its history or of the hidden target of a reload names.
+- A ref that the table does not hold fails the row of a `DocumentText` with `Table _warehouse._elt_files has no stored file <ref>. Reload the copy that stored it to store the file again.` A login without a permission is a `config` failure, as for the destination.
+- Recipe: [store files in the database and read their text](./docs/recipes/store-files-in-the-database-and-read-their-text.md).
+
 ## Descriptions
 
 The descriptions of the source become `MS_Description` extended properties of each table, view and column (`sp_addextendedproperty`, `sp_updateextendedproperty`), the property that SQL Server Management Studio and the SQL Server source of elt read. The rules are those of [elt-postgresql](../postgresql/README.md#descriptions). An extended property holds at most 7,500 bytes; a longer description fails the declaration of the copy before a connection reads.
@@ -458,6 +480,7 @@ Each decision above that depends on the behavior of the server has a probe, whos
 
 - [Load a stream into SQL Server and read it as of a position](./docs/recipes/load-a-stream-and-read-it-as-of-a-position.md)
 - [Chunk documents, embed each chunk and search them with a vector index](./docs/recipes/search-chunks-with-a-vector-index.md)
+- [Store files in the database and read their text](./docs/recipes/store-files-in-the-database-and-read-their-text.md)
 
 ## Decisions
 
@@ -474,3 +497,5 @@ Each decision above that depends on the behavior of the server has a probe, whos
 - [ADR 0011](./docs/adr/0011-a-batch-travels-as-one-json-parameter-that-openjson-reads.md): a batch travels as one JSON parameter that `OPENJSON` reads.
 - [ADR 0012](./docs/adr/0012-the-rules-that-the-destinations-share-move-into-elt-before-the-third-destination.md): the rules that the destinations share move into elt before the third destination.
 - [ADR 0013](./docs/adr/0013-a-computed-dataset-declares-its-indexes-and-the-destination-reconciles-them.md): a computed dataset declares its indexes and the destination reconciles them.
+- [ADR 0014](./docs/adr/0014-each-vector-index-has-a-search-function-in-marts.md): each vector index has a search function in `marts`.
+- [ADR 0015](./docs/adr/0015-the-file-storage-compares-the-names-of-its-files-by-their-bytes.md): the file storage compares the names of its files by their bytes.

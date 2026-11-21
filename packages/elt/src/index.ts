@@ -181,4 +181,5 @@ export {
   recordedStreamStatus,
 } from './state/pass-status.ts';
 export { syncHistoryRelations } from './state/sync-history-relations.ts';
+export { DatabaseFiles } from './storage/database-files.ts';
 export { LocalFiles } from './storage/local-files.ts';

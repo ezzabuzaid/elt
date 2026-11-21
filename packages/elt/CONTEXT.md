@@ -153,8 +153,12 @@ A copy of a source's file that a copy kept in a file storage, for example `Local
 _Avoid_: Attachment (an app's word; a stored file can be any file), blob
 
 **Ref**:
-The text that names a stored file in its file storage. Only that storage resolves it: `open(ref)` gives a path, and `head(ref, length)` gives the first bytes. For `LocalFiles`, it is the path of the file relative to its folder, and the SHA-256 of the bytes names the file.
+The text that names a stored file in its file storage. Only that storage resolves it: `open(ref)` gives a path, and `head(ref, length)` gives the first bytes. For `LocalFiles`, it is the path of the file relative to its folder. For a database file storage, it is the SHA-256 of the scope, a slash, and the name of the file. In both, the SHA-256 of the bytes and the short source extension name the file.
 _Avoid_: Path (a ref is not a path that a reader can open itself), id
+
+**Database file storage**:
+A file storage that keeps each stored file in a table of the database of a destination, in chunks of at most 4 MiB, for example the storage that `SQLiteDestination.files()` gives. Its `open(ref)` gives a temporary copy. `DatabaseFiles` is its template class.
+_Avoid_: Blob store, file column, chunk table (the chunk tables of `blob().from(file)` were removed)
 
 **Derived dataset**:
 Data that the pipeline keeps in step with what its copies load, and that it can always make again from that data (Kleppmann's derived data; Estuary calls it a derivation).

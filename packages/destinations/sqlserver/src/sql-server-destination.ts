@@ -16,6 +16,7 @@ import { SqlServerColumns } from './sql-server-columns.ts';
 import { type SqlServerLogin, connect } from './sql-server-connection.ts';
 import { SqlServerDeduplicatingWriter } from './sql-server-deduplicating-writer.ts';
 import { failureType } from './sql-server-failure-type.ts';
+import { SqlServerFiles } from './sql-server-files.ts';
 import { identifiers } from './sql-server-identifiers.ts';
 import { SqlServerLoad } from './sql-server-load.ts';
 import { readNumbering, sqlServerDatabase } from './sql-server-numbering.ts';
@@ -114,6 +115,12 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
     position?: string,
   ): Promise<SqlServerReading | { readonly expired: string }> {
     return readAsOf(this[database], position);
+  }
+
+  // A file storage in the database of this destination, which a copy gives
+  // to .store() and a DocumentText reads.
+  files(): SqlServerFiles {
+    return new SqlServerFiles(this[database]);
   }
 
   table(

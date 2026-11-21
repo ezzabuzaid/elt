@@ -14,6 +14,7 @@ import type { PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
 import { PostgresDeduplicatingWriter } from './postgres-deduplicating-writer.ts';
 import { failureType } from './postgres-failure-type.ts';
+import { PostgresFiles } from './postgres-files.ts';
 import { PostgresLoad } from './postgres-load.ts';
 import { postgresDatabase, readNumbering } from './postgres-numbering.ts';
 import { PostgresOverwriteWriter } from './postgres-overwrite-writer.ts';
@@ -108,6 +109,12 @@ export class PostgresDestination extends Destination<PostgresTable> {
     position?: string,
   ): Promise<PostgresReading | { readonly expired: string }> {
     return readAsOf(this.#url, position);
+  }
+
+  // A file storage in the database of this destination, which a copy gives
+  // to .store() and a DocumentText reads.
+  files(): PostgresFiles {
+    return new PostgresFiles(this.#url);
   }
 
   table(

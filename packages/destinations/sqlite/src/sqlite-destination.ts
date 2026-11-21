@@ -16,6 +16,7 @@ import type { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
 import { SQLiteDeduplicatingWriter } from './sqlite-deduplicating-writer.ts';
 import { failureType } from './sqlite-failure-type.ts';
+import { SQLiteFiles } from './sqlite-files.ts';
 import { SQLiteLoad, readNumbering, sqliteFile } from './sqlite-loads.ts';
 import { SQLiteOverwriteWriter } from './sqlite-overwrite-writer.ts';
 import { SQLiteTable } from './sqlite-table.ts';
@@ -107,6 +108,14 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     if (this.path === ':memory:')
       throw new TypeError('Readings require a SQLite destination file');
     return readAsOf(this.path, position);
+  }
+
+  // A file storage in the file of this destination, which a copy gives to
+  // .store() and a DocumentText reads.
+  files(): SQLiteFiles {
+    if (this.path === ':memory:')
+      throw new TypeError('File storage requires a SQLite destination file');
+    return new SQLiteFiles(this.path);
   }
 
   table(

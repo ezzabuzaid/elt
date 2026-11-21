@@ -60,6 +60,17 @@ Counts:
 - `deleted` is the number of accepted deletions, also keys that were not there.
 - Neither count is the final number of rows.
 
+## Files
+
+SQLite takes the `text().from(file).parse(parser)` and `text().from(file.store(storage))` declarations. See [stored files](../../elt/README.md#stored-files-and-document-parsing) in elt. Parsed content is `TEXT`, and so is the ref of a stored file. A plain `blob()` column stores an inline `BLOB` value.
+
+`destination.files()` gives a [database file storage](../../elt/README.md#files-in-the-database) in the file of the destination: a copy gives it to `.store()`, and a `DocumentText` reads each file from it, `new DocumentText({ parser, files: destination.files(), column })`. A destination of `:memory:` refuses it.
+
+- The table is the reserved `_elt_files`, a `STRICT` rowid table: `"scope" TEXT`, the SHA-256 of the scope; `"name" TEXT`, the SHA-256 of the bytes and the short source extension; `"n" INTEGER`, the place of the chunk from 0; and `"bytes" BLOB`, at most 4 MiB. The key is `("scope", "name", "n")`. The first call of the storage makes the table, and makes it again when another version declared it otherwise.
+- The ref is `<scope hash>/<name>`. The description of the ref column in the catalog begins with the `reference` of the storage: "Name of a copy of the source file bytes in table _elt_files of this database: the SHA-256 of its scope, a slash, and the SHA-256 of the bytes with a short source extension. Kept only while a row references it. Not the source file name, a URL or extracted text."
+- Each call opens a connection of its own to the file, as each writer of the file does (`openDestination`). A save commits each chunk on its own, before the rows that name the file commit. The reconcile keeps each file that a row of the target, of its history or of the hidden target of a reload names.
+- A ref that the table does not hold fails the row of a `DocumentText` with `Table _elt_files has no stored file <ref>. Reload the copy that stored it to store the file again.`
+
 ## Locks and commits
 
 - The SQLite file has a [persistent WAL](./CONTEXT.md). Each connection that writes the file opens it with `openDestination(path)`, which gives the journal `PersistentWriteAheadLog` of `@zukhruf/sqlite-open`. The last connection that writes the file and closes decides if the `-wal` and `-shm` files stay, so all of these connections use it. Use `openDestination` also in a host that opens the file to write.

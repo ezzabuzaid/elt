@@ -2,7 +2,7 @@
 
 Status: accepted by Ezz (2026-11-19). Backlog #4886.
 
-Superseded in part on 2026-11-22 (#5170): `blob().from(file)` and its file tables are gone, so `_warehouse` and `marts` have no `_elt_files_<hash>`. A file storage in the database, the next step of #5170, keeps the bytes of files in Postgres.
+Superseded in part on 2026-11-22 (#5170): `blob().from(file)` and its file tables are gone, so `_warehouse` and `marts` have no `_elt_files_<hash>`. The database file storage of #5170 step E3, `destination.files()`, keeps the bytes of files in `_warehouse._elt_files`.
 
 Before this decision, a warehouse had three kinds of schema:
 

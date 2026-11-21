@@ -609,6 +609,37 @@ new Copy(
 - An empty file is a real file of zero bytes. A source file that is not available gives a null ref.
 - The replication flushes each declared scope one time before its rows commit. It does not flush the folder for each file. A flush of a scope with no files does nothing. New parent folders are synced when they are made.
 
+### Files in the database
+
+Each destination gives a file storage in its own database: `sqlite.files()`, `postgres.files()` and `sqlServer.files()`. A copy and a rule use it as they use `LocalFiles`:
+
+```ts
+const attachments = postgres.table('attachments', (c) => [
+  c.text('id'),
+  c.text('attachmentRef').from(notes.attachments.file.store(postgres.files())),
+]);
+const attachmentCopy = new Copy(notes.attachments, attachments);
+const attachmentText = new ComputedDataset({
+  into: postgres,
+  name: 'attachment_text',
+  description: 'The text of each stored attachment.',
+  from: [attachments],
+  compute: new DocumentText({
+    parser: () => new MacOSDocumentParser(),
+    files: postgres.files(),
+    column: 'attachmentRef',
+  }),
+});
+```
+
+- Use it when the host of the writer gets a fresh disk, such as a container that a deploy or a restart makes again: a folder of `LocalFiles` is then empty, and the next reconcile fails the copy. The files of a database file storage stay with the rows that name them.
+- The table keeps each file in chunks of at most 4 MiB: the SHA-256 of the scope, the name of the file, the place of the chunk from 0, and its bytes. An empty file is one empty chunk. The name is the SHA-256 of the bytes and the short source extension, as `LocalFiles` names its files. The ref is `<scope hash>/<name>`. See each destination for its table.
+- The identity names the kind of database, not a server, a database or a folder. Thus a warehouse that moves keeps its refs and its checkpoints.
+- Each call of the storage uses a connection of its own, not the connection of the load. A save writes its chunks under a pending name, and then renames them to the name of the content in one statement, only when the scope has no file of that name. Thus a save again gives the same ref and never overwrites a file. Each statement commits on its own, so a save is durable when it resolves, before its rows commit, and `flush` has nothing to do. The pending chunks of a failed save are not referenced, so the next reconcile removes them.
+- `open(ref)` writes a temporary copy, named as the file is stored, into a folder of its own (owner-only) in the temporary folder of the system. Its dispose removes the folder. `head(ref, length)` reads only the chunks that hold the first `length` bytes, and of those only the bytes it needs.
+- A ref that the table does not hold throws a `StoredFileMissingError` that names the table and the ref, and tells you to reload the copy that stored the file.
+- The storage calls its errors `config` or `system` as its destination does: an error of a permission is `config`.
+
 ### Files and rows
 
 - The transfer saves the files before it applies the records, and commits the rows before it removes files that are not used now.
@@ -637,8 +668,9 @@ For a different storage, extend the exported `FileStorage`:
 | `failureType(error)`         | The [failure type](#failure-types) of each error that `save`, `flush` or `retain` raised.                                    |
 
 - The transfer reads refs as text that it does not interpret. Thus an S3 storage can return its own form of ref, with no change to the destinations.
-- Only `LocalFiles` exists now. Its reconcile scans the kept refs and the folder of the scope at each commit. It keeps no separate index of objects.
-- A rule reads a stored file only through its storage: `DocumentText` disposes each opened file after its parse. `LocalFiles` gives its own path, and its dispose does nothing. A storage that keeps no files on the disk gives a temporary copy, and its dispose removes it. See [ADR 0030](./docs/adr/0030-a-rule-reads-a-stored-file-through-its-storage.md).
+- Two kinds exist now: `LocalFiles`, and the [database file storage](#files-in-the-database) of each destination. The reconcile of each scans the kept refs and the files of the scope at each commit: the folder of the scope, or the rows of its chunk 0. Neither keeps a separate index of objects.
+- For a storage in a database, extend `DatabaseFiles<Connection>`. It is a template class: it owns the content hash, the chunks, the pending name, the reconcile, the temporary copy and its dispose, and the missing ref. A subclass gives `identity`, `failureType`, `connect()` (a connection of its own, with the table made when absent) and the SQL of `write`, `rename`, `remove`, `names` and `read`. `SQLiteFiles`, `PostgresFiles` and `SqlServerFiles` are the three subclasses.
+- A rule reads a stored file only through its storage: `DocumentText` disposes each opened file after its parse. `LocalFiles` gives its own path, and its dispose does nothing. A database file storage gives a temporary copy, and its dispose removes it. See [ADR 0030](./docs/adr/0030-a-rule-reads-a-stored-file-through-its-storage.md).
 - A ref that `LocalFiles` does not hold throws a `StoredFileMissingError` that names the folder and the ref, and tells you to reload the copy that stored the file.
 - `LocalFiles` calls an error of the file system `config` when a person must change the folder: `EACCES` and `EPERM` (this process may not write it) and `EROFS` (a read-only file system). Each other error is `system`.
 

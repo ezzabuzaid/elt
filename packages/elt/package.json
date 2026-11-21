@@ -39,6 +39,7 @@
   },
   "dependencies": {
     "@zukhruf/async": "^0.8.31",
+    "@zukhruf/fs": "^0.8.31",
     "@zukhruf/snapshot-differential": "^0.8.31",
     "@zukhruf/vectors": "^0.8.40"
   },
